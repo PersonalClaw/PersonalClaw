@@ -47,14 +47,14 @@ async def _tools_section() -> list[dict[str, Any]]:
     *registered* tool. The Tools page enumerates it separately; the manifest
     describes the stable registered surface.
     """
-    from personalclaw.tool_providers.registry import list_all_tools
+    from personalclaw.tool_providers.registry import EXTERNAL_MCP_PROVIDER, list_all_tools
 
     tools = await list_all_tools()
     out: list[dict[str, Any]] = []
     for t in tools:
-        # The generic external-MCP fan-in ("mcp" provider) is per-install and not
-        # part of the stable self-description — it varies by the user's mcp.json.
-        if t.provider == "mcp":
+        # The generic external-MCP fan-in is per-install and not part of the stable
+        # self-description — it varies by the user's mcp.json.
+        if t.provider == EXTERNAL_MCP_PROVIDER:
             continue
         meta = TOOL_META.get(t.name, {})
         out.append(

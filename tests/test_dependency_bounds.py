@@ -5,13 +5,13 @@ release keeps the symbols this repo imports. `mcp` lost that bet: `mcp 2.0.0` re
 `mcp.client.streamable_http.streamablehttp_client`, which `personalclaw/mcp_client.py`
 imports by name for the streamable-HTTP transport. The repo's own venv had `mcp 1.28.1`
 and was green, so nothing here failed — and **CI installs from the lockfile, so CI could
-not see it either**. Only a fresh `pip install 'personalclaw[mcp]'` resolved 2.0.0 and
-broke, which is the one path a new user takes.
+not see it either**. Only a fresh install of what was then `personalclaw[mcp]` resolved 2.0.0
+and broke, which is the one path a new user takes.
 
-This rail asserts an upper bound on the extras whose modules are imported for a *named*
-attribute. It deliberately does not police every extra: a bound costs real maintenance
-(someone must widen it), so it is spent where a rename is known to break an import rather
-than everywhere as a matter of style.
+This rail asserts an upper bound on the dependencies whose modules are imported for a *named*
+attribute, wherever pyproject declares them. It deliberately does not police every dependency:
+a bound costs real maintenance (someone must widen it), so it is spent where a rename is known
+to break an import rather than everywhere as a matter of style.
 
 `requires-python` is the same defect with a bigger blast radius, and it collected too: an
 open `>=3.12` promised every future interpreter while `full.yml` verified two, so 3.14
@@ -33,31 +33,35 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: extra name -> the distribution inside it that must carry an upper bound, and why.
+#: distribution that must carry an upper bound wherever it is declared, and why.
 _MUST_BE_BOUNDED = {
     "mcp": (
-        "mcp",
         "mcp 2.0.0 renamed mcp.client.streamable_http.streamablehttp_client, which "
-        "src/personalclaw/mcp_client.py imports by name",
+        "src/personalclaw/mcp_client.py imports by name"
     ),
 }
 
 
-def _optional_dependencies() -> dict[str, list[str]]:
+def _declarations() -> dict[str, list[str]]:
+    """Every requirement list in pyproject: the core dependencies and each extra."""
     with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
-        return tomllib.load(fh)["project"]["optional-dependencies"]
+        project = tomllib.load(fh)["project"]
+    return {"dependencies": project["dependencies"], **project["optional-dependencies"]}
 
 
-def test_import_sensitive_extras_declare_an_upper_bound() -> None:
-    extras = _optional_dependencies()
+def test_import_sensitive_dependencies_declare_an_upper_bound() -> None:
     unbounded: list[str] = []
-    for extra, (dist, reason) in _MUST_BE_BOUNDED.items():
-        assert extra in extras, f"extra {extra!r} disappeared from pyproject.toml"
-        specs = [s for s in extras[extra] if s.split(">=")[0].split("[")[0].strip() == dist]
-        assert specs, f"extra {extra!r} no longer declares {dist!r}"
-        for spec in specs:
+    for dist, reason in _MUST_BE_BOUNDED.items():
+        found = [
+            (where, spec)
+            for where, specs in _declarations().items()
+            for spec in specs
+            if spec.split(">=")[0].split("[")[0].strip() == dist
+        ]
+        assert found, f"pyproject.toml no longer declares {dist!r}"
+        for where, spec in found:
             if "<" not in spec and "==" not in spec and "~=" not in spec:
-                unbounded.append(f"{extra}: {spec!r} — {reason}")
+                unbounded.append(f"{where}: {spec!r} — {reason}")
     assert not unbounded, (
         "these specs would let a FRESH install resolve a major release that renamed an "
         "imported symbol (CI installs from the lockfile and will not catch it): "

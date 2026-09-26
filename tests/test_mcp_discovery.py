@@ -1117,11 +1117,8 @@ class TestProbeRemoteTimeout:
     @pytest.mark.asyncio
     async def test_probe_remote_timeout_uses_config(self) -> None:
         """A server that never answers reads ``timeout`` after ``_get_probe_timeout()``."""
-        from personalclaw.mcp_client import mcp_sdk_available
         from personalclaw.mcp_discovery import _probe_remote
 
-        if not mcp_sdk_available():
-            pytest.skip("requires the 'mcp' SDK extra")
         server = McpServerInfo(name="remote", url="https://example.com/mcp", transport="http")
 
         async def never_answers(self):

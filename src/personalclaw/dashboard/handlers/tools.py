@@ -115,6 +115,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
     sources are already disjoint by construction).
     """
     from personalclaw.tool_providers.registry import (
+        EXTERNAL_MCP_PROVIDER,
         clear_load_failures,
         get_load_failures,
         list_all_tools,
@@ -235,14 +236,13 @@ async def api_tools_list(request: web.Request) -> web.Response:
     # This already includes personalclaw-core (registered via
     # their bundled app.json as InProcessMcpToolProvider, which applies the same
     # infer_risk_from_name classification) plus the entity categories, so there is no
-    # separate hardcoded core/schedule enumeration. Skip the generic "mcp" provider —
-    # Source 3 emits external MCP tools labeled per-server; re-adding them here under
-    # provider="mcp" would produce a phantom duplicate group (the _add dedup keys on
-    # provider).
+    # separate hardcoded core/schedule enumeration. Skip the provider that serves external
+    # MCP servers — Source 3 emits their tools labeled per-server; re-adding them here under
+    # its name would produce a phantom duplicate group (the _add dedup keys on provider).
     try:
         registry_tools = await list_all_tools()
         for t in registry_tools:
-            if t.provider == "mcp":
+            if t.provider == EXTERNAL_MCP_PROVIDER:
                 continue
             _add(
                 t.name,
@@ -272,9 +272,11 @@ async def api_tools_list(request: web.Request) -> web.Response:
     # feeds the approval gate. Read tools stay safe.
     from personalclaw.task_modes import infer_risk_from_name
 
-    # Source 3: External MCP servers from the LIVE in-process client registry —
-    # exactly the tools the native loop can actually call (no catalog/loop
-    # divergence). Empty when the optional 'mcp' SDK isn't installed.
+    # Source 3: External MCP servers from the LIVE in-process client registry — the tools
+    # each connected server offers, over the connection an agent's call uses. An agent
+    # reaches them only through the provider Source 2 skips; while none is registered the
+    # server's own status says so (`mcp_discovery.as_agents_see_it`), so the page can show
+    # what a server offers without claiming an agent can call it.
     #
     # Servers are probed CONCURRENTLY with a short per-server timeout: one slow
     # or unreachable server must not stall the whole catalog (and with it the
@@ -282,38 +284,34 @@ async def api_tools_list(request: web.Request) -> web.Response:
     try:
         from personalclaw.mcp_client import get_mcp_client_registry
 
-        registry = get_mcp_client_registry()
-        if registry is not None:
-            conns = list(registry.items())
+        conns = list(get_mcp_client_registry().items())
 
-            async def _list_one(name: str, conn) -> tuple[str, list]:
-                try:
-                    tools = await asyncio.wait_for(
-                        conn.list_tools(), timeout=_MCP_LIST_TIMEOUT_SECS
-                    )
-                    return name, list(tools)
-                except (asyncio.TimeoutError, Exception):  # noqa: BLE001
-                    logger.debug(
-                        "MCP server '%s' tool listing skipped (slow/unreachable)",
-                        name,
-                        exc_info=True,
-                    )
-                    return name, []
+        async def _list_one(name: str, conn) -> tuple[str, list]:
+            try:
+                tools = await asyncio.wait_for(conn.list_tools(), timeout=_MCP_LIST_TIMEOUT_SECS)
+                return name, list(tools)
+            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                logger.debug(
+                    "MCP server '%s' tool listing skipped (slow/unreachable)",
+                    name,
+                    exc_info=True,
+                )
+                return name, []
 
-            results = await asyncio.gather(*(_list_one(n, c) for n, c in conns))
-            for server_name, tools in results:
-                for tool in tools:
-                    _add(
-                        f"mcp/{server_name}/{tool.name}",
-                        tool.description,
-                        server_name,
-                        tool.input_schema,
-                        risk_level=infer_risk_from_name(tool.name),
-                        # An external MCP server has no supply-chain tier — see the `tier`
-                        # note in `_add`. "" is the honest answer, `builtin` would be a lie.
-                        default_tier="",
-                        server_tool=tool.name,
-                    )
+        results = await asyncio.gather(*(_list_one(n, c) for n, c in conns))
+        for server_name, tools in results:
+            for tool in tools:
+                _add(
+                    f"mcp/{server_name}/{tool.name}",
+                    tool.description,
+                    server_name,
+                    tool.input_schema,
+                    risk_level=infer_risk_from_name(tool.name),
+                    # An external MCP server has no supply-chain tier — see the `tier`
+                    # note in `_add`. "" is the honest answer, `builtin` would be a lie.
+                    default_tier="",
+                    server_tool=tool.name,
+                )
     except Exception as exc:
         logger.warning("Failed to list tools from MCP client registry", exc_info=True)
         record_failure("mcp", str(exc))
@@ -752,11 +750,11 @@ async def api_tool_groups(request: web.Request) -> web.Response:
     (``tools.group_defaults``), both via the config API.
     """
     from personalclaw.tool_providers import groups as groups_mod
-    from personalclaw.tool_providers.registry import list_all_tools
+    from personalclaw.tool_providers.registry import EXTERNAL_MCP_PROVIDER, list_all_tools
 
     defs: list = []
     try:
-        defs = [t for t in await list_all_tools() if t.provider != "mcp"]
+        defs = [t for t in await list_all_tools() if t.provider != EXTERNAL_MCP_PROVIDER]
     except Exception:
         logger.warning("Failed to list tools for the group partition", exc_info=True)
     # The cwd-coupled platform provider isn't in the registry (same reason the

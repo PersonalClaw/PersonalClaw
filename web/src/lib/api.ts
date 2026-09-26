@@ -2446,7 +2446,9 @@ export interface AlwaysOnResponse {
 export type McpTransport = 'stdio' | 'http' | 'sse'
 /** A configured MCP server as `GET /api/mcp` lists it: its state and how it is reached, never its
  *  definition — arguments and a URL can carry a token, and this list is kept in session storage.
- *  The edit form reads one server's definition from `GET /api/mcp/servers/{name}`. */
+ *  The edit form reads one server's definition from `GET /api/mcp/servers/{name}`.
+ *  `status` is `ok` only when an agent can call the server's tools; a server PersonalClaw
+ *  connected to that no agent can reach reads `unserved`, with the reason in `error`. */
 export interface McpServer {
   name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean
@@ -2471,10 +2473,8 @@ export type McpServerDefinition =
 export type McpServerSave =
   | { transport?: 'stdio'; command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[]; keepEnv?: string[] }
   | { transport: 'http' | 'sse'; url: string; headers?: Record<string, string>; keepHeaders?: string[] }
-/** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats).
- *  `available:false` when the mcp SDK extra isn't installed (no pool exists). */
+/** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats). */
 export interface McpPoolStats {
-  available: boolean
   live_connections?: number; shared_conns?: number; session_conns?: number
   configured_servers?: number; spawns?: number; reaps?: number; served?: number
   evicted?: number; reused?: number

@@ -14,6 +14,7 @@ import asyncio
 import pytest
 
 import personalclaw.dashboard.handlers.tools as tools_mod
+from personalclaw.mcp_client import McpClientRegistry
 
 
 class _FakeTool:
@@ -112,9 +113,9 @@ async def test_handler_surfaces_provider_load_failure(monkeypatch):
     # Real list_all_tools over a broken provider → records the failure.
     reg.clear_load_failures()
     monkeypatch.setattr(reg, "_providers", {"broken-prov": _BrokenProvider()})
-    # No MCP registry for this test.
+    # An empty MCP registry: no server is configured for this test.
     monkeypatch.setattr(
-        "personalclaw.mcp_client.get_mcp_client_registry", lambda: None, raising=False
+        "personalclaw.mcp_client.get_mcp_client_registry", McpClientRegistry, raising=False
     )
 
     resp = await tools_mod.api_tools_list(_DummyRequest())
@@ -137,7 +138,7 @@ async def test_handler_no_failures_when_all_load(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        "personalclaw.mcp_client.get_mcp_client_registry", lambda: None, raising=False
+        "personalclaw.mcp_client.get_mcp_client_registry", McpClientRegistry, raising=False
     )
     from personalclaw.tool_providers import registry as reg
 

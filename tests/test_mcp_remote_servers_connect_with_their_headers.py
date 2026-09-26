@@ -40,9 +40,7 @@ from aiohttp.test_utils import make_mocked_request
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import mcp_server_prefix, ref_key, write_mcp_document
-from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs, mcp_sdk_available
-
-pytestmark = pytest.mark.skipif(not mcp_sdk_available(), reason="requires the 'mcp' SDK extra")
+from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs
 
 NAME = "remote-fixture"
 AUTH = "Bearer fixture-remote-auth-0f1e2d3c4b5a69788796a5b4"

@@ -99,7 +99,6 @@ dependency; extras are the plain-pip path):
 | `openai` | `pip install 'personalclaw[openai]'` | the OpenAI SDK (chat/embeddings/STT/TTS) | small |
 | `anthropic` | `pip install 'personalclaw[anthropic]'` | the Anthropic SDK | small |
 | `bedrock` | `pip install 'personalclaw[bedrock]'` | AWS Bedrock (`boto3`) | medium |
-| `mcp` | `pip install 'personalclaw[mcp]'` | Model Context Protocol servers/tools | small |
 | `js-render` | `pip install 'personalclaw[js-render]'` | JS-rendered web fetch (Playwright) | large (browser) |
 | `models` | `pip install 'personalclaw[models]'` | local inference: embeddings + STT + TTS | large (ML) |
 

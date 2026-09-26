@@ -324,7 +324,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
     Agent-level ``mcpServers`` and ``includeMcpJson`` are merged at runtime.
     """
     global _mcp_probe_in_progress
-    from personalclaw.mcp_discovery import list_servers  # circular import
+    from personalclaw.mcp_discovery import as_agents_see_it, list_servers  # circular import
 
     # Kick off a background re-probe if the handler cache is stale,
     # so the next request gets fresh results.
@@ -371,6 +371,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
         d["enabled"] = not is_disabled
         if is_disabled:
             d["status"] = "disabled"
+        d = as_agents_see_it(d)
         err = d.get("error")
         if err:
             err, _ = redact_credentials(err)
@@ -448,7 +449,7 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     probe results don't reset user's previous enable/disable choices.
     """
     global _mcp_probe_ts
-    from personalclaw.mcp_discovery import probe_all  # noqa: F811
+    from personalclaw.mcp_discovery import as_agents_see_it, probe_all  # noqa: F811
 
     servers = await probe_all()
     # mcp.json holds the enabled/disabledTools state
@@ -461,9 +462,11 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
         if isinstance(spec, dict) and spec.get("disabledTools"):
             d["disabledTools"] = spec["disabledTools"]
         result.append(d)
+    # The cache keeps what the probe found; whether an agent can call a server is decided
+    # when it is shown, because the provider that serves it can arrive after the probe.
     _mcp_probe_cache[:] = result
     _mcp_probe_ts = time.time()
-    return web.json_response(result)
+    return web.json_response([as_agents_see_it(d) for d in result])
 
 
 async def api_mcp_probe_one(request: web.Request) -> web.Response:
@@ -477,7 +480,7 @@ async def api_mcp_probe_one(request: web.Request) -> web.Response:
     name = request.match_info["name"].strip()
     if not name:
         return web.json_response({"error": "server name is required"}, status=400)
-    from personalclaw.mcp_discovery import probe_one  # noqa: F811
+    from personalclaw.mcp_discovery import as_agents_see_it, probe_one  # noqa: F811
 
     info = await probe_one(name)
     if info is None:
@@ -498,12 +501,14 @@ async def api_mcp_probe_one(request: web.Request) -> web.Response:
     if not replaced:
         _mcp_probe_cache.append(d)
     _mcp_probe_ts = time.time()
-    return web.json_response(d)
+    return web.json_response(as_agents_see_it(d))
 
 
 async def api_mcp_probe_cached(request: web.Request) -> web.Response:
     """GET /api/mcp/probe — return cached probe results (non-blocking)."""
     global _mcp_probe_in_progress
+    from personalclaw.mcp_discovery import as_agents_see_it
+
     now = time.time()
     if now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress:
         _mcp_probe_in_progress = True
@@ -511,20 +516,16 @@ async def api_mcp_probe_cached(request: web.Request) -> web.Response:
         task = asyncio.create_task(_bg_mcp_probe())
         state._background_tasks.add(task)
         task.add_done_callback(state._background_tasks.discard)
-    return web.json_response(_mcp_probe_cache)
+    return web.json_response([as_agents_see_it(d) for d in _mcp_probe_cache])
 
 
 async def api_mcp_pool_stats(request: web.Request) -> web.Response:
     """GET /api/mcp/pool-stats — the in-process MCP connection-pool observability tile
     (P23d): live/shared/session connection counts + lifetime spawn/reap/served/reuse
-    counters. Returns ``{available:false}`` when the ``mcp`` SDK extra is absent (no
-    pool exists) so the FE can show a graceful 'MCP not installed' state."""
+    counters."""
     from personalclaw.mcp_client import get_mcp_client_registry
 
-    reg = get_mcp_client_registry()
-    if reg is None:
-        return web.json_response({"available": False})
-    return web.json_response({"available": True, **reg.pool_stats()})
+    return web.json_response(get_mcp_client_registry().pool_stats())
 
 
 async def api_mcp_importable(request: web.Request) -> web.Response:

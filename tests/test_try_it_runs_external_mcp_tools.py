@@ -44,11 +44,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw import mcp_client
 from personalclaw.config.secret_refs import write_mcp_document
-from personalclaw.mcp_client import mcp_sdk_available
 from personalclaw.tool_providers import registry as tool_registry
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
-
-pytestmark = pytest.mark.skipif(not mcp_sdk_available(), reason="requires the 'mcp' SDK extra")
 
 SERVER = "fixture"
 

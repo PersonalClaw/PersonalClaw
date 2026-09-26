@@ -13,16 +13,7 @@ import textwrap
 
 import pytest
 
-from personalclaw.mcp_client import (
-    McpClientRegistry,
-    get_mcp_client_registry,
-    mcp_sdk_available,
-)
-
-pytestmark = pytest.mark.skipif(
-    not mcp_sdk_available(), reason="requires the optional 'mcp' SDK extra"
-)
-
+from personalclaw.mcp_client import McpClientRegistry, get_mcp_client_registry
 
 # A minimal stdio MCP server: one tool that echoes its argument.
 _FIXTURE_SERVER = textwrap.dedent("""
@@ -100,7 +91,6 @@ def test_registry_reconciles_added_and_removed(fixture_server):
     assert {n for n, _ in reg.items()} == {"a", "c"}
 
 
-def test_registry_singleton_present_with_sdk():
-    # SDK is available (module-level skip otherwise), so the registry is a real
-    # object, never None.
-    assert get_mcp_client_registry() is not None
+def test_the_registry_is_always_there():
+    # The SDK is a core dependency, so there is no install on which the registry is missing.
+    assert isinstance(get_mcp_client_registry(), McpClientRegistry)

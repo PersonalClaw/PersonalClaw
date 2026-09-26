@@ -1794,6 +1794,7 @@ dependencies = [
     { name = "html2text" },
     { name = "httpx" },
     { name = "jsonschema" },
+    { name = "mcp" },
     { name = "nh3" },
     { name = "numpy" },
     { name = "openpyxl" },
@@ -1831,7 +1832,6 @@ dev = [
     { name = "huggingface-hub" },
     { name = "hypothesis" },
     { name = "isort" },
-    { name = "mcp" },
     { name = "mypy" },
     { name = "openai" },
     { name = "piper-tts" },
@@ -1858,9 +1858,6 @@ js-render = [
 ]
 keychain = [
     { name = "keyring" },
-]
-mcp = [
-    { name = "mcp" },
 ]
 models = [
     { name = "faiss-cpu" },
@@ -1919,7 +1916,7 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'eval'", specifier = ">=3.0" },
     { name = "jsonschema", specifier = ">=4" },
     { name = "keyring", marker = "extra == 'keychain'", specifier = ">=24" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<2" },
+    { name = "mcp", specifier = ">=1.2,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2,<3" },
     { name = "nh3", specifier = ">=0.2" },
     { name = "numpy", specifier = ">=1.21,<3" },
@@ -1929,7 +1926,6 @@ requires-dist = [
     { name = "pdfplumber", specifier = ">=0.11,<1" },
     { name = "personalclaw", extras = ["bedrock"], marker = "extra == 'dev'" },
     { name = "personalclaw", extras = ["embeddings"], marker = "extra == 'models'" },
-    { name = "personalclaw", extras = ["mcp"], marker = "extra == 'dev'" },
     { name = "personalclaw", extras = ["models"], marker = "extra == 'dev'" },
     { name = "personalclaw", extras = ["openai"], marker = "extra == 'dev'" },
     { name = "personalclaw", extras = ["stt"], marker = "extra == 'models'" },
@@ -1959,7 +1955,7 @@ requires-dist = [
     { name = "tree-sitter-language-pack", specifier = ">=1.0,<2" },
     { name = "websockets", specifier = ">=12,<18" },
 ]
-provides-extras = ["anthropic", "openai", "bedrock", "httpx", "oauth2", "slack", "stt", "tts", "eval", "embeddings", "mcp", "js-render", "keychain", "models", "dev", "test"]
+provides-extras = ["anthropic", "openai", "bedrock", "httpx", "oauth2", "slack", "stt", "tts", "eval", "embeddings", "js-render", "keychain", "models", "dev", "test"]
 
 [[package]]
 name = "pillow"

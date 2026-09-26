@@ -145,6 +145,63 @@ def server_name_problem(name: str) -> str | None:
     )
 
 
+def stdio_spawn_env(server_env: Mapping[str, str]) -> dict[str, str]:
+    """The environment a stdio server is spawned in — by the probe AND by the agent's connection.
+
+    The gateway's environment with its ``PATH`` augmented, so a daemon's thin ``PATH`` still finds
+    ``node``/``npx``/``uvx``, then the server's own variables over it. A server's own ``PATH`` goes
+    IN FRONT of the gateway's instead of replacing it, which is also how ``rebuild_agent_config``
+    resolves the command. One definition because there were two: the probe prepended and the
+    agent's connection replaced, so a server that set ``PATH`` probed "ok" while every call to it
+    failed with the command not found.
+    """
+    env = dict(os.environ)
+    env["PATH"] = augmented_path(env.get("PATH", ""))
+    if "PATH" in server_env:
+        env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
+    env.update({k: v for k, v in server_env.items() if k != "PATH"})
+    return env
+
+
+# ── what an agent can call ────────────────────────────────────────────────────────────────────
+#
+# A server PersonalClaw connects to is not therefore one an agent can use. Every external server's
+# tools reach an agent through ONE registered tool provider
+# (`tool_providers.registry.EXTERNAL_MCP_PROVIDER`, which the MCP Tool Servers app registers), and
+# without it the native loop has none of them. So "ok", which the Tools page draws as a green
+# "ready", is said only while that provider is on an agent's surface. It is applied where a status
+# is SHOWN, not where it is probed: the probe's result is cached, and the provider comes and goes
+# with its app.
+
+#: A server PersonalClaw connected to whose tools no agent can call.
+UNSERVED = "unserved"
+
+#: Why, as the Tools page says it. The app is named here, in copy, and nowhere in the predicate.
+UNSERVED_REASON = (
+    "Connected, but no agent can call its tools yet. They reach an agent through the MCP Tool "
+    "Servers app: install it from the Store, or turn it on if it is installed."
+)
+
+
+def as_agents_see_it(row: dict[str, Any]) -> dict[str, Any]:
+    """*row* (a :meth:`McpServerInfo.to_dict`) with an ``ok`` it has not earned taken back.
+
+    ``ok`` stays ``ok`` only when an agent's surface carries external servers' tools; otherwise
+    it becomes :data:`UNSERVED` with :data:`UNSERVED_REASON`. Every other status is already not a
+    claim that an agent can call the server, and passes through. So does PersonalClaw's own
+    server (:data:`_MANAGED_SERVER_NAMES`): it is not in ``mcp.json`` and reaches no agent through
+    that provider — a native agent has its tools in-process, and an ACP session is handed it in
+    ``session/new`` (``acp.mcp_servers``).
+    """
+    from personalclaw.tool_providers.registry import serves_external_mcp_tools
+
+    if row.get("name") in _MANAGED_SERVER_NAMES:
+        return row
+    if row.get("status") == "ok" and not serves_external_mcp_tools():
+        return {**row, "status": UNSERVED, "error": UNSERVED_REASON}
+    return row
+
+
 @dataclass
 class _ProbeResult:
     """Cached probe result for a single server."""
@@ -197,7 +254,7 @@ class McpServerInfo:
     cwd: str = ""  # working dir for the spawn (app-shipped servers set this to the app dir)
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
-    status: str = "unknown"  # unknown | ok | error | probing | outdated
+    status: str = "unknown"  # unknown | ok | error | probing | outdated (UNSERVED is only shown)
     # Each tool entry is a dict with at least "name"; optionally "description"
     # and "inputSchema" populated by tools/list responses. Plain strings are
     # also accepted on input and normalized to dicts at probe.
@@ -430,7 +487,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     ``tools/list``, so a stateful server read ``ok`` with no tools.
     """
     from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
-    from personalclaw.mcp_client import McpServerConn, mcp_sdk_available
+    from personalclaw.mcp_client import McpServerConn
 
     try:
         # The spec holds `{{secret:…}}` references; the header values are resolved here, where the
@@ -446,12 +503,6 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     if server.transport not in MCP_TRANSPORTS:
         server.status = "error"
         server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
-    elif not mcp_sdk_available():
-        server.status = "error"
-        server.error = (
-            "connecting to a server at a URL needs the 'mcp' extra "
-            "(pip install 'personalclaw[mcp]')"
-        )
     else:
         conn = McpServerConn(
             server.name, {"type": server.transport, "url": server.url, "headers": headers}
@@ -538,12 +589,7 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
     server.status = "probing"
     proc = None
     try:
-        env = dict(os.environ)
-        env["PATH"] = augmented_path(env.get("PATH", ""))
-        # Merge server-specific env additively
-        if "PATH" in server_env:
-            env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
-        env.update({k: v for k, v in server_env.items() if k != "PATH"})
+        env = stdio_spawn_env(server_env)
 
         # Resolve command to absolute path using the merged env PATH
         resolved = shutil.which(server.command, path=env.get("PATH"))
