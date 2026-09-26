@@ -201,10 +201,14 @@ Data leaving the running system:
   `redact_exfiltration_urls`).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.
-- **Secret settings held by reference** (`config/secret_refs.py`): a provider key and every
-  app setting declared `x-meta.sensitive` live in the credential store; `config.json`, an
-  app's `data/config.json` and provider instance records carry a `{{secret:…}}` reference.
-  Deleting a provider, or either removal rung of an app, deletes what it owned.
+- **Secret settings held by reference** (`config/secret_refs.py`): a provider key, every
+  app setting declared `x-meta.sensitive`, every MCP server `env` and `headers` value (bar the
+  `env` variables a server marks plain) and the webhook token live in the credential store;
+  `config.json`, an app's `data/config.json`, provider instance records, `mcp.json` and the
+  agent config carry a `{{secret:…}}` reference, resolved where the value is used: an MCP
+  server's at spawn, the webhook token when a request is checked. Every path that adds or changes
+  an MCP server writes through `secret_refs.write_mcp_document`. Deleting a provider, removing an MCP
+  server on the Tools page, or either removal rung of an app, deletes what it owned.
 - **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
   `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
   in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
@@ -214,8 +218,11 @@ Data leaving the running system:
   database) keeps the umask mode inside the 0700 home.
 - **Credential-free snapshots** (`durability/inventory.py`, `credential=True`): `.env`,
   `.env.pre-keychain`, `credentials.json` and `.local_secret` never enter a snapshot, and a
-  per-app `.app_secret` enters neither a snapshot nor an export. MCP server `env` values and
-  the webhook token are not covered yet — [limitations.md §6](limitations.md).
+  per-app `.app_secret` enters neither a snapshot nor an export. No settings file an archive
+  carries holds a stored value (`tests/test_export_carries_no_credential_store_value.py`
+  searches every member for every value the store holds). What a reference cannot cover (copies
+  made before the upgrade, a multi-line value, Claude Code's own config) is in
+  [limitations.md §6](limitations.md).
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 

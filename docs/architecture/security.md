@@ -78,8 +78,10 @@ permission model holds in every auth mode.
 `POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is
 middleware-exempt; its **only** gate is `_verify_hook_token` — a
 constant-time (`hmac.compare_digest`) check of the Bearer or
-`x-personalclaw-token` header against `hooks.webhook_token` in config. No
-configured token means every request is refused. Denials are logged to the
+`x-personalclaw-token` header against `hooks.webhook_token` in config — a
+`{{secret:…}}` reference there, resolved from the credential store at the
+check (`config/secret_refs.py`). No configured token, or a reference the store
+cannot answer, means every request is refused. Denials are logged to the
 Security Event Log.
 
 ## Command screening (`security.py`)

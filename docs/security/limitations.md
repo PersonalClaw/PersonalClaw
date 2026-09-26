@@ -331,32 +331,40 @@ Providers**, or turn off **Answer when nothing else is bound** in its settings t
 switch takes effect when you save it; it decides what answers when no chat model is chosen,
 so if onboarding made this your chat model, choose another in **Settings → Models** too.
 
-## 6. Two secrets are still stored inline: MCP server `env` values and the webhook token
+## 6. Where a stored secret can still appear in plaintext
 
-A provider's API key and every app setting its manifest declares `x-meta.sensitive` are kept
-in the credential store — the OS keychain, or `~/.personalclaw/.env` at mode 0600 — and the
-settings file holds only a `{{secret:…}}` reference to it (`src/personalclaw/config/secret_refs.py`).
-Two secrets are not among those settings yet, and are written exactly as you entered them:
+A provider's API key, every app setting its manifest declares `x-meta.sensitive`, every value
+in an MCP server's `env` and `headers`, and the webhook token (`hooks.webhook_token`, which
+`POST /api/hooks/agent` checks) are kept in the credential store: the OS keychain, or
+`~/.personalclaw/.env` at mode 0600. The file that configures them holds a `{{secret:…}}`
+reference, resolved where the value is used (`src/personalclaw/config/secret_refs.py`). An MCP
+server variable you mark plain (the Add form's **Plain values**) stays readable in `mcp.json`
+and travels with an export. One named like a token, secret, password or API key is stored
+whatever you mark. Snapshots and exports carry the references and never the store, so
+restoring onto another machine means entering those secrets again.
 
-- an MCP server's `env` block — free-form, in `~/.personalclaw/mcp.json`, copied into the agent
-  config `~/.personalclaw/agents/personalclaw.json`, and read back by every place that starts
-  the server;
-- the webhook token, `hooks.webhook_token` in `~/.personalclaw/config.json`, which
-  `POST /api/hooks/agent` checks.
+A secret still appears in plaintext in these places:
 
-So a token in either place:
+- **Copies made before you upgraded.** The first start after the upgrade moves every plaintext
+  value it finds in those files into the store. A copy made earlier keeps its own: an older
+  snapshot or export, a `pre-restore-*` directory, the time-travel history of `config.json`
+  (`state-history/`, which never leaves the machine), and an audit-log row an earlier
+  `personalclaw config set` wrote with the value in it. The audit log travels in an export,
+  and its rows are chained, so they are not rewritten.
+- **A multi-line value**, such as a PEM key in an MCP server's `env`. `.env` holds one
+  `KEY=VALUE` per line, so adding a server with one is refused. One that reaches `mcp.json`
+  another way (an import, a hand edit) stays there and travels with it, and the gateway logs
+  which variable it left.
+- **A value typed into `mcp.json` or `config.json` by hand** (`personalclaw config edit`, an
+  editor) stays in the file until the gateway next starts and moves it.
+- **Claude Code's own config.** Putting an MCP server into Claude Code's scope
+  (`POST /api/mcp/apply` with `ccGlobal`) writes it into `~/.claude.json` with its values,
+  because Claude Code reads only its own file. That copy is outside PersonalClaw's home,
+  snapshots and exports, under Claude Code's own file permissions. The copy PersonalClaw makes
+  by itself when sessions restart (`~/.mcp.json`) carries only the plain values.
 
-- is on disk in plaintext, in a file PersonalClaw writes 0600 inside a home that is 0700, so no
-  other account on the machine can read it. A file last written by an earlier release keeps the
-  mode it had until PersonalClaw next writes it;
-- travels in a `personalclaw snapshot` and in an export, which carry `mcp.json` and
-  `config.json`;
-- for the webhook token, is also kept in the local time-travel history (`state-history/`, which
-  records `config.json` and never leaves the machine).
-
-**What this means for you:** prefer a Secrets-panel credential for an MCP server's token and
-leave its value out of `mcp.json`; treat a snapshot or export of a home that holds either one as
-holding those tokens, and change the webhook token if such an archive leaves your hands.
+**What this means for you:** after upgrading, treat snapshots and exports made before it as
+holding your tokens. Delete them, or change any token that has left your hands in one.
 
 ## 7. An app's own code runs as you
 
@@ -420,8 +428,8 @@ patched inline in a docs change. Every item above has a named future direction
 (extending the hard rail to ACP protocol paths for #1; OS-level app isolation for
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
-weight's sha256 when it loads, for the gap in #5; resolving MCP `env` values and the webhook
-token from the credential store where they are used, for #6; per-app OS isolation for every
+weight's sha256 when it loads, for the gap in #5; a store that can hold a multi-line value,
+for the part of #6 that is ours to close; per-app OS isolation for every
 kind of app code, which today only a backend that names a sandbox tier has, and a consent row
 that names all of that code and says it runs as you, for #7). This page will shrink as those
 land.

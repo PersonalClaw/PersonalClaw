@@ -117,7 +117,7 @@ children (bash tools, hook and cron-script children, app backends, MCP servers).
 
 | Key | Default | What it does |
 |---|---|---|
-| `hooks` | `{}` | Webhook trigger config by hook id, plus `webhook_token` and `auto_approve_sources` (sources whose tool calls are auto-approved). Managed via the Triggers UI/API (`/api/hooks`); documented here because the raw shape is config-visible. |
+| `hooks` | `{}` | Webhook trigger config by hook id, plus `webhook_token` and `auto_approve_sources` (sources whose tool calls are auto-approved). `webhook_token` is kept in the credential store and the file holds a `{{secret:…}}` reference to it; `personalclaw config set hooks.webhook_token <token>` sets it. Managed via the Triggers UI/API (`/api/hooks`); documented here because the raw shape is config-visible. |
 | `observe_max_messages` | `200` | Channel-observation ring buffer size (messages kept per channel for context). |
 | `observe_ttl_hours` | `168` | How long observed channel messages stay usable as context. |
 | `timezone` | `""` (system) | IANA timezone (e.g. `Asia/Tokyo`) for schedules and the clock the LLM sees. Set by `personalclaw setup`; per-job trigger timezones override it. |

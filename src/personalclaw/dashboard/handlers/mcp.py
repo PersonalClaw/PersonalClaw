@@ -102,15 +102,10 @@ def _migrate_legacy_mcp_json() -> None:
                 cservers[name] = spec
                 moved += 1
         if moved:
-            from personalclaw.agent import _atomic_json_write
-
-            canon.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_json_write(canon, cdata)
+            _atomic_write(canon, cdata)
             logger.info("mcp: migrated %d server(s) from legacy settings/mcp.json", moved)
         # empty the legacy file so it can't re-diverge
-        from personalclaw.agent import _atomic_json_write
-
-        _atomic_json_write(legacy, {"mcpServers": {}})
+        _atomic_write(legacy, {"mcpServers": {}})
     except Exception:
         logger.debug("mcp: legacy migration skipped", exc_info=True)
 
@@ -152,12 +147,7 @@ def _get_mcp_lock() -> _McpFileLock:
 
 def _write_mcp_json(data: dict) -> None:
     """Atomically write global mcp.json to prevent partial reads."""
-    from personalclaw.agent import (  # noqa: F811  # circular import: agent imports handlers
-        _atomic_json_write,
-    )
-
-    _GLOBAL_MCP_JSON.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_json_write(_GLOBAL_MCP_JSON, data)
+    _atomic_write(_GLOBAL_MCP_JSON, data)
 
 
 # ── MCP Servers ──
@@ -239,11 +229,7 @@ def _sync_mcp_to_agent(name: str, enabled: bool, *, remove: bool = False) -> Non
     if remove:
         cfg.get("mcpServers", {}).pop(name, None)
     try:
-        from personalclaw.agent import (  # noqa: F811 circular: agent imports handlers
-            _atomic_json_write,
-        )
-
-        _atomic_json_write(path, cfg)
+        _atomic_write(path, cfg)
     except OSError as exc:
         logger.warning("Cannot write agent config %s: %s", path, exc)
 
@@ -306,11 +292,7 @@ def _sync_mcp_to_agent_batch(names: list[str], enabled: bool) -> None:
     if not changed:
         return
     try:
-        from personalclaw.agent import (  # noqa: F811 circular: agent imports handlers
-            _atomic_json_write,
-        )
-
-        _atomic_json_write(path, cfg)
+        _atomic_write(path, cfg)
     except OSError as exc:
         logger.warning("Cannot write agent config %s: %s", path, exc)
 
@@ -917,7 +899,10 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
 
     Body (PUT)::
 
-        { "command": "node", "args": ["server.js"], "env": {"KEY": "val"} }
+        { "command": "node", "args": ["server.js"], "env": {"KEY": "val"}, "plainEnv": [] }
+
+    Every ``env`` value is saved in the credential store and ``mcp.json`` holds a reference to
+    it, except the variables ``plainEnv`` names, which stay in the file as settings.
 
     DELETE removes the server from the config.
     """
@@ -1015,8 +1000,25 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     entry: dict[str, Any] = {"command": command}
     if body.get("args"):
         entry["args"] = body["args"]
-    if body.get("env"):
-        entry["env"] = body["env"]
+    env = body.get("env") or {}
+    plain = body.get("plainEnv") or []
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+    ):
+        return json_error(
+            "invalid_env", message="env must map variable names to string values", status=400
+        )
+    if not isinstance(plain, list) or not all(isinstance(n, str) for n in plain):
+        return json_error(
+            "invalid_env", message="plainEnv must be a list of variable names", status=400
+        )
+    if env:
+        entry["env"] = env
+        # The variables the user marked plain — settings, not secrets. Every OTHER value goes to
+        # the credential store, and mcp.json holds a reference to it (`secret_refs`).
+        marked = sorted({n for n in plain if n in env})
+        if marked:
+            entry["plainEnv"] = marked
 
     # Write to ~/.personalclaw/mcp.json — the PersonalClaw scope the native MCP
     # client actually spawns + lists tools from (mcp_client._personalclaw_mcp_specs).
@@ -1029,6 +1031,13 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         # erasing every MCP server the user had configured. Raising surfaces it as a failed request
         # instead — see `ConfigUnreadable`.
         data = _load_json_for_update(_canonical_mcp_json())
+        from personalclaw.config.secret_refs import store_mcp_spec
+
+        try:
+            # STRICT: a value typed now that the store cannot hold is refused, not left inline.
+            entry = store_mcp_spec(name, entry, strict=True)
+        except ValueError as exc:
+            return json_error("invalid_env", message=str(exc), status=400)
         data.setdefault("mcpServers", {})[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
 
@@ -1113,8 +1122,30 @@ def _load_json_for_update(path: Path) -> dict[str, Any]:
     return data
 
 
+def _is_personalclaw_document(path: Path) -> bool:
+    """``mcp.json`` (and its legacy ``settings/`` twin) or the agent config — the files whose MCP
+    server secrets live in the credential store. Any other path is another tool's own file."""
+    return path in {
+        _canonical_mcp_json(),
+        _GLOBAL_MCP_JSON,
+        _legacy_mcp_json(),
+        _installed_agent_json(),
+    }
+
+
 def _atomic_write(path: Path, data: dict) -> None:
-    """Atomic JSON write; reuses the agent helper."""
+    """Atomic JSON write of an MCP document.
+
+    PersonalClaw's own documents go through ``secret_refs.write_mcp_document``, which keeps a
+    server's ``env``/``headers`` values in the credential store, so no path in this module can
+    write one into the file. Another tool's file (``~/.claude.json``) is written as
+    given — :func:`_set_scope_entry` has already put the spec in the form that tool reads.
+    """
+    if _is_personalclaw_document(path):
+        from personalclaw.config.secret_refs import write_mcp_document
+
+        write_mcp_document(path, data)
+        return
     from personalclaw.agent import (  # noqa: F811  # circular: agent imports dashboard handlers
         _atomic_json_write,
     )
@@ -1271,7 +1302,15 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
             spec = _find_server_spec_anywhere(name)
         if spec is None:
             return "missing_spec"
-        servers[name] = {k: v for k, v in spec.items() if k != "disabled"}
+        entry = {k: v for k, v in spec.items() if k != "disabled"}
+        if not _is_personalclaw_document(path):
+            # Putting a server into another tool's scope is the user choosing to hand it over,
+            # and that tool reads only its own file, so the values go with it — resolved from
+            # the credential store, in the one form it understands.
+            from personalclaw.config.secret_refs import foreign_mcp_spec
+
+            entry = foreign_mcp_spec(entry, with_secrets=True)
+        servers[name] = entry
         _atomic_write(path, data)
         return "added"
     # enabled=False — hard remove.

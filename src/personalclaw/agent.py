@@ -1239,7 +1239,11 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
         if os.path.isabs(cmd) and os.path.isfile(cmd) and os.access(cmd, os.X_OK):
             resolved = cmd
         else:
-            env_path = spec.get("env", {}).get("PATH", "")
+            # A server's PATH is an env value like any other, so it may be a credential-store
+            # reference: resolved for the lookup, never written back.
+            from personalclaw.config.secret_refs import resolve_mcp_values
+
+            env_path = resolve_mcp_values(spec.get("env")).get("PATH", "")
             search_path = (env_path + os.pathsep if env_path else "") + os.environ.get("PATH", "")
             resolved = shutil.which(cmd, path=search_path)
         if resolved:
@@ -1314,7 +1318,11 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     for key in ("tools", "allowedTools"):
         config[key] = list(dict.fromkeys(config.get(key, [])))
 
-    _atomic_json_write(path, config)
+    # Through the MCP document writer: a server spec reaches this file with its secrets as
+    # credential-store references, whichever source it was merged from.
+    from personalclaw.config.secret_refs import write_mcp_document
+
+    write_mcp_document(path, config)
     logger.info("Installed agent config: %s", path)
 
     return path

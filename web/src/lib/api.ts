@@ -7524,8 +7524,10 @@ export const api = {
   // without re-probing the whole fleet.
   reconnectMcp: (name: string) => post<McpServer>(`/api/mcp/probe/${encodeURIComponent(name)}`),
   toggleAllMcp: (enabled: boolean) => post('/api/mcp/toggle-all', { enabled }),
-  // add/update an MCP server (stdio): writes ~/.personalclaw/mcp.json + enables.
-  addMcpServer: (name: string, body: { command: string; args?: string[]; env?: Record<string, string> }) =>
+  // add/update an MCP server (stdio): writes ~/.personalclaw/mcp.json + enables. Every `env`
+  // value is kept in the credential store (mcp.json holds a reference) except the variables
+  // `plainEnv` names, which stay in the file as settings.
+  addMcpServer: (name: string, body: { command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[] }) =>
     put<{ ok?: boolean; name: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body),
   removeMcpServer: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}`),
   // Servers configured in an external backend (Claude Code) not yet in PClaw.

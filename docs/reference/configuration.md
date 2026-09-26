@@ -295,7 +295,7 @@ makes the voice loop noisier, never less safe.
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
-| `hooks` | object | `{}` | Triggers page / `/api/hooks` | Webhook trigger config by hook id, plus `webhook_token` and `auto_approve_sources`. Managed via the Triggers UI; documented here because the raw shape is config-visible. |
+| `hooks` | object | `{}` | Triggers page / `/api/hooks` | Webhook trigger config by hook id, plus `webhook_token` (kept in the credential store — the file holds a `{{secret:…}}` reference; set it with `personalclaw config set hooks.webhook_token <token>`) and `auto_approve_sources`. Managed via the Triggers UI; documented here because the raw shape is config-visible. |
 | `observe_max_messages` | integer | `200` | backend-only | Channel-observation ring-buffer size (messages kept per channel for context). |
 | `observe_ttl_hours` | number | `168.0` | backend-only | How long observed channel messages stay usable as context. |
 | `agents` | object | `{}` | Agents page | Named agent definitions (see below). |

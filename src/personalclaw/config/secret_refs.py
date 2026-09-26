@@ -1,14 +1,17 @@
 """Secret settings live in the credential store; a settings FILE carries only a reference.
 
-🔴 **THE DEFECT.** Three kinds of settings file persisted a credential inline, in plaintext:
+🔴 **THE DEFECT.** Five kinds of settings record persisted a credential inline, in plaintext:
 
 * core ``config.json`` ``providers[].options`` — the key typed in Settings → Providers → Add
   instance landed as ``options.api_key`` (measured on the real image, at mode 0644);
 * an app's own settings, ``apps/<app>/data/config.json`` — slack-channel's Bot and App tokens,
   which a keep-data uninstall then parked, tokens and all, in ``apps/.<app>.data``;
-* a multi-instance provider's records, ``extensions/<app>/instances/<id>.json``.
+* a multi-instance provider's records, ``extensions/<app>/instances/<id>.json``;
+* an MCP server's ``env`` and ``headers`` in ``mcp.json``, copied into the agent config
+  ``agents/personalclaw.json`` (see "MCP server specs" below);
+* the webhook token, ``hooks.webhook_token`` in ``config.json`` (see "core config.json").
 
-Every snapshot and every export captures all three, so each plaintext key also left the machine
+Every snapshot and every export captures all of them, so each plaintext key also left the machine
 in every archive. The config round-trip contract already said secrets go in the credential store;
 nothing at those writers enforced it.
 
@@ -29,7 +32,8 @@ manifest rail also uses). The declaration is the truth when the schema is availa
 still catches the field when it is not (a provider type whose app has not loaded yet).
 
 **Ownership.** The store key encodes its owner — ``PCSECRET_PROVIDER_…``, ``PCSECRET_APP_…``,
-``PCSECRET_INSTANCE_…`` — deterministically, so re-saving a record re-uses its key and deleting
+``PCSECRET_INSTANCE_…``, ``PCSECRET_MCP_…``, ``PCSECRET_CONFIG_…`` — deterministically, so
+re-saving a record re-uses its key and deleting
 the record (or uninstalling the app) removes exactly what it owned, by prefix. A reference to a
 key the record does NOT own (``{{secret:MY_VAULT_KEY}}``, typed by hand to share a Secrets-panel
 credential) is resolved like any other but never deleted: it belongs to the vault.
@@ -327,6 +331,244 @@ def resolve_provider_records(records: Any) -> list[dict[str, Any]]:
     return out
 
 
+# ── MCP server specs: mcp.json and the agent config ─────────────────────────
+#
+# An MCP server's ``env`` block (and a remote server's ``headers``) is where its API key goes.
+# Both documents that hold server specs — ``mcp.json``, the store the native client spawns from,
+# and ``agents/personalclaw.json``, which the rebuild copies every spec into — keep references;
+# every path that adds or changes a server writes through :func:`write_mcp_document`, and the
+# three places a server is started (``mcp_client``, the discovery probe, the rebuild's command
+# lookup) resolve at that moment.
+#
+# **Which values are secret: every one, unless the server marks a variable plain.** A server's
+# environment is free-form, and its secrets have no naming convention a rule could rely on:
+# ``DATABASE_URL`` carries a password, ``NOTION_INTEGRATION`` is a token, ``GH_PAT`` matches no
+# credential noun. A name rule that misses leaves the secret in plaintext in every export, silently;
+# storing a value that was not secret costs only that it stays on this machine. So every value is
+# stored, except a variable named in the spec's ``plainEnv`` list (the Add form's "Plain values"
+# field), which stays inline and travels with an export — unless its name is credential-shaped,
+# which no marking overrides. Header values are always stored: headers are how a remote server
+# authenticates, and nothing in the product writes a plain one.
+
+#: Spec key listing the ``env`` variables that stay inline — settings that are not secret.
+MCP_PLAIN_ENV = "plainEnv"
+
+_MCP_OWNED_PREFIX = f"{OWNED_KEY_PREFIX}MCP_"
+_MCP_PARTS = {"env": "ENV", "headers": "HDR"}
+
+
+@dataclass(frozen=True)
+class _ExactNameOwner(SecretOwner):
+    """An owner whose field names are case-sensitive and unbounded — environment variables and
+    headers. ``API_KEY`` and ``api_key`` are two variables, and two long names can share their
+    first 32 characters, so the key carries a digest of the exact name as well as its segment."""
+
+    def key(self, field_name: str) -> str:
+        return f"{self.prefix}{_segment(field_name, 32)}_{_digest(field_name)}"
+
+
+def mcp_server_prefix(server: str) -> str:
+    """Every key an MCP server's secrets are stored under starts with this."""
+    return f"{_MCP_OWNED_PREFIX}{_segment(server, 32)}_{_digest(server)}__"
+
+
+def _mcp_owner(server: str, part: str) -> SecretOwner:
+    return _ExactNameOwner(f"{mcp_server_prefix(server)}{_MCP_PARTS[part]}__")
+
+
+def plain_env_names(spec: Mapping[str, Any]) -> set[str]:
+    """The ``env`` variables ``spec`` marks plain."""
+    listed = spec.get(MCP_PLAIN_ENV)
+    return {n for n in listed if isinstance(n, str)} if isinstance(listed, list) else set()
+
+
+def _unstorable(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and ref_key(value) is None
+        and any(ch in value.strip() for ch in ("\n", "\r", "\x00"))
+    )
+
+
+def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dict[str, Any]:
+    """The STORED form of one MCP server spec: each ``env`` value (bar the plain ones) and each
+    ``headers`` value saved under a key the server owns, the field holding the reference.
+
+    ``strict`` is for a value a user is typing now: one the store cannot hold faithfully (a
+    multi-line value — ``.env`` is one ``KEY=VALUE`` per line) raises :class:`ValueError` and
+    nothing is stored, so the caller can refuse it. Otherwise that value is left inline and
+    logged: the write chokepoint and the boot move must never drop a server, or the rest of its
+    secrets, over one value they cannot move.
+    """
+    if strict:
+        # Refused BEFORE anything is stored: a refusal halfway through would leave the values
+        # it had already saved in the store with no file referencing them.
+        for part in _MCP_PARTS:
+            values = spec.get(part)
+            for name, value in values.items() if isinstance(values, Mapping) else ():
+                if _unstorable(value):
+                    raise ValueError(
+                        f"{name}: a multi-line value cannot be kept in the credential store — "
+                        "enter it as a single line"
+                    )
+    out = dict(spec)
+    for part in _MCP_PARTS:
+        values = spec.get(part)
+        if not isinstance(values, Mapping) or not values:
+            continue
+        movable = dict(values)
+        inline: dict[str, Any] = {}
+        for name in [n for n, v in movable.items() if _unstorable(v)]:
+            inline[name] = movable.pop(name)
+            logger.warning(
+                "MCP server %r: %s %s holds a multi-line value, which the credential store "
+                "cannot keep; it stays in the file",
+                server,
+                part,
+                name,
+            )
+        plain = plain_env_names(spec) if part == "env" else set()
+        stored = store(
+            movable,
+            owner=_mcp_owner(server, part),
+            declared=[n for n in movable if n not in plain],
+        )
+        out[part] = {n: inline[n] if n in inline else stored[n] for n in values}
+    return out
+
+
+def resolve_mcp_values(values: Mapping[str, Any] | None) -> dict[str, Any]:
+    """An ``env`` or ``headers`` map in LOGICAL form, for the moment a server is started."""
+    out: dict[str, Any] = {}
+    for name, value in (values or {}).items():
+        key = ref_key(value)
+        if key is None:
+            out[name] = value
+            continue
+        # A reference the store cannot answer is DROPPED, not passed on as ``""``: the child then
+        # inherits the gateway's own variable of that name, if any, exactly as it would had the
+        # spec never named it — and never receives the placeholder as though it were a token.
+        real = get_credential(key)
+        if real:
+            out[name] = real
+    return out
+
+
+def resolve_mcp_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """The LOGICAL form of one MCP server spec — for the moment a server is started, never for
+    a file. ``plainEnv`` is dropped: it describes the stored form and means nothing to a child."""
+    out = {k: v for k, v in spec.items() if k != MCP_PLAIN_ENV}
+    for part in _MCP_PARTS:
+        values = spec.get(part)
+        if isinstance(values, Mapping):
+            out[part] = resolve_mcp_values(values)
+    return out
+
+
+def foreign_mcp_spec(spec: Mapping[str, Any], *, with_secrets: bool) -> dict[str, Any]:
+    """A spec for ANOTHER tool's config file (Claude Code's), which cannot read this store.
+
+    ``with_secrets`` is the user putting a server into that tool's scope on purpose: the values
+    go with it, in the only form that tool reads. Without it — a copy nobody asked for — every
+    stored value is left out, and only the plain ones travel.
+    """
+    if with_secrets:
+        return resolve_mcp_spec(spec)
+    out = {k: v for k, v in spec.items() if k != MCP_PLAIN_ENV}
+    for part in _MCP_PARTS:
+        values = spec.get(part)
+        if isinstance(values, Mapping):
+            out[part] = {n: v for n, v in values.items() if ref_key(v) is None}
+    return out
+
+
+def _mcp_refs(doc: Any) -> set[str]:
+    """Every owned MCP key a ``{"mcpServers": …}`` document references."""
+    servers = doc.get("mcpServers") if isinstance(doc, dict) else None
+    keys: set[str] = set()
+    for spec in servers.values() if isinstance(servers, dict) else ():
+        for part in _MCP_PARTS:
+            values = spec.get(part) if isinstance(spec, dict) else None
+            for value in values.values() if isinstance(values, dict) else ():
+                key = ref_key(value)
+                if key and key.startswith(_MCP_OWNED_PREFIX):
+                    keys.add(key)
+    return keys
+
+
+def mcp_documents() -> tuple[Path, Path]:
+    """The two files that hold MCP server specs: ``mcp.json`` and the agent config."""
+    from personalclaw.agent import AGENT_FILENAME, agents_dir
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / "mcp.json", agents_dir() / AGENT_FILENAME
+
+
+def write_mcp_document(path: Path, data: dict[str, Any]) -> None:
+    """Write ``mcp.json`` or the agent config with every server in STORED form.
+
+    Every server in ``data`` has its secrets moved into the store before the file is written
+    (``data`` is updated in place, so a caller reading it afterwards reads what reached the
+    disk). A secret the write stopped referencing is then deleted — unless the OTHER document
+    still references it: both files hold the same server under the same owned keys, and a
+    removal lands in one of them first.
+    """
+    from personalclaw.agent import _atomic_json_write
+
+    previous = _read_json(path)
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict):
+        for name, spec in servers.items():
+            if isinstance(spec, dict):
+                servers[name] = store_mcp_spec(str(name), spec, strict=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_json_write(path, data)
+    doomed = _mcp_refs(previous) - _mcp_refs(data)
+    for other in mcp_documents():
+        if doomed and other != path:
+            doomed -= _mcp_refs(_read_json(other))
+    for key in sorted(doomed):
+        delete_credential(key)
+
+
+# ── core config.json: the webhook token ─────────────────────────────────────
+
+#: Secret-bearing sections of ``config.json`` and the fields each DECLARES secret (a
+#: credential-shaped name in the section is caught too). ``hooks.webhook_token`` is the bearer
+#: token ``POST /api/hooks/agent`` checks.
+_CONFIG_SECRET_FIELDS: dict[str, tuple[str, ...]] = {"hooks": ("webhook_token",)}
+
+
+def config_owner(section: str) -> SecretOwner:
+    """A secret-bearing section of core ``config.json``."""
+    return SecretOwner(f"{OWNED_KEY_PREFIX}CONFIG_{_segment(section, 32)}__")
+
+
+def store_config_secrets(
+    doc: dict[str, Any], previous: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """The STORED form of a whole ``config.json`` document, updated in place and returned.
+
+    For every writer that can put a secret into the file: ``AppConfig.save()`` (which every API
+    handler that saves the config, and the boot-time config migration, go through) and the CLI's
+    ``config set`` / ``--file`` / ``unset``. A value typed into the file by hand is moved at the
+    next boot (:func:`migrate_plaintext_secrets`). ``previous`` is the document on disk before the
+    write, so a secret this write drops — ``config unset hooks.webhook_token`` — is deleted from
+    the store.
+    """
+    for section, declared in _CONFIG_SECRET_FIELDS.items():
+        before = previous.get(section) if isinstance(previous, Mapping) else None
+        before = before if isinstance(before, Mapping) else None
+        values = doc.get(section)
+        if isinstance(values, dict):
+            doc[section] = store(
+                values, owner=config_owner(section), declared=declared, previous=before
+            )
+        else:
+            _delete_orphans(before, {}, config_owner(section))
+    return doc
+
+
 # ── the one-time move (gateway boot) ────────────────────────────────────────
 
 
@@ -343,15 +585,40 @@ def _write_json(path: Path, data: Any) -> None:
     atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
 
 
-def _move_config_providers(path: Path, *, point_only: bool) -> bool:
-    """``providers[].options`` of one config document. ``point_only`` (``config.json.bak``)
-    replaces a plaintext secret with a reference to the LIVE record's key without storing the
-    backup's value — a backup can hold an older key, and storing it would overwrite a rotation."""
+def _point_at(values: Mapping[str, Any], fields: Iterable[str], owner: SecretOwner) -> dict:
+    """``values`` with each plaintext secret in ``fields`` replaced by a reference to the key
+    ``owner`` keeps it under — WITHOUT storing the plaintext (see ``point_only``)."""
+    moved = dict(values)
+    for field_name in fields:
+        value = moved.get(field_name)
+        if isinstance(value, str) and value.strip() and ref_key(value) is None:
+            moved[field_name] = make_ref(owner.key(field_name))
+    return moved
+
+
+def _move_config_document(path: Path, *, point_only: bool) -> bool:
+    """``providers[].options`` and the secret-bearing sections (``hooks``) of one config
+    document. ``point_only`` (``config.json.bak``) replaces a plaintext secret with a reference
+    to the LIVE record's key without storing the backup's value — a backup can hold an older
+    key, and storing it would overwrite a rotation."""
     doc = _read_json(path)
-    if not isinstance(doc, dict) or not isinstance(doc.get("providers"), list):
+    if not isinstance(doc, dict):
         return False
     changed = False
-    for record in doc["providers"]:
+    for section, declared in _CONFIG_SECRET_FIELDS.items():
+        values = doc.get(section)
+        if not isinstance(values, dict):
+            continue
+        owner = config_owner(section)
+        if point_only:
+            moved = _point_at(values, secret_fields(values, declared), owner)
+        else:
+            moved = store(values, owner=owner, declared=declared)
+        if moved != values:
+            doc[section] = moved
+            changed = True
+    records = doc.get("providers")
+    for record in records if isinstance(records, list) else []:
         if not isinstance(record, dict) or not isinstance(record.get("options"), dict):
             continue
         name = str(record.get("name") or "")
@@ -359,13 +626,8 @@ def _move_config_providers(path: Path, *, point_only: bool) -> bool:
             continue
         options = record["options"]
         if point_only:
-            owner = provider_owner(name)
             fields = secret_fields(options, declared_provider_type_fields(str(record.get("type"))))
-            moved = dict(options)
-            for field_name in fields:
-                value = moved.get(field_name)
-                if isinstance(value, str) and value.strip() and ref_key(value) is None:
-                    moved[field_name] = make_ref(owner.key(field_name))
+            moved = _point_at(options, fields, provider_owner(name))
         else:
             moved = store_provider_options(name, str(record.get("type") or ""), options, options)
         if moved != options:
@@ -420,6 +682,53 @@ def _move_instance_record(path: Path, app: str) -> bool:
     return True
 
 
+def _point_mcp_at_live(spec: dict[str, Any], live: Any) -> dict[str, Any]:
+    """The agent config's copy of a server ``mcp.json`` also defines: each plaintext value in it
+    is pointed at ``mcp.json``'s key for that variable instead of being stored. The rebuild lays
+    ``mcp.json``'s spec over this copy, so ``mcp.json`` holds the value that is live — storing the
+    copy's (possibly older) value under the same key would overwrite it."""
+    if not isinstance(live, Mapping):
+        return spec
+    out = dict(spec)
+    for part in _MCP_PARTS:
+        mine, theirs = spec.get(part), live.get(part)
+        if isinstance(mine, Mapping) and isinstance(theirs, Mapping):
+            out[part] = {
+                name: (
+                    theirs[name]
+                    if isinstance(value, str)
+                    and ref_key(value) is None
+                    and ref_key(theirs.get(name))
+                    else value
+                )
+                for name, value in mine.items()
+            }
+    return out
+
+
+def _move_mcp_document(path: Path, live: Path | None) -> bool:
+    """Every server spec in ``mcp.json`` or the agent config (``live``: the ``mcp.json`` whose
+    keys the agent config's copies point at)."""
+    doc = _read_json(path)
+    servers = doc.get("mcpServers") if isinstance(doc, dict) else None
+    if not isinstance(servers, dict):
+        return False
+    live_doc = _read_json(live) if live is not None else None
+    live_servers = live_doc.get("mcpServers") if isinstance(live_doc, dict) else None
+    changed = False
+    for name, spec in servers.items():
+        if not isinstance(spec, dict):
+            continue
+        twin = live_servers.get(name) if isinstance(live_servers, dict) else None
+        moved = store_mcp_spec(str(name), _point_mcp_at_live(spec, twin), strict=False)
+        if moved != spec:
+            servers[name] = moved
+            changed = True
+    if changed:
+        _write_json(path, doc)
+    return changed
+
+
 def migrate_plaintext_secrets() -> list[str]:
     """Move every plaintext secret an earlier release left in a settings file into the store.
 
@@ -436,9 +745,13 @@ def migrate_plaintext_secrets() -> list[str]:
     from personalclaw.config.loader import config_dir
 
     home = config_dir()
+    mcp_json, agent_config = mcp_documents()
     steps: list[tuple[Path, Any]] = [
-        (home / "config.json", lambda p: _move_config_providers(p, point_only=False)),
-        (home / "config.json.bak", lambda p: _move_config_providers(p, point_only=True)),
+        (home / "config.json", lambda p: _move_config_document(p, point_only=False)),
+        (home / "config.json.bak", lambda p: _move_config_document(p, point_only=True)),
+        # `mcp.json` first: the agent config's copies point at the keys it stores.
+        (mcp_json, lambda p: _move_mcp_document(p, live=None)),
+        (agent_config, lambda p: _move_mcp_document(p, live=mcp_json)),
     ]
     apps = apps_dir()
     if apps.is_dir():

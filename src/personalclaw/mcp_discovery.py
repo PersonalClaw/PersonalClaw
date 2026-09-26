@@ -484,8 +484,12 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
                 "clientInfo": {"name": "personalclaw-probe", "version": "1.0.0"},
             },
         }
+        from personalclaw.config.secret_refs import resolve_mcp_values
+
+        # The spec holds `{{secret:…}}` references; the header values are resolved here, where
+        # the request is made, and never written anywhere.
         hdrs = {
-            **server.headers,
+            **resolve_mcp_values(server.headers),
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
@@ -577,12 +581,17 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
     server.status = "probing"
     proc = None
     try:
+        from personalclaw.config.secret_refs import resolve_mcp_values
+
+        # The spec holds `{{secret:…}}` references; the values are resolved here, at spawn, and
+        # reach only the child's environment.
+        server_env = resolve_mcp_values(server.env)
         env = dict(os.environ)
         env["PATH"] = augmented_path(env.get("PATH", ""))
         # Merge server-specific env additively
-        if "PATH" in server.env:
-            env["PATH"] = server.env["PATH"] + os.pathsep + env["PATH"]
-        env.update({k: v for k, v in server.env.items() if k != "PATH"})
+        if "PATH" in server_env:
+            env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
+        env.update({k: v for k, v in server_env.items() if k != "PATH"})
 
         # Resolve command to absolute path using the merged env PATH
         resolved = shutil.which(server.command, path=env.get("PATH"))
@@ -926,8 +935,15 @@ def register_servers_for_cc(
     Adds entries without removing existing ones. CC-side complement
     to sync_to_agent_config() which handles agent-side registration.
 
+    🔴 Only a server's PLAIN values are written: this file is outside the PersonalClaw home,
+    nobody asked for the copy, and a new one is created at the umask mode — so a credential-store
+    value copied here would be a world-readable plaintext secret. A server whose token Claude Code
+    needs goes into Claude Code's own scope on purpose (the Tools page's Claude Code toggle).
+
     Returns True if any servers were added or updated.
     """
+    from personalclaw.config.secret_refs import foreign_mcp_spec
+
     if mcp_json_path is None:
         mcp_json_path = Path.home() / ".mcp.json"
 
@@ -942,14 +958,15 @@ def register_servers_for_cc(
     changed = False
 
     for s in servers:
+        plain = foreign_mcp_spec({"env": s.env, "headers": s.headers}, with_secrets=False)
         if s.is_remote:
             entry: dict = {"url": s.url, "type": "streamable-http"}
-            if s.headers:
-                entry["headers"] = s.headers
+            if plain.get("headers"):
+                entry["headers"] = plain["headers"]
         else:
             entry = {"command": s.command, "args": s.args or [], "type": "stdio"}
-            if s.env:
-                entry["env"] = s.env
+            if plain.get("env"):
+                entry["env"] = plain["env"]
 
         if s.name not in mcp or mcp[s.name] != entry:
             mcp[s.name] = entry

@@ -1737,8 +1737,9 @@ async def start_dashboard(
     from personalclaw.providers.routes import register_routes as register_extension_routes
 
     load_all_extensions()
-    # Move any secret an earlier release left inline in a settings file (a provider key in
-    # config.json, an app's tokens in its data/config.json, an instance's key) into the
+    # Move any secret an earlier release left inline in a settings file (a provider key or the
+    # webhook token in config.json, an app's tokens in its data/config.json, an instance's key,
+    # an MCP server's env and headers in mcp.json and the agent config) into the
     # credential store. HERE: after extensions load, so every app's declared-sensitive fields
     # are known, and before the registry sync below reads config.json. Idempotent and
     # fail-safe per file — a key it cannot move keeps working where it is.

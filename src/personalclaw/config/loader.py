@@ -4796,7 +4796,13 @@ class AppConfig:
         # `meta` is stamped above and so is already in `d`, which is what keeps this write
         # authoritative over the one key it does own.
         p = config_path()
-        d = merge_unmodeled_top_keys(d, read_config_for_merge(p))
+        on_disk = read_config_for_merge(p)
+        d = merge_unmodeled_top_keys(d, on_disk)
+        # The webhook token — a secret in a modelled section — reaches the file as a reference;
+        # its value goes to the credential store (`config.secret_refs.store_config_secrets`).
+        from personalclaw.config.secret_refs import store_config_secrets
+
+        d = store_config_secrets(d, previous=on_disk)
         p.parent.mkdir(parents=True, exist_ok=True)
         from personalclaw.atomic_write import atomic_write
 
