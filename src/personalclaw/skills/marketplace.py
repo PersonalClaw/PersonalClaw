@@ -25,28 +25,24 @@ from typing import Any
 from personalclaw.record_ids import record_path
 from personalclaw.skills.loader import validate_skill_md as _validate_skill_md
 
-
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
-
-
 logger = logging.getLogger(__name__)
 
 _SKILL_FILENAME = "SKILL.md"
 
-# Standard discovery paths in priority order
-SKILL_DISCOVERY_PATHS: list[Path] = [
-    Path.home() / ".agents" / "skills",  # agentskills.io cross-client standard
-    _path_home_pclaw() / "skills",  # user-created skills
-]
+
+def skill_discovery_paths() -> list[Path]:
+    """The standard skill discovery paths, in priority order, resolved per call.
+
+    A function rather than a list built at import: the second entry is in the PersonalClaw home,
+    and a home established after this module was imported must be the one searched.
+    """
+    from personalclaw.config.loader import config_dir
+
+    return [
+        Path.home() / ".agents" / "skills",  # agentskills.io cross-client standard
+        config_dir() / "skills",  # user-created skills
+    ]
+
 
 # Default target for `skills install` when the caller doesn't override.
 # Matches the first discovery path so the installed skill is immediately
@@ -543,7 +539,7 @@ def list_local_skills(extra_paths: list[Path] | None = None) -> list[dict[str, s
     """
     from personalclaw.skills.loader import iter_skill_files
 
-    search_paths = list(SKILL_DISCOVERY_PATHS)
+    search_paths = skill_discovery_paths()
     if extra_paths:
         search_paths.extend(extra_paths)
 

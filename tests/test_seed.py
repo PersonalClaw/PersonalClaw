@@ -134,10 +134,10 @@ def test_seed_cmd_exit_code_on_unset(
 ) -> None:
     """seed_cmd returns 2 and prints to stderr when $PERSONALCLAW_HOME is unset.
 
-    ``sel`` is patched to keep the test hermetic: the real ``sel()``
-    singleton resolves its log dir from ``Path.home()``, NOT
-    ``$PERSONALCLAW_HOME``, and would otherwise append real audit events to
-    the dev's own ``~/.personalclaw/security_events.jsonl`` HMAC chain.
+    ``sel`` is patched to keep the test hermetic: with ``$PERSONALCLAW_HOME``
+    unset, the real ``sel()`` singleton lives in the default home, and would
+    otherwise append audit events to the dev's own
+    ``~/.personalclaw/security_events.jsonl`` HMAC chain.
     """
     monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
 
@@ -626,7 +626,7 @@ def test_seed_resolve_failure_fails_closed(tmp_path: Path, monkeypatch: pytest.M
     original_resolve = Path.resolve
 
     def _selective_raise(self, *args, **kwargs):
-        # Only fail on the for_main_home_check resolve — leave other
+        # Only fail on the main-home check's resolve — leave other
         # resolves alone (fixtures-root resolution, etc.) so the test
         # isolates the exact branch under regression.
         if str(self) == str(target):

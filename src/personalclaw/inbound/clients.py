@@ -31,7 +31,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
@@ -53,8 +52,7 @@ PINNED_BINDINGS: tuple[str, ...] = ("agent", "tools", "scope")
 def clients_path() -> Path:
     from personalclaw.config.loader import config_dir
 
-    home = Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
-    return home / _FILE
+    return config_dir() / _FILE
 
 
 def hash_token(token: str) -> str:

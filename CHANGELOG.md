@@ -343,6 +343,35 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An app can no longer read another owner's key by naming it.** #3626 made a `{{secret:…}}` reference in a settings record resolve only its owner's keys, but `credentials.json` had a way around it. `personalclaw.sdk.credentials.CredentialStore` let any app `save` a descriptor, and `resolve` then read that name out of `.env`, so an app could name a provider's `PCSECRET_…` key and get its value. `credentials.json` is no longer a store. An owned `PCSECRET_…` key, which belongs to the provider's or the app's own setting, is refused by name wherever a name is resolved: an app's `CredentialStore.resolve`, a workflow step, a trigger action, a knowledge connector pack and a provider entry's `credential`. Each refusal says why and names no value. A connector pack can no longer have a value stored under a reserved name either, which would have overwritten that key. A value left in `credentials.json` is not read by anything; see Changed for how it moves.
 
+- **Every part of PersonalClaw asks one resolver where your home is, so a rail that refuses your
+  real home refuses it however it is named, and importing PersonalClaw creates and opens
+  nothing.** Thirty-five places worked the home out themselves and disagreed with `config_dir()`
+  three ways. *A system directory*: `PERSONALCLAW_HOME=/usr/…` is never used as a home, so the
+  gateway runs on `~/.personalclaw`, but `--approval yolo`, `--seed`, an eval cell and the
+  scripted test model each looked at the variable, saw a directory that was not the main home,
+  and let the run through. Measured: a yolo gateway came up on the main home while its READY
+  line said `/usr/…`. The secret-path guard protected `/usr/…/.env` and not the home in use.
+  *A literal `~`*: ten stores read `PERSONALCLAW_HOME` without expanding it, so a service file
+  saying `~/pclaw-dev` sent the durability state, footprint, backup state and a full snapshot of
+  the home into a directory named `~` under the working directory. *Test isolation*: the
+  security log resolved the home itself, so a test that isolated `config_dir` still wrote the
+  real `security_events.jsonl`. Thirteen modules also fell back to `~/.personalclaw` whenever
+  `config_dir()` raised. All of them ask `config.loader` now: `resolve_config_dir()` where
+  creating the home would be wrong, and `uses_default_home()` for the rails.
+  `tests/test_active_home_is_the_only_home.py` fails on a new resolver.
+  **Importing is not running.** Seven module bodies resolved the home while being imported, and
+  the first created it — so collecting tests, an editor's language server or
+  `python -c "import personalclaw.agent"` made a home on a machine that had none. They resolve
+  it when it is used, the test suite's import-time home override is gone, and
+  `tests/test_importing_personalclaw_touches_no_home.py` imports every module in a child whose
+  `HOME` and `PERSONALCLAW_HOME` are empty directories and fails on any file touched or any home
+  path held by a module.
+  **The offline reference needs no home.** `python -m personalclaw.manifest_reference` enabled
+  every bundled provider to list their tools, which copied fifteen bundled skills into the home
+  and created `memory.db` there. It builds only the tool providers now, from a fresh install's
+  settings, and `providers.md` no longer says "(enabled)", which described the generator's own
+  process rather than any install.
+
 - **No model's verdict can hide or hold up a pending approval, or any other decision you owe.** The second-opinion check (INU-6) lets a notification rule ask a model whether an item's claim holds, and files a REFUTED item under *Filtered* with its notification withheld. It was allowed on *Agent request*, the kind every pending approval's Inbox row rides, and `PUT /api/notifications/rules` accepted `verify: true` for it. With that set, raising an approval ran the model call inside the registration, on the gateway's own loop: with a model that took one second to answer, the approval took 1.03 s to publish and the gateway ran nothing else meanwhile. A REFUTED answer filed the approval's row under *Filtered*, off the Open list and every count, and withheld its bell entry and native banner. The row stayed filtered after the approval was answered, so Restore would have announced an approval that no longer existed. The claim the model judged carried the tool call's own arguments. A kind is now a *decision* when work waits on your answer: *Agent request* (tool approvals, *Trust this project folder?*, the autonomy ladder's one-tap holds), *Loop needs your input* (workflow gates, blocked loops, sign-in handoffs, control-bridge confirmations), *Room paused* and *Approval needed*. A decision can never be verifiable (the registry refuses the pair), so it is listed and notified the moment it is raised, and no model is asked about it. The rules PUT refuses `verify` for a decision and says why, and a `verify` stored before this change reads as off. Proposals keep the check. `approval/requested` also names its real owner module, `dashboard/approval_state.py`, which a notification-registry rail had been failing on since #3594.
 
 - **An app can no longer change what you dictate, and packs are uninstalled only by you.** Every transcript from the mic and from knowledge audio passes through the lexicon before your agent reads it. A correction set to apply automatically replaces its word with its own text every time you say it. A vocabulary term steers the transcriber and replaces a word it was unsure of with the term's text. An app that declared `/api/lexicon` could add, arm, remove or wipe both. Recording the same correction twice arms it, so no write could be scoped away. The lexicon is now a security route family (`apps/permissions.py`), and every lexicon write is owner-only except `POST /api/lexicon/rebuild`, which re-derives the graph's terms from your knowledge graph and carries no text of its own. Reads stay the manifest allowlist's business. The Minutes app declares `/api/lexicon` but calls none of these routes, so no first-party app loses anything it uses. The new `POST /api/packs/{name}/uninstall` is owner-only too.

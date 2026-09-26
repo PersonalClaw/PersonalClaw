@@ -90,7 +90,7 @@ def test_the_dead_mcp_json_constant_is_gone() -> None:
     The issue asks for it to be resolved lazily too, on the ground that fixing only
     ``AGENTS_DIR`` leaves ``mcp.json`` exposed. Measured: nothing in ``src/``, ``tests/``,
     ``harness/``, ``web/`` or ``scripts/`` ever read it, and the path it named is separately
-    read as ``_USER_DIR / "mcp.json"`` inside ``rebuild_agent_config``. So it is deleted rather
+    read as ``<home>/mcp.json`` inside ``rebuild_agent_config``. So it is deleted rather
     than made lazy — a constant that does not exist cannot be exposed, and a lazy resolver with
     no callers would be the inert-surface shape this repo has a ratchet for.
     """
@@ -135,30 +135,12 @@ def test_every_consumer_resolves_per_call(module: str, symbol: str) -> None:
     assert callable(found), f"{module}.{symbol} must be the resolver, not a frozen Path"
 
 
-def test_no_module_level_constant_is_built_from_the_home_in_agent_py() -> None:
-    """The residue check the issue asks for, scoped to the module that had the defect.
-
-    🪤 IT IS DELIBERATELY NOT A TREE-WIDE BAN. `service/macos.py`'s `PLIST_DIR` and
-    `skills/marketplace.py`'s discovery paths are built from `Path.home()` and are correct —
-    a launch agent really does live in the user's `Library`, and `~/.agents/skills` is not the
-    PersonalClaw home at all. The defect is specifically a **`config_dir()`-derived** path
-    frozen at import, because `config_dir()` is the seam isolation moves.
-
-    🔴 AND IT NAMES WHAT IS STILL FROZEN. `_USER_DIR` (and the `_USER_PROMPT` /
-    `_USER_OVERRIDES` pair derived from it) and `_DEFAULT_HOOKS_DIR` have the identical shape
-    and are NOT converted here: between them ~17 test sites monkeypatch the constants directly
-    — which is the symptom, since patching a frozen constant is the only way to redirect one —
-    and rewriting those is a second change with its own blast radius. They are READ paths, so
-    they do not produce the rail failure this issue is about; the writer does, and the writer
-    is `agents_dir()`. This assertion holds the line at the one that writes.
-    """
+def _frozen_home_constants(source: str) -> list[str]:
+    """Module-level names whose value is built from ``_user_dir()`` / ``config_dir()``."""
     import ast
 
-    import personalclaw.agent as agent
-
-    tree = ast.parse(Path(agent.__file__).read_text(encoding="utf-8"))
     frozen = []
-    for node in tree.body:
+    for node in ast.parse(source).body:
         if isinstance(node, ast.Assign):
             names = [t.id for t in node.targets if isinstance(t, ast.Name)]
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
@@ -170,12 +152,31 @@ def test_no_module_level_constant_is_built_from_the_home_in_agent_py() -> None:
         text = ast.unparse(node.value)
         if "_user_dir()" in text or "config_dir()" in text:
             frozen.extend(names)
-    assert (
-        "AGENTS_DIR" not in frozen and "_USER_MCP_JSON" not in frozen
-    ), f"a home-derived path is frozen at import again: {frozen}"
-    # Non-vacuous: the two still-frozen ones are present, so this is a LINE and not a green
-    # over an empty scan. When they are converted, this expectation must shrink deliberately.
-    assert sorted(frozen) == ["_DEFAULT_HOOKS_DIR", "_USER_DIR"], (
-        "the set of import-time home paths in agent.py changed — convert the new one or record "
-        f"why it is safe (the DASHBOARD_PORT distinction): {sorted(frozen)}"
-    )
+    return frozen
+
+
+def test_no_module_level_constant_is_built_from_the_home_in_agent_py() -> None:
+    """The residue check the issue asks for, scoped to the module that had the defect.
+
+    🪤 IT IS DELIBERATELY NOT A TREE-WIDE BAN. `service/macos.py`'s `PLIST_DIR` and
+    `skills/marketplace.py`'s install path are built from `Path.home()` and are correct — a
+    launch agent really does live in the user's `Library`, and `~/.agents/skills` is not the
+    PersonalClaw home at all. The defect is specifically a **`config_dir()`-derived** path
+    frozen at import, because `config_dir()` is the seam isolation moves. The tree-wide line is
+    `tests/test_importing_personalclaw_touches_no_home.py`, which imports every module.
+
+    `_USER_DIR` (with the `_USER_PROMPT` / `_USER_OVERRIDES` pair derived from it) and
+    `_DEFAULT_HOOKS_DIR` were the last two; they are call-time resolvers now, so none is left.
+    """
+    import personalclaw.agent as agent
+
+    frozen = _frozen_home_constants(Path(agent.__file__).read_text(encoding="utf-8"))
+    assert frozen == [], f"a home-derived path is frozen at import again: {frozen}"
+
+
+def test_the_residue_scan_sees_a_frozen_constant() -> None:
+    """Non-vacuous: an empty result above is a line only if the scan finds the shape it bans."""
+    assert _frozen_home_constants('_DEFAULT_HOOKS_DIR = _user_dir() / "hooks"\n') == [
+        "_DEFAULT_HOOKS_DIR"
+    ]
+    assert _frozen_home_constants("HOME: Path = config_dir()\n") == ["HOME"]

@@ -1730,7 +1730,7 @@ async def start_dashboard(
     # Only expose the simulation endpoint in dev/debug environments
     _truthy = {"1", "true", "yes", "on"}
     if (
-        os.environ.get("PERSONALCLAW_HOME", "").endswith("-dev")
+        config_dir().name.endswith("-dev")
         or os.environ.get("PERSONALCLAW_DEV_MODE", "").lower() in _truthy
     ):
         app.router.add_post("/api/update/simulate", handlers.api_update_simulate)

@@ -79,7 +79,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     for mod in (loader_mod, loader_pkg, inbox_mod, native_mod, entity_mod, state_mod):
         monkeypatch.setattr(mod, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
+    monkeypatch.setattr(mp, "skill_discovery_paths", lambda: [])
 
     assert loader_pkg.config_dir() == tmp_path
     assert loader_mod.skills_dir() == tmp_path / "skills"

@@ -291,9 +291,9 @@ class TestNamespacedSkillsAreListed:
         flat.mkdir(parents=True)
         (flat / "SKILL.md").write_text("---\nname: hand-written\ndescription: d\n---\nb\n")
 
-        # Only this home's root — `SKILL_DISCOVERY_PATHS` is bound at import and also carries
-        # `~/.agents/skills`, which is the developer's real machine.
-        monkeypatch.setattr(M, "SKILL_DISCOVERY_PATHS", [home / "skills"])
+        # Only this home's root — the discovery paths also carry `~/.agents/skills`, which is
+        # the developer's real machine.
+        monkeypatch.setattr(M, "skill_discovery_paths", lambda: [home / "skills"])
         names = {s["name"] for s in M.list_local_skills()}
         assert {
             f"{AUTO_SKILL_NAMESPACE}/loop-worker",

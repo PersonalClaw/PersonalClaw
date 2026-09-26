@@ -11,6 +11,7 @@ catalog of curated skills.
 """
 
 import logging
+from collections.abc import Callable
 from importlib import resources
 from pathlib import Path
 
@@ -47,8 +48,16 @@ class NativeSkillsMarketplace(SkillsMarketplace):
     ``personalclaw/skills/bundled/`` that contain a ``SKILL.md``.
     """
 
-    def __init__(self, root: Path | None = None) -> None:
-        self._root = root or _bundled_root()
+    def __init__(self, root: Path | Callable[[], Path] = _bundled_root) -> None:
+        """``root`` is the catalog directory, or a function answering it per use — which is how
+        the ``installed`` marketplace, registered at import, reads the home in use now rather
+        than the one that existed when this module was imported."""
+        self._root_source = root
+
+    @property
+    def _root(self) -> Path:
+        source = self._root_source
+        return source() if callable(source) else source
 
     @property
     def marketplace_type(self) -> str:
@@ -138,12 +147,10 @@ class NativeSkillsMarketplace(SkillsMarketplace):
 
 get_default_skills_registry().register("native", NativeSkillsMarketplace())
 
-# Also register user-installed skills as searchable
+# Also register user-installed skills as searchable — `<home>/skills`, found when searched.
 from personalclaw.skills.loader import skills_dir as _user_skills_dir  # noqa: E402
 
-get_default_skills_registry().register(
-    "installed", NativeSkillsMarketplace(root=_user_skills_dir())
-)
+get_default_skills_registry().register("installed", NativeSkillsMarketplace(root=_user_skills_dir))
 
 
 def create_provider(config=None):

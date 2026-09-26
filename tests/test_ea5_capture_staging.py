@@ -7,8 +7,8 @@ definition. A test that calls `prune()` directly would have passed for the whole
 state, so the retention tests here drive the REAL consolidation tick and assert on files
 disappearing, with an AST floor for the wire itself.
 
-Every test drives a `tmp_path` home. `capture_dir()` and `staging._default_home()` both
-resolve `config_dir()` per call (never cached at import) precisely so this monkeypatch
+Every test drives a `tmp_path` home. `capture_dir()` and the staging store's default home
+both resolve `config_dir()` per call (never cached at import) precisely so this monkeypatch
 reaches them, and the staging store's process-global instance is reset around every test
 — without that, a cached store from an earlier test would be the one written to, and the
 row this suite asserts on would land somewhere it never looks.

@@ -169,11 +169,6 @@ def _shipped_prompt() -> Path:
     return _BUNDLED_CFG_DIR / "prompts" / "chat.md"
 
 
-# User overrides — honor PERSONALCLAW_HOME via config_dir()
-_USER_DIR = _user_dir()
-_USER_PROMPT = _USER_DIR / "prompt.md"
-_USER_OVERRIDES = _USER_DIR / "agent.json"
-
 # personalclaw binary path — resolved lazily to handle gateway restarts
 # where PATH may not include the virtualenv at import time.
 _PERSONALCLAW_BIN: str | None = None
@@ -312,9 +307,10 @@ _MANAGED_MCP_SERVERS: dict[str, dict] = {
 
 
 def _prompt_path(mode: str = "") -> Path:
-    """Return user prompt if it exists, otherwise shipped prompt."""
-    if _USER_PROMPT.is_file():
-        return _USER_PROMPT
+    """Return the user's ``<home>/prompt.md`` if it exists, otherwise the shipped prompt."""
+    user_prompt = _user_dir() / "prompt.md"
+    if user_prompt.is_file():
+        return user_prompt
     return _shipped_prompt()
 
 
@@ -482,8 +478,11 @@ _HOOK_EVENT_CANONICAL = {
     "stop": "stop",
 }
 
-# Default hooks directory.
-_DEFAULT_HOOKS_DIR = _user_dir() / "hooks"
+
+def _default_hooks_dir() -> Path:
+    """``<home>/hooks`` — where agent hooks are auto-imported from unless configured otherwise."""
+    return _user_dir() / "hooks"
+
 
 # Recognize hook event from filename suffix when no "# event:" header is set.
 # Ordering matters: check more specific suffixes first.
@@ -862,7 +861,8 @@ def _apply_user_agent_hooks(config: dict, pc_cfg: dict) -> None:
     agent_cfg = pc_cfg.get("agent") if isinstance(pc_cfg.get("agent"), dict) else {}
     user_hooks = agent_cfg.get("agent_hooks") if isinstance(agent_cfg, dict) else None
     autoimport_enabled = True
-    hooks_dir = _DEFAULT_HOOKS_DIR
+    default_hooks_dir = _default_hooks_dir()
+    hooks_dir = default_hooks_dir
     if isinstance(agent_cfg, dict):
         if "agent_hooks_autoimport" in agent_cfg:
             autoimport_enabled = bool(agent_cfg.get("agent_hooks_autoimport"))
@@ -908,7 +908,7 @@ def _apply_user_agent_hooks(config: dict, pc_cfg: dict) -> None:
                     "falling back to %s",
                     custom_dir,
                     home,
-                    _DEFAULT_HOOKS_DIR,
+                    default_hooks_dir,
                 )
                 _sel_hook_rejected(
                     "autoimport", str(requested), "agent_hooks_dir outside HOME or sensitive"
@@ -1057,7 +1057,7 @@ def build_agent_config() -> dict:
     additively merged; bundled hooks always run first and cannot be removed.
     """
     config = _load_json(_shipped_defaults())
-    config = _deep_merge(config, _load_json(_USER_OVERRIDES))
+    config = _deep_merge(config, _load_json(_user_dir() / "agent.json"))
 
     # Hooks always come from the bundled config, even if a project-dir override
     # is stale. (Bash command screening is enforced natively in
@@ -1210,10 +1210,10 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     # Skip managed servers — their command/args are set by _refresh_dynamic_fields().
     managed_names = set(_MANAGED_MCP_SERVERS)
 
-    # ~/.personalclaw/mcp.json — user-configured MCP overrides (highest priority).
+    # <home>/mcp.json — user-configured MCP overrides (highest priority).
     from personalclaw.config.secret_refs import MCP_DEFINITION_KEYS
 
-    personalclaw_mcp = _load_json(_USER_DIR / "mcp.json").get("mcpServers", {})
+    personalclaw_mcp = _load_json(_user_dir() / "mcp.json").get("mcpServers", {})
     for name, spec in personalclaw_mcp.items():
         if isinstance(spec, dict) and name not in managed_names:
             mcps = config.setdefault("mcpServers", {})

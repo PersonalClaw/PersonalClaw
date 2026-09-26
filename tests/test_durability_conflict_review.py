@@ -34,8 +34,8 @@ _ENTRY_ID = "tasks"  # json_entity_dir + union_by_id + domain work → SURFACE_D
 def home(tmp_path, monkeypatch):
     """An isolated home, pinned on the environment AND on `config_dir`.
 
-    `service.active_home()` reads `PERSONALCLAW_HOME` first, so setting only `config_dir`
-    would let a resolve write into the developer's real home.
+    Both seams, so neither a reader of the variable's home nor a `config_dir` patch can leave a
+    resolve writing into the developer's real home.
     """
     h = tmp_path / "home"
     (h / "tasks").mkdir(parents=True)

@@ -38,7 +38,6 @@ PEM = (
 def home(monkeypatch):
     monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     home = config_loader.config_dir()
-    monkeypatch.setattr("personalclaw.agent._USER_DIR", home)
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     (agents / "personalclaw.json").write_text(

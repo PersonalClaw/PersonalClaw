@@ -534,9 +534,9 @@ def human_span(secs: float) -> str:
 def _home() -> Path:
     """The home the CLI reports on — delegated, never re-derived.
 
-    `service.active_home()` already resolves `PERSONALCLAW_HOME` then the config dir. A second
-    spelling here would be a second thing to keep in sync, and the failure it produces is a
-    report that quietly describes a different home than the tick compacts.
+    `service.active_home()` is the one resolver's answer. A second spelling here would be a
+    second thing to keep in sync, and the failure it produces is a report that quietly
+    describes a different home than the tick compacts.
     """
     from personalclaw.durability.service import active_home
 

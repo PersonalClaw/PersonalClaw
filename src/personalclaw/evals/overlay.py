@@ -197,25 +197,35 @@ def throwaway_home() -> Path:
     (:mod:`personalclaw.evals.gate`) writes a candidate artifact into the same throwaway home,
     and a private copy of this check would be a second answer to "may I write here" — which is
     exactly one answer too many for a guard whose whole job is to have no exceptions.
+
+    Whether that home is the default one is asked of the resolver, never of the variable: an
+    override the resolver refuses (a system directory) runs the child on the default home.
     """
-    raw = os.environ.get("PERSONALCLAW_HOME", "")
-    if not raw:
+    from personalclaw.config.loader import (
+        default_config_dir,
+        home_override,
+        resolve_config_dir,
+        uses_default_home,
+    )
+
+    if home_override() is None:
         raise OverlayRefusedError(
             "refusing to apply an ablation overlay: PERSONALCLAW_HOME is unset, so the "
             "overlay would land in the operator's real home"
         )
-    home = Path(raw).expanduser()
-    default_home = Path.home() / ".personalclaw"
     try:
-        same = home.resolve() == default_home.resolve()
-    except OSError:  # pragma: no cover - resolve on a vanished parent
-        same = str(home) == str(default_home)
-    if same:
+        on_default_home = uses_default_home()
+    except OSError as exc:
+        raise OverlayRefusedError(
+            f"refusing to apply an ablation overlay: PERSONALCLAW_HOME cannot be resolved "
+            f"({exc}) — a cell must run in a throwaway home"
+        ) from exc
+    if on_default_home:
         raise OverlayRefusedError(
             "refusing to apply an ablation overlay: PERSONALCLAW_HOME resolves to the "
-            f"default home {default_home} — a cell must run in a throwaway home"
+            f"default home {default_config_dir()} — a cell must run in a throwaway home"
         )
-    return home
+    return resolve_config_dir()
 
 
 def config_field_exists(dotted: str) -> bool:

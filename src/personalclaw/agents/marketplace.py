@@ -18,19 +18,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
-
-
 logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -170,7 +157,7 @@ class AgentMarketplace(ABC):
 
 
 class LocalAgentMarketplace(AgentMarketplace):
-    """Stores agent definitions as JSON under ``~/.personalclaw/agents/<name>/agent.json``.
+    """Stores agent definitions as JSON under ``<home>/agents/<name>/agent.json``.
 
     Each agent lives in its own directory so future tooling can co-locate
     skill files, prompt assets, or version history alongside ``agent.json``
@@ -178,7 +165,17 @@ class LocalAgentMarketplace(AgentMarketplace):
     """
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self._base = base_dir or (_path_home_pclaw() / "agents")
+        self._base_dir = base_dir
+
+    @property
+    def _base(self) -> Path:
+        """``base_dir``, else ``<home>/agents`` resolved per use: the default instance is
+        registered at import, before any home is established."""
+        if self._base_dir is not None:
+            return self._base_dir
+        from personalclaw.config.loader import config_dir
+
+        return config_dir() / "agents"
 
     @property
     def marketplace_type(self) -> str:

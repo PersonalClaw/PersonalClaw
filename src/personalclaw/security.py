@@ -189,14 +189,15 @@ def _pclaw_home_sensitive_paths() -> list[str]:
     itself, and it was measurably one: with ~70 call sites, merely checking a path
     materialized the home. It surfaced as a file-listing test failing on an unexpected
     ``.personalclaw`` entry appearing inside a fixture's fake ``$HOME`` — the guard had
-    created it mid-assertion. This mirrors the same resolution rules without the mkdir.
+    created it mid-assertion. ``resolve_config_dir()`` is the same rule without the mkdir.
+    It used to be re-spelled here, and the copy guarded ``$PERSONALCLAW_HOME`` as written —
+    so an override the resolver refuses (a system directory) had this guarding a directory
+    nothing used while the process ran on the default home.
     """
-    override = os.environ.get("PERSONALCLAW_HOME")
+    from personalclaw.config.loader import resolve_config_dir
+
     try:
-        if override:
-            home = Path(override).expanduser()
-        else:
-            home = Path.home() / ".personalclaw"
+        home = resolve_config_dir()
     except (OSError, ValueError, RuntimeError):
         return []
     return [str(home / entry) for entry in _SENSITIVE_PCLAW_HOME_ENTRIES]

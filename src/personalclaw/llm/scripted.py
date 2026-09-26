@@ -134,7 +134,8 @@ from personalclaw.llm.events import AgentEvent as LLMEvent
 #: The opt-in. Names the script path, so "enabled" and "what it will say" are one act.
 SCRIPT_ENV_VAR = "PERSONALCLAW_SCRIPTED_MODEL_SCRIPT"
 
-#: The home override the second lock reads. Set + non-real is the only accepted state.
+#: The home override the second lock is about, as its refusals name it. Set, and resolving to a
+#: home that is not the real one, is the only accepted state — the resolver answers both.
 HOME_ENV_VAR = "PERSONALCLAW_HOME"
 
 SCRIPT_VERSION = 1
@@ -176,26 +177,15 @@ class ScriptedScriptError(ScriptedProviderError):
     """The script file is missing, unreadable, or malformed."""
 
 
-def _real_home() -> Path:
-    """The user's real assistant home — the one place the fake must never answer in.
-
-    ``CONFIG_DIR_NAME`` is imported lazily on purpose: taking it at module scope would
-    add ``config.loader``'s whole closure to this module's declared import graph for a
-    single string constant that is only needed at gate time, when the config system is
-    loaded anyway. Importing it rather than re-spelling ``".personalclaw"`` keeps one
-    source of truth for the home's name.
-    """
-    from personalclaw.config.loader import CONFIG_DIR_NAME
-
-    return (Path.home() / CONFIG_DIR_NAME).resolve()
-
-
 def resolve_script_path() -> Path:
     """Return the opted-in script path, or raise a typed refusal.
 
-    Deliberately does **not** call ``config_dir()``: that helper ``mkdir``s the home it
-    resolves, so using it to detect "this is the real home" would create
-    ``~/.personalclaw`` as a side effect of refusing to touch it.
+    The real-home check asks the resolver (``config.loader``), which creates nothing — not
+    ``config_dir()``, which ``mkdir``s the home it resolves and so would create
+    ``~/.personalclaw`` as a side effect of refusing to touch it — and never the variable
+    itself: an override the resolver refuses (a system directory) runs on the real home.
+    Imported here rather than at module scope, so ``config.loader``'s closure stays out of
+    this module's declared import graph for a check only needed at gate time.
     """
     raw = os.environ.get(SCRIPT_ENV_VAR, "").strip()
     if not raw:
@@ -205,19 +195,26 @@ def resolve_script_path() -> Path:
             f"default script and no config setting that can enable it."
         )
 
-    override = os.environ.get(HOME_ENV_VAR, "").strip()
-    if not override:
+    from personalclaw.config.loader import default_config_dir, home_override, uses_default_home
+
+    if home_override() is None:
         raise ScriptedProviderRefused(
             f"ScriptedProvider refuses to run against the default home "
-            f"({_real_home()}): it would fabricate model answers under the user's real "
-            f"assistant identity. Set {HOME_ENV_VAR} to an isolated directory."
+            f"({default_config_dir()}): it would fabricate model answers under the user's "
+            f"real assistant identity. Set {HOME_ENV_VAR} to an isolated directory."
         )
-    active_home = Path(override).expanduser().resolve()
-    if active_home == _real_home():
+    try:
+        on_real_home = uses_default_home()
+    except OSError as exc:
         raise ScriptedProviderRefused(
-            f"ScriptedProvider refuses to run against the real home ({active_home}): "
-            f"it would fabricate model answers under the user's real assistant "
-            f"identity. Point {HOME_ENV_VAR} at an isolated directory."
+            f"ScriptedProvider refuses to run: {HOME_ENV_VAR} cannot be resolved ({exc}). "
+            f"Point {HOME_ENV_VAR} at an isolated directory."
+        ) from exc
+    if on_real_home:
+        raise ScriptedProviderRefused(
+            f"ScriptedProvider refuses to run against the real home "
+            f"({default_config_dir().resolve()}): it would fabricate model answers under the "
+            f"user's real assistant identity. Point {HOME_ENV_VAR} at an isolated directory."
         )
 
     path = Path(raw).expanduser()

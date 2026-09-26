@@ -181,13 +181,11 @@ async def _model_provider_client(tmp_path):
     from personalclaw.dashboard.handlers import providers as model_providers
     from personalclaw.providers import instance_routes
 
-    # 🪤 `config_dir` is NOT the only home seam these routes reach: a tool-instance
-    # mutation runs `_rebuild_agent_config_safe()`, which writes through `agent.agents_dir()`
-    # and reads `agent._USER_DIR`. Redirect them too, so nothing here can reach the real home.
+    # 🪤 A tool-instance mutation runs `_rebuild_agent_config_safe()`, which writes through
+    # `agent.agents_dir()` — redirected too, so nothing here can reach the real home.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
-        patch("personalclaw.agent._USER_DIR", tmp_path),
         # The typed media registries are process-wide; a config write re-reads them.
         patch.object(model_providers, "_refresh_media_registries", lambda: None),
     ):

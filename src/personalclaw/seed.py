@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover — PersonalClaw targets py3.12+.
 # install itself is broken — there's no scenario where it's optional.
 # ``_safe_audit`` still handles *runtime* SEL failures (read-only
 # ``$HOME``, HMAC-key write failure) via its broad except.
+from personalclaw.config.loader import default_config_dir, home_override, uses_default_home
 from personalclaw.sel import sel
 
 # Exit codes: 0 success, 1 I/O error, 2 rail violation (rejected input).
@@ -152,59 +153,32 @@ def _resolve_fixture(name: str) -> Path:
 
 
 def _main_home() -> Path:
-    """Return the resolved path to the main gateway home (``~/.personalclaw``).
+    """The main gateway home (``~/.personalclaw``), symlinks collapsed.
 
-    ``Path.home() / ".personalclaw"``, then ``expanduser().resolve()`` to
-    collapse any symlinks along the way. This is the path we refuse to
-    seed into under any circumstance — even with ``--seed-replace`` — because
-    clobbering the dev's live gateway state is the single most destructive
-    outcome this tool could produce.
-
-    Extracted as a helper so tests can monkeypatch ``Path.home()`` via
-    ``$HOME`` and exercise the rail on synthetic ``~/.personalclaw`` paths.
+    The home we refuse to seed into under any circumstance — even with ``--seed-replace`` —
+    because clobbering the dev's live gateway state is the single most destructive outcome this
+    tool could produce. ``$HOME`` decides it, so a test repoints ``$HOME`` to exercise the rail
+    on a synthetic ``~/.personalclaw``.
     """
-    return (Path.home() / ".personalclaw").expanduser().resolve()
+    return default_config_dir().resolve()
 
 
-def _resolve_target(*, for_main_home_check: bool = False) -> Path:
-    """Return ``$PERSONALCLAW_HOME`` as a ``Path``, or raise ``SeedError``.
+def _resolve_target() -> Path:
+    """``$PERSONALCLAW_HOME`` as written — ``~`` expanded, symlinks NOT resolved — or raise
+    ``SeedError`` when it is unset.
 
-    ``expanduser()`` is applied so ``PERSONALCLAW_HOME=~/dev`` works. Pass
-    ``for_main_home_check=True`` to additionally ``resolve()`` the path so
-    a symlinked ``PERSONALCLAW_HOME`` pointing at ``~/.personalclaw`` is caught by
-    the main-home rail. The unresolved form is used for ``copytree`` /
-    ``rmtree`` because a non-existent target is valid input to those.
+    The path ``copytree``/``rmtree`` act on: a non-existent target is valid input to both, and
+    the replace rail must still see a symlinked home as a symlink. Whether it is the MAIN home is
+    asked of the resolver (:func:`~personalclaw.config.loader.uses_default_home`), not of this
+    path — an override the resolver refuses runs the gateway on the main home, whatever it names.
     """
-    raw = os.environ.get("PERSONALCLAW_HOME")
-    if not raw:
+    target = home_override()
+    if target is None:
         raise SeedError(
             "$PERSONALCLAW_HOME is not set. Point it at a dev directory "
             "(e.g. PERSONALCLAW_HOME=~/.personalclaw-dev personalclaw gateway --seed empty).",
             rail=SeedError.RAIL_UNSET_HOME,
         )
-    target = Path(raw).expanduser()
-    if for_main_home_check:
-        # ``resolve(strict=False)`` tolerates non-existent targets while
-        # still collapsing any symlinks that DO exist along the way. That
-        # catches ``$PERSONALCLAW_HOME -> ~/.personalclaw`` even when the symlink
-        # target doesn't exist yet on some platforms.
-        #
-        # On resolution failure (broken symlink chain, permission error,
-        # exotic cross-mount issues) we MUST fail closed — falling back
-        # to the unresolved path would silently bypass the main-home
-        # rail: if the unresolved path is actually a symlink to
-        # ``~/.personalclaw`` that ``resolve()`` couldn't evaluate, the
-        # rail comparison won't match, and ``--seed-replace`` would
-        # then ``rmtree`` the dev's live gateway home. That's the one
-        # outcome this tool must never produce.
-        try:
-            target = target.resolve(strict=False)
-        except OSError as exc:
-            raise SeedError(
-                f"cannot resolve $PERSONALCLAW_HOME ({raw!r}) for main-home "
-                f"safety check — refusing to proceed: {exc}",
-                rail=SeedError.RAIL_RESOLVE_FAILED,
-            ) from exc
     return target
 
 
@@ -213,10 +187,12 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
 
     Raises ``SeedError`` on rail violations. Enforces, in order:
 
-    1. **Main-home rail** — refuses when ``$PERSONALCLAW_HOME`` resolves to
-       ``~/.personalclaw`` (the dev's live gateway home). This rail is
-       ABSOLUTE: ``replace=True`` does NOT override it. Clobbering the
-       main gateway is the one outcome we never want to enable.
+    1. **Main-home rail** — refuses when the home in use would be
+       ``~/.personalclaw`` (the dev's live gateway home): ``$PERSONALCLAW_HOME``
+       pointing at it, through a symlink or not, or naming a system directory,
+       which is never used as a home. This rail is ABSOLUTE: ``replace=True``
+       does NOT override it. Clobbering the main gateway is the one outcome we
+       never want to enable.
     2. **Non-empty rail** — refuses when the target exists and contains
        anything, unless ``replace=True``. With ``replace=True``, the
        shutil.rmtree the target first, then copytree. The sequence is not
@@ -228,18 +204,26 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
     symlinks.
     """
     src = _resolve_fixture(fixture_name)
-    # Resolve twice: once symlink-collapsed for the main-home comparison,
-    # once raw for the actual copy/rmtree operations (those tolerate
-    # non-existent targets and we want to pass the user-provided path).
-    dst_resolved = _resolve_target(for_main_home_check=True)
-    if dst_resolved == _main_home():
+    dst = _resolve_target()
+    # On a resolution failure (broken symlink chain, permission error, exotic cross-mount
+    # issues) we MUST fail closed: if the path is a symlink to ``~/.personalclaw`` that could
+    # not be evaluated, allowing it would let ``--seed-replace`` ``rmtree`` the dev's live
+    # gateway home — the one outcome this tool must never produce.
+    try:
+        on_main_home = uses_default_home()
+    except OSError as exc:
         raise SeedError(
-            f"refusing to seed main gateway home: {dst_resolved}. "
+            f"cannot resolve $PERSONALCLAW_HOME ({str(dst)!r}) for main-home "
+            f"safety check — refusing to proceed: {exc}",
+            rail=SeedError.RAIL_RESOLVE_FAILED,
+        ) from exc
+    if on_main_home:
+        raise SeedError(
+            f"refusing to seed main gateway home: {_main_home()}. "
             "Point $PERSONALCLAW_HOME at a separate dev directory "
             "(e.g. ~/.personalclaw-dev).",
             rail=SeedError.RAIL_MAIN_HOME,
         )
-    dst = _resolve_target()
 
     if dst.exists() and any(dst.iterdir()):
         if not replace:

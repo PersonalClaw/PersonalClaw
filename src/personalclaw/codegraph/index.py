@@ -144,7 +144,7 @@ def workspace_key(workspace: str) -> str:
 def default_db_path(workspace: str) -> Path:
     from personalclaw.config.loader import config_dir
 
-    root = Path(os.environ.get("PERSONALCLAW_HOME", config_dir())) / "codegraph"
+    root = config_dir() / "codegraph"
     root.mkdir(parents=True, exist_ok=True)
     return root / f"{workspace_key(workspace)}.db"
 

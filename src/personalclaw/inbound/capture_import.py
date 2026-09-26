@@ -673,7 +673,7 @@ def file_content_hash(path: Path) -> str:
 def _home(home: Path | str | None = None) -> Path:
     if home is not None:
         return Path(home)
-    return Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
+    return config_dir()
 
 
 def ledger_path(home: Path | str | None = None) -> Path:

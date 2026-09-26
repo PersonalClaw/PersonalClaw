@@ -22,7 +22,7 @@ def home(tmp_path, monkeypatch):
     # test only sees the global + agent-local tiers under tmp.
     import personalclaw.skills.marketplace as mp
 
-    monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
+    monkeypatch.setattr(mp, "skill_discovery_paths", lambda: [])
     return tmp_path
 
 
