@@ -208,13 +208,15 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     setTimeout(load, 400)
   }
 
-  // Per-tool enable/disable. MCP tools write mcp.json (disabledTools); native
+  // Per-tool enable/disable. An MCP server's tool writes that server's `disabledTools` in
+  // mcp.json, under the name the SERVER gives it (`serverTool`): that list is what an ACP agent
+  // and the gateway's own check read, and `mcp/<server>/<tool>` in it matches nothing. Native
   // tools write tool_prefs.json. Locked tools never reach here (switch disabled).
   async function toggleTool(g: Group, t: ToolItem) {
     const enabled = t.disabled === true  // flipping → if currently disabled, enable
     const what = `${enabled ? 'enable' : 'disable'} "${t.name}"`
-    const ok = g.kind === 'mcp' && g.server
-      ? await reportingWrite(what, () => api.toggleMcpTool(g.server!.name, t.name, enabled))
+    const ok = g.kind === 'mcp' && g.server && t.serverTool
+      ? await reportingWrite(what, () => api.toggleMcpTool(g.server!.name, t.serverTool!, enabled))
       : await reportingWrite(what, () => api.toggleTool(t.provider, t.name, enabled))
     if (ok) setTimeout(load, 300)
   }

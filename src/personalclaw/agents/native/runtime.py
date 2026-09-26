@@ -200,6 +200,12 @@ _NEEDS_APPROVAL: Any = object()
 #: must not see two different accounts of the same thing.
 CANCELLED_BEFORE_RUN = "Error: cancelled before this tool ran"
 
+#: A tool result's error state, the one bit the tool card, the loop breaker and procedural memory
+#: all read: ``tool_meta["ok"]`` is present and False only on failure, absent on success (the
+#: contract ``acp/outcomes.py`` states for both seams). Merged into a dispatch's meta wherever this
+#: class writes a failure; ``_invoke`` sets it from a provider's own ``success``.
+_FAILED: dict[str, Any] = {"ok": False}
+
 # Sentinel: this call was dropped by a stop, so it must not be dispatched and must not
 # reach _run_tool's accounting tail. A unique object rather than a string or None, both of
 # which a legitimate result already occupies in the wave's `results` list.
@@ -662,17 +668,20 @@ class NativeAgentRuntime(AgentProvider):
             )
         return lines
 
-    def _reset_tools(self, args: dict) -> str:
+    def _reset_tools(self, args: dict, *, meta_sink: dict | None = None) -> str:
         """Apply ``reset_tools`` — FINAL-STATE group activation (§5.2).
 
         One boolean per group; every non-``always_on`` group the caller omits (or
         sets false) deactivates. Final-state rather than delta semantics because
         deltas accumulate drift over a long session. Returns the new active set
         plus the instructions of each NEWLY activated group, so usage guidance
-        arrives exactly when the tools do.
+        arrives exactly when the tools do. A call it cannot apply marks *meta_sink*
+        failed, the one bit the tool card reads.
         """
         raw = args.get("groups")
         if not isinstance(raw, dict):
+            if meta_sink is not None:
+                meta_sink.update(_FAILED)
             return (
                 "Error: `groups` must be an object mapping group name → true/false, "
                 'e.g. {"groups": {"schedule": true, "memory": true}}.'
@@ -1486,7 +1495,7 @@ class NativeAgentRuntime(AgentProvider):
                     results[i] = (
                         f"Error: {wave[i].tool_name} raised "
                         f"{type(outcome).__name__}: {outcome}",
-                        {},
+                        dict(_FAILED),
                     )
                 else:
                     results[i] = outcome
@@ -1517,6 +1526,7 @@ class NativeAgentRuntime(AgentProvider):
             tool_call_id=prep.call.tool_call_id,
             title=prep.tool_name,
             tool_output=CANCELLED_BEFORE_RUN,
+            tool_meta=dict(_FAILED),
         )
         self._messages.append(self._tool_result_msg(prep.call, CANCELLED_BEFORE_RUN))
 
@@ -1540,14 +1550,14 @@ class NativeAgentRuntime(AgentProvider):
         (Bedrock Converse rejects an unanswered `toolUse` outright).
         """
         if prep.arg_error:
-            return (f"Error: {prep.tool_name} was not run. {prep.arg_error}", {})
+            return (f"Error: {prep.tool_name} was not run. {prep.arg_error}", dict(_FAILED))
         if not any(dispatch_plan.conflicts(prep.reservations, p) for p in poisoned):
             return None
         return (
             f"Error: {prep.tool_name} was not run — an earlier call in this turn that "
             "touches the same resource failed, so the resource's state is unknown. "
             "Re-check that state before retrying.",
-            {},
+            dict(_FAILED),
         )
 
     async def _prefetch(self, prep: "_PreparedCall") -> tuple[Any, dict]:
@@ -1601,6 +1611,7 @@ class NativeAgentRuntime(AgentProvider):
                 tool_call_id=call.tool_call_id,
                 title=tool_name,
                 tool_output=blocked_str,
+                tool_meta=dict(_FAILED),
             )
             self._messages.append(self._tool_result_msg(call, blocked_str))
             return
@@ -1626,6 +1637,7 @@ class NativeAgentRuntime(AgentProvider):
                     "approve) — it was auto-declined",
                     tool_name,
                 )
+                meta.update(_FAILED)
             else:
                 request_id = call.tool_call_id or tool_name
                 # Register the pending Future BEFORE surfacing the request, so an
@@ -1644,18 +1656,25 @@ class NativeAgentRuntime(AgentProvider):
                 decision = await self._approval.wait(request_id, fut)
                 if self._cancelled:
                     result_str = "Error: cancelled"
+                    meta.update(_FAILED)
                 elif decision == REJECT:
                     # Recoverable: feed back WHY + adapt-don't-repeat guidance so
                     # the model doesn't silently stall on an unattended surface.
                     _, result_str = security.classify_denial(
                         security.DENY_KIND_USER, "the user declined this tool call", tool_name
                     )
+                    meta.update(_FAILED)
                 else:
                     result_str = await self._invoke(tool_name, args, meta_sink=meta)
 
-        # Record the outcome and apply graduated breaker verdicts. A failure is a
-        # result the model reads as an error; a success clears this key's streak.
-        failed = result_str.startswith("Error:")
+        # Record the outcome and apply graduated breaker verdicts; a success clears this key's
+        # streak. Whether it failed is the ONE bit the result carries to the tool card
+        # (`tool_meta["ok"] is False`), stamped where the failure was written: by `_invoke` from
+        # the provider's own `success`, and by each refusal this class authors. It used to be
+        # re-derived here from the text (`startswith("Error:")`), so a provider failure with a
+        # WHAT/WHY/FIX envelope counted as a success, a successful `cat error.log` as a failure,
+        # and every refusal the runtime wrote went to the card with no bit at all, a green check.
+        failed = meta.get("ok") is False
         # Procedural-memory signal (M5d): accumulate this turn's tool outcomes for
         # the after-turn review to mine into how-to-work priors. Bounded.
         #
@@ -1730,6 +1749,7 @@ class NativeAgentRuntime(AgentProvider):
         deny = security.is_denied(tool_name, self._extra_deny)
         if deny:
             _, observation = security.classify_denial(security.DENY_KIND_POLICY, deny, tool_name)
+            meta.update(_FAILED)
             return observation
 
         # Task-mode gate (ask/plan/build) — runs HERE, before approval, so a
@@ -1741,6 +1761,7 @@ class NativeAgentRuntime(AgentProvider):
         tm_deny = task_mode_denies(self._task_mode, tool_name, "", call.tool_input)
         if tm_deny:
             _, observation = security.classify_denial(security.DENY_KIND_POLICY, tm_deny, tool_name)
+            meta.update(_FAILED)
             return observation
 
         # PreToolUse hooks (blocking) — recoverable: adapt, don't repeat.
@@ -1755,8 +1776,13 @@ class NativeAgentRuntime(AgentProvider):
                 _, observation = security.classify_denial(
                     security.DENY_KIND_HOOK, _reason, tool_name
                 )
+                meta.update(_FAILED)
                 return observation
 
+        # A tool this agent does not have (it was never offered, or it is switched off) is refused
+        # before anything asks you about it: allowing the call could run nothing.
+        if tool_name not in self._tool_index and tool_name not in self._META_TOOLS:
+            return self._unknown_tool(tool_name, meta)
         if self._requires_approval(tool_name):
             return _NEEDS_APPROVAL
         if self._asks_first(tool_name):
@@ -1765,6 +1791,12 @@ class NativeAgentRuntime(AgentProvider):
             # the host says whose switch set the policy (`chat_runner.auto_approval_reason`).
             meta[TOOL_META_APPROVAL_WAIVED] = True
         return await self._invoke(tool_name, args, meta_sink=meta)
+
+    @staticmethod
+    def _unknown_tool(tool_name: str, meta: dict) -> str:
+        """The answer to a call naming a tool this agent does not have, marked failed in *meta*."""
+        meta.update(_FAILED)
+        return f"Error: unknown tool {tool_name!r}"
 
     def _resolve_name(self, name: str) -> str:
         """Map an incoming tool name to a real tool id, healing a provider's
@@ -1832,10 +1864,10 @@ class NativeAgentRuntime(AgentProvider):
         # reset_tools (group activation): answered by the runtime — it changes the
         # schema block, not any external state, so no provider and no gate.
         if tool_name == "reset_tools":
-            return self._reset_tools(args)
+            return self._reset_tools(args, meta_sink=meta_sink)
         prov = self._tool_index.get(tool_name)
         if prov is None:
-            return f"Error: unknown tool {tool_name!r}"
+            return self._unknown_tool(tool_name, meta_sink)
         # Sticky set (TR2): a tool the agent actually called stays surfaced for the
         # rest of the session, so a multi-step task can't lose a tool mid-task when
         # the query phrasing drifts. Cheap insurance against the cardinal failure.

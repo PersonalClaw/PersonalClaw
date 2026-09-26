@@ -546,12 +546,18 @@ def run_mcp_stdio_loop(
                 respond(
                     req_id,
                     build_tool_response(
-                        f"Error: tool '{tool_name}' is not available for this agent"
+                        f"Error: tool '{tool_name}' is not available for this agent",
+                        is_error=True,
                     ),
                 )
             else:
+                from personalclaw.tool_providers.base import ToolFailure
+
                 result_text = call_tool_fn(tool_name, tool_args)
-                respond(req_id, build_tool_response(result_text))
+                # The handler's verdict is its answer's type (#3487); the MCP client reads it
+                # as `isError`, so an ACP agent can report the call failed.
+                is_error = isinstance(result_text, ToolFailure)
+                respond(req_id, build_tool_response(result_text, is_error=is_error))
         elif req_id is not None:
             respond(
                 req_id,

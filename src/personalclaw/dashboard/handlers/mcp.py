@@ -658,7 +658,11 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
 async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
     """POST /api/mcp/toggle-tool — enable or disable a specific tool in an MCP server.
 
-    Updates ``disabledTools`` in ``~/.personalclaw/mcp.json``.
+    Updates ``disabledTools`` in ``~/.personalclaw/mcp.json``, the one switch for the tool: an ACP
+    agent reads the list, and so does ``tool_prefs.is_disabled``, the check the native runtime,
+    ``POST /api/tools/invoke`` and ``GET /api/tools`` make. ``tool`` is the name the server gives
+    it (``hello``, the ``serverTool`` of its ``GET /api/tools`` row). ``mcp/<server>/<tool>`` is
+    refused: in the list it would match nothing, so the switch would read off and switch nothing.
     """
     try:
         body = await request.json()
@@ -671,6 +675,14 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
     enabled = body.get("enabled", True)
     if not server or not tool:
         return web.json_response({"error": "server and tool are required"}, status=400)
+    if tool.startswith(f"mcp/{server}/"):
+        return web.json_response(
+            {
+                "error": f"name the tool as the server does ({tool[len(f'mcp/{server}/'):]!r}), "
+                f"not as an agent sees it ({tool!r})"
+            },
+            status=400,
+        )
 
     async with _get_mcp_lock():
         try:
@@ -720,6 +732,15 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
             # Raw text is diagnostics for the log; the wire speaks guidance (failure_copy).
             logger.warning("mcp: failed to write mcp.json", exc_info=True)
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
+    # It changes what an agent can call, the security-relevant change its native sibling
+    # (`POST /api/tools/toggle`, #45) already logs.
+    sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="mcp.toggle_tool",
+        outcome="enabled" if enabled else "disabled",
+        source="tools",
+        resources=f"{server}:{tool}",
+    )
     return web.json_response({"ok": True, "server": server, "tool": tool, "enabled": enabled})
 
 

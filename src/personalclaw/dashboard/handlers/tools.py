@@ -154,6 +154,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
         risk_level: object = "safe",
         *,
         default_tier: str = "builtin",
+        server_tool: str = "",
     ) -> None:
         key = (provider, name)
         if key in seen or not name:
@@ -163,6 +164,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
         prov_off = provider in disabled_provs
         tools_out.append(
             {
+                # An external MCP server's tool, as the SERVER names it: what its switch writes
+                # to that server's `disabledTools` (`POST /api/mcp/toggle-tool`). Only on those
+                # rows; `name` is how an agent sees it (`mcp/<server>/<tool>`).
+                **({"serverTool": server_tool} if server_tool else {}),
                 "name": name,
                 "description": description,
                 "provider": provider,
@@ -179,8 +184,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 # so the UI can show "off because the provider is off".
                 "locked": locked,
                 "providerDisabled": prov_off,
-                "disabled": (not locked)
-                and (prov_off or tool_prefs.key_for(provider, name) in disabled_keys),
+                # The one check the runtime and `POST /api/tools/invoke` make, so the switch
+                # reads off exactly when an agent cannot call the tool. That includes an MCP
+                # server's tool switched off in its `disabledTools`, which this used to miss.
+                "disabled": tool_prefs.is_disabled(provider, name, disabled_keys, disabled_provs),
                 # CONTEXT-ECONOMY §5: which activation GROUP this tool belongs to
                 # (derived from its provider; core-locked names are always "core").
                 # Read-only here — activation is per-session runtime state, not a pref.
@@ -305,6 +312,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
                         # An external MCP server has no supply-chain tier — see the `tier`
                         # note in `_add`. "" is the honest answer, `builtin` would be a lie.
                         default_tier="",
+                        server_tool=tool.name,
                     )
     except Exception as exc:
         logger.warning("Failed to list tools from MCP client registry", exc_info=True)
@@ -639,8 +647,9 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
     used to promise only the first, accurately — and the toggle's UI presented itself as
     the tool's on/off switch while a second path executed it anyway (#437).
 
-    Core-locked tools are rejected (4xx). MCP tools use ``/api/mcp/toggle-tool`` (which
-    writes mcp.json) — the page routes by provider.
+    Core-locked tools are refused with 409. So is an MCP server's tool (``mcp/<server>/<tool>``),
+    with the route that does switch it: ``POST /api/mcp/toggle-tool``, which writes that server's
+    ``disabledTools`` in mcp.json, the one list an ACP agent and this gateway both read.
     """
     from personalclaw.tool_providers import tool_prefs
     from personalclaw.tool_providers.registry import list_all_tools
@@ -671,8 +680,10 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
         result.get("error", ""),
     )
     if not result.get("ok"):
-        # locked-tool rejection → 409 Conflict (a real, expected denial, not a bug).
-        return web.json_response(result, status=409 if result.get("locked") else 400)
+        # A locked tool, or an MCP server's tool (switched on its server's own list) → 409
+        # Conflict: a real, expected denial, not a bug.
+        conflict = result.get("locked") or result.get("elsewhere")
+        return web.json_response(result, status=409 if conflict else 400)
     return web.json_response(result)
 
 

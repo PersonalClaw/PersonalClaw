@@ -821,12 +821,15 @@ class TestClauseThreeScenarioDrivesTheUI:
     on — the routing (now through the real dispatcher), the MCP binding, the state-mutation
     requirement, and the engine-enforced proof gate.
 
-    The MCP half of the clause IS satisfied and was measured separately: with `chrome-devtools`
-    in `$PERSONALCLAW_HOME/mcp.json` and the `mcp-tools` app installed, the running gateway's
-    `/api/tools` lists all 29 `mcp/chrome-devtools/*` tools, so a stage subagent can drive the
-    browser. Nothing declares or checks that dependency, which is its own gap — the template
-    declares `git`/`ffmpeg` under `metadata.requirements.binaries` and preflight has no
-    equivalent for an MCP server.
+    The MCP half of the clause is what the stage's agent can CALL, and that is asserted on the
+    agent's own index (`test_the_execute_stage_can_call_the_browser_tools`), not read off
+    `/api/tools`. This docstring used to take "`/api/tools` lists all 29 `mcp/chrome-devtools/*`
+    tools" as "a stage subagent can drive the browser". The catalog lists a connected server's
+    tools from the client registry directly, so it lists them with no MCP Tool Servers app to
+    serve them to an agent, and lists a tool switched off on the Tools page. Nothing declares or
+    checks the dependency on that server either, which is its own gap: the template declares
+    `git`/`ffmpeg` under `metadata.requirements.binaries` and preflight has no equivalent for an
+    MCP server.
     """
 
     @staticmethod
@@ -924,6 +927,70 @@ class TestClauseThreeScenarioDrivesTheUI:
         prompt = self._nodes(self._spec())["execute"]["config"]["prompt"]
         assert "Chrome DevTools MCP" in prompt
         assert "NEW page" in prompt, "co-tenant discipline: never take over the user's page"
+
+    def test_the_execute_stage_can_call_the_browser_tools(self, tmp_path, monkeypatch):
+        """What the `execute` stage's agent can CALL: the index of a native agent built over the
+        surface a stage agent gets (`tool_surface`, `tools_posture: full`).
+
+        Two things the `/api/tools` listing hides, both measured here against the same listing:
+        without the MCP Tool Servers app no agent can call a Chrome DevTools tool at all, and with
+        it an agent cannot call one switched off on the Tools page. The listing has both.
+        """
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+        from test_a_disabled_tool_is_disabled_everywhere import _Conn, _McpToolServers, _Registry
+        from test_native_runtime import _defn, _ScriptedModel
+
+        from personalclaw import mcp_client
+        from personalclaw.agents.native.builtin_tools import create_platform_tools_provider
+        from personalclaw.agents.native.runtime import NativeAgentRuntime
+        from personalclaw.config.loader import config_dir
+        from personalclaw.config.secret_refs import write_mcp_document
+        from personalclaw.dashboard.handlers.tools import api_tools_list
+        from personalclaw.tool_providers import registry as tool_registry
+
+        server = "chrome-devtools"
+        registry = _Registry({server: _Conn(["new_page", "navigate_page", "take_screenshot"])})
+        monkeypatch.setattr(mcp_client, "_registry", registry)
+        monkeypatch.setattr(mcp_client, "get_mcp_client_registry", lambda: registry)
+        monkeypatch.setattr(tool_registry, "_providers", {})
+        monkeypatch.setattr(tool_registry, "_provider_app", {})
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path))
+        write_mcp_document(
+            config_dir() / "mcp.json",
+            {"mcpServers": {server: {"command": "npx", "disabledTools": ["take_screenshot"]}}},
+        )
+
+        async def callable_now() -> set[str]:
+            runtime = NativeAgentRuntime(
+                definition=_defn(),
+                model_provider=_ScriptedModel([[]]),
+                tool_providers=tool_registry.tool_surface(
+                    create_platform_tools_provider(cwd=tmp_path)
+                ),
+                cwd=str(tmp_path),
+            )
+            await runtime.start()
+            return {n for n in runtime._tool_index if n.startswith(f"mcp/{server}/")}
+
+        async def listed() -> dict[str, bool]:
+            app = web.Application()
+            app.router.add_get("/api/tools", api_tools_list)
+            async with TestClient(TestServer(app)) as http:
+                rows = (await (await http.get("/api/tools")).json())["tools"]
+            return {t["name"]: t["disabled"] for t in rows if t["provider"] == server}
+
+        everything = {f"mcp/{server}/{t}" for t in ("new_page", "navigate_page", "take_screenshot")}
+        assert set(asyncio.run(listed())) == everything, "precondition: the page lists all three"
+        assert asyncio.run(callable_now()) == set(), "no MCP Tool Servers app, and yet callable"
+
+        tool_registry.register_provider(_McpToolServers(), app="mcp-tools")
+
+        assert asyncio.run(callable_now()) == {
+            f"mcp/{server}/new_page",
+            f"mcp/{server}/navigate_page",
+        }, "the stage's agent can call a tool switched off on the Tools page"
+        assert asyncio.run(listed())[f"mcp/{server}/take_screenshot"] is True
 
     def test_the_scenario_prompt_requires_a_state_mutation(self):
         """Render-checking is the failure mode this clause exists to exclude."""

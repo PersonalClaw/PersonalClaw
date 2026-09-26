@@ -6,14 +6,23 @@ call it) and is reported disabled by ``GET /api/tools``. Disable is authoritativ
 and pre-retrieval — orthogonal to progressive disclosure (which only defers
 *schemas* of enabled tools).
 
-Persisted in ``~/.personalclaw/tool_prefs.json``:
+Two stores, one answer (:func:`load_disabled`, :func:`is_disabled`):
 
-    {"disabled": ["builtin:some_tool", "mcp/GitHub/SomeTool", ...]}
+* A native tool's switch is in ``~/.personalclaw/tool_prefs.json``, as a
+  ``"<provider>:<tool>"`` key (provider = the provider-instance name):
 
-Keys are ``"<provider>:<tool>"`` (provider = the provider-instance name, e.g.
-``builtin`` for native builtins, the MCP server name for MCP tools). MCP tools
-ALSO honor the existing ``mcpServers.<server>.disabledTools`` in ``mcp.json`` (the
-ACP layer reads that) — this module is the native-runtime + UI unification.
+      {"disabled": ["personalclaw-artifacts:artifact_delete", ...]}
+
+* An external MCP server's tool is switched off in that server's own
+  ``mcpServers.<server>.disabledTools`` in ``mcp.json``, under the name the server gives it
+  (``hello``). That list is what an ACP agent reads, what import's ``toolOverrides`` write, and
+  what the Tools page's switch writes (``POST /api/mcp/toggle-tool``). Everywhere else the tool is
+  ``mcp/<server>/<tool>``, and that is how it is matched here, whichever provider label a surface
+  gives it (the catalog labels it with its server, an agent's surface with the ``mcp`` provider).
+
+Every consumer asks :func:`is_disabled`: the native runtime drops the tool from the model's schema
+and its dispatch index, ``POST /api/tools/invoke`` refuses it with ``403 tool_disabled``, and
+``GET /api/tools`` shows its switch off.
 
 CORE-LOCKED tools (:data:`CORE_LOCKED`) can never be disabled — the platform's own
 features call them. A disable request for a locked tool is rejected; the filter
@@ -78,8 +87,26 @@ def _prefs_path():
 
 
 def key_for(provider: str, name: str) -> str:
-    """The disable key for a (provider, tool) pair."""
+    """The disable key for a (provider, tool) pair.
+
+    An MCP server's tool is its own key, ``mcp/<server>/<tool>``: the name says which server's
+    list switches it, and a surface's provider label for it (the server, or ``mcp``) does not.
+    """
+    if server_tool(name) is not None:
+        return name
     return f"{provider or 'other'}:{name}"
+
+
+def server_tool(name: str) -> tuple[str, str] | None:
+    """``(server, tool)`` for an MCP server's tool named ``mcp/<server>/<tool>``, else ``None``.
+
+    ``tool`` is the name the server gives it, the one its ``disabledTools`` list holds.
+    """
+    prefix, _, rest = name.partition("/")
+    server, _, tool = rest.partition("/")
+    if prefix != "mcp" or not server or not tool:
+        return None
+    return server, tool
 
 
 def is_locked(name: str) -> bool:
@@ -118,9 +145,31 @@ def _save(doc: dict) -> None:
 
 
 def load_disabled() -> set[str]:
-    """The set of disabled TOOL keys (``provider:tool``)."""
+    """The set of disabled TOOL keys (:func:`key_for`): the native switches in
+    ``tool_prefs.json`` and each MCP server's ``disabledTools`` in ``mcp.json``."""
     items = _load().get("disabled", [])
-    return {str(k) for k in items if isinstance(k, str)}
+    keys = {str(k) for k in items if isinstance(k, str)}
+    return keys | _load_mcp_disabled()
+
+
+def _load_mcp_disabled() -> set[str]:
+    """Every MCP server's switched-off tools, as ``mcp/<server>/<tool>``. Never raises — a missing
+    or unreadable ``mcp.json`` switches nothing off (the same fail-open as ``tool_prefs.json``)."""
+    try:
+        data = json.loads((config_dir() / "mcp.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return set()
+    except (json.JSONDecodeError, OSError):
+        logger.debug("tool_prefs: mcp.json unreadable — treating as none disabled", exc_info=True)
+        return set()
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    out: set[str] = set()
+    for server, spec in servers.items() if isinstance(servers, dict) else ():
+        tools = spec.get("disabledTools") if isinstance(spec, dict) else None
+        for tool in tools if isinstance(tools, list) else ():
+            if isinstance(tool, str) and tool:
+                out.add(f"mcp/{server}/{tool}")
+    return out
 
 
 def load_disabled_providers() -> set[str]:
@@ -131,10 +180,22 @@ def load_disabled_providers() -> set[str]:
 
 
 def set_enabled(provider: str, name: str, enabled: bool) -> dict:
-    """Enable/disable a native-provider TOOL. Refuses a core-locked tool. (MCP
-    tools use ``/api/mcp/toggle-tool`` → mcp.json.)"""
+    """Enable/disable a native-provider TOOL. Refuses a core-locked tool, and an MCP server's
+    tool, whose one switch is its server's ``disabledTools`` (``POST /api/mcp/toggle-tool``): a key
+    here would be a second switch for it, and one no ACP agent reads."""
     if not name:
         return {"ok": False, "error": "tool name is required"}
+    mcp = server_tool(name)
+    if mcp is not None:
+        return {
+            "ok": False,
+            "error": (
+                f"{name!r} is a tool of the MCP server {mcp[0]!r}, which is switched on its "
+                f"server's own list: POST /api/mcp/toggle-tool with server {mcp[0]!r} and tool "
+                f"{mcp[1]!r}"
+            ),
+            "elsewhere": True,
+        }
     if not enabled and is_locked(name):
         return {
             "ok": False,
@@ -176,7 +237,8 @@ def is_disabled(
     disabled_providers: set[str] | None = None,
 ) -> bool:
     """Whether a tool is user-disabled — either individually OR because its whole
-    provider is disabled. A locked tool is NEVER disabled (defensive)."""
+    provider is disabled. A locked tool is NEVER disabled (defensive). An MCP server's tool is
+    matched by its name (:func:`key_for`), so *provider* may be either label a surface gives it."""
     if is_locked(name):
         return False
     dp = disabled_providers if disabled_providers is not None else load_disabled_providers()
