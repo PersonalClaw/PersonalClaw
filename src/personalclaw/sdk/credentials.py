@@ -1,9 +1,11 @@
-"""SDK: the credential store + the HuggingFace token cascade.
+"""SDK: read a credential by name + the HuggingFace token cascade.
 
-Stable re-export of ``personalclaw.llm.credentials`` — the generic, provider-
-agnostic secret store an app uses to resolve an API key/token by name (the same
-store core uses; despite the ``llm`` package location it's not LLM-specific). An
-app imports this, not the core module, so the core path can move.
+Stable re-export of ``personalclaw.llm.credentials``. ``CredentialStore(config_dir())
+.resolve(NAME)`` reads a secret stored under NAME in the credential store Settings → Secrets
+writes (the OS keychain when it is on, else ``<home>/.env``), the one core reads too; despite the
+``llm`` package location it's not LLM-specific. It raises ``KeyError`` for a name nothing stored,
+and for a ``PCSECRET_…`` key, which only the setting that owns it reads (that error's message
+says so). An app imports this, not the core module, so the core path can move.
 
 Also re-exports the shared HuggingFace token cascade (LOCAL-MODEL-MANAGER-V2 §5):
 an HF-touching app (``diarization-pyannote``, …) delegates its own token lookup to

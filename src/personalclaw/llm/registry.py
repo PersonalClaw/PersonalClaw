@@ -344,10 +344,31 @@ class ProviderRegistry:
         if factory is None:
             return None
         try:
-            return factory(dict(entry.options or {}), model=entry.model)
+            return factory(_catalog_options(entry), model=entry.model)
         except Exception:  # noqa: BLE001 — a catalog build never breaks a hot GET
             logger.debug("catalog factory for type %r failed", entry.type, exc_info=True)
             return None
+
+
+def _catalog_options(entry: ProviderEntry) -> dict[str, object]:
+    """The options a catalog is built from: the entry's, plus the key its ``credential`` names.
+
+    A catalog factory takes options, not the entry, so an entry that authenticates with a
+    credential stored by name (``credential``, from Settings → Secrets) reached Test connection
+    and model discovery with no key at all, while a chat turn built through :meth:`build` had it.
+    The named key is handed over as ``api_key``, the option every catalog reads its key from; an
+    ``api_key`` the entry holds itself wins, as it does in the factories.
+    """
+    options = dict(entry.options or {})
+    if entry.credential and not options.get("api_key"):
+        from personalclaw.config.loader import config_dir
+        from personalclaw.llm.credentials import CredentialStore
+
+        try:
+            options["api_key"] = CredentialStore(config_dir()).resolve(entry.credential).secret
+        except KeyError:
+            pass  # not stored (or an owned key): the catalog reports the missing key, truly
+    return options
 
 
 # ── Module-level default registry singleton ──────────────────────────────

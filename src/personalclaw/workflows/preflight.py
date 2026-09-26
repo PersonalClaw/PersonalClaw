@@ -146,13 +146,15 @@ def _check_credentials(
     if lookup is None:
         try:
             from personalclaw.config.loader import config_dir
-            from personalclaw.llm.credentials import CredentialStore
+            from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
 
             store = CredentialStore(config_dir())
 
             def lookup(key: str) -> bool:  # type: ignore[misc]
                 try:
                     cred = store.resolve(key)
+                except OwnedCredentialRefused as refused:
+                    raise _Refused(refused) from None
                 except KeyError:
                     return False
                 return bool(getattr(cred, "secret", ""))
@@ -166,7 +168,7 @@ def _check_credentials(
                     message=(
                         f"could not check {len(needed)} credential(s): the store is " "unavailable"
                     ),
-                    remediation="the run may still work; check Settings → Providers if it fails",
+                    remediation="the run may still work; check Settings → Secrets if it fails",
                     severity=SEVERITY_WARNING,
                     kind="credentials",
                 )
@@ -176,6 +178,16 @@ def _check_credentials(
     for key in needed:
         try:
             present = bool(lookup(key))
+        except _Refused as refused:
+            result.findings.append(
+                Finding(
+                    code="WF_PRE_CREDENTIAL_REFUSED",
+                    message=refused.reason.cause,
+                    remediation=refused.reason.remedy,
+                    kind="credentials",
+                )
+            )
+            continue
         except Exception:
             logger.debug("preflight: credential lookup failed for %s", key, exc_info=True)
             continue
@@ -184,15 +196,19 @@ def _check_credentials(
                 Finding(
                     code="WF_PRE_CREDENTIAL_MISSING",
                     message=f"credential {key!r} is not set",
-                    # No settings page is named: this check reads `credentials.json`, which
-                    # neither Settings → Providers (a provider's key is stored under a name of
-                    # its own) nor Settings → Secrets writes, so either would send the user to
-                    # a page whose save does not clear this refusal.
-                    remediation=f"set a value for the credential {key!r}, then start the run "
-                    "again",
+                    remediation=f"store {key!r} in Settings → Secrets, then start the run again",
                     kind="credentials",
                 )
             )
+
+
+class _Refused(Exception):
+    """The store refused to read a key by name (``OwnedCredentialRefused``): a finding of its
+    own, since that key IS set and "is not set" would be false."""
+
+    def __init__(self, reason: Any) -> None:
+        super().__init__(str(reason))
+        self.reason = reason
 
 
 # ── binaries ─────────────────────────────────────────────────────────────────

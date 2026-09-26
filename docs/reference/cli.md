@@ -157,7 +157,7 @@ Install agent config and configure credentials (interactive wizard).
 | `--clean` | Fresh install — don't merge MCP servers/tools from existing config. |
 | `--mode {docker,service,none}` | Deployment mode: Docker Compose, system service (systemd/launchd), or none. |
 | `--provider NAME` | Set the default chat provider by registry entry name. |
-| `--credential NAME[=VALUE]` | Store a named credential (value from the argument or an env var). |
+| `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
 
 ## `personalclaw doctor`
 

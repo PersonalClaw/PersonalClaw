@@ -159,11 +159,10 @@ def _key_in_store(entry: Any) -> bool:
         from personalclaw.config.loader import config_dir
         from personalclaw.llm.credentials import CredentialStore
 
-        # The HOME, not the file: `CredentialStore.__init__` takes a home and derives
-        # `<home>/credentials.json` + `<home>/.env` itself. Passing the file made it read
-        # `credentials.json/credentials.json`, load no descriptors, and raise `KeyError`
-        # from `resolve` for every name — swallowed below, so every correctly configured
-        # provider reported its credential as absent (#2217).
+        # The HOME, not a file: `CredentialStore` reads `<home>/.env` (and the keychain).
+        # Passing a file path made it read nothing and raise `KeyError` from `resolve` for
+        # every name — swallowed below, so every correctly configured provider reported its
+        # credential as absent (#2217).
         return bool(CredentialStore(config_dir()).resolve(entry.credential).secret)
     except Exception:
         return False
@@ -1283,7 +1282,13 @@ async def api_provider_test(request: web.Request) -> web.Response:
             # ``_original_type`` preserves the branded config type; the registry type
             # (openai/anthropic/…) is what a catalog is keyed on.
             ptype = options.get("_original_type") or p.get("type", "")
-            entry = ProviderEntry(name=name, type=ptype, model=p.get("model", ""), options=options)
+            entry = ProviderEntry(
+                name=name,
+                type=ptype,
+                model=p.get("model", ""),
+                options=options,
+                credential=p.get("credential") or None,
+            )
         except Exception:
             return web.json_response({"error": "not found"}, status=404)
 

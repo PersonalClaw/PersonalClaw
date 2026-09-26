@@ -141,20 +141,21 @@ def validate_args(entry: Any, args: dict[str, Any]) -> dict[str, str]:
 
 
 def _default_secret(name: str) -> str:
-    """Resolve ``name`` from the credential store, or raise. Never returns a blank."""
+    """Resolve ``name`` from the credential store Settings → Secrets writes, or raise. Never
+    returns a blank."""
     from personalclaw.config.loader import config_dir
-    from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
 
     try:
         cred = CredentialStore(config_dir()).resolve(name)
+    except OwnedCredentialRefused as refused:
+        raise PackConfigError(str(refused)) from None
     except KeyError as exc:
         raise PackConfigError(
-            f"credential {name!r} is not configured; add it in Settings > Credentials "
-            f"before enabling this source"
+            f"credential {name!r} is not configured; store it in Settings → Secrets before "
+            f"enabling this source"
         ) from exc
-    if not cred.secret:
-        raise PackConfigError(f"credential {name!r} is configured but has no value")
-    return cred.secret
+    return cred.secret or ""
 
 
 def render_fetch(

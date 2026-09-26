@@ -1022,13 +1022,13 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,
         help="gateway auth store: login hash, 2FA enrolment, device pairing codes",
     ),
-    # 🔴 #2217 — the provider credential DESCRIPTORS (`llm/credentials.py` `CREDENTIALS_FILE`,
-    # written 0600 by `CredentialStore.save`). Declared so `audit_home()` claims it; it was
-    # neither claimed nor ignored. #2217 also made snapshots CARRY it so a restore returned the
-    # keys; that is reversed on purpose: a descriptor can hold an inline `value`, and no
-    # credential value travels in an archive any more (`credential=True`, see the module
-    # docstring). `merge` cannot fire for it either way — shards are built from
-    # `export_entries()`, which drops secrets.
+    # 🔴 #2217 — the credential DESCRIPTORS an older release kept (`llm/credentials.py`
+    # `CREDENTIALS_FILE`). Nothing writes it any more: the gateway moves it into the credential
+    # store at boot and deletes it (`move_credentials_file`), and it stays on a home only while
+    # the Doctor lists a value in it that could not be moved. Declared so `audit_home()` claims
+    # it while it exists. A descriptor can hold an inline `value`, and no credential value
+    # travels in an archive (`credential=True`, see the module docstring). `merge` cannot fire
+    # for it either way — shards are built from `export_entries()`, which drops secrets.
     #
     # Distinct from the `credentials` TREE two entries up: that is the keychain-backed store,
     # this is the top-level `credentials.json` descriptor file, and `claim_for` is
@@ -1041,7 +1041,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_REPLACE_ONLY,
         secret=True,
         credential=True,
-        help="provider credential descriptors (API keys)",
+        help="an older release's credential descriptors, until they move into the store",
     ),
     StateEntry(
         id="security_events",

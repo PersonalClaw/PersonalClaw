@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -242,11 +243,18 @@ def test_an_empty_kind_is_refused_but_an_empty_item_id_is_not() -> None:
 def test_push_init_stores_a_real_p256_keypair_in_the_credential_store(home: Path) -> None:
     from cryptography.hazmat.primitives.asymmetric import ec
 
+    from personalclaw import secrets_vault
+    from personalclaw.config.credentials import get_credential
+
     public_key, private_key = push.push_init()
 
-    stored = json.loads((home / "credentials.json").read_text())
-    assert stored[push.VAPID_PUBLIC_CRED] == {"type": "static_token", "value": public_key}
-    assert stored[push.VAPID_PRIVATE_CRED] == {"type": "static_token", "value": private_key}
+    assert get_credential(push.VAPID_PUBLIC_KEY) == public_key
+    assert get_credential(push.VAPID_PRIVATE_KEY) == private_key
+    # The install's own key material: not a user secret Settings → Secrets lists (and could
+    # delete), and not exported into the environment every child process inherits.
+    assert not any("VAPID" in row.name for row in secrets_vault.list_presence())
+    assert private_key not in os.environ.values()
+    assert not (home / "credentials.json").exists()
     # A real key, not 32 random bytes: derive it and check the public half matches, which is
     # what a push service does before accepting the JWT.
     derived = ec.derive_private_key(
@@ -274,15 +282,16 @@ def test_push_init_is_idempotent_and_force_rotates(home: Path) -> None:
     assert rotated != first
 
 
-def test_push_init_preserves_other_credentials(home: Path) -> None:
-    """`CredentialStore.save` REPLACES the file, so a merge bug would delete the user's keys."""
-    (home / "credentials.json").write_text(
-        json.dumps({"ANTHROPIC_API_KEY": {"type": "api_key", "value": "keep-me"}})
-    )
+def test_push_init_preserves_other_credentials(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Storing the pair rewrites ``.env``, so a merge bug there would delete the user's keys."""
+    from personalclaw.config.credentials import get_credential, save_credential
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.delenv("ANTHROPIC_API_KEY")  # registered: teardown drops the mirrored value
+    save_credential("ANTHROPIC_API_KEY", "keep-me")
     push.push_init()
-    stored = json.loads((home / "credentials.json").read_text())
-    assert stored["ANTHROPIC_API_KEY"]["value"] == "keep-me"
-    assert push.VAPID_PUBLIC_CRED in stored
+    assert get_credential("ANTHROPIC_API_KEY") == "keep-me"
+    assert get_credential(push.VAPID_PUBLIC_KEY)
 
 
 def test_the_vapid_header_is_a_verifiable_es256_jwt_scoped_to_the_endpoint_origin(
@@ -744,7 +753,7 @@ async def _drive_routes(client) -> None:  # noqa: ANN001
     assert status["backend"] == "webpush"
     assert status["vapid_ready"] is True
     assert status["vapid_public_key"] == push.vapid_public_key()
-    assert "vapid_private_key" not in status and push.VAPID_PRIVATE_CRED not in str(status)
+    assert "vapid_private_key" not in status and push.VAPID_PRIVATE_KEY not in str(status)
     # The wire contract, pinned as a SET. The handler spells the payload out as a literal
     # (an allowlist over `push_status()`), so a dropped field would otherwise be invisible —
     # the frontend would read `undefined` and paint a wrong state rather than fail.

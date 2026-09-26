@@ -3980,36 +3980,12 @@
   },
   "kind": "class",
   "members": {
-   "has": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "name"}
-    ],
-    "returns": "bool"
-   },
-   "list": {
-    "kind": "method",
-    "params": [],
-    "returns": "list[Credential]"
-   },
-   "reload": {
-    "kind": "method",
-    "params": [],
-    "returns": "None"
-   },
    "resolve": {
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "name"}
     ],
     "returns": "Credential"
-   },
-   "save": {
-    "kind": "method",
-    "params": [
-     {"annotation": "dict[str, dict[str, object]]", "kind": "positional_or_keyword", "name": "descriptors"}
-    ],
-    "returns": "None"
    }
   }
  },

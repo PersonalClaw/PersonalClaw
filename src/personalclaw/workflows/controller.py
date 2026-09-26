@@ -5998,20 +5998,26 @@ def _is_approved(ask: Any, answer: Any) -> bool:
 
 
 def _secret_resolver(key: str) -> str:
-    """Resolve `{{secret:KEY}}` from the credential store.
+    """Resolve `{{secret:KEY}}` from the credential store Settings → Secrets writes.
 
     Injected rather than imported at the binding layer so unit tests never touch real
     credentials, and so the resolution point is a single auditable seam.
 
     An unknown name returns "" rather than raising: `resolve()` treats an empty secret as
     a resolution failure and reports it with the binding's own error message, which is
-    more actionable than a bare `KeyError` from two layers down.
+    more actionable than a bare `KeyError` from two layers down. An OWNED key (a provider's or
+    an app's own `PCSECRET_…` key) raises instead, with the sentence that says why no step can
+    read it: that key is set, so "is not set" would be false.
     """
     from personalclaw.config.loader import config_dir
-    from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
 
     try:
         cred = CredentialStore(config_dir()).resolve(key)
+    except OwnedCredentialRefused as refused:
+        raise BindingError(
+            refused.cause, remediation=refused.remedy, caller_supplied=True
+        ) from None
     except KeyError:
         return ""
     return cred.secret or ""

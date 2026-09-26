@@ -1022,26 +1022,28 @@ def test_a_missing_credential_refuses_rather_than_sending_a_blank_header():
         render_fetch(entry, {"repo": "a/b"}, secret_resolver=_missing)
 
 
-def test_the_default_credential_resolver_refuses_a_configured_but_valueless_secret(
+def test_the_default_credential_resolver_reads_settings_secrets_and_refuses_by_name(
     tmp_path, monkeypatch
 ):
-    """The shipped resolver, not an injected fake. A descriptor with no value anywhere in the
-    chain must refuse by name — the injected-resolver tests above prove the propagation, and
-    this proves the thing that actually runs in production."""
+    """The shipped resolver, not an injected fake: a secret stored by name (Settings → Secrets)
+    resolves, and a name nothing stored refuses by name, sending the user to that page. The
+    injected-resolver tests above prove the propagation; this proves what runs in production."""
+    from personalclaw.config.credentials import save_credential
     from personalclaw.knowledge_providers.connector_pack import _default_secret
 
     home = tmp_path / "creds-home"
     home.mkdir()
-    (home / "credentials.json").write_text(
-        json.dumps({"ACME_TOKEN": {"type": "static_token"}}), encoding="utf-8"
-    )
     monkeypatch.setattr(
         "personalclaw.config.loader.config_dir", lambda *a, **k: home, raising=False
     )
-    with pytest.raises(PackConfigError, match="configured but has no value"):
-        _default_secret("ACME_TOKEN")
-    with pytest.raises(PackConfigError, match="is not configured"):
-        _default_secret("NEVER_DECLARED")
+    monkeypatch.setenv("ACME_TOKEN", "x")
+    monkeypatch.delenv("ACME_TOKEN")  # registered: teardown drops the mirrored value
+    save_credential("ACME_TOKEN", "acme-value")
+    monkeypatch.delenv("ACME_TOKEN")
+
+    assert _default_secret("ACME_TOKEN") == "acme-value"
+    with pytest.raises(PackConfigError, match="store it in Settings → Secrets"):
+        _default_secret("NEVER_STORED")
 
 
 def test_a_secret_in_a_rendered_url_is_refused_even_from_an_edited_manifest():

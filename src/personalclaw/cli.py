@@ -543,7 +543,11 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--credential",
         default="",
         metavar="NAME[=VALUE]",
-        help="Store a named credential (value from arg or env var)",
+        help=(
+            "Save a secret under NAME in the credential store Settings → Secrets lists, for "
+            "{{secret:NAME}} and a provider's credential to read (the value after =, else "
+            "from the environment variable NAME)"
+        ),
     )
     setup_parser.add_argument(
         "--app",

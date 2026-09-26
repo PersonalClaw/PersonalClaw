@@ -253,7 +253,10 @@ definition (a `{{nodes.…}}` id, a field of another step's output, a loop root,
 and is `internal`, since whoever pressed Run did not write it. Neither is retryable. A
 secret the credential store does not hold is refused, never substituted: the store
 answers "" for a missing key, and a request carrying it fails at its receiver with
-nothing naming the key.
+nothing naming the key. The store is the one Settings → Secrets writes
+(`llm/credentials.py` `CredentialStore`, reading `config/credentials.py`). An owned
+`PCSECRET_…` key, which belongs to a provider's or an app's own setting, is refused by
+name with the reason, so a step cannot read another record's key.
 
 Two asymmetries that are easy to get backwards:
 

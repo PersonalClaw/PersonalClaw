@@ -654,16 +654,16 @@ def _model_app_for_provider_type(provider_type: str) -> tuple[str, bool] | None:
 
 def _credential_is_missing(name: str) -> bool:
     """Whether ``name`` names a credential the store cannot produce a secret for."""
-    try:
-        from personalclaw.config.loader import config_dir
-        from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.config.loader import config_dir
+    from personalclaw.llm.credentials import CredentialStore
 
-        store = CredentialStore(config_dir())
-        if not store.has(name):
-            return True
-        return str(getattr(store.resolve(name), "source", "") or "none") == "none"
+    try:
+        CredentialStore(config_dir()).resolve(name)
+    except KeyError:  # not stored, or an owned key nothing reads by name
+        return True
     except Exception:  # noqa: BLE001 — an unreadable store is not evidence of a missing key
         return False
+    return False
 
 
 def _diagnose_unbuildable_ref(
@@ -787,7 +787,7 @@ def _diagnose_unbuildable_ref(
         return (
             f"provider {provider_name!r} needs credential {credential!r}, which has no "
             f"secret in the credential store",
-            f"set {credential!r} in Settings → Providers, or {rebind}",
+            f"store {credential!r} in Settings → Secrets, or {rebind}",
         )
 
     return (
@@ -1516,7 +1516,7 @@ def _resolve_from_config_registry(
             pass
     # When options carry an inline api_key (set by the "Add instance" UI form)
     # but no credential is linked, synthesize a Credential so the factory gets
-    # it without requiring a credentials.json entry.
+    # it without a named credential in the store.
     if "credential_store" not in build_kwargs and not candidate.credential:
         inline_key = (candidate.options or {}).get("api_key")
         if inline_key and isinstance(inline_key, str):
