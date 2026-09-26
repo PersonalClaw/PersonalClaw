@@ -7,15 +7,14 @@ import { PanelHeader } from './settingsUI'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextInput } from '../../ui/forms'
 
-/** Archive — browse the message lines that compaction or rotation dropped OUT of a
- *  session (read-only). A row is one `archive/{key}__{stamp}.jsonl` batch of dropped
- *  lines, NOT a closed or whole session — nothing in the product closes a session, and
- *  no writer here archives one (`history.py:_archive_lines`, called only from
- *  `rewrite_session` reason=compact/bg_compress and the size rotation reason=rotate).
- *  The backend prunes each batch 7 days after it lands (`history.py`
- *  `ARCHIVE_RETENTION_DAYS = 7` → `_cleanup_old_archives`), so this panel must never
- *  imply the transcripts are kept. Backed by /api/session/archive (list) +
- *  /api/session/archive/{name} (read). */
+/** Archive — browse the message lines that EARLIER versions trimmed out of a chat
+ *  (read-only). A row is one `archive/{key}__{stamp}.jsonl` batch of trimmed lines, NOT a
+ *  closed or whole session. Nothing writes this directory any more — background compression
+ *  and the 2 MB size rotation both used to, and neither shortens a chat now — and nothing
+ *  prunes it, because for a chat trimmed before that a batch can be the only copy of its
+ *  lines. A batch is removed only when its chat is deleted (`ConversationLog.delete_session`),
+ *  so this panel must never imply batches expire or that new ones will appear. Backed by
+ *  /api/session/archive (list) + /api/session/archive/{name} (read). */
 export function ArchivePanel() {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<string | null>(null)
@@ -36,7 +35,7 @@ export function ArchivePanel() {
 
   return (
     <div>
-      <PanelHeader title="Archive" hint="When compaction or rotation drops older messages out of a session, the dropped lines are kept here so you can still read them — read-only, one batch of lines per entry rather than a whole session, and deleted 7 days after they land." />
+      <PanelHeader title="Archive" hint="Earlier versions of PersonalClaw trimmed older messages out of long or idle chats. Those lines are kept here so you can still read them — read-only, one batch of lines per entry rather than a whole chat. Chats are no longer trimmed, and deleting a chat deletes its entries here too." />
 
       {archives.length > 0 && (
         <div className="mb-3">
@@ -51,7 +50,7 @@ export function ArchivePanel() {
       {shown.length === 0 ? (
         <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-8 text-center">
           <Archive size={22} className="mx-auto mb-2 text-on-surface-low" />
-          <p data-type="body-s" className="text-on-surface-low">{q ? 'No trimmed messages match.' : 'Nothing dropped yet. When compaction or rotation drops older messages out of a session, the dropped lines are kept here for 7 days.'}</p>
+          <p data-type="body-s" className="text-on-surface-low">{q ? 'No trimmed messages match.' : 'Nothing here. Chats are no longer trimmed; this only lists lines an earlier version trimmed.'}</p>
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">

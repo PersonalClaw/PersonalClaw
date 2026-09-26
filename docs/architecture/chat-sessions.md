@@ -35,11 +35,29 @@ chat, channel thread, loop worker, webhook, subagent).
 ## History & persistence
 
 - **`history.py`** — one JSONL file per session at
-  `~/.personalclaw/sessions/{safe_key}.jsonl`. Files rotate at 2 MB
-  (`_SESSION_MAX_BYTES`); dropped lines are archived to `sessions/archive/`
-  with a 7-day retention sweep (`ARCHIVE_RETENTION_DAYS`, rate-limited to once
-  per hour). Archive *reads* are redacted through `redact_credentials` /
-  `redact_exfiltration_urls` before anything leaves the store.
+  `~/.personalclaw/sessions/{safe_key}.jsonl`. **The file is the user's
+  record and nothing shortens it**: there is no size cap, no rotation and no
+  background rewrite, at any size. What bounds cost is what a reader takes —
+  `recent()` and `history_for_model()` return a window.
+- **Background compression shortens what the model reads, never the file**
+  (`bg_compress.py`). An idle chat gets a derived record beside its
+  transcript, `{safe_key}.summary.json`, naming the span it covers — counted
+  in turns (`summarized`, `reduced`), so it applies to the file and to a
+  resident session's buffer alike — and a digest of that span. `model_view()`
+  is the one transform: while the digest still matches, the model reads the
+  summary in place of the oldest turns and the next ones capped; the moment a
+  turn in the span changes, it reads the turns as written. The dashboard applies
+  it to the turns a fresh runtime is handed (`prior_turns_transcript`); a reader
+  with no live session reads `history_for_model()`. `model_window()` is the one
+  message budget both use, and it keeps a summary first. Deleting a chat
+  deletes its record, and the pass drops any record whose transcript is gone.
+- **`sessions/archive/`** holds lines EARLIER versions trimmed out of chats
+  (2 MB rotation and the old background rewrite). Nothing writes it and nothing
+  prunes it — for those chats a batch can be the only copy — and neither the
+  startup/shutdown workspace sweep (`cleanup_stale_sessions`) nor any write
+  path touches it; a batch is removed when its chat is deleted. Archive *reads*
+  are redacted through `redact_credentials` / `redact_exfiltration_urls` before
+  anything leaves the store.
 - **`resolve_history_key()`** resolves whether a bare key is a channel-thread
   key or lives in the `dashboard:` namespace *by asking the store* — core
   assumes no key shape and names no provider.
@@ -74,7 +92,9 @@ chat, channel thread, loop worker, webhook, subagent).
    context, and — for channel-linked sessions — the `channel-thread-context`
    snippet. A fresh runtime is restored ONLY from the session's own turns before
    the one being sent (`chat_persistence.prior_turns_transcript`) — never the
-   in-flight message, never another session's transcript. `context_engine.py` and
+   in-flight message, never another session's transcript — with the chat's
+   background summary standing in for its oldest turns while it still describes
+   them (`history.model_view`). `context_engine.py` and
    `context_compaction.py` manage sizing and compaction.
 3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
    the default agent ships with none, so its prompt is the one bound in Settings →

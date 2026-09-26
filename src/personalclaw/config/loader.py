@@ -2820,26 +2820,30 @@ class ToolsConfig:
         ),
     )
     # Background compression service (Context Economy §4) — the always-on complement
-    # to on-demand projection: idle, at-rest session history is topic-segmented and
-    # attention-weighted compressed on the maintenance cadence so long sessions stay
-    # fast. Feature flag (missing = the DEFAULT, not fail-safe-off): a maintenance
-    # nicety, not a guard.
+    # to on-demand projection: an idle, at-rest chat is topic-segmented and
+    # attention-weighted on the maintenance cadence, so the history the model is handed
+    # when it resumes is short. It writes a derived record beside the chat and never the
+    # chat itself, which is why it can be on by default. Feature flag (missing = the
+    # DEFAULT, not fail-safe-off): a maintenance nicety, not a guard.
     bg_compress_enabled: bool = field(
         default=True,
         metadata=_meta(
             "Background compression",
-            "Continuously compress old, idle conversation history in the background "
-            "(topic-segmented, attention-weighted) so long sessions stay fast. Every "
-            "dropped span is archived first (fully recoverable) and the summary names "
-            "its archive. Incognito/temporary chats are never touched.",
+            "Summarize the older part of idle chats in the background (topic-segmented, "
+            "attention-weighted), so the history handed to the model when one is picked up "
+            "again opens with a short summary instead of every message. Chats are never "
+            "changed: every message stays as you left it. The summary is kept beside the "
+            "chat, stops being used the moment a message it covers changes, and is deleted "
+            "with the chat. Uses the background model. Incognito/temporary chats are never "
+            "summarized.",
         ),
     )
     bg_compress_idle_days: float = field(
         default=7.0,
         metadata=_meta(
             "Background compression idle window",
-            "Only compress sessions untouched for at least this many days (at rest — "
-            "an active session is never compressed).",
+            "Only summarize chats untouched for at least this many days (at rest — an "
+            "active chat is never summarized).",
         ),
     )
     # Dynamic tool-group activation (Context Economy §5) — partition the tool

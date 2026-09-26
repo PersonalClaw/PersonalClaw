@@ -4,9 +4,9 @@ These rails are organised around the two claims the atoms actually make, because
 claims about REUSE and absence rather than about new behaviour, and neither is visible by
 reading the room code alone:
 
-* AR-2: the transcript persists through ``history.ConversationLog``, so rotation and
-  archiving are the shipped code paths — tested by driving a real 2 MB transcript and
-  asserting the rotation happened with no rotation code in ``rooms/``.
+* AR-2: the transcript persists through ``history.ConversationLog``, so it keeps the
+  session contract — the record is never cut — tested by driving a real transcript
+  past 2 MB and reading every line back.
 * AR-3: each member holds its OWN provider session with no shared context window — tested
   as two distinct provider objects under two distinct keys, plus the by-absence property
   that a ``room:`` key resolves to the INTERACTIVE, human-approves posture.
@@ -135,54 +135,28 @@ def test_an_archived_room_accepts_no_messages(enabled):
     assert exc.value.code == "room_archived"
 
 
-def test_a_2mb_transcript_fires_the_inherited_rotation_and_archive(enabled):
-    """AR-2's reuse clause: rotation is ConversationLog's, so a room grows no rotation code.
+def test_a_transcript_past_2mb_keeps_every_line(enabled):
+    """AR-2's reuse clause: a room's transcript is a ``ConversationLog``, so it inherits the
+    session contract — the record is never cut — and a room grows no size policy of its own.
 
-    Drives a real transcript past ``history._SESSION_MAX_BYTES`` and asserts the shipped
-    policy ran — the file shrank to the keep-window and the overflow landed in an archive
-    under the ROOM's own directory, which is the observable consequence of pointing a
-    ``ConversationLog`` at ``rooms/<id>/`` rather than reimplementing the policy.
+    Past 2 MB the inherited rotation used to cut the transcript to its last 200 lines and
+    move the rest into ``rooms/<id>/archive/``. Bulk lines go through ``room_log()`` — the
+    room's own log object — which keeps 300 appends off the index-read path.
     """
-    from personalclaw import history
-
-    room = store.create_room("Rotation")
+    room = store.create_room("Long room")
     path = store.transcript_path(room.id)
-    archive_dir = store.room_dir(room.id) / "archive"
-
-    # Rotation needs BOTH conditions the shipped policy checks: over
-    # `_SESSION_MAX_BYTES` **and** more than `_SESSION_KEEP_LINES` lines
-    # (`history.py:861-867`), so the chunk is sized to overshoot both — a handful of very
-    # fat lines exceeds the byte budget and rotates nothing, because there would be
-    # nothing left to drop.
-    #
-    # The loop stops on the ARCHIVE appearing rather than on the file shrinking below the
-    # cap, because the shipped policy makes a size-based wait unterminable: 200 kept lines
-    # of 8 KB is 1.6 MB, so every rotation lands back under the cap and the next append
-    # pushes over it again. Bulk lines go through `room_log()` directly — the room's own
-    # log object, so the rotation under test is still the room's — which keeps 250-odd
-    # appends off the index-read path.
     log = store.room_log(room.id)
-    chunk = "x" * 8_000
-    for _ in range(400):
-        log.append(store.TRANSCRIPT_KEY, role="user", content=chunk)
-        if archive_dir.exists():
-            break
-    else:  # pragma: no cover - a failed rail, not a branch
-        pytest.fail("400 appends of 8 KB never tripped the inherited rotation")
+    for i in range(300):
+        log.append(store.TRANSCRIPT_KEY, role="user", content=f"{i:03d} " + "x" * 8_000)
 
-    assert path.stat().st_size < history._SESSION_MAX_BYTES, "the transcript was rotated"
-    assert len(store.read_messages(room.id)) <= history._SESSION_KEEP_LINES
-    assert list(archive_dir.iterdir()), "the rotated-out lines were archived, not dropped"
+    assert path.stat().st_size > 2 * 1024 * 1024
+    kept = store.read_messages(room.id)
+    assert [m["content"][:3] for m in kept] == [f"{i:03d}" for i in range(300)]
+    assert not (store.room_dir(room.id) / "archive").exists(), "nothing was moved out"
 
-    # And the room is still usable afterwards: a post-rotation append reads back.
+    # And the room is still usable afterwards: a later append reads back.
     store.append_message(room.id, role="user", content="after")
     assert store.read_messages(room.id)[-1]["content"] == "after"
-
-    # And the reuse is structural, not incidental: no rotation constant lives in rooms/.
-    source = (store.__file__,)
-    for f in source:
-        text = open(f, encoding="utf-8").read()
-        assert "_SESSION_MAX_BYTES" not in text and "_KEEP_LINES" not in text
 
 
 def test_the_write_path_redacts_every_role_including_the_human(enabled):

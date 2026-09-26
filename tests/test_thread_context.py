@@ -108,7 +108,7 @@ class TestNoThreadReminder:
         from personalclaw.history import ConversationLog
 
         log = MagicMock(spec=ConversationLog)
-        log.recent.return_value = [
+        log.recent.return_value = log.history_for_model.return_value = [
             {"role": "user", "content": "what is X?"},
             {"role": "assistant", "content": "X is Y."},
         ]
@@ -127,7 +127,7 @@ class TestNoThreadReminder:
         from personalclaw.history import ConversationLog
 
         log = MagicMock(spec=ConversationLog)
-        log.recent.return_value = [
+        log.recent.return_value = log.history_for_model.return_value = [
             {"role": "user", "content": "hello"},
         ]
 

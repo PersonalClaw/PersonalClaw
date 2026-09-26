@@ -10,8 +10,8 @@ and the per-member transcript cursors are a later atom, deliberately absent here
 
 **Nothing here is a new storage engine.** The transcript is a
 :class:`~personalclaw.history.ConversationLog` pointed at the room's own directory, so
-rotation at 2 MB, the archive window and its 7-day retention are the SAME code paths a
-session uses — not a second policy that can drift from them. The one thing a shared
+it keeps the same contract a session does — the transcript is never cut — rather than
+a second policy that can drift from it. The one thing a shared
 transcript needs and a per-participant session does not is a per-message author, which is
 ``ConversationLog.append``'s additive ``speaker`` argument (see
 :func:`~personalclaw.history.speaker_of`). Redaction reuses
@@ -25,7 +25,7 @@ lands at the path AGENT-ROOMS names)::
 
     rooms/index.json                    the room records, members included
     rooms/<id>/transcript.jsonl         the shared transcript
-    rooms/<id>/archive/                 inherited from ConversationLog, 7-day window
+    rooms/<id>/archive/                 lines an earlier version's size rotation trimmed
 
 A room id is a strict slug (:data:`_ROOM_ID_RE`), which is what lets the directory name
 BE the id: ``history._safe_key`` is the identity map over that alphabet, so there is no
@@ -260,9 +260,9 @@ def room_log(room_id: str) -> ConversationLog:
     """The room's transcript store: a ``ConversationLog`` on the room's own directory.
 
     Per-room rather than one log over a shared ``rooms/`` directory, so the transcript
-    lands at ``rooms/<id>/transcript.jsonl`` and its rotation archive at
-    ``rooms/<id>/archive/`` — the room's whole on-disk footprint under one path that
-    :func:`delete_room`-style cleanup could remove in one move.
+    lands at ``rooms/<id>/transcript.jsonl`` (and any lines an earlier version trimmed out
+    of it at ``rooms/<id>/archive/``) — the room's whole on-disk footprint under one path
+    that :func:`delete_room`-style cleanup could remove in one move.
     """
     return ConversationLog(base_dir=room_dir(room_id))
 
