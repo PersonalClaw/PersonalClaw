@@ -2,19 +2,24 @@
 
 Session files: ~/.personalclaw/sessions/{safe_key}.jsonl
 Each entry tracks provenance (source_thread, source_user) for citation.
-Files auto-rotate at 2MB (``_SESSION_MAX_BYTES``), keeping the last 200 lines.
 
-Lines that rotation or compaction DROPS are not gone immediately: they are appended to
-sessions/archive/{safe_key}__{stamp}.jsonl, one file per drop, by ``_archive_lines``.
-That directory is a short recovery window for trimmed message lines — it is NOT storage
-for closed or finished sessions. Nothing in the product closes a session (sessions are
-deleted), no caller archives a whole one, and ``_cleanup_old_archives`` unlinks each file
-``ARCHIVE_RETENTION_DAYS`` (7) days after its mtime. So any surface that lists these files
-owes the reader all three facts: that a row is a slice of one session rather than the
-session, what dropped it (compaction or rotation), and that it expires in 7 days (#464).
+**A session file is the user's record, and nothing here shortens it.** No size cap, no
+rotation, no background rewrite: what bounds cost is what a READER takes — ``recent`` and
+:meth:`ConversationLog.history_for_model` return a window, the consolidator reads past its
+offset. Background compression (``bg_compress``) shortens only what the MODEL reads, through
+a derived record beside the transcript (``{safe_key}.summary.json``, see :func:`model_view`)
+that deleting loses nothing from.
+
+``sessions/archive/{safe_key}__{stamp}.jsonl`` holds lines that EARLIER versions trimmed out
+of a session (size rotation and background compression both used to). Nothing writes there
+any more and nothing prunes it: for a chat trimmed before this, a batch may be the only copy
+of the lines it holds. A batch goes when the chat it came from is deleted. Any surface that
+lists these files owes the reader both facts: that a row is a slice of one session rather
+than the session, and that it is a leftover of an earlier version (#464).
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -53,10 +58,9 @@ logger = logging.getLogger(__name__)
 
 SESSIONS_DIR_NAME = "sessions"
 ARCHIVE_DIR_NAME = "archive"
-ARCHIVE_RETENTION_DAYS = 7
+#: The background-compression record beside a transcript: ``{safe_key}.summary.json``.
+SUMMARY_SUFFIX = ".summary.json"
 _CONSOLIDATION_THRESHOLD = 30  # preferences/projects update threshold (messages)
-_SESSION_MAX_BYTES = 2 * 1024 * 1024  # 2MB
-_SESSION_KEEP_LINES = 200
 SEARCH_MIN_CHARS = 2  # shortest query string that triggers backend search
 _TITLE_BOOST = 10  # field-boost multiplier for title matches in search_sessions
 _SEARCH_SCAN_WINDOW = 500  # cap files scanned per search to bound I/O
@@ -87,91 +91,126 @@ def _archive_dir(base: Path | None = None) -> Path:
     return (base or _sessions_dir()) / ARCHIVE_DIR_NAME
 
 
-def _archive_lines(
-    key: str, lines: list[str], reason: str, base: Path | None = None
-) -> Path | None:
-    """Append dropped message lines to archive/{key}__{YYYYMMDD-HHMMSS}.jsonl.
+def _is_archive_batch_of(name: str, safe: str) -> bool:
+    """Whether *name* is an archive batch an earlier version wrote for the safe key *safe*.
 
-    The delimiter is ``__``, not ``.`` — a session key can itself contain dots (a channel
-    ``thread_ts``), which is what the collision loop below parses back out; it also appends
-    ``-{n}`` when two drops land in the same second. Returns the new path, or None when
-    there was nothing to drop. The file is not permanent: the call to
-    ``_cleanup_old_archives`` at the end of this function prunes the directory to
-    ``ARCHIVE_RETENTION_DAYS``.
+    Batches are named ``{safe_key}__{YYYYMMDD-HHMMSS}[-n].jsonl``. A key may itself contain
+    ``__``, so a bare prefix match would also claim another chat's batches; the stamp after
+    the delimiter is what ties the name to exactly this key.
     """
-    if not lines:
-        return None
-    import itertools
-
-    adir = _archive_dir(base)
-    adir.mkdir(parents=True, exist_ok=True)
-    now = datetime.now()
-    stamp = now.strftime("%Y%m%d-%H%M%S")
-    safekey = _safe_key(key)
-    header = (
-        json.dumps(
-            {
-                "_type": "archive",
-                "reason": reason,
-                "archived_at": now.isoformat(),
-                "count": len(lines),
-            }
-        )
-        + "\n"
-    )
-    payload = header + "".join(lines)
-    # Atomic exclusive-create to avoid TOCTOU clobber when two archives land in the same second.
-    # Use '__' delimiter so keys containing dots (e.g. a channel thread_ts) don't confuse rfind('.') parsing.  # noqa: E501
-    for n in itertools.count():
-        if n > 1000:
-            raise RuntimeError(f"Failed to create archive file after {n} attempts")
-        candidate = adir / f"{safekey}__{stamp}{f'-{n}' if n else ''}.jsonl"
-        try:
-            with candidate.open("x", encoding="utf-8") as f:
-                f.write(payload)
-            break
-        except FileExistsError:
-            continue
-    logger.info(
-        "Archived %d lines from session %s to %s (reason=%s)",
-        len(lines),
-        key,
-        candidate.name,
-        reason,
-    )
-    _cleanup_old_archives(base=base)
-    return candidate
+    return re.fullmatch(re.escape(safe) + r"__\d{8}-\d{6}(?:-\d+)?\.jsonl", name) is not None
 
 
-_last_cleanup: float = 0.0
+# ── What the MODEL reads: background compression's derived record ──
+
+#: The rows a conversation hands the model: its turns. Everything else in a transcript (tool
+#: rows, approvals, stop cards, errors) is shown to the user and never restored as history.
+TURN_ROLES = ("user", "assistant")
+#: The entries of a model view (:func:`model_view`): a background summary, then turns.
+MODEL_VIEW_ROLES = ("summary", *TURN_ROLES)
 
 
-def _cleanup_old_archives(
-    retention_days: int = ARCHIVE_RETENTION_DAYS, base: Path | None = None
-) -> int:
-    """Delete archive files older than retention_days. Rate-limited to once per hour."""
-    global _last_cleanup
-    import time as _time
+def _turns(messages: list[dict]) -> list[dict]:
+    return [m for m in messages if m.get("role") in TURN_ROLES]
 
-    now = _time.time()
-    if now - _last_cleanup < 3600:
-        return 0
-    _last_cleanup = now
-    adir = _archive_dir(base)
-    if not adir.exists():
-        return 0
-    cutoff = now - retention_days * 86400
-    removed = 0
-    for p in adir.glob("*.jsonl"):
-        try:
-            if p.stat().st_mtime < cutoff:
-                p.unlink()
-                removed += 1
-        except OSError:
-            pass
-    if removed:
-        logger.info("Cleaned %d expired archive files (>%dd)", removed, retention_days)
-    return removed
+
+def span_digest(turns: list[dict]) -> str:
+    """A digest of what a summary record stands in for: each turn's role and text, in order."""
+    h = hashlib.sha256()
+    for m in turns:
+        h.update(json.dumps([m.get("role", ""), str(m.get("content", ""))]).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+def summary_record(
+    messages: list[dict],
+    stamp: tuple[int, int],
+    *,
+    summary: str,
+    summarized: int,
+    reduced: int,
+    reduced_cap: int,
+) -> dict:
+    """The record background compression keeps beside a transcript (``{key}.summary.json``).
+
+    ``summarized`` and ``reduced`` count the conversation's TURNS (user/assistant rows),
+    not the file's lines: the model reads ``summary`` in place of the first ``summarized``
+    turns and turns ``summarized..reduced`` capped to ``reduced_cap`` characters, for as
+    long as ``digest`` still matches the first ``reduced`` turns. Counting turns is what
+    lets one record apply to every source of them — the file, or a resident session's
+    buffer. ``stamp`` is the transcript's ``(mtime_ns, size)`` when it was read, so a pass
+    can tell it already summarized this exact file without reading it again.
+    """
+    return {
+        "stamp": [int(stamp[0]), int(stamp[1])],
+        "turns": len(_turns(messages)),
+        "summary": summary,
+        "summarized": summarized,
+        "reduced": reduced,
+        "reduced_cap": reduced_cap,
+        "digest": span_digest(_turns(messages)[:reduced]),
+        "created_at": datetime.now().isoformat(),
+    }
+
+
+def summary_holds(record: dict, messages: list[dict]) -> bool:
+    """Whether *record*'s summary still describes *messages*: the span it covers is unchanged.
+
+    An edit, an undo, a regenerate or a switched variant inside the span changes its digest,
+    and a shorter conversation no longer has the span at all. Either way the summary is
+    stale and the model reads the turns themselves.
+    """
+    if not record.get("summary"):
+        return False
+    try:
+        summarized = int(record["summarized"])
+        reduced = int(record["reduced"])
+        cap = int(record["reduced_cap"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    turns = _turns(messages)
+    if not (0 < summarized <= reduced <= len(turns)) or cap <= 0:
+        return False
+    return record.get("digest") == span_digest(turns[:reduced])
+
+
+def model_view(messages: list[dict], record: dict | None) -> list[dict]:
+    """The conversation as the MODEL reads it: ``[{role, content}]`` of its turns, in order.
+
+    While *record* holds (:func:`summary_holds`), one ``{"role": "summary"}`` entry stands in
+    for the turns it summarized and the turns after them are read capped to
+    ``reduced_cap`` characters. Every later turn, including every one written since the
+    record was made, is read as written. *messages* is only ever READ here: the file, or a
+    session's buffer — any list whose turns are the conversation's.
+    """
+    turns = _turns(messages)
+    view: list[dict] = []
+    start = 0
+    if record is not None and summary_holds(record, turns):
+        summarized, start = int(record["summarized"]), int(record["reduced"])
+        cap = int(record["reduced_cap"])
+        view.append({"role": "summary", "content": str(record["summary"])})
+        for m in turns[summarized:start]:
+            content = str(m.get("content", ""))
+            if len(content) > cap:
+                content = content[:cap] + " …"
+            view.append({"role": m["role"], "content": content})
+    view.extend({"role": m["role"], "content": m.get("content", "")} for m in turns[start:])
+    return view
+
+
+def model_window(view: list[dict], max_messages: int) -> list[dict]:
+    """The last *max_messages* entries of a model view, for a reader with a message budget.
+
+    A summary the window would cut stays as the first entry: it is the only thing left
+    that tells the model how the conversation started.
+    """
+    if len(view) <= max_messages:
+        return view
+    if max_messages > 1 and view[0].get("role") == "summary":
+        return [view[0], *view[len(view) - max_messages + 1 :]]
+    return view[-max_messages:] if max_messages > 0 else []
 
 
 def _safe_key(key: str) -> str:
@@ -209,7 +248,7 @@ def speaker_of(msg: dict) -> str:
 
 
 class ConversationLog:
-    """Append-only JSONL conversation store with provenance and rotation."""
+    """Append-only JSONL conversation store with provenance. It never shortens a transcript."""
 
     def __init__(self, base_dir: Path | None = None):
         self._dir = base_dir or _sessions_dir()
@@ -303,9 +342,6 @@ class ConversationLog:
 
         # Invalidate cache since file changed
         self._invalidate_cache(key)
-
-        # Rotate if file exceeds size limit
-        self._maybe_rotate(path)
 
     def recent(
         self,
@@ -482,8 +518,8 @@ class ConversationLog:
         real count in the metadata line, with the byte length of the message lines it
         counted; while the file still has exactly that many bytes after its first line, the
         recorded count stands. A writer that
-        appended since (a channel app's ``append``), rotated, or compacted changes those
-        bytes, and the lines are counted instead. Cached per (mtime, size), so a list
+        appended since (a channel app's ``append``) changes those bytes, and the lines are
+        counted instead. Cached per (mtime, size), so a list
         request re-reads only the files that changed. ``None`` — shown as no count — only
         when the file cannot be read at all.
         """
@@ -671,6 +707,11 @@ class ConversationLog:
         messages stayed searchable — a privacy hole. Best-effort: search-index
         failure must never block the deletion itself (the periodic
         ``session_search.purge_orphans`` sweep is the compensator).
+
+        The same holds for the two other places a chat's words live: its background
+        summary, and any batch of lines an earlier version trimmed out of it into
+        ``archive/``. Nothing prunes that directory any more, so a deleted chat would
+        otherwise leave its trimmed lines behind for good.
         """
         path = self._path(key)
         if path.exists():
@@ -678,8 +719,86 @@ class ConversationLog:
             self._invalidate_cache(key)
             self.invalidate_tab_id_cache()
             self._forget_search_rows(key)
+            self.delete_summary(key)
+            self._forget_archive_batches(key)
             return True
         return False
+
+    def _forget_archive_batches(self, key: str) -> None:
+        """Unlink the archive batches earlier versions trimmed out of *key*'s transcript."""
+        adir = _archive_dir(self._dir)
+        safe = _safe_key(key)
+        try:
+            batches = [
+                p for p in adir.glob(f"{safe}__*.jsonl") if _is_archive_batch_of(p.name, safe)
+            ]
+        except OSError:
+            return
+        for p in batches:
+            try:
+                p.unlink()
+            except OSError:
+                logger.warning("delete_session: could not remove archive batch %s", p.name)
+
+    # ── The background summary: derived data beside the transcript ──
+
+    def transcript_stamp(self, key: str) -> tuple[int, int] | None:
+        """``(mtime_ns, size)`` of *key*'s transcript, or ``None`` when there is none."""
+        try:
+            st = self._path(key).stat()
+        except OSError:
+            return None
+        return st.st_mtime_ns, st.st_size
+
+    def summary_path(self, key: str) -> Path:
+        return self._dir / f"{_safe_key(key)}{SUMMARY_SUFFIX}"
+
+    def read_summary(self, key: str) -> dict | None:
+        """*key*'s background-summary record, or ``None``.
+
+        Fails OPEN to "no summary": the record is derived, so a missing or unreadable one
+        only means the model reads the transcript itself, as it would for a chat that was
+        never summarized.
+        """
+        try:
+            data = json.loads(self.summary_path(key).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def write_summary(self, key: str, record: dict) -> None:
+        atomic_write(self.summary_path(key), json.dumps(record))
+
+    def delete_summary(self, key: str) -> None:
+        try:
+            self.summary_path(key).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("could not remove the background summary for %s", key)
+
+    def prune_orphan_summaries(self) -> int:
+        """Unlink every summary whose transcript is gone, whatever removed the transcript."""
+        removed = 0
+        try:
+            records = list(self._dir.glob(f"*{SUMMARY_SUFFIX}"))
+        except OSError:
+            return 0
+        for p in records:
+            transcript = self._dir / f"{p.name[: -len(SUMMARY_SUFFIX)]}.jsonl"
+            if transcript.exists():
+                continue
+            try:
+                p.unlink()
+                removed += 1
+            except OSError:
+                continue
+        return removed
+
+    def history_for_model(self, key: str, max_messages: int) -> list[dict]:
+        """What the model reads of *key*'s persisted transcript: :func:`model_view` through
+        :func:`model_window`. For a reader with no live session to take the turns from."""
+        return model_window(
+            model_view(self._read_messages(key), self.read_summary(key)), max_messages
+        )
 
     @staticmethod
     def _forget_search_rows(key: str) -> None:
@@ -788,109 +907,6 @@ class ConversationLog:
             meta = {}
         self._meta_cache[key] = (mtime, meta)
         return meta
-
-    def sliding_window(self, key: str, keep_recent: int = 5) -> tuple[list[dict], list[dict]]:
-        """Split messages into (older, recent) for compaction.
-
-        *keep_recent* is the number of recent user/assistant pairs to retain.
-        Returns ``(older_messages, recent_messages)``.
-        """
-        messages = self._read_messages(key)
-        # keep_recent pairs = keep_recent * 2 individual messages
-        split = max(0, len(messages) - keep_recent * 2)
-        return messages[:split], messages[split:]
-
-    def rewrite_session(self, key: str, messages: list[dict], *, reason: str = "compact") -> None:
-        """Rewrite session JSONL with only the given messages.
-
-        Dropped lines are archived (recoverable) with ``reason`` naming why —
-        "compact" for manual/idle compaction, "bg_compress" for the background
-        compression service (Context Economy §4).
-        """
-        path = self._path(key)
-        self._dir.mkdir(parents=True, exist_ok=True)
-        # Archive only messages being dropped (old content minus what's being kept).
-        # Compare by normalized JSON (sort_keys) to be resilient to key ordering changes.
-        if path.exists():
-            old_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-            if old_lines and '"_type"' in old_lines[0]:
-                old_lines = old_lines[1:]
-            kept_serialized = {json.dumps(m, sort_keys=True) for m in messages}
-            dropped = []
-            for ln in old_lines:
-                if not ln.strip():
-                    continue
-                try:
-                    normalized = json.dumps(json.loads(ln), sort_keys=True)
-                except (json.JSONDecodeError, ValueError):
-                    dropped.append(ln)  # corrupted line → archive it
-                    continue
-                if normalized not in kept_serialized:
-                    dropped.append(ln)
-            try:
-                _archive_lines(key, dropped, reason=reason, base=self._dir)
-            except Exception:
-                logger.warning("Failed to archive dropped lines for %s", key, exc_info=True)
-        # Preserve select fields from original metadata
-        orig_meta = self.get_metadata(key) or {}
-        meta = {
-            "_type": "metadata",
-            "created_at": orig_meta.get("created_at", datetime.now().isoformat()),
-            "last_consolidated": orig_meta.get("last_consolidated", 0),
-            "compacted_at": datetime.now().isoformat(),
-        }
-        if orig_meta.get("memory_mode"):
-            meta["memory_mode"] = orig_meta["memory_mode"]
-        lines = [json.dumps(meta) + "\n"]
-        for m in messages:
-            lines.append(json.dumps(m) + "\n")
-        atomic_write(path, "".join(lines))
-        self._invalidate_cache(key)
-
-    def _maybe_rotate(self, path: Path) -> None:
-        """Rotate session file if it exceeds size limit."""
-        try:
-            if path.stat().st_size <= _SESSION_MAX_BYTES:
-                return
-        except OSError:
-            return
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        if len(lines) <= _SESSION_KEEP_LINES:
-            return
-        # Keep metadata line + last N message lines
-        meta_line = lines[0] if lines and '"_type"' in lines[0] else ""
-        kept = lines[-_SESSION_KEEP_LINES:]
-        dropped_start = 1 if meta_line else 0
-        # Edge case: if len(lines) <= _SESSION_KEEP_LINES + dropped_start, the slice
-        # is empty and _archive_lines returns None (noop). The guard above already
-        # returns when len(lines) <= _SESSION_KEEP_LINES, so this only fires when
-        # there are genuinely more lines than we keep.
-        try:
-            _archive_lines(
-                path.stem,
-                lines[dropped_start:-_SESSION_KEEP_LINES],
-                reason="rotate",
-                base=self._dir,
-            )
-        except Exception:
-            logger.warning("Failed to archive rotated lines for %s", path.stem, exc_info=True)
-
-        # Reset last_consolidated since offsets are now invalid
-        if meta_line:
-            try:
-                meta = json.loads(meta_line)
-                meta["last_consolidated"] = 0
-                meta["rotated_at"] = datetime.now().isoformat()
-                meta_line = json.dumps(meta) + "\n"
-            except json.JSONDecodeError:
-                pass
-
-        content = meta_line + "".join(kept)
-        atomic_write(path, content)
-        # Invalidate cache — offsets changed
-        safe = path.stem
-        self._invalidate_cache(safe)
-        logger.info("Rotated session file %s (%d → %d lines)", path.name, len(lines), len(kept))
 
 
 # ── Module-level helpers for auto skill eligibility ──

@@ -8,7 +8,6 @@ import pytest
 
 from personalclaw.history import (
     _CONSOLIDATION_THRESHOLD,
-    _SESSION_KEEP_LINES,
     ConversationLog,
     HistoryConsolidator,
 )
@@ -96,30 +95,21 @@ class TestConversationLog:
         messages = log._read_messages("t1")
         assert messages[0]["tools"] == ["ReadFile", "WriteFile"]
 
-    def test_rotation(self, tmp_path):
+    def test_a_long_thread_is_never_cut_and_keeps_its_consolidated_offset(self, tmp_path):
+        """Past 2 MB the file used to be cut to its last 200 lines and the offset reset to 0."""
         log = ConversationLog(base_dir=tmp_path)
-        # Need > 200 lines AND > 2MB to trigger rotation
-        content = "x" * 10000
-        for i in range(300):
-            log.append("t1", "user", f"{content} msg {i}")
-        path = tmp_path / "t1.jsonl"
-        lines = path.read_text().splitlines()
-        # Should have metadata + kept lines (+ a few from post-rotation appends)
-        assert len(lines) <= _SESSION_KEEP_LINES + 5
-
-    def test_rotation_resets_consolidated(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        # Need > 200 lines AND > 2MB to trigger rotation
         content = "x" * 10000
         for i in range(250):
             log.append("t1", "user", f"{content} msg {i}")
         log.mark_consolidated("t1", 200)
-        # Add more to trigger rotation again
         for i in range(100):
             log.append("t1", "user", f"{content} more {i}")
-        # After rotation, last_consolidated should be reset to 0
-        meta = log._read_metadata("t1")
-        assert meta.get("last_consolidated") == 0
+        assert (tmp_path / "t1.jsonl").stat().st_size > 3 * 1024 * 1024
+        messages = log._read_messages("t1")
+        assert len(messages) == 350
+        assert messages[0]["content"].endswith("msg 0")
+        assert log._read_metadata("t1").get("last_consolidated") == 200
+        assert not (tmp_path / "archive").exists()
 
     def test_corrupted_json_lines_skipped(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path)
@@ -190,80 +180,6 @@ class TestConversationLog:
         by_key = {s["key"]: s for s in log.list_sessions()}
         assert by_key["t-with"].get("agent") == "provider-v2"
         assert "agent" not in by_key["t-without"]
-
-
-class TestRewriteSession:
-    def test_rewrite_replaces_content(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        for i in range(20):
-            log.append("t1", "user", f"msg {i}")
-        log.rewrite_session("t1", [{"role": "user", "content": "recent", "ts": "now"}])
-        messages = log._read_messages("t1")
-        assert len(messages) == 1
-        assert messages[0]["content"] == "recent"
-
-    def test_rewrite_sets_compacted_metadata(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("t1", "user", "hello")
-        log.rewrite_session("t1", [{"role": "user", "content": "kept", "ts": "now"}])
-        meta = log._read_metadata("t1")
-        assert "compacted_at" in meta
-        assert meta["last_consolidated"] == 0
-
-    def test_rewrite_creates_dir_if_missing(self, tmp_path):
-        sessions_dir = tmp_path / "new_sessions"
-        log = ConversationLog(base_dir=sessions_dir)
-        log.rewrite_session("t1", [{"role": "user", "content": "hi", "ts": "now"}])
-        assert (sessions_dir / "t1.jsonl").exists()
-
-    def test_rewrite_empty_messages(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("t1", "user", "hello")
-        log.rewrite_session("t1", [])
-        messages = log._read_messages("t1")
-        assert messages == []
-        # Metadata should still exist
-        meta = log._read_metadata("t1")
-        assert meta["_type"] == "metadata"
-
-    def test_rewrite_atomic(self, tmp_path):
-        """Rewrite uses tmp file — original should not be corrupted on crash."""
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("t1", "user", "original")
-        # Verify no .tmp file left behind after successful rewrite
-        log.rewrite_session("t1", [{"role": "user", "content": "new", "ts": "now"}])
-        tmp_files = list(tmp_path.glob("*.tmp"))
-        assert tmp_files == []
-
-
-class TestSessionManagerCompaction:
-    def test_sliding_window_splits_messages(self, tmp_path):
-        from personalclaw.history import ConversationLog
-
-        log = ConversationLog(base_dir=tmp_path)
-        log.init()
-        # 10 messages = 5 pairs
-        for i in range(10):
-            role = "user" if i % 2 == 0 else "assistant"
-            log.append("t1", role, f"msg-{i}")
-
-        older, recent = log.sliding_window("t1", keep_recent=2)
-        # keep 2 pairs = 4 messages recent, 6 older
-        assert len(older) == 6
-        assert len(recent) == 4
-        assert recent[0]["content"] == "msg-6"
-
-    def test_sliding_window_all_recent_when_few(self, tmp_path):
-        from personalclaw.history import ConversationLog
-
-        log = ConversationLog(base_dir=tmp_path)
-        log.init()
-        log.append("t1", "user", "hello")
-        log.append("t1", "assistant", "hi")
-
-        older, recent = log.sliding_window("t1", keep_recent=5)
-        assert len(older) == 0
-        assert len(recent) == 2
 
 
 class TestCanonicalKey:
@@ -659,128 +575,6 @@ class TestSearchSessions:
         assert "new-weak-2" in result_keys
 
 
-class TestArchive:
-    def test_rotate_archives_dropped_lines(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("personalclaw.history._SESSION_MAX_BYTES", 100)
-        monkeypatch.setattr("personalclaw.history._SESSION_KEEP_LINES", 3)
-        log = ConversationLog(base_dir=tmp_path)
-        for i in range(20):
-            log.append("t1", "user", f"message number {i} with enough text to exceed limits")
-        archives = list((tmp_path / "archive").glob("t1__*.jsonl"))
-        assert len(archives) >= 1
-        content = archives[0].read_text()
-        header = json.loads(content.splitlines()[0])
-        assert header["_type"] == "archive"
-        assert header["reason"] == "rotate"
-        assert header["count"] > 0
-
-    def test_rewrite_session_archives_existing(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("t1", "user", "original msg 1")
-        log.append("t1", "assistant", "original msg 2")
-        log.rewrite_session("t1", [{"role": "user", "content": "new", "ts": "x"}])
-        archives = list((tmp_path / "archive").glob("t1__*.jsonl"))
-        assert len(archives) == 1
-        content = archives[0].read_text()
-        assert "original msg 1" in content
-        assert "original msg 2" in content
-        header = json.loads(content.splitlines()[0])
-        assert header["reason"] == "compact"
-
-    def test_cleanup_old_archives(self, tmp_path):
-        import os
-        import time
-
-        import personalclaw.history as history_mod
-        from personalclaw.history import _cleanup_old_archives
-
-        history_mod._last_cleanup = 0.0  # reset rate-limit so cleanup actually runs
-        adir = tmp_path / "archive"
-        adir.mkdir()
-        old = adir / "old__20200101-000000.jsonl"
-        old.write_text("{}\n")
-        new = adir / "new__20990101-000000.jsonl"
-        new.write_text("{}\n")
-        # Backdate old file by 10 days
-        ten_days_ago = time.time() - 10 * 86400
-        os.utime(old, (ten_days_ago, ten_days_ago))
-        removed = _cleanup_old_archives(retention_days=7, base=tmp_path)
-        assert removed == 1
-        assert not old.exists()
-        assert new.exists()
-
-    def test_archive_empty_lines_noop(self, tmp_path):
-        from personalclaw.history import _archive_lines
-
-        result = _archive_lines("k", [], reason="rotate", base=tmp_path)
-        assert result is None
-        assert not (tmp_path / "archive").exists()
-
-    def test_same_second_conflict_suffixes_filename(self, tmp_path):
-        """Multiple archives for same key in same second must not clobber each other."""
-        from personalclaw.history import _archive_lines
-
-        p1 = _archive_lines("k", ["line1\n"], reason="rotate", base=tmp_path)
-        p2 = _archive_lines("k", ["line2\n"], reason="rotate", base=tmp_path)
-        p3 = _archive_lines("k", ["line3\n"], reason="rotate", base=tmp_path)
-        assert len({p1, p2, p3}) == 3
-        assert p1.exists() and p2.exists() and p3.exists()
-        assert "line1" in p1.read_text()
-        assert "line2" in p2.read_text()
-        assert "line3" in p3.read_text()
-
-    def test_cleanup_old_archives_noop_when_dir_missing(self, tmp_path):
-        import personalclaw.history as history_mod
-        from personalclaw.history import _cleanup_old_archives
-
-        history_mod._last_cleanup = 0.0
-        removed = _cleanup_old_archives(retention_days=7, base=tmp_path)
-        assert removed == 0
-
-    def test_safe_key_sanitizes_unsafe_chars(self, tmp_path):
-        """Keys with slashes/colons must be sanitized into safe filenames."""
-        from personalclaw.history import _archive_lines, _safe_key
-
-        assert _safe_key("slack:C123/456") == "slack_C123_456"
-        p = _archive_lines("slack:C123/456", ["x\n"], reason="rotate", base=tmp_path)
-        assert p is not None
-        assert "/" not in p.name and ":" not in p.name
-        assert p.name.startswith("slack_C123_456__")
-
-    def test_multiple_rotations_produce_multiple_archives(self, tmp_path, monkeypatch):
-        """A session that keeps growing across multiple rotate cycles produces multiple archive files."""  # noqa: E501
-        monkeypatch.setattr("personalclaw.history._SESSION_MAX_BYTES", 200)
-        monkeypatch.setattr("personalclaw.history._SESSION_KEEP_LINES", 2)
-        log = ConversationLog(base_dir=tmp_path)
-        for _ in range(3):
-            # Each round writes enough to trigger a rotate
-            for i in range(20):
-                log.append("loop", "user", f"msg {i} " + "x" * 50)
-        archives = list((tmp_path / "archive").glob("loop__*.jsonl"))
-        assert len(archives) >= 2, f"expected multiple archives, got {len(archives)}"
-
-    def test_archive_header_is_valid_json_metadata_line(self, tmp_path):
-        """First line of archive is a JSON metadata row; remaining lines are original message jsonl."""  # noqa: E501
-        from personalclaw.history import _archive_lines
-
-        p = _archive_lines(
-            "k",
-            ['{"role":"user","content":"a"}\n', '{"role":"assistant","content":"b"}\n'],
-            reason="rotate",
-            base=tmp_path,
-        )
-        lines = p.read_text().splitlines()
-        header = json.loads(lines[0])
-        assert header == {
-            "_type": "archive",
-            "reason": "rotate",
-            "archived_at": header["archived_at"],
-            "count": 2,
-        }
-        assert json.loads(lines[1])["role"] == "user"
-        assert json.loads(lines[2])["role"] == "assistant"
-
-
 class TestArchiveDashboardAPI:
     """HTTP-level tests for /api/session/archive endpoints."""
 
@@ -943,33 +737,6 @@ class TestArchiveDashboardAPI:
             body = await resp.text()
             # Raw credential must not appear in the response
             assert "AKIAIOSFODNN7EXAMPLE" not in body
-
-
-class TestArchiveOnlyDropped:
-    """rewrite_session must archive only the messages being dropped, not kept ones."""
-
-    def test_rewrite_archives_only_dropped_messages(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("t1", "user", "A")
-        log.append("t1", "assistant", "B")
-        log.append("t1", "user", "C")
-        # Read back the three message lines so we can feed them exactly to rewrite_session
-        from personalclaw.history import _safe_key
-
-        path = tmp_path / f"{_safe_key('t1')}.jsonl"
-        lines = [ln for ln in path.read_text().splitlines() if ln and '"_type"' not in ln]
-        assert len(lines) == 3
-        kept = [json.loads(lines[1]), json.loads(lines[2])]  # B, C
-        log.rewrite_session("t1", kept)
-        archives = list((tmp_path / "archive").glob("t1__*.jsonl"))
-        assert len(archives) == 1
-        archived = archives[0].read_text()
-        # Only the dropped message A should be in the archive (not B or C).
-        assert '"content": "A"' in archived
-        assert '"content": "B"' not in archived
-        assert '"content": "C"' not in archived
-        header = json.loads(archived.splitlines()[0])
-        assert header["count"] == 1
 
 
 # ---------------------------------------------------------------------------

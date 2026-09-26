@@ -1059,3 +1059,20 @@ def prior_turns_transcript(
         for m in msgs[:cut]
         if m.get("role") in ("user", "assistant")
     ]
+
+
+def background_summary(state: DashboardState, session: _ChatSession) -> dict | None:
+    """The background-compression record of *session*'s persisted transcript, or ``None``.
+
+    Looked up under the key the session saves under, so a channel thread's record is found
+    under its own bare key. Fails OPEN to ``None``: the record is derived data, and without
+    it a fresh runtime is simply handed the turns themselves.
+    """
+    log = state.conversation_log
+    if log is None:
+        return None
+    try:
+        return log.read_summary(persisted_history_key(log, session.key))
+    except Exception:  # noqa: BLE001 — a derived record must never cost a turn
+        logger.debug("background summary unreadable for %s", session.key, exc_info=True)
+        return None

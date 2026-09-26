@@ -23,7 +23,11 @@ from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
-from personalclaw.dashboard.chat_persistence import prior_turns_transcript, save_session_to_history
+from personalclaw.dashboard.chat_persistence import (
+    background_summary,
+    prior_turns_transcript,
+    save_session_to_history,
+)
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_finish_reason,
@@ -75,6 +79,7 @@ from personalclaw.guardrails.loop_breaker import (
     structural_note,
     warn_note,
 )
+from personalclaw.history import model_view
 from personalclaw.hooks import (
     HOOK_EVENT_AGENT_SPAWN,
     HOOK_EVENT_ERROR,
@@ -2215,6 +2220,11 @@ async def run_chat(
         _prior_transcript = prior_turns_transcript(
             session, _in_flight_text, nested=_prompt_depth > 0
         )
+        if is_new and not resumed and _prior_transcript:
+            # What the fresh runtime is handed of those turns: while the chat's background
+            # summary (`bg_compress`) still describes its oldest span, the summary stands in
+            # for that span. The chat itself — the buffer and the file — is never shortened.
+            _prior_transcript = model_view(_prior_transcript, background_summary(state, session))
         _restoring_history = bool(is_new and not resumed and _prior_transcript)
         if not is_new:
             _session_verb = "continued"

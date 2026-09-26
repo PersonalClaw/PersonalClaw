@@ -251,8 +251,8 @@ Alert keywords, name-mention alerts, and retention live in the Inbox settings pa
 | `tools.projection_rules[].name` | string | `""` | Settings → Tool output | Short label for the rule. |
 | `tools.projection_rules[].match_regex` | string | `""` | Settings → Tool output | Regex matched against the start of a tool's output. |
 | `tools.projection_rules[].strategy` | enum: `log`, `diff`, `json`, `test`, `csv` | `log` | Settings → Tool output | The builtin projector to apply. |
-| `tools.bg_compress_enabled` | boolean | `true` | Settings → Chat | Continuously compress old, idle conversation history in the background (topic-segmented, attention-weighted) so long sessions stay fast. Every dropped span is archived first and stays recoverable, and the summary names its archive. Incognito/temporary chats are never touched. |
-| `tools.bg_compress_idle_days` | number (0–365) | `7.0` | Settings → Chat | Only compress sessions untouched for at least this long — an active session is never compressed. |
+| `tools.bg_compress_enabled` | boolean | `true` | Settings → Chat | Summarize the older part of idle chats in the background (topic-segmented, attention-weighted), so the history handed to the model when one is picked up again opens with a short summary instead of every message. Chats are never changed: every message stays as you left it. The summary is kept beside the chat (`sessions/{key}.summary.json`), stops being used the moment a message it covers changes, and is deleted with the chat. Uses the background model. Incognito/temporary chats are never summarized. |
+| `tools.bg_compress_idle_days` | number (0–365) | `7.0` | Settings → Chat | Only summarize chats untouched for at least this long — an active chat is never summarized. |
 
 ## Voice (`voice.*`)
 

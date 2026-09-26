@@ -494,7 +494,6 @@ class TestValidationRegressions:
     def test_scan_still_honors_the_persisted_mode(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path / "persisted")
         log.append("m1", "user", "watermelon notes here")
-        log.rewrite_session("m1", log.read_messages("m1"))
         # Directly stamp the persisted mode, as an incognito session would carry.
         path = next((tmp_path / "persisted").glob("m1*"))
         lines = path.read_text().splitlines()

@@ -592,7 +592,7 @@ class TestSoftGatePrompt:
 
 
 class TestHistoryFileIntegrity:
-    """list_sessions() must surface memory_mode; rewrite_session() must preserve it."""
+    """list_sessions() must surface memory_mode."""
 
     def test_list_sessions_includes_memory_mode(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path)
@@ -605,26 +605,6 @@ class TestHistoryFileIntegrity:
         assert by_key["e1"].get("memory_mode") == "incognito"
         assert by_key["t1"].get("memory_mode") == "temporary"
         assert by_key["p1"].get("memory_mode") == "persistent"
-
-    def test_rewrite_session_preserves_memory_mode(self, tmp_path):
-        """Compaction must not drop memory_mode from metadata."""
-        log = ConversationLog(base_dir=tmp_path)
-        _write_session(log, "e1", [("user", "a"), ("assistant", "b")], memory_mode="incognito")
-
-        kept = [{"role": "user", "content": "a", "ts": "2026-01-01T00:00:01"}]
-        log.rewrite_session("e1", kept)
-
-        meta = log.get_metadata("e1")
-        assert meta.get("memory_mode") == "incognito"
-
-    def test_rewrite_session_persistent_has_no_memory_mode(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        _write_session(log, "p1", [("user", "a")])
-
-        log.rewrite_session("p1", [{"role": "user", "content": "a", "ts": "2026-01-01T00:00:01"}])
-
-        meta = log.get_metadata("p1")
-        assert "memory_mode" not in meta
 
 
 # ── Context builder: blocks_reads skips memory ──

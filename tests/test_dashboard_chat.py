@@ -4972,11 +4972,12 @@ class TestForkSession:
             data = await resp.json()
             new_key = data["key"]
 
-        # conversation_log.recent(forked_key) is what ContextBuilder.build_session_context
-        # calls to assemble the thread-history section for the new agent process.
+        # conversation_log.history_for_model(forked_key) is what
+        # ContextBuilder.build_session_context calls to assemble the thread-history
+        # section for the new agent process.
         from personalclaw.dashboard.chat import _history_key_for
 
-        recent = state.conversation_log.recent(_history_key_for(new_key))
+        recent = state.conversation_log.history_for_model(_history_key_for(new_key), 20)
         visible = [m for m in recent if m.get("role") in ("user", "assistant")]
         assert [m["content"] for m in visible] == [
             "parent question",

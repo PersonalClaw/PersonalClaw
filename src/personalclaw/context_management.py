@@ -131,15 +131,21 @@ def evict_completed_agents(agents: dict, max_retained: int = MAX_RETAINED_AGENTS
 def cleanup_stale_sessions() -> int:
     """Remove session workspace directories older than SESSION_MAX_AGE_SECS.
 
+    ``sessions/archive/`` sits beside the workspaces but is not one: it holds the lines
+    earlier versions trimmed out of chats, and for those chats it can be the only copy. It
+    is never swept, however old it is — a batch goes when its chat is deleted.
+
     Returns number of cleaned up sessions.
     """
+    from personalclaw.history import ARCHIVE_DIR_NAME
+
     sessions_dir = config_dir() / "sessions"
     if not sessions_dir.exists():
         return 0
     now = time.time()
     cleaned = 0
     for d in sessions_dir.iterdir():
-        if not d.is_dir():
+        if not d.is_dir() or d.name == ARCHIVE_DIR_NAME:
             continue
         try:
             files = list(d.iterdir())

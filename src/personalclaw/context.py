@@ -799,13 +799,19 @@ async def compress_thread_history(
     ``_HEAD_TAIL_MESSAGES`` are kept verbatim while the middle is
     LLM-compressed, preserving both conversation opening context and
     the most recent exchanges.
+
+    ``prior_turns`` may be a model view (``history.model_view``): a chat the background
+    compression service summarized (``bg_compress``) then opens with a ``summary`` entry
+    in place of its oldest span, which the window below keeps first. Such a chat arrives
+    here short — often short enough that this function makes no model call of its own.
     """
+    from personalclaw.history import MODEL_VIEW_ROLES, model_window  # circular import
     from personalclaw.llm_helpers import stream_and_collect  # circular import
     from personalclaw.session import BACKGROUND_KEY  # circular import
 
-    recent = [m for m in prior_turns if m.get("role") in ("user", "assistant")][
-        -_COMPRESSION_MAX_MESSAGES:
-    ]
+    recent = model_window(
+        [m for m in prior_turns if m.get("role") in MODEL_VIEW_ROLES], _COMPRESSION_MAX_MESSAGES
+    )
     if not recent:
         return None
 
@@ -1308,15 +1314,16 @@ class ContextBuilder:
                 )
                 parts.append(_history_header + compressed_history + "\n[End of thread history]\n\n")
             else:
+                from personalclaw.history import MODEL_VIEW_ROLES, model_window
+
                 if prior_transcript is not None:
-                    recent = [
-                        m for m in prior_transcript if m.get("role") in ("user", "assistant")
-                    ][-_FALLBACK_HISTORY_MESSAGES:]
+                    recent = model_window(
+                        [m for m in prior_transcript if m.get("role") in MODEL_VIEW_ROLES],
+                        _FALLBACK_HISTORY_MESSAGES,
+                    )
                 elif self.conversation_log is not None:
-                    recent = self.conversation_log.recent(
-                        session_key,
-                        max_messages=_FALLBACK_HISTORY_MESSAGES,
-                        roles={"user", "assistant"},
+                    recent = self.conversation_log.history_for_model(
+                        session_key, _FALLBACK_HISTORY_MESSAGES
                     )
                 else:
                     recent = []
