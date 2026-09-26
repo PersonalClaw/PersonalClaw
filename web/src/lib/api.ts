@@ -2393,12 +2393,18 @@ export interface AlwaysOnResponse {
   /** How a user opts a skill INTO the always-on tier — so an empty tier can explain itself. */
   always_skill_mechanism: string
 }
+/** How PersonalClaw reaches an MCP server: it starts a command (`stdio`), or connects to a URL over
+ *  Streamable HTTP (`http`) or the older HTTP+SSE transport (`sse`). */
+export type McpTransport = 'stdio' | 'http' | 'sse'
+/** A configured MCP server as `GET /api/mcp` lists it: its state and how it is reached, never its
+ *  definition — arguments and a URL can carry a token, and this list is kept in session storage.
+ *  The edit form reads one server's definition from `GET /api/mcp/servers/{name}`. */
 export interface McpServer {
-  name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
+  name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean
 }
-/** One variable (or header) of a server another tool configured: its NAME and whether it has a
- *  value — never the value, which is that server's token. The import reads it server-side. */
+/** One variable (or header) of a server: its NAME and whether it has a value — never the value,
+ *  which is that server's token. The import reads it server-side; the edit form keeps it by name. */
 export interface McpValuePresence { name: string; hasValue: boolean }
 /** One `env` variable as the edit form reads it (`GET /api/mcp/servers/{name}`). A plain one
  *  carries its value; a stored one only says whether a value is saved, so a secret never makes
@@ -2406,10 +2412,17 @@ export interface McpValuePresence { name: string; hasValue: boolean }
 export type McpEnvEntry =
   | { name: string; plain: true; value: string }
   | { name: string; plain: false; hasValue: boolean }
-/** `GET /api/mcp/servers/{name}`: what the edit form needs, or why it cannot edit this server. */
+/** `GET /api/mcp/servers/{name}`: what the edit form needs, or why it cannot edit this server. A
+ *  server at a URL has its headers as names only: every header value is in the credential store. */
 export type McpServerDefinition =
-  | { name: string; editable: true; command: string; args: string[]; env: McpEnvEntry[] }
+  | { name: string; editable: true; transport: 'stdio'; command: string; args: string[]; env: McpEnvEntry[] }
+  | { name: string; editable: true; transport: 'http' | 'sse'; url: string; headers: McpValuePresence[] }
   | { name: string; editable: false; reason: string }
+/** `PUT /api/mcp/servers/{name}`: a server started with a command, or one at a URL. `keepEnv` and
+ *  `keepHeaders` name the values the edit form showed masked and the user left as they were. */
+export type McpServerSave =
+  | { transport?: 'stdio'; command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[]; keepEnv?: string[] }
+  | { transport: 'http' | 'sse'; url: string; headers?: Record<string, string>; keepHeaders?: string[] }
 /** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats).
  *  `available:false` when the mcp SDK extra isn't installed (no pool exists). */
 export interface McpPoolStats {
@@ -2419,9 +2432,12 @@ export interface McpPoolStats {
   evicted?: number; reused?: number
 }
 /** An MCP server configured in an external backend (e.g. Claude Code) that
- *  isn't yet in PersonalClaw — offered as an import suggestion on the Tools page. */
+ *  isn't yet in PersonalClaw — offered as an import suggestion on the Tools page.
+ *  What the row shows and no credential: `command` is the program's name, and every credential in
+ *  `args` and `url` (a flag's value, a header, a URL's userinfo, query values and token-shaped path
+ *  segments) arrives as the mask. The import reads the whole definition server-side. */
 export interface ImportableMcpServer {
-  name: string; backend: string; command?: string; args?: string[]; url?: string
+  name: string; backend: string; transport: McpTransport; command: string; args: string[]; url: string
   env?: McpValuePresence[]; headers?: McpValuePresence[]
 }
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
@@ -7585,12 +7601,13 @@ export const api = {
   // without re-probing the whole fleet.
   reconnectMcp: (name: string) => post<McpServer>(`/api/mcp/probe/${encodeURIComponent(name)}`),
   toggleAllMcp: (enabled: boolean) => post('/api/mcp/toggle-all', { enabled }),
-  // Add or edit an MCP server (stdio) — the one write path for both: writes ~/.personalclaw/mcp.json
-  // and rebuilds the agent config. Every `env` value is kept in the credential store (mcp.json holds
-  // a reference) except the variables `plainEnv` names, which stay in the file as settings.
-  // `keepEnv` names variables whose saved value stays as it is: the edit form sends a secret it only
-  // showed masked this way, so the value never comes to the browser and back.
-  saveMcpServer: (name: string, body: { command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[]; keepEnv?: string[] }) =>
+  // Add or edit an MCP server — a command or a URL, the one write path for both: writes
+  // ~/.personalclaw/mcp.json and rebuilds the agent config. Every `env` value is kept in the credential
+  // store (mcp.json holds a reference) except the variables `plainEnv` names, which stay in the file as
+  // settings; every header value is kept there too. `keepEnv` / `keepHeaders` name values whose saved
+  // value stays as it is: the edit form sends a secret it only showed masked this way, so the value
+  // never comes to the browser and back.
+  saveMcpServer: (name: string, body: McpServerSave) =>
     put<{ ok?: boolean; name: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body),
   // What the edit form reads: names, plain values, and for a stored value only whether one is saved.
   mcpServerDefinition: (name: string) => get<McpServerDefinition>(`/api/mcp/servers/${encodeURIComponent(name)}`),

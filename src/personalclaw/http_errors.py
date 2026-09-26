@@ -733,6 +733,20 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The settings reference a credential that belongs to a different owner; store the key "
         "under this owner instead."
     ),
+    # ── saving an MCP server at a URL (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
+    # `invalid_transport` (400) — the transport is not `stdio`, `http` or `sse`, or the body carries
+    # the other transport's fields. `invalid_url` (400) — the URL is not an http(s) address with a
+    # host. `invalid_headers` (400) — the headers cannot be saved as sent: not a map of names to
+    # strings, a name that is not a header name or is sent twice, an empty value or one with a line
+    # break, or a header asked to keep a saved value it does not have. The message names the header.
+    "invalid_transport": (
+        "The MCP server's transport is not stdio, http or sse, or the request mixes the fields "
+        "of two transports."
+    ),
+    "invalid_url": "The MCP server's URL is not an http or https address with a host.",
+    "invalid_headers": (
+        "The MCP server's headers cannot be saved as sent; the message names the header."
+    ),
 }
 
 

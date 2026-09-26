@@ -234,6 +234,9 @@ def test_the_import_listing_sends_names_and_never_a_value(world) -> None:
         {"name": "LOG_LEVEL", "hasValue": True},
     ]
     assert servers[REMOTE]["headers"] == [{"name": "Authorization", "hasValue": True}]
-    # What a user needs to recognise the server is still there.
-    assert servers[NAME]["command"] == sys.executable
+    # What a user needs to recognise the server is still there: the program and its transport,
+    # and a remote server's address (this one carries no credential, so nothing is masked).
+    assert servers[NAME]["command"] == Path(sys.executable).name
+    assert servers[NAME]["transport"] == "stdio"
+    assert servers[REMOTE]["transport"] == "http"
     assert servers[REMOTE]["url"] == "https://mcp.example.invalid/mcp"

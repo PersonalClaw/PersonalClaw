@@ -258,7 +258,11 @@ Data leaving the running system:
   An owned secret is never put in the gateway's environment, so no child process, an MCP server
   included, inherits another record's value: `AppConfig.load_credentials` and the CLI's `.env`
   loader (`cli.main`) both skip `PCSECRET_` keys. `GET /api/mcp/importable` sends another tool's
-  variable and header names, never their values.
+  variable and header names, never their values, and each server's command name, arguments and
+  URL with every credential in them masked (`mcp_discovery.masked_args` / `masked_url`);
+  `GET /api/mcp` sends no server's definition at all. A remote server's headers are resolved from
+  the store when the native client connects, against the server's own owner (below), and sent on
+  each request, never written anywhere.
 - **A reference resolves only against its own owner** (`SecretOwner.holds`): an app's settings,
   its instances and its `{app}:{server}` MCP servers resolve only that app's keys; core's
   settings resolve every key no app holds, the Secrets-panel vault included. A settings file is

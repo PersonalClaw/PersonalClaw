@@ -12,10 +12,11 @@ as a small **actor**: one background task holds the transport + session context
 open and serves ``list_tools`` / ``call_tool`` requests off a queue, with
 health/respawn and clean shutdown (drained by the gateway's reaper on exit).
 
-Transports: stdio (``command``/``args``/``env``) and remote SSE/HTTP (``url``).
-The SDK is imported lazily so the package still imports without the extra; a
-missing SDK degrades to an empty registry (no servers), never an ImportError at
-module load.
+Transports: stdio (``command``/``args``/``env``), and a server at a ``url`` over Streamable HTTP
+or SSE, sent its ``headers`` on every request — which one is the spec's ``type``, read by
+:func:`personalclaw.mcp_discovery.mcp_transport`. The SDK is imported lazily so the package still
+imports without the extra; a missing SDK degrades to an empty registry (no servers), never an
+ImportError at module load.
 """
 
 from __future__ import annotations
@@ -289,24 +290,37 @@ class McpServerConn:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            self._error = str(exc)[:300] or exc.__class__.__name__
+            self._error = _failure_text(exc, str(self.spec.get("url") or ""))
             logger.warning("MCP server '%s' connection failed: %s", self.name, self._error)
             self._ready.set()  # unblock waiters with the error recorded
 
     async def _open_transport(self, stack: Any):
-        """Enter the right transport context for this server's spec."""
-        url = self.spec.get("url") or self.spec.get("endpoint")
-        if url:
-            transport = (self.spec.get("transport") or "").lower()
-            if transport in ("http", "streamable-http", "streamable_http"):
+        """Enter the right transport context for this server's spec: the one
+        :func:`~personalclaw.mcp_discovery.mcp_transport` names."""
+        from personalclaw.mcp_discovery import mcp_transport
+
+        transport = mcp_transport(self.spec)
+        if transport in ("http", "sse"):
+            url = str(self.spec.get("url") or "")
+            if not url:
+                raise ValueError(f"an {transport} server needs a url")
+            # How a remote server authenticates, sent on every request of the connection. The
+            # registry's specs are resolved already (`_personalclaw_mcp_specs`), so these are the
+            # values, read from the credential store when the spec was loaded.
+            headers = {str(k): str(v) for k, v in (self.spec.get("headers") or {}).items()}
+            if transport == "http":
                 from mcp.client.streamable_http import streamablehttp_client
 
-                read, write, _ = await stack.enter_async_context(streamablehttp_client(url))
+                read, write, _ = await stack.enter_async_context(
+                    streamablehttp_client(url, headers=headers)
+                )
                 return read, write
             from mcp.client.sse import sse_client
 
-            read, write = await stack.enter_async_context(sse_client(url))
+            read, write = await stack.enter_async_context(sse_client(url, headers=headers))
             return read, write
+        if transport != "stdio":
+            raise ValueError(f"PersonalClaw cannot connect over the {transport!r} transport")
 
         # stdio: spawn the declared command with the augmented PATH so a daemon
         # PATH still resolves node/npx/uvx the same way probe_server does.
@@ -374,6 +388,29 @@ class McpServerConn:
                     fut.set_result((False, str(exc)[:500]))
 
 
+def _failure_text(exc: BaseException, url: str = "") -> str:
+    """One line saying why a connection failed — the Tools page shows it, and so does the log.
+
+    The SDK raises a transport failure out of an anyio task group, so what arrives is an
+    exception group whose own text is only "unhandled errors in a TaskGroup (1 sub-exception)";
+    the cause is its first leaf. An HTTP refusal reads as its status (``HTTP 401 Unauthorized``)
+    rather than httpx's sentence, which spells out the URL, and a URL can carry a token — so any
+    other message has the server's URL replaced by its masked form.
+    """
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return f"HTTP {status} {getattr(response, 'reason_phrase', '') or ''}".strip()
+    text = str(exc) or exc.__class__.__name__
+    if url and url in text:
+        from personalclaw.mcp_discovery import masked_url
+
+        text = text.replace(url, masked_url(url))
+    return text[:300]
+
+
 def _coerce_output(result: Any) -> str:
     """Flatten an MCP ``CallToolResult`` into the text string the loop feeds back."""
     parts: list[str] = []
@@ -411,20 +448,25 @@ def _is_poolable(spec: dict[str, Any]) -> bool:
 
 def _spec_hash(spec: dict[str, Any]) -> str:
     """A stable content hash of the connection-defining fields of a server spec, so two
-    servers sharing a NAME but differing in command/args/env/url/transport get DISTINCT
-    pool entries instead of colliding on one connection (P23e). Uses sha256 over a
-    sort-keyed JSON of only the fields that change what process/endpoint we talk to —
-    NEVER Python ``hash()`` (its per-process salt would give a different key every run,
-    breaking any cross-process/cross-surface sharing that keys off this)."""
+    servers sharing a NAME but differing in command/args/env/url/transport/headers get DISTINCT
+    pool entries instead of colliding on one connection (P23e) — and a remote server whose token
+    was rotated behind an unchanged reference reconnects with the new one, as a stdio server's
+    environment does. Uses sha256 over a sort-keyed JSON of only the fields that change what
+    process/endpoint we talk to — NEVER Python ``hash()`` (its per-process salt would give a
+    different key every run, breaking any cross-process/cross-surface sharing that keys off
+    this)."""
     import hashlib
     import json
+
+    from personalclaw.mcp_discovery import mcp_transport
 
     material = {
         "command": spec.get("command", ""),
         "args": spec.get("args", []),
         "env": spec.get("env", {}),
         "url": spec.get("url", ""),
-        "transport": spec.get("transport", ""),
+        "transport": mcp_transport(spec),
+        "headers": spec.get("headers", {}),
     }
     blob = json.dumps(material, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]

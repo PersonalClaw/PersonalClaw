@@ -1,8 +1,9 @@
 """MCP server discovery — detects configured MCP servers and checks liveness.
 
 Scans the agent config (``agents/defaults.json``) for ``mcpServers`` entries,
-then optionally probes each server by spawning the command and sending an
-MCP ``initialize`` handshake.
+then optionally probes each server: a stdio server by spawning its command and sending an
+MCP ``initialize`` handshake, a server at a URL through the native client, over its own
+transport and with its headers.
 
 Used by the dashboard to show live MCP server badges and by the heartbeat
 to auto-sync newly discovered servers into the agent config.
@@ -12,14 +13,16 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import time
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
-import aiohttp
-
+from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
 from personalclaw.env import augmented_path
 from personalclaw.hooks import safe_read_file
 
@@ -68,11 +71,58 @@ def _mcp_json_paths() -> tuple[Path, ...]:
     return (config_dir() / "mcp.json",)
 
 
-# External backend MCP configs PersonalClaw can *import from* (but never
-# silently loads). Each entry maps a config file to the backend label shown in
-# the import-suggestions UI. Extensible: add further backend config paths here
-# once their formats are confirmed — the discovery + import path is backend-agnostic.
-_IMPORT_SOURCES: tuple[tuple[Path, str], ...] = ((Path.home() / ".claude.json", "Claude Code"),)
+def _import_sources() -> tuple[tuple[Path, str], ...]:
+    """External backend MCP configs PersonalClaw can *import from* (but never silently loads),
+    each with the backend label the import suggestions show. Extensible: add further backend
+    config paths here once their formats are confirmed — the discovery + import path is
+    backend-agnostic.
+
+    A FUNCTION, like :func:`_mcp_json_paths`: this was ``Path.home() / ".claude.json"`` frozen at
+    import, so it ignored ``$CLAUDE_CONFIG_DIR`` while the onboarding importer honoured it. Claude
+    Code's file now comes from the resolver that importer uses, per call. Tests monkeypatch this.
+    """
+    from personalclaw.onboarding_import.sources import claude_code
+
+    return ((claude_code.global_config_path(), claude_code.DISPLAY_NAME),)
+
+
+# ── transports ──────────────────────────────────────────────────────────────
+#
+# A server spec says how it is reached in ONE key, ``type``, with one of three values. It is
+# Claude Code's key and spelling (and VS Code's), so a spec copied between PersonalClaw and Claude
+# Code keeps its transport in both directions. Every reader asks :func:`mcp_transport` — the
+# native client, the probe, the rebuild, the edit form, the provider card — so no two of them can
+# disagree about what a server is. Before, the client read only ``transport``, so an imported
+# ``"type": "http"`` server was opened as SSE, while the probe posted to every URL as Streamable
+# HTTP.
+
+#: The transports PersonalClaw connects over: a spawned ``command``, Streamable HTTP, and the older
+#: HTTP+SSE transport.
+MCP_TRANSPORTS = ("stdio", "http", "sse")
+
+#: Other names for Streamable HTTP in server configs. ``streamable-http`` is also what PersonalClaw
+#: itself wrote into ``~/.mcp.json`` before, which Claude Code's schema does not accept.
+_TRANSPORT_ALIASES = {
+    "streamable-http": "http",
+    "streamable_http": "http",
+    "streamablehttp": "http",
+}
+
+
+def mcp_transport(spec: Mapping[str, Any]) -> str:
+    """How PersonalClaw connects to the server ``spec`` describes: ``stdio``, ``http`` or ``sse``.
+
+    The declared ``type`` decides (``transport``, the other key server configs use for it, when
+    ``type`` is absent). With neither, a ``url`` and no ``command`` is ``sse``: what a bare URL has
+    always meant to the native client, and what the MCP Tool Servers card and pack connectors meant
+    when they wrote one. Anything else is ``stdio``. A declared transport PersonalClaw has no client
+    for (``ws``) comes back as it is, so the caller can say so instead of guessing.
+    """
+    declared = spec.get("type") or spec.get("transport")
+    if isinstance(declared, str) and declared.strip():
+        name = declared.strip().lower()
+        return _TRANSPORT_ALIASES.get(name, name)
+    return "sse" if spec.get("url") and not spec.get("command") else "stdio"
 
 
 @dataclass
@@ -118,7 +168,7 @@ def _cache_probe(server: "McpServerInfo") -> None:
 
 @dataclass
 class McpServerInfo:
-    """Metadata for a single MCP server (local stdio or remote HTTP)."""
+    """Metadata for a single MCP server (local stdio, or remote over Streamable HTTP or SSE)."""
 
     name: str
     command: str = ""
@@ -135,28 +185,36 @@ class McpServerInfo:
     error: str = ""
     source: str = "agent"  # agent | mcp.json | discovered
     disabled_tools: list[str] = field(default_factory=list)
+    #: ``stdio``, ``http`` or ``sse`` (:func:`mcp_transport`). Left empty, it is derived from
+    #: ``url`` and ``command`` exactly as for a spec that declares none.
+    transport: str = ""
+
+    def __post_init__(self) -> None:
+        self.transport = mcp_transport(
+            {"type": self.transport, "url": self.url, "command": self.command}
+        )
 
     @property
     def is_remote(self) -> bool:
-        """True for Streamable HTTP servers (url-based, no command)."""
-        return bool(self.url) and not self.command
+        """True for a server reached at a URL rather than spawned from a command."""
+        return self.transport != "stdio"
 
     def to_dict(self) -> dict[str, Any]:
+        """The server as the Tools page reads it: its name, how it is reached, and its state.
+
+        Never its definition. Arguments and a URL can carry a token (``--api-key …``,
+        ``?token=…``), the page shows neither, and it keeps this response in session storage;
+        so ``command``, ``args``, ``url``, ``headers`` and ``cwd`` stay on the server. The edit
+        form reads one server's definition from ``GET /api/mcp/servers/{name}`` when it opens.
+        """
         d: dict[str, Any] = {
             "name": self.name,
-            "command": self.command,
-            "args": self.args or [],
+            "transport": self.transport,
             "status": self.status,
             "tools": self.tools,
             "error": self.error,
             "source": self.source,
         }
-        if self.url:
-            d["url"] = self.url
-            if self.headers:
-                d["headers"] = self.headers
-        if self.cwd:
-            d["cwd"] = self.cwd
         if self.disabled_tools:
             d["disabledTools"] = self.disabled_tools
         return d
@@ -260,6 +318,7 @@ def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
         url=spec.get("url", ""),
         headers=spec.get("headers", {}),
         source=source,
+        transport=mcp_transport(spec),
     )
 
 
@@ -341,37 +400,21 @@ def list_servers() -> list[McpServerInfo]:
     return list(servers.values())
 
 
-async def _read_jsonrpc_response(resp: aiohttp.ClientResponse) -> dict:
-    """Parse a JSON-RPC response from either JSON or SSE content-type.
-
-    MCP Streamable HTTP servers may respond with ``application/json`` (single
-    object) or ``text/event-stream`` (SSE with ``data:`` lines containing JSON).
-    """
-    ct = resp.content_type or ""
-    if "text/event-stream" in ct:
-        body = await resp.text()
-        last: dict = {}
-        for line in body.splitlines():
-            if line.startswith("data:"):
-                payload = line[len("data:") :].strip()
-                if payload:
-                    try:
-                        parsed = json.loads(payload)
-                        if isinstance(parsed, dict) and "id" in parsed:
-                            last = parsed
-                    except json.JSONDecodeError:
-                        pass
-        return last
-    return await resp.json()
-
-
 async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
-    """Probe a remote Streamable HTTP MCP server via POST."""
+    """Probe a server at a URL through the native client — the connection an agent's tool call
+    makes, over the server's own transport and with its headers — so ``ok`` here means an agent
+    can use it.
+
+    This used to be a hand-written Streamable HTTP exchange: it posted to every URL, so an SSE
+    server always read as an error, and it dropped the session id between ``initialize`` and
+    ``tools/list``, so a stateful server read ``ok`` with no tools.
+    """
     from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+    from personalclaw.mcp_client import McpServerConn, mcp_sdk_available
 
     try:
-        # The spec holds `{{secret:…}}` references; the header values are resolved here, where
-        # the request is made, and never written anywhere — only keys the server's owner holds.
+        # The spec holds `{{secret:…}}` references; the header values are resolved here, where the
+        # connection is made, and never written anywhere — only keys the server's owner holds.
         headers = resolve_mcp_values(server.name, "headers", server.headers)
     except ForeignSecretReference as exc:
         # No request was made and no value was read: the whole sentence is this server's error.
@@ -380,66 +423,37 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         _cache_probe(server)
         return server
     server.status = "probing"
-    try:
-        init_body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "personalclaw-probe", "version": "1.0.0"},
-            },
-        }
-        hdrs = {
-            **headers,
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-
-        timeout = aiohttp.ClientTimeout(total=_get_probe_timeout())
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(server.url, json=init_body, headers=hdrs) as resp:
-                if resp.status != 200:
-                    server.status = "error"
-                    server.error = f"HTTP {resp.status}"
-                    _cache_probe(server)
-                    return server
-                data = await _read_jsonrpc_response(resp)
-                if data.get("error"):
-                    server.status = "error"
-                    err = data["error"]
-                    server.error = (
-                        err.get("message", "unknown error") if isinstance(err, dict) else str(err)
-                    )
-                    _cache_probe(server)
-                    return server
-
-            list_body = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-            async with session.post(server.url, json=list_body, headers=hdrs) as resp:
-                if resp.status == 200:
-                    data = await _read_jsonrpc_response(resp)
-                    tools_data = data.get("result", {}).get("tools", [])
-                    server.tools = [
-                        {
-                            "name": t.get("name", ""),
-                            "description": t.get("description", ""),
-                            "inputSchema": t.get("inputSchema", {}),
-                        }
-                        for t in tools_data
-                        if isinstance(t, dict) and t.get("name")
-                    ]
-
-        server.status = "ok"
-    except asyncio.TimeoutError:
+    if server.transport not in MCP_TRANSPORTS:
         server.status = "error"
-        server.error = "timeout"
-        logger.warning("MCP probe failed [%s]: timeout", server.name)
-    except Exception as exc:
+        server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
+    elif not mcp_sdk_available():
         server.status = "error"
-        server.error = str(exc)[:200]
+        server.error = (
+            "connecting to a server at a URL needs the 'mcp' extra "
+            "(pip install 'personalclaw[mcp]')"
+        )
+    else:
+        conn = McpServerConn(
+            server.name, {"type": server.transport, "url": server.url, "headers": headers}
+        )
+        try:
+            tools = await asyncio.wait_for(conn.list_tools(), timeout=_get_probe_timeout())
+            if conn.error:
+                server.status = "error"
+                server.error = conn.error
+            else:
+                server.status = "ok"
+                server.tools = [
+                    {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+                    for t in tools
+                ]
+        except asyncio.TimeoutError:
+            server.status = "error"
+            server.error = "timeout"
+        finally:
+            await conn.shutdown()
+    if server.status == "error":
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
-
     _cache_probe(server)
     return server
 
@@ -698,11 +712,17 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     for name, spec in mcp_servers.items():
         if not isinstance(spec, dict):
             continue
+        # `url`, `headers` and the transport too: without them a remote server read as a stdio
+        # one with no command, and `register_servers_for_cc` wrote it into `~/.mcp.json` as
+        # `{"command": "", "type": "stdio"}`, an entry Claude Code refuses.
         info = McpServerInfo(
             name=name,
             command=spec.get("command", ""),
             args=spec.get("args"),
             env=spec.get("env") or {},
+            url=spec.get("url", ""),
+            headers=spec.get("headers") or {},
+            transport=mcp_transport(spec),
             source="discovered",
         )
         if name not in agent_names:
@@ -724,10 +744,6 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     return out
 
 
-# Test override seam: tests monkeypatch this to inject fixture import paths.
-_IMPORT_JSON_PATHS: tuple[tuple[Path, str], ...] = _IMPORT_SOURCES
-
-
 def discover_importable_servers() -> list[dict[str, Any]]:
     """Return MCP servers configured in an external backend (e.g. Claude Code)
     that are NOT yet present in any PersonalClaw scope — i.e. candidates the
@@ -738,10 +754,13 @@ def discover_importable_servers() -> list[dict[str, Any]]:
     Claude-Code-only server). The UI offers each as an explicit "Import" action
     backed by ``/api/mcp/apply``, which copies the spec into the PClaw scope.
 
-    Each entry: ``{name, backend, command, args, url, env, headers}``, where ``env`` and
-    ``headers`` are ``[{name, hasValue}]`` — which variables the server sets, never what they
-    hold. This is the list a browser renders, and those values are the server's tokens; the
-    import reads them from the backend's own file, server-side, and stores them.
+    This is the list a browser renders, so each entry carries what the picker shows and no
+    credential: ``{name, backend, transport, command, args, url, env, headers}``. ``command`` is
+    the command's file name, ``args`` the arguments with every credential in them masked
+    (:func:`masked_args`), ``url`` the address with its userinfo, query values and any token-shaped
+    path segment masked (:func:`masked_url`), and ``env``/``headers`` ``[{name, hasValue}]`` —
+    which variables the server sets, never what they hold. The import reads the whole definition
+    from the backend's own file, server-side, and stores its values.
     """
     # Servers already known to PClaw (mcp.json + the agent config) are not
     # "importable" — they're already first-class.
@@ -750,7 +769,7 @@ def discover_importable_servers() -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for path, backend in _IMPORT_JSON_PATHS:
+    for path, backend in _import_sources():
         if not path.is_file():
             continue
         try:
@@ -766,18 +785,22 @@ def discover_importable_servers() -> list[dict[str, Any]]:
         for name, spec in servers.items():
             if not isinstance(spec, dict) or name in known or name in seen:
                 continue
-            # Only surface servers we can actually run: a stdio command or a
-            # remote url. Skip malformed entries silently.
-            if not (spec.get("command") or spec.get("url")):
+            # Only surface servers PersonalClaw can run: a stdio command, or a URL over a
+            # transport it has a client for. Skip anything else silently.
+            transport = mcp_transport(spec)
+            remote = transport != "stdio"
+            if transport not in MCP_TRANSPORTS or not spec.get("url" if remote else "command"):
                 continue
             seen.add(name)
+            args = spec.get("args")
             out.append(
                 {
                     "name": name,
                     "backend": backend,
-                    "command": spec.get("command", ""),
-                    "args": spec.get("args", []),
-                    "url": spec.get("url", ""),
+                    "transport": transport,
+                    "command": "" if remote else _command_name(str(spec["command"])),
+                    "args": masked_args(args) if not remote and isinstance(args, list) else [],
+                    "url": masked_url(str(spec["url"])) if remote else "",
                     "env": _names_with_presence(spec.get("env")),
                     "headers": _names_with_presence(spec.get("headers")),
                 }
@@ -791,6 +814,130 @@ def _names_with_presence(values: Any) -> list[dict[str, Any]]:
     if not isinstance(values, dict):
         return []
     return [{"name": str(k), "hasValue": v not in (None, "")} for k, v in values.items()]
+
+
+# ── what a browser may see of another tool's server definition ──────────────
+#
+# A server's arguments and URL are where a token goes when it is not in the environment or a
+# header: ``--api-key sk-…``, ``--header "Authorization: Bearer …"``, ``?token=…``,
+# ``https://user:pw@…``, or the secret path segment a hosted endpoint embeds. The import picker
+# needs to show which server a row is, not how it authenticates, so those parts reach the browser
+# as the mask the edit form uses. Deliberately biased toward masking: an over-masked argument
+# costs a little recognisability, an under-masked one is a token in the page and in its session
+# storage.
+
+#: Flags whose NEXT argument is an HTTP header (``mcp-remote --header "Authorization: Bearer …"``,
+#: curl's ``-H``): its name stays, its value is masked.
+_HEADER_FLAGS = frozenset({"--header", "--headers", "-H"})
+#: A scheme, as ``urlsplit`` reads one: so ``--url=https://…`` is not mistaken for a URL.
+_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
+#: A run of token characters. Long enough, and mixing letters and digits, it is a key in a format
+#: no named rule knows (a hex or base64url secret). ``/`` and ``.`` are not in it: a path, a host
+#: name and a version number are not tokens, and a JWT's parts are tested one by one.
+_TOKEN_RUN_RE = re.compile(r"[A-Za-z0-9_\-+=~]{20,}")
+_LETTER_RE = re.compile(r"[A-Za-z]")
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _looks_secret(text: str) -> bool:
+    """Shaped like a credential: a format the credential redactor knows (a provider key, a bearer
+    token, ``api_key=…``), or a long run of token characters mixing letters and digits."""
+    from personalclaw.security import redact_credentials
+
+    if redact_credentials(text)[1]:
+        return True
+    return any(
+        _TOKEN_RUN_RE.fullmatch(piece) and _LETTER_RE.search(piece) and _DIGIT_RE.search(piece)
+        for piece in text.split(".")
+    )
+
+
+def _command_name(command: str) -> str:
+    """A command's file name (``npx``, ``node.exe``): the picker shows which program, not where
+    it lives."""
+    return re.split(r"[\\/]", command.rstrip("\\/"))[-1]
+
+
+def masked_url(url: str) -> str:
+    """``url`` as a browser may see it: where it points, and no credential it carries.
+
+    Scheme, host, port and path stay, so the server is recognisable. Userinfo, every query value,
+    the fragment and any path segment shaped like a token are masked. Text that is not a URL with
+    a host is masked whole if it looks like a credential and kept otherwise.
+    """
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return SECRET_MASK
+    host = parts.hostname
+    if not parts.scheme or not host:
+        return SECRET_MASK if _looks_secret(url) else url
+    netloc = (f"[{host}]" if ":" in host else host) + (f":{port}" if port else "")
+    if "@" in parts.netloc:
+        netloc = f"{SECRET_MASK}@{netloc}"
+    path = "/".join(
+        SECRET_MASK if seg and _looks_secret(unquote(seg)) else seg for seg in parts.path.split("/")
+    )
+    query = "&".join(
+        (SECRET_MASK if _looks_secret(key) else key) + (f"={SECRET_MASK}" if value else "")
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+    )
+    return urlunsplit((parts.scheme, netloc, path, query, SECRET_MASK if parts.fragment else ""))
+
+
+def masked_args(args: Iterable[Any]) -> list[str]:
+    """Command arguments as a browser may see them: every credential they carry masked.
+
+    The value a credential-named flag carries (``--api-key X``, ``--token=X``, ``API_KEY=X``,
+    named by :func:`~personalclaw.apps.secret_fields.is_credential_field_name`, the repository's
+    one rule), a header's value (``--header "Authorization: Bearer X"``), a URL's credential parts
+    (:func:`masked_url`), and an argument shaped like a credential. A shell string (``sh -c "…"``)
+    is read word by word by the same rules. Everything else stays, so the command line still says
+    which server it starts.
+    """
+    out: list[str] = []
+    carries: str | None = None
+    for raw in args:
+        arg = str(raw)
+        if carries == "header":
+            out.append(_masked_header(arg))
+        elif carries == "value":
+            out.append(SECRET_MASK)
+        else:
+            out.append(_masked_word(arg))
+        carries = _what_flag_carries(arg)
+    return out
+
+
+def _what_flag_carries(arg: str) -> str | None:
+    """What the argument AFTER ``arg`` holds: ``"header"``, a credential ``"value"``, or neither."""
+    if arg in _HEADER_FLAGS:
+        return "header"
+    if arg.startswith("-") and "=" not in arg and is_credential_field_name(arg.lstrip("-")):
+        return "value"
+    return None
+
+
+def _masked_header(text: str) -> str:
+    name, sep, _value = text.partition(":")
+    return f"{name.strip()}: {SECRET_MASK}" if sep and name.strip() else SECRET_MASK
+
+
+def _masked_word(arg: str) -> str:
+    scheme, sep, _rest = arg.partition("://")
+    if sep and _SCHEME_RE.fullmatch(scheme):
+        return masked_url(arg)
+    name, sep, value = arg.partition("=")
+    if sep and name:
+        if name in _HEADER_FLAGS:
+            return f"{name}={_masked_header(value)}"
+        if is_credential_field_name(name.lstrip("-")):
+            return f"{name}={SECRET_MASK}"
+        return f"{name}={_masked_word(value)}" if value else arg
+    if any(ch.isspace() for ch in arg):
+        return " ".join(masked_args(arg.split()))
+    return SECRET_MASK if _looks_secret(arg) else arg
 
 
 def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:
@@ -880,7 +1027,9 @@ def register_servers_for_cc(
     for s in servers:
         plain = foreign_mcp_spec(s.name, {"env": s.env, "headers": s.headers}, with_secrets=False)
         if s.is_remote:
-            entry: dict = {"url": s.url, "type": "streamable-http"}
+            # Claude Code's own `type` values (`http`, `sse`): it refuses the `streamable-http`
+            # this used to write.
+            entry: dict = {"url": s.url, "type": s.transport}
             if plain.get("headers"):
                 entry["headers"] = plain["headers"]
         else:

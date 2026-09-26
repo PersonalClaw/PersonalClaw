@@ -12,8 +12,9 @@ Each ``mcpServers`` entry maps to one :class:`ExtensionInstance`:
 
 * ``id`` / ``display_name`` = the server name (the mcp.json key)
 * ``config`` = ``{transport, command, args, endpoint}`` matching the card's
-  ``settingsSchema`` (``args`` is a space-joined string; ``endpoint`` is the SSE
-  ``url``)
+  ``settingsSchema`` (``transport`` is the spec's ``type``, read by
+  ``mcp_discovery.mcp_transport``; ``args`` is a space-joined string; ``endpoint`` is a
+  remote server's ``url``)
 * ``enabled`` = NOT the spec's ``disabled`` flag
 
 Writes preserve any ``env``/``headers`` already on the spec so editing from the
@@ -67,10 +68,14 @@ def _save(data: dict[str, Any]) -> None:
 
 
 def _spec_to_instance(name: str, spec: dict[str, Any]) -> ExtensionInstance:
+    from personalclaw.mcp_discovery import mcp_transport
+
     url = spec.get("url", "")
     args = spec.get("args", [])
     config: dict[str, Any] = {
-        "transport": "sse" if url else "stdio",
+        # The server's real transport, not "sse" for every URL: the card writes back what it
+        # read, so a Streamable HTTP server read as "sse" was turned into one on the next save.
+        "transport": mcp_transport(spec),
         "command": spec.get("command", ""),
         "args": " ".join(args) if isinstance(args, list) else str(args or ""),
         "endpoint": url,
@@ -102,7 +107,9 @@ def _config_to_spec(config: dict[str, Any], existing: dict[str, Any] | None) -> 
             spec["disabled"] = True
 
     transport = config.get("transport") or ("sse" if config.get("endpoint") else "stdio")
-    if transport == "sse":
+    if transport != "stdio":
+        # Spelled out (`type`, the key every MCP reader asks — `mcp_discovery.mcp_transport`).
+        spec["type"] = transport
         spec["url"] = (config.get("endpoint") or "").strip()
     else:
         spec["command"] = (config.get("command") or "").strip()

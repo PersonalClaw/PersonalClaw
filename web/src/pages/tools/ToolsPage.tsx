@@ -20,10 +20,10 @@ import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { readableErrText } from '../../lib/errText'
-import { api, type ToolItem, type McpServer, type McpServerDefinition, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
+import { api, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
-import { STORED_VALUE_MASK, buildMcpEdit, buildMcpEnv, envFormFields, formatArgs, parseArgs } from './mcpServerEnv'
+import { STORED_VALUE_MASK, buildMcpEdit, buildMcpEnv, buildMcpHeaderEdit, buildMcpHeaders, envFormFields, formatArgs, headerFormText, parseArgs } from './mcpServerEnv'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
 import { PageTitle } from '../../ui/PageTitle'
@@ -522,8 +522,8 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
               <span data-type="caption" className="text-on-surface-low" title={`Provided by the '${g.server.name.split(':')[0]}' app — uninstall it from the Store to remove this server.`}>via app</span>
             ) : (<>
               {/* Edit reads the server's definition from the gateway: names, plain values, and for a
-                  stored value only that one is saved. A server the form does not own (PersonalClaw's
-                  own, a remote one) opens to the sentence that says why. */}
+                  stored value only that one is saved — for a command and for a URL alike. A server
+                  the form does not own (PersonalClaw's own) opens to the sentence that says why. */}
               <SquareIconButton icon={Pencil} iconSize={13}
                 label={`Edit ${g.server.name}`} title="Edit server" onClick={() => onEditServer(g.server!)} />
               <SquareIconButton icon={Trash2} iconSize={13} tone="danger"
@@ -690,6 +690,24 @@ function Toggle({ on }: { on: boolean }) {
   return <SharedToggle on={on} readOnly decorative size="sm" />
 }
 
+/** The three ways to reach an MCP server, in the words the Add and Edit forms and the import list
+ *  all use, so one server reads one way everywhere. */
+const TRANSPORT_OPTIONS: Array<{ key: McpTransport; label: string }> = [
+  { key: 'stdio', label: 'Command' },
+  { key: 'http', label: 'HTTP' },
+  { key: 'sse', label: 'SSE' },
+]
+const transportLabel = (t: McpTransport) => TRANSPORT_OPTIONS.find((o) => o.key === t)?.label ?? t
+const TRANSPORT_HINT = 'How PersonalClaw reaches the server: it starts a command, or connects to a URL over Streamable HTTP or the older SSE transport.'
+const URL_HINT = "The server's MCP endpoint, e.g. https://mcp.example.com/mcp."
+const HEADERS_HINT = 'One Name: value per line (optional), sent with every request. Each value is kept in your credential store, never in mcp.json or an export.'
+const EDIT_HEADERS_HINT = `One Name: value per line, sent with every request. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, or type over it to replace it. Delete a line to stop sending the header.`
+
+/** Where an importable server runs, as its row shows it. Every credential in it arrived masked. */
+function importedTarget(s: ImportableMcpServer): string {
+  return s.transport === 'stdio' ? [s.command, formatArgs(s.args ?? [])].filter(Boolean).join(' ') : s.url
+}
+
 /** What an importable server sets, by NAME: its environment variables and a remote one's headers.
  *  `''` when it sets neither. */
 function importedValues(s: ImportableMcpServer): string {
@@ -740,12 +758,14 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                   <div className="flex items-center gap-2">
                     <span className="truncate font-mono text-on-surface text-[0.8125rem]" title={s.name}>{s.name}</span>
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{s.backend}</span>
+                    <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low" title={TRANSPORT_HINT}>{transportLabel(s.transport)}</span>
                   </div>
-                  {/* The server line is a URL or a full command line — the most tail-heavy string on
-                      the surface, and the half that says WHICH server this is. It did not clip with this
+                  {/* The server line is a URL or a command line — the most tail-heavy string on the
+                      surface, and the half that says WHICH server this is. It did not clip with this
                       seed's data, but it truncates by the same rule and a `title` costs nothing; the
-                      alternative is a row whose name recovers and whose address does not. */}
-                  <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]" title={s.url || [s.command, ...(s.args ?? [])].join(' ')}>{s.url || [s.command, ...(s.args ?? [])].join(' ')}</p>
+                      alternative is a row whose name recovers and whose address does not. The gateway
+                      sends it with every credential masked (`/api/mcp/importable`). */}
+                  <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]" title={importedTarget(s)}>{importedTarget(s)}</p>
                   {/* Names only: the listing never carries a value (`/api/mcp/importable`). */}
                   {importedValues(s) && (
                     <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={importedValues(s)}>{importedValues(s)}</p>
@@ -771,18 +791,22 @@ const ARGS_HINT = 'Space-separated args passed to the command (optional). Put an
 const ENV_HINT = 'One KEY=value per line (optional). Each value is kept in your credential store, never in mcp.json or an export.'
 const PLAIN_HINT = 'Settings that are not secret, one KEY=value per line (optional). Kept readable in mcp.json, so they travel with an export. A name ending in TOKEN, SECRET, PASSWORD or API_KEY goes to the credential store anyway.'
 
-/** Add a tool server — either a stdio MCP server (→ PUT /api/mcp/servers/{name},
- *  writes ~/.personalclaw/mcp.json) OR an OpenAI-compatible REST tool server
- *  (→ an `openai-tools` provider instance). The "+" offers both tool-provider
- *  types so the user isn't forced into MCP. */
+/** Add a tool server — either an MCP server, started with a command or reached at a URL (→ PUT
+ *  /api/mcp/servers/{name}, writes ~/.personalclaw/mcp.json) OR an OpenAI-compatible REST tool
+ *  server (→ an `openai-tools` provider instance). The "+" offers both tool-provider types so the
+ *  user isn't forced into MCP. */
 function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
   const [kind, setKind] = useState<'mcp' | 'openai'>('mcp')
   // MCP fields
   const [name, setName] = useState('')
+  const [transport, setTransport] = useState<McpTransport>('stdio')
   const [command, setCommand] = useState('')
   const [args, setArgs] = useState('')
   const [env, setEnv] = useState('')
   const [plainEnv, setPlainEnv] = useState('')
+  const [url, setUrl] = useState('')
+  const [headers, setHeaders] = useState('')
+  const remote = transport !== 'stdio'
   // OpenAI tool-server fields
   const [oaName, setOaName] = useState('')
   const [endpoint, setEndpoint] = useState('')
@@ -800,15 +824,21 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
 
   const submitMcp = async () => {
     if (!validName) { setErr('Name must be letters, digits, dashes, underscores (1–64).'); return }
-    if (!command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
+    if (remote && !url.trim()) { setErr("Enter the server's URL (e.g. https://mcp.example.com/mcp)."); return }
+    if (!remote && !command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
     setSaving(true); setErr('')
     try {
-      const argv = parseArgs(args)
-      await api.saveMcpServer(name.trim(), {
-        command: command.trim(),
-        args: argv.length ? argv : undefined,
-        ...buildMcpEnv(env, plainEnv),
-      })
+      if (remote) {
+        await api.saveMcpServer(name.trim(), { transport, url: url.trim(), ...buildMcpHeaders(headers) })
+      } else {
+        const argv = parseArgs(args)
+        await api.saveMcpServer(name.trim(), {
+          transport: 'stdio',
+          command: command.trim(),
+          args: argv.length ? argv : undefined,
+          ...buildMcpEnv(env, plainEnv),
+        })
+      }
       onAdded()
     } catch (e) { setErr(apiErr(e)); setSaving(false) }
   }
@@ -829,7 +859,7 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
     } catch (e) { setErr(apiErr(e)); setSaving(false) }
   }
 
-  const canSubmit = kind === 'mcp' ? (!!name && !!command.trim()) : !!endpoint.trim()
+  const canSubmit = kind === 'mcp' ? (!!name && !!(remote ? url : command).trim()) : !!endpoint.trim()
 
   return (
     <Modal title="Add tool server" icon={<Server size={18} className="text-primary" />} onClose={onClose}>
@@ -842,23 +872,35 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
           <Field label="Name" hint="A unique handle (letters, digits, dashes, underscores).">
             <TextInput value={name} onChange={setName} placeholder="filesystem-mcp" size="md" surface="high" />
           </Field>
-          <Field label="Command" hint="The executable that starts the server over stdio.">
-            <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
+          <Field label="Transport" hint={TRANSPORT_HINT}>
+            <Segmented value={transport} onChange={(t) => { setTransport(t as McpTransport); setErr('') }} options={TRANSPORT_OPTIONS} />
           </Field>
-          <Field label="Arguments" hint={ARGS_HINT}>
-            <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
-          </Field>
-          <Field label="Environment" hint={ENV_HINT}>
-            {/* The one raw control left in this modal after the Field migration. A raw element
-                cannot read FieldLabelCtx, so it stayed unnamed while its seven TextInput siblings
-                were fixed. `TextArea` claims the Field label the same way they do — and this also
-                retires the `mcpInputCls.replace('h-9', …)` string surgery, which reached into a
-                class string to undo a height the primitive never sets. */}
-            <TextArea value={env} onChange={setEnv} rows={2} placeholder="API_KEY=sk-…" mono size="md" />
-          </Field>
-          <Field label="Plain values" hint={PLAIN_HINT}>
-            <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
-          </Field>
+          {remote ? (<>
+            <Field label="URL" hint={URL_HINT}>
+              <TextInput value={url} onChange={setUrl} placeholder="https://mcp.example.com/mcp" size="md" surface="high" mono />
+            </Field>
+            <Field label="Headers" hint={HEADERS_HINT}>
+              <TextArea value={headers} onChange={setHeaders} rows={2} placeholder="Authorization: Bearer …" mono size="md" />
+            </Field>
+          </>) : (<>
+            <Field label="Command" hint="The executable that starts the server over stdio.">
+              <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
+            </Field>
+            <Field label="Arguments" hint={ARGS_HINT}>
+              <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
+            </Field>
+            <Field label="Environment" hint={ENV_HINT}>
+              {/* The one raw control left in this modal after the Field migration. A raw element
+                  cannot read FieldLabelCtx, so it stayed unnamed while its seven TextInput siblings
+                  were fixed. `TextArea` claims the Field label the same way they do — and this also
+                  retires the `mcpInputCls.replace('h-9', …)` string surgery, which reached into a
+                  class string to undo a height the primitive never sets. */}
+              <TextArea value={env} onChange={setEnv} rows={2} placeholder="API_KEY=sk-…" mono size="md" />
+            </Field>
+            <Field label="Plain values" hint={PLAIN_HINT}>
+              <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
+            </Field>
+          </>)}
         </>) : (<>
           <Field label="Name" hint="A label for this tool server (optional — defaults to the endpoint).">
             <TextInput value={oaName} onChange={setOaName} placeholder="my-tools" size="md" surface="high" />
@@ -879,7 +921,8 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
               omitted while `saving`, where the label already reads "Adding…". */}
           <Button size="sm" onClick={kind === 'mcp' ? submitMcp : submitOpenai} loading={saving} loadingLabel="Adding…" disabled={saving || !canSubmit}
             disabledReason={saving ? undefined
-              : kind === 'mcp' ? 'Name the server and give it a command' : "Enter the server's endpoint URL"}>Add server</Button>
+              : kind === 'mcp' ? (remote ? 'Name the server and give it a URL' : 'Name the server and give it a command')
+                : "Enter the server's endpoint URL"}>Add server</Button>
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
           {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>
@@ -891,43 +934,61 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
 /** The Environment hint on the EDIT form: what the mask is and the three things a line can do. */
 const EDIT_ENV_HINT = `One KEY=value per line. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, type over it to replace it, or move the line to Plain values to keep it readable in mcp.json. Delete a line to remove the variable.`
 
-/** Edit an existing stdio MCP server — the Add form's fields over the same write
- *  (`PUT /api/mcp/servers/{name}`). The gateway sends names, plain values and, for a stored value,
- *  only that one is saved; such a line shows the mask, and left as it is the saved value is kept
- *  (`keepEnv`), so a secret never comes to the browser and back. A server the form does not own
- *  (PersonalClaw's own, an app's, a remote one) opens to the gateway's sentence saying why. */
+/** Edit an existing MCP server — the Add form's fields over the same write
+ *  (`PUT /api/mcp/servers/{name}`), for a server started with a command and for one at a URL. The
+ *  gateway sends names, plain values and, for a stored value (a secret variable, any header), only
+ *  that one is saved; such a line shows the mask, and left as it is the saved value is kept
+ *  (`keepEnv`, `keepHeaders`), so a secret never comes to the browser and back. Switching the
+ *  transport replaces the definition whole. A server the form does not own (PersonalClaw's own, an
+ *  app's) opens to the gateway's sentence saying why. */
 function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose: () => void; onSaved: () => void }) {
   const key = `tools:mcp-server:${name}`
   const { data: def, error: loadErr, refresh } = useQuery<McpServerDefinition>(key, () => api.mcpServerDefinition(name))
+  const [transport, setTransport] = useState<McpTransport>('stdio')
   const [command, setCommand] = useState('')
   const [args, setArgs] = useState('')
   const [env, setEnv] = useState('')
   const [plainEnv, setPlainEnv] = useState('')
+  const [url, setUrl] = useState('')
+  const [headers, setHeaders] = useState('')
   const [seeded, setSeeded] = useState(false)
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  const remote = transport !== 'stdio'
 
   // Seeded ONCE from the definition: a revalidation landing mid-edit must not replace what is typed.
   useEffect(() => {
     if (seeded || !def || !def.editable) return
-    setCommand(def.command)
-    setArgs(formatArgs(def.args))
-    const fields = envFormFields(def.env)
-    setEnv(fields.secretText)
-    setPlainEnv(fields.plainText)
+    setTransport(def.transport)
+    if (def.transport === 'stdio') {
+      setCommand(def.command)
+      setArgs(formatArgs(def.args))
+      const fields = envFormFields(def.env)
+      setEnv(fields.secretText)
+      setPlainEnv(fields.plainText)
+    } else {
+      setUrl(def.url)
+      setHeaders(headerFormText(def.headers))
+    }
     setSeeded(true)
   }, [def, seeded])
 
   const submit = async () => {
-    if (!command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
+    if (remote && !url.trim()) { setErr("Enter the server's URL (e.g. https://mcp.example.com/mcp)."); return }
+    if (!remote && !command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
     setSaving(true); setErr('')
     try {
-      const argv = parseArgs(args)
-      await api.saveMcpServer(name, {
-        command: command.trim(),
-        args: argv.length ? argv : undefined,
-        ...buildMcpEdit(env, plainEnv),
-      })
+      if (remote) {
+        await api.saveMcpServer(name, { transport, url: url.trim(), ...buildMcpHeaderEdit(headers) })
+      } else {
+        const argv = parseArgs(args)
+        await api.saveMcpServer(name, {
+          transport: 'stdio',
+          command: command.trim(),
+          args: argv.length ? argv : undefined,
+          ...buildMcpEdit(env, plainEnv),
+        })
+      }
       invalidateKeys(key)
       onSaved()
     } catch (e) { setErr(readableErrText(e) || "Couldn't save the server."); setSaving(false) }
@@ -944,23 +1005,35 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
         ) : !def.editable ? (
           <p data-type="body-s" className="text-on-surface-low">{def.reason}</p>
         ) : (<>
-          <Field label="Command" hint="The executable that starts the server over stdio.">
-            <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
+          <Field label="Transport" hint={TRANSPORT_HINT}>
+            <Segmented value={transport} onChange={(t) => { setTransport(t as McpTransport); setErr('') }} options={TRANSPORT_OPTIONS} />
           </Field>
-          <Field label="Arguments" hint={ARGS_HINT}>
-            <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
-          </Field>
-          <Field label="Environment" hint={EDIT_ENV_HINT}>
-            <TextArea value={env} onChange={setEnv} rows={3} placeholder="API_KEY=sk-…" mono size="md" />
-          </Field>
-          <Field label="Plain values" hint={PLAIN_HINT}>
-            <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
-          </Field>
+          {remote ? (<>
+            <Field label="URL" hint={URL_HINT}>
+              <TextInput value={url} onChange={setUrl} placeholder="https://mcp.example.com/mcp" size="md" surface="high" mono />
+            </Field>
+            <Field label="Headers" hint={EDIT_HEADERS_HINT}>
+              <TextArea value={headers} onChange={setHeaders} rows={3} placeholder="Authorization: Bearer …" mono size="md" />
+            </Field>
+          </>) : (<>
+            <Field label="Command" hint="The executable that starts the server over stdio.">
+              <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
+            </Field>
+            <Field label="Arguments" hint={ARGS_HINT}>
+              <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
+            </Field>
+            <Field label="Environment" hint={EDIT_ENV_HINT}>
+              <TextArea value={env} onChange={setEnv} rows={3} placeholder="API_KEY=sk-…" mono size="md" />
+            </Field>
+            <Field label="Plain values" hint={PLAIN_HINT}>
+              <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
+            </Field>
+          </>)}
         </>)}
         <div className="flex items-center gap-2">
           {editable && (
-            <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…" disabled={saving || !command.trim()}
-              disabledReason={saving ? undefined : 'Give the server a command'}>Save</Button>
+            <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…" disabled={saving || !(remote ? url : command).trim()}
+              disabledReason={saving ? undefined : remote ? 'Give the server a URL' : 'Give the server a command'}>Save</Button>
           )}
           <Button variant="ghost" size="sm" onClick={onClose}>{editable ? 'Cancel' : 'Close'}</Button>
           {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
