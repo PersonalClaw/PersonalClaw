@@ -125,11 +125,16 @@ describe('SSM-9 · the Session Map\'s return-to-newest control', () => {
     // The literal, not the constant, so renaming the constant's VALUE cannot quietly rename the
     // control while this file follows it.
     expect(RETURN_TO_LATEST_LABEL).toBe('Jump to latest message')
-    const pill = screen.getByRole('button', { name: 'Jump to latest message' })
-    expect(pill).toHaveAttribute('aria-label', 'Jump to latest message')
-    // §A.7 keeps the pill's visible text too — the name rails read a text label, not an icon-only
-    // control, so an icon-only "refinement" is a regression rather than a tidy-up.
-    expect(pill).toHaveTextContent('Jump to latest')
+    const control = screen.getByRole('button', { name: 'Jump to latest message' })
+    expect(control).toHaveAttribute('aria-label', 'Jump to latest message')
+    // 🔑 THE OWNER'S REFERENCE (2026-09-25) MAKES IT A CIRCULAR DOWN-ARROW, superseding §A.7's text
+    // pill. What §A.7 was protecting survives: the NAME is unchanged, and the words the control no
+    // longer shows become its tooltip, so a pointer user can still read what it does before pressing
+    // it (the reference's own friction list faults unexplained icon-only controls).
+    expect(control).toHaveAttribute('title', 'Jump to latest message')
+    expect(control.className.split(/\s+/)).toContain('rounded-full')
+    expect(control.textContent, 'the circular form shows the arrow only').toBe('')
+    expect(control.querySelector('svg'), 'the down-arrow is the control').not.toBeNull()
   })
 
   it('returns to the newest message on click — once per click', () => {

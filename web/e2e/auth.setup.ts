@@ -42,7 +42,12 @@ setup('authenticate', async ({ page, context }) => {
   // token-proxy plugin relaying the gateway's Set-Cookie onto the preview
   // origin. Do it once, then persist the cookie jar.
   await page.goto(`${BASE}/?token=${encodeURIComponent(TOKEN)}`)
-  await page.waitForLoadState('networkidle').catch(() => {})
+  // 🪤 NO NETWORK WAIT HERE, for `gotoRoute`'s reason (helpers.ts): this app does not go network-idle
+  // on any useful timescale. An unbounded `networkidle` used to sit here, and its only limit was this
+  // test's 30s budget — measured 2026-09-25, it returned after 23.0s — so a busier host spent the whole
+  // budget before the assertion that proves authentication ran. A cap would only be a sleep that
+  // always elapses. Nothing needs the network quiet: the cookie arrives on the handshake's own 302,
+  // which `goto` has already followed, and the shell check below is the barrier.
 
   // Confirm the SHELL mounted — not merely that #root has content. The
   // onboarding screen is also several KB of #root innerHTML, so the old

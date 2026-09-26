@@ -4,7 +4,7 @@ import { spring } from '../../design/motion'
 
 /** SESSION MAP — RETURN-TO-NEWEST (SEMANTIC-SESSION-MAP §A.7, atom SSM-9).
  *
- *  The map's canonical "back to newest" affordance. It is the pill the chat transcript has always
+ *  The map's canonical "back to newest" affordance. It is the control the chat transcript has always
  *  shown when you scroll up — same accessible name, same gate, same gesture — MOVED here, because
  *  §A.7's instruction is the whole atom: **do not invent a new control.**
  *
@@ -30,9 +30,12 @@ import { spring } from '../../design/motion'
  *  user gesture: unconditional, and smooth precisely so the jump reads as travel rather than a
  *  teleport. Collapsing the two would make streaming either yank or crawl.
  *
- *  DESIGN LANGUAGE: the pill is chrome, not content — `bg-surface/95` + `backdrop-blur-md` over the
- *  transcript, `border-outline-variant/50`, ink at `text-on-surface-var` brightening to
- *  `text-on-surface` on hover. Entrance/exit ride `spring.spatialFast`, a gated getter, so
+ *  DESIGN LANGUAGE: a CIRCULAR down-arrow — the owner's reference (2026-09-25) shows exactly this
+ *  once the reader leaves the newest message, and the words it used to carry are the accessible
+ *  name (and the tooltip) rather than a label competing with the transcript. It is chrome, not
+ *  content — `bg-surface/95` + `backdrop-blur-md` over the transcript, `border-outline-variant/50`,
+ *  the arrow at `text-on-surface-var` brightening to `text-on-surface` on hover — and 32px, above
+ *  SC 2.5.8's 24px floor. Entrance/exit ride `spring.spatialFast`, a gated getter, so
  *  `prefers-reduced-motion` collapses it through `design/motion`'s single off-switch
  *  (`reducedMotionAppWide.test.ts`) instead of a hand-rolled transition here.
  */
@@ -46,7 +49,7 @@ export const RETURN_TO_LATEST_LABEL = 'Jump to latest message'
  *
  *  Takes the ELEMENT rather than the ref so the map does not reach into `ChatPage`'s ref cell, and
  *  so a caller with no anchor yet (an unmounted or empty transcript) is a no-op rather than a
- *  crash — the pill can only be visible once the transcript has scrolled, but the `?.` costs
+ *  crash — the control can only be visible once the transcript has scrolled, but the `?.` costs
  *  nothing and removes the ordering question entirely. */
 export function scrollToLatest(end: Element | null | undefined) {
   end?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -68,9 +71,10 @@ export function SessionMapReturnLatest({ scrolledUp, onReturnToLatest }: Session
       {scrolledUp && (
         <motion.button type="button" onClick={onReturnToLatest}
           aria-label={RETURN_TO_LATEST_LABEL}
+          title={RETURN_TO_LATEST_LABEL}
           initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={spring.spatialFast}
-          className="absolute left-1/2 -top-2 z-20 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 bg-surface/95 px-3 h-8 text-on-surface-var text-[0.75rem] shadow-md backdrop-blur-md transition-colors hover:bg-surface-high hover:text-on-surface">
-          <ArrowDown size={13} /> Jump to latest
+          className="absolute left-1/2 -top-2 z-20 -translate-x-1/2 inline-flex size-8 items-center justify-center rounded-full border border-outline-variant/50 bg-surface/95 text-on-surface-var shadow-md backdrop-blur-md transition-colors hover:bg-surface-high hover:text-on-surface">
+          <ArrowDown size={16} aria-hidden />
         </motion.button>
       )}
     </AnimatePresence>

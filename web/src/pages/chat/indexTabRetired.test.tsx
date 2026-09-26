@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { ChatActivityPanel } from './ChatActivityPanel'
 import { SessionMapRail } from './SessionMapRail'
 import { hydrateTurns, deriveActivity, type HistMsg } from './chatTypes'
-import { sessionMapMarks } from './sessionMap'
+import { sessionMapEntries } from './sessionMap'
 
 // ── SSM-13 — THE SUPERSEDED ACTIVITY → INDEX TAB IS GONE, AND STAYS GONE ─────────────────────
 //
@@ -53,7 +53,7 @@ const MESSAGES: HistMsg[] = [
 
 const TURNS = hydrateTurns(MESSAGES)
 const ACTIVITY = deriveActivity(TURNS)
-const MARKS = sessionMapMarks(TURNS)
+const ENTRIES = sessionMapEntries(TURNS)
 
 const USER_TEXTS = ['run the build', 'now the tests']
 const A_FILE = 'src/pages/chat/sessionMap.ts'
@@ -66,7 +66,7 @@ describe('SSM-13 — the Activity panel renders no Index tab', () => {
     expect(TURNS.length).toBeGreaterThan(1)
     expect(TURNS.filter((t) => t.role === 'user')).toHaveLength(USER_TEXTS.length)
     // …and the map DOES index them, so the outline's content is still reachable — just elsewhere.
-    expect(MARKS.filter((m) => m.kind === 'user')).toHaveLength(USER_TEXTS.length)
+    expect(ENTRIES.map((e) => e.preview)).toEqual(USER_TEXTS)
     // The surviving tabs are non-empty, so the render below is a populated panel.
     expect(ACTIVITY.files.length, 'the fixture surfaced no file, so the Files control below is vacuous').toBeGreaterThan(0)
     expect(ACTIVITY.links.length, 'the fixture surfaced no link').toBeGreaterThan(0)
@@ -247,11 +247,12 @@ describe('SSM-13 — nothing in the tree consumes an activity index', () => {
 
   it('🔑 SSM-1\'s model is the session\'s only index, and it is still consumed', () => {
     // The clause is "no consumer OTHER THAN SSM-1's model" — a one-sided absence would also be
-    // satisfied by deleting the map. So the survivor is asserted positively: `sessionMapMarks` has
-    // production importers, and the rail is mounted in the page.
-    const marksUsers = hits(scanned, /sessionMapMarks\(/).filter((rel) => !/\.test\.tsx?$/.test(rel))
-    expect(marksUsers, 'SSM-1\'s model has no non-test consumer — the session would have NO index').not.toHaveLength(0)
-    expect(marksUsers).toContain(join('src', 'pages', 'ChatPage.tsx'))
+    // satisfied by deleting the map. So the survivor is asserted positively: the map's entries —
+    // SSM-1's model grouped one per user message — have a production consumer, and the rail is
+    // mounted in the page.
+    const entryUsers = hits(scanned, /sessionMapEntries\(/).filter((rel) => !/\.test\.tsx?$/.test(rel))
+    expect(entryUsers, 'the map\'s model has no non-test consumer — the session would have NO index').not.toHaveLength(0)
+    expect(entryUsers).toContain(join('src', 'pages', 'ChatPage.tsx'))
     const railUsers = hits(scanned, /<SessionMapRail\b/)
     expect(railUsers, 'the Session Map rail is mounted nowhere — deleting the Index tab would leave no in-session index').toContain(join('src', 'pages', 'ChatPage.tsx'))
   })
@@ -263,15 +264,15 @@ describe('SSM-13 — the survivor still navigates', () => {
     // proof, which asserted this of BOTH surfaces; only one is left to assert it of.
     const jumpToTurn = vi.fn()
     const rail = render(
-      <SessionMapRail marks={MARKS} turnNodes={new Map<number, Element>()} scrollRef={{ current: null }} onJumpTo={jumpToTurn} />,
+      <SessionMapRail entries={ENTRIES} turnNodes={new Map<number, Element>()} scrollRef={{ current: null }} onJumpTo={jumpToTurn} />,
     )
     const ticks = rail.container.querySelectorAll('[data-session-mark]')
-    expect(ticks, 'the rail rendered no marks').toHaveLength(MARKS.length)
-    const nth = MARKS.findIndex((m) => m.kind === 'user')
+    expect(ticks, 'the rail rendered no marks').toHaveLength(ENTRIES.length)
+    const nth = ENTRIES.findIndex((e) => e.preview === USER_TEXTS[1])
     expect(nth, 'the rail carries no user mark, so it is not indexing the turns the Index tab listed').toBeGreaterThan(-1)
     await userEvent.click(ticks[nth])
     expect(jumpToTurn, 'a rail tick reached no jump handler').toHaveBeenCalledTimes(1)
-    expect(jumpToTurn.mock.calls[0][0]).toBe(MARKS[nth].visibleIndex)
+    expect(jumpToTurn.mock.calls[0][0]).toBe(ENTRIES[nth].visibleIndex)
     rail.unmount()
   })
 

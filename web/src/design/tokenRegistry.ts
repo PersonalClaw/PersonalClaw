@@ -3,12 +3,6 @@
 // Appearance settings UI (what to render). Add a token here → it's instantly
 // customizable everywhere. Defaults mirror design/tokens.css.
 
-import {
-  DEFAULT_SESSION_MAP_DENSITY,
-  SESSION_MAP_DENSITIES,
-  SESSION_MAP_DENSITY_VAR,
-} from '../pages/chat/sessionMap'
-
 export type TokenKind = 'color' | 'scalar' | 'select'
 
 export interface ColorToken {
@@ -144,15 +138,6 @@ export const TOKENS: Token[] = [
   // select to the <html> data-ui attribute, whose tokens.css blocks re-scale the
   // whole app's spacing/radius (and, for cli, the font family). comfortable = default.
   sel('--ui-density', 'UI density', 'Layout', 'comfortable', ['comfortable', 'dense', 'cli']),
-  // SSM-14: the Session Map's mark density — a per-surface VIEW preference, which §A.9 of
-  // SEMANTIC-SESSION-MAP places HERE (registry + appearance store + localStorage) rather
-  // than in config.json, because nothing about it needs to sync across devices. Read in JS
-  // off the appearance store (the --bg-style pattern), never through CSS: it selects WHICH
-  // marks the map renders, and the vocabulary + default live with the mark contract in
-  // pages/chat/sessionMap.ts so they cannot be spelled twice.
-  sel(SESSION_MAP_DENSITY_VAR, 'Session map detail', 'Layout', DEFAULT_SESSION_MAP_DENSITY, [
-    ...SESSION_MAP_DENSITIES,
-  ]),
 
   // ── Shape ──
   s('--radius-scale', 'Corner roundness', 'Shape', 1, 0, 2, 0.05),

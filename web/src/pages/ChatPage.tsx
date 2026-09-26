@@ -99,14 +99,7 @@ import { CheckWorkChip } from './chat/CheckWorkChip'
 import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
 import { SessionMapRail } from './chat/SessionMapRail'
 import { SessionMapDrawer } from './chat/SessionMapDrawer'
-import {
-  sessionMapMarks,
-  sessionMapDensityMarks,
-  asSessionMapDensity,
-  SESSION_MAP_DENSITY_VAR,
-} from './chat/sessionMap'
-import { useAppearance } from '../app/appearance'
-import { TOKENS } from '../design/tokenRegistry'
+import { sessionMapEntries } from './chat/sessionMap'
 import { TextRunOwnership } from './chat/coalesceReducers'
 import { SnapshotReplay } from './chat/snapshotReplay'
 import { resolveStalledStream, STREAM_HEAL_WARNING } from './chat/streamStall'
@@ -408,13 +401,6 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
  *  turns plus a compact composer for quick replies without opening the full chat
  *  UI. Streams over the shared WS; "Continue" (full page) is a small control in
  *  the composer's action row. */
-/** The registry entry behind the Session Map's density preference (SSM-14). Resolved once,
- *  from the registry, so the preference has exactly ONE declared default — `selectValue`
- *  reads `token.value` when the user has set no override. */
-const SESSION_MAP_DENSITY_TOKEN = TOKENS.find(
-  (t) => t.kind === 'select' && t.varName === SESSION_MAP_DENSITY_VAR,
-)
-
 function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: () => void }) {
   const [detail, setDetail] = useState<{ title: string; messages: ChatHistoryMsg[] } | null>(null)
   const [failed, setFailed] = useState(false)
@@ -647,9 +633,6 @@ function RoomsRedirect({ navigate }: { navigate: (p: string, opts?: { replace?: 
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion, liveRun, setLiveRun }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void; liveRun: string; setLiveRun: (s: string) => void }) {
   const data = useComposerData()
   const { name } = useIdentity()
-  // SSM-14: the Session Map's persisted mark-density preference, read off the appearance
-  // store (the `--bg-style` → `DotGlow` pattern — a `select` token consumed in JS, not CSS).
-  const { selectValue } = useAppearance()
   // The project this chat scopes under. Seeded from the launch URL (?project=<id> from a
   // project page's Chat button), but ALSO user-pickable on a bare new chat via the
   // composer's project chooser (the vision's "optional project chooser"). Frozen once the
@@ -2718,22 +2701,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // activity panel: the Files / Links tabs, derived from the transcript. No navigation —
   // the Session Map's rail and drawer are the session's only jump surface (SSM-13).
   const activity = useMemo(() => deriveActivity(turns), [turns])
-  // The Session Map's ordered marks (SSM-1) — one per turn plus one per typed sub-event inside
-  // it. Memoised on the same inputs the rail and the drawer both read, so the two forms index
-  // the identical array and the observer in SSM-5 is not rebuilt per render.
-  const allSessionMarks = useMemo(() => sessionMapMarks(turns, subagents), [turns, subagents])
-  // The persisted mark-density preference (SSM-14) is applied HERE, once, rather than inside
-  // either form: the rail and the coarse-pointer drawer must index the IDENTICAL array (a
-  // "Turn 3 of 7" that means a different 7 in each form is two maps), and it keeps the rail a
-  // pure renderer of the marks it is handed. Validated on read — localStorage is untrusted
-  // input and a stale value must degrade to the named default, not to a blank rail.
-  const mapDensity = asSessionMapDensity(
-    SESSION_MAP_DENSITY_TOKEN ? selectValue(SESSION_MAP_DENSITY_TOKEN) : undefined,
-  )
-  const sessionMarks = useMemo(
-    () => sessionMapDensityMarks(allSessionMarks, mapDensity),
-    [allSessionMarks, mapDensity],
-  )
+  // The Session Map's entries — one per USER message, each owning the turns of its exchange.
+  // Derived ONCE, here, and handed to both forms, so the rail and the coarse-pointer drawer index
+  // the identical array (a "Message 3 of 7" that means a different 7 in each form is two maps).
+  const sessionEntries = useMemo(() => sessionMapEntries(turns), [turns])
   /** Scroll the turn at a map coordinate into view — the ONE scroll implementation behind the
    *  rail's tick and the drawer's row, which since SSM-13 are the only two jump surfaces. */
   function jumpToTurn(coord: number) {
@@ -3558,7 +3529,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   costs the centred transcript nothing. */}
               <div className="relative flex min-h-0 flex-1">
               {mapOpen && !isMobile && (
-                <SessionMapRail marks={sessionMarks} turnNodes={turnNodes.current}
+                <SessionMapRail entries={sessionEntries} turnNodes={turnNodes.current}
                   scrollRef={scrollRef} onJumpTo={jumpToTurn} />
               )}
               {/* `data-transcript-scroll` names THIS element as the one `scrollRef` points at, so
@@ -3583,7 +3554,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                     const isLast = i === turns.length - 1
                     const turnTextOf = (t: ChatTurn) => t.segments.map((s) => (s.kind === 'text' ? s.text : '')).join('')
                     return (
-                      <div key={i} className="relative"
+                      // `data-transcript-turn` names a turn node by its side of the exchange, so the
+                      // browser gate can put a REPLY on screen without its question and check the
+                      // Session Map still lights that question — the registry itself is a ref.
+                      <div key={i} className="relative" data-transcript-turn={turn.role}
                         ref={(el) => { const c = markCoordOf(turn, i); if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c) }}>
                         {/* small, fixed, centered glow anchor at the top of the
                             ACTIVE turn — the traveling light targets this stable
@@ -3712,7 +3686,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           {mapOpen && isMobile && started && (
             <SidePanel title="Session map" icon={<ListTree size={18} className="text-primary" />} storeKey="session-map-w"
               fillHeight onClose={() => setMapOpen(false)}>
-              <SessionMapDrawer marks={sessionMarks}
+              <SessionMapDrawer entries={sessionEntries}
                 onJumpTo={(coord) => { pendingMapJump.current = coord; setMapOpen(false) }} />
             </SidePanel>
           )}

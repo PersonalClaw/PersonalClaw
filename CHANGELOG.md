@@ -21,6 +21,29 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **The prompt budget is 4,096 and not 2,048, which is the difference between a floor that answers and one that refuses your second paragraph.** This is the number the headroom contract bounds an assembled prompt against, and the bound is `window − output_reserve`, so 2,048 left **1,728** tokens of input room rather than 2,048. Measured here by driving the real `assemble_context` → headroom-check seam on a fresh home — no memory, no history, the most favourable case there is — a first turn assembles **1,640** tokens, which fits 1,728 with **88** to spare; that figure reproduces to the token the one the context-budget fix recorded when it named this default as the remaining half of the problem. 88 tokens is not a budget, it is a rounding error, and bisecting the user text puts the cliff at **372 characters**: at 372 the prompt is exactly 1,728 and fits, at **373 it is refused outright** — on a *first* message, with nothing in the conversation to trim. At 4,096 the room is 3,776, the same first turn still assembles 1,640 with **2,136** to spare. (Since then the bundled model is sent your message alone, so almost all of the 3,776 is the message's, and a message too long for it is refused with the limit: about 15,000 characters of plain English at this setting. See the prompt-bound fix under Fixed.) **The throughput cost is not where it looks:** the assembled first-turn prompt is **identical at both settings** (1,640 tokens — the assembler's own budget is already far under either room), so a wider window does not make a first answer slower. The extra CPU only arrives once a conversation genuinely grows past 1,728 tokens, which under 2,048 could not happen because the turn was refused instead. It costs nothing else — no licence change, no larger download, no new dependency — and it is still well under the 8,192 the weight itself declares, which is why the setting was always a throughput choice rather than the model's limit. It stays editable in Settings, and its help text now says that lowering it speeds replies and can start refusing longer questions.
 - **A workflow step whose output ignored its declared `schema` now says so on its own row.** [#3545](https://github.com/PersonalClaw/PersonalClaw/issues/3545). A node could declare a `schema`, get back JSON carrying none of the declared keys, and report Done with nothing anywhere saying so. The first symptom was a binding error two or three steps later in a different node, and since [#3544](https://github.com/PersonalClaw/PersonalClaw/issues/3544) not even that, because the reading side now falls back to its declared `default`. The step that produced the output now names both facts on its `step_completed` ledger row, its node row and its `workflow_node_done` event, and the run view shows it as a warning line on that row, for example *the output ignored its declared schema: 2 of 2 declared keys are missing (tier, why); got answer*. It never fails or retries the step, so every run ends exactly as it did before. It covers `infer` nodes and `stage`s, which [#3531](https://github.com/PersonalClaw/PersonalClaw/pull/3531) made checkable by storing a stage's output in its declared shape: over the 47 bundled stages that declare a schema, a conforming answer is named by none of them and prose by all of them. The check reads what the worker returned, before the judge contract fills in a judge's declared keys, so a judge that answered in prose is named too. Driven on `general-project` with a worker that answers in prose, all 12 steps of its six rounds now say so, where before none did. The field is written only when there is something to name, so a conforming run's ledger is byte-identical to before.
 
+### Changed
+
+- **The Session Map is a map of your messages: one marker for each message you sent, all one
+  length, with colour showing which are on screen.** The rail drew a mark for every reply, tool
+  call, approval and error, and used length for both the kind of event and the on-screen region,
+  so its shape changed as you scrolled and a sweep down it rippled. A marker is now a message you
+  sent, and the start of the reply is on its card. At rest every marker is the same length. The
+  messages whose exchange is on screen are in the accent colour and the rest are grey, and
+  scrolling changes only the colour. While you read a long answer, its question stays lit after
+  the question itself has scrolled away. Only the marker under the pointer or the keyboard cursor
+  grows and brightens, with its card beside the rail, and it shrinks back when you move off it.
+  Pointing and arrowing never move the transcript; a click, Enter or Space does.
+  The card shows the time, your message and a muted excerpt of the reply. Each marker is a 32×24
+  target, above WCAG 2.2's 24px minimum, named "Message 3 of 12: …", and the rail tells a screen
+  reader once what its markers are and how to use them. Jump to latest is now a round arrow
+  button. On a phone the drawer lists the same messages, each with the start of its reply.
+  **Design → Layout → "Session map detail" is removed**, since one marker per message leaves
+  nothing to filter; a saved value is ignored. The grey is a new token, `--color-map-rest`, set as
+  far in lightness from the accent as 3:1 contrast on the canvas allows. Each colour clears 3:1 on
+  the canvas in all 12 schemes. The two differ in lightness by 1.7:1 to 4.0:1, short of 3:1, which
+  is fine here: the transcript itself shows what is on screen, and hover and focus are carried by
+  the marker's size and its card. `aria-current` gives assistive tech the on-screen state.
+
 ### Fixed
 
 - **A room keeps showing replies after everyone has spoken, a restart no longer loses a round without a word, and a member whose turn fails says so.** Three Agent Rooms defects with one cause: the round lived only in the memory of the task running it.
@@ -184,6 +207,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **After a very long message, the turn's error rendered about 21,000px below the view**, reachable only through *Jump to latest*, because the decision to follow new content was made after the message's own bubble had pushed the bottom away. Sending now follows that turn to its outcome, a new chat's first message included, unless you scroll away or unfold your message. A message over 16 lines or 1,500 characters opens folded behind *Show full message*, with the whole text still in the page.
   **A link to a chat that doesn't exist** looked like an ordinary empty chat, and a message sent there failed with "No such chat session." and was not saved. It now says *This chat doesn't exist* and offers a new chat, carrying over an unsent message. A read that fails for any other reason says the chat couldn't load and offers Retry.
   **The Connect page dropped the link you opened.** After pasting a token you landed on the dashboard; now you land on the chat or page you opened. Only a dashboard route on the same origin is carried over, and a pasted URL contributes only its token. The password sign-in page lands on the opened route too.
+- **The Session Map's browser tests no longer fail at random on the rail's own animation, and the
+  e2e sign-in step no longer waits on a network that never goes quiet.** "The roving cursor is
+  VISIBLE" and "LENGTH is the channel" read a marker's length the moment it crossed a threshold,
+  while it was still moving. The length is a spring that takes about half a second to land and
+  overshoots, and framer-motion runs it outside the Web Animations API, so no settle helper could
+  see it. The tests failed in 4 of 6 runs at the commit that added them and in 10 of 10 on the
+  commit this change started from; the product was never wrong. They now wait for the marker to
+  move and then for two equal readings at least 100ms apart (`restingLengths` in
+  `web/e2e/sessionMap.spec.ts`), and they check the rules above instead of the old length
+  encoding. `web/e2e/auth.setup.ts` waited for `networkidle` with only the test's 30s budget as a
+  limit, and took 23.0s when measured; it now relies on the shell check that already follows the
+  sign-in redirect.
 
 ### Security
 

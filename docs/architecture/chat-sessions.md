@@ -162,7 +162,9 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
   second SOURCE for one contract, not a second contract. Both reproduce
   `hydrateTurns`'s two collapses — a native-loop prompt re-injection consumes a visible
   slot without producing a turn, and consecutive assistant messages merge into one turn
-  keyed on the last message folded in.
+  keyed on the last message folded in. The map UI draws a coarser view of the same marks:
+  one entry per user message (`sessionMapEntries`, which groups the marks by exchange), so
+  the typed marks remain the contract even though the rail no longer draws every kind.
 - **Two kinds are live-only.** `subagent` and `activity` ride WS streams that are never
   written to the conversation log, so the durable endpoint witnesses
   `user`/`assistant`/`tool`/`error` after a restart, and `approval` once it is decided

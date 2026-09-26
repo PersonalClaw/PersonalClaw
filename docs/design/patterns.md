@@ -225,30 +225,51 @@ All carry `aria-busy`/`aria-label`. **Migrate to it when** you see a bespoke `an
 
 ### Session Map — `web/src/pages/chat/sessionMap*` + `SessionMap*.tsx`
 
-The canonical **index of a long scrollable surface**: a typed mark per indexable event, a narrow
-rail of discrete ticks beside the content, a preview card that answers "what is this one?", one
-jump handler, and one "back to newest". Chat is its only consumer today — it **replaced** the
-Activity → **Index** tab rather than sitting beside it (`CHANGELOG.md` records the deletion of the
-tab, its list body and the `ChatActivity.index` model) — so the parts live under `pages/chat/`
-rather than `ui/`, the way `SlotEmptyState` lives under `pages/dashboard/widgets/`. It is
-documented here because it is the app's one answer to "index this scroller": a second outline
+The canonical **index of a long scrollable surface**: one marker per thing a reader will want to go
+back to, a narrow rail of uniform markers beside the content, a preview card that answers "what is
+this one?", one jump handler, and one "back to newest". Chat is its only consumer today — it
+**replaced** the Activity → **Index** tab rather than sitting beside it (`CHANGELOG.md` records the
+deletion of the tab, its list body and the `ChatActivity.index` model) — so the parts live under
+`pages/chat/` rather than `ui/`, the way `SlotEmptyState` lives under `pages/dashboard/widgets/`. It
+is documented here because it is the app's one answer to "index this scroller": a second outline
 panel or "jump to section" list is the thing not to build.
 
 | Part | File | Owns |
 |---|---|---|
-| **mark contract + derivation** | `sessionMap.ts` | `SessionMark`, `SESSION_MARK_KINDS`, `sessionMapMarks()`, `SESSION_MAP_MIN_MARKS`, the density preference |
+| **typed index + map entries** | `sessionMap.ts` | `SessionMark`, `SESSION_MARK_KINDS`, `sessionMapMarks()`; `SessionMapEntry`, `sessionMapEntries()`; `SESSION_MAP_MIN_MARKS` |
 | **current region** | `sessionMapRegion.ts` | `useVisibleTurns()` (the `IntersectionObserver`) + `currentMarkRange()` (pure) |
-| **the rail** | `SessionMapRail.tsx` | ticks, the roving cursor, hover/reveal, the halo |
-| **the preview card** | `SessionMapCard.tsx` | `sessionMapCardContent()`, `sessionMapMarkName()`, the card body |
-| **coarse-pointer form** | `SessionMapDrawer.tsx` | one 44px row per mark, kind in **words** |
-| **return-to-newest** | `SessionMapReturnLatest.tsx` | the app's **one** "back to the newest turn" pill |
+| **the rail** | `SessionMapRail.tsx` | the markers, the roving cursor, the one expanded marker, the reveal |
+| **the preview card** | `SessionMapCard.tsx` | `sessionMapMarkName()`, the card body |
+| **coarse-pointer form** | `SessionMapDrawer.tsx` | one 44px row per user message, the card's content inlined |
+| **return-to-newest** | `SessionMapReturnLatest.tsx` | the app's **one** "back to the newest message" control |
 
-#### Marks — the closed contract every consumer reads
+#### The owner's rules (2026-09-25)
+
+The owner ruled on the form property by property, and each rule replaced something an earlier form
+did. They are the spec; the rail's header restates them beside the code.
+
+1. **A marker is a user message.** Replies and their tool calls are not markers: a reply is too long
+   to show, and its opening is already on the question's card.
+2. **Every marker rests at one length.** At rest, length encodes nothing — not structure, not
+   position in the session.
+3. **What is on screen is said by colour alone**, never by size, so scrolling the transcript never
+   moves the rail's geometry.
+4. **Only the marker under the pointer or the keyboard cursor expands**, beyond the resting length and
+   in a brighter tone, with its card beside it. Its neighbours do not move, and it returns to the
+   resting length when the pointer or focus leaves.
+5. **Skimming moves nothing but the card.** Pointing and arrowing preview; only a click, `Enter` or
+   `Space` jumps the transcript.
+
+The rail stays put while the transcript scrolls (it is a sibling of the scroller — see **Usage**),
+the return-to-newest control is a circular button, and the phone drawer follows the same rules.
+
+#### The typed index — the contract the durable endpoint mirrors
 
 `SessionMarkKind` is a **closed** seven-value union — `user · assistant · tool · approval · error ·
 subagent · activity` — exported both as the type and as the runtime `SESSION_MARK_KINDS` array so a
-consumer or test validates against the set instead of re-listing it. Adding a kind is a contract
-change: every consumer switches on the union.
+consumer or test validates against the set instead of re-listing it. The rail no longer draws every
+kind (rule 1), and the vocabulary stays anyway: it is the shape the durable endpoint mirrors, and the
+map's entries are grouped from it.
 
 `sessionMapMarks(turns, subagents)` is the one pure derivation. It emits **one mark per turn**
 (kind = its role), then one typed sub-event mark per `tool` / `approval` / `error` /
@@ -262,20 +283,15 @@ not index-worthy.
 |---|---|
 | `markIndex` | 0-based position in the returned array — stable identity and render key |
 | `kind` | the closed vocabulary above |
-| `role` | the **owning turn's** role; a sub-event inherits it, so tone/ARIA treat user vs. agent uniformly |
+| `role` | the **owning turn's** role; a sub-event inherits it |
 | `visibleIndex` | the **jump coordinate** (the turn's `visibleIndex`) — **not** `markIndex`: a turn emits up to seven marks that all share one |
 | `ts` | the owning turn's timestamp, `''` when it carries none — never null |
-| `preview` | one-line **plain text** (markdown stripped via `previewText`, capped at 140) for the row, the card and the accessible name |
+| `preview` | one-line **plain text** (markdown stripped via `previewText`, capped at 140) |
 | `ok?` | tool marks only: present and `false` on a failed call, `undefined` otherwise — carried because a tool's outcome cannot be recovered once the raw segment is gone |
 
-> **As-built: `ok` has no consumer yet.** The derivation sets it, and nothing reads it — the rail
-> paints exactly two tones (current / history), so a failed tool tick is today indistinguishable from
-> a successful one. The field is the contract half of a danger paint that has not shipped; if you add
-> it, read `ok` here rather than re-deriving failure from the segment.
-
-**Self-suppression:** `SESSION_MAP_MIN_MARKS = 2`. One threshold, two behaviours — the rail returns
-`null` before its first hook; the drawer, which the user deliberately opened, renders the canonical
-`EmptyState` instead of a blank panel.
+> **As-built: `ok` has no consumer.** The derivation sets it and nothing reads it — the map draws
+> user messages only, so there is no tool marker to paint. If a failure paint ever returns, read `ok`
+> here rather than re-deriving failure from the segment.
 
 > **🔴 THE MARK VOCABULARY HAS A SECOND PRODUCER IN CORE — adding a kind is a contract change on
 > BOTH sides.** `dashboard/chat_session_map.py` (`GET /api/chat/sessions/{session}/map`) is the
@@ -290,190 +306,239 @@ not index-worthy.
 >   assistant · tool · approval · error`). `subagent` rides a WS stream never written to the
 >   conversation log, `activity` segments are live-only, and `approval` survives a restart once
 >   it is decided (a pending one is held back from the save). Run the frontend's own
->   `sessionMapMarks()` (`web/src/pages/chat/sessionMap.ts:156`) over the hydrated turns when you
->   need the live kinds; read the endpoint when you need durability.
+>   `sessionMapMarks()` over the hydrated turns when you need the live kinds; read the endpoint when
+>   you need durability.
 > - **The endpoint's `preview` is not always the first 140 characters.** It prefers a persisted
 >   per-turn *summary label* when one is present, because an assistant mark's raw opening is usually
 >   a preamble; the client derivation has no such label and always previews the text.
 >
-> The rail today renders the **client** derivation — nothing in `web/src/lib/api.ts` fetches the map
-> endpoint — so the two producers do not yet meet in this surface. That is what makes the mirror easy
-> to break silently: change a kind here and only the Python side's own tests notice.
+> The rail today renders entries grouped from the **client** derivation — nothing in
+> `web/src/lib/api.ts` fetches the map endpoint — so the two producers do not yet meet in this
+> surface. That is what makes the mirror easy to break silently: change a kind here and only the
+> Python side's own tests notice (`tests/test_session_map_endpoint.py` parses `SESSION_MARK_KINDS`
+> out of `sessionMap.ts`).
 
-**Density** is a persisted **view** preference, not config: `detailed` (default, every mark) or
-`turns` (turn marks only, for a tool-heavy session whose sub-event marks are the majority). It is
-registered as a `select` token under `--session-map-density` in `design/tokenRegistry.ts`, so the
-appearance store persists it and `DesignPanel` renders the control for free — deliberately **not** a
-`config.json` field, because nothing about it needs to sync across devices. `localStorage` is
-untrusted input, so `asSessionMapDensity()` narrows a stored string to the vocabulary and falls back
-to the **named** default (not to an array position). `sessionMapDensityMarks()` filters **and
-re-indexes**: `markIndex` is documented as a position in the returned array and `sessionMapMarkName`
-counts "Turn X of N" over the list it is handed, so a filtered list carrying pre-filter indices
-would keep the field name and break its meaning.
+#### Entries — what the map shows
 
-> **Apply density once, in the host.** `ChatPage` filters before handing the array to either form
-> (`ChatPage.tsx` — `sessionMarks`), because the rail and the drawer must index the **identical**
-> array: a "Turn 3 of 7" that means a different 7 in each form is two maps, not one.
+`sessionMapEntries(turns)` returns **one entry per user message**. It is built by **grouping** the
+typed index by exchange rather than by re-walking the turns, so an entry and the endpoint's marks
+agree about coordinates and previews by construction.
 
-#### Current region — the accent means "what is on screen"
+| Field | Meaning |
+|---|---|
+| `markIndex` | 0-based position among the entries — the render key, and the N of "Message N of M" |
+| `visibleIndex` | the user message's jump coordinate (`markCoordOf`) — what `onJumpTo` receives |
+| `coords` | **every** turn coordinate in the exchange, in order: the message, then each reply turn up to the next user message |
+| `ts` | the user message's timestamp, `''` when it carries none |
+| `preview` | the user message, one line of plain text |
+| `response` | the opening of the reply, one line of plain text — `''` until reply text has arrived |
+
+Agent output that precedes the first user message (an agent-initiated or resumed session) opens no
+entry: there is no question to file it under.
+
+**Self-suppression:** `SESSION_MAP_MIN_MARKS = 2` entries. One threshold, two behaviours — the rail
+returns `null` before its first hook; the drawer, which the user deliberately opened, renders the
+canonical `EmptyState` instead of a blank panel.
+
+> **Derive once, in the host.** `ChatPage` derives `sessionEntries` once and hands the same array to
+> both forms, because the rail and the drawer must index the **identical** array: a "Message 3 of 7"
+> that means a different 7 in each form is two maps, not one. There is no density preference to
+> filter by — the `detailed`/`turns` setting was deleted along with the per-event marks it filtered.
+
+#### Current region — the colour means "what is on screen"
 
 Two pieces, split so the arithmetic is testable without a DOM:
 
 - **`useVisibleTurns(turnNodes, scrollRef, coords)`** — an `IntersectionObserver` over the host's
   live node registry, rooted on the **transcript scroll container**, not the window (the transcript
   is a pane with a header above and a composer below; "in the window" and "in the pane" are
-  different rectangles). It accumulates across callbacks, because an observer reports only what
-  *changed* — one entry is not a statement about the other turns.
-- **`currentMarkRange(marks, visibleTurns)`** — pure; returns the **inclusive** `[lo, hi]` slice, and
-  `[0, -1]` for empty so `i >= lo && i <= hi` is simply false for every index rather than needing a
-  null check.
+  different rectangles). It observes **every coordinate an entry owns** — the question and each turn
+  of its answer — and accumulates across callbacks, because an observer reports only what *changed*.
+- **`currentMarkRange(entries, visibleTurns)`** — pure; returns the **inclusive** `[lo, hi]` slice,
+  and `[0, -1]` for empty so `i >= lo && i <= hi` is simply false for every index.
 
-> **🔑 The binary search is a contract, not an optimisation.** `visibleIndex` is non-decreasing
-> across the mark array (sub-events inherit their turn's coordinate; subagents carry the last
-> turn's), which is what lets a *range of turns* become a *contiguous slice of marks* — and that is
-> why the accent can be a range test instead of per-mark set membership. `sessionMapRegion.test.ts`
-> asserts the ordering directly rather than trusting it.
+> **🔑 A coordinate belongs to the last entry that starts at or before it.** An entry owns every turn
+> from its own message up to the next entry's, so an answer on screen lights its question. That is the
+> whole of "reading a long answer keeps its question lit" — the state a reader spends the most time
+> in, and the one the earlier rule (an entry is current only while its *own* turn is on screen) left
+> dark.
+>
+> **🔑 The binary search is a contract, not an optimisation.** `visibleIndex` is strictly increasing
+> across the entries, which is what lets a *range of turns* become a *contiguous slice of entries* —
+> and that is why the colour can be a range test instead of per-entry set membership.
+> `sessionMapRegion.test.ts` checks it against a linear reference over every window.
 >
 > **🪤 The re-observe key is the coordinate LIST, and choosing it is the whole design.** The node
 > registry is a mutated-in-place `useRef` Map, so its identity can never say "a new turn mounted";
-> the marks array changes on **every streamed token** (a preview grows), so keying on it would tear
-> down and rebuild the observer once per token. The coordinate list is the discriminator that
-> separates the two events. Follow this if you index a streaming surface.
+> the entries change on **every streamed token** (an entry's `response` grows), so keying on them
+> would tear down and rebuild the observer once per token. The coordinate list is the discriminator
+> that separates the two events. Follow this if you index a streaming surface.
 >
 > **🪤 The empty visible set is not a placeholder branch.** Between mount and the observer's first
-> callback — and in any environment with no layout — the honest answer is the newest turn, which is
+> callback — and in any environment with no layout — the honest answer is the newest entry, which is
 > where an unscrolled surface *is*. One total function, not a second mechanism to keep in step.
 
-Tone carries **position-in-session and nothing else**: the current region paints `--color-primary`
-(One-Voice — coral means "the agent / live / current"), history paints `--color-on-surface-low`. The
-track is a 1px `--color-rail` hairline, never a full-height coloured side-stripe (the Tone-Not-Line
-rule, enforced by `sideStripeDoctrine.test.ts`).
+#### Markers — one length at rest, colour for what is on screen
+
+Each marker is a 2px line inside a 32×24 button. At rest every marker is 12px long
+(`MARK_REST_SCALE = 0.5` of the 24px line), whatever it indexes and whether or not it is on screen.
+The on-screen region paints `--color-primary` (One-Voice — coral means "the agent / live / current")
+and the rest paints `--color-map-rest`, a neutral minted for this rail (see **Contrast**). Only the
+pointed-at marker changes size: it grows to the full 24px (`MARK_EXPANDED_SCALE`) and brightens, to
+`--color-primary-emphasis` on screen and to `--color-on-surface` off it. Which marker is pointed at
+is rail state rather than per-marker state, because it is a singleton — a pointer moving from one
+marker to the next hands the expansion over and never leaves two expanded.
+
+There is **no track**. The earlier 1px `--color-rail` hairline measured 1.000:1 on the light canvas
+(it painted nothing), and a column of markers on a constant pitch already reads as a rail;
+`SessionMapRail.test.tsx` asserts its absence. Nothing here is a coloured side-stripe either (the
+Tone-Not-Line rule, `sideStripeDoctrine.test.ts`): the tone lives in discrete markers that are the
+nav targets.
 
 #### Preview card — "what is this one?"
 
-Each mark is the trigger for a per-mark `ui/Popover` (portalled, `placement="bottom"`, 300px — a
-preview line wants ~45-55 characters; wider and the card occludes the very turn it describes). The
-frosted material, corner, entrance spring, viewport clamp, z-index, single-layer Escape and
-focus-restore all come from the shared primitive; the card owns only its body. Pointer intent is
-two delays: **150ms to open** (so a pointer merely *crossing* the rail does not strobe a card per
-tick) and **120ms to close** (the bridge that lets the pointer leave a 4px tick, cross the gap and
-land on the card to read or select the excerpt).
+Each marker is the trigger for a per-marker `ui/Popover` (portalled, `placement="right"` so it sits
+beside the rail instead of over the markers below it, 300px — a preview line wants ~45-55
+characters). The frosted material, corner, entrance spring, viewport clamp, z-index, single-layer
+Escape and focus-restore all come from the shared primitive; the card owns only its body:
 
-`sessionMapCardContent(marks, index)` is pure and derives from **the mark list, not the
-transcript** — which keeps the rail a pure function of `SessionMark[]` instead of re-hydrating
-turns behind its back. It yields `roleLabel` ("You" / "Assistant", the words the transcript already
-uses), `ts`, `request`, `response`, `turnPosition`, `turnTotal`. The **request** is the nearest
-`user` mark at or before this one; the **response** is the mark's **own** preview *except* when the
-mark is the request itself, in which case it is the next assistant mark.
+- a small **timestamp** (caption, `--color-on-surface-low`); an unparseable one renders **nothing**
+  rather than "Invalid Date" (`lib/epoch`'s contract);
+- the **request**, clamped to two lines, in `--color-on-surface` — not the low-contrast ramp, which
+  is for chrome, never for the sentence you came to read;
+- under a hairline divider, a **muted excerpt of the reply's opening**, clamped to three lines, in
+  `--color-on-surface-var`.
 
-> **🪤 That exception is what stops seven identical cards.** A turn emits up to seven marks sharing
-> one coordinate and one timestamp, so a card built from the exchange alone would answer "what is
-> this one?" with "the same as its neighbour". The response slot shows the mark's own line — the tool
-> line for a tool tick, the error text for an error tick.
->
+There is no role label: every entry is a user message and its excerpt is the reply, so a "You" on
+every card would label the one thing the map never varies.
+
+Pointer intent is two delays: **150ms to open** (so a pointer merely *crossing* the rail does not
+strobe a card per marker) and **120ms to close** (the bridge that lets the pointer leave the marker,
+cross the gap and land on the card to read or select the excerpt).
+
 > **🔑 Exactly one card open is a property of focus, not coordination.** `Popover.openSignal` is
 > one-way (nothing reaches `setOpen(false)`), so revealing card *j* while *i* was open would stack
-> them. Instead the card the cursor opened belongs to the mark that has **focus**, which the platform
-> already keeps a singleton, and a mark closes its own card on `blur`. `kbOpen` records *who opened
-> it*, because a pointer-opened card must not be dismissed by the blur that a click **into** the card
-> causes.
-
-An unparseable timestamp renders **nothing** rather than a placeholder — `lib/epoch`'s contract — so
-a turn with no `ts` shows a card with no clock instead of "Invalid Date".
+> them. Instead the card the cursor opened belongs to the marker that has **focus**, which the
+> platform already keeps a singleton, and a marker closes its own card on `blur`. `kbOpen` records
+> *who opened it*, because a pointer-opened card must not be dismissed by the blur that a click
+> **into** the card causes.
 
 #### Accessibility
 
-- **Landmark, once.** The rail is `<nav aria-label="Session map">`. The drawer adds **no** nav
-  landmark: it renders inside `ui/SidePanel`, already a `role="region"` named "Session map", and
-  nesting two same-named regions for one surface is the defect.
-- **One tab stop, roving `tabIndex`.** The slot starts on the current region's first mark; arrows
-  move it, `Home`/`End` go to the ends, `PageUp`/`PageDown` step 5 **marks** (not turns — a turn can
-  emit seven ticks, so a turn-sized page is a different distance every press), `Enter`/`Space` jump.
+- **Landmark, once.** The rail is `<nav aria-label="Session map">`, described by a visually hidden
+  hint ("One mark per message you sent. Point at or arrow to a mark to preview it; click it or press
+  Enter to jump to it.") so what the markers are is said once rather than on every marker. The drawer
+  adds **no** nav landmark: it renders inside `ui/SidePanel`, already a `role="region"` named
+  "Session map", and nesting two same-named regions for one surface is the defect.
+- **One tab stop, roving `tabIndex`.** The slot starts on the current region's first marker; arrows
+  move it, `Home`/`End` go to the ends, `PageUp`/`PageDown` step 5 markers, `Enter`/`Space` jump.
   `preventDefault()` fires only for handled keys: it stops the arrows scrolling the surface out from
   under the cursor **and** stops the browser's own button activation firing a second jump.
 - **Passive focus must not open the card; an explicit cursor key must.** The rail sits between the
   content and the composer, so Tab-through would flash a card on the way past — but a sighted
-  keyboard user arrowing down 4px ticks with no card is navigating blind. The discriminator is
+  keyboard user arrowing down markers with no card is navigating blind. The discriminator is
   **intent**: a cursor key sets a one-shot `reveal` immediately before moving focus and the receiving
   `onFocus` consumes it. Tab never sets it.
-- **Accessible name:** `sessionMapMarkName` → `Turn N of M: <subject>`, the subject bounded to 40
-  chars through `lib/rowSubject`. Built from the **mark's own** preview, not the exchange's request —
-  naming from the exchange would give one turn's seven ticks one name, the duplicate-name defect
-  `computedNames.test.tsx` measured at ×83 elsewhere.
+- **The cursor is visible twice.** The focused marker keeps the global `:focus-visible` ring
+  (`tokens.css`, 2px opaque `--color-primary`; no `outline-none` anywhere in the rail) **and** expands
+  like a hovered one, so a keyboard user sees where the cursor is through the platform's channel and
+  the design's.
+- **Accessible name:** `sessionMapMarkName` → `Message N of M: <subject>`, the subject bounded to 40
+  chars through `lib/rowSubject`. The drawer's rows and the live region read the same position, so
+  the two forms cannot number a message differently.
 - **Live region:** `role="status" aria-live="polite"`, and it announces **only** the jump ("Jumped to
-  turn N of M") and only while the rail holds focus. The name already states the cursor position on
-  every move, so repeating it would be double-speak; what a screen-reader user cannot otherwise tell
-  is whether the *content* moved, since focus stays on the rail. It clears when focus leaves the rail
-  entirely, so a later hover cannot re-announce a jump nobody made.
-- **Focus ring:** no `outline-none` anywhere — the mark takes the global `:focus-visible` ring
-  (`tokens.css`, 2px opaque `--color-primary`, no alpha) rather than minting a local one.
-- **Hit target:** `.hit-24-x` gives each 4px tick the 24px pressable band (WCAG 2.2 SC 2.5.8) that
-  `NavRail`'s splitter uses. The band is **horizontal only, deliberately** — it pins to the element's
-  own vertical extent, and on a rail whose ticks sit a few px apart a vertical 24px band would
-  swallow its neighbours.
+  message N of M") and only while the rail holds focus. The name already states the cursor position
+  on every move, so repeating it would be double-speak; what a screen-reader user cannot otherwise
+  tell is whether the *content* moved, since focus stays on the rail. It clears when focus leaves the
+  rail entirely, so a later hover cannot re-announce a jump nobody made.
+- **Hit target:** the pressable area is the **whole row**, 32×24, and the rows are flush — every
+  pixel of the rail belongs to some marker, and each clears WCAG 2.2 SC 2.5.8's 24×24. The `.hit-24-x`
+  band the tick form used is gone: it widens only the horizontal axis, and the failing axis was the
+  tick's 4px height.
 - **🔴 The rail's `ml-4` is load-bearing clearance, and it must not become a t-shirt token.** The
-  rail mounts against the shell's content-column edge, where `NavRail`'s splitter wears the same
-  `.hit-24-x` band plus `z-10`. Measured at 1280×420 on a 196px nav, `elementFromPoint` at every
-  tick's own centre returned the **splitter**, 6 of 6 — every mark un-clickable by pointer at the
-  default nav width. `ml-4` is a real 16px at every density; `--spacing-l` is `16px *
-  var(--space-scale)` and `tokens.css` drops that scale to 0.8 and 0.68, so `ml-l` would be 12.8px
-  and 10.9px against a fixed 14px requirement and the stolen target would return, invisibly, for
-  exactly the users who chose tighter spacing.
-- **Touch:** drawer rows are `min-h-11` (44px). `.hit-24-x` is deliberately **not** reused there —
-  it grows a hairline to the 24px *pointer* minimum, which is a different and smaller target than a
-  thumb. The drawer also carries kind as **words** (`KIND_LABEL`), not tone: it has no current-region
-  observer, and per-kind colour would mint a third vocabulary for one closed set.
-- **Reduced motion:** the halo runs on `physics.snappy` and the drawer rows and pill on `spring.*` —
-  gated getters, so `prefers-reduced-motion` collapses them through `design/motion`'s single
-  off-switch (`reducedMotionAppWide.test.ts`), never a hand-rolled spring.
-- **Contrast:** a mark is a UI component, not text, so **SC 1.4.11 at 3:1** governs it — not 1.4.3's
-  4.5, which a 4px tick is not subject to. `design/schemeContrast.test.ts` measures both mark tones
-  on the rail's real ground across 12 schemes × 2 modes: worst **4.37** (light / coral / current),
-  best 10.87. It parses the tones out of the component rather than restating them, so a repaint is
-  followed rather than silently un-measured.
+  rail mounts against the shell's content-column edge, where `NavRail`'s splitter wears a `.hit-24-x`
+  band plus `z-10`. Measured at 1280×420 on a 196px nav, `elementFromPoint` at every mark's own
+  centre returned the **splitter**, 6 of 6 — every mark un-clickable by pointer at the default nav
+  width. `ml-4` is a real 16px at every density; `--spacing-l` is `16px * var(--space-scale)` and
+  `tokens.css` drops that scale to 0.8 and 0.68, so `ml-l` would be 12.8px and 10.9px against a fixed
+  14px requirement and the stolen target would return, invisibly, for exactly the users who chose
+  tighter spacing.
+- **The edge fade must not dim a resting marker.** The list fades its own top and bottom by
+  `--spacing-xl` so an overflowing rail ends in a gradient, and it is **padded by the same token**, so
+  a list that fits shows every marker at full strength. Unpadded, the first and last markers sat 12px
+  into the fade at 60% alpha, which composites the rest tone to about 1.9:1 on the canvas. The roving
+  cursor scrolls the rail until its marker clears the fade, not just the box edge.
+- **Touch:** drawer rows are `min-h-11` (44px) and carry the card's content inline — the request (two
+  lines), the reply's opening (one line) and the clock — because a touch device has no hover to reveal
+  a card with.
+- **Reduced motion:** the marker's length runs on `physics.snappy` and the drawer rows and the return
+  control on `spring.*` — gated getters, so `prefers-reduced-motion` collapses them through
+  `design/motion`'s single off-switch (`reducedMotionAppWide.test.ts`), never a hand-rolled spring.
+  With motion off a marker still expands; it just does not travel there. Colour switches and never
+  animates.
+- **Contrast:** a marker is a UI component, not text, so **SC 1.4.11 at 3:1** governs it — not
+  1.4.3's 4.5. `design/schemeContrast.test.ts` parses both resting tones and both lit tones out of the
+  component and measures them on the rail's real ground, the canvas, across 12 schemes × 2 modes: the
+  on-screen accent 5.60-12.93, `--color-map-rest` 3.21 (dark) / 3.23 (light). It also asserts that
+  the on-screen and off-screen tones differ in **lightness** by at least 1.7:1 in all 24 combinations
+  (worst 1.733, light / slate; best 4.035), and that each lit tone out-contrasts its resting tone.
 
-> **Two measured a11y limitations are recorded and deliberately NOT asserted** — each needs a design
-> ruling the map does not own, and an invented assertion would either be red on arrival or bless the
-> defect:
+> **Decided (2026-09-25): the two tones do not need 3:1 between them, and the rail keeps the accent
+> for on-screen messages and the grey for the rest.** Three reasons:
 >
-> 1. **The current region is encoded by hue alone.** `--color-primary` vs `--color-on-surface-low`
->    measures **1.004:1** (dark / coral) and never exceeds 1.944 in any scheme × mode. The accessible
->    name never says "current" and the halo paints only on hover/focus, so a reader with
->    achromatopsia cannot locate the current region. That is an **SC 1.4.1 (Use of Color)** question
->    about the *encoding*, and fixing it means a second visual channel (size / shape / ring). What
->    *is* asserted is the floor that keeps the question answerable: the two tones must remain two
->    different tokens, so collapsing them to one reds.
-> 2. **The track is invisible in light mode.** `--color-rail` is `#f0f4f8` and so is
->    `--color-canvas` — byte-identical, **1.000:1** (1.163 in dark). No WCAG rule is broken: the
->    track is `aria-hidden` and documented decorative ("the marks are the targets"). But the tone is
->    shared with `NavRail`, which uses it as a *background* rather than a hairline, so a retint is a
->    cross-surface change with visual baselines attached, not a local fix.
+> 1. **Which messages are on screen is supplementary information.** The transcript itself shows what
+>    is on screen, so SC 1.4.1 does not require the rail's colour to carry that on its own, and the
+>    step between the two states does not need 3:1. It measures 1.73-4.03:1 (worst light / slate). A
+>    3:1 step is out of reach with the accent in any case: with both tones at 3:1 on the canvas, it
+>    would need an accent about 9:1 from the canvas, and the accent is 5.6-12.9:1. `aria-current`
+>    still gives the state to assistive tech, and `schemeContrast.test.ts` keeps the 1.7:1 floor so
+>    the step cannot quietly shrink.
+> 2. **Each marker meets SC 1.4.11 on its own.** Both tones clear 3:1 against the rail's ground, the
+>    canvas, in all 12 schemes × 2 modes: the accent at 5.60-12.93, `--color-map-rest` at 3.21 (dark)
+>    and 3.23 (light). No scheme overrides either the grey or the canvas, and
+>    `schemeContrast.test.ts` asserts every scheme × mode.
+> 3. **The essential interaction states are not colour.** Hover and focus are carried by size (the
+>    marker grows to 24px), by the card, and for focus by the ring. The brighter tone only adds to
+>    them.
 
 Both forms are gated in a real browser: `web/e2e/a11y.spec.ts` runs axe with the desktop rail
 **open** and its card open, and on the 390px drawer, each with a reachability floor so a clean axe
-result cannot come from a surface it never visited; `web/e2e/sessionMap.spec.ts` walks the keyboard
+result cannot come from a surface it never visited. `web/e2e/sessionMap.spec.ts` walks the keyboard
 path (Tab reaches the rail, arrows rove the single tab stop, `Enter` and `Space` each move the
 transcript in opposite directions so neither can pass on the other's scroll), asserts scroll-fixity,
-and reads the rail's real painted backdrop so re-parenting it reds loudly.
+reads the rail's real painted backdrop so re-parenting it reds loudly, and pins the owner's rules:
+the 32×24 row, one resting length with no marker inside the fade, colour following the scroll while
+no geometry moves, only the pointed-at marker expanding and letting go, the card beside the rail,
+expansion without travel under reduced motion, the visible roving cursor, and an answer on screen
+keeping its question lit.
+
+> **🪤 Read a marker's length after it has SETTLED, not when it crosses a threshold.** The length is a
+> framer-motion spring driven from framer's own frame loop — `document.getAnimations()`, and so
+> `settleEntranceAnimations`, cannot see it — and it takes about half a second to land. The first two
+> browser tests of this rail awaited only the first sample past a threshold and then compared the
+> shape, i.e. they compared it mid-flight: measured frame by frame, the hovered mark crossed the
+> threshold at ~110ms while its neighbour was still at 17.2-18.1px on its way to 18.6, and the cursor
+> test read a mark at 12.15px, one frame above its 12.12 rest. They were red in 4 of 6 runs at the
+> commit that added them. `sessionMap.spec.ts`'s `restingLengths` waits for movement first and then
+> for two equal readings at least 100ms apart; reuse it.
 
 **Usage**
 
 ```tsx
-import { sessionMapMarks, sessionMapDensityMarks, asSessionMapDensity } from './chat/sessionMap'
+import { sessionMapEntries } from './chat/sessionMap'
 import { SessionMapRail } from './chat/SessionMapRail'
 import { SessionMapDrawer } from './chat/SessionMapDrawer'
 import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
 
-// derive once, filter once — both forms index the identical array
-const all = useMemo(() => sessionMapMarks(turns, subagents), [turns, subagents])
-const marks = useMemo(() => sessionMapDensityMarks(all, density), [all, density])
+// derive once — both forms index the identical array
+const entries = useMemo(() => sessionMapEntries(turns), [turns])
 
 // 🔑 the rail is a SIBLING of the scroller, never a child: an element outside the scroll
 // container has no scroll offset to inherit, so no `sticky`, no scroll listener and no
 // re-positioning code exists to get wrong.
 <div className="relative flex min-h-0 flex-1">
   {mapOpen && !isMobile && (
-    <SessionMapRail marks={marks} turnNodes={turnNodes.current}
+    <SessionMapRail entries={entries} turnNodes={turnNodes.current}
       scrollRef={scrollRef} onJumpTo={jumpToTurn} />
   )}
   <div ref={scrollRef} data-transcript-scroll className="relative min-w-0 flex-1 overflow-y-auto">
@@ -482,9 +547,9 @@ const marks = useMemo(() => sessionMapDensityMarks(all, density), [all, density]
   </div>
 </div>
 
-// coarse pointer: ONE named header control opens a drawer over the same marks + same jump
+// coarse pointer: ONE named header control opens a drawer over the same entries + same jump
 <SidePanel title="Session map" fillHeight onClose={() => setMapOpen(false)}>
-  <SessionMapDrawer marks={marks} onJumpTo={jump} />
+  <SessionMapDrawer entries={entries} onJumpTo={jump} />
 </SidePanel>
 ```
 
@@ -497,11 +562,11 @@ mobile that control **is** the in-session navigation.
 panel, a "jump to section" list, or a second back-to-newest control. **Never add a second
 return-to-newest** — `SessionMapReturnLatest.test.tsx` derives single-implementation over the whole
 `web/src` tree, so a duplicate anywhere turns red rather than shipping two names for one intent.
-Tests key off the stable `data-session-map-*` / `data-session-mark` hooks (plus `data-kind` and
-`data-current`); keep them when you touch the markup.
+Tests key off the stable `data-session-map-*` / `data-session-mark` hooks (plus `data-current` and
+`data-expanded`); keep them when you touch the markup.
 
 > **NOTE: not yet a generic `ui/` primitive.** The derivation is typed to chat's
-> `ChatTurn` / `Segment` / `SubagentCard`, so a second consumer means extracting `sessionMapMarks`
-> behind an adapter (the rail, card, region and drawer are already pure over `SessionMark[]` and need
-> no change) — **not** copying the rail. The mark vocabulary is closed for the same reason: a new kind
-> is a contract change every consumer switches on.
+> `ChatTurn` / `Segment` / `SubagentCard`, so a second consumer means extracting `sessionMapEntries`
+> behind an adapter (the rail, card, region and drawer are already pure over `SessionMapEntry[]` and
+> need no change) — **not** copying the rail. The mark vocabulary is closed for the same reason: a
+> new kind is a contract change every consumer switches on.

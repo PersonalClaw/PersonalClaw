@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sessionMapMarks, SESSION_MARK_KINDS } from './sessionMap'
+import { sessionMapEntries, sessionMapMarks, SESSION_MARK_KINDS } from './sessionMap'
 import { hydrateTurns, type ChatTurn, type Segment, type SubagentCard, type HistMsg } from './chatTypes'
 
 // ── SSM-1 — the typed session-map mark model + derivation (contract owner) ──────────────────
@@ -198,5 +198,54 @@ describe('sessionMapMarks — subagents, fallbacks, and the real hydration path'
     expect(assistant.visibleIndex).toBe(turns.find((t) => t.role === 'assistant')!.visibleIndex)
     // The tool segment merged into the assistant turn → it inherits that turn's coordinate.
     expect(tool.visibleIndex).toBe(assistant.visibleIndex)
+  })
+})
+
+// ── THE MAP — one entry per USER message (the owner's ruling, 2026-09-25) ────────────────────
+//
+// `sessionMapEntries` groups the typed index above by exchange. VACUITY FLOOR: "one entry per user
+// message" is faked by `turns.filter(user)`, which drops the replies entirely — so the entries are
+// also asserted to OWN their replies' coordinates (what lights a question while its answer is read)
+// and to preview the reply's TEXT rather than whichever sub-event came first.
+
+describe('sessionMapEntries — the map lists user messages, each owning its exchange', () => {
+  const turns: ChatTurn[] = [
+    { role: 'assistant', ts: 'a0', visibleIndex: 0, segments: [{ kind: 'text', text: 'Good morning — here is your digest.' }] },
+    { role: 'user', ts: 'u1', visibleIndex: 1, segments: [{ kind: 'text', text: 'Run the **build**' }] },
+    { role: 'assistant', ts: 'a2', visibleIndex: 3, segments: [
+      { kind: 'tool', id: 't', tool: 'Terminal', detail: 'npm run build', done: true },
+      { kind: 'text', text: 'Built it in 4s.' },
+      { kind: 'error', text: 'one warning' },
+    ] },
+    { role: 'assistant', ts: 'a3', visibleIndex: 4, segments: [{ kind: 'text', text: 'Also cleaned the cache.' }] },
+    { role: 'user', ts: 'u2', visibleIndex: 5, segments: [{ kind: 'text', text: 'Thanks' }] },
+  ]
+  const entries = sessionMapEntries(turns)
+
+  it('emits exactly one entry per user turn, in order, numbered by position', () => {
+    expect(entries.map((e) => e.preview)).toEqual(['Run the build', 'Thanks'])
+    expect(entries.map((e) => e.markIndex)).toEqual([0, 1])
+    expect(entries.map((e) => e.visibleIndex)).toEqual([1, 5])
+    expect(entries.map((e) => e.ts)).toEqual(['u1', 'u2'])
+  })
+
+  it('🔑 an entry OWNS every reply turn up to the next question', () => {
+    expect(entries[0].coords).toEqual([1, 3, 4])
+    expect(entries[1].coords).toEqual([5])
+  })
+
+  it('🔑 previews the reply’s TEXT — not the tool call that ran before it', () => {
+    expect(entries[0].response).toBe('Built it in 4s.')
+    // A question still waiting for its answer previews nothing rather than a placeholder.
+    expect(entries[1].response).toBe('')
+  })
+
+  it('agent output before the first question opens no entry', () => {
+    expect(entries.every((e) => !e.coords.includes(0))).toBe(true)
+    expect(sessionMapEntries([turns[0]])).toEqual([])
+  })
+
+  it('is a no-op on an empty transcript', () => {
+    expect(sessionMapEntries([])).toEqual([])
   })
 })
