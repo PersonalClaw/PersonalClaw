@@ -495,7 +495,9 @@ def home(tmp_path, monkeypatch, wire) -> Iterator[Path]:
         for cb in trust_mode._TRUST._on_disable
         if not str(getattr(cb, "__module__", "")).startswith("_pclaw_app_reload_probe")
     ]
-    tools.unregister_provider("reload-probe")
+    probe = tools.get_provider("reload-probe")
+    if probe is not None:
+        tools.unregister_provider(probe)
     channel_transports.unregister_transport("reload-probe")
     sidecar._runners.pop(APP, None)
     for name in _probe_modules(tmp_path):

@@ -92,10 +92,18 @@ has cost someone a debugging session.
   `bash "ls"` needs nothing. The nine filesystem/shell tools are confined to the
   configured workspace root; an unresolved root refuses with `503 workspace_unresolved`
   rather than running them in the gateway's own directory. The tool is resolved by its
-  name over the same providers an agent turn has, so `provider` only says which provider
-  serving that name to try first, and an external MCP server's tool
+  name over the same providers an agent turn has, to the one provider serving that name,
+  so a `provider` in the body is not read, and an external MCP server's tool
   (`mcp/<server>/<tool>`) runs through the provider that serves it to agents. A name the
   agent's hard deny-list refuses is refused here too, with `403 tool_denied_by_policy`.
+- **A tool name has one provider.** `bash`, `read_file` and the other platform tools are
+  the platform's, names under `mcp/` are the MCP Tool Servers app's, a provider core ships
+  outranks an installed app's, and otherwise the provider that claimed a name first keeps
+  it. A provider offering a name someone else holds is refused whole, when its names are
+  read (at enable, and on every read after): `POST /api/providers/{name}/enable` answers
+  `409` with the reason, `POST /api/apps/{name}/enable`, install and update answer `ok`
+  with the reason in `providerErrors`, the provider's row in `GET /api/providers` is off
+  with the same sentence in `error`, and the security log has an `outcome=refused` row.
 - **`POST /api/durability/import` validates when you omit `mode`.** Omitting it changes
   nothing at all; `?mode=merge` applies copy-if-missing; `?mode=replace&confirm=true`
   overwrites. `POST /api/durability/archive/{id}/restore` is the same shape — no `mode`

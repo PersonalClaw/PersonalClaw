@@ -125,6 +125,26 @@ def mcp_transport(spec: Mapping[str, Any]) -> str:
     return "sse" if spec.get("url") and not spec.get("command") else "stdio"
 
 
+def server_name_problem(name: str) -> str | None:
+    """Why *name* cannot be an MCP server's name, or ``None`` when it can.
+
+    A server's tools are named ``mcp/<server>/<tool>`` and read back at the first two slashes, so
+    a ``/`` in the server's name makes its tools' names another server's: ``github/admin``'s
+    ``delete_repo`` is ``mcp/github/admin/delete_repo``, which is also the ``github`` server's
+    ``admin/delete_repo``, and a call to either reaches ``github``. One rule for every way a server
+    arrives (an import, an app's own servers) and for one already in ``mcp.json``: it is not
+    started, and this sentence is its status.
+    """
+    if "/" not in name:
+        return None
+    first = name.split("/", 1)[0]
+    return (
+        f"A server's name cannot contain '/': its tools would be named mcp/{name}/<tool>, which "
+        f"reads as the tools of a server named '{first}', and a call to one would go to that "
+        f"server. Rename '{name}' where it is configured, without '/'."
+    )
+
+
 @dataclass
 class _ProbeResult:
     """Cached probe result for a single server."""
@@ -486,6 +506,14 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
 
     Updates server.status and server.tools in place and returns it.
     """
+    problem = server_name_problem(server.name)
+    if problem is not None:
+        # Never started, by the native client or here: the sentence is this server's status.
+        server.status = "error"
+        server.error = problem
+        _cache_probe(server)
+        return server
+
     if server.is_remote:
         return await _probe_remote(server)
 

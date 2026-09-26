@@ -403,7 +403,7 @@ class NativeAgentRuntime(AgentProvider):
         # never disabled (the tool_prefs guards ignore them). Load once; fail-open.
         from personalclaw.tool_providers import tool_prefs
         from personalclaw.tool_providers.portable_schema import offered_tool_definitions
-        from personalclaw.tool_providers.registry import app_of
+        from personalclaw.tool_providers.registry import app_of, serve
 
         disabled_keys = tool_prefs.load_disabled()
         disabled_provs = tool_prefs.load_disabled_providers()
@@ -412,17 +412,19 @@ class NativeAgentRuntime(AgentProvider):
         provider_of: dict[str, str] = {}  # tool name → resolved provider key (grouping)
         dropped: list[str] = []
         for prov in self._tool_providers:
-            prov_name = getattr(prov, "name", "") or ""
-            if prov_name in disabled_provs:
+            if (getattr(prov, "name", "") or "") in disabled_provs:
                 logger.info(
-                    "native: provider %r is user-disabled — skipping its toolset", prov_name
+                    "native: provider %r is user-disabled — skipping its toolset", prov.name
                 )
-                continue
-            try:
-                tools = await prov.list_tools()
-            except Exception:  # noqa: BLE001 - a broken provider must not kill start
-                logger.debug("native: tool provider %s list failed", prov_name, exc_info=True)
-                continue
+        # ONE NAME, ONE PROVIDER: the surface is read through the registry's rule, so a name maps
+        # to the provider that serves it, never to whichever advertised it last (a registered app
+        # that offered `bash` used to receive the agent's `bash` calls). A broken provider must not
+        # kill start: its failure is logged and the rest still serve.
+        served, failures = await serve(self._tool_providers, skip=disabled_provs)
+        for prov, _exc in failures:
+            logger.debug("native: tool provider %s list failed", prov.name, exc_info=_exc)
+        for prov, tools in served:
+            prov_name = getattr(prov, "name", "") or ""
             enabled = []
             for t in tools:
                 # Prefer the tool's own provider tag; fall back to the provider

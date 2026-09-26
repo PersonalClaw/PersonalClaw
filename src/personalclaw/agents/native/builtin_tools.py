@@ -190,6 +190,11 @@ PLATFORM_CATEGORIES: frozenset[str] = frozenset({"filesystem", "shell", "core"})
 PLATFORM_TOOL_NAMES: frozenset[str] = frozenset(
     name for name, category in _CATEGORY_OF.items() if category in PLATFORM_CATEGORIES
 )
+# The platform bundle's provider name and title. It is built per session and never registered, so
+# the tool registry holds these for it: no registered provider may take the name, or any tool
+# name in PLATFORM_TOOL_NAMES (`tool_providers.registry`).
+PLATFORM_PROVIDER_NAME = "personalclaw-filesystem"
+PLATFORM_DISPLAY_NAME = "Filesystem & Shell Tools"
 # category → (provider_name, display) for the installable app providers.
 APP_CATEGORY_PROVIDERS: dict[str, tuple[str, str]] = {
     "knowledge": ("personalclaw-knowledge-tools", "Knowledge Tools"),
@@ -2261,8 +2266,8 @@ def create_platform_tools_provider(
     return NativeBuiltinToolProvider(
         cwd=Path(cwd) if cwd else None,
         categories=PLATFORM_CATEGORIES,
-        provider_name="personalclaw-filesystem",
-        display="Filesystem & Shell Tools",
+        provider_name=PLATFORM_PROVIDER_NAME,
+        display=PLATFORM_DISPLAY_NAME,
     )
 
 

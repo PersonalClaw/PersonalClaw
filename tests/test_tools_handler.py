@@ -260,22 +260,23 @@ class _InvokeRequest:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad_provider", [["a", "b"], {"x": 1}])
-async def test_invoke_rejects_non_string_provider(bad_provider):
-    """A non-string ``provider`` is a 400, mirroring the ``arguments`` guard.
+async def test_a_provider_in_the_body_is_not_read(bad_provider, monkeypatch):
+    """A name has one provider, so the route resolves by name alone and never reads ``provider``.
 
-    Regression: an unhashable ``provider`` (list/dict) flowed straight into
-    ``get_provider(provider_name)`` — a dict lookup — which raised and surfaced
-    as HTTP 500 instead of a clean 400.
+    Re-pointed, not relaxed. This pinned a 400 for a non-string ``provider``, from when an
+    unhashable one flowed into a dict lookup and surfaced as a 500. Then ``provider`` became a
+    preference tried first, which let a request hand ``bash`` to any registered provider that also
+    advertised it; now it is not consulted at all, so what it holds cannot change the answer.
     """
-    import json
+    prov = _RecordingProvider("artifact_list", risk="safe")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
 
     resp = await tools_mod.api_tool_invoke(
         _InvokeRequest({"tool": "artifact_list", "provider": bad_provider})
     )
-    assert resp.status == 400
-    payload = json.loads(resp.body.decode())
-    assert payload["ok"] is False
-    assert payload["error"] == "provider must be a string"
+    assert resp.status == 200, _payload(resp)
+    assert prov.invoked == [("artifact_list", {})]
 
 
 # ── #444 gaps #2/#3: tools toggle validation ────────────────────────────────

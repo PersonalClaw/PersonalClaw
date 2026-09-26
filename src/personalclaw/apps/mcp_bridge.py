@@ -96,9 +96,16 @@ def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
         base = app_dir(manifest.name)
     except Exception:
         base = None
+    from personalclaw.mcp_discovery import server_name_problem
+
     registered: list[str] = []
     for name, spec in servers.items():
         if not isinstance(spec, dict):
+            continue
+        problem = server_name_problem(_ns(manifest.name, str(name)))
+        if problem is not None:
+            # Its tools would be named as another of the app's servers'.
+            logger.warning("app %s: MCP server %r not registered: %s", manifest.name, name, problem)
             continue
         spec = dict(spec)  # don't mutate the manifest's object
         if base is not None and spec.get("command") and "url" not in spec and not spec.get("cwd"):

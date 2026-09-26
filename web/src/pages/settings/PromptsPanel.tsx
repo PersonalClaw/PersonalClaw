@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api, type PromptBinding, type PromptItem, type PromptBindings } from '../../lib/api'
 import { useQuery } from '../../lib/data'
+import { reportingWrite } from '../../app/reportingWrite'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 
@@ -31,11 +32,12 @@ export function PromptsPanel() {
   )
   const [saving, setSaving] = useState('')
 
+  // Reported, and the re-read GATED on the answer: a refused binding used to reject unhandled, the
+  // picker kept the old prompt and nothing said why, which is what a successful no-op looks like.
   const onPick = async (useCase: string, ref: string) => {
     setSaving(useCase)
     try {
-      await api.setPromptBinding(useCase, ref)
-      refresh()
+      if (await reportingWrite('save that prompt binding', () => api.setPromptBinding(useCase, ref))) refresh()
     } finally {
       setSaving('')
     }
