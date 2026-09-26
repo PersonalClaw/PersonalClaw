@@ -1,5 +1,6 @@
 import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
+import { approvalDestination } from '../../app/approvalDestination'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
 
@@ -118,6 +119,13 @@ export const NON_CHANNEL_ITEM_KINDS: InboxItemKind[] = [
 export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   const refs = it.refs || {}
   if (refs.loop) return refs.loop_kind === 'code' ? `code/${refs.loop}` : `loops/${refs.loop}`
+  // A pending approval's row goes where the approval is ANSWERED, derived by the one parser of an
+  // approval's session key — a workflow stage's `workflow:<run>:<node>` is not a chat, and
+  // spelling `chat/<session>` for it is the 404 `approvalDestination` exists to prevent (#258).
+  // The router path is its href without the leading `#/`, which `navigate` owns.
+  if (refs.approval && typeof refs.session === 'string' && refs.session) {
+    return approvalDestination(refs.session).href.replace(/^#\//, '')
+  }
   if (refs.session) return `chat/${encodeURIComponent(refs.session)}`
   if (refs.workflow) return `workflows/${refs.workflow}`
   // LV-4's identity report links the artifact it wrote. LAST in the chain, so every
@@ -137,6 +145,9 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
 export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   const refs = it.refs || {}
   if (refs.loop) return 'Go to loop'
+  if (refs.approval && typeof refs.session === 'string' && refs.session) {
+    return approvalDestination(refs.session).linkLabel
+  }
   if (refs.session) return 'Go to chat'
   if (refs.workflow) return 'Go to workflow'
   if (refs.artifact) return 'Open the report'

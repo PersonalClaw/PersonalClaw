@@ -15,13 +15,15 @@
  *     channel-shaped kinds a message source may claim. `BASE_LANE` below is keyed off that same
  *     split: the three channel-shaped kinds map to `null`, the six attention kinds map to a lane.
  *
- *  2. **A pending approval already appears TWICE on the wire, so a naive concat double-counts it.**
- *     `chat_runner._mirror_approval_to_inbox()` raises an `agent_request` item carrying
- *     `refs = {session, approval: <request_id>}` for any approval that outlives its prompt — and
- *     `PendingApproval.id` IS that `request_id`. So one blocked decision is one row in
- *     `GET /api/approvals` and a second row in `GET /api/inbox`. `toLanes` suppresses the mirror
- *     when its `refs.approval` matches an approval in the same snapshot. This is not a hypothetical
- *     precedence puzzle; it is the shipped behaviour of the two endpoints Mission Control reads.
+ *  2. **A pending approval appears TWICE on the wire, so a naive concat double-counts it.**
+ *     The pending-approval registry (`DashboardState._hold_approval`) raises an `agent_request`
+ *     Inbox row carrying `refs = {session, approval: <registry id>}` for every pending approval,
+ *     the moment it is pending — and `PendingApproval.id` IS that registry id. So one blocked
+ *     decision is one row in `GET /api/approvals` and a second row in `GET /api/inbox`. `toLanes`
+ *     suppresses the row when its `refs.approval` matches an approval in the same snapshot, and
+ *     Home's To triage and approvals count apply the same rule through `mirroredApprovalId`. This
+ *     is not a hypothetical precedence puzzle; it is the shipped behaviour of the two endpoints
+ *     every attention surface reads.
  *
  *  3. **🔴 "Working" is NOT derivable from the attention store. Nothing in the inbox says
  *     "in flight".** `ItemStatus`'s own docstring (inbox.py:49) declares the lifecycle as
@@ -185,9 +187,13 @@ function timeOf(item: AttentionInput): number | null {
   return null
 }
 
-/** True when this item is the inbox MIRROR of a tool approval (fact 2), rather than an agent's own
- *  question. `refs.approval` holds the approval's `request_id`, which is `PendingApproval.id`. */
-function mirroredApprovalId(item: AttentionInput): string {
+/** The registry id of the pending approval this Inbox row is the listing of, or '' when it is an
+ *  agent's own question (fact 2). `refs.approval` holds `PendingApproval.id`.
+ *
+ *  THE one test for "this Inbox row and that approval are the same item" — every surface that
+ *  lists both (Mission Control's lanes, Home's To triage, Home's inbox count) asks it here, so none
+ *  of them can count one blocked decision twice. */
+export function mirroredApprovalId(item: Pick<InboxItem, 'refs'>): string {
   const raw = item.refs?.approval
   return typeof raw === 'string' && raw !== '' ? raw : ''
 }

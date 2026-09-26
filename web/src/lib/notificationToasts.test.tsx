@@ -110,6 +110,16 @@ describe('shouldToastNote', () => {
   it('stays silent on a note with no text at all', () => {
     expect(shouldToastNote({ kind: 'info', title: '', body: '' })).toBe(false)
   })
+
+  it('leaves the note for a pending approval row to the approval announcing itself', () => {
+    // The approval is announced once — its card in the chat, the nudge (with its link)
+    // everywhere else. Its row's note carries the row's refs, so `approval` marks it; a second
+    // toast here would sit beside the very card that asks. Vacuity floor: the same note without
+    // the ref still toasts, so this is the ref deciding, not the note being unsayable.
+    const row = note({ kind: 'agent_request', title: 'Approval needed: bash', body: 'researcher is waiting' })
+    expect(shouldToastNote(row)).toBe(true)
+    expect(shouldToastNote({ ...row, approval: 'chat-a:1', session: 'chat-a' })).toBe(false)
+  })
 })
 
 describe('useNotificationToasts', () => {

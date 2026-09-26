@@ -4390,17 +4390,30 @@ export interface SystemInfo {
 }
 export interface AuthStatus { mode: string; bind_host: string; valid: boolean; minutes_remaining?: number; oauth2_issuer?: string }
 
-// A pending tool approval (GET /api/approvals + the `approval` WS event carry the
-// SAME shape — see state._pending_approvals). The dashboard Action Center resolves
-// these inline via approve/reject.
+// A pending tool approval — ONE registry entry (state._pending_approvals) that every surface
+// reads: GET /api/approvals and the `approval` WS event carry the SAME shape, for a chat's
+// approval and a background one alike. Home's count and To triage, the phone companion and the
+// Inbox row all describe this entry; `POST /api/approvals/{id}/{action}` answers it.
 export interface PendingApproval {
-  id: string; source: string; tool: string
+  /** The REGISTRY id — unique across every chat, and what `resolveApproval` takes. */
+  id: string
+  /** How the waiter addresses the call: equal to `id` for a background origin; for a chat, the
+   *  chat's own id, which its card posts to `/api/chat/sessions/{session}/approve`. */
+  request_id: string
+  source: string; tool: string
   tool_input?: unknown; tool_purpose?: string
   session: string; ts: number
+  /** The chat's name, when it has one ("" until it is titled, and for a background origin). */
+  session_title: string
+  /** Which agent is asking — a chat names it; "" for a background origin. */
+  agent: string
+  /** The effective risk the chat card shows; "" when the origin did not resolve one. */
+  risk: string
   // The backend's command-screening verdict (`task_modes.read_only_command`), #2821.
   // `null` when this call runs no shell — the tri-state matters, so decode it with
   // `readOnlyCommandOf` rather than testing truthiness.
   is_read_only?: boolean | null
+  grant_agent: string
 }
 
 // GET /api/push — what a browser needs to subscribe, plus what already has (MC-5 §C3).

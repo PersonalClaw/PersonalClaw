@@ -97,6 +97,51 @@ process owns the store, and `InboxService` bounces mutations onto the loop that 
 and it is exactly what a future multi-writer shared inbox must fix — with a
 sibling-preserving read-modify-write — before it can claim a merge-safe semantic.
 
+## Pending approvals: one registry, every surface
+
+A tool call waiting on a human decision — from a chat, a subagent, a workflow stage, or an MCP
+server's elicitation — is **one entry** in `DashboardState._pending_approvals`
+(`dashboard/state.py`), and every surface reads that entry:
+
+| Surface | Reads |
+|---|---|
+| Home's approvals count and **To triage**, Mission Control, the phone companion, the workflow run view, the desktop tray, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
+| The chat card, the out-of-context nudge | the `approval` WS frame — the same entry |
+| The phone push, the `ApprovalRequest` lifecycle hook | fired from the registration |
+| The Inbox | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}` |
+
+The entry carries enough to act on: which chat (`session`, `session_title`), which agent
+(`agent`), and what it wants to do (`tool`, redacted `tool_input`/`tool_purpose`, `risk`,
+`is_read_only`). `_hold_approval` is the one registration and writes all of the above together;
+there is no path by which a surface learns of an approval another does not list. A chat
+approval used to broadcast its own frame and register nowhere else, so it reached only its own
+chat.
+
+**The registry id is not the chat's id.** A chat's `request_id` is unique only inside that chat —
+an ACP agent's permission request carries the agent's JSON-RPC message id, counted from the same
+small integers on every connection — so the registry keys a chat approval
+`chat_approval_id(session, request_id)` and keeps the bare id as the entry's `request_id`, which
+is what the chat's card, transcript and approve route go on using.
+
+**One decision path.** `POST /api/chat/sessions/{key}/approve` (the card) and
+`POST /api/approvals/{id}/{action}` (every surface outside the chat) both answer a chat's approval
+through `decide_session_approval`: the same transcript record, the same SEL `tool_approval:<verb>`
+row, and the same waiting runner — whose refusal handling (the rest of a refused batch is refused
+rather than re-asked, so a Deny cannot be routed around with a second call) is therefore the same
+for every door.
+
+**Every end goes through `withdraw_approval`.** An answer, an expiry, a torn-down turn: the entry
+leaves the registry, its Inbox row is closed through `resolve_attention_items` on the live store,
+and one `approval_resolved` frame (`id`, `request_id`, `session`, `approved`) tells every open
+surface. No approval survives a restart, so `close_orphaned_approval_rows` closes, at boot, any
+row still asking for one.
+
+**Announced once.** The Inbox row is the durable listing, not a second announcement: the chat
+card announces an approval in context and the nudge everywhere else, so the SPA's notification
+toast stands down for a note whose `refs` name an approval (it still lands in the bell), and
+Home's inbox count and To triage recognise the row as the approval they already list
+(`mirroredApprovalId`).
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**

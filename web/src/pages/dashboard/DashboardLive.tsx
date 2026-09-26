@@ -270,7 +270,11 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   // type to the slice it affects so a change lands immediately, not next poll.
   const onMessage = useCallback((m: WsMessage) => {
     const t = m.type
-    if (t === 'approval') loadApprovals()
+    // A pending approval is one registry entry with an Inbox row raised and closed alongside it,
+    // so BOTH frames move both slices. `approval_resolved` is what takes an answered (or expired)
+    // approval off Home at once — without it the count and To triage kept a decided approval up
+    // to the next poll, offering Approve/Reject on a call that had already been answered.
+    if (t === 'approval' || t === 'approval_resolved') { loadApprovals(); loadInbox() }
     else if (t.startsWith('inbox')) loadInbox()
     else if (t.startsWith('notification')) loadNotifications()
     // Loop / run progress + session lifecycle nudges refresh the work + status views

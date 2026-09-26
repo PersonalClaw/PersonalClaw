@@ -73,8 +73,14 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   const [busy, setBusy] = useState(false)
 
   const load = () => { refreshItems(); refreshStatus() }
-  // Live: triage layer pushes new/updated items over the shared WS.
-  useChatSocket((m: WsMessage) => { if (m.type === 'inbox_item_updated' || m.type === 'inbox_new_item') load() })
+  // Live: triage layer pushes new/updated items over the shared WS. A pending approval's row is
+  // raised and closed with the approval itself, so the approval frames move this list too — an
+  // approval answered in its chat (or on the phone) leaves an open Inbox at once, rather than
+  // standing there asking for a decision that was already made.
+  useChatSocket((m: WsMessage) => {
+    if (m.type === 'inbox_item_updated' || m.type === 'inbox_new_item'
+      || m.type === 'approval' || m.type === 'approval_resolved') load()
+  })
 
   // TSE2-3 — the local owner's handle, off the status payload this page ALREADY reads.
   //

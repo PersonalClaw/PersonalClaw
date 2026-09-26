@@ -391,7 +391,8 @@ class TestSessionLifecycle:
             resp = await client.post("/api/chat/sessions/s1/approve", json={"action": "approved"})
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
-                "approval_resolved", {"id": "req-abc", "approved": True}
+                "approval_resolved",
+                {"id": "s1:req-abc", "request_id": "req-abc", "session": "s1", "approved": True},
             )
 
     @pytest.mark.asyncio
@@ -412,7 +413,8 @@ class TestSessionLifecycle:
             )
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
-                "approval_resolved", {"id": "req-xyz", "approved": True}
+                "approval_resolved",
+                {"id": "s1:req-xyz", "request_id": "req-xyz", "session": "s1", "approved": True},
             )
 
     @pytest.mark.asyncio
@@ -433,7 +435,8 @@ class TestSessionLifecycle:
             )
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
-                "approval_resolved", {"id": "req-rej", "approved": False}
+                "approval_resolved",
+                {"id": "s1:req-rej", "request_id": "req-rej", "session": "s1", "approved": False},
             )
 
 
@@ -2750,9 +2753,10 @@ class TestBulkApproveBroadcast:
         broadcast_calls = [
             c for c in state.broadcast_ws.call_args_list if c.args[0] == "approval_resolved"
         ]
-        ids = {c.args[1]["id"] for c in broadcast_calls}
-        assert "req-1" in ids
-        assert "req-2" in ids
+        # The chat addresses its own calls by request_id; the registry id is session-scoped.
+        assert {c.args[1]["request_id"] for c in broadcast_calls} == {"req-1", "req-2"}
+        assert {c.args[1]["id"] for c in broadcast_calls} == {"s1:req-1", "s1:req-2"}
+        assert all(c.args[1]["approved"] is True for c in broadcast_calls)
 
 
 # ── Coverage: multi-pending approval 400 and trust auto-approve ──
