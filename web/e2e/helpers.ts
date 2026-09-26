@@ -1,5 +1,6 @@
-import { type Page, expect } from '@playwright/test'
+import { type ConsoleMessage, type Page, expect } from '@playwright/test'
 import type { Theme } from './routes'
+import { STREAM_HEAL_WARNING } from '../src/pages/chat/streamStall'
 
 // ── Harness helpers ─────────────────────────────────────────────────────────
 
@@ -723,10 +724,34 @@ export async function assertPristineFlywheel(page: Page): Promise<void> {
  *  session that does not exist. The loop therefore asserts the transcript's own per-turn row counts
  *  after every send (see the 🪤 inside), and reds at the send that was lost. `chat.spec.ts` states
  *  the discipline this restores: composer state and transcript state are two INDEPENDENT readings
- *  of "finished", and both belong inside the loop. */
+ *  of "finished", and both belong inside the loop.
+ *
+ *  🔑 AND "FINISHED" MEANS THE TERMINAL FRAME ARRIVED (#3575). The stall reconciler settles a turn
+ *  whose `chat_done` never reached the tab, which is right for a user and wrong for this barrier:
+ *  healed, the rows below appear anyway, so a turn that LOST its terminal frame read exactly like
+ *  one that did not — 4-6 of these reds per run became 0 without the frame loss being fixed.
+ *  ChatPage announces every heal (`STREAM_HEAL_WARNING`), and a turn that needed one fails here,
+ *  at its own send. `streamStall.spec.ts` is where a heal is the thing under test. */
 export async function driveScriptedTurns(page: Page, prompt: string, turns = 1): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message input' })
   await expect(composer).toBeVisible({ timeout: 15_000 })
+  const heals: string[] = []
+  const onConsole = (m: ConsoleMessage) => { if (m.text().includes(STREAM_HEAL_WARNING)) heals.push(m.text()) }
+  page.on('console', onConsole)
+  try {
+    await driveTurns(page, composer, prompt, turns, heals)
+  } finally {
+    page.off('console', onConsole)
+  }
+}
+
+async function driveTurns(
+  page: Page,
+  composer: ReturnType<Page['getByRole']>,
+  prompt: string,
+  turns: number,
+  heals: string[],
+): Promise<void> {
   // ── THE TWO TRANSCRIPT READINGS THIS HELPER IS COUNTED BY ──────────────────────────────────
   // One row per USER turn: `ChatPage.tsx:3282` renders it as `{!streaming && <UserActions …/>}`,
   // so the count is "how many turns have landed" AND "nothing is streaming" in one reading.
@@ -785,6 +810,11 @@ export async function driveScriptedTurns(page: Page, prompt: string, turns = 1):
     // The composer's own idle reading, independent of the two transcript ones (chat.spec.ts's
     // point: a half-finished turn fails one of them).
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible({ timeout: 30_000 })
+    expect(
+      heals,
+      `turn ${n + 1} completed only because the stall reconciler healed it: its terminal frame never\n` +
+        `reached the tab. The rows above are the heal's, not the stream's (#3575).`,
+    ).toEqual([])
   }
   await expect(
     page.getByRole('button', { name: 'Regenerate', exact: true }),

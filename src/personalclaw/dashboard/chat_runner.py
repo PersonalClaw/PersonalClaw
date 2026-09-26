@@ -1790,7 +1790,6 @@ async def run_chat(
 
     assistant_text = ""
     last_heartbeat = time.time()
-    chunk_seq = 0
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
     # Host-authority bookkeeping for ACP turns (§2.2 / G27). An ACP CLI decides for
@@ -2861,16 +2860,17 @@ async def run_chat(
                         elif m.get("role") not in ("tool", "permission"):
                             break
                 in_tool_group = False
-                chunk_seq += 1
                 safe_chunk, _ = redact_exfiltration_urls(event.text)
                 safe_chunk, _ = redact_credentials(safe_chunk)
                 assistant_text += safe_chunk
                 # Grows the ONE streaming entry for this answer — never a row per chunk.
                 session.stream_chunk(safe_chunk)
-                # Push chunk to WS clients (HTTP SSE reader drains from session._pending)
+                # Push chunk to WS clients (HTTP SSE reader drains from session._pending).
+                # Grown and stamped in this one synchronous step, so a session-detail
+                # snapshot's `stream_seq` is an exact resume point (see next_stream_seq).
                 state.broadcast_ws(
                     "chat_chunk",
-                    {"session": session.key, "content": safe_chunk, "seq": chunk_seq},
+                    {"session": session.key, "content": safe_chunk, "seq": state.next_stream_seq()},
                 )
             elif event.kind == EVENT_THINKING_CHUNK:
                 # Thinking content is not included in the main response text.

@@ -161,7 +161,7 @@ export function skillsUsedTitle(skills: SkillUsed[]): string {
 /** Stamp `origin` onto the activity segment `insertActivity` just created, given the
  *  arrays before (`prev`) and after (`next`) that call (LEARNING-VISIBILITY T2.2).
  *
- *  Exists so the ChatPage WS handler doesn't have to widen `insertActivity`'s signature (and
+ *  Exists so `TextRunOwnership.activity` doesn't have to widen `insertActivity`'s signature (and
  *  re-baseline its K42/K44/K45 suite) just to carry one optional field. It identifies the new
  *  segment by REFERENCE, not by matching text: `insertActivity` returns `prev` untouched on
  *  both its early-outs (a turn with tool cards, an adjacent duplicate line), so the only
@@ -542,8 +542,17 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
       lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content) })
+    } else if (m.role === 'streaming') {
+      // The answer being written RIGHT NOW — the gateway keeps it as ONE `streaming` entry,
+      // grown in place until it settles. Skipping it cut off everything a turn had written
+      // before a reload (measured on two reloads: the 170- and 209-char partials, gone from
+      // answers of 6,580 and 3,857 chars until a second reload after the turn ended). It
+      // renders as the answer's text; `livePartialOf` names it for the resume that continues
+      // it. Not a visible-list slot: the backend counts user/assistant rows only.
+      lastAssistant().segments.push({ kind: 'text', text: m.content })
+      assistantTextSinceUser = true
     }
-    // other roles (chunk/system): skip.
+    // other roles (queued/system): skip.
   }
   // A finished session has nothing in flight: the native path persists tool calls
   // without ever flagging done, so any lingering pending card would spin forever.
@@ -555,4 +564,20 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     tools.slice(0, -1).forEach((seg) => { seg.done = true })
   }
   return turns
+}
+
+/** The roles `hydrateTurns` renders — every other row is invisible to the transcript. */
+const TRANSCRIPT_ROLES = new Set(['user', 'assistant', 'streaming', 'tool', 'permission', 'error'])
+
+/** The text of the answer still being written when this history was read — the `streaming`
+ *  entry, when it is the last row the transcript renders — or `null`. That entry paints the
+ *  hydrated transcript's tail segment, so a resume can continue the live answer IN it instead
+ *  of beside it. Behind a rendered row (a card appended while the answer was arriving) it is
+ *  not the tail, and the live text lands after that row as a fresh segment, as it does live. */
+export function livePartialOf(messages: HistMsg[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (TRANSCRIPT_ROLES.has(m.role)) return m.role === 'streaming' ? m.content : null
+  }
+  return null
 }

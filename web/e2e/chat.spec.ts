@@ -140,6 +140,8 @@ test.describe('scripted chat turn (PHF-7)', () => {
     let release = false
     let markReleased!: () => void
     const released = new Promise<void>((resolve) => { markReleased = resolve })
+    let markDoneHeld!: () => void
+    const doneHeld = new Promise<void>((resolve) => { markDoneHeld = resolve })
 
     // Reproduce the first-send remount race deterministically. The backend is the normal
     // offline scripted provider; only delivery timing changes:
@@ -167,6 +169,7 @@ test.describe('scripted chat turn (PHF-7)', () => {
           && (type === 'chat_chunk' || type === 'chat_done')
         ) {
           connection.frames.push({ message, type })
+          if (type === 'chat_done') markDoneHeld()
           return
         }
         ws.send(message)
@@ -198,8 +201,11 @@ test.describe('scripted chat turn (PHF-7)', () => {
       order.push('persisted assistant')
       await route.fulfill({ response })
 
-      // Let React commit the refreshed transcript before releasing the terminal WS
+      // Release only once the turn's terminal frame is itself held: the runner persists the
+      // answer and then does post-turn work before `chat_done`, which a fixed wait here raced.
+      // Then let React commit the refreshed transcript before releasing the terminal WS
       // frames. That is the inter-transport ordering this regression owns.
+      await doneHeld
       await page.waitForTimeout(100)
       release = true
       for (const connection of heldConnections) {
@@ -279,8 +285,8 @@ test.describe('scripted chat turn (PHF-7)', () => {
     }
 
     // Establish the session before interception. A brand-new chat remounts after
-    // create and can legitimately miss frames sent before its replacement socket
-    // opens; that is the persisted-refresh race covered by the test above. This
+    // create, and the replacement can take its first frames from a snapshot rather
+    // than live; that is the persisted-refresh race covered by the test above. This
     // case owns an already-connected sequential turn.
     await gotoRoute(page, 'chat')
     const composer = page.getByRole('textbox', { name: 'Message input' })
