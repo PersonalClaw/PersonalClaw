@@ -63,16 +63,16 @@ the authority where the two could disagree: it carries the machine-readable inve
 |---|---|---|---|
 | `name` (property) | the opaque provider key: trust store, SEL, inbox source, settings all key off it. Pick it once; changing it orphans state | **MUST** | yes — clause 1 |
 | `display_name` (property) | the label on the Channels page | **MUST** | yes — clause 1 |
-| `connect()` | called at boot; returns success as a `bool` | **MUST** | yes — clause 2 |
-| `disconnect()` | graceful close at shutdown | **MUST** | yes — clause 2 |
+| `connect()` | the Channels page's **Connect** button; returns success as a `bool` | **MUST** | yes — clause 2 |
+| `disconnect()` | the Channels page's **Disconnect** button | **MUST** | yes — clause 2 |
 | `send(OutboundMessage)` | the one outbound primitive every surface can rely on; returns `bool`, and never raises for a well-formed message | **MUST** | yes — clause 2 |
 | `capabilities()` | machine-readable feature gate — core routes and feature-gates off it, so it must be *honest*, not aspirational | **MUST** | yes — clause 3 |
-| `health()` | the Channels page pill, AND core's only answer to "is this channel configured" (the gateway's dashboard-only line, `setup`'s remote-URL prompt, `doctor`'s remote-bind warning). `{state, detail}` with `state` in `ready` / `offline` / `error`; a fourth state renders as an unknown grey pill. Return `offline` only when you have nothing to connect with (no token, no account): `error` (half-up) and `ready` both read as configured | **MUST** | yes — clause 5 |
+| `health()` | the Channels page pill, AND core's only answer to "is this channel configured" (whether core runs your receiver at all, the gateway's dashboard-only line, `setup`'s remote-URL prompt, `doctor`'s remote-bind warning). `{state, detail}` with `state` in `ready` / `offline` / `error`; a fourth state renders as an unknown grey pill. Return `offline` only when you have nothing to connect with (no token, no account): `error` (half-up) and `ready` both read as configured. While core is starting your receiver the page shows core's own `starting`, and a start that raised shows core's `error` sentence — yours again once the start has succeeded | **MUST** | yes — clause 5 |
 | `test()` | the "Test" button — an active probe. `{ok: bool, detail: str}`, and it MUST agree with `health()`: a green Test on an offline channel is a lie | **MUST** | yes — clause 5 |
 | `info()` | static listing; MUST project `name`, `display_name`, `connected`, `capabilities()` without relabelling any of them | **MUST** | yes — clause 1 |
 | `connected` (property) | the default `health()`/`test()`/`info()` all derive from it | **SHOULD** — override it, or override `health()` so it stops mattering | **no** — in no kit tuple |
-| `start_inbound(services)` | called once by the gateway *after* core services are up, with a `GatewayServices` handle. This is where a push/poll receiver starts | **MUST if `capabilities().inbound` is `True`**, else MAY | partly (clause 4 checks the inbound path exists, via `inbound_via=`) |
-| `stop_inbound()` | graceful stop of whatever `start_inbound` started | **MUST if you implement `start_inbound`** | **no** — in no kit tuple |
+| `start_inbound(services)` | called by core *after* its services are up, with a `GatewayServices` handle — at boot, and whenever your channel is enabled, installed, updated or its settings are saved — at most once per instance, and only while `health()` is not `offline`. It runs as its own task: raising, or not returning within a minute, becomes your channel's status. This is where a push/poll receiver starts | **MUST if `capabilities().inbound` is `True`**, else MAY | partly (clause 4 checks the inbound path exists, via `inbound_via=`) |
+| `stop_inbound()` | stop EVERYTHING `start_inbound` started. Called when your instance is replaced (the replacement starts only after this returns), disabled or uninstalled, when `health()` turns `offline`, and at shutdown. Core drops the delivery handle registered under your channel's name itself | **MUST if you implement `start_inbound`** | **no** — in no kit tuple |
 | `receive()` | the optional pull-based inbound seam: an `AsyncIterator[ChannelMessage]`. The base implementation raises | **MAY** — no shipped channel uses it; they all drive their own loop from `start_inbound` | partly (clause 4 accepts a named handler instead) |
 
 `connected`, `start_inbound`, `stop_inbound` and `receive` appear in **none** of the kit's
@@ -124,20 +124,33 @@ to catch dishonesty here: declaring `inbound=True` with no inbound path, and dec
 
 ```
 install / enable      →  your manifest's provider `implementation` factory builds the instance
-gateway boot          →  connect()                     (returns bool; a False is not a crash)
-                      →  start_inbound(services)       (once, AFTER core services are up)
+the instance is live  →  health(); unless `offline`: start_inbound(services), as its own task
+  (boot, install,        (the page reads `starting` until it returns; `error` + why if it
+   enable, update,        raises or takes over a minute)
+   settings saved)
+settings saved/update →  a NEW instance: old.stop_inbound() FIRST, then the new one starts —
+                         never two receivers at once
+disable / uninstall   →  stop_inbound()                (core drops your delivery handle)
+health() → offline    →  stop_inbound()                (e.g. its token was deleted)
 Channels page render  →  info(), capabilities(), health()
 "Test" button         →  test()                        (must agree with health())
-settings saved        →  a NEW instance from the saved settings; if the old one's inbound was
-                         running: old.stop_inbound() → new.start_inbound(services)
+"Connect"/"Disconnect"→  connect() / disconnect()
 every inbound message →  your handler → guard_inbound(...) → session
-gateway shutdown      →  stop_inbound() → disconnect()
+gateway shutdown      →  stop_inbound()
 ```
 
-Saving your settings (Configure → Save on the Apps page, or the provider form) rebuilds your
-transport from what was saved, and hands the running receiver to the new instance — so a new
-token reaches inbound too, without a restart. `stop_inbound()` has to actually stop what
-`start_inbound()` started: the old instance is dropped right after.
+Core runs receivers by one rule, `channel_transports.reconcile_inbound`, applied at boot, on every
+change to the transport registry (enable, disable, install, uninstall, update, a settings save), and
+after a secret is written to or deleted from the Secrets vault: exactly one receiver per enabled
+channel whose `health()` is not `offline`, on the instance that is registered NOW, and none for any
+other. So a channel starts and stops receiving the moment it is enabled, changed or removed — no
+restart. After a vault write, a channel that then reports `error` (a receiver still on the token it
+started with says so) is rebuilt from its settings, which replaces its receiver. `start_inbound()`
+is called at most once per instance, and a failed start is retried only when the channel changes
+(its settings are saved, it is turned off and on). `stop_inbound()` has to actually stop what
+`start_inbound()` started: the replacement starts the moment it returns. An update's new Python
+code still needs a restart to load (the app loader caches modules, see
+[app-platform](../architecture/app-platform.md)); the receiver is replaced either way.
 
 Notes that bite:
 

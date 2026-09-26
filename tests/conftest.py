@@ -780,18 +780,22 @@ def _reset_channel_delivery_registry() -> object:
     `test_services_initially_none` asserts a fresh orchestrator has NO delivery, and a leaked
     handle from an approval test makes the registry answer one. Cleared rather than
     snapshot-restored, because unlike the provider registries nothing legitimately pre-registers a
-    channel at import time: outside a live gateway the correct state is empty. The record of which
-    transports' inbound receivers are running (``channel_transports._inbound``) is the same kind of
-    process-global and is cleared with it.
+    channel at import time: outside a live gateway the correct state is empty. The receivers core
+    runs (``channel_transports._receivers``) and the gateway binding they run on
+    (``channel_transports._binding``, which holds a test's event loop) are the same kind of
+    process-global and are reset with it — a binding left behind would schedule the next test's
+    registry changes onto a closed loop.
     """
     from personalclaw import channel_transports
     from personalclaw.channel_delivery import register
 
     register(None)
-    channel_transports._inbound.clear()
+    channel_transports._binding = None
+    channel_transports._receivers.clear()
     yield
     register(None)
-    channel_transports._inbound.clear()
+    channel_transports._binding = None
+    channel_transports._receivers.clear()
 
 
 @pytest.fixture(autouse=True)

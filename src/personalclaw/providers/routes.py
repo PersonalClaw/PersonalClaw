@@ -244,10 +244,11 @@ async def apply_saved_settings(name: str) -> None:
 
     A provider instance is built from its settings at enable-time and cached in the typed
     registry, so a saved change (a new API key, a new bot token) reached nothing until a
-    restart. This rebuilds an enabled app's providers from the saved settings, moves a channel's
-    running inbound receiver onto the rebuilt transport (the old one would otherwise stay
-    connected on the old token), and drops the typed media registries' transient adapters so the
-    next resolution rebuilds from current config.
+    restart. This rebuilds an enabled app's providers from the saved settings — for a channel,
+    the registry change stops the old instance's receiver and starts the rebuilt one's
+    (``channel_transports.reconcile_inbound``), which has run by the time this returns — and
+    drops the typed media registries' transient adapters so the next resolution rebuilds from
+    current config.
 
     ONE definition for both settings routes: ``PATCH /api/providers/{name}/config`` did this,
     and ``PUT /api/apps/{name}/config`` — the Apps page's Configure → Save, writing the same
@@ -259,20 +260,49 @@ async def apply_saved_settings(name: str) -> None:
     the owner switched off carries no error, and an app that is disabled is not retried.
     """
     from personalclaw.apps.permissions import app_lifecycle_denial
-    from personalclaw.channel_transports import hand_over_inbound
+    from personalclaw.channel_transports import settled
 
     registry = get_provider_registry()
     ext = registry.get(name)
     if ext is not None and ext.enabled:
-        await hand_over_inbound(registry.rebuild(name))
+        registry.rebuild(name)
     elif ext is not None and ext.error and not app_lifecycle_denial(name):
         registry.enable(name)
+    # For a channel, either one changed the transport registry: its receivers are reconciled
+    # before this returns, so the response the caller renders already reflects them.
+    await settled()
     try:
         from personalclaw.dashboard.handlers.providers import _refresh_media_registries
 
         _refresh_media_registries()
     except Exception:  # noqa: BLE001 — refresh is best-effort, never block a save
         logger.debug("media registry refresh after a settings save failed", exc_info=True)
+
+
+async def apply_changed_credentials() -> None:
+    """Make a credential just written to, or removed from, the shared store reach the channels.
+
+    A channel app may read a plain credential name besides its own settings — an earlier
+    release's setup stored ``TELEGRAM_BOT_TOKEN`` in the store, and a container passes one in
+    the environment — and its receiver keeps the value it started with. Core cannot know which
+    names an app reads, so it asks the channels. A reconciliation first starts a channel the
+    change configured and stops one it left with nothing (``offline``); then every enabled
+    channel that reports an error — a receiver still running on the old value says so — is
+    rebuilt from its current settings, which replaces its receiver. A channel the change did
+    not touch stays ``ready`` and keeps running undisturbed.
+    """
+    from personalclaw.channel_transports import channel_health, reconcile_inbound
+
+    await reconcile_inbound()
+    unsettled: list[str] = []
+    for ext in get_provider_registry().list_by_type("channel"):
+        transport = ext.provider_instance
+        if not ext.enabled or transport is None:
+            continue
+        if (await channel_health(transport)).get("state") == "error":
+            unsettled.append(ext.name)
+    for name in dict.fromkeys(unsettled):
+        await apply_saved_settings(name)
 
 
 async def handle_enable(request: web.Request) -> web.Response:

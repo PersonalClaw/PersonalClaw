@@ -4,8 +4,9 @@ The gateway delivers cron/heartbeat/subagent results and interactive approval
 prompts to whatever channel a session came from. That delivery is
 channel-specific (Slack renders mrkdwn + Block Kit ack buttons + threads), so the
 rendering lives in the channel's own bundle, not core. Each channel transport registers its
-handle at boot (``start_inbound``) and core calls these high-level methods with PLAIN text +
-structured intent; the implementation renders channel-specifically.
+handle when its receiver starts (``start_inbound``), core drops it when that receiver stops
+(``channel_transports.reconcile_inbound``), and core calls these high-level methods with PLAIN
+text + structured intent; the implementation renders channel-specifically.
 
 When no channel is configured nothing is registered and the gateway delivers to
 the dashboard only. This is the outbound half of the core↔channel seam

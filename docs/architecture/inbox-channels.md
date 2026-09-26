@@ -273,13 +273,21 @@ Core owns two protocols and **zero vendor code**:
 
 ### Inbound — `channel_transports/`
 
-`base.py` defines `ChannelTransportProvider`; `manager.py` is the registry.
-The gateway iterates `list_transports()` and calls each transport's
-`start_inbound(services)` with the `GatewayServices` object
-(`gateway_services.py` — sessions, context builder, conversation log,
-consolidator, cron service, subagent manager, channel history, dashboard
-state, config, owner id). Two implementations ship in-tree: `webui.py` (the
-dashboard itself as a transport) and `reference_echo.py` (a minimal example).
+`base.py` defines `ChannelTransportProvider`; the package `__init__.py` is the
+registry, and `manager.py` the Channels page's view of it. The gateway binds the
+`GatewayServices` object (`gateway_services.py` — sessions, context builder,
+conversation log, consolidator, cron service, subagent manager, channel history,
+dashboard state, config, owner id) at boot, and from then on ONE rule,
+`reconcile_inbound`, runs each transport's receiver: it is re-applied whenever a
+transport registers or unregisters (install, enable, disable, uninstall, update, a
+settings save) and after a Secrets-vault write, and keeps exactly one receiver
+(`start_inbound(services)`) per registered channel whose `health()` is not
+`offline`, on the instance registered now — stopping (`stop_inbound()`) a replaced,
+removed or unconfigured one first, and dropping the delivery handle it registered.
+A start runs as its own task, so a slow or failing channel holds up no other; the
+Channels page reads `starting` while it runs and the reason when it failed. Two
+implementations ship in-tree: `webui.py` (the dashboard itself as a transport, with
+no receiver) and `reference_echo.py` (a minimal example).
 
 ### Outbound — `channel_delivery.py`
 

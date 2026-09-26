@@ -140,22 +140,21 @@ class ProviderRegistry:
             self._disable_one(rec)
         return True
 
-    def rebuild(self, name: str) -> list[tuple[Any, Any]]:
+    def rebuild(self, name: str) -> None:
         """Re-create an enabled app's live provider instances from its CURRENT settings.
 
         An instance is built from its settings once, at enable, and cached here, so a saved
         setting (a new API key, a new bot token) reaches nothing until the instance is rebuilt.
-        Returns ``(old, new)`` per provider in the app's chain, so the caller can move what an
-        instance owns — a channel's running inbound receiver — onto its replacement. A disabled
-        or unknown app has nothing live to rebuild: ``[]``.
+        What an instance runs follows it: a channel's receiver moves to the rebuilt transport
+        because the transport registry's change reconciles the receivers
+        (``channel_transports.reconcile_inbound``). A disabled or unknown app has nothing live
+        to rebuild.
         """
         primary = self._extensions.get(name)
         if primary is None or not primary.enabled:
-            return []
-        old = [rec.provider_instance for rec in primary.chain()]
+            return
         self.disable(name)
         self.enable(name)
-        return list(zip(old, [rec.provider_instance for rec in primary.chain()]))
 
     def deregister(self, name: str) -> bool:
         """Disable AND forget an extension entirely (for uninstall).
@@ -497,7 +496,8 @@ class ChannelTypeHandler(_TypeHandler):
     in the ``channel_transports`` registry so the Channels page + comms manager
     can list/manage it. Enabling ``slack-channel`` registers the Slack
     transport; disabling it unregisters it — one source of truth, no parallel
-    startup path.
+    startup path. Its inbound receiver follows the same registry: each change
+    reconciles the receivers, so enabling starts one and disabling stops it.
     """
 
     def create(self, ext: RegisteredProvider) -> Any:

@@ -130,7 +130,9 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
           distinct from the enable/config surface above. */}
       {channel && <ChannelRuntimeRow channel={channel} onChanged={onChannelChanged} />}
 
-      {open && hasConfig && <ProviderConfigForm name={ext.name} />}
+      {/* A save rebuilds the provider — for a channel, its receiver restarts on what was saved —
+          so the card re-reads what the save changed instead of showing the status from before. */}
+      {open && hasConfig && <ProviderConfigForm name={ext.name} onSaved={onChanged} />}
     </div>
   )
 }
@@ -140,12 +142,21 @@ const CHANNEL_STATE_TONE: Record<string, string> = {
   error: 'var(--color-danger)', offline: 'var(--color-on-surface-low)',
 }
 
+/** The status word beside the dot, from what the channel is doing (`health.state`) — never from
+ *  `connected`, which says only that a token is present. The word used to come from `connected`,
+ *  so a channel whose receiver never started read "Connected" beside a red dot and a detail saying
+ *  it was not receiving. `starting` is core's own state while it starts the receiver. */
+const CHANNEL_STATE_LABEL: Record<string, string> = {
+  ready: 'Connected', starting: 'Starting…', error: 'Error', offline: 'Not connected',
+}
+
 /** The live connection strip for a channel provider: a health dot + state/detail,
  *  plus Test / Connect|Disconnect actions that hit the /api/channels runtime. */
 function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; onChanged?: () => void }) {
   const [busy, setBusy] = useState('')
   const [detail, setDetail] = useState<string | null>(null)
-  const tone = CHANNEL_STATE_TONE[channel.health.state] ?? 'var(--color-on-surface-low)'
+  const state = channel.health.state
+  const tone = CHANNEL_STATE_TONE[state] ?? 'var(--color-on-surface-low)'
   const act = async (kind: 'test' | 'connect' | 'disconnect') => {
     if (busy) return
     setBusy(kind); setDetail(null)
@@ -162,8 +173,10 @@ function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; on
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-outline-variant/30 pt-2">
       <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-var">
-        <span className="size-2 rounded-full" style={{ background: tone }} />
-        {channel.connected ? 'Connected' : channel.health.state === 'error' ? 'Error' : 'Not connected'}
+        {state === 'starting'
+          ? <Loader2 size={10} className="animate-spin" aria-hidden />
+          : <span className="size-2 rounded-full" style={{ background: tone }} />}
+        {CHANNEL_STATE_LABEL[state] ?? state}
       </span>
       {(detail ?? channel.health.detail) && <span data-type="caption" className="text-on-surface-low truncate max-w-[60%]">{detail ?? channel.health.detail}</span>}
       <div className="ml-auto flex items-center gap-1.5">
