@@ -68,9 +68,10 @@ describe('every row-scoped RowAction names its row', () => {
     ['pages/dashboard/widgets/TasksWidget.tsx', 1, 0],
     ['pages/dashboard/widgets/PinnedArtifacts.tsx', 1, 0],
     ['pages/dashboard/widgets/ActiveWork.tsx', 2, 1],   // the composer's Send is a singleton
-    // doctor + update + health-unknown: one each, no rows. The third is ux-673's "Health unknown"
-    // row — a singleton like its siblings (the strip has no rows to name), so `named` stays 0.
-    ['pages/dashboard/widgets/SystemHealth.tsx', 0, 3],
+    // doctor + update + health-unknown + doctor-off: one each, no rows. The third is ux-673's
+    // "Health unknown" row and the fourth says the Doctor is switched off — singletons like their
+    // siblings (the strip has no rows to name), so `named` stays 0.
+    ['pages/dashboard/widgets/SystemHealth.tsx', 0, 4],
     // One Unload per resident model (LMMV-5) — five rows of a bare "Unload" is this rail's
     // exact defect, so the name carries the model.
     ['pages/dashboard/widgets/OnThisMachine.tsx', 1, 0],

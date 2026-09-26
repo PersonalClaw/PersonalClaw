@@ -7,7 +7,7 @@ import {
   Trash2, Gavel, FlaskConical, KeyRound, type LucideIcon,
 } from 'lucide-react'
 import {
-  api, isEvalsOff, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
+  api, isNotRun, isSwitchedOff, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
   type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
@@ -238,13 +238,14 @@ export function ModelsPanel() {
     api.modelsHealth().then((h) => h.providers).catch(() => [] as ProviderHealth[]), { persist: false })
   // The judge benchmark's tier recommendations (ES-4), so rebinding a judge to the cheapest
   // adequate tier is ONE action here rather than a hand-translation from a table on another
-  // page. Evals off (`{"enabled": false}`), a failure or a 404 all collapse to "no
-  // recommendation, no chip" — which is an honest absence rather than a swallowed error,
-  // because the Learning page's Judge tiers panel is the surface that owns reporting WHY there
-  // is none.
+  // page. Evals off (`{"enabled": false}`), no benchmark yet (`{"ran": false}`) and a failure all
+  // collapse to "no recommendation, no chip" — which is an honest absence rather than a swallowed
+  // error, because the Learning page's Judge tiers panel is the surface that owns reporting WHY
+  // there is none. The first two are decided 200s: "no benchmark yet" used to be a 404, so with
+  // evals on every visit here logged a failed request until someone ran the CLI benchmark.
   const { data: judgeRecs } = useQuery('settings:judge-bench-recs', () =>
     api.judgeBench()
-      .then((v) => (isEvalsOff(v) ? [] : v.recommendations))
+      .then((v) => (isSwitchedOff(v) || isNotRun(v) ? [] : v.recommendations))
       .catch(() => [] as JudgeBenchRecommendation[]),
     { persist: false })
   const allModels = data?.allModels

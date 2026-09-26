@@ -2774,16 +2774,31 @@ export interface AttentionScope {
   trend: '' | 'rising' | 'falling' | 'flat'
 }
 
-/** What every eval REPORT read answers while `evals.enabled` is off (`handlers/evals.py:_off`):
- *  a decided state the panel renders, not an error. These reads used to 404 `evals_disabled`,
- *  which logged one console error per panel on every visit to `#/learning` for a feature a
- *  default install has merely not turned on. No eval view carries a top-level `enabled`, so the
- *  flag alone tells the two apart. */
-export interface EvalsOffView { enabled: false }
+/** What a read a page loads to render answers while its feature's switch is off: the decided
+ *  `200 {"enabled": false}` (`docs/reference/api-overview.md`, "A switched-off feature"). The
+ *  evals reports, the feedback producers and a thumbs pair's verdict, the Doctor's report, fixes
+ *  and remediation, the Learning page's five reads and the rooms list all answer it. They used to
+ *  answer 404 or 403, so a page logged one failed request per read for a feature that was merely
+ *  off. A panel renders it as its off state, with the way to turn the feature on; it is not an
+ *  error. No view these routes publish carries a top-level `enabled`, so the flag alone tells the
+ *  two apart. */
+export interface SwitchedOffView { enabled: false }
 
-export function isEvalsOff(v: unknown): v is EvalsOffView {
+export function isSwitchedOff(v: unknown): v is SwitchedOffView {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
     && (v as { enabled?: unknown }).enabled === false
+}
+
+/** What an eval report read answers while evals are on and the command that produces its report
+ *  has not run: the decided `200 {"ran": false}` (`handlers/evals.py:_not_run`). Judge-bench,
+ *  ablation, learning-benchmark and retrieval answer it. They used to 404 with a code per route, so
+ *  the Models page (which reads judge-bench for its recommended chip) and the Learning page logged
+ *  failed requests until a CLI run happened, which for most installs is never. */
+export interface NotRunView { ran: false }
+
+export function isNotRun(v: unknown): v is NotRunView {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+    && (v as { ran?: unknown }).ran === false
 }
 
 export interface JudgeBenchView {
@@ -6378,7 +6393,7 @@ export const api = {
   // ── Doctor: tiered read-only health probes (PLATFORM-RESILIENCE §1) ──
   /** `fresh` re-probes past the server's 30s cache — for the Doctor page's own Re-run and the
    *  re-read after a Fix, where a cached report would show the verdict from before the repair. */
-  doctor: (fresh = false) => get<DoctorReport>(fresh ? '/api/doctor?fresh=1' : '/api/doctor'),
+  doctor: (fresh = false) => get<DoctorReport | SwitchedOffView>(fresh ? '/api/doctor?fresh=1' : '/api/doctor'),
   doctorCapability: (capability: string) =>
     get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
       `/api/doctor/${encodeURIComponent(capability)}`,
@@ -6469,7 +6484,7 @@ export const api = {
       `/api/durability/conflicts/${encodeURIComponent(id)}/resolve`, { choice, confirm: true },
     ),
   // ── Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1) ──
-  doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
+  doctorFixes: () => get<{ fixes: DoctorFix[] } | SwitchedOffView>('/api/doctor/fixes'),
   doctorFixApply: (fixId: string) =>
     post<{ ok: boolean; fix_id: string; result?: string; error?: string }>(
       `/api/doctor/fix/${encodeURIComponent(fixId)}`, { confirm: true },
@@ -6485,7 +6500,7 @@ export const api = {
   doctorCrash: (filename: string) =>
     get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
   // ── Remediation engine (PLATFORM-RESILIENCE §4) ──
-  doctorRemediation: () => get<RemediationSnapshot>('/api/doctor/remediation'),
+  doctorRemediation: () => get<RemediationSnapshot | SwitchedOffView>('/api/doctor/remediation'),
   doctorRemediationRun: () =>
     post<{ score_before: number; score_after: number; jobs: RemediationJobRow[]; stopped_reason: string }>(
       '/api/doctor/remediation/run', { confirm: true },
@@ -6823,7 +6838,9 @@ export const api = {
     get<{ models: LocalModel[] }>(`/api/models/local/${encodeURIComponent(provider)}/search?q=${encodeURIComponent(q)}`).then((d) => d.models ?? []),
   // dashboard config (server-persisted prefs incl. the operator name)
   dashboardConfig: () => get<DashboardConfig>('/api/dashboard/config'),
-  saveDashboardConfig: (body: Partial<DashboardConfig>) => put<{ ok: boolean }>('/api/dashboard/config', body),
+  /** Answers the settings AS STORED, so a caller shows what the server kept (it slugifies
+   *  `username` and trims `user_name`) without a second read. */
+  saveDashboardConfig: (body: Partial<DashboardConfig>) => put<{ ok: boolean } & DashboardConfig>('/api/dashboard/config', body),
 
   // Screen context (MULTIMODAL-IO §5). `screenShareState` says whether the control
   // should be offered and — when the bound model can read a frame in no form —
@@ -6882,13 +6899,13 @@ export const api = {
   pinChatSession: (session: string, pinned: boolean) => patch(`/api/chat/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
 
   // ── Agent Rooms ──
-  // Every route refuses with `rooms_disabled` (403) while `rooms.enabled` is off, INCLUDING
-  // the reads — so a caller learns the feature is off from the same envelope it would learn
-  // anything else, and `hasApiCode(err, 'rooms_disabled')` is how the UI tells "off" from
-  // "broken". A room id is a strict slug, so it needs no escaping; a MEMBER name is an
-  // agent-binding key and is encoded.
+  // While `rooms.enabled` is off (the shipped default) the LIST answers `SwitchedOffView`, the
+  // decided answer every switched-off read gives, because the chat page asks for it on every
+  // visit. Every other route, one room's read included, refuses with `rooms_disabled` (403): each
+  // addresses a room, and there are none while off. A room id is a strict slug, so it needs no
+  // escaping; a MEMBER name is an agent-binding key and is encoded.
   rooms: (archived = false) =>
-    get<{ rooms: RoomRecord[] }>(`/api/rooms${archived ? '?archived=1' : ''}`),
+    get<{ rooms: RoomRecord[] } | SwitchedOffView>(`/api/rooms${archived ? '?archived=1' : ''}`),
   room: (id: string) => get<RoomDetail>(`/api/rooms/${encodeURIComponent(id)}`),
   createRoom: (title: string) => post<{ room: RoomRecord }>('/api/rooms', { title }),
   archiveRoom: (id: string) => post<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}/archive`),
@@ -7470,7 +7487,7 @@ export const api = {
     if (opts?.tier) q.set('tier', opts.tier)
     if (opts?.flagged) q.set('flagged', '1')
     const qs = q.toString()
-    return get<LearningInbox>(`/api/learning/proposals${qs ? `?${qs}` : ''}`)
+    return get<LearningInbox | SwitchedOffView>(`/api/learning/proposals${qs ? `?${qs}` : ''}`)
   },
   learningProposal: (id: string) =>
     get<Record<string, unknown>>(`/api/learning/proposals/${encodeURIComponent(id)}`),
@@ -7481,9 +7498,9 @@ export const api = {
   rejectLearningProposal: (id: string) =>
     del(`/api/learning/proposals/${encodeURIComponent(id)}`),
   learningStagingWeek: (days = 7) =>
-    get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
+    get<StagingWeek | SwitchedOffView>(`/api/learning/staging/week?days=${days}`),
   learningHealth: (days = 7) =>
-    get<LearningHealth>(`/api/learning/health?days=${days}`),
+    get<LearningHealth | SwitchedOffView>(`/api/learning/health?days=${days}`),
   /** The identity report, DETERMINISTIC (LV-4). No model call — a panel mounting must not
    *  spend one, so the narrative is only composed by the POST below.
    *
@@ -7491,7 +7508,7 @@ export const api = {
    *  It used to default to 30 here, which made a weekly install's panel say "last 30 days" about
    *  a document its own cron writes over 7 — the FE quietly overriding a setting it also renders. */
   identityReport: (days?: number) =>
-    get<IdentityReportView>(`/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`),
+    get<IdentityReportView | SwitchedOffView>(`/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`),
   /** Compose, narrate, persist the versioned artifact and raise ONE inbox item. Separate from
    *  the GET because it spends a model call and writes two durable things; the scheduled job
    *  calls the same backend function, so there is one owner, not two. `days` is omitted by
@@ -7503,16 +7520,16 @@ export const api = {
     ),
   /** The judge tier-recommendation table (ES-4). Read-only: the RUN is
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
-   *  must not start one. "Evals off" is a 200 `EvalsOffView`; "no benchmark yet" is a 404
-   *  with its own code. */
-  judgeBench: () => get<JudgeBenchView | EvalsOffView>('/api/evals/judge-bench'),
+   *  must not start one. "Evals off" is a 200 `SwitchedOffView`; "no benchmark yet" is a 200
+   *  `NotRunView`. */
+  judgeBench: () => get<JudgeBenchView | SwitchedOffView | NotRunView>('/api/evals/judge-bench'),
   /** The newest keep/remove/lighten ablation report (ES-7 §3.1). Read-only for the bench's
    *  reason: a POST would hold a request open for a multi-cell matrix and spend real money on
    *  a click. The RUN is `personalclaw ablation` or the monthly cadence. THREE distinct
-   *  non-reports — a 200 `EvalsOffView`, a 404 `ablation_absent`, and a 500 `ablation_unreadable`
+   *  non-reports — a 200 `SwitchedOffView`, a 200 `NotRunView`, and a 500 `ablation_unreadable`
    *  — because they send a user to three different places (the switch, the registry, a bug), and
    *  one state for all of them would make the panel's empty state a guess. */
-  ablation: () => get<AblationView | EvalsOffView>('/api/evals/ablation'),
+  ablation: () => get<AblationView | SwitchedOffView | NotRunView>('/api/evals/ablation'),
   /** The skill-impact benchmark: does an approved skill make the next run better? (LV-7)
    *
    *  Read-only, and for the sharpest reason on this route family: §3 pairs k=5 trials per arm
@@ -7523,9 +7540,9 @@ export const api = {
    *  The verdict is computed by the runner (its thresholds live in `harness/fanout_measure.py`,
    *  outside the wheel) and written into the report. Neither the gateway nor this page can
    *  synthesise one — which is exactly why an unmeasured task arrives as `verdict: null` and
-   *  renders as "not measured" instead of as a zero. "Evals off" is a 200 `EvalsOffView`;
-   *  "no benchmark yet" is a 404 with its own code. */
-  learningBenchmark: () => get<BenchmarkView | EvalsOffView>('/api/evals/learning-benchmark'),
+   *  renders as "not measured" instead of as a zero. "Evals off" is a 200 `SwitchedOffView`;
+   *  "no benchmark yet" is a 200 `NotRunView`. */
+  learningBenchmark: () => get<BenchmarkView | SwitchedOffView | NotRunView>('/api/evals/learning-benchmark'),
   /** Pre-registered template A/B studies (ES-5). Read-only for the same reason as the
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
@@ -7534,9 +7551,9 @@ export const api = {
    *  reason than the bench's: retrieval costs no model calls, but §5.1 forbids the harness
    *  writing to knowledge.db or memory.db at all, and the cheapest way to keep that promise
    *  on a web surface is to have no run trigger on it. The RUN is `personalclaw
-   *  retrieval-eval`. "Evals off" is a 200 `EvalsOffView`; "no run yet" is a 404 with its own
-   *  code. */
-  retrievalBench: () => get<RetrievalBenchView | EvalsOffView>('/api/evals/retrieval'),
+   *  retrieval-eval`. "Evals off" is a 200 `SwitchedOffView`; "no run yet" is a 200
+   *  `NotRunView`. */
+  retrievalBench: () => get<RetrievalBenchView | SwitchedOffView | NotRunView>('/api/evals/retrieval'),
   /** §5.2's hand-label card for one store. `store` is REQUIRED — the two stores never share
    *  a corpus, so a card built for the wrong one would collect labels against ids the other
    *  has never heard of, and the backend refuses a missing one rather than defaulting. */
@@ -7548,12 +7565,12 @@ export const api = {
   saveRetrievalLabels: (store: string, labels: Record<string, string[]>) =>
     post<{ ok: boolean; store: string; queries: number; hand_labelled: number }>(
       '/api/evals/retrieval/labels', { store, labels }),
-  evalStudies: () => get<{ studies: StudyRow[] } | EvalsOffView>('/api/evals/studies'),
+  evalStudies: () => get<{ studies: StudyRow[] } | SwitchedOffView>('/api/evals/studies'),
   evalStudy: (studyId: string) =>
     get<StudyView>(`/api/evals/studies/${encodeURIComponent(studyId)}`),
   /** ES-9's lab-vs-field table — one row per subject, divergence verdicts decided
    *  server-side. Read-only: the demotion the flag feeds is the gateway sweep's. */
-  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] } | EvalsOffView>('/api/evals/field-metrics'),
+  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] } | SwitchedOffView>('/api/evals/field-metrics'),
   /** The proposals queue AND the ladder's last pass, from one read. Returns the whole
    *  feed rather than unwrapping to the array: `lastReview` is what makes an empty
    *  `proposals` falsifiable, and a second accessor over the same route would be two
@@ -7569,7 +7586,7 @@ export const api = {
   /** The learning summary block (LV-3). 404s when `learning.enabled` is off — the
    *  caller must let the block be ABSENT in that case rather than render zeros, which
    *  would claim nothing was learned when the truthful answer is "not being tracked". */
-  learningSummary: (days?: number) => get<LearningSummary>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
+  learningSummary: (days?: number) => get<LearningSummary | SwitchedOffView>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
   // Ephemeral session-skill drafts (skill-ephemeral-promotion).
   ephemeralSkills: (session: string) =>
     get<{ drafts: EphemeralDraft[] }>(`/api/skills/ephemeral/${encodeURIComponent(session)}`).then((d) => d.drafts),
@@ -8270,9 +8287,9 @@ export const api = {
   // Feedback Signal (plan 58): 👍/👎 on AI judgment outputs + per-producer accuracy.
   recordFeedback: (body: FeedbackRecordBody) => post<{ ok: boolean; id: string; verdict: string }>('/api/feedback', body),
   feedbackTarget: (kind: FeedbackTargetKind, id: string) =>
-    get<{ verdict: 'up' | 'down' | null; reason?: string }>(`/api/feedback/target/${kind}/${encodeURIComponent(id)}`),
+    get<{ verdict: 'up' | 'down' | null; reason?: string } | SwitchedOffView>(`/api/feedback/target/${kind}/${encodeURIComponent(id)}`),
   feedbackProducers: (windowDays?: number) =>
-    get<FeedbackProducersResponse>(`/api/feedback/producers${windowDays ? `?window_days=${windowDays}` : ''}`),
+    get<FeedbackProducersResponse | SwitchedOffView>(`/api/feedback/producers${windowDays ? `?window_days=${windowDays}` : ''}`),
   feedbackSnooze: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/snooze', producer),
   feedbackClear: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/clear', producer),
   // Investigate Anywhere (plan 60): server-composed context envelope + staged session.

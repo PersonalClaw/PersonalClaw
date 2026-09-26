@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ThumbsUp, ThumbsDown } from 'lucide-react'
-import { api, type FeedbackTargetKind, type FeedbackProducer } from '../lib/api'
+import { api, isSwitchedOff, type FeedbackTargetKind, type FeedbackProducer } from '../lib/api'
 import { cx } from './cx'
 
 /** Quiet 👍/👎 pair for AI JUDGMENT outputs (FEEDBACK-SIGNAL plan 58) — inbox
@@ -11,7 +11,9 @@ import { cx } from './cx'
  *  popover; Enter or click-away records without a reason. State is reflected (a
  *  filled thumb), reversible (re-thumb supersedes), and hydrated from the store on
  *  mount so a reopened card shows the existing verdict. Renders nothing while the
- *  feedback config kill-switch is off (the backend 404s; we hide on the first 404). */
+ *  feedback config kill-switch is off: the hydrating read answers `{"enabled": false}` then (a
+ *  decided 200; it used to 404, one failed request per card that carried thumbs). A read that
+ *  FAILS hides the pair too — a verdict control that cannot say what it holds is not offered. */
 export function FeedbackThumbs({ targetKind, targetId, producer, snapshot, className }: {
   targetKind: FeedbackTargetKind
   targetId: string
@@ -31,8 +33,12 @@ export function FeedbackThumbs({ targetKind, targetId, producer, snapshot, class
     let alive = true
     setVerdict(null); setWhyOpen(false); setWhy('')
     api.feedbackTarget(targetKind, targetId)
-      .then((r) => { if (alive) setVerdict(r.verdict) })
-      .catch(() => { if (alive) setDisabled(true) })  // kill-switch → hide entirely
+      .then((r) => {
+        if (!alive) return
+        if (isSwitchedOff(r)) setDisabled(true)
+        else setVerdict(r.verdict)
+      })
+      .catch(() => { if (alive) setDisabled(true) })
     return () => { alive = false }
   }, [targetKind, targetId])
 

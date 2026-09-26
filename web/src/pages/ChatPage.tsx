@@ -88,7 +88,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -4676,11 +4676,13 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // them. `persist: false` for the same reason.
   //
   // Not swallowed, and the distinction matters more here than elsewhere: rooms ship DISABLED, so
-  // the common failure is a deliberate 403 `rooms_disabled` rather than a broken read, and
-  // `RoomsScope` renders those as two different things. A `.catch(() => [])` would have told a
-  // user with the feature switched off that they have no rooms.
+  // the common answer is a decided `{"enabled": false}` rather than a list, and `RoomsScope`
+  // renders "off", "none" and "could not read" as three different things. A `.catch(() => [])`
+  // would have told a user with the feature switched off that they have no rooms. The off answer
+  // used to be a 403 `rooms_disabled`, so every chat visit on a default install logged a failed
+  // request.
   const { data: roomsData, error: roomsError, refresh: refreshRooms } = useQuery(
-    'rooms:list', () => api.rooms().then((d) => d.rooms), { persist: false },
+    'rooms:list', () => api.rooms().then((d) => (isSwitchedOff(d) ? d : d.rooms)), { persist: false },
   )
   const folders = foldersData ?? []
   const tags = tagsData ?? []
@@ -4894,8 +4896,8 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // "every chat", and a room is not a chat. A room's count of 0 with the feature ON is still a
   // reason to show the tab — otherwise the only way to reach the "New room" action would be to
   // already have a room, which is the discoverability dead end this scope exists to avoid.
-  const roomCount = roomsData?.length ?? 0
-  const roomsAvailable = roomsData !== undefined
+  const roomCount = Array.isArray(roomsData) ? roomsData.length : 0
+  const roomsAvailable = Array.isArray(roomsData)
 
   async function del(s: ChatSessionSummary) {
     if (!(await confirm({

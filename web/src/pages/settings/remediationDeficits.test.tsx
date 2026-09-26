@@ -44,7 +44,9 @@ const snapshot = (over: Record<string, unknown> = {}) => ({
 
 async function mount(over: Record<string, unknown> = {}) {
   vi.resetModules()
-  vi.doMock('../../lib/api', () => ({
+  vi.doMock('../../lib/api', async () => ({
+    // The real module under the stubbed `api`: the section imports `isSwitchedOff` from it too.
+    ...(await vi.importActual<typeof import('../../lib/api')>('../../lib/api')),
     api: {
       doctorRemediation: () => Promise.resolve(snapshot(over)),
       doctorRemediationRun: () => Promise.resolve({}),
@@ -253,7 +255,8 @@ describe('the Run-now toast level is derived from the result', () => {
       notify: (m: string, l?: string) => { calls.push([m, l]) },
     }))
     vi.doMock('../../ui/dialog', () => ({ confirm: () => Promise.resolve(true) }))
-    vi.doMock('../../lib/api', () => ({
+    vi.doMock('../../lib/api', async () => ({
+      ...(await vi.importActual<typeof import('../../lib/api')>('../../lib/api')),
       api: {
         doctorRemediation: () => Promise.resolve(snapshot()),
         doctorRemediationRun: () => Promise.resolve(result),

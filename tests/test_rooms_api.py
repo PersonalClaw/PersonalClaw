@@ -101,8 +101,24 @@ def _post_message(room_id, payload):
 # ── the kill switch ─────────────────────────────────────────────────────────
 
 
-def test_every_route_refuses_while_rooms_is_disabled(monkeypatch):
-    """`rooms.enabled=false` means OFF, reads included — not "off for writes only"."""
+def test_the_list_answers_off_while_rooms_is_disabled(monkeypatch):
+    """The chat page asks for the list on every visit, and off is the shipped default, so the
+    list answers the decided ``{"enabled": false}`` — the flag alone, and no ``rooms: []``
+    beside it, which would read as "you have no rooms" to a client that skips the flag. As a 403
+    it logged a failed request on every chat visit of a default install."""
+    from personalclaw.config.loader import AppConfig
+
+    conf = AppConfig()
+    assert conf.rooms.enabled is False, "the shipped default"
+    monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls, *a, **k: conf))
+
+    response = _list()
+    assert response.status == 200
+    assert _body(response) == {"enabled": False}
+
+
+def test_every_other_route_refuses_while_rooms_is_disabled(monkeypatch):
+    """`rooms.enabled=false` means OFF, reads of a room included — not "off for writes only"."""
     from personalclaw.config.loader import AppConfig
 
     conf = AppConfig()
@@ -110,7 +126,6 @@ def test_every_route_refuses_while_rooms_is_disabled(monkeypatch):
     monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls, *a, **k: conf))
 
     for response in (
-        _list(),
         _create(),
         _get("anything"),
         _add_member("anything", {"name": "analyst"}),

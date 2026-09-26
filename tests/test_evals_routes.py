@@ -4,11 +4,12 @@
 matrix is 540 judge calls, so a POST that started one would spend real money on a click and
 hold a request open for minutes. The run is `personalclaw judge-bench`.
 
-The load-bearing assertions are the two non-answers. "No benchmark has run yet" is a 404 with
-its own stable code, and "the eval substrate is off" is a DECIDED 200 ``{"enabled": false}``
-on every report read — one answer for both would make the panel's empty state a guess, and
-the off state is not a failure (a 404 there logged six console errors per Learning visit on a
-default install).
+The load-bearing assertions are the two non-answers, and both are DECIDED 200s. "The eval
+substrate is off" is ``{"enabled": false}`` on every report read, and "no benchmark has run yet"
+is ``{"ran": false}`` on the four that publish a run. They stay two bodies — one answer for both
+would make the panel's empty state a guess — and neither is a failure: as 404s they logged six
+console errors per Learning visit on a default install, and one per Models visit with evals on
+until a CLI run happened.
 """
 
 from __future__ import annotations
@@ -94,15 +95,17 @@ def test_every_report_read_on_the_surface_is_in_the_off_census():
     assert gets - drill_downs == {path for _, path in _REPORT_READS}
 
 
-def test_no_benchmark_yet_is_a_different_404_than_disabled(evals_on, monkeypatch):
-    """The panel renders guidance for one of these and a load failure for the other, so a
-    shared code would collapse two different user situations into one."""
+def test_no_benchmark_yet_is_a_decided_200_not_a_404(evals_on, monkeypatch):
+    """ "Nothing has run" is the ordinary state for most installs, and the Models page reads this
+    route on every visit for its recommended chip — as a 404 it logged a failed request each time.
+    It is a different body from "evals off", because the panel sends a user to the command for one
+    and to the switch for the other."""
     from personalclaw.evals import judge_bench as jb
 
     monkeypatch.setattr(jb, "latest_bench_view", lambda: None)
     resp = _run(E.api_evals_judge_bench(_req()))
-    assert resp.status == 404
-    assert _body(resp)["error"]["code"] == "judge_bench_absent"
+    assert resp.status == 200
+    assert _body(resp) == {"ran": False}
 
 
 def test_a_read_failure_is_a_500_not_an_empty_table(evals_on, monkeypatch):
@@ -283,16 +286,15 @@ def _abl_req(**kw):
     return _req(path="/api/evals/ablation", **kw)
 
 
-def test_no_ablation_yet_is_a_distinct_404_code(evals_on, monkeypatch):
+def test_no_ablation_yet_is_a_decided_200_distinct_from_off(evals_on, monkeypatch):
     """Three states send a user to three different places — the switch, the registry, and
-    waiting for the cadence — so "nothing has run" cannot share a code with "evals off"."""
+    waiting for the cadence — so "nothing has run" cannot share a body with "evals off". The
+    panel names the registry and the command; the route only has to say which state it is."""
     monkeypatch.setattr("personalclaw.evals.ablation.latest_ablation_view", lambda: None)
     resp = _run(E.api_evals_ablation(_abl_req()))
-    assert resp.status == 404
-    code = _body(resp)["error"]["code"]
-    assert code == "ablation_absent"
-    assert code != "evals_disabled"
-    assert "ablation_registry.json" in _body(resp)["error"]["message"]
+    assert resp.status == 200
+    assert _body(resp) == {"ran": False}
+    assert _body(resp) != {"enabled": False}
 
 
 def test_an_unreadable_artifact_is_a_500_not_an_empty_table(evals_on, monkeypatch):
@@ -346,9 +348,9 @@ def _ret_req(method="GET", path="/api/evals/retrieval", **kw):
     return _req(method, path, **kw)
 
 
-def test_no_retrieval_run_yet_is_a_different_404_than_disabled(evals_on, monkeypatch):
-    """The panel renders guidance + the label card for one of these and a load failure for the
-    other, so a shared code would collapse two different user situations into one."""
+def test_no_retrieval_run_yet_is_a_decided_200_not_a_404(evals_on, monkeypatch):
+    """The panel renders guidance + the label card for this state, and it is the ordinary one
+    until someone runs the command, so it is an answer and not a failure."""
     from personalclaw.evals import retrieval_bench as rb
 
     monkeypatch.setattr(
@@ -357,16 +359,16 @@ def test_no_retrieval_run_yet_is_a_different_404_than_disabled(evals_on, monkeyp
         lambda: {"stores": {kind: {"run": ""} for kind in rb.STORES}},
     )
     resp = _run(E.api_evals_retrieval(_ret_req()))
-    assert resp.status == 404
-    assert _body(resp)["error"]["code"] == "retrieval_absent"
+    assert resp.status == 200
+    assert _body(resp) == {"ran": False}
 
 
 def test_one_benchmarked_store_is_enough_to_publish(evals_on, monkeypatch):
     """A user who has only ever run `--store knowledge` must still see that half.
 
-    The vacuity floor on the 404 above: if the absence check read "every store has a run"
-    instead of "any store has a run", a half-measured home would 404 forever and the panel
-    would tell the user to run a command they already ran.
+    The vacuity floor on the not-run answer above: if the absence check read "every store has a
+    run" instead of "any store has a run", a half-measured home would answer "not run" forever
+    and the panel would tell the user to run a command they already ran.
     """
     from personalclaw.evals import retrieval_bench as rb
 
@@ -506,17 +508,14 @@ def _bench_req(**kw):
     return _req(path="/api/evals/learning-benchmark", **kw)
 
 
-def test_no_benchmark_run_yet_is_a_distinct_404_code(evals_on, monkeypatch):
+def test_no_benchmark_run_yet_is_a_decided_200_not_a_404(evals_on, monkeypatch):
     """This panel's ORDINARY state, permanently so for most users — the paired design is 100
-    real model calls. It is therefore the state that must be distinguishable from a failure, and
-    the message names the command rather than leaving a user to guess."""
+    real model calls. It is therefore the state that must be distinguishable from a failure (a
+    500, below) and from "evals off"; the panel names the command."""
     monkeypatch.setattr("personalclaw.evals.learning_bench.latest_report", lambda: None)
     resp = _run(E.api_evals_learning_benchmark(_bench_req()))
-    assert resp.status == 404
-    code = _body(resp)["error"]["code"]
-    assert code == "learning_benchmark_absent"
-    assert code != "evals_disabled"
-    assert "scripts/learning_benchmark.py" in _body(resp)["error"]["message"]
+    assert resp.status == 200
+    assert _body(resp) == {"ran": False}
 
 
 def test_an_unreadable_benchmark_report_is_a_500_not_an_empty_table(evals_on, monkeypatch):

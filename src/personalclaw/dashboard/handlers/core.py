@@ -1568,6 +1568,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "values": ["scratch", "worktree", "in_place", "container"],
     },
     "workflows.workspace_teardown_on_expiry": {"type": "bool"},
+    # The learning subsystem's own switch. Live-editable because every reader re-loads the config
+    # (the gate per decision, the Learning routes per request), and because it needs a way back
+    # on: while it is off the Learning page says so and offers "Turn learning on", which is this
+    # PATCH. Without the row the only way back was hand-editing `config.json`.
+    "learning.enabled": {"type": "bool"},
     # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
     # evidence floor and the session-score threshold are how an owner tunes how
     # eagerly the system learns, and staging can be turned off if the log is

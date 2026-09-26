@@ -2,13 +2,13 @@ import { ExternalLink, FlaskConical, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { StatusPill } from '../../ui/StatusPill'
 import { fvs } from '../../design/fontWeight'
-import { hasApiCode, isEvalsOff } from '../../lib/api'
+import { isNotRun, isSwitchedOff } from '../../lib/api'
 import { UNRECORDED_LABEL, provenanceRecorded, tokensUnrecorded } from '../../lib/unrecorded'
 import { repoDocUrl } from '../../lib/repoDocs'
 import { EvalsOff } from './EvalsOff'
 import type {
   BenchmarkArmAggregate, BenchmarkProviderBinding, BenchmarkReport, BenchmarkTaskRow,
-  BenchmarkView, EvalsOffView,
+  BenchmarkView, NotRunView, SwitchedOffView,
 } from '../../lib/api'
 
 /** Canonical blob root for repo docs, from `pyproject.toml`'s `[project.urls] Source`.
@@ -37,14 +37,14 @@ import type {
  *
  *  **A failed fetch is not an empty benchmark.** "No benchmark has run yet" is this panel's
  *  ORDINARY state for months, so it must be distinguishable from "we could not ask". The backend
- *  answers the three distinctly — a decided "off", a 404 with its own code, a 500 — and this
- *  reads them. */
+ *  answers the three distinctly — a decided "off", a decided "not run", a 500 — and this reads
+ *  them. */
 export function BenchmarkPanel({ view, error, onRetry }: {
-  view: BenchmarkView | EvalsOffView | undefined
+  view: BenchmarkView | SwitchedOffView | NotRunView | undefined
   error: unknown
   onRetry: () => void
 }) {
-  if (isEvalsOff(view)) {
+  if (isSwitchedOff(view)) {
     return (
       <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
         <Heading />
@@ -64,32 +64,30 @@ export function BenchmarkPanel({ view, error, onRetry }: {
                 than the whole instruction. `EvalsOff` spans control AND destination so the name
                 carries the purpose out of context.
 
-            The `learning_benchmark_absent` branch below keeps its OWN command on purpose — the
-            docstring's rule is that turning a setting on and registering a component are two
-            different places, so each panel's `*_absent` state owns its run command. */}
+            The not-run branch below keeps its OWN command on purpose — the docstring's rule is
+            that turning a setting on and registering a component are two different places, so
+            each panel's not-run state owns its run command. */}
         <EvalsOff what="benchmark" />
       </section>
     )
   }
-  if (view === undefined && error) {
-    if (hasApiCode(error, 'learning_benchmark_absent')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
-          <Heading />
-          <p className="text-on-surface-low text-[0.8125rem]">
-            No skill-impact benchmark has run yet. Start with{' '}
-            <code className="text-on-surface-var">
-              python scripts/learning_benchmark.py --preflight
-            </code>{' '}
-            — it calls no model — then <code className="text-on-surface-var">--run</code>. The full
-            paired design is 100 real model calls, so nothing here starts one on a click.
-          </p>
-          <MethodologyLink doc="docs/research/learning-benchmark-protocol.md" />
-        </section>
-      )
-    }
-    return <LoadError what="skill-impact benchmark" error={error} onRetry={onRetry} />
+  if (isNotRun(view)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
+        <Heading />
+        <p className="text-on-surface-low text-[0.8125rem]">
+          No skill-impact benchmark has run yet. Start with{' '}
+          <code className="text-on-surface-var">
+            python scripts/learning_benchmark.py --preflight
+          </code>{' '}
+          — it calls no model — then <code className="text-on-surface-var">--run</code>. The full
+          paired design is 100 real model calls, so nothing here starts one on a click.
+        </p>
+        <MethodologyLink doc="docs/research/learning-benchmark-protocol.md" />
+      </section>
+    )
   }
+  if (view === undefined && error) return <LoadError what="skill-impact benchmark" error={error} onRetry={onRetry} />
   if (!view) return null
 
   const report = view.report

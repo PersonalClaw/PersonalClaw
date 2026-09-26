@@ -63,18 +63,17 @@ const rejectLearningProposal = vi.fn<() => Promise<void>>()
 // double that omits a fetch the page makes throws inside a passive effect — which surfaces as
 // five unrelated failures about rows and cache keys, and hides which fetch is missing.
 const learningHealth = vi.fn<() => Promise<never>>()
-const judgeBench = vi.fn<() => Promise<never>>()
+const judgeBench = vi.fn<() => Promise<{ ran: false }>>()
 const evalStudies = vi.fn<() => Promise<never>>()
-const retrievalBench = vi.fn<() => Promise<never>>()
-const ablation = vi.fn<() => Promise<never>>()
+const retrievalBench = vi.fn<() => Promise<{ ran: false }>>()
+const ablation = vi.fn<() => Promise<{ ran: false }>>()
 const identityReport = vi.fn<() => Promise<never>>()
-const learningBenchmark = vi.fn<() => Promise<never>>()
+const learningBenchmark = vi.fn<() => Promise<{ ran: false }>>()
 
-// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The five eval
-// panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
-// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
-// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
-// fire and the test would pass by rendering the generic failure instead.
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError` and answer guards are kept. The eval
+// panels branch on `isSwitchedOff`/`isNotRun`, so a factory that returned only `api` made the mocked
+// module throw "No export is defined" from inside the render — and a double that rejected where the
+// wire answers `{"ran": false}` would render the generic failure instead of the state under test.
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
   return {
@@ -94,7 +93,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       retrievalBench: () => retrievalBench(),
       ablation: () => ablation(),
       identityReport: () => identityReport(),
-      // Rejected in each suite's setup with its own ORDINARY 404 code: this page reads it,
+      // Answered in each suite's setup with its ORDINARY `{"ran": false}`: this page reads it,
       // so a double that omits it throws inside a passive effect and hides the real failure.
       learningBenchmark: () => learningBenchmark(),
     },
@@ -112,28 +111,28 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // panel's own error rendering.
     learningHealth.mockRejectedValue(new Error('not under test'))
     // Same posture as the health panel, for the same reason: the judge-tier panel's own
-    // rendering is not this suite's subject, and a 404 is its ORDINARY state (no benchmark
-    // has run), so the list must be unaffected by it.
-    judgeBench.mockRejectedValue(new ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent'))
+    // rendering is not this suite's subject, and `{"ran": false}` is its ORDINARY state (no
+    // benchmark has run), so the list must be unaffected by it.
+    judgeBench.mockResolvedValue({ ran: false })
     // And the study panel, for the third time and the same reason: `StudiesPanel.test.tsx` owns
     // its rendering, and "no study registered" is its ordinary state.
     evalStudies.mockRejectedValue(new ApiError('No study is registered under that id.', 404, 'study_absent'))
     // And the retrieval-arms panel, for the fourth time and the same reason:
     // `RetrievalBenchPanel.test.tsx` owns its rendering, and "no retrieval benchmark yet"
     // is its ordinary state.
-    retrievalBench.mockRejectedValue(new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent'))
+    retrievalBench.mockResolvedValue({ ran: false })
     // And the ablation report, for the fifth time and the same reason: `AblationPanel.test.tsx`
     // owns its rendering, and "no ablation has run yet" is its ordinary state — for months,
     // since the cadence is monthly and the registry starts empty.
-    ablation.mockRejectedValue(new ApiError('No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`.', 404, 'ablation_absent'))
+    ablation.mockResolvedValue({ ran: false })
     // And LV-4's identity report, for the sixth time and the same reason:
     // `IdentityReportPanel.test.tsx` owns its rendering. Omitting it threw inside a passive
     // effect and surfaced as five failures about rows and cache keys — the exact symptom the
     // note above this mock block describes, reproduced by the sixth read.
     identityReport.mockRejectedValue(new Error('not under test'))
-    // And LV-7's benchmark, for the seventh. An `ApiError` carrying the real code, matching the
-    // convention the rest of this block moved to: `BenchmarkPanel` branches on `hasApiCode`.
-    learningBenchmark.mockRejectedValue(new ApiError('No skill-impact benchmark has run yet. Run `python scripts/learning_benchmark.py --preflight` and then `--run`.', 404, 'learning_benchmark_absent'))
+    // And LV-7's benchmark, for the seventh: the wire's `{"ran": false}`, the value
+    // `BenchmarkPanel` renders its never-run state from.
+    learningBenchmark.mockResolvedValue({ ran: false })
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })

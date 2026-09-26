@@ -33,18 +33,18 @@ import type {
 const learningProposals = vi.fn<() => Promise<LearningInbox>>()
 const learningStagingWeek = vi.fn<() => Promise<StagingWeek>>()
 const learningHealth = vi.fn<() => Promise<never>>()
-const judgeBench = vi.fn<() => Promise<never>>()
+const judgeBench = vi.fn<() => Promise<{ ran: false }>>()
 const evalStudies = vi.fn<() => Promise<never>>()
-const retrievalBench = vi.fn<() => Promise<never>>()
-const ablation = vi.fn<() => Promise<never>>()
+const retrievalBench = vi.fn<() => Promise<{ ran: false }>>()
+const ablation = vi.fn<() => Promise<{ ran: false }>>()
 const identityReport = vi.fn<() => Promise<never>>()
 const learningBenchmark = vi.fn<() => Promise<BenchmarkView>>()
 
-// 🪟 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. This
-// panel branches on `hasApiCode(error, '<code>')`, so a factory that returned only `api` makes the
-// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
-// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
-// fire and the test would pass by rendering the generic failure instead.
+// 🪟 PARTIAL mock, via `importOriginal`: the REAL `ApiError` and answer guards are kept. This
+// panel branches on `isSwitchedOff`/`isNotRun`, so a factory that returned only `api` makes the
+// mocked module throw "No export is defined" from inside the render — and a double that rejected
+// where the wire answers `{"ran": false}` would render the generic failure instead of the state
+// under test.
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
   return {
@@ -164,10 +164,10 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     learningProposals.mockResolvedValue(EMPTY_INBOX)
     learningStagingWeek.mockResolvedValue(WEEK)
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new ApiError('no judge bench', 404, 'judge_bench_absent'))
+    judgeBench.mockResolvedValue({ ran: false })
     evalStudies.mockRejectedValue(new ApiError('no study', 404, 'study_absent'))
-    retrievalBench.mockRejectedValue(new ApiError('no retrieval bench', 404, 'retrieval_absent'))
-    ablation.mockRejectedValue(new ApiError('no ablation', 404, 'ablation_absent'))
+    retrievalBench.mockResolvedValue({ ran: false })
+    ablation.mockResolvedValue({ ran: false })
     // LV-4's identity report: the page reads it, so a double that omits it throws inside a
     // passive effect and surfaces as failures about this panel instead.
     identityReport.mockRejectedValue(new Error('not under test'))
@@ -350,8 +350,8 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
   it('distinguishes "no benchmark yet" from "we could not ask"', () => {
     const absent = render(
       <BenchmarkPanel
-        view={undefined}
-        error={new ApiError('no benchmark yet', 404, 'learning_benchmark_absent')}
+        view={{ ran: false }}
+        error={null}
         onRetry={() => {}}
       />,
     )

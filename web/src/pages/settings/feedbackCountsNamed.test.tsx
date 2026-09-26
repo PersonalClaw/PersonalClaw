@@ -30,7 +30,9 @@ import { FeedbackPanel } from './FeedbackPanel'
 // The visible text is untouched: this is an accessibility-tree fix and the captures are identical.
 
 const feedbackProducers = vi.fn()
-vi.mock('../../lib/api', () => ({
+vi.mock('../../lib/api', async (importOriginal) => ({
+  // The real module under the stubbed `api`: the panel imports `isSwitchedOff` from it too.
+  ...(await importOriginal<typeof import('../../lib/api')>()),
   api: {
     feedbackProducers: (...a: unknown[]) => feedbackProducers(...a),
     feedbackSnooze: vi.fn(),

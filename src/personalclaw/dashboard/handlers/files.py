@@ -3518,7 +3518,10 @@ async def api_create_dir(request: web.Request) -> web.Response:
 
 
 async def api_dashboard_config(request: web.Request) -> web.Response:
-    """GET/PUT /api/dashboard/config — read or write dashboard settings."""
+    """GET/PUT /api/dashboard/config — read or write dashboard settings.
+
+    Both answer the settings as stored; a PUT adds ``ok``.
+    """
     cfg = AppConfig.load()
     if request.method == "PUT":
         try:
@@ -3665,27 +3668,34 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="dashboard_config_write", outcome="success"
         )
-        return web.json_response({"ok": True})
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="dashboard_config_read", outcome="success"
-    )
+    else:
+        _sel().log_tool_invocation(
+            session_key="dashboard", tool_name="dashboard_config_read", outcome="success"
+        )
+    # Both methods answer the settings AS STORED, from this one body. A PUT answers them because
+    # the server rewrites what it is sent (``username`` slugified, ``user_name`` trimmed and
+    # capped): a client that wanted the stored value had to read it back, and Settings → Account
+    # chained that re-read onto the save, so a re-read that failed was reported as "Couldn't save
+    # your username" about a save that had landed.
+    d = cfg.dashboard
     return web.json_response(
         {
-            "restore_sessions": cfg.dashboard.restore_sessions,
-            "restore_window_minutes": cfg.dashboard.restore_window_minutes,
-            "merge_queued_messages": cfg.dashboard.merge_queued_messages,
-            "auto_tag_sessions": cfg.dashboard.auto_tag_sessions,
-            "widget_density": cfg.dashboard.widget_density,
-            "user_name": cfg.dashboard.user_name,
-            "username": cfg.dashboard.username,
-            "send_on_enter": cfg.dashboard.send_on_enter,
-            "show_timestamps": cfg.dashboard.show_timestamps,
-            "show_thinking_inline": cfg.dashboard.show_thinking_inline,
-            "simplified_tool_names": cfg.dashboard.simplified_tool_names,
-            "followup_chips": cfg.dashboard.followup_chips,
-            "offer_check_work": cfg.dashboard.offer_check_work,
-            "stream_reveal": cfg.dashboard.stream_reveal,
-            "screen_share_enabled": cfg.dashboard.screen_share_enabled,
-            "document_editing": cfg.dashboard.document_editing,
+            **({"ok": True} if request.method == "PUT" else {}),
+            "restore_sessions": d.restore_sessions,
+            "restore_window_minutes": d.restore_window_minutes,
+            "merge_queued_messages": d.merge_queued_messages,
+            "auto_tag_sessions": d.auto_tag_sessions,
+            "widget_density": d.widget_density,
+            "user_name": d.user_name,
+            "username": d.username,
+            "send_on_enter": d.send_on_enter,
+            "show_timestamps": d.show_timestamps,
+            "show_thinking_inline": d.show_thinking_inline,
+            "simplified_tool_names": d.simplified_tool_names,
+            "followup_chips": d.followup_chips,
+            "offer_check_work": d.offer_check_work,
+            "stream_reveal": d.stream_reveal,
+            "screen_share_enabled": d.screen_share_enabled,
+            "document_editing": d.document_editing,
         }
     )

@@ -34,9 +34,15 @@ import { join } from 'node:path'
 // `settings:projection-rules`. **A per-surface honesty fix is not done until every consumer of its cache
 // key stops substituting** — and the hub is a consumer of eleven of them.
 //
-// 🔑 WHAT KEEPS ITS FALLBACK, AND WHY: reads that DECORATE rather than define. `dashboardConfig` (the
-// starter list), `durabilityStatus` + `durabilitySnapshots` (a status strip and a list), `api.agents()`
-// in AgentDefaults. Losing one of those degrades a section; losing the config fabricates the panel.
+// 🔑 WHAT KEEPS ITS FALLBACK, AND WHY: reads that DECORATE rather than define. `durabilityStatus` +
+// `durabilitySnapshots` (a status strip and a list), `api.agents()` in AgentDefaults. Losing one of
+// those degrades a section; losing the config fabricates the panel.
+//
+// 🔴 `dashboardConfig` IN CHAT SETTINGS WAS ON THIS LIST, AND IT DEFINES. It was kept as "the starter
+// list", but the starter list has its own read (`sessionTemplates`); the dashboard read is `cfg`, the
+// Sessions and Messages sections' whole state, and the panel's gate waits for it. So its fallback did
+// not degrade a section — it resolved the query with `cfg: null` and the panel spun its skeleton
+// forever, with no error and no Retry. It is bare now and pinned below as a defining read.
 
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
@@ -80,12 +86,20 @@ describe('a config panel does not present fabricated values as saved state', () 
   it('the decorating reads KEEP their fallbacks — this is not a no-catch sweep', () => {
     // Deliberate, and pinned: a future "finish the job" pass would make a missing snapshot list blank a
     // panel that could have rendered.
-    expect(codeOf('pages/settings/ChatPanel.tsx')).toMatch(/api\.dashboardConfig\(\)\.catch\(\(\) => null\)/)
     const dur = codeOf('pages/settings/DurabilityPanel.tsx')
     expect(dur).toMatch(/api\.durabilityStatus\(\)\.catch\(\(\) => null\)/)
     // `durabilityArchive` since DAS-10 — it replaced `durabilitySnapshots` when the §6
     // archive browser landed. Still a DECORATING read, so it keeps its fallback.
     expect(dur).toMatch(/api\.durabilityArchive\(\)\.catch\(\(\) => null\)/)
+  })
+
+  it("Chat settings' dashboard read DEFINES its Sessions and Messages sections, so it is bare", () => {
+    // The panel's gate waits for `cfg`, which is this read. A substitute here resolved the query with
+    // `cfg: null`, so the LoadError branch never ran and the skeleton never left.
+    const chat = codeOf('pages/settings/ChatPanel.tsx')
+    const line = chat.split('\n').find((l) => l.includes('api.dashboardConfig()')) ?? ''
+    expect(line, 'the read must still be there').toContain('api.dashboardConfig()')
+    expect(line, 'a `.catch` on THIS read spins the panel forever').not.toMatch(/\.catch\(/)
   })
 
   it('the hub stops poisoning the legibility key it shares with that panel', () => {
@@ -248,8 +262,13 @@ describe('a config panel does not present fabricated values as saved state', () 
     // budgeted as deliberate *because* it was byte-identical to the panel's read, so de-swallowing
     // either alone would have left the other's error branch unreachable behind a primed cache entry.
     // Two entries move together or neither can move.
+    //
+    // ── 🔻 7 → 6 ─────────────────────────────────────────────────────────────────────────────────
+    //
+    // Chat settings' `dashboardConfig`, which was listed as a decorating read and defines two of the
+    // panel's sections (see the header). With its fallback the panel spun forever on a failed read.
     const PER_FILE: Record<string, number> = {
-      ChatPanel: 1,
+      ChatPanel: 0,
       DurabilityPanel: 2,
       PacksPanel: 1,
       AgentDefaultsPanel: 1,

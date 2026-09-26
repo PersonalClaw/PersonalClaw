@@ -35,18 +35,17 @@ import type { AblationArmAggregate, AblationView, LearningInbox, StagingWeek } f
 const learningProposals = vi.fn<() => Promise<LearningInbox>>()
 const learningStagingWeek = vi.fn<() => Promise<StagingWeek>>()
 const learningHealth = vi.fn<() => Promise<never>>()
-const judgeBench = vi.fn<() => Promise<never>>()
+const judgeBench = vi.fn<() => Promise<{ ran: false }>>()
 const evalStudies = vi.fn<() => Promise<never>>()
-const retrievalBench = vi.fn<() => Promise<never>>()
+const retrievalBench = vi.fn<() => Promise<{ ran: false }>>()
 const identityReport = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<AblationView>>()
-const learningBenchmark = vi.fn<() => Promise<never>>()
+const learningBenchmark = vi.fn<() => Promise<{ ran: false }>>()
 
-// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The five eval
-// panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
-// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
-// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
-// fire and the test would pass by rendering the generic failure instead.
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError` and answer guards are kept. The eval
+// panels branch on `isSwitchedOff`/`isNotRun`, so a factory that returned only `api` made the mocked
+// module throw "No export is defined" from inside the render — and a double that rejected where the
+// wire answers `{"ran": false}` would render the generic failure instead of the state under test.
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
   return {
@@ -64,7 +63,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       retrievalBench: () => retrievalBench(),
       identityReport: () => identityReport(),
       ablation: () => ablation(),
-      // Rejected in each suite's setup with its own ORDINARY 404 code: this page reads it,
+      // Answered in each suite's setup with its ORDINARY `{"ran": false}`: this page reads it,
       // so a double that omits it throws inside a passive effect and hides the real failure.
       learningBenchmark: () => learningBenchmark(),
       acceptLearningProposal: () => Promise.resolve({ ok: true }),
@@ -124,19 +123,19 @@ describe('the ablation report is CONSUMED, not merely served', () => {
     vi.clearAllMocks()
     learningProposals.mockResolvedValue(EMPTY_INBOX)
     learningStagingWeek.mockResolvedValue(WEEK)
-    // Each of these rejects with its own ORDINARY 404 code: their panels own their own
-    // rendering, and this suite's subject must not depend on any of them loading.
+    // Each of these gets its own ORDINARY answer: their panels own their own rendering, and this
+    // suite's subject must not depend on any of them loading.
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent'))
+    judgeBench.mockResolvedValue({ ran: false })
     evalStudies.mockRejectedValue(new ApiError('No study is registered under that id.', 404, 'study_absent'))
-    retrievalBench.mockRejectedValue(new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent'))
+    retrievalBench.mockResolvedValue({ ran: false })
     // LV-4's identity report: the page reads it, so a double that omits it throws inside a
     // passive effect — exactly the failure mode the note above the declarations describes.
     identityReport.mockRejectedValue(new Error('not under test'))
-    // LV-7's skill-impact benchmark, in its ORDINARY never-run state. An `ApiError` carrying the
-    // real code, not a bare `Error`: `BenchmarkPanel` branches on `hasApiCode`, so a message-only
-    // double would fall through to the generic failure and assert nothing about the empty state.
-    learningBenchmark.mockRejectedValue(new ApiError('No skill-impact benchmark has run yet. Run `python scripts/learning_benchmark.py --preflight` and then `--run`.', 404, 'learning_benchmark_absent'))
+    // LV-7's skill-impact benchmark, in its ORDINARY never-run state: the wire's `{"ran": false}`,
+    // not a rejection, which `BenchmarkPanel` would render as the generic failure and so assert
+    // nothing about the empty state.
+    learningBenchmark.mockResolvedValue({ ran: false })
   })
 
   /** 🔑 THE RAIL THAT CLOSES THE INERT ROUTE.
@@ -244,7 +243,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
   // ── EMPTY vs BROKEN vs OFF: three codes, three answers ─────────────────────────────
 
   it('renders "no ablation yet" as guidance rather than as a load failure', () => {
-    render(<AblationPanel view={undefined} error={new ApiError('No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`.', 404, 'ablation_absent')} onRetry={() => {}} />)
+    render(<AblationPanel view={{ ran: false }} error={null} onRetry={() => {}} />)
     expect(screen.getByText(/personalclaw ablation --force/)).toBeTruthy()
     expect(screen.queryByText(/Retry/)).toBeNull()
   })
@@ -275,7 +274,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
    *  the failure this guards is a typo'd path, which a mock can never catch. */
   it('the api client targets GET /api/evals/ablation', () => {
     const src = readFileSync(join(process.cwd(), 'src', 'lib', 'api.ts'), 'utf8')
-    expect(src).toContain("ablation: () => get<AblationView | EvalsOffView>('/api/evals/ablation')")
+    expect(src).toContain("ablation: () => get<AblationView | SwitchedOffView | NotRunView>('/api/evals/ablation')")
     // Vacuity floor for the scan itself: `toContain` over a large file passes for the wrong
     // reasons easily, so prove it discriminates.
     expect(src).not.toContain("'/api/evals/ablations'")

@@ -28,7 +28,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       modelsAvailable: () => modelsAvailable(),
       modelsActive: () => Promise.resolve({}),
       modelsHealth: () => Promise.resolve({ providers: [] }),
-      judgeBench: () => Promise.reject(new actual.ApiError('none', 404, 'judge_bench_absent')),
+      judgeBench: () => Promise.resolve({ ran: false }),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
       modelsLoaded: () => Promise.resolve({
         loaded: [], providers: [],

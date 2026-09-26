@@ -33,8 +33,8 @@ interface Identity {
   name: string
   /** The attribution handle already stored (`dashboard.username`), '' when unset.
    *  Read-only here: the two surfaces that WRITE it are first-run onboarding (via
-   *  `setName`'s second argument) and Settings → Account, which re-reads the stored
-   *  slug after saving because the server normalizes what it sends. */
+   *  `setName`'s second argument) and Settings → Account, which shows the stored slug the
+   *  PUT answers with, because the server normalizes what it is sent. */
   username: string
   /** A non-empty stored name. It means something only once `status` is `ready`: before that
    *  nothing is known about the home, and `false` is just what an empty name derives to — which is

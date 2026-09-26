@@ -37,11 +37,21 @@ from personalclaw.http_errors import json_error
 logger = logging.getLogger(__name__)
 
 
-def _enabled() -> bool:
-    """The `learning.enabled` kill-switch. Every route 404s when learning is off.
+def _off() -> web.Response:
+    """A report READ while learning is off — the flag alone (see :func:`_enabled`)."""
+    return web.json_response({"enabled": False})
 
-    404 rather than 403: with learning disabled there is no inbox, and reporting "forbidden" would
-    imply one exists behind a permission wall. Matches the feedback module's rail.
+
+def _enabled() -> bool:
+    """The `learning.enabled` kill-switch.
+
+    While it is off, the five reads a page loads to render — the proposal list, the staging week,
+    the flywheel health, the summary and the identity report — answer ``_off()``, the decided
+    ``200 {"enabled": false}`` every switched-off read gives (``docs/reference/api-overview.md``).
+    They used to 404, so the Learning page and the Skills header logged a failed request each for a
+    switch that was merely off. One proposal, accept, reject and delivering the identity report
+    still 404: they address a surface that is off. 404 rather than 403 for those: with learning
+    disabled there is no inbox, and "forbidden" would imply one behind a permission wall.
     """
     try:
         from personalclaw.config.loader import AppConfig
@@ -184,7 +194,7 @@ async def api_learning_proposals(request: web.Request) -> web.Response:
     is empty is worse than no chip.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _off()
 
     from personalclaw.learning import proposals as store
     from personalclaw.learning.inbox import build_view
@@ -348,7 +358,7 @@ async def api_learning_staging_week(request: web.Request) -> web.Response:
     staging tier exists to expose.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _off()
 
     from personalclaw.learning.staging import StagingStore
 
@@ -457,7 +467,7 @@ async def api_learning_health(request: web.Request) -> web.Response:
     generate traffic.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _off()
 
     from personalclaw.learning import measure
     from personalclaw.learning.staging import StagingStore
@@ -568,7 +578,7 @@ async def api_learning_summary(request: web.Request) -> web.Response:
     same caller. The skill and proposal groups are not memory and stay visible.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _off()
 
     from personalclaw.dashboard.handlers._shared import _blocks_reads_session, _get_memory
     from personalclaw.learning_summary import (
@@ -662,7 +672,7 @@ async def api_learning_identity_report(request: web.Request) -> web.Response:
     that module owns (measured — it reddens `test_wire_error_envelope_census`'s `Call` pin).
     """
     if not _enabled():
-        return json_error("learning_disabled", status=404)
+        return _off()
 
     from personalclaw.learning_report import identity_report_payload
 

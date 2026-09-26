@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { reportingWrite } from '../../app/reportingWrite'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
-import { api } from '../../lib/api'
+import { api, isSwitchedOff } from '../../lib/api'
 import type {
   PendingApproval, DashboardStatus, InboxItem, SkillProposal,
   Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo, DiscoverResponse, DoctorReport,
@@ -85,6 +85,11 @@ export interface DashboardLiveData {
    *  and critically distinct from a healthy report, because a health surface that goes quiet is
    *  read as "nothing wrong". Consumers must render "unknown", never silence. */
   doctorErr: unknown
+  /** The Doctor is switched off (`resilience.doctor_enabled`): its report read answered the decided
+   *  `{"enabled": false}`. A third state beside a report and a failure, and it must not render as
+   *  either — quiet reads as healthy on the SystemHealth strip, and "health unknown" says a probe
+   *  failed when none was asked to run. `doctor` is `null` while this is true. */
+  doctorOff: boolean
   /** Which slices have completed at least one read ATTEMPT — success **or** failure.
    *
    *  🔴 THE FAILED CASE WAS CONVERGED AND THE NOT-YET-READ CASE WAS NEVER MODELLED. Every `*Err`
@@ -172,6 +177,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [discoverErr, setDiscoverErr] = useState<unknown>(null)
   const [doctor, setDoctor] = useState<DoctorReport | null>(null)
   const [doctorErr, setDoctorErr] = useState<unknown>(null)
+  const [doctorOff, setDoctorOff] = useState(false)
 
   // Individual slice loaders — each swallows errors (a dead endpoint must not
   // blank the whole dashboard) and no-ops if the component has unmounted.
@@ -244,8 +250,10 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   // "Couldn't load the doctor report" out loud for exactly this reason; the summary surfaces now
   // get the same fact to work with.
   const loadDoctor = useCallback(() => {
-    api.doctor().then((d) => { guard(setDoctor)(d); guard(setDoctorErr)(null) })
-      .catch((e) => guard(setDoctorErr)(e))
+    api.doctor().then((d) => {
+      const off = isSwitchedOff(d)
+      guard(setDoctorOff)(off); guard(setDoctor)(off ? null : d); guard(setDoctorErr)(null)
+    }).catch((e) => guard(setDoctorErr)(e))
   }, [])
 
   // Dismiss persists server-side; on success refetch so the tip drops from the
@@ -334,7 +342,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     loopsErr, tasksErr, notificationsErr, read,
     loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
     status, notifications, system,
-    discover, discoverErr, doctor, doctorErr,
+    discover, discoverErr, doctor, doctorErr, doctorOff,
     retryApprovals: loadApprovals, retryInbox: loadInbox, retryProposals: loadProposals,
     dismissDiscoverTip, refreshAll,
   }

@@ -9,6 +9,14 @@ firing down/recovery transition notifications). All three are read-only.
 
 Both surfaces are guard-class gated: ``resilience.doctor_enabled`` and
 ``resilience.degraded_indicator`` (a missing/unknown value keeps them ON).
+
+While ``doctor_enabled`` is off, the three reads a page loads to render — the report, the fix
+catalog and the remediation snapshot — answer ``200 {"enabled": false}``, the decided answer every
+switched-off read gives (``docs/reference/api-overview.md``). They used to 404, so the Home
+dashboard, the Settings hub and the Doctor page each logged a failed request for a switch that was
+merely off. A re-probe of one capability, one crash file, and every action still refuse with 404
+``doctor_disabled``: they address a surface that is off, and the page never asks for them while
+the report says so.
 """
 
 from __future__ import annotations
@@ -61,6 +69,11 @@ def _invalidate_doctor_cache() -> None:
     _doctor_cache = None
 
 
+def _off() -> web.Response:
+    """A report READ while ``doctor_enabled`` is off — the flag alone (module docstring)."""
+    return web.json_response({"enabled": False})
+
+
 async def api_doctor(request: web.Request) -> web.Response:
     """GET /api/doctor — all probes, grouped by capability, cached 30s.
 
@@ -69,7 +82,7 @@ async def api_doctor(request: web.Request) -> web.Response:
     report made the button a no-op.
     """
     if not _resilience_cfg().doctor_enabled:
-        return json_error("doctor_disabled", status=404)
+        return _off()
     global _doctor_cache, _doctor_cache_ts
     now = time.monotonic()
     fresh = request.query.get("fresh") in ("1", "true")
@@ -141,7 +154,7 @@ async def _run_degraded(state: object) -> list[dict]:
 async def api_doctor_fixes(request: web.Request) -> web.Response:
     """GET /api/doctor/fixes — the fix catalog with read-only dry-previews."""
     if not _resilience_cfg().doctor_enabled:
-        return json_error("doctor_disabled", status=404)
+        return _off()
     from personalclaw.resilience import fixes as _fixes
 
     def _catalog() -> list[dict]:
@@ -696,7 +709,7 @@ async def api_doctor_remediation(request: web.Request) -> web.Response:
     """GET /api/doctor/remediation — current health score, a dry-run plan preview, and
     the recent remediation-run ledger."""
     if not _resilience_cfg().doctor_enabled:
-        return json_error("doctor_disabled", status=404)
+        return _off()
     return web.json_response(await asyncio.to_thread(remediation_snapshot))
 
 

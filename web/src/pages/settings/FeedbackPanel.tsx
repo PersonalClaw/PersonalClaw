@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ThumbsUp, ThumbsDown, BellOff, RotateCcw } from 'lucide-react'
-import { api, type FeedbackProducerRow } from '../../lib/api'
+import { api, isSwitchedOff, type FeedbackProducerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useQuery, invalidateKeys } from '../../lib/data'
+import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
@@ -39,7 +39,11 @@ export function FeedbackPanel() {
     finally { setBusy('') }
   }
 
-  const rows = data?.producers ?? []
+  // `{"enabled": false}` while "Collect feedback" is off — a decided 200, not an error (it used to
+  // 404, so every visit here with feedback off logged a failed request). Narrowed once, here.
+  const off = isSwitchedOff(data)
+  const table = off ? undefined : data
+  const rows = table?.producers ?? []
 
   return (
     <div>
@@ -47,7 +51,7 @@ export function FeedbackPanel() {
         hint="Every 👍/👎 you leave on an AI judgment (inbox triage, drafts, digests, loop findings) is attributed to the source that produced it — the bound prompt, judge, or rule. A source that keeps being wrong asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing. Everything here is deterministic counting; nothing leaves this machine." />
 
       <Section title="Judgment sources"
-        hint={data ? `Rolling ${data.window_days}-day window · accuracy shown after ${data.min_n} verdicts. History restarts when you rebind a prompt (a new prompt is a new source).` : undefined}>
+        hint={table ? `Rolling ${table.window_days}-day window · accuracy shown after ${table.min_n} verdicts. History restarts when you rebind a prompt (a new prompt is a new source).` : undefined}>
         {/* Three states, not two — and the middle one is the half that makes de-swallowing real:
             with the fallback gone `data` is undefined for the failed AND the loading case, so the
             error branch has to come first or it is unreachable, and the skeleton has to exist or a
@@ -56,6 +60,12 @@ export function FeedbackPanel() {
           <LoadError what="judgment sources" error={loadErr} onRetry={refresh} />
         ) : !data ? (
           <ListSkeleton rows={3} what="judgment sources" />
+        ) : off ? (
+          // The switch is the Tuning section's first row, on this same page, so the way back on is
+          // named rather than linked. No Retry: a switch that is off does not flip on a re-read.
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low">
+            Feedback is off, so no 👍/👎 are shown and no new verdicts are recorded. The ones already recorded are kept. Turn on Collect feedback under Tuning below.
+          </div>
         ) : rows.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low">
             No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, loop findings, and synthesized skills. Verdicts collect here per judgment source.
@@ -103,8 +113,10 @@ function FeedbackTuningSection() {
     api.patchConfig(`feedback.${key}`, value).then(() => {
       onSaved?.()
       // The section above prints `window_days` and `min_n` in its hint, off a separate endpoint —
-      // re-read it so the two cannot disagree one click after a save.
-      invalidateKeys('settings:feedback-producers')
+      // re-read it so the two cannot disagree one click after a save. Except after switching
+      // feedback OFF: that save decides the table's answer, so it is written, not asked for.
+      if (key === 'enabled' && value === false) writeQuery('settings:feedback-producers', { enabled: false })
+      else invalidateKeys('settings:feedback-producers')
     }).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
       notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')

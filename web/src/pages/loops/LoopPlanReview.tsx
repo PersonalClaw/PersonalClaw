@@ -8,6 +8,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
+import { LoadError } from '../../ui/ListScaffold'
 import { spring } from '../../design/motion'
 import { api, type GoalLoop, type GoalType, type SkillItem, type SkillSearchResult, type GrillPhase, type GrillPhaseStep, type WorkflowDefStub } from '../../lib/api'
 import type { LoopDraft } from './loopDraft'
@@ -59,6 +60,11 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   onBack: () => void
 }) {
   const [loop, setLoop] = useState<GoalLoop | null>(null)
+  // 🔴 A failed read of the loop used to be `.catch(() => {})`, and `!loop` below then said
+  // "Analyzing the plan…" forever — a planner that never finishes, on a read that had already
+  // failed. Said, with a Retry and the way back.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
   const [title, setTitle] = useState(draft.classification.title || '')
   const [editingTitle, setEditingTitle] = useState(false)
   const [subGoals, setSubGoals] = useState<string[]>([])
@@ -145,13 +151,14 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
 
   useEffect(() => {
     let alive = true
+    setLoadErr(null)
     api.uLoop(draft.loopId).then((raw) => {
       if (!alive) return
       const l = loopToGoalLoop(raw)
       setLoop(l); setSubGoals(l.sub_goals ?? []); setGoalType(l.goal_type)
       setVerifyCommand(l.verify_command ?? '')
       if (!title) setTitle(l.name || '')
-    }).catch(() => {})
+    }).catch((e) => { if (alive) setLoadErr(e) })
     api.savedAgents().then((list) => { if (alive) setAgentNames(list.map((a) => a.name)) }).catch(() => {})
     // Installed capabilities for the picker (best-effort).
     api.skills().then((s) => { if (alive) setInstalledSkills(s) }).catch(() => {})
@@ -159,7 +166,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     // picker below is length-guarded, so an empty list renders no section; the
     // persisted `workflow_ids` field is left intact for the v2 defs to fill.
     return () => { alive = false }
-  }, [draft.loopId])  // eslint-disable-line
+  }, [draft.loopId, attempt])  // eslint-disable-line
 
   // The clarifying-question walk — ONE model, two sources (no dual path), now typed as the
   // QuestionSlider's SliderQuestion so the deep-rigor Round renders as a one-at-a-time stepper:
@@ -308,6 +315,14 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     }
   }
 
+  if (!loop && loadErr) {
+    return (
+      <div className="flex h-full flex-col">
+        <TopBar left={<IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />} />
+        <LoadError what="plan" error={loadErr} onRetry={() => setAttempt((n) => n + 1)} />
+      </div>
+    )
+  }
   if (!loop) return <div data-type="body-s" className="flex h-full items-center justify-center text-on-surface-low">Analyzing the plan…</div>
 
   // Header: back + (editable) generated title + a compact step indicator.

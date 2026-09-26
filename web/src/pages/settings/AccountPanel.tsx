@@ -9,6 +9,7 @@ import { PanelHeader, Section, Field, Row, Toggle } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
+import { FormSkeleton, InlineLoadError } from '../../ui/ListScaffold'
 
 /** Account / identity settings. Self-hosted single-user → the two identities are
  *  the operator's name (SERVER-side DashboardConfig.user_name, follows the user
@@ -61,12 +62,15 @@ export function AccountPanel() {
   }
   useEffect(loadHandle, [])
   const handleDirty = handle !== null && handleDraft.trim() !== handle
+  // 🔴 THE SAVE AND A RE-READ SHARED ONE CATCH. The field shows the slug the server stored, and
+  // getting it took a second GET chained onto the PUT, so a GET that failed after a PUT that landed
+  // said "Couldn't save your username" — about a save that had worked. The PUT now answers the
+  // settings as stored, so there is no second request, and the one failure left is the save's own.
   const saveHandle = () => {
     api.saveDashboardConfig({ username: handleDraft.trim() })
-      .then(() => api.dashboardConfig())
-      .then((c) => {
-        const stored = String(c?.username ?? '')
-        setHandle(stored); setHandleDraft(stored)
+      .then((stored) => {
+        const v = String(stored?.username ?? '')
+        setHandle(v); setHandleDraft(v)
         setHandleSaved(true); setTimeout(() => setHandleSaved(false), 1800)
       })
       .catch((e) => {
@@ -213,16 +217,33 @@ function LoginSection() {
   const [pwConfirm, setPwConfirm] = useState('')
   const [busy, setBusy] = useState(false)
   const [pwSaved, setPwSaved] = useState(false)
+  // 🔴 A FAILED READ HID THIS WHOLE SECTION. `.catch(() => {})` left `state` null and the section
+  // returned null, so a user whose read failed saw no "Sign in from outside your network" at all —
+  // no message, no retry, nothing to say the control exists. A read after a change (a password set,
+  // a switch flipped) could fail the same way and leave the section showing the state from before
+  // it. Both now say so beside a Retry.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
 
   const load = () => {
     api.authSession().then((s) => {
       setState(s)
       setUserDraft(s.username || '')
-    }).catch(() => {})
+      setLoadErr(null)
+    }).catch(setLoadErr)
   }
   useEffect(load, [])
 
-  if (!state) return null
+  const title = 'Sign in from outside your network'
+  const hint = 'Off by default. Turn this on only if you reach this dashboard over a tunnel or from the internet — on your home network the token link is simpler and safer.'
+  if (!state) {
+    return (
+      <Section title={title} hint={hint}>
+        {loadErr
+          ? <InlineLoadError what="sign-in settings" error={loadErr} onRetry={load} />
+          : <FormSkeleton sections={1} rows={3} title={false} what="sign-in settings" />}
+      </Section>
+    )
+  }
 
   // A username edit with no password typed is the case that used to vanish: the button now says so.
   const userDirty = userDraft.trim() !== (state.username || '')
@@ -274,8 +295,8 @@ function LoginSection() {
   }
 
   return (
-    <Section title="Sign in from outside your network"
-      hint="Off by default. Turn this on only if you reach this dashboard over a tunnel or from the internet — on your home network the token link is simpler and safer.">
+    <Section title={title} hint={hint}>
+      {loadErr ? <InlineLoadError what="sign-in settings" error={loadErr} onRetry={load} /> : null}
 
       {/* 🔴 THE SIGN-IN USERNAME USED TO SIT IN ITS OWN FIELD WITH NO SAVE CONTROL AT ALL, and the
           only writer of it — `POST /api/auth/password` — requires a password in the same call
