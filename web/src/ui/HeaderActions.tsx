@@ -582,12 +582,16 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
  *  the row shouldn't spend width on all N options at rest. It participates in the
  *  responsive cluster exactly like HeaderSegmented (primary, never-overflow: it
  *  always stays visible, going icon-only when tight, never into the `…` menu). */
-export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }: {
+export function HeaderModePill({ options, value, onChange, ariaLabel, disabled, disabledReason }: {
   options: SegOption[]
   value: string
   onChange: (k: string) => void
   ariaLabel?: string
   disabled?: boolean
+  /** Why the pill is unavailable. Given one, a disabled pill stays REACHABLE and says so —
+   *  `aria-disabled` with the reason in `title`, `Button`'s rule (`disabledReason.test.tsx`) —
+   *  instead of dropping out of the tab order with nothing to say. */
+  disabledReason?: string
 }) {
   const [open, setOpen] = useState(false)
   const [rect, setRect] = useState<DOMRect | null>(null)
@@ -676,6 +680,8 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
   if (!active) return null
   const ActiveIcon = active.icon
   const label = active.label ?? active.key
+  // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
+  const softOff = !!disabled && !!disabledReason
 
   return (
     <div ref={wrapRef} className="relative shrink-0"
@@ -685,14 +691,19 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
       {/* Collapsed trigger — the current selection. Matches HeaderControl sizing so
           it sits flush beside sibling controls (h-10 pill, or size-10 icon-only). */}
       <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={`${ariaLabel ?? 'Mode'}: ${label}`}
-        title={active.title ?? `${ariaLabel ?? 'Mode'}: ${label}`} disabled={disabled}
-        onClick={() => (open ? closeNow() : doOpen())}
+        title={softOff ? disabledReason : (active.title ?? `${ariaLabel ?? 'Mode'}: ${label}`)}
+        aria-disabled={softOff || undefined}
+        disabled={softOff ? undefined : disabled}
+        onClick={() => { if (disabled) return; if (open) closeNow(); else doOpen() }}
         data-type="label-s"
         className={cx(
           'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
           'transition-colors duration-100 disabled:opacity-40 disabled:pointer-events-none',
+          // Same dim as the native attribute, without swallowing the hover that shows the reason.
+          'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
           iconOnly ? 'size-10' : 'h-10 px-l',
-          open ? 'bg-surface-highest text-on-surface' : 'bg-surface-high text-on-surface hover:bg-surface-highest',
+          open ? 'bg-surface-highest text-on-surface' : 'bg-surface-high text-on-surface',
+          !disabled && !open && 'hover:bg-surface-highest',
         )}
         style={fvs(470)}>
         {ActiveIcon && <ActiveIcon size={16} className="shrink-0" />}

@@ -2563,3 +2563,11 @@ def _manifest_of(name: str) -> AppManifest | None:
     except Exception:  # noqa: BLE001
         logger.debug("app %s: manifest load failed", name, exc_info=True)
         return None
+
+
+def display_name_of(name: str) -> str:
+    """The name the app *name* goes by: its manifest's ``displayName``, the one install consent
+    showed you. The bare name when it declares none, or is no longer installed — so a conversation
+    an uninstalled app started still says which app it was."""
+    manifest = _manifest_of(name) if name else None
+    return (manifest.displayName if manifest is not None else "") or name

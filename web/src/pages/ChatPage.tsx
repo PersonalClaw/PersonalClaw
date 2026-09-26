@@ -39,6 +39,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { sessionRowMeta } from './chat/sessionRowMeta'
+import { AppPermissionNotice, StartedByApp, startedByName } from './chat/StartedByApp'
 import { snapshotPredatesSend, streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
@@ -388,6 +389,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
               className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
               <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
               <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{sessionTitle(s)}</span>
+              <StartedByApp s={s} />
               <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(sessionActivitySeconds(s))}</span>
             </motion.button>
           ))}
@@ -907,6 +909,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // open. Sourced from the server (not from the navigation that created the branch) so
   // the breadcrumb is still there after a reload. `title: ''` = the origin is gone.
   const [branchedFrom, setBranchedFrom] = useState<{ key: string; title: string } | null>(null)
+  // The app that started this conversation, and whether its grant approves on its own — `null`
+  // for one of yours. Read from the session detail on every open.
+  const [startedBy, setStartedBy] = useState<{ name: string; autoApproves: boolean } | null>(null)
   // Investigate origin (plan 60): the entity this chat was opened to investigate.
   // Rendered as a header chip deep-linking back to the source surface.
   const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
@@ -1136,6 +1141,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
+    setStartedBy(null)  // so is which app started it
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
     setLoadFailure(null)
     let alive = true
@@ -1216,6 +1222,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // than from whatever navigation happened to land us here.
         setBranchedFrom(d.forked_from
           ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
+          : null)
+        // Which app started this conversation, if one did: a turn here runs under that app's
+        // grant whoever sends it, and the composer and the Permission pill say so (`StartedByApp`).
+        setStartedBy(startedByName(d)
+          ? { name: startedByName(d), autoApproves: !!d.app_auto_approves }
           : null)
         // Investigate origin chip (plan 60) — present on sessions opened via
         // POST /api/investigate; survives the first turn (display fields kept).
@@ -3097,6 +3108,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             : 'Temporary — this chat is forgotten when the session ends.'}</span>
         </div>
       )}
+      {/* An app's conversation: what you send runs under the APP's grant, not your approval
+          switches — said before you type, like the memory notice above. */}
+      {startedBy && <AppPermissionNotice name={startedBy.name} autoApproves={startedBy.autoApproves} />}
       {/* Voice-input failure notice: STT errors (mic denied, no STT model,
           backend failure) otherwise vanish silently after the spinner. */}
       {micError && (
@@ -3441,7 +3455,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           <HeaderActions className="max-w-[70vw]">
             <HeaderModePill ariaLabel="Task mode" value={selection.taskMode ?? 'agent'}
               options={TASK_MODE_SLIDER} onChange={(v) => applySelection({ taskMode: v as TaskMode })} />
+            {/* In an app's conversation the app's grant decides every turn and your choice here
+                would be overwritten by it, so the pill shows that grant and is not yours to move
+                (the composer says why). */}
             <HeaderModePill ariaLabel="Permission mode" value={selection.approval ?? 'normal'}
+              disabled={!!startedBy}
+              disabledReason={startedBy ? `${startedBy.name}'s permissions decide this chat, not yours` : undefined}
               options={APPROVAL_SLIDER} onChange={(v) => applySelection({ approval: v as ApprovalMode })} />
             {started && sessionRef.current && (
               <HeaderControl icon={NotebookPen} label="Brief the agent" priority="low" onClick={briefAgent} />
@@ -5092,6 +5111,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               </button>
             )
           })()}
+          <StartedByApp s={s} />
           {(s.tags ?? []).map((tid) => tagById[tid] && (
             <span key={tid} className="inline-flex items-center rounded-pill px-1.5 h-[18px] text-[0.75rem]"
               style={{ background: `color-mix(in srgb, ${tagById[tid].color || 'var(--color-primary)'} 18%, transparent)`, color: tagById[tid].color || 'var(--color-primary)' }}>{tagById[tid].name}</span>

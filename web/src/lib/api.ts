@@ -1130,7 +1130,14 @@ export interface ChatSessionSummary {
   lifecycle?: 'active' | 'archived'
   last_activity_at?: number
   never_archive?: boolean
+  /** Which app started the conversation — absent on one of yours. `created_by_app` is the
+   *  app's id; `created_by_app_name` is the name install consent showed you, which a history
+   *  row prints as "Started by …". */
+  created_by_app?: string; created_by_app_name?: string
 }
+/** The two fields that say which app started a conversation, as the list and the detail send
+ *  them. */
+export type AppStarted = Pick<ChatSessionSummary, 'created_by_app' | 'created_by_app_name'>
 // ── Agent Rooms (AGENT-ROOMS) ───────────────────────────────────────────────────────────
 // A room is a persistent shared transcript plus a member list, where the human and N bound
 // agents deliberate. It is NOT a chat session: rooms live under `/api/rooms`, each member
@@ -6923,7 +6930,12 @@ export const api = {
     natural_voice_effective?: boolean; natural_voice_source?: string
     /** The newest `chat_chunk.seq` these messages hold (read in the same step as them). A
      *  chat resuming the in-flight `streaming` partial drops chunks stamped at or below it. */
-    stream_seq?: number }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+    stream_seq?: number
+    /** Present only on a conversation an APP started. A turn in it runs under that app's
+     *  grant, whoever sends the message — your approval switches never reach it — and
+     *  `app_auto_approves` says which way that grant decides: `true` its tool calls run without
+     *  asking you, `false` they ask. */
+  } & AppStarted & { app_auto_approves?: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   /** Set the per-conversation natural-voice scope (PT-7). `''` clears the override so
    *  the conversation inherits the bound agent's preference again. The response is the

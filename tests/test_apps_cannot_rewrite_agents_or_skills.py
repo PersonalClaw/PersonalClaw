@@ -237,7 +237,8 @@ class TestAnAppCannotInstallASkillOrRewriteAPrompt:
             ("GET", "/api/skills", "/api/skills"),
             ("POST", "/api/skills/{name}/verify", "/api/skills/deploy-site/verify"),
             ("DELETE", "/api/skills/proposals/{id}", "/api/skills/proposals/p1"),
-            ("DELETE", "/api/skills/ephemeral/{session}/{slug}", "/api/skills/ephemeral/s1/d1"),
+            # A chat's draft skills are held to the app's own conversations, in both directions:
+            # `test_apps_see_only_their_own_conversations.py::SESSION_READS`.
             ("GET", "/api/prompts", "/api/prompts"),
             ("POST", "/api/prompts/{name:.+}/render", "/api/prompts/chat/render"),
             ("POST", "/api/prompts/preview", "/api/prompts/preview"),

@@ -120,9 +120,20 @@ the relay you install for approvals: an app that declares `/api/approvals` (the 
 companion does) can approve or reject your pending approvals one at a time, and the
 gateway cannot tell whether an answer it relays was yours.
 
-Every write route in these families has to be declared one way or the other: one that is
-not is refused to every app until someone declares it, and
-`tests/test_security_posture_rail.py` fails the build on it.
+What your conversations say is yours to read, too. An app reads only the conversations it
+started: a transcript, its map, a tool's full output, an export, a draft skill or a
+background agent's result from any other is refused. Your chat list, your history and a
+search over them answer an app with its own conversations only. Your rooms, your inbox,
+your chat folders and tags and the transcripts older versions archived are not an app's
+to read at all. Its websocket carries a frame about a conversation only if the app started
+it, and an inbox item only if the app raised it (its own proposal). The approval relay is the
+one exception there too: it hears your approvals, which it already reads through
+`/api/approvals`. An app also may not clear your notifications, mark
+them read or change what reaches you.
+
+Every write route in these families, and every read in your conversation families, has to
+be declared one way or the other: one that is not is refused to every app until someone
+declares it, and `tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
 because `/api/config` also carries ordinary settings an app may legitimately write: an

@@ -281,6 +281,39 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A secret reference resolves only against its own owner's credentials.** Since #3607 and #3617, settings hold `{{secret:…}}` references and the credential store holds each value under its owner: core, or one app by name. The resolver never checked that owner, and a settings file is text an app can write. So one app's settings could reference another app's bot token, a provider's API key or a Settings → Secrets credential, and that app was handed the value. Measured on `main`: `ProviderSettings.load` returned the other owner's token, a multi-instance record was handed out holding it, an app's MCP server (`{app}:{server}`) was spawned with it, the webhook authenticated with an app's token, and every save that named one was accepted. **Now a record resolves only keys its owner holds.** An app holds its settings' and instances' keys, and its MCP servers hold their own; core holds everything no app holds, the vault included, so a vault credential typed into a provider instance still works. `secret_refs.resolve` and the MCP resolvers take the owner as a required argument, so a missing owner is an error rather than core. **A reference to another owner's key is refused** where it is used and where it is saved. The consumer gets `ForeignSecretReference`, which names the key and where it lives: a provider fails to enable with that sentence on its card, an MCP server is not started and its probe reports the sentence, and a webhook is refused. The security log gets a `denied` row naming the app and the key, never the value, which is never read. Saving an app's settings that name one is refused with what to do: the Configure page, Settings → Providers and an app's instances answer 400, and the app's own `ProviderSettings.save` raises the same sentence: *"FAL API Key refers to {{secret:MY_FAL_KEY}}, a credential in Settings → Secrets. It belongs to a different owner, so FAL cannot use it. Store the key under FAL instead: type the key itself — not a reference — into FAL API Key on FAL's Configure page."* An instance and the MCP server form answer with the code `secret_owned_elsewhere`. The two newest places that turn a reference into its value obey the same rule: `personalclaw config get --reveal` shows core's own values and leaves a reference to an app's key as the reference, so the `--reveal` → edit → `config set --file` round trip cannot copy that token into core's settings; and the MCP edit form refuses to move a kept value into `mcp.json` in plaintext when it names another owner's key. There is deliberately no way to grant one owner another's key. **If you typed a Settings → Secrets reference into an app's settings**, that app now refuses it: type the key itself on the app's Configure page, and saving that re-enables the app's provider at once, without a restart. **No read-back resolves a reference any more.** The settings routes, the instance routes and the Providers list mask the stored form, so a reference is shown masked whatever its field is called. Before, a credential-named field an app did not declare `sensitive` (`apiKey`) came back in the clear, and so did a reference typed into an ordinary field. The Configure form now shows such a field as saved. Exports and snapshots are unchanged and carry references only, never a value. **SDK change:** `ProviderSettings.load`, `save` and `update` (published as `personalclaw.sdk.settings` and `personalclaw.sdk.channel`) keep their signatures, but now raise `ForeignSecretReference`, a `ValueError`, for a reference to another owner's key, where before they resolved it or stored it. The apps that call them are companion, discord-channel, email-channel, fal-image, local-image-gen, mail-inbox, ops, skills-sh, slack-channel and telegram-channel, plus vector-store-qdrant's tests. None of them writes such a reference, so none behaves differently unless its settings file was edited to name another owner's key. `update` now merges over the stored form, so a secret the call does not mention is kept as its reference and never read back out.
 
+- **An installed app can no longer read your conversations, and its socket carries only its
+  own.** The change below held an app's writes to the conversations it started, but reads were
+  still decided by the path it declared. So an app that declared `/api/chat` or `/api/sessions`
+  could:
+  1. read any of your chats in full: the transcript, its map, a tool's full output, the export,
+     the plan, the rewind preview and the draft skills it produced, plus `GET /api/sessions/{key}`
+     and what its background agents returned;
+  2. list every conversation you have, and search all of them with the matching passage
+     (`GET /api/chat/sessions`, `GET /api/sessions`, `GET /api/sessions/search`);
+  3. read your rooms, your inbox, your chat folders and tags, and the transcripts older versions
+     archived (`/api/session/archive`);
+  4. receive every answer your agent streamed you, every tool call and result, your whole
+     session list and every item that reached your inbox on its websocket, which filtered by
+     event type only;
+  5. clear your notifications, mark them read or change their rules, and keep a chat's agent
+     running past its idle limit (`/api/session-keepalive`).
+
+  The conversation families now declare their reads route by route, and a read nothing declares
+  is refused to every app. A read of one conversation reaches only a conversation the app
+  started; any other gets `403` with a Security Event Log row naming the app. A list or a search
+  answers an app with its own conversations only. Rooms, the inbox, your chat folders and tags
+  and the archive are yours, and `HEAD` is refused wherever `GET` is. On the websocket, a frame
+  about a conversation reaches an app only if the app started it, an inbox item only if the app
+  raised it, and its session list holds only its own. The menu-bar companion still rings for your
+  approvals, which it already reads through `/api/approvals`. Notification writes and the
+  keepalive are yours, and a chat's draft skills follow its conversation. A tool call the native
+  runtime runs without asking is now logged `auto_approved` with the grant that allowed it
+  (`app_grant`, `trust` or `yolo`), as the ACP runtime already was. In your chat history, a
+  conversation an app started says "Started by <app>". Inside it, the composer says that what you
+  send runs with the app's permissions, and
+  the Permission control shows the app's grant instead of your setting. A folder chosen for an
+  app's conversation no longer lands in your recent projects. Behaviour change: an app that read
+  your chats, history, rooms or inbox is refused. No bundled or first-party app did.
 - **An installed app can no longer post into your chats, rooms or runs, or steer them, and a
   conversation of its own runs under its own grant.** With an ordinary `api` declaration an app
   could:
