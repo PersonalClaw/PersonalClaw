@@ -1001,7 +1001,9 @@ export interface ChatSession {
   last_ts?: string
 }
 export interface ChatSessionSummary {
-  key: string; title: string; agent?: string; model?: string; messages: number
+  /** `messages` is the REAL count the conversation serves, or `null` when the server could
+   *  not read the file (render nothing — see `sessionRowMeta`). */
+  key: string; title: string; agent?: string; model?: string; messages: number | null
   running?: boolean; created?: string; last_activity_ts?: string; last_ts?: string; pinned?: boolean
   folder_id?: string; tags?: string[]; color_index?: number | null
   last_message?: string; prompt_preview?: string

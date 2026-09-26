@@ -148,16 +148,44 @@ def _validate_reasoning_effort(raw: object) -> str:
     return ""
 
 
-#: Roles that are STREAM BOOKKEEPING, never transcript. The write loop below has always
-#: dropped them; the save guard now counts what will actually be written, so the filter
-#: has to exist exactly once or the guard would compare a padded buffer length against a
-#: filtered disk length and let a shorter transcript through.
-_NON_TRANSCRIPT_ROLES = frozenset({"chunk", "done", "streaming", "queued", "permission"})
+def _permission_resolved(m: dict) -> bool:
+    """Whether a ``permission`` row records a DECISION (its ``cls`` carries ``resolved``)."""
+    try:
+        cls = json.loads(m.get("cls") or "")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(cls, dict) and bool(cls.get("resolved"))
 
 
-def _persistable(msgs: list[dict]) -> list[dict]:
-    """The subset of *msgs* that :func:`save_session_to_history` will actually write."""
-    return [m for m in msgs if m.get("role", "assistant") not in _NON_TRANSCRIPT_ROLES]
+def _persistable(msgs: list[dict], *, final: bool = False) -> list[dict]:
+    """The subset of *msgs* that :func:`save_session_to_history` will actually write.
+
+    Exactly once, because the overwrite guard counts what will be written: a second copy
+    of this rule would compare a padded buffer length against a filtered disk length and
+    let a shorter transcript through. Held back, and only these:
+
+    * the answer still streaming — the turn settles it, and the save that follows writes
+      it. A ``final`` save (the gateway is stopping; nothing will settle it) writes it
+      as far as it got, because the user was reading it.
+    * an approval still waiting for an answer — a request, not yet a record. Once
+      decided it is the permanent record of a security decision and is written like any
+      other message (it used to be dropped either way, so resolved approvals vanished
+      from their chats on every restart).
+    * a ``queued`` placeholder for a message that has not been sent yet.
+    """
+    out: list[dict] = []
+    for m in msgs:
+        role = m.get("role", "assistant")
+        if role == "streaming":
+            if final and m.get("content"):
+                out.append({**m, "role": "assistant"})
+        elif role == "queued":
+            continue
+        elif role == "permission" and not _permission_resolved(m):
+            continue
+        else:
+            out.append(m)
+    return out
 
 
 #: Meta-line keys a session can carry without anyone having written to it — the structural
@@ -208,10 +236,14 @@ def _persisted_message_count(state: DashboardState, history_key: str) -> int:
 
 
 def save_all_sessions_to_history(state: DashboardState) -> None:
-    """Save all active sessions to history. Called on gateway shutdown."""
+    """Save all active sessions to history — the LAST save before the gateway stops.
+
+    Called on shutdown and before a self-update restart. ``final`` because no turn gets to
+    finish after it: an answer still streaming is written as far as the user saw it.
+    """
     for session in list(state._sessions.values()):
         try:
-            save_session_to_history(state, session, force=True)
+            save_session_to_history(state, session, force=True, final=True)
         except Exception:
             logger.error("Shutdown: failed to save session %s", session.key, exc_info=True)
 
@@ -285,6 +317,54 @@ def _attach_rewound(session: _ChatSession, m: dict) -> None:
     out = _redact_rewound(m.get("rewound"))
     if out:
         session.messages[-1]["rewound"] = out
+
+
+def _seed_transcript(state: DashboardState, session: _ChatSession, history_key: str) -> None:
+    """Load the WHOLE persisted transcript of *history_key* into *session*'s buffer.
+
+    THE one loader, for every path that materialises a persisted chat: the boot restore,
+    opening a chat from disk, and resume. It is never a window. The save rewrites the
+    whole file FROM this buffer, so a message left out here is a message the next save
+    deletes — and it was: the boot restore kept the last 500, the open-from-disk path the
+    last 200, the next turn then went unsaved (the guard saw "buffer ≤ disk") and the
+    shutdown flush forced the window over the file, dropping every older message.
+
+    Every field of every line comes back — ``cls`` (a stop card's state, an approval's
+    decision) and ``meta`` (tool output, citations, telemetry) included. Resume used to
+    rebuild each line with a guessed ``cls`` and no ``meta``, and the next save wrote the
+    stripped copy over the file.
+
+    Replayed without broadcasting: loading history is not live activity, and a
+    ``chat_message`` frame per loaded row would replay the whole chat into every open tab.
+    ``_disk_older_count`` is what legacy cross-restart chaining keeps in OLDER sibling
+    files of the same tab, which the conversation shows first but this session never
+    writes.
+    """
+    log = state.conversation_log
+    if log is None:
+        return
+    own = log.read_messages(history_key)
+    session._disk_older_count = max(0, len(log.read_messages_chained(history_key)) - len(own))
+    for m in own:
+        role = m.get("role", "assistant")
+        cls = m.get("cls") or ("msg msg-u" if role == "user" else "msg msg-a")
+        content = m.get("content", "")
+        if role != "user":
+            content, _ = redact_exfiltration_urls(content)
+            content, _ = redact_credentials(content)
+        session.append(
+            role,
+            content,
+            cls,
+            ts=m.get("ts", ""),
+            broadcast=False,
+            meta=_redact_meta(m["meta"]) if m.get("meta") else None,
+        )
+        _attach_variants(session, m)
+        _attach_rewound(session, m)
+    session.drain()
+    session._resumed_count = len(session.messages)
+    session._dirty = False
 
 
 def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta: dict) -> None:
@@ -456,26 +536,7 @@ def _rehydrate_session_from_history(
         from personalclaw.dashboard.side_state import SideState
 
         session._side = SideState.from_dict(_side_meta)
-    messages = state.conversation_log.read_messages(history_key)
-    for m in messages[-200:]:
-        role = m.get("role", "assistant")
-        cls = m.get("cls") or ("msg msg-u" if role == "user" else "msg msg-a")
-        content = m.get("content", "")
-        if role != "user":
-            content, _ = redact_exfiltration_urls(content)
-            content, _ = redact_credentials(content)
-        session.append(
-            role,
-            content,
-            cls,
-            ts=m.get("ts", ""),
-            meta=_redact_meta(m["meta"]) if m.get("meta") else None,
-        )
-        _attach_variants(session, m)
-        _attach_rewound(session, m)
-    session.drain()
-    session._resumed_count = len(session.messages)
-    session._dirty = False
+    _seed_transcript(state, session, history_key)
     logger.info("Rehydrated session %s (%s) from history", session_name, session.title)
     return session
 
@@ -654,27 +715,7 @@ def restore_recent_sessions(
             tab_id = uuid.uuid4().hex[:12]
             state.conversation_log.update_metadata(key, {"tab_id": tab_id})
         session._tab_id = tab_id
-        messages = state.conversation_log.read_messages_chained(key)
-        session._disk_older_count = max(0, len(messages) - 500)
-        for m in messages[-500:]:
-            role = m.get("role", "assistant")
-            cls = m.get("cls") or ("msg msg-u" if role == "user" else "msg msg-a")
-            content = m.get("content", "")
-            if role != "user":
-                content, _ = redact_exfiltration_urls(content)
-                content, _ = redact_credentials(content)
-            session.append(
-                role,
-                content,
-                cls,
-                ts=m.get("ts", ""),
-                meta=_redact_meta(m["meta"]) if m.get("meta") else None,
-            )
-            _attach_variants(session, m)
-            _attach_rewound(session, m)
-        session.drain()
-        session._resumed_count = len(session.messages)
-        session._dirty = False
+        _seed_transcript(state, session, key)
         restored += 1
         logger.info("Restored session %s (%s)", session_name, session.title)
     _sync_dashboard_sessions(state)
@@ -688,12 +729,17 @@ def save_session_to_history(
     *,
     closed: bool = False,
     force: bool = False,
+    final: bool = False,
 ) -> None:
     """Persist session messages to JSONL history.
 
     Public because it is re-exported as `personalclaw.sdk.channel.save_session_to_history`:
     a channel app that mutates a linked session out-of-band (an interactive option pick,
     a link/unlink) has to flush it, or the thread it just changed is lost on restart.
+
+    ``final`` marks the last save this process makes (see
+    :func:`save_all_sessions_to_history`): an answer still streaming is written as far as
+    it got, since nothing will settle it afterwards.
     """
     msgs = messages if messages is not None else session.messages
     if not state.conversation_log:
@@ -729,8 +775,11 @@ def save_session_to_history(
     # it even though it is shorter" — which is exactly what undo / regenerate /
     # edit-resend / switch-variant need. They used to get it by lying to the old
     # predicate (`session._resumed_count = 0`), which also corrupted the count
-    # `chat_fork` reads off the same field; they now pass `force` and say so.
-    outgoing = _persistable(msgs)
+    # `chat_fork` reads off the same field; they now pass `force` and say so. Neither
+    # side of that comparison is a WINDOW: every load path seeds the whole file
+    # (`_seed_transcript`) and the buffer is never trimmed, so a buffer that holds less
+    # than the file can only be an explicit, forced shrink.
+    outgoing = _persistable(msgs, final=final)
     # 🔴 A CONVERSATION WITH NO TURNS YET IS STILL REAL STATE (#2969). This function used
     # to return on `not msgs` before it ever reached the meta line, so a brand-new chat's
     # title, pin, colour, folder, tags and `never_archive` were accepted `200 {"ok": true}`
@@ -746,8 +795,8 @@ def save_session_to_history(
     # is shorter"; it has never meant "write my EMPTY buffer over five persisted turns", and
     # `save_all_sessions_to_history` passes it for every resident session on shutdown. That
     # case returns without writing, exactly as `not msgs` did — and it now also covers a
-    # buffer holding only non-transcript rows (chunk/done/streaming/queued/permission),
-    # which `not msgs` let through to a forced full rewrite.
+    # buffer holding only rows `_persistable` holds back (a pending approval, a queued
+    # placeholder), which `not msgs` let through to a forced full rewrite.
     if not outgoing and _persisted_message_count(state, history_key):
         logger.debug(
             "metadata-only save skipped for %s: buffer holds no transcript, disk does",
@@ -888,7 +937,7 @@ def save_session_to_history(
         if not outgoing and not (set(meta_line) - _CREATE_TIME_META_KEYS):
             logger.debug("metadata-only save skipped for %s: nothing set since create", history_key)
             return
-        lines = [json.dumps(meta_line) + "\n"]
+        lines: list[str] = []
         for m in outgoing:
             role = m.get("role", "assistant")
             content = m.get("content", "")
@@ -923,11 +972,22 @@ def save_session_to_history(
             cls_val = m.get("cls", "")
             if role == "system" and cls_val:
                 entry["cls"] = cls_val
+            elif role == "permission":
+                # The decision lives in `cls` (request id, tool input, risk, `resolved`),
+                # so a permission row without it would come back as a bare title.
+                entry["cls"] = json.dumps(_redact_meta(json.loads(cls_val)))
             if m.get("meta"):
                 entry["meta"] = _redact_meta(m["meta"])
             lines.append(json.dumps(entry) + "\n")
+        # The REAL count, recorded with the lines it counts, so the chat list can show it
+        # for a chat that is not in memory without guessing from the file size (it showed
+        # `size / 200`: "8 messages" for a five-message chat). `message_bytes` lets the
+        # reader prove the lines are still the ones counted: a writer that appends without
+        # rewriting this line changes the size, and the reader then counts instead.
+        meta_line["message_count"] = len(lines)
+        meta_line["message_bytes"] = sum(len(line.encode("utf-8")) for line in lines)
 
-        atomic_write(path, "".join(lines), fsync=True)
+        atomic_write(path, json.dumps(meta_line) + "\n" + "".join(lines), fsync=True)
         state.conversation_log._invalidate_cache(history_key)
         state.conversation_log.invalidate_tab_id_cache()
         # Keep cross-session search current (SESSION-MANAGEMENT §C1). Runs after the
@@ -953,7 +1013,7 @@ def _build_history_prefix(session: _ChatSession) -> str:
     total = 0
     for m in session.messages:
         role = m.get("role", "")
-        if role in ("chunk", "done", "streaming", "queued", "permission", "error", "tool"):
+        if role in ("streaming", "queued", "permission", "error", "tool"):
             continue
         label = "User" if role == "user" else "Assistant"
         text = m.get("content", "")[:500]

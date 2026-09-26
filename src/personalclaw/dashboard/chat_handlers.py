@@ -18,9 +18,9 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
 from personalclaw.dashboard.chat_persistence import (
-    _attach_variants,
     _redact_meta,
     _rehydrate_session_from_history,
+    _seed_transcript,
     _validate_reasoning_effort,
     resolve_session,
     save_session_to_history,
@@ -856,51 +856,24 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
     if not session:
         return web.json_response({"error": "not found"}, status=404)
 
-    # Canonical persisted key, via the one owner of on-disk identity (falls back to the
-    # dashboard form for a live session with no disk history yet).
-    resolved_key = persisted_history_key(state.conversation_log, session.key)
-
     limit_raw = request.query.get("limit")
     before = request.query.get("before")
 
-    # No limit → load ALL messages (chained across gateway restarts).
-    # In-memory session.messages is authoritative for the current session.
-    # _disk_older_count gates whether to read disk AND provides the stable
-    # slice boundary (set at restore/resume, never drifts with new messages).
+    # ONE list for both modes: the whole transcript, oldest first. The session's buffer
+    # holds its whole file (`_seed_transcript` never loads a window), and the splice with
+    # older sibling files lives in `full_session_messages` (chat_utils) because the
+    # session-map endpoint has to index the SAME list — see its docstring. Pagination is a
+    # slice of it, so `before` indexes the list the unpaginated read serves. (It used to
+    # stitch disk and memory by COUNT, and the per-turn `done` rows in the buffer made the
+    # "unflushed tail" too long, serving the last turn twice.)
+    all_msgs = full_session_messages(state, session)
+    total = len(all_msgs)
     if limit_raw is None and before is None:
-        # The splice lives in `full_session_messages` (chat_utils) because the session-map
-        # endpoint has to index the SAME list — see its docstring.
-        messages = full_session_messages(state, session)
-        total = len(messages)
+        messages = all_msgs
         has_more = False
     else:
-        # Paginated path: always reads from chained disk history; no in-memory
-        # offset math.
         limit = min(int(limit_raw or "200"), 500)
-        history_key = resolved_key
-        try:
-            all_msgs = (
-                state.conversation_log.read_messages_chained(history_key)
-                if state.conversation_log
-                else []
-            )
-        except Exception:
-            logger.warning("read_messages_chained failed for %s", history_key, exc_info=True)
-            all_msgs = []
-        # Append any un-flushed in-memory tail messages beyond what's on disk.
-        # Use _disk_older_count to isolate current-session disk count, since
-        # chained disk includes older sessions that inflate disk_len.
-        mem_len = len(session.messages)
-        disk_len = len(all_msgs)
-        current_session_disk = max(0, disk_len - session._disk_older_count)
-        unflushed = mem_len - current_session_disk
-        if unflushed > 0:
-            all_msgs = list(all_msgs) + list(session.messages[-unflushed:])
-        total = len(all_msgs)
-        if before is not None:
-            end = max(0, min(int(before), total))
-        else:
-            end = total
+        end = max(0, min(int(before), total)) if before is not None else total
         start = max(0, end - limit)
         messages = all_msgs[start:end]
         has_more = start > 0
@@ -2445,24 +2418,12 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
                     state.conversation_log._meta_cache.pop(resolved_key, None)
         except Exception:
             logger.warning("Failed to clear closed flag for %s", resolved_key, exc_info=True)
-    all_messages = state.conversation_log.read_messages_chained(resolved_key)
-    disk_total = len(all_messages)
-    max_resume = 500
-    messages = all_messages[-max_resume:] if disk_total > max_resume else all_messages
-    # Stable count of messages older than what we loaded into memory
-    session._disk_older_count = max(0, disk_total - len(messages))
-    for m in messages:
-        role = m.get("role", "assistant")
-        cls = "msg msg-u" if role == "user" else "msg msg-a"
-        content = m.get("content", "")
-        if role != "user":
-            content, _ = redact_exfiltration_urls(content)
-            content, _ = redact_credentials(content)
-        session.append(role, content, cls, ts=m.get("ts", ""))
-        _attach_variants(session, m)
-    session.drain()
-    session._resumed_count = len(session.messages)
-    total = disk_total
+    # The whole transcript, every field of every line — through the one loader the boot
+    # restore and the open-from-disk path use. This path used to keep the last 500 and
+    # rebuild each line with a guessed `cls` and no `meta`, and the next save wrote the
+    # stripped window over the file.
+    _seed_transcript(state, session, resolved_key)
+    total = session.message_count
     recent = session.messages[-200:] if len(session.messages) > 200 else session.messages
     _sync_dashboard_sessions(state)
     state.push_sessions_update()

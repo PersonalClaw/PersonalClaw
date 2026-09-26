@@ -179,6 +179,22 @@ def _safe_key(key: str) -> str:
     return re.sub(r"[^\w\-.]", "_", key)
 
 
+def _count_message_lines(lines) -> int:
+    """How many of *lines* (bytes) :meth:`ConversationLog._read_messages` reads as messages."""
+    count = 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and data.get("_type") != "metadata":
+            count += 1
+    return count
+
+
 def speaker_of(msg: dict) -> str:
     """The per-message author, or ``""`` for the human and for every pre-``speaker`` line.
 
@@ -201,6 +217,8 @@ class ConversationLog:
         self._msg_cache: dict[str, tuple[float, list[dict]]] = {}
         # mtime-based metadata cache: key → (mtime, metadata)
         self._meta_cache: dict[str, tuple[float, dict]] = {}
+        # Message-count cache for `list_sessions`: key → ((mtime, size), count)
+        self._count_cache: dict[str, tuple[tuple[float, int], int | None]] = {}
 
     def init(self) -> None:
         """Create sessions directory if missing."""
@@ -390,7 +408,7 @@ class ConversationLog:
             key = path.stem
             meta: dict = {
                 "key": key,
-                "messages": max(1, int(stat.st_size / 200)),
+                "messages": self._message_count(key, path, stat.st_mtime, stat.st_size),
                 "modified": stat.st_mtime,
                 "created": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             }
@@ -461,6 +479,49 @@ class ConversationLog:
         sessions = list(by_canon.values())
         sessions.sort(key=lambda s: s.get("modified", 0), reverse=True)
         return sessions
+
+    def _message_count(self, key: str, path: Path, mtime: float, size: int) -> int | None:
+        """How many messages *path* holds — the number its conversation serves when opened.
+
+        Never a guess. This read ``size / 200`` for every chat not in memory, so after a
+        restart a five-message chat listed as "8 messages". The dashboard's save records the
+        real count in the metadata line, with the byte length of the message lines it
+        counted; while the file still has exactly that many bytes after its first line, the
+        recorded count stands. A writer that
+        appended since (a channel app's ``append``), rotated, or compacted changes those
+        bytes, and the lines are counted instead. Cached per (mtime, size), so a list
+        request re-reads only the files that changed. ``None`` — shown as no count — only
+        when the file cannot be read at all.
+        """
+        stamp = (mtime, size)
+        cached = self._count_cache.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        count: int | None
+        try:
+            with open(path, "rb") as f:
+                first = f.readline()
+                try:
+                    head = json.loads(first) if first.strip() else {}
+                except json.JSONDecodeError:
+                    head = {}
+                if not isinstance(head, dict) or head.get("_type") != "metadata":
+                    count = _count_message_lines([first]) + _count_message_lines(f)
+                else:
+                    recorded = head.get("message_count")
+                    recorded_bytes = head.get("message_bytes")
+                    if (
+                        type(recorded) is int
+                        and type(recorded_bytes) is int
+                        and size - len(first) == recorded_bytes
+                    ):
+                        count = recorded
+                    else:
+                        count = _count_message_lines(f)
+        except OSError:
+            count = None
+        self._count_cache[key] = (stamp, count)
+        return count
 
     def search_sessions(self, query: str, limit: int = 50) -> list[dict]:
         """Return session metadata for files whose message content matches *query*.
@@ -766,6 +827,7 @@ class ConversationLog:
         """Invalidate caches for a key after a write operation."""
         self._msg_cache.pop(key, None)
         self._meta_cache.pop(key, None)
+        self._count_cache.pop(_safe_key(key), None)
 
     def get_metadata(self, key: str) -> dict:
         """Return session metadata for *key*."""

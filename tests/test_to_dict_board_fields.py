@@ -106,50 +106,41 @@ def test_prompt_preview_truncation():
     assert d["prompt_preview"].endswith("…")
 
 
-def test_message_count_excludes_done_sentinel():
-    # A completed 2-turn chat carries a `role: "done"` sentinel per streamed turn.
-    # The list count (to_dict) must exclude those, matching the detail/transcript
-    # view — a 2-turn chat is 4 messages, not 6 (#2862).
-    s = _session(
-        {"role": "user", "content": "hi", "ts": "t1"},
-        {"role": "assistant", "content": "hello", "ts": "t2"},
-        {"role": "done", "content": "", "ts": "t3"},
-        {"role": "user", "content": "again", "ts": "t4"},
-        {"role": "assistant", "content": "sure", "ts": "t5"},
-        {"role": "done", "content": "", "ts": "t6"},
-    )
-    assert len(s.messages) == 6  # raw in-memory list still carries the sentinels
+def _turn(s: _ChatSession, question: str, answer: str) -> None:
+    """One real turn through the session API the runner drives."""
+    s.append("user", question)
+    for i in range(0, len(answer), 2):
+        s.stream_chunk(answer[i : i + 2])
+    s.finish_stream(answer)
+    s.signal_done()
+
+
+def test_message_count_ignores_the_end_of_turn_signal():
+    # #2862: a completed 2-turn chat is 4 messages, not 6. The end-of-turn marker goes to
+    # live readers only (`signal_done`), never into the transcript the list counts.
+    s = _ChatSession("test-session")
+    _turn(s, "hi", "hello")
+    _turn(s, "again", "sure")
+    assert [m["role"] for m in s.messages] == ["user", "assistant", "user", "assistant"]
     assert s.to_dict()["messages"] == 4
 
 
 def test_message_count_single_turn():
-    # A single-turn chat shows 2, not 3 (raw list has one `done` sentinel).
-    s = _session(
-        {"role": "user", "content": "hi", "ts": "t1"},
-        {"role": "assistant", "content": "hello", "ts": "t2"},
-        {"role": "done", "content": "", "ts": "t3"},
-    )
+    s = _ChatSession("test-session")
+    _turn(s, "hi", "hello")
     assert s.to_dict()["messages"] == 2
 
 
 def test_message_count_agrees_with_detail_view():
-    # The list count and the detail endpoint must never diverge on the same
-    # session: both go through _prepare_messages' exclusion/collapse rule. Cover a
-    # mid-stream (running) session with `chunk` entries too — the detail view
-    # collapses each chunk run into one streaming message, and the list count must
-    # match that, not the raw entry count.
-    msgs = [
-        {"role": "user", "content": "hi", "ts": "t1"},
-        {"role": "chunk", "content": "hel", "ts": "t2"},
-        {"role": "chunk", "content": "lo", "ts": "t3"},
-        {"role": "assistant", "content": "hello", "ts": "t4"},
-        {"role": "done", "content": "", "ts": "t5"},
-        {"role": "user", "content": "more", "ts": "t6"},
-        {"role": "chunk", "content": "sure", "ts": "t7"},
-    ]
-    s = _session(*msgs)
+    # The list count and the detail endpoint must never diverge on the same session.
+    # Mid-stream (running), however many chunks the answer arrived in, both count it once.
+    s = _ChatSession("test-session")
+    _turn(s, "hi", "hello")
+    s.append("user", "more")
+    for chunk in ("su", "re", " thing"):
+        s.stream_chunk(chunk)
     loop = asyncio.new_event_loop()
-    s.task = loop.create_future()  # running: chunk buffer surfaces as a streaming msg
+    s.task = loop.create_future()  # running: the open answer is served as a streaming msg
     d = s.to_dict()
-    assert d["messages"] == len(_prepare_messages(s.messages, s.running))
+    assert d["messages"] == len(_prepare_messages(s.messages, s.running)) == 4
     loop.close()

@@ -226,11 +226,19 @@ def test_an_empty_buffer_never_overwrites_a_persisted_transcript(tmp_path):
     after = _log_path(state).read_bytes()
     assert after == before, "a forced save with an empty buffer rewrote a real transcript"
 
-    blank.messages.extend([{"role": "chunk", "content": "x"}, {"role": "done", "content": ""}])
+    # Rows the save holds back: an answer still streaming, an approval nobody has answered,
+    # a queued placeholder.
+    blank.messages.extend(
+        [
+            {"role": "streaming", "content": "x"},
+            {"role": "permission", "content": "bash", "cls": json.dumps({"request_id": "r1"})},
+            {"role": "queued", "content": "next"},
+        ]
+    )
     save_session_to_history(state, blank, force=True)
     assert (
         _log_path(state).read_bytes() == before
-    ), "a buffer of only non-transcript rows rewrote a real transcript"
+    ), "a buffer of only held-back rows rewrote a real transcript"
 
 
 def test_the_flush_loop_no_longer_gates_on_message_count(tmp_path):

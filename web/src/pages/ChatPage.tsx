@@ -38,6 +38,7 @@ import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
+import { sessionRowMeta } from './chat/sessionRowMeta'
 import { streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
@@ -4978,7 +4979,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           </div>
         )}
         <div className="flex items-center gap-1.5 flex-wrap text-on-surface-low text-[0.8125rem]">
-          <span>{s.messages} message{s.messages === 1 ? '' : 's'}{s.running ? ' · running' : ''}{s.model ? ` · ${s.model}` : ''}</span>
+          <span>{sessionRowMeta(s)}</span>
           {/* Origin chip on worker chats — names the loop / code project and opens its
               cockpit (not the raw chat) so the user dives into context. The 'loop' origin
               covers every non-code kind (general/goal/design), so the label is neutral. */}

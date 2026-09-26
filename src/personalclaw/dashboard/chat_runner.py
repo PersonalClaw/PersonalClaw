@@ -906,36 +906,12 @@ def _flush_segment(
     *,
     broadcast: bool = True,
 ) -> None:
-    """Finalize current text block as a segment and persist it."""
+    """Settle the answer streamed so far as an assistant segment.
 
-    # Remove trailing chunk messages (they belong to this segment).
-    # Also pull aside any stop_event interleaved with this segment's chunks
-    # so it lands AFTER the finalized assistant message. Historical
-    # stop_events from prior turns stay in place.
-    def _is_stop_event(m: dict) -> bool:
-        cls_val = m.get("cls", "")
-        if not cls_val or not isinstance(cls_val, str):
-            return False
-        try:
-            parsed = json.loads(cls_val)
-            return isinstance(parsed, dict) and parsed.get("kind") == "stop_event"
-        except (json.JSONDecodeError, ValueError):
-            return False
-
-    # Walk backwards to find the start of the trailing chunk/stop_event run.
-    boundary = len(session.messages)
-    for i in range(len(session.messages) - 1, -1, -1):
-        role = session.messages[i].get("role", "")
-        if role == "chunk" or _is_stop_event(session.messages[i]):
-            boundary = i
-        else:
-            break
-    head = session.messages[:boundary]
-    tail = session.messages[boundary:]
-    trailing_stop_events = [m for m in tail if _is_stop_event(m)]
-    session.messages = (
-        head  # drops chunks AND trailing stop_events; tail.non-chunk-non-stop stays in head
-    )
+    The ONE settler of a streamed answer — the end of a turn, a tool call or approval
+    that interrupts the text, and every error path that ends a turn mid-answer all come
+    here, so an interrupted answer is kept exactly like a finished one.
+    """
     # Redact the accumulated text
     redacted, exfil_warnings = redact_exfiltration_urls(assistant_text)
     for w in exfil_warnings:
@@ -943,12 +919,11 @@ def _flush_segment(
     redacted, cred_warnings = redact_credentials(redacted)
     for w in cred_warnings:
         logger.warning("Credential redacted in chat segment: %s", w)
-    # Persist as assistant message. Broadcast is kept enabled so that
-    # other tabs viewing the same session receive the finalized text.
-    # The active tab already has this content from streaming chunks;
-    # the chat_segment event tells it to finalize streaming → assistant.
-    session.append("assistant", redacted, "msg msg-a")
-    last_msg: dict = session.messages[-1]
+    # Settled in place — where the text streamed, so a stop card pressed mid-answer stays
+    # after the prose. The settled entry is broadcast so other tabs viewing the session get
+    # the finalized text; the active tab already has it from the streamed chunks, and the
+    # chat_segment event tells it to finalize streaming → assistant.
+    last_msg: dict = session.finish_stream(redacted)
     # Episodic memory citations (§5.4): stamp the turn's `[Memory N]` → record manifest
     # onto the assistant message's meta so the frontend can resolve each cited token to
     # a deep-link. The manifest is per-TURN (episodic injects once, on the new-session
@@ -988,11 +963,6 @@ def _flush_segment(
         last_msg["variant_idx"] = len(pending_list) - 1
         session._pending_variants = []
         attached_variants = True
-    # Re-append any stop_event that belongs to this segment's trailing run,
-    # placed AFTER the finalized assistant message so the UI shows
-    # prose → stop card.
-    for ev in trailing_stop_events:
-        session.messages.append(ev)
     # Tell the frontend to finalize streaming → assistant.
     if broadcast:
         state.broadcast_ws("chat_segment", {"session": session.key})
@@ -2939,14 +2909,15 @@ async def run_chat(
                                     "tool_result",
                                     {"session": session.key, "tool_call_id": tcid, "output": ""},
                                 )
-                        elif m.get("role") not in ("tool", "permission", "chunk"):
+                        elif m.get("role") not in ("tool", "permission"):
                             break
                 in_tool_group = False
                 chunk_seq += 1
                 safe_chunk, _ = redact_exfiltration_urls(event.text)
                 safe_chunk, _ = redact_credentials(safe_chunk)
                 assistant_text += safe_chunk
-                session.append("chunk", safe_chunk, "chunk")
+                # Grows the ONE streaming entry for this answer — never a row per chunk.
+                session.stream_chunk(safe_chunk)
                 # Push chunk to WS clients (HTTP SSE reader drains from session._pending)
                 state.broadcast_ws(
                     "chat_chunk",
@@ -4060,8 +4031,12 @@ async def run_chat(
                 logger.debug("Main loop: compaction event text=%r", event.text)
                 if _broadcast_compaction_result(state, session, event):
                     saw_compaction = True
+                    # What streamed before the result was the agent's compaction chatter,
+                    # not an answer: the result message above replaces it.
+                    session.discard_stream()
                     assistant_text = ""
             elif event.kind == EVENT_CLEAR_STATUS:
+                session.discard_stream()
                 session.messages.clear()
                 assistant_text = ""
                 session.append("assistant", "Conversation cleared.", "msg msg-a")
@@ -4079,6 +4054,8 @@ async def run_chat(
                 new_agent, _ = redact_exfiltration_urls(new_agent)
                 if new_agent:
                     session.agent = new_agent
+                    # The switch acknowledgement below replaces what streamed before it.
+                    session.discard_stream()
                     assistant_text = ""
                     session.append(
                         "assistant",
@@ -4187,6 +4164,11 @@ async def run_chat(
         if _stop_reason and _stop_reason.startswith("error:"):
             _rc = getattr(client, "exit_code", None)
             _rc_suffix = f" (exit {_rc})" if _rc is not None else ""
+            # The answer streamed before the process died was on screen: keep it, ahead
+            # of the error that explains why it stops.
+            if assistant_text:
+                _flush_segment(state, session, assistant_text, broadcast=False)
+                assistant_text = ""
 
             def _emit_error(msg: str) -> None:
                 session.append("error", msg, "msg msg-err")
@@ -4215,7 +4197,7 @@ async def run_chat(
         )
         if first_word == "/compact" and not saw_compaction and not slash_substituted:
             # Clear ACP agent's streamed "Compacting conversation..." text
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
+            session.discard_stream()
             assistant_text = ""
             state.broadcast_ws("chat_done", {"session": session.key})
             # Tell frontend to show compacting state and disable input
@@ -4461,24 +4443,17 @@ async def run_chat(
                 )
             except Exception:
                 logger.debug("Failed to mirror response to channel", exc_info=True)
+    # Every handler below settles the answer streamed so far BEFORE it appends its own row,
+    # so the partial answer the user was reading is kept, and sits ahead of the error that
+    # explains why it stops.
     except asyncio.CancelledError:
         if assistant_text:
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append(
-                "assistant",
-                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
-                "msg msg-a",
-            )
+            _flush_segment(state, session, assistant_text, broadcast=False)
     except AcpProcessDied as exc:
         logger.warning("ACP process died in session %s: %s — resetting session", session.key, exc)
         needs_session_reset = True
         if assistant_text:
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append(
-                "assistant",
-                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
-                "msg msg-a",
-            )
+            _flush_segment(state, session, assistant_text, broadcast=False)
         if _prompt_depth == 0:
             session._acp_pipe_death_retries += 1
             if session._acp_pipe_death_retries <= 3:
@@ -4495,12 +4470,7 @@ async def run_chat(
         )
         needs_session_reset = True  # checked in finally block
         if assistant_text:
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append(
-                "assistant",
-                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
-                "msg msg-a",
-            )
+            _flush_segment(state, session, assistant_text, broadcast=False)
         if _prompt_depth == 0:
             session._prompt_busy_retries += 1
             if session._prompt_busy_retries <= 3:
@@ -4530,10 +4500,7 @@ async def run_chat(
             )
             needs_session_reset = True  # checked in finally block
             if assistant_text:
-                _safe, _ = redact_exfiltration_urls(assistant_text)
-                _safe, _ = redact_credentials(_safe)
-                session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-                session.append("assistant", _safe, "msg msg-a")
+                _flush_segment(state, session, assistant_text, broadcast=False)
             if _prompt_depth == 0:
                 session._prompt_busy_retries += 1
                 if session._prompt_busy_retries <= 3:
@@ -4546,10 +4513,7 @@ async def run_chat(
                 session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
         else:
             if assistant_text:
-                _safe, _ = redact_exfiltration_urls(assistant_text)
-                _safe, _ = redact_credentials(_safe)
-                session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-                session.append("assistant", _safe, "msg msg-a")
+                _flush_segment(state, session, assistant_text, broadcast=False)
             _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))
             _err_text, _ = redact_credentials(_err_text)
             session.append(
@@ -4567,6 +4531,8 @@ async def run_chat(
             await _fire(HOOK_EVENT_ERROR, _err_text)
     except Exception as exc:
         logger.exception("Dashboard chat error in session %s", session.key)
+        if assistant_text:
+            _flush_segment(state, session, assistant_text, broadcast=False)
         _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))
         _err_text, _ = redact_credentials(_err_text)
         session.append("error", _err_text, "msg msg-err")
@@ -4577,6 +4543,15 @@ async def run_chat(
         await _fire(HOOK_EVENT_ERROR, _err_text)
         await state.sessions.record_failure(session_key)
     finally:
+        # No exit leaves an answer half-written: one still streaming here — a path that
+        # returned or raised without settling it — is settled where it stood, before the
+        # file-change flush below attaches this turn's chips to it.
+        _unsettled = session.streaming_text
+        if _unsettled is not None:
+            try:
+                _flush_segment(state, session, _unsettled, broadcast=False)
+            except Exception:
+                logger.warning("could not settle the streamed answer for %s", session.key)
         session._batch_rejected = False
         # Clear this turn from the active-job tracker (PLATFORM-RESILIENCE §6.2) — the
         # same turn-exit boundary autonudge re-arms on. Best-effort.
@@ -4754,7 +4729,7 @@ async def run_chat(
         else:
             session._stopping = False
             # Only send "done" when queue is empty — keeps SSE reader alive
-            session.append("done", "", "done")
+            session.signal_done()
             # Clear task reference BEFORE pushing session update so that
             # session.running returns False immediately.  Without this,
             # push_sessions_update() reports running=True because the task

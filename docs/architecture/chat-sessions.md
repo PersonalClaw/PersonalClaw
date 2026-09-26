@@ -48,6 +48,17 @@ chat, channel thread, loop worker, webhook, subagent).
   Model-to-provider matching is data-driven via
   `catalog.model_family_provider_types(model)` — no vendor names at the call
   site, and unknown model families are never restricted.
+- **The transcript buffer is the whole file.** `save_session_to_history`
+  rewrites a session's file from `_ChatSession.messages`, so the buffer holds
+  every message the file holds and nothing trims it. Every path that loads a
+  persisted chat (boot restore, opening one from disk, resume) goes through
+  `_seed_transcript`, which loads the whole file with each line's `cls` and
+  `meta`. The buffer holds transcript entries only: a streamed answer is ONE
+  `streaming` entry however many chunks it arrives in (`stream_chunk`), settled
+  in place into an `assistant` entry (`finish_stream`), and the end-of-turn
+  marker goes to live readers only (`signal_done`). An approval is written once
+  it is decided. The save records `message_count` in the metadata line, which
+  `ConversationLog.list_sessions` serves as the chat list's count.
 
 ## The dashboard chat pipeline
 
@@ -71,7 +82,10 @@ chat, channel thread, loop worker, webhook, subagent).
    overrides per-session (the `model` kwarg threads through
    `llm/registry.py` `registry.build`; every factory honors it).
 5. **Streaming + persistence** — chunks stream over the dashboard WebSocket;
-   the finished turn appends to the session JSONL.
+   the finished turn is saved by rewriting the session JSONL from the buffer.
+   Every exit from a turn, an error included, first settles the answer
+   streamed so far (`_flush_segment`), so a partial answer is kept like a
+   finished one.
 
 Around the engine:
 
@@ -126,10 +140,9 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
   slot without producing a turn, and consecutive assistant messages merge into one turn
   keyed on the last message folded in.
 - **Two kinds are live-only.** `subagent` and `activity` ride WS streams that are never
-  written to the conversation log, and `permission` rows are dropped on save
-  (`_NON_TRANSCRIPT_ROLES`), so the durable endpoint witnesses
-  `user`/`assistant`/`tool`/`error` after a restart and `approval` only while the row is
-  still in the live buffer.
+  written to the conversation log, so the durable endpoint witnesses
+  `user`/`assistant`/`tool`/`error` after a restart, and `approval` once it is decided
+  (`_persistable` writes a resolved `permission` row and holds back a pending one).
 - **Per-turn telemetry** (cost, tokens, cache split, duration, context %, event and
   tool-call counts, model) is stamped by `chat_runner` onto the turn's LAST assistant
   message as `meta.turn_telemetry`, *before* `save_session_to_history` — that function

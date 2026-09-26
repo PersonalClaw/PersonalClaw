@@ -15,7 +15,7 @@ from chat_test_helpers import (
     _make_state,
 )
 
-from personalclaw.dashboard.state import _MAX_SESSION_MESSAGES, DashboardState, _ChatSession
+from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
 
 # ── Session unit tests ──
@@ -47,20 +47,14 @@ class TestChatSession:
         assert len(pending) == 1
         assert pending[0]["content"] == "fresh response"
 
-    def test_total_messages_survives_trim(self):
+    def test_the_transcript_is_never_trimmed(self):
+        """No cap drops what the user wrote: the buffer was trimmed at 10,000 entries."""
         session = _ChatSession("s1")
-        count = _MAX_SESSION_MESSAGES + 100
+        count = 10_050
         for i in range(count):
             session.append("user", f"msg {i}")
-        assert len(session.messages) == _MAX_SESSION_MESSAGES
-        assert session.total_messages == count
-
-    def test_trim_keeps_latest(self):
-        session = _ChatSession("s1")
-        count = _MAX_SESSION_MESSAGES + 50
-        for i in range(count):
-            session.append("user", f"msg {i}")
-        assert session.messages[0]["content"] == "msg 50"
+        assert len(session.messages) == count
+        assert session.messages[0]["content"] == "msg 0"
         assert session.messages[-1]["content"] == f"msg {count - 1}"
 
     def test_to_dict(self):
@@ -117,7 +111,7 @@ class TestApiChatDrainOnDisconnect:
         session = state.get_or_create_session("s1")
 
         async def fake_run_chat(st, sl, msg):
-            sl.append("chunk", "partial answer", "chunk")
+            sl.stream_chunk("partial answer")
             await asyncio.sleep(60)
 
         monkeypatch.setattr("personalclaw.dashboard.chat_handlers.run_chat", fake_run_chat)
@@ -574,7 +568,7 @@ class TestHasReaderFlag:
         session._on_message = lambda key, msg: received.append(msg)
 
         session._has_reader = False
-        session.append("chunk", "text")
+        session.stream_chunk("text")
         assert len(received) == 0
 
     def test_user_never_broadcast(self, tmp_path, monkeypatch):
@@ -602,58 +596,73 @@ class TestHasReaderFlag:
         assert len(received) == 2
 
 
-# ── Chunk cleanup after response ──
+# ── A streamed answer is one transcript entry ──
 
 
-class TestChunkCleanup:
-    def test_chunks_removed_from_messages(self):
-        """After assistant response, chunk messages should be cleaned up."""
+class TestStreamedAnswerIsOneEntry:
+    def test_chunks_grow_one_entry_that_settles_in_place(self):
+        """However many chunks arrive, the answer is ONE entry, settled where it streamed."""
         session = _ChatSession("s1")
         session.append("user", "hello")
-        session.append("chunk", "He")
-        session.append("chunk", "llo")
-        session.append("chunk", " world")
-        assert sum(1 for m in session.messages if m["role"] == "chunk") == 3
+        for chunk in ("He", "llo", " world"):
+            session.stream_chunk(chunk)
+        assert [m["role"] for m in session.messages] == ["user", "streaming"]
+        assert session.streaming_text == "Hello world"
 
-        # Simulate what run_chat does after streaming
-        session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-        session.append("assistant", "Hello world")
-        assert sum(1 for m in session.messages if m["role"] == "chunk") == 0
-        assert session.messages[-1]["role"] == "assistant"
-        assert session.messages[0]["role"] == "user"
+        settled = session.finish_stream("Hello world")
+        assert settled is session.messages[-1]
+        assert [(m["role"], m["content"]) for m in session.messages] == [
+            ("user", "hello"),
+            ("assistant", "Hello world"),
+        ]
+        assert session.streaming_text is None
+
+    def test_a_stop_card_pressed_mid_answer_stays_after_the_prose(self):
+        session = _ChatSession("s1")
+        session.append("user", "hello")
+        session.stream_chunk("partial ")
+        session.append("system", '{"kind": "stop_event"}', '{"kind": "stop_event"}')
+        session.stream_chunk("answer")
+        session.finish_stream("partial answer")
+        assert [m["role"] for m in session.messages] == ["user", "assistant", "system"]
+        assert session.messages[1]["content"] == "partial answer"
+
+    def test_a_cleared_buffer_forgets_the_open_stream(self):
+        session = _ChatSession("s1")
+        session.stream_chunk("stale")
+        session.messages.clear()
+        session.stream_chunk("fresh")
+        assert [(m["role"], m["content"]) for m in session.messages] == [("streaming", "fresh")]
 
 
 # ── _prepare_messages filtering ──
 
 
 class TestPrepareMessages:
-    def test_queued_preserved_done_stripped(self):
+    def test_queued_preserved(self):
         """queued messages must survive _prepare_messages so the frontend shows the banner after tab switch."""  # noqa: E501
         from personalclaw.dashboard.chat import _prepare_messages
 
         msgs = [
             {"role": "user", "content": "hello"},
             {"role": "queued", "content": "next msg"},
-            {"role": "done", "content": ""},
             {"role": "assistant", "content": "hi"},
         ]
         out = _prepare_messages(msgs, running=False)
         roles = [m["role"] for m in out]
         assert "queued" in roles, "queued must be preserved for tab-switch indicator"
-        assert "done" not in roles, "done must be stripped"
 
-    def test_chunks_collapsed_to_streaming(self):
-        """Trailing chunks should be collapsed into a single streaming message."""
+    def test_the_streaming_answer_is_served_once(self):
+        """A streamed answer is ONE streaming message, whatever its chunk count."""
         from personalclaw.dashboard.chat import _prepare_messages
 
-        msgs = [
-            {"role": "user", "content": "hi"},
-            {"role": "chunk", "content": "Hel"},
-            {"role": "chunk", "content": "lo"},
-        ]
-        out = _prepare_messages(msgs, running=True)
-        assert out[-1]["role"] == "streaming"
-        assert "Hel" in out[-1]["content"]
+        session = _ChatSession("s1")
+        session.append("user", "hi")
+        session.stream_chunk("Hel")
+        session.stream_chunk("lo")
+        out = _prepare_messages(session.messages, running=True)
+        assert [m["role"] for m in out] == ["user", "streaming"]
+        assert out[-1]["content"] == "Hello"
 
     def test_queued_placeholder_removed_on_processing(self):
         """When a queued message starts processing, its placeholder is replaced by a user entry."""
@@ -727,32 +736,50 @@ class TestHistorySaveOnClose:
         assert not state.conversation_log.has_log("dashboard:s1")
         assert state.conversation_log.read_messages("dashboard:s1") == []
 
-    def test_transient_roles_excluded_from_history(self, tmp_path, monkeypatch):
-        """chunk, done, queued, permission are not persisted (the save_session_to_history
+    def test_what_the_save_holds_back_and_what_it_keeps(self, tmp_path, monkeypatch):
+        """Held back: an approval nobody has answered, a queued placeholder, and an answer
+        still streaming. Kept: a DECIDED approval, with the decision (the save_session_to_history
         contract — exercised directly since delete now hard-purges rather than saves)."""
+        import json
+
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         from personalclaw.dashboard.chat import save_session_to_history
 
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
         session.append("user", "run ls")
-        session.append("permission", "ls")
+        session.append("permission", "ls", json.dumps({"request_id": "r1", "resolved": "approved"}))
         session.append("tool", "ls")
+        session.append("permission", "rm", json.dumps({"request_id": "r2"}))
         session.append("queued", "next msg")
-        session.append("chunk", "partial")
-        session.append("done", "")
         session.append("assistant", "done")
+        session.stream_chunk("partial")
         session.drain()
 
         save_session_to_history(state, session, force=True)
 
         msgs = state.conversation_log.read_messages("dashboard:s1")
-        roles = [m["role"] for m in msgs]
-        assert "chunk" not in roles
-        assert "done" not in roles
-        assert "queued" not in roles
-        assert "permission" not in roles
-        assert roles == ["user", "tool", "assistant"]
+        assert [m["role"] for m in msgs] == ["user", "permission", "tool", "assistant"]
+        assert json.loads(msgs[1]["cls"]) == {"request_id": "r1", "resolved": "approved"}
+
+    def test_the_last_save_before_a_stop_keeps_the_answer_still_streaming(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        from personalclaw.dashboard.chat import save_all_sessions_to_history
+
+        state = _make_state(tmp_path)
+        session = state.get_or_create_session("s1")
+        session.append("user", "tell me a story")
+        session.stream_chunk("Once upon ")
+        session.stream_chunk("a time")
+        save_all_sessions_to_history(state)
+
+        msgs = state.conversation_log.read_messages("dashboard:s1")
+        assert [(m["role"], m["content"]) for m in msgs] == [
+            ("user", "tell me a story"),
+            ("assistant", "Once upon a time"),
+        ]
 
     def test_close_saves_mode_to_history(self, tmp_path, monkeypatch):
         """Session mode is persisted in session metadata on close."""
@@ -906,20 +933,20 @@ class TestInMemoryAuthority:
 
     @pytest.mark.asyncio
     async def test_full_load_prepends_older_disk_messages(self, tmp_path, monkeypatch):
-        """No-limit path prepends older disk messages when restore truncated."""
+        """No-limit path prepends the older head ``_disk_older_count`` names (the older
+        sibling files of a legacy chained tab) to the buffer."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         log = state.conversation_log
         # Simulate: 8 messages on disk total (5 older + 3 recent)
         for i in range(8):
             log.append("dashboard:s2", "user", f"msg {i}")
-        # Session has only the last 3 in memory (simulating truncated restore)
+        # Session buffer holds the last 3; the first 5 live outside it
         session = state.get_or_create_session("s2")
         session.append("user", "msg 5")
         session.append("user", "msg 6")
         session.append("user", "msg 7")
         session.drain()
-        # Flag that restore truncated older messages
         session._disk_older_count = 5
 
         async with TestClient(TestServer(_make_app(state))) as client:
@@ -933,13 +960,14 @@ class TestInMemoryAuthority:
 
     @pytest.mark.asyncio
     async def test_legacy_pagination_with_limit(self, tmp_path, monkeypatch):
-        """Legacy limit-based pagination reads from chained disk."""
+        """Limit-based pagination slices the SAME list the unpaginated read serves.
+
+        The chat is opened from disk by the first request (the whole file is loaded)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         log = state.conversation_log
         for i in range(10):
             log.append("dashboard:s3", "user", f"msg {i}")
-        session = state.get_or_create_session("s3")  # noqa: F841
 
         async with TestClient(TestServer(_make_app(state))) as client:
             # limit=3 returns last 3, has_more=True
@@ -1374,16 +1402,15 @@ class TestFlushSegment:
         state.broadcast_ws = MagicMock()
         session = state.get_or_create_session("s1")
         # Simulate accumulated chunks
-        session.append("chunk", "Hello ")
-        session.append("chunk", "world")
+        session.stream_chunk("Hello ")
+        session.stream_chunk("world")
 
         from personalclaw.dashboard.chat import _flush_segment
 
         _flush_segment(state, session, "Hello world")
 
-        # Chunks should be removed
-        chunk_msgs = [m for m in session.messages if m.get("role") == "chunk"]
-        assert len(chunk_msgs) == 0
+        # The streamed answer is settled — no streaming entry remains
+        assert not any(m.get("role") == "streaming" for m in session.messages)
         # Assistant message should be persisted
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         assert len(assistant_msgs) == 1
@@ -1857,28 +1884,27 @@ class TestModelBackfillOnComplete:
 
 
 class TestPrepareMessagesInterleaved:
-    """Tests for _prepare_messages with interleaved assistant/tool/chunk messages."""
+    """_prepare_messages with interleaved assistant/tool messages and a streamed answer."""
 
-    def test_interleaved_assistant_tool_chunk_structure(self):
-        """_prepare_messages with interleaved assistant/tool/chunk returns
-        correct structure.
+    def test_interleaved_assistant_tool_streaming_structure(self):
+        """_prepare_messages with interleaved assistant/tool and an answer still
+        streaming returns correct structure.
 
         Validates: Requirements 6.1
         """
         from personalclaw.dashboard.chat import _prepare_messages
 
-        messages = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "Before tool", "cls": "msg msg-a"},
-            {"role": "tool", "content": "✅ read_file", "cls": "msg msg-tool"},
-            {"role": "assistant", "content": "After tool", "cls": "msg msg-a"},
-            {"role": "chunk", "content": "still "},
-            {"role": "chunk", "content": "streaming"},
-        ]
+        session = _ChatSession("s1")
+        session.append("user", "hello")
+        session.append("assistant", "Before tool", "msg msg-a")
+        session.append("tool", "✅ read_file", "msg msg-tool")
+        session.append("assistant", "After tool", "msg msg-a")
+        session.stream_chunk("still ")
+        session.stream_chunk("streaming")
 
-        result = _prepare_messages(messages, running=True)
+        result = _prepare_messages(session.messages, running=True)
 
-        # user, assistant, tool, assistant, streaming (collapsed chunks)
+        # user, assistant, tool, assistant, streaming (one entry, however many chunks)
         assert len(result) == 5
         assert result[0]["role"] == "user"
         assert result[1]["role"] == "assistant"
@@ -1889,8 +1915,8 @@ class TestPrepareMessagesInterleaved:
         assert result[4]["role"] == "streaming"
         assert result[4]["content"] == "still streaming"
 
-    def test_no_trailing_chunks_no_streaming(self):
-        """Without trailing chunks, no streaming message is produced."""
+    def test_no_open_stream_no_streaming(self):
+        """Without an answer still streaming, no streaming message is produced."""
         from personalclaw.dashboard.chat import _prepare_messages
 
         messages = [

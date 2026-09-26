@@ -161,10 +161,10 @@ class _FakeState:
 async def _client(monkeypatch, *, script=None) -> tuple[TestClient, _FakeState]:
     """A live server with `/v1` mounted and a scripted turn runner.
 
-    ``script`` is the list of transcript rows the "turn" appends. The dialect's job is
-    to translate them, so scripting them is exactly the seam under test; the row shapes
-    are the ones ``chat_runner`` really appends (``("chunk", text, "chunk")`` and the
-    terminal ``("done", "", "done")``).
+    ``script`` is the list of rows the "turn" queues for its reader. The dialect's job is
+    to translate them, so scripting them is exactly the seam under test; the shapes are
+    the frames ``chat_runner`` really queues for a live reader (``stream_chunk`` sends
+    ``("chunk", text, "chunk")``, ``signal_done`` the terminal ``("done", "", "done")``).
     """
     rows = script if script is not None else [("chunk", "hello ", "chunk"), ("done", "", "done")]
 

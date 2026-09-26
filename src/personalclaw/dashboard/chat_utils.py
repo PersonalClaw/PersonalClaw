@@ -545,9 +545,9 @@ def persisted_history_key(conversation_log, session_name: str) -> str:
 def full_session_messages(state: DashboardState, session: _ChatSession) -> list[dict]:
     """THE owner of "the whole transcript for this session, oldest first".
 
-    The in-memory buffer holds at most the tail (``restore_recent_sessions`` keeps the
-    last 500 and records how many older messages stayed on disk in
-    ``_disk_older_count``), so the complete transcript is ``the older disk head + the
+    The in-memory buffer holds the session's whole file (``_seed_transcript`` never loads
+    a window); a legacy tab chained across restarts also has OLDER sibling files, counted
+    by ``_disk_older_count``, so the complete transcript is ``the older sibling head + the
     buffer``. That splice is what makes an INDEX into this list meaningful: the visible
     user/assistant position inside it is ``at_message_index``, the coordinate
     ``POST .../fork`` and edit-resend speak.
@@ -842,63 +842,59 @@ def _dequeue_next_message(session, merge_enabled: bool) -> tuple:
 
 
 def _prepare_messages(messages: list[dict], running: bool) -> list[dict]:
-    """Prepare messages for API response."""
+    """Prepare messages for API response — one served message per transcript entry.
+
+    The buffer holds transcript entries only (``_ChatSession.append``), so this maps each
+    one to its wire form and drops none; the chat list's count
+    (``_ChatSession.message_count``) relies on that. The answer still streaming is ONE
+    ``streaming`` entry, served in the exact shape the client has always hydrated.
+    """
     out: list[dict] = []
-    chunk_text = ""
     for m in messages:
         role = m.get("role", "")
-        if role == "chunk":
-            chunk_text += m.get("content", "")
-        elif role == "done":
+        text = m.get("content", "")
+        if role == "streaming":
+            out.append(
+                {"role": "streaming", "content": _redact_for_display(text), "cls": "msg msg-a"}
+            )
             continue
-        else:
-            if chunk_text:
-                redacted_chunk, _ = redact_exfiltration_urls(chunk_text)
-                redacted_chunk, _ = redact_credentials(redacted_chunk)
-                out.append({"role": "streaming", "content": redacted_chunk, "cls": "msg msg-a"})
-                chunk_text = ""
-            text = m.get("content", "")
-            if role not in ("user", "system") and text:
-                text, _ = redact_exfiltration_urls(text)
-                text, _ = redact_credentials(text)
-                m = {**m, "content": text}
-            msg_out = dict(m)
-            if msg_out.get("variants"):
-                msg_out["variants"] = [
-                    {
-                        **v,
-                        "content": redact_credentials(
-                            redact_exfiltration_urls(v.get("content", ""))[0]
-                        )[0],
-                    }
-                    for v in msg_out["variants"]
-                    if isinstance(v, dict)
-                ]
-            # Rewind tails (CHAT-CRAFT S1): redact non-user snapshot content on the
-            # wire, matching the main transcript's redaction (user content is left
-            # as-is, exactly like the primary user messages above).
-            if isinstance(msg_out.get("rewound"), list):
-                redacted_chain: list[dict] = []
-                for snap in msg_out["rewound"]:
-                    if not isinstance(snap, dict) or not isinstance(snap.get("messages"), list):
+        if role not in ("user", "system") and text:
+            text, _ = redact_exfiltration_urls(text)
+            text, _ = redact_credentials(text)
+            m = {**m, "content": text}
+        msg_out = dict(m)
+        if msg_out.get("variants"):
+            msg_out["variants"] = [
+                {
+                    **v,
+                    "content": redact_credentials(
+                        redact_exfiltration_urls(v.get("content", ""))[0]
+                    )[0],
+                }
+                for v in msg_out["variants"]
+                if isinstance(v, dict)
+            ]
+        # Rewind tails (CHAT-CRAFT S1): redact non-user snapshot content on the
+        # wire, matching the main transcript's redaction (user content is left
+        # as-is, exactly like the primary user messages above).
+        if isinstance(msg_out.get("rewound"), list):
+            redacted_chain: list[dict] = []
+            for snap in msg_out["rewound"]:
+                if not isinstance(snap, dict) or not isinstance(snap.get("messages"), list):
+                    continue
+                snap_msgs = []
+                for sm in snap["messages"]:
+                    if not isinstance(sm, dict):
                         continue
-                    snap_msgs = []
-                    for sm in snap["messages"]:
-                        if not isinstance(sm, dict):
-                            continue
-                        sc = sm.get("content", "")
-                        if sm.get("role") not in ("user", "system") and sc:
-                            sc, _ = redact_exfiltration_urls(sc)
-                            sc, _ = redact_credentials(sc)
-                        snap_msgs.append({**sm, "content": sc})
-                    redacted_chain.append({**snap, "messages": snap_msgs})
-                msg_out["rewound"] = redacted_chain
-            meta = parse_cls_meta(m.get("cls", ""))
-            if meta is not None:
-                msg_out["meta"] = meta
-            out.append(msg_out)
-    if chunk_text:
-        redacted_chunk, _ = redact_exfiltration_urls(chunk_text)
-        redacted_chunk, _ = redact_credentials(redacted_chunk)
-        out.append({"role": "streaming", "content": redacted_chunk, "cls": "msg msg-a"})
+                    sc = sm.get("content", "")
+                    if sm.get("role") not in ("user", "system") and sc:
+                        sc, _ = redact_exfiltration_urls(sc)
+                        sc, _ = redact_credentials(sc)
+                    snap_msgs.append({**sm, "content": sc})
+                redacted_chain.append({**snap, "messages": snap_msgs})
+            msg_out["rewound"] = redacted_chain
+        meta = parse_cls_meta(m.get("cls", ""))
+        if meta is not None:
+            msg_out["meta"] = meta
+        out.append(msg_out)
     return out
