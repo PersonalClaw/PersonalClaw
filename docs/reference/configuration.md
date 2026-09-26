@@ -261,6 +261,11 @@ text-to-speech is bound in Settings → Models; these are the provider-agnostic 
 top of it. All of them are comfort settings rather than safety guards — turning one off
 makes the voice loop noisier, never less safe.
 
+Two text-to-speech switches are not keys here: **Enable text-to-speech** (any speech at all,
+including the Speak button on a reply) and **Speak replies aloud** (each reply read out as soon
+as it finishes, in the tab the message was sent from). Both are the Text-to-speech use case's
+own settings (`enabled` and `auto_speak`), set in Settings → Speech & Transcription.
+
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
 | `voice.push_to_talk_chord` | string | `CommandOrControl+Shift+Space` | Settings → Speech & Transcription | The global shortcut the **desktop app** binds for push-to-talk: press to start capturing the microphone, press again to stop and transcribe into the composer at your cursor. An Electron accelerator string; needs at least one modifier, since a bare key would be taken from every other app on the machine. The desktop shell binds it and refuses an unusable or already-taken chord with a reason. Ignored in a browser tab (no global shortcuts). See [the desktop guide](../guides/desktop.md). |
