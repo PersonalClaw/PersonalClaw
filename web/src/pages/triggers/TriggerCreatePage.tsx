@@ -99,7 +99,9 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // no app contributes a source — an empty picker with no fallback would be a dead end.
   const appEvents = useMemo(() => appEventOptions(catalog), [catalog])
   // The variables available to the ACTION depend on the configured TRIGGER.
-  const actionVars = kind === 'schedule' ? (catalog?.schedule ?? []) : kind === 'lifecycle' ? em.vars : []
+  // A data event's are `event_triggers.EVENT_VARS`, served in the same catalog — `[]` here left the
+  // form offering no variables for an action that receives `$key`, `$value`, `$source`, ….
+  const actionVars = kind === 'schedule' ? (catalog?.schedule ?? []) : kind === 'lifecycle' ? em.vars : (catalog?.event ?? [])
   // Draft-by-default surfacing (EIAT-5): a send-capable action delivers OUT to a channel, so an
   // inbox trigger that auto-replies is worth flagging before the user commits. Keyed to the
   // provider, not to a per-provider capability flag (none exists in core yet — see EIAT-3).

@@ -187,9 +187,9 @@ def to_schedule_row(
         "created_ts": None,
         "last_status": str(getattr(trigger, "health_status", "") or ""),
         "last_run_status": last_run_status or None,
-        # 🔴 THE LIFECYCLE STATE, which this projection alone omitted (issue 496). The store and
-        # event projections both send it (`handlers/triggers.py::_serialize_store` and
-        # `_serialize_event`) and the frontend renders it through the shared `triggerHealthMeta`,
+        # 🔴 THE LIFECYCLE STATE, which this projection alone omitted (issue 496). The store
+        # projection sends it (`handlers/triggers.py::_serialize_store`, which a data-event row
+        # takes too) and the frontend renders it through the shared `triggerHealthMeta`,
         # so the CLOCK kind was the one kind whose lifecycle was invisible. Measured on a live
         # gateway: an AUTOPAUSED and a QUARANTINED clock trigger both arrived as `state: null`
         # with `last_status: 'failing'` and rendered as the identical "failing" dot — and

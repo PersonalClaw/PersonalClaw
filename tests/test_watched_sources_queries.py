@@ -4,22 +4,22 @@ Covers the atom's second done_when clause: "*a saved source query matches new it
 tokens and emits ``SourceQueryMatched``, a subscribed Trigger fires*" (SC#10).
 
 The end-to-end test is driven through the REAL seams — the engine's poll path, the saved-query
-matcher, ``trigger_sources.registry.emit``, ``event_triggers``' matcher, and the action
-provider. Nothing is hand-built, so a missing link produces no call at all rather than a green.
+matcher, ``trigger_sources.registry.emit``, the gateway's event router (``event_triggers``' matcher
+and the store's gate walk), the one store dispatch, and the action provider. Nothing is hand-built,
+so a missing link produces no call at all rather than a green.
 
 The zero-token claim is asserted by making every LLM entry point explode, and it carries its
 own vacuity assertion: the same exploding patch is proven to fire when something DOES call it.
 
-Isolation: ``PERSONALCLAW_HOME`` + ``config.loader.config_dir`` are BOTH redirected (patching
-one leaves import-bound stores reaching the real home), the event-trigger engine singleton is
-reset around each test, and the process-global trigger-source registry is torn down.
+Isolation: ``PERSONALCLAW_HOME`` points every store at a per-test home (see ``_isolated_home`` for
+why the env var alone), the event router is detached after each test that attaches one, and the
+process-global trigger-source registry is torn down.
 """
 
-import asyncio
-
 import pytest
+from fakes import with_event_router
 
-from personalclaw.event_triggers import APP_EVENT, SOURCE_APP, EventTrigger, EventTriggerStore
+from personalclaw.event_triggers import APP_EVENT, SOURCE_APP, event_spec
 from personalclaw.knowledge import source_queries as sq
 from personalclaw.knowledge.source_engine import SourceEngine
 from personalclaw.knowledge.source_streams import SOURCE_QUERY_MATCHED, SourceEventSpool
@@ -32,6 +32,8 @@ from personalclaw.knowledge_providers.base import (
     SourcePollResult,
 )
 from personalclaw.trigger_sources.registry import NAMESPACE_PREFIX, unregister_source
+from personalclaw.triggers.models import Trigger
+from personalclaw.triggers.store import TriggerStore
 
 
 @pytest.fixture(autouse=True)
@@ -58,18 +60,20 @@ def _clean_registry():
 
 @pytest.fixture()
 def _event_store(_isolated_home):
-    """An event-trigger store in the isolated home, with the engine singleton reset both ways.
+    """The one trigger store, in the isolated home — where an `event` trigger lives."""
+    return TriggerStore(base_dir=_isolated_home)
 
-    ``EventTriggerEngine._get_store`` memoizes on first use and ``get_engine()`` is
-    process-global, so without the reset the second test in a worker reads the first's store.
-    """
-    import personalclaw.event_triggers as et
 
-    et._engine = None
-    try:
-        yield EventTriggerStore(_isolated_home / "event_triggers.json")
-    finally:
-        et._engine = None
+def _subscribed(glob: str) -> Trigger:
+    """A user's `AppEvent` trigger on the watched-sources bridge, with a read-only action."""
+    return Trigger(
+        id="t-releases",
+        name="t-releases",
+        kind="event",
+        enabled=True,
+        spec=event_spec(APP_EVENT, glob),
+        workflow={"inline": {"provider": "notify", "config": {}}},
+    )
 
 
 @pytest.fixture()
@@ -137,7 +141,7 @@ def _engine(store, provider, spool, query_store):
 
 
 def _fake_provider(calls):
-    """The action-provider shape `event_triggers` really calls (`execute(config, ctx, timeout)`)."""
+    """The action-provider shape the store dispatch really calls (`execute(config, ctx, …)`)."""
     from personalclaw.action_providers import ActionResult
 
     class _Fake:
@@ -301,17 +305,11 @@ async def test_a_subscribed_trigger_fires_END_TO_END(store, tmp_path, _event_sto
     """🔴 THE CLAUSE. A poll ingests a matching item and a user's `event` trigger runs.
 
     Every link is real: engine → saved-query matcher → `trigger_sources.registry.emit`
-    (namespace + fence at origin) → `event_triggers` matcher → the action provider.
+    (namespace + fence at origin) → the gateway's event router → the store dispatch → the action
+    provider.
     """
     _event_store.upsert(
-        EventTrigger(
-            id="t-releases",
-            pattern=APP_EVENT,
-            source=SOURCE_APP,
-            event_glob=f"{NAMESPACE_PREFIX}:{sq.TRIGGER_SOURCE_NAME}:{SOURCE_QUERY_MATCHED}",
-            action_provider="notify",
-            debounce_secs=0.0,
-        )
+        _subscribed(f"{NAMESPACE_PREFIX}:{sq.TRIGGER_SOURCE_NAME}:{SOURCE_QUERY_MATCHED}")
     )
     calls: list = []
     monkeypatch.setattr(
@@ -324,11 +322,7 @@ async def test_a_subscribed_trigger_fires_END_TO_END(store, tmp_path, _event_sto
     store.create_source(name="s", provider="watched-fixture", kind="feed")
     provider = FixtureSourceProvider([SourceItem(guid="g1", title="Release 2.0", url="u")])
 
-    await _engine(store, provider, spool, queries).tick()
-    for _ in range(50):  # the engine schedules the fire as a task
-        await asyncio.sleep(0)
-        if calls:
-            break
+    await with_event_router(_engine(store, provider, spool, queries).tick)
 
     assert calls, "the saved-query match never reached the trigger's action provider"
     payload = calls[0].payload
@@ -339,22 +333,13 @@ async def test_a_subscribed_trigger_fires_END_TO_END(store, tmp_path, _event_sto
     )
     # The query id rides `meta` — that is what a per-query subscription binds to.
     assert payload["meta"]["query_id"] == saved.id
-    assert _event_store.load()[0].fire_count == 1
+    assert _event_store.get("t-releases").trigger.run_count == 1
 
 
 @pytest.mark.asyncio
 async def test_a_nonmatching_item_fires_no_trigger(store, tmp_path, _event_store, monkeypatch):
     """VACUITY GUARD for the test above: same wiring, an item the query rejects, zero fires."""
-    _event_store.upsert(
-        EventTrigger(
-            id="t-releases",
-            pattern=APP_EVENT,
-            source=SOURCE_APP,
-            event_glob=f"{NAMESPACE_PREFIX}:{sq.TRIGGER_SOURCE_NAME}:*",
-            action_provider="notify",
-            debounce_secs=0.0,
-        )
-    )
+    _event_store.upsert(_subscribed(f"{NAMESPACE_PREFIX}:{sq.TRIGGER_SOURCE_NAME}:*"))
     calls: list = []
     monkeypatch.setattr(
         "personalclaw.action_providers.get_action_provider", lambda _n: _fake_provider(calls)
@@ -366,9 +351,7 @@ async def test_a_nonmatching_item_fires_no_trigger(store, tmp_path, _event_store
     store.create_source(name="s", provider="watched-fixture", kind="feed")
     provider = FixtureSourceProvider([SourceItem(guid="g1", title="Nightly build")])
 
-    await _engine(store, provider, spool, queries).tick()
-    for _ in range(50):
-        await asyncio.sleep(0)
+    await with_event_router(_engine(store, provider, spool, queries).tick)
 
     assert calls == []
     assert [r for r in spool.read() if r["event"] == SOURCE_QUERY_MATCHED] == []

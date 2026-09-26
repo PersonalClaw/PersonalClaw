@@ -226,7 +226,23 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
             "delete_after_run",
         }
     ),
-    "event": frozenset({"source", "pattern", "blocking", "agent_scope"}),
+    # A data event (`event_triggers`): the pattern, its derived source, and the ONE matcher key
+    # that pattern reads (`event_triggers.PATTERN_MATCHER`). `blocking` and `agent_scope` are the
+    # lifecycle-hook absorption's (§1.4 decision 2); no data event reads either, which the doctor
+    # names for `agent_scope` (`unenforced_agent_scope`).
+    "event": frozenset(
+        {
+            "source",
+            "pattern",
+            "key_glob",
+            "content_re",
+            "sender_glob",
+            "address_glob",
+            "event_glob",
+            "blocking",
+            "agent_scope",
+        }
+    ),
     "run_completed": frozenset({"source_trigger", "source_def"}),
     # `message`/`max_cycles`/`stop_sentinel_path` are the absorbed autonudge loop's payload
     # (WF2AUT-11 half 2) — the same §6 argument as the `interval` clock kind below: the store
@@ -409,6 +425,109 @@ def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
     return []
 
 
+def _event_spec_issues(spec: dict[str, Any] | None) -> list[Issue]:
+    """Structural issues in an `event` trigger's spec — every way it could fail to ever fire.
+
+    A data-event row fires when `event_triggers.matches` says so, and that function reads exactly
+    three things: `source`, `pattern`, and the one matcher key the pattern names. So each is checked
+    against what the matcher will do with it, and anything that would leave the row saved, listed
+    and permanently silent is an ERROR — the never-throw rule's whole point is that such a row is
+    visible as broken, not green:
+
+    * no pattern, or one the grammar does not know — it matches nothing;
+    * a source that is not the pattern's own — the source gate would admit only events the pattern
+      can never match (the writers derive the source; this catches a hand-edited row);
+    * a pattern whose matcher is required (`event_triggers.REQUIRED_MATCHER`) with that matcher
+      empty — an empty key glob or content regex matches no write, and an empty sender or address
+      glob matches no message.
+
+    A matcher key the pattern does NOT read is a warning: the row fires as its pattern says and the
+    key does nothing, which its author should be told. A catastrophic content regex is a warning
+    too, for the reason `catastrophic_regex_hint` gives.
+    """
+    from personalclaw.event_triggers import (
+        EVENT_PATTERNS,
+        MATCHER_KEYS,
+        PATTERN_MATCHER,
+        PATTERN_SOURCE,
+        REQUIRED_MATCHER,
+        catastrophic_regex_hint,
+    )
+
+    block = spec or {}
+    pattern = str(block.get("pattern", "") or "").strip()
+    if not pattern:
+        return [
+            Issue(
+                path="spec.pattern",
+                message=f"an event trigger needs a pattern — one of {list(EVENT_PATTERNS)}",
+                severity="error",
+            )
+        ]
+    if pattern not in PATTERN_SOURCE:
+        from personalclaw.hooks import HOOK_EVENTS
+
+        if pattern in HOOK_EVENTS:
+            # The chat routes "when a session ends" to this kind; the event it names exists, but it
+            # fires LIFECYCLE triggers (`hooks.json`), which no event row is matched against.
+            return [
+                Issue(
+                    path="spec.pattern",
+                    message=(
+                        f"{pattern} is an agent-lifecycle event, which fires lifecycle triggers "
+                        "(the Triggers page's 'Lifecycle event' type), not event triggers. An "
+                        "event trigger reacts to a memory write, an inbox message or an app "
+                        f"event: one of {list(EVENT_PATTERNS)}"
+                    ),
+                    severity="error",
+                )
+            ]
+        return [
+            Issue(
+                path="spec.pattern",
+                message=(
+                    f"unknown event pattern {pattern!r}; expected one of {list(EVENT_PATTERNS)}"
+                ),
+                severity="error",
+                closest=_closest(pattern, EVENT_PATTERNS),
+            )
+        ]
+    issues: list[Issue] = []
+    source = str(block.get("source", "") or "").strip()
+    wanted_source = PATTERN_SOURCE[pattern]
+    if not source:
+        issues.append(
+            Issue(path="spec.source", message="an event trigger needs a source", severity="error")
+        )
+    elif source != wanted_source:
+        issues.append(
+            Issue(
+                path="spec.source",
+                message=f"{pattern} listens to {wanted_source} events, so a source of {source!r} "
+                "would admit only events it can never match",
+                severity="error",
+            )
+        )
+    field = PATTERN_MATCHER[pattern]
+    if pattern in REQUIRED_MATCHER and field and not str(block.get(field, "") or "").strip():
+        issues.append(
+            Issue(
+                path=f"spec.{field}",
+                message=f"{pattern} needs a {field}; without one it can never fire",
+                severity="error",
+            )
+        )
+    for key in sorted(MATCHER_KEYS - {field}):
+        if str(block.get(key, "") or "").strip():
+            issues.append(
+                Issue(path=f"spec.{key}", message=f"{pattern} does not read {key!r}; it is ignored")
+            )
+    hint = catastrophic_regex_hint(str(block.get("content_re", "") or ""))
+    if hint:
+        issues.append(Issue(path="spec.content_re", message=hint))
+    return issues
+
+
 def validate_spec(kind: str, spec: dict[str, Any], workflow: Any = None) -> list[Issue]:
     """Structural issues in one kind's spec. NEVER raises.
 
@@ -519,11 +638,8 @@ def validate_spec(kind: str, spec: dict[str, Any], workflow: Any = None) -> list
                         ),
                     )
                 )
-    elif kind == "event" and not str((spec or {}).get("source", "") or "").strip():
-        issues.append(
-            Issue(path="spec.source", message="an event trigger needs a source", severity="error")
-        )
-    if kind == "event":
+    elif kind == "event":
+        issues.extend(_event_spec_issues(spec))
         issues.extend(_agent_scope_issues(spec))
     elif kind == "webhook" and not str((spec or {}).get("token_ref", "") or "").strip():
         # A webhook with no token is an unauthenticated fire endpoint. Refused at author time rather
@@ -767,9 +883,10 @@ class Trigger:
     #: fire needs "when did this last fire", and neither existing timestamp answers it:
     #: `last_success_at` and `last_failure_at` both describe an OUTCOME, and a fire that was
     #: SUPPRESSED (quiet hours, budget, overlap) is neither — so debouncing off either one would
-    #: count a blocked fire as a fire and let a debounced trigger straight through. The legacy
-    #: `event_triggers.EventTrigger` carries exactly this field, which is why debounce works there
-    #: and not here (S150 measured that gap and named it).
+    #: count a blocked fire as a fire and let a debounced trigger straight through. The retired
+    #: `event_triggers.EventTrigger` carried exactly this field, which is why debounce worked there
+    #: and not here (S150 measured that gap and named it). Event triggers are rows of this entity
+    #: now, and their `debounce_secs` spaces off this field like every other kind's.
     #:
     #: ISO, like every other timestamp on this entity. Absent on every row written before S151,
     #: which reads as "never fired" — the right answer for spacing: a trigger with no recorded
@@ -1457,17 +1574,21 @@ LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
         "consecutive_dupes": None,  # ditto — a delivery concern, not a trigger field
         "acked_items": None,  # inbox acknowledgement state; the inbox owns it (Inbox-Unification)
     },
+    # A legacy `event_triggers.json` row, as `boot_migrate.absorb_event_triggers` writes it. The
+    # matcher keys land flat in `spec`, beside the pattern and its source — the shape
+    # `event_triggers.matches` reads — and only the pattern's OWN matcher is carried: the legacy
+    # row stored all five, four of them inert for its pattern.
     "EventTrigger": {
-        "id": "id",
+        "id": "id (namespaced: event:<id>)",
         "enabled": "enabled",
-        "pattern": "spec.source",
+        "pattern": "spec.pattern",
         "source": "spec.source",  # EIAT-1: the event's origin class (memory/inbox/app)
-        "key_glob": "spec.pattern.glob",
-        "content_re": "spec.pattern.regex",
-        "sender_glob": "spec.pattern.sender_glob",  # EIAT-1: inbox sender matcher
-        "address_glob": "spec.pattern.address_glob",  # EIAT-1: inbox address matcher
+        "key_glob": "spec.key_glob",
+        "content_re": "spec.content_re",
+        "sender_glob": "spec.sender_glob",  # EIAT-1: inbox sender matcher
+        "address_glob": "spec.address_glob",  # EIAT-1: inbox address matcher
         # AUTO-A4: the app-source matcher — a glob on the namespaced `app:<app>:<event>` name.
-        "event_glob": "spec.pattern.event_glob",
+        "event_glob": "spec.event_glob",
         # AUTO-A4: the lifecycle state, which `Trigger` already carries as a first-class field. Maps
         # by NAME rather than into `spec`, because it is the same vocabulary (`TriggerState`) — an
         # app-source park must survive the migration as a park, not as prose in a spec dict.
@@ -1475,11 +1596,13 @@ LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
         "park_reason": "last_error_summary",
         "park_retry_after": "park_retry_after",
         "action_provider": "workflow.inline.provider",
-        "action_config": "workflow.inline",
+        "action_config": "workflow.inline.config",
         "max_fires": "gates.max_fires",
         "debounce_secs": "gates.debounce_secs",
         "fire_count": "run_count",
-        "last_fired_at": "last_success_at",
+        # The spacing meter (S151) — `last_success_at` describes an OUTCOME, and the legacy stamp
+        # recorded that the trigger fired.
+        "last_fired_at": "last_fired_at",
     },
 }
 

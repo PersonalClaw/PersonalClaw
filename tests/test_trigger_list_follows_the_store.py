@@ -72,7 +72,7 @@ def test_a_chat_made_event_or_manual_automation_is_listed_and_counted(home):
     store = TriggerStore(base_dir=home)
     for kind, spec in (
         ("clock", {"kind": "interval", "every_secs": 3600}),
-        ("event", {"source": "session", "pattern": "SessionEnd"}),
+        ("event", {"pattern": "MemoryKeyPattern", "key_glob": "project.*"}),
         ("manual", {}),
     ):
         made = Tools.create(store, name=f"my {kind}", kind=kind, spec=spec, message="go")

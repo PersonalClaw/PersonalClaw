@@ -405,7 +405,9 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="event_triggers.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
-        help="event-pattern triggers",
+        # Nothing writes it any more: an older home's (or snapshot's) copy is absorbed into
+        # `triggers.json` at the next boot and renamed `.migrated`.
+        help="legacy data-event triggers, absorbed into triggers.json at boot",
     ),
     StateEntry(
         id="autonudge",

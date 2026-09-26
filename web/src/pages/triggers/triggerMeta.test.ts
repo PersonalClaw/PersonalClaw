@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger, scheduleToTrigger,
   EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon, eventSourceLabel,
-  appEventOptions, actionIsSendCapable, eventToTrigger,
+  appEventOptions, actionIsSendCapable,
 } from './triggerMeta'
 import type { TriggerVariables, Trigger as WireTrigger, ScheduleJob } from '../../lib/api'
 
@@ -25,6 +25,7 @@ const cat = (over: Partial<TriggerVariables> = {}): TriggerVariables => ({
     { event: 'MemoryWrite', label: 'Memory write', desc: 'A memory is written', vars: ['$EVENT'], blocking: false, dormant: true },
   ],
   app_sources: [],
+  event: ['$EVENT', '$key', '$value'],
   ...over,
 })
 
@@ -179,7 +180,7 @@ describe('storeToTrigger', () => {
 // that keep the form honest: the table is in lockstep with the backend `event_triggers.EVENT_PATTERNS`
 // tuple (same 6 members), each row's `matcher` names the ONE spec field the backend's `matches()`
 // reads for that pattern (so the form never shows an inert field), and `matcherRequired` mirrors the
-// server's `sender_glob_required` gate so the UI blocks the same empty submit the API would reject.
+// server's `REQUIRED_MATCHER` so the UI blocks the same empty submit the API would reject.
 
 describe('EVENT_PATTERN_META', () => {
   it('has exactly one row per backend EVENT_PATTERNS member', () => {
@@ -216,11 +217,17 @@ describe('EVENT_PATTERN_META', () => {
     expect(eventPatternMeta('ContentMatch').matcher).toBe('content_re')
   })
 
-  it('marks only InboxSender as matcher-required, mirroring the server gate', () => {
-    // The backend rejects an empty sender_glob on InboxSender (code sender_glob_required); no other
-    // pattern gates its matcher. The form must block the same submit, not a different set.
-    const required = EVENT_PATTERN_META.filter((p) => p.matcherRequired).map((p) => p.pattern)
-    expect(required).toEqual(['InboxSender'])
+  it('marks exactly the backend REQUIRED_MATCHER patterns as matcher-required', () => {
+    // 🔴 Only InboxSender was required, and the hints beside the other three said "Empty matches
+    // all" (InboxAddress) and "Empty matches nothing" (MemoryKeyPattern, ContentMatch). The matcher
+    // treats an empty glob or regex as matching NOTHING for all four, so each saved a trigger that
+    // could never fire. `event_triggers.REQUIRED_MATCHER` refuses all four now, and the form blocks
+    // the same submit; AppEvent stays optional because its empty glob is the documented catch-all.
+    const required = EVENT_PATTERN_META.filter((p) => p.matcherRequired).map((p) => p.pattern).sort()
+    expect(required).toEqual(['ContentMatch', 'InboxAddress', 'InboxSender', 'MemoryKeyPattern'])
+    for (const p of EVENT_PATTERN_META.filter((row) => row.matcherRequired)) {
+      expect(p.matcherHint, p.pattern).not.toMatch(/empty matches/i)
+    }
   })
 })
 
@@ -341,37 +348,35 @@ describe('actionIsSendCapable', () => {
   })
 })
 
-// ── Data-event rows must be listable (EIAT) ─────────────────────────────────
+// ── A data-event row is a store row ──────────────────────────────────────────
 //
-// `GET /api/triggers` serves FOUR kinds — schedule, lifecycle, event, store — and the list page
-// fetched only three. An event trigger created from this page's own form existed on the wire,
-// fired on a real memory write, and appeared nowhere: no row, no filter chip, no count.
-//
-// The list renders `whenIcon`/`whenLabel`/`actionLabel` off every row, and the wire sends NONE of
-// them — so simply fetching the fourth source is not enough; an unconverted row renders
-// `undefined` for the icon. These lock both halves.
-describe('eventToTrigger', () => {
-  const wire = {
-    kind: 'event', id: 'event:memo', raw_id: 'memo', name: 'On a memory write', enabled: true,
-    pattern: 'MemoryKeyPattern', key_glob: 'project.acme.*', fire_count: 3,
-    action: { provider: 'create-task', config: {} },
-  } as unknown as WireTrigger
+// An event trigger lives in the one trigger store, so it arrives with the store kinds
+// (`store_kind: 'event'`, pattern and matcher in `spec`) and opens in the store inspector. It is
+// still presented as what it listens for — "On an event" said nothing a user could act on.
+describe('storeToTrigger — a data-event row', () => {
+  const wire = storeRow({
+    store_kind: 'event', id: 'store:event:memo', raw_id: 'event:memo', name: 'On a memory write',
+    spec: { source: 'memory', pattern: 'MemoryKeyPattern', key_glob: 'project.acme.*' },
+    run_count: 3, action: { provider: 'create-task', config: {} },
+  })
 
-  it('supplies every presentation field the list row renders', () => {
-    const t = eventToTrigger(wire)
+  it('supplies every presentation field the list row renders, named for its pattern', () => {
+    const t = storeToTrigger(wire)
     // A missing whenIcon is not a cosmetic gap: `<t.whenIcon />` throws on undefined.
     expect(t.whenIcon).toBeTruthy()
     expect(t.actionIcon).toBeTruthy()
     expect(t.whenTone).toMatch(/^var\(--color-/)
     expect(t.whenLabel).toBe(eventPatternMeta('MemoryKeyPattern').label)
-    expect(t.actionLabel).toBeTruthy()
+    expect(t.actionLabel).toBe('Create Task')
     expect(t.kind).toBe('event')
-    expect(t.rawId).toBe('memo')
+    expect(t.id).toBe('store:event:memo')
+    expect(t.rawId).toBe('event:memo')
   })
 
-  it('reports the fire count as runCount, and no clock state', () => {
-    const t = eventToTrigger(wire)
+  it('reports its fire count as runCount, and no clock state', () => {
+    const t = storeToTrigger(wire)
     expect(t.runCount).toBe(3)
+    expect(t.hasRun).toBe(true)
     // A data event has no schedule, so claiming a next run or a last status would be a lie.
     expect(t.lastRunTs).toBeNull()
     expect(t.runStatus).toBeNull()
@@ -380,26 +385,25 @@ describe('eventToTrigger', () => {
   it('carries only the ONE matcher its pattern reads', () => {
     // MemoryKeyPattern reads key_glob; a sender_glob on the same row is inert for it, so
     // surfacing it would claim a constraint the backend never applies.
-    expect(eventToTrigger(wire).eventMatcher).toBe('project.acme.*')
-    const anyWrite = eventToTrigger({ ...wire, pattern: 'MemoryUpdate' } as unknown as WireTrigger)
+    const t = storeToTrigger({ ...wire, spec: { ...wire.spec, sender_glob: 'alice@*' } })
+    expect(t.eventPattern).toBe('MemoryKeyPattern')
+    expect(t.eventMatcher).toBe('project.acme.*')
+    const anyWrite = storeToTrigger({ ...wire, spec: { source: 'memory', pattern: 'MemoryUpdate' } })
     expect(eventPatternMeta('MemoryUpdate').matcher).toBeNull()
     expect(anyWrite.eventMatcher).toBe('')
   })
 
   it('passes the server read_only verdict through, like its siblings', () => {
-    // Inert until `_serialize_event` sends attribution, but the mapper must not be why a
-    // foreign event row shows a Delete its schedule/store siblings would hide (TSE-4).
-    expect(eventToTrigger(wire).readOnly).toBe(false)
-    const foreign = eventToTrigger({ ...wire, read_only: true, author: 'alice' } as unknown as WireTrigger)
+    expect(storeToTrigger(wire).readOnly).toBe(false)
+    const foreign = storeToTrigger({ ...wire, read_only: true, author: 'alice' })
     expect(foreign.readOnly).toBe(true)
     expect(foreign.author).toBe('alice')
   })
 
-  it('does NOT set `hook`, which would open the wrong inspector', () => {
+  it('opens the store inspector, never the lifecycle one', () => {
     // The panel's dispatch chain ends in an `open.hook` fallback to LifecycleDetail.
-    const t = eventToTrigger(wire)
+    const t = storeToTrigger(wire)
     expect(t.hook).toBeUndefined()
-    expect(t.store).toBeUndefined()
-    expect(t.event).toBeTruthy()
+    expect(t.store).toBe(wire)
   })
 })

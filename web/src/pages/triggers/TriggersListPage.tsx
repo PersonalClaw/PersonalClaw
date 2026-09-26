@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff, Trash2 } from 'lucide-react'
+import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -14,8 +14,6 @@ import { Segmented } from '../../ui/Segmented'
 import { WeekGridView } from './WeekGridView'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { confirmDelete } from '../../ui/dialog'
-import { reportingWrite } from '../../app/reportingWrite'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
@@ -24,13 +22,11 @@ import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { triggerStatusMeta, explainsCause, relFuture } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
-import { BUSY_REASON } from '../../ui/unavailable'
-import { Eyebrow } from '../../ui/Eyebrow'
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
 // `Data events` was missing, so an event trigger — creatable from this page's own form — had no
@@ -91,14 +87,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const { data: hooks, error: hooksErr, refresh: refreshHooks } = useQuery('triggers:hooks', () => api.hooks(), { persist: true })
   // Issue 610: the badge reads each event's fire path from the server catalog (module-cached).
   const catalog = useTriggerVariables()
-  // Store triggers (file/web_watch/idle/…) carry live enabled/health state → persist:false, like
-  // schedules: instant in-app revisit but never stale across a hard reload.
+  // Store triggers (file/web_watch/idle/…, and data events) carry live enabled/health state →
+  // persist:false, like schedules: instant in-app revisit but never stale across a hard reload. A
+  // data-event trigger is a row in the same store, so it arrives here too; `storeToTrigger` presents
+  // it by the pattern it listens for.
   const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
-  // Data-event triggers (EIAT). `GET /api/triggers` serves FOUR kinds — schedule, lifecycle,
-  // event, store — and this page fetched only three, so an event trigger created through the
-  // create form (`trigger_type: 'event'`) existed, fired, and was never listed anywhere. It
-  // carries live enabled/fire-count state → persist:false, like schedules and stores.
-  const { data: events, error: eventsErr, refresh: refreshEvents } = useQuery('triggers:events', () => api.eventTriggers(), { persist: false })
   const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
   // How much each row's action may do UNATTENDED (AUTONOMY-GUARDRAILS §6.1). The ladder is
   // keyed on the action-provider name — the same identity the backend dispatch seams hold —
@@ -112,7 +105,6 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
   const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
   const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
-  const loadEvents = () => { invalidateKeys('triggers:events'); refreshEvents() }
   // Keep schedule next-run/running fresh, paused while hidden and slower while nobody is here.
   useVisiblePoll(refreshSchedules, 10_000, { immediate: false })
   // 🔴 A trigger written anywhere else (a loop's auto-nudge, the chat's automation tools, another
@@ -122,27 +114,29 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   useChatSocket((m: WsMessage) => {
     const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
     if (Array.isArray(kinds) && kinds.includes('crons')) {
-      loadSchedules(); loadHooks(); loadStores(); loadEvents()
+      loadSchedules(); loadHooks(); loadStores()
     }
   })
 
   const triggers = useMemo<Trigger[] | null>(() => {
-    if (schedules === undefined || hooks === undefined || stores === undefined || events === undefined) return null
+    if (schedules === undefined || hooks === undefined || stores === undefined) return null
     // Every kind needs its converter: the wire carries no `whenLabel`/`whenIcon`/`actionLabel`,
     // so a raw row would render `undefined` for the icon the list draws per row.
-    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger), ...events.map(eventToTrigger)]
+    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger)]
     const n = q.trim().toLowerCase()
     return all
       .filter((t) => filter === 'all' || t.kind === filter)
       .filter((t) => !n || `${t.name} ${t.whenLabel} ${t.actionLabel}`.toLowerCase().includes(n))
-  }, [schedules, hooks, stores, events, filter, q])
+  }, [schedules, hooks, stores, filter, q])
 
   const open = useMemo(() => resolveOpenTrigger(triggers, openId), [triggers, openId])
 
   const counts = useMemo(() => {
-    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, st = stores?.length ?? 0, e = events?.length ?? 0
-    return { all: s + h + st + e, schedule: s, lifecycle: h, store: st, event: e }
-  }, [schedules, hooks, stores, events])
+    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, all = stores?.length ?? 0
+    // Data events are store rows; the chip counts them apart from the other store kinds.
+    const e = (stores ?? []).filter((row) => row.store_kind === 'event').length
+    return { all: s + h + all, schedule: s, lifecycle: h, store: all - e, event: e }
+  }, [schedules, hooks, stores])
 
   // 🔴 A FAILED FETCH USED TO READ AS "No triggers". Each list source `.catch(() => [])`'d its
   // rejection, so a gateway that was down rendered the newcomer empty state — the exact conflation
@@ -152,7 +146,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // actually failed — a partial success still renders, because a working schedule list should not be
   // hidden because the event feed hiccuped.
   const loadFailed = triggers === null &&
-    !!(schedulesErr || hooksErr || storesErr || eventsErr)
+    !!(schedulesErr || hooksErr || storesErr)
 
   return (
     <WorkbenchLayout
@@ -202,13 +196,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
           <SidePanel key={open.id} fillHeight storeKey="trigger-panel-w" icon={<open.whenIcon size={18} style={{ color: open.whenTone }} />} title={open.name} onClose={() => setQuery({ open: null, edit: null })}>
             {open.kind === 'schedule' && open.schedule
               ? <ScheduleDetail job={open.schedule} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
-              : open.kind === 'store' && open.store
+              // A data-event trigger IS a store row: the same inspector, run history and Run now.
+              : (open.kind === 'store' || open.kind === 'event') && open.store
               ? <StoreTriggerDetail trigger={open.store} providers={providers} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
-              : open.kind === 'event' && open.event
-              // A data-event trigger has no editor yet (recreate to change its pattern), but
-              // Delete works: the backend DELETE branch has existed since EIAT and the panel is
-              // where destructive actions live on this page (see the menuItems comment below).
-              ? <EventTriggerSummary t={open} onDeleted={() => { setOpenId(""); loadEvents() }} />
               : open.hook
               ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
               : null}
@@ -223,8 +213,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {loadFailed ? (
-          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || eventsErr}
-            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); invalidateKeys('triggers:events'); }} />
+          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr}
+            onRetry={() => { loadSchedules(); refreshHooks(); loadStores() }} />
         ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
               !q && filter === 'all' ? (
                 // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
@@ -290,9 +280,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // so offering Edit would be offering to change a row whose owner's machine — not
                   // this one — decides what it does. Open still works: the row is informational,
                   // and informational means readable.
-                  // An EVENT row gets no Edit either: its inspector has no editor (recreate to
-                  // change the pattern), so the item silently acted as a second Open — an
-                  // affordance that lies about what it does.
+                  // An EVENT row gets no Edit either: the store inspector has no editor (the chat's
+                  // `automation_update`, or recreating it, changes the pattern), so the item would
+                  // silently act as a second Open — an affordance that lies about what it does.
                   const menuItems: ContextMenuItem[] = [
                     { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
                     ...(t.readOnly || t.kind === 'event' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
@@ -406,89 +396,3 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
     </WorkbenchLayout>
   )
 }
-
-/** Read-only inspector for a data-event trigger. Mirrors `StoreTriggerDetail`'s section rhythm
- *  (uppercase caption over a value) so the two inspectors read as one family; it stays local
- *  rather than exporting that file's private `Section` for a single caller.
- *
- *  Shows only the matcher the row's pattern actually reads — `eventPatternMeta().matcher` names
- *  it, and the other glob fields are inert for that pattern, so rendering them would claim a
- *  constraint that is not applied. */
-export function EventTriggerSummary({ t, onDeleted }: { t: Trigger; onDeleted: () => void }) {
-  const [busy, setBusy] = useState(false)
-  const pm = eventPatternMeta(t.eventPattern)
-  // 🔴 THE LIFECYCLE, which this inspector had no row for (issue 496). `_serialize_event` sends
-  // `state`/`health`/`last_error` and its docstring says why: *"a row that shows only
-  // `enabled: true` while never firing is the 'backend truth, frontend silence' shape — the panel
-  // needs the state AND the reason to say anything true."* This panel showed neither, so an event
-  // trigger PARKED because the app that owns its event was uninstalled read as a working one.
-  // Rendered through the same mapper the list and the store panel use, not a fourth vocabulary.
-  const lc = triggerStatusMeta(t)
-  const rows: Array<[string, string]> = [
-    ['Fires on', pm.label],
-    ...(pm.matcher ? [[pm.matcherLabel, t.eventMatcher || 'anything'] as [string, string]] : []),
-    ['Then', t.actionLabel],
-    ['Fired', t.runCount != null ? `${t.runCount}×` : '—'],
-  ]
-  // Same shape as StoreTriggerDetail.remove(): confirm → reportingWrite (failure becomes a
-  // toast and returns false) → onDeleted closes the panel and reloads the event list. The
-  // default "This cannot be undone." body is accurate here — an event trigger keeps no run
-  // history, so deletion removes exactly the trigger.
-  async function remove() {
-    if (!(await confirmDelete('data-event trigger', t.name))) return
-    setBusy(true)
-    try {
-      if (!(await reportingWrite(`delete ${t.name}`, () => api.deleteEventTrigger(t.rawId)))) return
-      onDeleted()
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <div className="flex flex-col gap-l p-l">
-      <p className="text-on-surface-var text-[0.8125rem]">{pm.desc}</p>
-      {/* Status first, because it decides whether anything else on this panel matters: a parked
-          trigger's pattern and action are what it WOULD do, not what it does.
-          The eyebrow is the `Eyebrow` primitive, not the older raw-size-plus-uppercase-tracking
-          shape the sibling panels still carry: DESIGN.md §3/§6's Weight-First rule bans
-          uppercase-with-tracking, and both design ratchets (`eyebrowWeightRole`, `typeScaleRatchet`)
-          count SOURCE TEXT — so even naming the old class literal in a comment trips them. */}
-      <div>
-        <Eyebrow className="mb-xs">Status</Eyebrow>
-        <div className="flex items-center gap-1.5">
-          <lc.icon size={13} style={{ color: lc.tone }} />
-          <span data-type="body-m" className="text-on-surface">
-            {lc.label === 'parked'
-              ? 'Parked — the source this listens to went away; it resumes if it returns'
-              : lc.label && lc.label !== 'never run' ? lc.label
-              : t.enabled ? 'Listening' : 'Paused — it will not fire until re-enabled'}
-          </span>
-        </div>
-        {explainsCause(lc) && t.lastError && (
-          <div data-type="caption" className="mt-0.5 font-mono text-on-surface-low break-all">{t.lastError}</div>
-        )}
-      </div>
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
-          <div data-type="body-m" className="text-on-surface break-words">{value}</div>
-        </div>
-      ))}
-      <p className="text-on-surface-low text-[0.8125rem]">
-        Editing a data-event trigger isn’t available here yet — recreate it to change its pattern.
-      </p>
-      {/* No action row for a foreign row, same reasoning as StoreTriggerDetail: Delete is a
-          write to somebody else's automation. Inert today (events carry no attribution on the
-          wire yet) but the gate is the family invariant, not a per-panel choice. */}
-      {!t.readOnly && (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <div className="flex-1" />
-          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} disabledReason={BUSY_REASON} className="text-danger">
-            <Trash2 size={14} /> Delete
-          </Button>
-        </div>
-      )}
-    </div>
-  )
-}
-
