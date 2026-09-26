@@ -68,7 +68,7 @@ and an unenforced instruction drifts the first time one side is edited.
 | --- | --- | --- |
 | `ci.yml` `lint` | `shellcheck -s sh` · `sh -n` · `dash -n` · the offline module with `PERSONALCLAW_REQUIRE_INSTALL_PROOF=1` | every PR |
 | `ci.yml` `test` | same module, leverless (a laptop without dash skips rather than reds) | every PR |
-| `full.yml` `install-smoke` | staged **and** served installer in a bare `ubuntu:latest` container, `personalclaw --version`, plus the served-vs-pinned drift check | push to `main` + nightly |
+| `full.yml` `install-smoke` | current-checkout install + non-interactive `personalclaw setup` with system timezone paths removed; staged **and** served installer in a bare `ubuntu:latest` container; served-vs-pinned drift check | push to `main` + nightly |
 
 A fetch failure in `install-smoke` reports **`unproven` and reds**. It never goes green: an
 unanswered question is not a passing answer, and this repo has mistaken the two before.

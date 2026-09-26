@@ -407,11 +407,23 @@ def _setup_timezone() -> None:
     # The refusal point for a typo'd zone (#2520): `config.timezone` has no PATCH allowlist
     # entry, so this prompt is the only authoring surface for it, and a name that lands in the
     # file unvalidated is a silent hour-shift for every schedule that falls back to it.
-    from personalclaw.timezones import is_known_zone
+    from personalclaw.timezones import TimeZoneDatabaseUnavailable, is_known_zone
 
     max_retries = 3
     for attempt in range(max_retries):
-        if is_known_zone(tz_val):
+        try:
+            known = is_known_zone(tz_val)
+        except TimeZoneDatabaseUnavailable:
+            # Every name, valid or not, fails here, so a re-prompt would blame the user for a
+            # broken install. Say it once and stop.
+            print("  ❌ Timezone database unavailable, so no zone can be checked.")
+            print(
+                "     Reinstall PersonalClaw; the base package includes the Python "
+                "`tzdata` database."
+            )
+            print("     Then run `personalclaw setup` and `personalclaw doctor` again.\n")
+            return
+        if known:
             break  # valid
         suggestion = abbrev_to_iana.get(tz_val.upper())
         if suggestion:

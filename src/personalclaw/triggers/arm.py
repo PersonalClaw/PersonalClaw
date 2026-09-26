@@ -417,21 +417,39 @@ def semantic_spec_issues(
     # like zones, and are rejected by every IANA lookup.
     tz_declared = str(spec.get("timezone", "") or "").strip()
     if tz_declared:
-        from personalclaw.timezones import is_known_zone
+        from personalclaw.timezones import TimeZoneDatabaseUnavailable, is_known_zone
 
-        if not is_known_zone(tz_declared):
+        try:
+            known = is_known_zone(tz_declared)
+        except TimeZoneDatabaseUnavailable:
+            # Nothing can be checked on this install, so this is not the author's mistake and
+            # not an ERROR: the trigger still saves, and fires at UTC until the database is back
+            # (`timezones.resolve_zone`). Saying so is what keeps it from being a silent shift.
             issues.append(
                 Issue(
                     path="spec.timezone",
-                    severity="error",
+                    severity="warning",
                     message=(
-                        f"{tz_declared!r} is not an IANA timezone name — use one like "
-                        f"'America/Los_Angeles' or 'Europe/London' (abbreviations such as "
-                        f"'PDT' or 'CEST' are not zones). Leave it empty to use this "
-                        f"machine's zone"
+                        f"{tz_declared!r} cannot be checked because the IANA timezone database "
+                        "is unavailable, so this trigger fires at UTC until it is. Reinstall "
+                        "PersonalClaw; the base package includes the Python `tzdata` database"
                     ),
                 )
             )
+        else:
+            if not known:
+                issues.append(
+                    Issue(
+                        path="spec.timezone",
+                        severity="error",
+                        message=(
+                            f"{tz_declared!r} is not an IANA timezone name — use one like "
+                            f"'America/Los_Angeles' or 'Europe/London' (abbreviations such as "
+                            f"'PDT' or 'CEST' are not zones). Leave it empty to use this "
+                            f"machine's zone"
+                        ),
+                    )
+                )
 
     clock_kind = str(spec.get("kind", "") or "")
     expr = str(spec.get("expr", "") or "").strip()

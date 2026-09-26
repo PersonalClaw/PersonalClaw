@@ -532,6 +532,37 @@ class TestSetupTimezone:
         output = capsys.readouterr().out
         assert "Unknown timezone" in output
 
+    def test_missing_database_is_not_called_an_unknown_timezone(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A broken install is actionable once; re-prompting implies the user's name is wrong."""
+        from zoneinfo import ZoneInfoNotFoundError
+
+        from personalclaw import timezones as tzmod
+        from personalclaw.cli_setup import _setup_timezone
+
+        monkeypatch.setattr("personalclaw.cli_setup.sys.stdin", _TtyStdin())
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text("{}")
+        monkeypatch.setattr("personalclaw.cli_setup.config_path", lambda: cfg_file)
+        monkeypatch.setattr(
+            tzmod,
+            "ZoneInfo",
+            lambda key: (_ for _ in ()).throw(
+                ZoneInfoNotFoundError(f"No time zone found with key {key}")
+            ),
+        )
+
+        with patch("builtins.input", return_value="America/Los_Angeles"):
+            with patch("personalclaw.cli_setup._detect_system_timezone", return_value=""):
+                _setup_timezone()
+
+        assert "timezone" not in json.loads(cfg_file.read_text())
+        output = capsys.readouterr().out
+        assert "Timezone database unavailable" in output
+        assert "Unknown timezone" not in output
+        assert "tzdata" in output
+
     def test_keeps_existing_on_enter(self, tmp_path, monkeypatch):
         """Re-running setup with existing timezone keeps it on Enter."""
         cfg_file = tmp_path / "config.json"
