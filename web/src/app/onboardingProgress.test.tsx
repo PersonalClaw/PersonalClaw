@@ -26,6 +26,7 @@ const onboarding = vi.fn()
 const onboardingModelCheck = vi.fn()
 const testModelProvider = vi.fn()
 const setName = vi.fn()
+const keepOrDefaultName = vi.fn()
 
 vi.mock('../lib/api', () => ({
   api: {
@@ -58,7 +59,7 @@ vi.mock('./identity', async (orig) => {
     // '' is a fresh install, which is what these tests are.
     // `name` is the STORED display name (offered back on a deliberate re-run); `username` the stored
     // handle. Both '' here, which is a fresh install — the case every test in this file is about.
-    useIdentity: () => ({ name: '', setName, username: '' }),
+    useIdentity: () => ({ name: '', setName, keepOrDefaultName, username: '' }),
   }
 })
 // The 3D backdrop needs a real canvas; the flow's logic does not.
@@ -530,9 +531,12 @@ describe('skip at any step lands in a working dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Skip setup/ }))
     // Identity is what releases the route guard, so a skip that did not commit it would
     // leave the user pinned to the onboarding screen forever.
-    // The handle is '' rather than a slug of the default name: the guard needs a non-empty
-    // NAME, nothing needs a handle, and a skipped run must not be stamped `operator` (TSE-1).
-    await waitFor(() => expect(setName).toHaveBeenCalledWith('Operator', ''))
+    // It commits through `keepOrDefaultName`: the default name only onto a home that still has
+    // none when the skip lands, and no handle — the guard needs a non-empty NAME, nothing needs
+    // a handle, and a skipped run must not be stamped `operator` (TSE-1). That body is asserted
+    // on the real provider in `identityHandleWrite.test.tsx`.
+    await waitFor(() => expect(keepOrDefaultName).toHaveBeenCalledWith())
+    expect(setName).not.toHaveBeenCalled()
     expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
     // …and the rail marker is written, so the skipper gets the starter rail like anyone else.
     expect(readNavDisclosure().mode).toBe('starter')

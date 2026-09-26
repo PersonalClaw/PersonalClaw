@@ -85,11 +85,18 @@ export function SteeringPanel({
     // both the worker and the isolated judge sessions through the project context block —
     // there is no separate judge-prompt store to write, so this is the real channel, scoped
     // to every run under the project rather than this one alone (which the label makes plain).
-    let current = ''
+    // 🔴 A FAILED READ OPENS NOTHING. It used to "fall through with an empty field — the PUT still
+    // lands the new value": the dialog then offered this project's standing guidance as blank, and
+    // Save PUT that blank over it — one click, no typing, wiping the instructions every run under
+    // the project carries. The field can only be seeded with what is stored, so without a read there
+    // is nothing honest to edit.
+    let current: string
     try {
       current = (await api.project(projectId)).agent_instructions_template ?? ''
-    } catch {
-      /* fall through with an empty field — the PUT still lands the new value */
+    } catch (e) {
+      const why = e instanceof Error && e.message ? e.message : 'the request failed'
+      notify(`Couldn't read this project's guidance, so nothing was opened or changed: ${why}`, 'error')
+      return
     }
     const answers = await promptForm({
       title: 'Judge guidance for this project',

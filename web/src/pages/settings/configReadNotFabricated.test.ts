@@ -135,9 +135,10 @@ describe('a config panel does not present fabricated values as saved state', () 
     expect(hook, 'a substitute on the CONFIG read defeats the panel on the hub journey')
       .not.toMatch(/personalclawConfig\(\)[^\n]*\.catch\(/)
     // 🪤 …and the DECORATING read keeps its own, exactly as the panel spells it. Stripping this one
-    // would be the over-correction: the default agent's NAME renders as '—', it is not a control's
-    // claimed state, and blanking the tile for it would be a regression dressed as a fix.
-    expect(hook, 'the default-agent name keeps its fallback').toMatch(/api\.agents\(\)\.then\(\(a\) => a\.default_agent\)\.catch\(\(\) => ''\)/)
+    // would be the over-correction: the default agent's NAME renders as '—' on the tile, and blanking
+    // the tile for it would be a regression dressed as a fix. The fallback is `null`, not `''`: the
+    // panel seeds its picker from the same value, and `''` there claimed "no default" for an unread one.
+    expect(hook, 'the default-agent name keeps its fallback').toMatch(/api\.agents\(\)\.then\(\(a\) => a\.default_agent\)\.catch\(\(\) => null\)/)
   })
 
   it('🔴 the agent-defaults tile substitutes the TRUE default, not the safe-looking one', () => {

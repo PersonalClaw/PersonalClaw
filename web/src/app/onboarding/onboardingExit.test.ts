@@ -95,7 +95,7 @@ describe('the guard consumes it', () => {
     // setup is not wanted, the route is not `#/onboarding`, and the shell can render it. Pinned with
     // the dependency list so a new guard input cannot be added without this rail being re-read.
     expect(app()).toMatch(
-      /\n {4}clearOnboardingExit\(\)\n {2}\}, \[loaded, onboarded, setupRerun, route, sub, navigate\]\)/)
+      /\n {4}clearOnboardingExit\(\)\n {2}\}, \[identityStatus, onboarded, setupRerun, route, sub, navigate\]\)/)
   })
 
   it('the redirect INTO onboarding still holds the gate', () => {
@@ -131,8 +131,8 @@ describe('the guard consumes it', () => {
     // the shape that failed twice (see `routeCasesCoverRoutable.test.ts`).
     const src = app()
     const effect = src.slice(
-      src.indexOf('if (!loaded) return'),
-      src.indexOf('[loaded, onboarded, setupRerun, route, sub, navigate])'))
+      src.indexOf("if (identityStatus !== 'ready') return"),
+      src.indexOf('[identityStatus, onboarded, setupRerun, route, sub, navigate])'))
     const wantsSetup = effect.indexOf('if (wantsSetup) {')
     // 🪤 The STATEMENT, anchored at its own indentation — `indexOf('clearOnboardingExit()')` finds
     // the prose mention in the branch's own comment first and truncates the slice before the return.

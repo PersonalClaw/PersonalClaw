@@ -31,7 +31,7 @@ import { DialogHost } from '../ui/dialog/DialogHost'
 import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
 import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
-import { LoadingStatus } from '../ui/ListScaffold'
+import { LoadError, LoadingStatus } from '../ui/ListScaffold'
 import { useQuery } from '../lib/data'
 import { resolveAppIcon } from '../pages/apps/appIcon'
 import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
@@ -231,7 +231,7 @@ function AppInner() {
   // per-kind voice it hands back (MOBILE-COMPANION MC-6). Mounted in the shell so any open tab
   // can voice it, not just the notifications page. A no-op where service workers are unavailable.
   useEffect(() => installPushCuePlayback(), [])
-  const { onboarded, loaded } = useIdentity()
+  const { onboarded, status: identityStatus, error: identityError, retry: retryIdentity } = useIdentity()
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === '1')
   useEffect(() => { localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? '1' : '0') }, [navCollapsed])
   // Mobile: the rail defaults COLLAPSED and expands as an overlay DRAWER (it must not
@@ -432,8 +432,13 @@ function AppInner() {
   // `replace: true` on that branch is load-bearing: a push would leave the bogus hash in history,
   // so Back would return the user to the broken URL they were just rescued from — and each Back
   // press would re-run this effect, bouncing them forward again.
+  //
+  // 🔴 Nothing is decided until the stored identity has been READ. Waiting for the read to SETTLE
+  // was not enough: a failed read settled as "no name", this effect sent the user to setup, and a
+  // first-run Skip there wrote the fallback name over the real one. A failed read is `failed`, and
+  // the retry screen below owns the page until a read succeeds.
   useEffect(() => {
-    if (!loaded) return
+    if (identityStatus !== 'ready') return
     const wantsSetup = !onboarded || setupRerun
     if (wantsSetup) {
       if (route !== 'onboarding') {
@@ -458,7 +463,7 @@ function AppInner() {
     // the PWA's `start_url`, so correcting it away made an installed app open on the wrong surface.
     if (route && !renderable(route)) { navigate('dashboard', { replace: true }); return }
     clearOnboardingExit()
-  }, [loaded, onboarded, setupRerun, route, sub, navigate])
+  }, [identityStatus, onboarded, setupRerun, route, sub, navigate])
 
   // ── Progressive disclosure over the rail (ONBOARDING-UX C4) ──
   // Read synchronously from localStorage on mount: no probe, so no flash of the wrong rail,
@@ -508,8 +513,19 @@ function AppInner() {
   const embedRef = useRef(query.embed === '1')
   if (query.embed === '1') embedRef.current = true
 
-  // Wait for the server identity before deciding — don't flash onboarding.
-  if (!loaded) return <div className="grid h-full place-items-center" style={{ background: 'var(--color-canvas)' }}><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
+  // Wait for the server identity before deciding — don't flash onboarding. `PageFallback` rather
+  // than a bare spinner, so a Retry below is followed by an announced "Loading", not by silence.
+  if (identityStatus === 'loading') return <div className="h-full" style={{ background: 'var(--color-canvas)' }}><PageFallback /></div>
+  // 🔴 A FAILED READ OF WHO YOU ARE GETS A RETRY — NEITHER SETUP NOR THE APP. Either would be a guess
+  // about a home nobody has read, and setup's guess is destructive: its first-run Skip commits a
+  // name over whatever is stored. No toast host here, because nothing on this screen writes.
+  if (identityStatus === 'failed') {
+    return (
+      <div className="grid h-full place-items-center overflow-y-auto px-l" style={{ background: 'var(--color-canvas)' }}>
+        <LoadError what="account" error={identityError} onRetry={retryIdentity} />
+      </div>
+    )
+  }
   // `sub` is the step's slug, `navigate` makes each step a history entry, and `onFinished` withdraws
   // a re-run request so the guard above — still the only navigator — moves the user out.
   //
