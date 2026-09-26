@@ -277,15 +277,14 @@ class TestUpdateEndpoints:
         assert reexec_called == [True]
 
     @pytest.mark.asyncio
-    async def test_update_apply_rejects_dirty_tree(self, monkeypatch, tmp_path) -> None:
+    async def test_update_apply_rejects_dirty_tree(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ) -> None:
         """Update apply returns 409 when the tree is dirty AND there is a newer
         release to check out (the dirty gate only guards a REAL advance — a
         nothing-to-advance apply degrades to restart instead, tested below)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        (tmp_path / ".git").mkdir(
-            exist_ok=True
-        )  # mark as a git checkout (T4.1 detect_install_kind)
+        package_in_checkout(tmp_path)  # a git checkout the package runs from (T4.1)
 
         import personalclaw.dashboard.handlers.updates as upd
         from personalclaw.dashboard.handlers import api_update_apply
@@ -324,15 +323,14 @@ class TestUpdateApplyPipeline:
         return request
 
     @pytest.mark.asyncio
-    async def test_full_pipeline_reaches_restart(self, monkeypatch, tmp_path) -> None:
+    async def test_full_pipeline_reaches_restart(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ) -> None:
         """Release channel, a newer tag resolved → steps pulling/installing/
         building/restarting fire and _graceful_reexec is REACHED. The git kind
         rides the release TAG (fetch --tags + checkout), never a pull/reset."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        (tmp_path / ".git").mkdir(
-            exist_ok=True
-        )  # mark as a git checkout (T4.1 detect_install_kind)
+        package_in_checkout(tmp_path)  # a git checkout the package runs from (T4.1)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -409,14 +407,13 @@ class TestUpdateApplyPipeline:
         assert upd._apply_in_flight is False
 
     @pytest.mark.asyncio
-    async def test_pip_failure_stops_before_restart(self, monkeypatch, tmp_path) -> None:
+    async def test_pip_failure_stops_before_restart(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ) -> None:
         """pip install failure → error step, no frontend build, no re-exec,
         and the in-flight guard is released."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        (tmp_path / ".git").mkdir(
-            exist_ok=True
-        )  # mark as a git checkout (T4.1 detect_install_kind)
+        package_in_checkout(tmp_path)  # a git checkout the package runs from (T4.1)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -455,13 +452,14 @@ class TestUpdateApplyPipeline:
         assert upd._apply_in_flight is False
 
     @pytest.mark.asyncio
-    async def test_stable_channel_on_latest_tag_restarts_only(self, monkeypatch, tmp_path) -> None:
+    async def test_stable_channel_on_latest_tag_restarts_only(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ) -> None:
         """Git checkout, stable channel, already on the resolved release TAG →
         ride tags, not commits: degrade to restart-only (no checkout, no advance)
         even though `main` may carry newer commits (RUM-4)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        (tmp_path / ".git").mkdir(exist_ok=True)
+        package_in_checkout(tmp_path)
         import personalclaw.dashboard.handlers.updates as upd
         from personalclaw import __version__ as _ver
 
@@ -505,16 +503,13 @@ class TestUpdateApplyPipeline:
         assert not any("pull" in a for a in pulled)
         assert upd._apply_in_flight is False
 
-    async def _run_nothing_to_pull(self, monkeypatch, tmp_path, *, rev_list):
+    async def _run_nothing_to_pull(self, monkeypatch, tmp_path, package_in_checkout, *, rev_list):
         """Drive api_update_apply on the NIGHTLY channel with a mocked git where
         `rev-list HEAD..@{u}` behaves per `rev_list` (a (returncode, stdout) tuple)
         and the tree is DIRTY — proving dirtiness doesn't matter when nothing will
         be advanced. Returns (resp_data, steps_seen, reexec_calls, commands)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        (tmp_path / ".git").mkdir(
-            exist_ok=True
-        )  # mark as a git checkout (T4.1 detect_install_kind)
+        package_in_checkout(tmp_path)  # a git checkout the package runs from (T4.1)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -571,13 +566,16 @@ class TestUpdateApplyPipeline:
         return data, steps_seen, reexec_calls, commands
 
     @pytest.mark.asyncio
-    async def test_no_upstream_degrades_to_restart(self, monkeypatch, tmp_path) -> None:
+    async def test_no_upstream_degrades_to_restart(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ) -> None:
         """No upstream configured (rev-list @{u} fails) → skip pull/install/
         build entirely, push ONLY the restarting step, and reach the re-exec —
         even on a DIRTY tree (nothing will be pulled, dirtiness is moot)."""
         data, steps, reexec, commands = await self._run_nothing_to_pull(
             monkeypatch,
             tmp_path,
+            package_in_checkout,
             rev_list=(128, b""),
         )
         assert data["status"] == "restarting"
@@ -590,12 +588,15 @@ class TestUpdateApplyPipeline:
         assert "pip" not in flat
 
     @pytest.mark.asyncio
-    async def test_up_to_date_degrades_to_restart(self, monkeypatch, tmp_path) -> None:
+    async def test_up_to_date_degrades_to_restart(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ) -> None:
         """Upstream configured but zero new commits → same short-circuit:
         restarting step + re-exec, with an 'Already up to date' note."""
         data, steps, reexec, commands = await self._run_nothing_to_pull(
             monkeypatch,
             tmp_path,
+            package_in_checkout,
             rev_list=(0, b"0\n"),
         )
         assert data["status"] == "restarting"
@@ -608,13 +609,12 @@ class TestUpdateApplyPipeline:
         assert "pip" not in flat
 
     @pytest.mark.asyncio
-    async def test_concurrent_apply_returns_409(self, monkeypatch, tmp_path) -> None:
+    async def test_concurrent_apply_returns_409(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ) -> None:
         """While one apply is in flight, a second POST /api/update is 409."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        (tmp_path / ".git").mkdir(
-            exist_ok=True
-        )  # mark as a git checkout (T4.1 detect_install_kind)
+        package_in_checkout(tmp_path)  # a git checkout the package runs from (T4.1)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", True)  # one already running
@@ -633,7 +633,7 @@ class TestUpdateApplyPipeline:
 
 
 class TestPackageRoot:
-    """package_root: git runs at PERSONALCLAW_PROJECT_DIR (repo root), but
+    """package_root: git runs in the checkout (``source_checkout``), but
     pip/frontend need the dir with pyproject.toml — top-level on a standalone
     checkout, nested at <repo>/PersonalClaw in the monorepo layout."""
 
@@ -752,7 +752,7 @@ class TestGitCheckReadsRemoteVersion:
 
         ``prefix`` selects the layout: ``""`` is the published standalone checkout
         (repo root IS the package root), ``"PersonalClaw"`` the nested monorepo.
-        Returns the clone's PACKAGE root — what PERSONALCLAW_PROJECT_DIR holds.
+        Returns the clone's PACKAGE root, the checkout the running package comes from.
         """
         origin = tmp_path / "origin"
         origin.mkdir()
@@ -772,12 +772,14 @@ class TestGitCheckReadsRemoteVersion:
         return work / prefix if prefix else work
 
     @pytest.mark.parametrize("prefix", ["", "PersonalClaw"])
-    def test_check_detects_remote_version_in_both_layouts(self, monkeypatch, tmp_path, prefix):
+    def test_check_detects_remote_version_in_both_layouts(
+        self, monkeypatch, tmp_path, prefix, package_in_checkout
+    ):
         """One commit behind a version-bumping tip ⇒ latest/available reflect it."""
         from personalclaw.dashboard.handlers import updates as U
 
         proj = self._behind_clone(tmp_path, prefix)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(proj))
+        package_in_checkout(proj, git="")  # the clone's own .git is the checkout's
         monkeypatch.setattr(U, "_local_version", "0.1.3")
         saved = dict(U._update_info)
         try:
@@ -789,12 +791,14 @@ class TestGitCheckReadsRemoteVersion:
             U._update_info.clear()
             U._update_info.update(saved)
 
-    def test_check_reports_no_update_when_versions_match(self, monkeypatch, tmp_path):
+    def test_check_reports_no_update_when_versions_match(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ):
         """Vacuity guard: the same probe must NOT claim an update at parity."""
         from personalclaw.dashboard.handlers import updates as U
 
         proj = self._behind_clone(tmp_path, "")
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(proj))
+        package_in_checkout(proj, git="")  # the clone's own .git is the checkout's
         monkeypatch.setattr(U, "_local_version", "0.1.4")  # already at the remote version
         saved = dict(U._update_info)
         try:

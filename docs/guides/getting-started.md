@@ -308,7 +308,10 @@ hand. This is a separate switch from `updates.auto`: one governs whether Persona
 - **Install more apps** — search providers, speech (STT/TTS), local models,
   channel connectors, and agent runtimes are all Store apps.
 - **Run it permanently** — `personalclaw service install` registers a systemd
-  unit (Linux) or launchd agent (macOS) so the gateway survives reboots.
+  unit (Linux) or launchd agent (macOS) so the gateway survives reboots. Run it
+  from the shell that has your settings: it carries `PERSONALCLAW_HOME`,
+  `AWS_PROFILE` and [the other variables listed here](../reference/cli.md#the-services-environment)
+  into the service, and never a secret.
 - **Back it up** — `personalclaw snapshot` creates a portable state archive;
   `personalclaw restore` brings it back. The archive never contains a credential: API keys
   and app tokens stay in this machine's credential store (the OS keychain, or

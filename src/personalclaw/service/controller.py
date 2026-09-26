@@ -7,9 +7,11 @@ directly. This keeps the dispatch logic in one place and makes the
 """
 
 import sys
+from collections.abc import Iterable
 
 from personalclaw.service import linux, macos
 from personalclaw.service.common import Platform, current_platform
+from personalclaw.service.environment import Capture, describe, summary
 
 
 def _unsupported_message() -> None:
@@ -21,8 +23,17 @@ def _unsupported_message() -> None:
     )
 
 
-def install_service() -> int:
+def _print_carried(carried: Capture) -> None:
+    """Say what the service's environment carries from this shell, and what it left out."""
+    for line in summary(carried):
+        print(f"   {line}")
+
+
+def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> int:
     """Install and start the platform service.
+
+    *extra* and *without* are ``--env NAME`` and ``--no-env NAME``: one more variable to carry
+    into the service's environment, one to leave out (:mod:`personalclaw.service.environment`).
 
     Returns 0 on success, non-zero otherwise. On Linux the install
     prompts for sudo on first use to write
@@ -35,12 +46,13 @@ def install_service() -> int:
     plat = current_platform()
     if plat == Platform.SYSTEMD:
         try:
-            linux.install()
+            carried = linux.install(extra=extra, without=without)
         except linux.ServiceInstallError as exc:
             print(f"❌ {exc}", file=sys.stderr)
             return 1
         print("✅ personalclaw service installed and started.")
         print(f"   unit: {linux.UNIT_PATH}")
+        _print_carried(carried)
         print()
         print("   Status: personalclaw service status")
         print("   Logs:   personalclaw logs -f")
@@ -48,12 +60,13 @@ def install_service() -> int:
         return 0
     if plat == Platform.LAUNCHD:
         try:
-            macos.install()
+            carried = macos.install(extra=extra, without=without)
         except macos.ServiceInstallError as exc:
             print(f"❌ {exc}", file=sys.stderr)
             return 1
         print("✅ personalclaw service installed and started.")
         print(f"   plist: {macos.PLIST_PATH}")
+        _print_carried(carried)
         print()
         print("   Status: personalclaw service status")
         print(f"   Logs:   tail -f {macos.STDOUT_LOG}")
@@ -79,16 +92,25 @@ def uninstall_service() -> int:
 
 
 def service_status() -> int:
-    """Print the platform service status. Returns 0 if active, 1 if inactive, 2 if unsupported."""
+    """Print the platform service status and the environment its installed file starts the
+    gateway in. Returns 0 if active, 1 if inactive, 2 if unsupported."""
     plat = current_platform()
     if plat == Platform.SYSTEMD:
         print(linux.status())
+        _print_environment(linux.installed_environment())
         return 0 if linux.is_active() else 1
     if plat == Platform.LAUNCHD:
         print(macos.status())
+        _print_environment(macos.installed_environment())
         return 0 if macos.is_active() else 1
     _unsupported_message()
     return 2
+
+
+def _print_environment(env: dict[str, str]) -> None:
+    """The installed file's environment, when there is an installed file."""
+    if env:
+        print("\n".join(describe(env)))
 
 
 def is_service_active() -> bool:

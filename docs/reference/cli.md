@@ -185,9 +185,39 @@ crash, auto-starts on boot.
 
 | Subcommand | What it does |
 |---|---|
-| `service install` | Install and start the gateway service. |
+| `service install [--env NAME]… [--no-env NAME]…` | Install and start the gateway service, carrying the variables below from this shell. `--env NAME` carries one more, `--no-env NAME` leaves one out. |
 | `service uninstall` | Stop and remove the gateway service. |
-| `service status` | Show service status (systemctl/launchctl). |
+| `service status` | Show service status (systemctl/launchctl) and the environment the installed service starts the gateway in. |
+
+### The service's environment
+
+A service is not started from your shell, so it does not see what your shell
+exports. `service install` writes each of these into the unit or plist when the
+shell running it sets it, and prints what it carried:
+
+| For | Variables |
+|---|---|
+| PersonalClaw | `PERSONALCLAW_HOME`, `PERSONALCLAW_WORKSPACE`, `PERSONALCLAW_PORT`, `PERSONALCLAW_CREDENTIAL_BACKEND`, `PERSONALCLAW_FIRST_PARTY_APPS_DIR` |
+| AWS: the Amazon Bedrock app and any AWS tool | `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_SDK_LOAD_CONFIG`, `AWS_CA_BUNDLE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_STS_REGIONAL_ENDPOINTS`, `AWS_ENDPOINT_URL` |
+| Where agent CLIs and model tools keep their files | `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HF_HOME`, `HF_HUB_CACHE`, `HF_TOKEN_PATH`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` |
+| Proxies and TLS trust | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`, `https_proxy`, `http_proxy`, `all_proxy`, `no_proxy`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS` |
+
+The service file sets `HOME` and `PATH` itself (and `USER` on Linux). Anything
+that widens who can reach the gateway, such as `PERSONALCLAW_BIND_HOST`, is carried
+only when you ask for it with `--env`.
+
+**A secret is never written into a service file.** The systemd unit is readable
+by every user on the machine, and the plist by any program running as you. A
+variable whose name is a secret (`AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+`GITHUB_TOKEN`, …) or whose value holds one (a proxy URL with a password in it)
+is left out, even when asked for with `--env`, and `service install` prints a
+sentence saying why. Save secrets in Settings → Secrets or with
+`personalclaw setup --credential NAME=…` instead: the gateway puts every secret
+saved there into its own environment when it starts, so the service and the
+tools it runs see them.
+
+To change what the service carries, set or unset the variable in your shell and
+run `personalclaw service install` again.
 
 ## `personalclaw cron`
 

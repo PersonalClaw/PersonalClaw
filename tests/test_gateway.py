@@ -667,10 +667,14 @@ class TestAutoApplyUpdate:
     """Auto-update logic."""
 
     @pytest.mark.asyncio
-    async def test_no_project_dir_returns_early(self):
+    async def test_no_source_checkout_returns_early(self):
         orch = _make_orchestrator()
-        with patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": ""}, clear=False):
+        with (
+            patch("personalclaw.self_update.source_checkout", return_value=""),
+            patch("personalclaw.self_update.git_tracked_changes") as tracked,
+        ):
             await orch._auto_apply_update()  # should not raise
+        tracked.assert_not_called()
 
     # RUM-4 retired the "only auto-update on main / coerce detached HEAD to main"
     # branch gate: the release channels (stable/beta/pin) check out a release TAG
@@ -689,7 +693,7 @@ class TestAutoApplyUpdate:
 
         reexec = AsyncMock()
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch("personalclaw.config.loader.AppConfig.load", return_value=_fake_updates_cfg()),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
             patch("personalclaw.self_update.resolve_target", AsyncMock(return_value="v99.0.0")),
@@ -1087,7 +1091,7 @@ class TestAutoApplyUpdateGitPath:
         orch.dashboard_state = ds
 
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch("personalclaw.config.loader.AppConfig.load", return_value=_fake_updates_cfg()),
             patch(
                 "personalclaw.self_update.git_tracked_changes",
@@ -1114,7 +1118,7 @@ class TestAutoApplyUpdateGitPath:
 
         reexec = AsyncMock()
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch("personalclaw.config.loader.AppConfig.load", return_value=_fake_updates_cfg()),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
             patch("personalclaw.self_update.resolve_target", AsyncMock(return_value="v99.0.0")),
@@ -1149,7 +1153,7 @@ class TestAutoApplyUpdateGitPath:
         from personalclaw import __version__ as cur
 
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch("personalclaw.config.loader.AppConfig.load", return_value=_fake_updates_cfg()),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
             patch("personalclaw.self_update.resolve_target", AsyncMock(return_value=f"v{cur}")),
@@ -1170,7 +1174,7 @@ class TestAutoApplyUpdateGitPath:
         orch.dashboard_state = ds
 
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch("personalclaw.config.loader.AppConfig.load", return_value=_fake_updates_cfg()),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
             patch("personalclaw.self_update.resolve_target", AsyncMock(return_value="")),
@@ -1190,7 +1194,7 @@ class TestAutoApplyUpdateGitPath:
         orch.dashboard_state = ds
 
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch(
                 "personalclaw.config.loader.AppConfig.load",
                 return_value=_fake_updates_cfg("nightly"),
@@ -1212,7 +1216,7 @@ class TestAutoApplyUpdateGitPath:
         orch.dashboard_state = ds
 
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch(
                 "personalclaw.config.loader.AppConfig.load",
                 return_value=_fake_updates_cfg("nightly"),
@@ -1883,7 +1887,7 @@ class TestAutoApplyUpdateVenvPath:
 
         reexec = AsyncMock()
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch(
                 "personalclaw.config.loader.AppConfig.load",
                 return_value=_fake_updates_cfg("nightly"),
@@ -1918,7 +1922,7 @@ class TestAutoApplyUpdateVenvPath:
 
         reexec = AsyncMock()
         with (
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch("personalclaw.config.loader.AppConfig.load", return_value=_fake_updates_cfg()),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
             patch("personalclaw.self_update.resolve_target", AsyncMock(return_value="v99.0.0")),
@@ -2661,7 +2665,7 @@ class TestCheckMissingDepsPip:
     def test_pip_install_on_missing_dep(self):
         orch = _make_orchestrator()
         with patch("importlib.util.find_spec", return_value=None):
-            with patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/proj"}):
+            with patch("personalclaw.self_update.source_checkout", return_value="/proj"):
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = MagicMock(returncode=0)
                     orch._check_missing_deps()
@@ -2670,7 +2674,7 @@ class TestCheckMissingDepsPip:
     def test_pip_install_failure(self):
         orch = _make_orchestrator()
         with patch("importlib.util.find_spec", return_value=None):
-            with patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/proj"}):
+            with patch("personalclaw.self_update.source_checkout", return_value="/proj"):
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = MagicMock(returncode=1, stderr=b"error")
                     orch._check_missing_deps()  # should not raise

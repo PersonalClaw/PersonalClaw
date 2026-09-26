@@ -20,8 +20,13 @@ both call.
     env PERSONALCLAW_INSTALL_KIND in {"container","desktop"}  -> that
         (baked into the Dockerfiles; set by the Electron shell, plan 45)
     a FROZEN process (PyInstaller bundle)                       -> "desktop"
-    a resolvable project dir that contains a .git directory     -> "git"
+    the running package is a git checkout's (source_checkout)  -> "git"
     else                                                        -> "pip"
+
+The ``git`` answer comes from where the running ``personalclaw`` package was imported from,
+and from nothing else: not the working directory, not ``PERSONALCLAW_PROJECT_DIR``, not a path
+``personalclaw setup`` once saved. Those all describe some tree near the process, which is not
+the same thing as the install the process runs. See :func:`source_checkout`.
 
 The frozen clause is not redundant with the env. The env is what the Electron shell
 declares, and it is the *right* signal when the shell spawned the gateway — but the frozen
@@ -109,22 +114,48 @@ _APPLY_METHOD: dict[str, str] = {
 DEFAULT_BRANCH_FALLBACK = "main"
 
 
-def project_dir() -> str:
-    """The resolved source-tree dir, or "".
+def _package_dir() -> Path:
+    """The directory the running ``personalclaw`` package was imported from."""
+    import personalclaw
 
-    ``PERSONALCLAW_PROJECT_DIR`` is set at startup by ``cli._detect_project_dir``
-    when the gateway runs from a checkout (it finds ``agents/`` + ``skills/``
-    walking up from CWD, or a saved path). A wheel/container/desktop install has
-    no such tree, so the env is unset.
+    return Path(personalclaw.__file__).resolve().parent
+
+
+def source_checkout() -> str:
+    """The source checkout the RUNNING ``personalclaw`` package comes from, or "" for a wheel.
+
+    Read from the package's own location, the one fact about an install this process cannot get
+    wrong. An editable install (``pip install -e .``, ``uv pip install -e .``) imports
+    ``<checkout>/src/personalclaw``, and its metadata agrees: ``direct_url.json`` names the
+    checkout and says ``editable``. A wheel (pip, pipx, ``uv tool``, the image) imports its own
+    copy from ``site-packages``, and its metadata can still name a checkout: ``uv tool install
+    <checkout>`` records the checkout it was built from as its ``direct_url`` and runs none of its
+    files. So the metadata is not asked. The location is also right when a path override puts a
+    checkout ahead of an installed copy, because then the checkout's files are the ones running.
+
+    It used to be the working directory. The CLI walked up from it for a checkout, or read a path
+    ``personalclaw setup`` had saved from such a walk, and exported the result as
+    ``PERSONALCLAW_PROJECT_DIR``. So a ``uv tool`` install started inside a PersonalClaw checkout
+    counted as a git install, and "Update & Restart" ran ``git fetch`` and ``git checkout`` on
+    that tree while the wheel the gateway runs from stayed where it was.
+
+    The markers are the two things every source layout has: ``pyproject.toml`` and
+    ``src/personalclaw``. Both the standalone checkout and the monorepo layout
+    (``<repo>/PersonalClaw``) have them, and :func:`git_root` then finds the ``.git`` at the
+    package root or one level up.
     """
-    return os.environ.get("PERSONALCLAW_PROJECT_DIR", "") or ""
+    pkg = _package_dir()
+    root = pkg.parent.parent
+    if pkg.parent.name == "src" and (root / "pyproject.toml").is_file():
+        return str(root)
+    return ""
 
 
 def _git_dir_candidates(proj: str) -> list[Path]:
     """``proj`` and its parent — the two places the repo root can be.
 
-    The project dir may be the repo root, or nested one level under it (monorepo
-    layout — see :func:`package_root`).
+    A checkout's package root may be the repo root, or nested one level under it
+    (monorepo layout — see :func:`package_root`).
     """
     root = Path(proj)
     return [root, root.parent]
@@ -170,7 +201,7 @@ def detect_install_kind() -> InstallKind:
         # The frozen bundle is only ever produced for the desktop app, and "desktop" is
         # the kind whose apply path is the honest one for it (download + reinstall).
         return "desktop"
-    if git_root(project_dir()):
+    if git_root(source_checkout()):
         return "git"
     return "pip"
 
@@ -198,8 +229,8 @@ def container_instructions(image_tag: str = "") -> list[str]:
 
 def package_root(proj: str) -> str:
     """Resolve the directory ``pip install -e .`` and the frontend build run
-    from. Git operations run at the repo root (``proj`` =
-    ``PERSONALCLAW_PROJECT_DIR``), but the installable package may live one
+    from. Git operations run in the checkout (``proj`` =
+    :func:`source_checkout`), but the installable package may live one
     level down: a standalone checkout has ``pyproject.toml`` at the top,
     while the monorepo layout nests it at ``<repo>/PersonalClaw``. Falls
     back to ``proj`` unchanged when neither probe hits."""
@@ -588,7 +619,7 @@ async def build_update_status(current: str) -> dict[str, object]:
 
     commits_behind: int | None = None
     if kind == "git":
-        proj = project_dir()
+        proj = source_checkout()
         if proj:
             try:
                 commits_behind = await commits_behind_upstream(proj)

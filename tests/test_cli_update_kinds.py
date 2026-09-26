@@ -112,9 +112,11 @@ def _fake_resolve(monkeypatch: pytest.MonkeyPatch, tag: str) -> None:
 
 
 def _as_git_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path) -> str:
+    """Run the package from a git checkout at *tmp_path*, the one thing that makes it git."""
     (tmp_path / ".git").mkdir(exist_ok=True)
     (tmp_path / "pyproject.toml").write_text("[project]\n")
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+    (tmp_path / "src" / "personalclaw").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(su, "_package_dir", lambda: tmp_path / "src" / "personalclaw")
     return str(tmp_path)
 
 

@@ -792,7 +792,7 @@ async def test_gateway_auto_update_reaps_the_install_it_timed_out(monkeypatch, t
     stub.chmod(0o755)
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(proj))
+    monkeypatch.setattr(self_update, "source_checkout", lambda: str(proj))
     monkeypatch.setattr(gw.sys, "executable", str(stub))
     monkeypatch.setattr(gw, "_AUTOUPDATE_PIP_TIMEOUT", 1.0)
 
