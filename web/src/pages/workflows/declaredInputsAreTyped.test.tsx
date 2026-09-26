@@ -49,7 +49,7 @@ async function mount(api: Record<string, unknown>) {
   const { WorkflowDefDetail } = await import('./WorkflowDefDetail')
   let r!: ReturnType<typeof render>
   await act(async () => {
-    r = render(<WorkflowDefDetail name="knowledge-lint" onBack={() => {}} onStarted={() => {}} />)
+    r = render(<WorkflowDefDetail name="knowledge-lint" onBack={() => {}} onStarted={() => {}} onEdit={() => {}} />)
     await new Promise((res) => setTimeout(res, 0))
   })
   return r

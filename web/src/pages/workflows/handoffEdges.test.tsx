@@ -59,7 +59,7 @@ async function mount(hands_off_to: unknown[] | undefined) {
   const { WorkflowDefDetail } = await import('./WorkflowDefDetail')
   let r!: ReturnType<typeof render>
   await act(async () => {
-    r = render(<WorkflowDefDetail name="code-project" onBack={() => {}} onStarted={() => {}} />)
+    r = render(<WorkflowDefDetail name="code-project" onBack={() => {}} onStarted={() => {}} onEdit={() => {}} />)
     await new Promise((res) => setTimeout(res, 0))
   })
   return r

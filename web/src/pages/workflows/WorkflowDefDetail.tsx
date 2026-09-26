@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Play, Sparkles, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Pencil, Play, Sparkles, RotateCcw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Loading, LoadError, InlineLoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
@@ -79,16 +79,18 @@ function MaturityBadge({ maturity }: { maturity: WorkflowMaturity }) {
 }
 
 /** One workflow definition — its tree, its declared inputs, its version history and run ledger,
- *  and a way to run or refine it.
+ *  and a way to run, refine or edit it.
  *
- *  Read-mostly by design: authoring a spec by hand is what `workflow_author` and the chat
- *  planner are for, and a half-built visual editor here would be worse than either. What
- *  this page owes the user is an honest view of what the workflow DOES plus the ability to
- *  supply inputs and start it. */
-export function WorkflowDefDetail({ name, onBack, onStarted }: {
+ *  An honest view of what the workflow DOES plus the ability to supply inputs and start it. The
+ *  editing itself is its own page (`WorkflowDefEditor`, reached by `onEdit`): a shipped template is
+ *  read-only, so its Edit makes a copy, and a past version is restored by editing from it — the
+ *  save makes it the newest version, which is the one a run executes. */
+export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
   name: string
   onBack: () => void
   onStarted: (runId: string) => void
+  /** Open the editor: on the current definition, or — with a version — on that recorded version. */
+  onEdit: (version?: number) => void
 }) {
   const [def, setDef] = useState<WorkflowDef | null>(null)
   const [loading, setLoading] = useState(true)
@@ -99,7 +101,6 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   const [starting, setStarting] = useState(false)
   const [tab, setTab] = useState<'steps' | 'versions' | 'ledger'>('steps')
   const [versions, setVersions] = useState<WorkflowVersionRow[]>([])
-  const [pinned, setPinned] = useState<number | null>(null)
   const [maturity, setMaturity] = useState<WorkflowMaturity | null>(null)
   const [diffOps, setDiffOps] = useState<WorkflowVersionOp[] | null>(null)
   const [ledger, setLedger] = useState<WorkflowLedgerRow[] | null>(null)
@@ -123,7 +124,6 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
     api.workflowVersions(name)
       .then((v) => {
         setVersions(v.versions)
-        setPinned(v.pinned)
         setMaturity(v.maturity)
         // A typed-op diff of the two most recent versions — the shape the refiner proposes and
         // the user rolls back. Only meaningful once a second version exists.
@@ -134,7 +134,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
           setDiffOps(null)
         }
       })
-      .catch((e) => { setVersionsErr(e); setVersions([]); setPinned(null); setMaturity(null) })
+      .catch((e) => { setVersionsErr(e); setVersions([]); setMaturity(null) })
   }, [name])
 
   useEffect(() => {
@@ -176,6 +176,8 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   // Read with `=== true`, matching the backend's `is True`: an absent key is UNPUBLISHED, which
   // is what every template authored before A2A existed looks like.
   const published = def?.metadata?.a2a_published === true
+  // Anything that is not the user's own (a shipped template, a pack's) is read-only here.
+  const readOnly = !!def && def.source !== 'user'
   const handoffs = useMemo(
     () => (def?.metadata?.hands_off_to ?? []).filter((h) => (h?.target_def ?? '').trim()),
     [def],
@@ -236,15 +238,6 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
     }
   }, [def, name])
 
-  const rollback = useCallback(async (version: number) => {
-    try {
-      await api.repinWorkflowVersion(name, version)
-      loadVersions()
-    } catch (e) {
-      notify(e instanceof Error ? e.message : 'Could not roll back', 'error')
-    }
-  }, [name, loadVersions])
-
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -268,6 +261,14 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
               disabledReason="A refinement is already in flight"
             >
               <Sparkles size={13} /> {refining ? 'Refining…' : 'Refine now'}
+            </QuietButton>
+            {/* A shipped template is read-only: its edit is saved as a copy under the user's own
+                name, and the label says so before the click rather than after it. */}
+            <QuietButton
+              onClick={() => onEdit()}
+              title={readOnly ? `Make your own copy of ${name} and edit it` : `Edit ${name}`}
+            >
+              <Pencil size={13} /> {readOnly ? 'Edit a copy' : 'Edit'}
             </QuietButton>
             {/* Off while a required input is blank, and it SAYS which one. Before this the
                 button stayed lit through a blank required field and through a mistyped one: the
@@ -422,11 +423,14 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                           <span data-type="caption" className="text-on-surface-low">{v.source}</span>
                           {v.created_at && <span data-type="caption" className="ml-s text-on-surface-low">{v.created_at}</span>}
                         </div>
-                        {v.version === pinned ? (
-                          <span data-type="caption" className="shrink-0 text-on-surface-low">pinned</span>
+                        {/* "current" is the definition's own version — the one a run executes. A
+                            restore opens the editor on that version, and its save becomes the
+                            newest version; the history itself is never rewritten. */}
+                        {v.version === def.version ? (
+                          <span data-type="caption" className="shrink-0 text-on-surface-low">current</span>
                         ) : (
-                          <QuietButton onClick={() => rollback(v.version)} title={`Roll back to v${v.version}`}>
-                            <RotateCcw size={12} /> Roll back
+                          <QuietButton onClick={() => onEdit(v.version)} title={`Open v${v.version} in the editor; saving it makes it the current version`}>
+                            <RotateCcw size={12} /> Restore
                           </QuietButton>
                         )}
                       </div>

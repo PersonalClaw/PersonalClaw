@@ -304,6 +304,17 @@ async def api_def_save(request: web.Request) -> web.Response:
         # it: without this the key is dropped before the save and the run-start applier finds
         # nothing to provision.
         workspace=body.get("workspace") if isinstance(body.get("workspace"), dict) else None,
+        # Three more fields a definition has, dropped here until the dashboard editor saved one
+        # (F-29): a copy of `code-project` came back with no judge contract.
+        runtime_hints=(
+            body.get("runtime_hints") if isinstance(body.get("runtime_hints"), dict) else None
+        ),
+        defaults=body.get("defaults") if isinstance(body.get("defaults"), dict) else None,
+        on_overlap=str(body.get("on_overlap", "") or ""),
+        # What this save was edited from, so the values the read hid come back from THAT
+        # definition (a copy of a shipped template) or that recorded version (a restore).
+        based_on=str(body.get("based_on", "") or ""),
+        based_on_version=_version_number(body.get("based_on_version")),
     )
     _audit(
         request,
@@ -317,10 +328,10 @@ async def api_def_save(request: web.Request) -> web.Response:
 async def api_def_a2a_publish(request: web.Request) -> web.Response:
     """POST /api/workflows/{name}/a2a-publish — the template detail UI's publish toggle.
 
-    Its own route rather than a field on the def save (EXTERNAL-ACCESS §5): the detail UI holds
-    the SECRET-STRIPPED def, so re-saving that document to carry one bool would persist the
-    stripped bindings. Guarded as a def SAVE because that is what it is — a write to the stored
-    template — and because publishing a workflow to an external protocol is not a read.
+    Its own route rather than a field on the def save (EXTERNAL-ACCESS §5): one bool must not
+    re-validate and re-save the whole definition (see `service.set_a2a_published`). Guarded as a
+    def SAVE because that is what it is — a write to the stored template — and because
+    publishing a workflow to an external protocol is not a read.
     """
     denied = _guard(request, "workflow_def_save")
     if denied is not None:
@@ -538,6 +549,57 @@ async def api_def_versions(request: web.Request) -> web.Response:
     stats = _template_run_stats(name)
     maturity = versions.template_maturity(spec, **stats)
     return web.json_response({"versions": rows, "pinned": pinned, "maturity": maturity})
+
+
+def _version_number(raw: Any) -> int:
+    """A version number from a request, or 0 for "none given" / not a positive integer."""
+    try:
+        value = int(str(raw).strip()) if raw not in (None, "") else 0
+    except ValueError:
+        return 0
+    return value if value > 0 else 0
+
+
+async def api_def_version_detail(request: web.Request) -> web.Response:
+    """GET /api/workflows/{name}/versions/{version} — one recorded version's full definition.
+
+    What the editor opens to restore a version: the version list says which exist, this is what
+    one of them WAS. Stripped exactly like `GET /api/workflows/{name}`, because a snapshot holds
+    the same values the current definition does, and saving an edit of it restores them through
+    `based_on_version`."""
+    from personalclaw.workflows import secrets, versions
+
+    name = request.match_info.get("name", "")
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
+    raw = request.match_info.get("version", "")
+    number = _version_number(raw)
+    if not number:
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": "the version must be a number"}},
+            status=400,
+        )
+    record = versions.get_version(name, number)
+    if record is None:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "not_found",
+                    "message": f"{name!r} has no recorded version {number}",
+                }
+            },
+            status=404,
+        )
+    return web.json_response(
+        {
+            "version": record.version,
+            "source": record.source,
+            "created_at": record.created_at,
+            "note": record.note,
+            "definition": secrets.strip_secrets(record.spec),
+        }
+    )
 
 
 async def api_def_version_diff(request: web.Request) -> web.Response:
@@ -1486,6 +1548,8 @@ def register_workflow_routes(app: web.Application) -> None:
     # with the one-segment def-detail/delete routes below; registered here beside their siblings.
     app.router.add_get("/api/workflows/{name}/versions", api_def_versions)
     app.router.add_get("/api/workflows/{name}/versions/diff", api_def_version_diff)
+    # AFTER `/diff`: routes match in registration order, and `{version}` would swallow it.
+    app.router.add_get("/api/workflows/{name}/versions/{version}", api_def_version_detail)
     app.router.add_post("/api/workflows/{name}/versions/repin", api_def_repin)
     app.router.add_get("/api/workflows/{name}/ledger", api_def_ledger)
     app.router.add_post("/api/workflows/{name}/refine", api_def_refine)
