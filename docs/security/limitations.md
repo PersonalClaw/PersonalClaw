@@ -102,6 +102,24 @@ manifest, which install consent lists by name, and runs agent work through its o
 `agent` permission. A lesson is memory that every agent is handed as a rule, so
 `/api/lessons` needs the `memory` grant, the same as `/api/memory`.
 
+Your conversations are in the same class, because a message in one of them is an
+instruction your agent carries out. An app may not send into one of your chats, or edit,
+regenerate, resume, stop, retitle, rebind or fork one, or answer an approval in one; it may
+not set the task mode of your chats, share one, carry one into your channel DM, or delete
+one from your history.
+It may not speak in a room (a line there is written as yours, and every member answers
+it), answer an agent's question in your inbox, approve a proposal, write an inbox note in
+your name, or post through the schedules' delivery door (`/api/send-message`), which
+speaks as your agent. An app may hold conversations of its own: it starts one, and only
+that one is its to reach. Its turns need its `agent` permission and run under that grant,
+never under your approval switches (YOLO, Trust, Trust reads, an agent's "always allow").
+The operator ceiling still bounds it, and an app never answers an approval raised in its
+own conversation. It reaches you through a proposal, which the inbox labels with the
+app's name, and `/api/reveal` opens only a file in its own data folder. The exception is
+the relay you install for approvals: an app that declares `/api/approvals` (the menu-bar
+companion does) can approve or reject your pending approvals one at a time, and the
+gateway cannot tell whether an answer it relays was yours.
+
 Every write route in these families has to be declared one way or the other: one that is
 not is refused to every app until someone declares it, and
 `tests/test_security_posture_rail.py` fails the build on it.

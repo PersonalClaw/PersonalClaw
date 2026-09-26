@@ -5198,66 +5198,78 @@ class TestForkSession:
         assert kw["outcome"] == "denied"
         assert "memory_mode=incognito" in kw["resources"]
 
+    @staticmethod
+    def _as_installed_app(tmp_path, monkeypatch, app_obj, caller: str, *installed: str) -> None:
+        """Put the REAL permission middleware in front of *app_obj*, answering for *caller*, with
+        *installed* apps in a scratch home that each declared `/api/chat` — so a refusal is the
+        route table's ownership rule, not a stand-in for it."""
+        from test_apps_cannot_run_code_or_bypass_approvals import _install
+
+        from personalclaw.apps import manager
+        from personalclaw.dashboard.server import app_permission_middleware
+
+        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+        monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+        for name in installed:
+            _install(tmp_path, name, {"api": ["/api/chat"]})
+
+        @web.middleware
+        async def inject_app(request, handler):
+            request["user"] = "owner"
+            request["app"] = caller
+            return await handler(request)
+
+        app_obj.middlewares.insert(0, inject_app)
+        app_obj.middlewares.insert(1, app_permission_middleware)
+
     @pytest.mark.asyncio
     async def test_fork_app_isolation_rejects_cross_app(self, tmp_path, monkeypatch):
-        """M-2 regression: app A cannot fork a session owned by app B."""
+        """M-2 regression: app A cannot fork a conversation app B started."""
         from unittest.mock import MagicMock
 
-        mock_sel = MagicMock()
-        monkeypatch.setattr("personalclaw.dashboard.chat_fork.sel", lambda: mock_sel)
+        rows = MagicMock()
+        monkeypatch.setattr("personalclaw.sel.sel", lambda: rows)
 
         state = _make_state(tmp_path)
-        session = state.get_or_create_session("src", app="app-B")
+        session = state.get_or_create_session("src", created_by_app="app-b")
         session.append("user", "secret", "msg msg-u")
         session.drain()
 
-        # aiohttp middleware populates request["app"]; test injects via middleware.
-        @web.middleware
-        async def inject_app(request, handler):
-            request["app"] = "app-A"
-            return await handler(request)
-
         app_obj = _make_app(state)
-        app_obj.middlewares.insert(0, inject_app)
+        self._as_installed_app(tmp_path, monkeypatch, app_obj, "app-a", "app-a", "app-b")
 
         async with TestClient(TestServer(app_obj)) as client:
             resp = await client.post("/api/chat/sessions/src/fork", json={})
             assert resp.status == 403
-            data = await resp.json()
-            assert "does not own" in data["error"]
+            assert "not a conversation this app started" in await resp.text()
 
-        # denied event logged
-        denied_calls = [
-            c for c in mock_sel.log_api_access.call_args_list if c[1].get("outcome") == "denied"
+        denied = [
+            c.kwargs
+            for c in rows.log_api_access.call_args_list
+            if c.kwargs.get("outcome") == "denied"
         ]
-        assert len(denied_calls) == 1
-        assert denied_calls[0][1]["source"] == "app_isolation"
+        assert [(d["caller"], d["source"]) for d in denied] == [("app:app-a", "app_permissions")]
+        assert len(state._sessions) == 1, "nothing was forked"
 
     @pytest.mark.asyncio
-    async def test_fork_inherits_app_ownership(self, tmp_path):
-        """I-1 regression: new_session._app is the requesting app (or empty for dashboard)."""
+    async def test_fork_inherits_app_ownership(self, tmp_path, monkeypatch):
+        """I-1 regression: the fork is the requesting app's (or yours, for the dashboard)."""
         state = _make_state(tmp_path)
-        session = state.get_or_create_session("src", app="app-X")
+        session = state.get_or_create_session("src", created_by_app="app-x")
         session.append("user", "hi", "msg msg-u")
         session.drain()
 
-        @web.middleware
-        async def inject_app(request, handler):
-            request["app"] = "app-X"
-            return await handler(request)
-
         app_obj = _make_app(state)
-        app_obj.middlewares.insert(0, inject_app)
+        self._as_installed_app(tmp_path, monkeypatch, app_obj, "app-x", "app-x")
 
         async with TestClient(TestServer(app_obj)) as client:
             resp = await client.post("/api/chat/sessions/src/fork", json={})
-            assert resp.status == 200
+            assert resp.status == 200, await resp.text()
             data = await resp.json()
 
         new_session = state._sessions.get(data["key"])
-        assert (
-            new_session._app == "app-X"
-        ), f"forked session must inherit caller's app, got {new_session._app!r}"
+        assert new_session.created_by_app == "app-x", new_session.created_by_app
+        assert new_session._app == "app-x", "its origin tag is the app's, like its source's"
 
     @pytest.mark.asyncio
     async def test_fork_rejects_when_session_cap_reached(self, tmp_path, monkeypatch):

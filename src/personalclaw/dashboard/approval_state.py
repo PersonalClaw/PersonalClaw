@@ -62,12 +62,15 @@ SESSION_APPROVAL_ACTIONS = frozenset(
     {"approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"}
 )
 
-#: The verbs above that do more than answer THIS call: each raises a standing posture — the
-#: chat's (``trust``, ``trust_reads``), the bound agent's for every future chat
-#: (``trust_agent``), or every session's (``yolo``). An app-scoped caller may answer a pending
-#: approval once, which is what a companion that relays the owner's decision needs, and never
-#: with one of these (``chat_handlers.api_chat_session_approve``).
-STANDING_APPROVAL_ACTIONS = SESSION_APPROVAL_ACTIONS - {"approved", "rejected"}
+#: Why an app may not answer an approval raised in a conversation the app itself started — the
+#: refusal ``handlers/sessions.api_approval_resolve`` gives (the chat's own approve route is the
+#: owner's outright, in ``apps/permissions.ROUTE_AUTHZ``). The relay a companion runs there
+#: carries YOUR decision; in the app's own conversation the app answering would be the app
+#: deciding its own request, past whatever made that conversation ask (the operator ceiling, or
+#: an ``agent`` grant it no longer holds).
+APP_OWN_APPROVAL_REFUSAL = (
+    "an approval raised in a conversation this app started is yours to answer, not the app's"
+)
 
 #: How a pending approval ENDS — the ``outcome`` every ``approval_resolved`` frame carries. The
 #: first two are a person's answer. The last two are an approval ending with NO answer:
@@ -681,6 +684,13 @@ class DashboardApprovalState:
             return False
         self.decide_session_approval(session, request_id, "approved" if approved else "rejected")
         return True
+
+    def approval_conversation_app(self, approval_id: str) -> str:
+        """The app that started the conversation holding the pending approval *approval_id* (by its
+        REGISTRY id), or ``""`` — for one of your chats, and for an approval no chat holds."""
+        entry = self._pending_approvals.get(approval_id)
+        session = self._sessions.get(str(entry.get("session") or "")) if entry else None
+        return session.created_by_app if session is not None else ""
 
     def decide_session_approval(
         self, session: "_ChatSession", request_id: str, action: str

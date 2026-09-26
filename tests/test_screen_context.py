@@ -519,7 +519,18 @@ class TestRouteGate:
 
     @pytest.mark.asyncio
     async def test_app_tokens_cannot_capture_the_screen(self, tmp_path, monkeypatch):
+        # The route table's refusal (`ROUTE_AUTHZ`: both screen-frame writes are owner-only),
+        # driven through the REAL permission middleware for an installed app that DECLARED
+        # `/api/chat` — so it is refused as the owner's surface, not as an undeclared path.
+        from test_apps_cannot_run_code_or_bypass_approvals import _install
+
+        from personalclaw.apps import manager
+        from personalclaw.dashboard.chat import api_chat_screen_frame, api_chat_screen_frame_pin
+        from personalclaw.dashboard.server import app_permission_middleware
+
         _home(monkeypatch, tmp_path, enabled=True)
+        monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+        _install(tmp_path, "some-app", {"api": ["/api/chat"]})
         state = _make_state(tmp_path)
         _session(state)
 
@@ -528,19 +539,27 @@ class TestRouteGate:
             request["app"] = "some-app"
             return await handler(request)
 
-        from personalclaw.dashboard.chat import api_chat_screen_frame
-
-        app = web.Application(middlewares=[_as_app])
+        app = web.Application(middlewares=[_as_app, app_permission_middleware])
         app["state"] = state
         app.router.add_post("/api/chat/screen-frame", api_chat_screen_frame)
-        with patch("personalclaw.dashboard.chat_handlers.sel", MagicMock()):
+        app.router.add_post("/api/chat/screen-frame/pin", api_chat_screen_frame_pin)
+        rows = MagicMock()
+        with patch("personalclaw.sel.sel", return_value=rows):
             async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/chat/screen-frame",
-                    json={"session": "s1", "frame_b64": _frame_b64()},
-                )
-                assert resp.status == 403
+                for path in ("/api/chat/screen-frame", "/api/chat/screen-frame/pin"):
+                    resp = await client.post(
+                        path, json={"session": "s1", "frame_b64": _frame_b64()}
+                    )
+                    text = await resp.text()
+                    assert resp.status == 403, text
+                    assert "owner-only" in text and "screen" in text, text
         assert screen_context.pending("s1") is False
+        denied = [
+            c.kwargs
+            for c in rows.log_api_access.call_args_list
+            if c.kwargs.get("outcome") == "denied"
+        ]
+        assert [d["caller"] for d in denied] == ["app:some-app", "app:some-app"], denied
 
     @pytest.mark.asyncio
     async def test_unknown_session_and_bad_action(self, tmp_path, monkeypatch):

@@ -118,7 +118,18 @@ def _sel():
     return _pkg.sel()
 
 
-def _app_path_refusal(raw: str, *, tool: str) -> web.Response | None:
+#: What the file explorer lets an app reach, as its refusal says it.
+_EXPLORER_REACH = (
+    "an app reaches only the folders the file explorer shows it, and no credential file in them"
+)
+#: What ``/api/reveal`` lets an app reach, as its refusal says it (:func:`_in_app_data_folder`).
+_REVEAL_REACH = (
+    "an app reveals and opens only its own files — those in its data folder, and no credential "
+    "file"
+)
+
+
+def _app_path_refusal(raw: str, *, tool: str, reach: str = _EXPLORER_REACH) -> web.Response | None:
     """``403`` and a Security Event Log row when an APP asked for a path the explorer refuses it;
     ``None`` for the owner, whose refusal each endpoint answers exactly as before.
 
@@ -130,14 +141,15 @@ def _app_path_refusal(raw: str, *, tool: str) -> web.Response | None:
     on whether the file exists, so the ``403`` confirms no more than the ``400`` does.
 
     Called BEFORE an endpoint writes its own denial row, so an app's refusal is recorded once,
-    under the app's name, rather than as a dashboard request."""
-    message = _app_path_refusal_message(raw, tool=tool)
+    under the app's name, rather than as a dashboard request. *reach* is the sentence saying what
+    this surface lets an app reach, so the refusal names the rule it applied."""
+    message = _app_path_refusal_message(raw, tool=tool, reach=reach)
     if not message:
         return None
     return json_error("forbidden", message=message, status=403)
 
 
-def _app_path_refusal_message(raw: str, *, tool: str) -> str:
+def _app_path_refusal_message(raw: str, *, tool: str, reach: str = _EXPLORER_REACH) -> str:
     """Record an APP's refused path in the Security Event Log and return the sentence its ``403``
     carries; ``""`` for the owner, with nothing recorded. The half of
     :func:`_app_path_refusal` an endpoint with an error envelope of its own (the chunked upload's
@@ -163,10 +175,7 @@ def _app_path_refusal_message(raw: str, *, tool: str) -> str:
         )
     except Exception:
         logger.warning("SEL audit failed for a refused app file access", exc_info=True)
-    return (
-        "an app reaches only the folders the file explorer shows it, and no credential file in "
-        f"them — not {raw}"
-    )
+    return f"{reach} — not {raw}"
 
 
 def _path_home_pclaw() -> Path:
@@ -177,6 +186,28 @@ def _path_home_pclaw() -> Path:
         return _cd()
     except Exception:
         return Path.home() / ".personalclaw"
+
+
+def _in_app_data_folder(app_name: str, path: str) -> bool:
+    """Whether *path* lies inside *app_name*'s own data folder (``apps/<name>/data``).
+
+    The folder is the app's only with its ``storage`` grant, which is what hands its backend the
+    same directory (``apps/backend_runtime.py``), so an app without the grant has no folder here
+    either. Both sides go through ``realpath``, so a symlink planted inside the folder cannot point
+    a reveal back out of it. Read-only: the folder is resolved, never created.
+    """
+    from personalclaw.apps.manager import app_dir
+    from personalclaw.apps.permissions import checker_for
+
+    checker = checker_for(app_name)
+    if checker is None or not checker.can_use_storage():
+        return False
+    try:
+        root = os.path.realpath(str(app_dir(app_name) / "data"))
+    except ValueError:
+        return False
+    real = os.path.realpath(os.path.expanduser(path))
+    return real == root or real.startswith(root + os.sep)
 
 
 async def api_reveal_path(request: web.Request) -> web.Response:
@@ -195,7 +226,7 @@ async def api_reveal_path(request: web.Request) -> web.Response:
     if not path or ".." in Path(path).parts:
         return web.json_response({"error": "invalid path"}, status=400)
     if is_sensitive_path(path):
-        refused = _app_path_refusal(path, tool="reveal_path")
+        refused = _app_path_refusal(path, tool="reveal_path", reach=_REVEAL_REACH)
         if refused is not None:
             return refused
         _sel().log_tool_invocation(
@@ -208,6 +239,18 @@ async def api_reveal_path(request: web.Request) -> web.Response:
             metadata={"action": action},
         )
         return web.json_response({"error": "access denied"}, status=403)
+    # An APP reveals and opens only its own files. The dashboard roots are your workspace, uploads
+    # and outbox, and "reveal" puts one of them on your screen while "open" hands it to your
+    # default app for its type — a `.command` file runs in Terminal — so what an app may name is
+    # the one folder that is the app's: its data folder, which it has with its `storage` grant.
+    from personalclaw.apps.permissions import request_app
+
+    app_name = request_app()
+    if app_name and not _in_app_data_folder(app_name, path):
+        # Returns on every path: the owner-only root check below is skipped for an app, so a
+        # fall-through here would hand the path to `open`.
+        message = _app_path_refusal_message(path, tool="reveal_path", reach=_REVEAL_REACH)
+        return json_error("forbidden", message=message or _REVEAL_REACH, status=403)
     # 🔴 THE ROOT ALLOWLIST. This was the ONE files endpoint that skipped
     # `_validate_dashboard_path`, so `/etc/hosts` and another instance's home both answered 200
     # (#655) — and it gains nothing from the blocked-basename work, because that lives INSIDE the
@@ -223,11 +266,8 @@ async def api_reveal_path(request: web.Request) -> web.Response:
     #
     # Non-breaking for the product: the only caller is the explorer's "Reveal in Finder" button,
     # which passes an `entry.path` the explorer itself enumerated — and the explorer cannot leave
-    # the roots.
-    if _validate_dashboard_path(path) is None:
-        refused = _app_path_refusal(path, tool="reveal_path")
-        if refused is not None:
-            return refused
+    # the roots. (Yours: an app was held to its own data folder above.)
+    if not app_name and _validate_dashboard_path(path) is None:
         _sel().log_tool_invocation(
             session_key="api",
             source="api",

@@ -77,6 +77,19 @@ chat, channel thread, loop worker, webhook, subagent).
   marker goes to live readers only (`signal_done`). An approval is written once
   it is decided. The save records `message_count` in the metadata line, which
   `ConversationLog.list_sessions` serves as the chat list's count.
+- **Who started a conversation.** `_ChatSession.created_by_app` is the app whose
+  token started it, or empty for yours, and it is the one thing an app's reach
+  into a conversation is decided on (`apps/permissions.ROUTE_AUTHZ` rows that
+  carry `owns`, enforced by `dashboard/server.py::app_permission_middleware`).
+  It is set only from a verified app identity, written to the metadata line as
+  `created_by_app`, and read back in `DashboardState.get_or_create_session`, the
+  one place every restore path mints a session, so a restart keeps an app's
+  conversation the app's and never makes one of yours an app's. It is not
+  `_app`: that is an origin tag (`loop`, a channel's provider name, an app's
+  name) saying where a conversation came from, which the chat list groups by,
+  and an app can share its name. An app's conversation runs under the app's
+  `agent` grant, never under your approval switches, whoever sends the message
+  (`chat_runner.app_conversation_posture`).
 
 ## The dashboard chat pipeline
 
@@ -141,8 +154,9 @@ on the message.
 ## Forking
 
 `dashboard/chat_fork.py` — `POST /api/chat/sessions/{session}/fork` copies a
-session into a new tab. App-scoped callers may only fork sessions they own
-(the `app` claim is checked; unscoped sessions are denied to apps).
+session into a new tab. An app may fork only a conversation it started (its
+`ROUTE_AUTHZ` row carries `owns`, checked against `created_by_app`), and the
+fork is the app's too; one of yours is refused to every app.
 
 ## The session map (in-session index) + per-turn telemetry
 
