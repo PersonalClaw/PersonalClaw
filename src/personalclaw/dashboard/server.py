@@ -1525,6 +1525,11 @@ async def start_dashboard(
     app.router.add_get("/api/sandbox/providers", handlers.api_sandbox_providers)
 
     # Channels (comms transports) — management surface over registered transports
+    from personalclaw.dashboard.handlers.channel_owner import (
+        api_channel_owner,
+        api_channel_owner_pairing_cancel,
+        api_channel_owner_pairing_start,
+    )
     from personalclaw.dashboard.handlers.channel_trust import (
         api_channel_trust,
         api_channel_trust_revoke,
@@ -1550,6 +1555,10 @@ async def start_dashboard(
     app.router.add_post("/api/channels/{name}/connect", api_channel_connect)
     app.router.add_post("/api/channels/{name}/disconnect", api_channel_disconnect)
     app.router.add_post("/api/channels/{name}/test", api_channel_test)
+    # A channel's owner: who core reaches you as there, and pairing it from its Configure page.
+    app.router.add_get("/api/channels/{name}/owner", api_channel_owner)
+    app.router.add_post("/api/channels/{name}/owner/pairing", api_channel_owner_pairing_start)
+    app.router.add_delete("/api/channels/{name}/owner/pairing", api_channel_owner_pairing_cancel)
 
     # Agent Rooms — shared transcripts several bound agents deliberate in. Gated by
     # `rooms.enabled` inside each handler rather than by skipping registration, so

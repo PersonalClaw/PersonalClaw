@@ -220,6 +220,19 @@ What that one call gets you, and what you must not re-implement:
   the same key. `CRED_OWNER_ID` is the one key every channel used to share — setting up a
   second channel overwrote the first one's owner — and `owner_id_for` falls back to it only
   while your channel has none of its own.
+- **Pairing the owner from the dashboard.** Declare `ChannelCapabilities(owner_pairing=True)`
+  when your DMs cross `deliver_channel_inbound` and you read your owner with `owner_id_for`
+  every time you need it (never keep the value from `start_inbound`). Your channel's Configure
+  page then offers **Pair as owner**: it shows an 8-digit code, the owner sends it to your bot
+  in a DM, and core redeems it at the door — storing the sender under
+  `owner_id_credential(PROVIDER)` and trusting them — and returns
+  `reason == "owner_paired"` with a canned reply your transport delivers like any other. Five
+  wrong codes cancel the code. Without the flag the page shows only who your channel reaches.
+- **A DM that is one conversation.** Declare `dm_thread_is_channel=True` when every message in
+  a DM reaches core with the DM's channel id as its `thread_id` (Telegram's chat id, a Discord
+  DM channel). A chat the owner hands to your channel from its menu ("Continue on …") is then
+  linked to the DM itself, so the owner's next message there continues it; otherwise it is
+  linked to the thread the handoff opened.
 - **Refuse an owner id you cannot reach.** An owner notification (a heartbeat or cron result,
   a hook result, a file, `send-message`) tries every connected channel in name order until one
   delivers it (`channel_delivery.reach_owner`). Your channel is passed over when it has no

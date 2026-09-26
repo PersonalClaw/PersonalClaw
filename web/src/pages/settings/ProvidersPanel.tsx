@@ -103,15 +103,14 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   const { data: channelsData, refresh: refreshChannels } = useQuery(
     'settings:channels', () => api.channels().catch(() => [] as ChannelRuntime[]), { persist: true },
   )
-  const channelByName = useMemo(() => {
+  // The channel *provider* is the app (`slack-channel`) and the channel *runtime* its transport
+  // (`slack`): the gateway names the app each channel came from, so the card finds its channel by
+  // that rather than by guessing from the app's name.
+  const channelByApp = useMemo(() => {
     const m = new Map<string, ChannelRuntime>()
-    for (const c of channelsData ?? []) m.set(c.name, c)
+    for (const c of channelsData ?? []) if (c.app) m.set(c.app, c)
     return m
   }, [channelsData])
-  // The channel *provider* is named e.g. `slack-channel` while the channel *runtime*
-  // is `slack` — match exactly, else on the name with a trailing `-channel` stripped.
-  const matchChannel = (providerName: string, map: Map<string, ChannelRuntime>): ChannelRuntime | undefined =>
-    map.get(providerName) ?? map.get(providerName.replace(/-channel$/, ''))
   // A forced readiness recheck (manual / post-sign-in) takes precedence over the
   // cached snapshot until the next revalidate folds it back in.
   const [runtimeOverride, setRuntimeOverride] = useState<AgentRuntime[] | null>(null)
@@ -214,7 +213,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
             {type !== 'agent' && type !== 'model' && type !== 'action' && exts.map((ext) => (
               ext.provider?.multiInstance
                 ? <MultiInstanceCard key={ext.name} ext={ext} onChanged={reload} />
-                : <ProviderCard key={ext.name} ext={ext} channel={type === 'channel' ? matchChannel(ext.name, channelByName) : undefined}
+                : <ProviderCard key={ext.name} ext={ext} channel={type === 'channel' ? channelByApp.get(ext.name) : undefined}
                     open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onChannelChanged={refreshChannels} />
             ))}
           </EntitySection>

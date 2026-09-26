@@ -84,14 +84,14 @@ async def handoff_to_channel(
     session_key: str,
     title: str = "",
     channel: str | None = None,
-    sessions: object | None = None,
 ) -> str | None:
-    """Hand off a dashboard session to a new channel DM thread.
+    """Post a dashboard session's opening into a channel — the owner's DM, or ``channel``.
 
-    Links the session via ``set_channel_link`` so bidirectional sync works.
     Delivers through the provider-agnostic :class:`ChannelDelivery` (open_dm +
     deliver_text) — core never touches a vendor client. Returns the thread_ts,
-    or None on failure.
+    or None on failure. Linking the chat to the conversation a reply arrives in is the
+    handoff route's (``dashboard.chat_channel``): the key is the channel's to decide, and
+    the link this used to record here was one the guarded door never read.
     """
     messages = conversation_log.read_messages(session_key)
     if not messages:
@@ -116,19 +116,10 @@ async def handoff_to_channel(
 
     try:
         target_channel = channel or await delivery.open_dm(owner_id)
-        thread_ts = await delivery.deliver_text(
+        return await delivery.deliver_text(
             target_channel,
             f"📲 *{title}*\n>{preview}\n\n_Reply to continue this session._",
         )
-
-        # Link via SessionMap instead of symlink
-        if sessions and hasattr(sessions, "set_channel_link"):
-            try:
-                sessions.set_channel_link(session_key, thread_ts, target_channel)  # type: ignore[union-attr]  # noqa: E501
-            except Exception:
-                logger.warning("Channel thread created but session link failed", exc_info=True)
-
-        return thread_ts
     except Exception:
         logger.warning("Handoff to channel failed", exc_info=True)
         return None
