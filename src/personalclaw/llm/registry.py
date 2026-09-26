@@ -565,7 +565,11 @@ def sync_entries_from_config() -> int:
                 ptype,
                 name,
             )
-        options = dict(p.get("options") or {})
+        # LOGICAL options: a secret field on disk is a `{{secret:…}}` reference into the
+        # credential store, and the provider factory reads the value, not the pointer.
+        from personalclaw.config.secret_refs import resolve as _resolve_secrets
+
+        options = _resolve_secrets(p.get("options") or {})
         if ptype != registry_type:
             options["_original_type"] = ptype
         try:

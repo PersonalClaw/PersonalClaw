@@ -232,10 +232,18 @@ _ensured_dirs: set[str] = set()
 
 
 def _ensure_dir(p: Path) -> Path:
-    """mkdir ``p`` once per process (idempotent, syscall only on first sight)."""
+    """Create the home ``p`` once per process — PRIVATE (0700) when this call creates it.
+
+    The home holds the credential store and every settings file, so a new one is 0700 like
+    ``~/.ssh``. An EXISTING home is never re-moded here: this runs whenever the home is
+    RESOLVED, including from module constants at import time, so a chmod here would change
+    whatever home an import happened to resolve — the developer's real one during test
+    collection. A loose home from an earlier release is tightened on the WRITE path instead,
+    the first time a file is written into it (:func:`personalclaw.atomic_write.ensure_private_dir`).
+    """
     key = str(p)
     if key not in _ensured_dirs:
-        p.mkdir(parents=True, exist_ok=True)
+        p.mkdir(mode=0o700, parents=True, exist_ok=True)
         _ensured_dirs.add(key)
     return p
 
@@ -4816,13 +4824,17 @@ class AppConfig:
             if val:
                 creds[key] = val
 
-        # Propagate credentials into the process environment so spawned children
+        # Propagate NAMED credentials into the process environment so spawned children
         # (sandboxed agents, MCP servers, cron-fired subprocesses) inherit them
         # via Popen's default env=os.environ.copy() — even when their view of
         # ~/.personalclaw/.env is a bind-mounted empty file. setdefault() preserves
-        # any value the caller already set explicitly.
+        # any value the caller already set explicitly. An OWNED key (a provider's or an
+        # app setting's secret) is read only through its settings reference, so it is
+        # never exported — see `config.credentials.OWNED_KEY_PREFIX`.
+        from personalclaw.config.credentials import is_owned_key
+
         for k, v in creds.items():
-            if v:
+            if v and not is_owned_key(k):
                 os.environ.setdefault(k, v)
 
         return creds

@@ -303,7 +303,10 @@ hand. This is a separate switch from `updates.auto`: one governs whether Persona
 - **Run it permanently** — `personalclaw service install` registers a systemd
   unit (Linux) or launchd agent (macOS) so the gateway survives reboots.
 - **Back it up** — `personalclaw snapshot` creates a portable state archive;
-  `personalclaw restore` brings it back.
+  `personalclaw restore` brings it back. The archive never contains a credential: API keys
+  and app tokens stay in this machine's credential store (the OS keychain, or
+  `~/.personalclaw/.env` at mode 0600), and settings carry only references to them — so a
+  restore onto a new machine asks you to enter the keys again.
 
 ## Reference docs
 

@@ -6,7 +6,7 @@ import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin, AlertTriangle,
-  Boxes, Package, Store,
+  Boxes, Package, Store, KeyRound,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -1760,7 +1760,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
                 <div data-type="body-s" className="text-on-surface">Force uninstall</div>
                 <div data-type="label-s" className="mt-0.5 text-on-surface-low">
                   Remove this app's files <span className="text-on-surface">and everything it stored for you</span> — notes, history,
-                  logs. Deactivate keeps the files; Uninstall removes them and keeps your data. This can't be undone.
+                  logs, saved credentials. Deactivate keeps the files; Uninstall removes them and keeps your data, but not its saved credentials. This can't be undone.
                 </div>
                 <Button variant="danger" size="sm" className="mt-2" onClick={() => setConfirmUninstall(true)}>
                   <Trash2 size={15} /> Force uninstall
@@ -2028,6 +2028,19 @@ export function RemoveAppModal({ name, onClose, onDone }: { name: string; onClos
             )}
           </div>
         </div>
+        {/* The data is kept; the credentials are NOT. Both removal rungs delete what the app keeps
+            in the credential store (`app_manager.force_uninstall` → `secret_refs.purge`), so
+            "your data is kept" must not be read as "your tokens are kept". Stated only when the
+            preview counted some — a count of names, no value on the wire. */}
+        {!!facts?.secrets && (
+          <div className="flex items-start gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
+            <KeyRound size={15} className="mt-0.5 shrink-0 text-on-surface-low" />
+            <div data-type="body-s" className="min-w-0 text-on-surface-low">
+              <span className="text-on-surface">{facts.secrets === 1 ? 'Its saved credential is deleted' : `Its ${facts.secrets} saved credentials are deleted`}</span>
+              {' '}— the tokens and keys entered in its settings. Reinstall it and you enter {facts.secrets === 1 ? 'it' : 'them'} again.
+            </div>
+          </div>
+        )}
         <KeptDepsList kept={kept} />
         {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-2">
@@ -2091,6 +2104,9 @@ export function UninstallModal({ name, onClose, onDone }: { name: string; onClos
           {facts?.present && facts.entries > 0
             ? <>, <span className="text-danger">including the {facts.entries} {facts.entries === 1 ? 'item' : 'items'} it stored for you</span></>
             : <> and anything it stored for you</>}
+          {facts?.secrets
+            ? <>, and <span className="text-danger">{facts.secrets === 1 ? 'the credential' : `the ${facts.secrets} credentials`} saved for it</span></>
+            : null}
           {' '}— it cannot be undone. To keep your data, use <span className="text-on-surface">Uninstall</span>;
           to just turn the app off and leave everything on disk, use <span className="text-on-surface">Deactivate</span>.
           {kept.length > 0 && ' Shared dependencies still used by other apps will be kept.'}

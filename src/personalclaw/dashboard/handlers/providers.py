@@ -20,6 +20,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.config import secret_refs
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import RequestValidationError, require_string
 
@@ -41,14 +42,29 @@ _readiness_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 async def api_providers_list(request: web.Request) -> web.Response:
     """GET /api/model-providers — list configured model-provider entries.
 
-    Returns ``{providers: [{name, type, model, capabilities, credential_status}]}``.
-    ``credential_status`` is ``"ok"``, ``"missing"``, or ``"unconfigured"``
-    (when no credential is declared).  No secret values are included.
+    Returns ``{providers: [{name, type, model, capabilities, credential_status,
+    stored_secrets}]}``. ``credential_status`` is ``"ok"``, ``"missing"``, or
+    ``"unconfigured"`` (when no credential is declared). ``stored_secrets`` names the
+    option fields whose value this instance keeps in the credential store — by NAME, so
+    the delete dialog can say the key goes with it. No secret values are included.
     """
+    import json as _json
+
+    from personalclaw.config.loader import config_path
     from personalclaw.llm.registry import get_default_registry
 
     registry = get_default_registry()
     entries = registry.list_entries()
+    try:
+        document = _json.loads(config_path().read_text(encoding="utf-8"))
+        records = document.get("providers") if isinstance(document, dict) else None
+    except (OSError, ValueError):
+        records = None
+    stored_options = {
+        str(p.get("name")): p.get("options") or {}
+        for p in (records if isinstance(records, list) else [])
+        if isinstance(p, dict)
+    }
 
     result: list[dict[str, Any]] = []
     for entry in entries:
@@ -92,6 +108,9 @@ async def api_providers_list(request: web.Request) -> web.Response:
                 "model": entry.model,
                 "capabilities": capabilities,
                 "credential_status": cred_status,
+                "stored_secrets": secret_refs.owned_field_names(
+                    stored_options.get(entry.name), secret_refs.provider_owner(entry.name)
+                ),
             }
         )
 
@@ -110,18 +129,14 @@ async def api_provider_types(request: web.Request) -> web.Response:
     (JSON Schema + x-meta) so the form renders the right fields (api_key / region /
     endpoint enum / …) without the frontend knowing the provider.
     """
-    from personalclaw.providers.registry import get_provider_registry
+    from personalclaw.providers.registry import get_provider_registry, model_provider_type
 
     reg = get_provider_registry()
     seen: set[str] = set()
     types: list[dict[str, Any]] = []
     for ext in reg.list_by_type("model"):
         cfg = ext.provider_config
-        # The CONCRETE type the app registers into the LLM registry (what
-        # api_provider_create expects) is ``providerType`` — NOT ``cfg.type``,
-        # which is the entity CLASS "model". Fall back to the app-name stem only
-        # if the manifest doesn't declare it.
-        ptype = cfg.providerType or ext.manifest.name.replace("-models", "")
+        ptype = model_provider_type(ext)
         if not ptype or ptype in seen or ptype == "acp_agent":
             continue
         seen.add(ptype)
@@ -872,12 +887,24 @@ async def api_provider_create(request: web.Request) -> web.Response:
         # clear semantics) — on a first create there is nothing yet to clear, so a `None`
         # here means only "store nothing for it", never a literal JSON `null` on disk.
         options = {k: v for k, v in options.items() if v is not None} if options else {}
+        # The key the user typed goes to the credential store; the document gets a
+        # `{{secret:…}}` reference to it. Writing `options` verbatim is how the key landed in
+        # config.json in plaintext — world-readable, and in every snapshot and export.
+        try:
+            stored = secret_refs.store_provider_options(name, ptype, options)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
         entry: dict = {"name": name, "type": ptype, "model": model}
-        if options:
-            entry["options"] = options
+        if stored:
+            entry["options"] = stored
         providers.append(entry)
 
-        atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
+        try:
+            atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
+        except BaseException:
+            # Nothing references the secret stored above; do not leave it behind.
+            secret_refs.purge([secret_refs.provider_owner(name).prefix])
+            raise
 
     from personalclaw.llm.registry import (
         ProviderEntry,
@@ -972,6 +999,9 @@ async def api_provider_update(request: web.Request) -> web.Response:
 
         if "model" in body:
             target["model"] = body["model"]
+        # Before `options`: which fields are secret is the TYPE's app's declaration.
+        if "type" in body:
+            target["type"] = body["type"]
         if "options" in body:
             # A plain `dict.update()` can only ADD or OVERWRITE a key that is PRESENT in
             # the incoming options — it has no way to express "remove this key", so an
@@ -981,16 +1011,26 @@ async def api_provider_update(request: web.Request) -> web.Response:
             # `None` value is the client's explicit "clear this field", distinct from the
             # key being absent from the payload at all (leave whatever is stored alone) —
             # so absence still means "unchanged" and only an explicit `null` deletes.
-            stored_options = target.setdefault("options", {})
+            #
+            # The merge runs on the LOGICAL options (references resolved), and the result is
+            # stored back through the credential store: a rotated key replaces the stored one,
+            # a cleared key is deleted from the store, an untouched one is left where it is.
+            previous = target.get("options") or {}
+            logical = secret_refs.resolve(previous)
             for key, value in body["options"].items():
                 if value is None:
-                    stored_options.pop(key, None)
+                    logical.pop(key, None)
                 else:
-                    stored_options[key] = value
-        if "type" in body:
-            target["type"] = body["type"]
+                    logical[key] = value
+            try:
+                target["options"] = secret_refs.store_provider_options(
+                    name, str(target.get("type") or ""), logical, previous
+                )
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=400)
 
         atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
+        logical_options = secret_refs.resolve(target["options"]) if "options" in target else None
 
     from personalclaw.llm.registry import get_default_registry
 
@@ -998,11 +1038,12 @@ async def api_provider_update(request: web.Request) -> web.Response:
     try:
         existing = registry.get_entry(name)
         # ProviderEntry is a frozen dataclass — build a replacement and re-register
-        # (register_entry is idempotent-by-name, so drop the old one first).
+        # (register_entry is idempotent-by-name, so drop the old one first). The entry
+        # carries the LOGICAL options: a factory reads `api_key` from it, not a reference.
         updated = _dataclasses.replace(
             existing,
             model=target.get("model", existing.model),
-            options=target.get("options", existing.options),
+            options=existing.options if logical_options is None else logical_options,
         )
         registry.unregister_entry(name)
         registry.register_entry(updated)
@@ -1036,6 +1077,9 @@ async def api_provider_delete(request: web.Request) -> web.Response:
             return web.json_response({"error": "not found"}, status=404)
 
         atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
+        # The key this instance owned goes with it. A reference it held to a Secrets-panel
+        # credential is not owned, so that credential stays for whatever else uses it.
+        secret_refs.purge([secret_refs.provider_owner(name).prefix])
 
     from personalclaw.llm.registry import get_default_registry
 
@@ -1101,7 +1145,7 @@ async def api_provider_test(request: web.Request) -> web.Response:
             p = next((p for p in data.get("providers", []) if p.get("name") == name), None)
             if not p:
                 return web.json_response({"error": "not found"}, status=404)
-            options = p.get("options") or {}
+            options = secret_refs.resolve(p.get("options") or {})
             # ``_original_type`` preserves the branded config type; the registry type
             # (openai/anthropic/…) is what a catalog is keyed on.
             ptype = options.get("_original_type") or p.get("type", "")

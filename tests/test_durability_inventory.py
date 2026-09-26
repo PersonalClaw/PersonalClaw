@@ -389,52 +389,49 @@ class TestTheGuardMeetsARealHome:
             assert derived_id not in backed_up
 
 
-class TestProviderCredentialsAreCarried:
-    """Issue 2217. `credentials.json` — the provider credential descriptors `CredentialStore`
-    writes 0600 — was neither claimed nor ignored, so `personalclaw snapshot` omitted it and a
-    restore came back with every model provider's key gone.
+class TestProviderCredentialsStayOnThisMachine:
+    """`credentials.json` — the provider credential descriptors `CredentialStore` writes 0600.
 
-    That is the same asset issue 951 destroyed from the other side (a `config set` dropping
-    `providers[]` with the keys in it), and the command the pre-1.0 release notes tell users to
-    run *before upgrading* did not carry it either. Declared rather than pinned as census debt
-    because the decision needs no guess: the issue body states it outright ("`credentials.json`
-    must be **declared** … while staying **excluded from export**"), and `secret=True` supplies
-    both halves — `backup_entries()` keeps secrets, `export_entries()` drops them. Same posture,
-    and the same argument, as `auth` (#130).
+    Issue 2217 declared it (it was neither claimed nor ignored, so `audit_home()` flagged it) and
+    made snapshots CARRY it, so a restore returned every provider key. That second half is
+    reversed on purpose: a descriptor can hold an inline `value`, a snapshot is a file that gets
+    copied off the machine, and no credential value travels in an archive any more — a snapshot
+    carries the settings that USE a key as `{{secret:…}}` references (`config.secret_refs`), and
+    the credential store stays here (`credential=True`).
     """
 
     def test_the_provider_credential_file_is_declared(self):
         entry = inv.claim_for("credentials.json")
-        assert entry is not None, "credentials.json is unclaimed — snapshot will not carry it"
+        assert entry is not None, "credentials.json is unclaimed — audit_home() will flag it"
         assert entry.id == "provider_credentials"
         assert entry.secret is True, "provider credentials must never leave the machine"
+        assert entry.credential is True
 
-    def test_a_snapshot_carries_it_and_an_export_does_not(self):
-        """The two projections, asserted together: a secret that exported would be worse than
-        one that is missed, and a secret that no snapshot carries is the data loss this closes.
-        """
-        assert "credentials.json" in {e.path for e in inv.backup_entries()}
+    def test_neither_a_snapshot_nor_an_export_carries_it(self):
+        assert "credentials.json" not in {e.path for e in inv.backup_entries()}
         assert "credentials.json" not in {e.path for e in inv.export_entries()}
         assert "credentials.json" in inv.secret_paths()
 
-    def test_a_named_snapshot_component_stages_it(self):
-        """At snapshot's own call site, not just in the manifest.
+    def test_no_credential_store_file_is_a_snapshot_entry(self):
+        """The whole store, not just the descriptor file: `.env` is where a key typed in
+        Settings now lives, and `.env.pre-keychain` is a second copy of every one."""
+        backed_up = {e.path for e in inv.backup_entries()}
+        for path in (".env", ".env.pre-keychain", "credentials", ".local_secret"):
+            assert path not in backed_up, path
 
-        The `security` component and not `everything`, deliberately: secrets are excluded from
-        the generic restore pass (`_extra_restore_paths`), so an entry that rode `everything`
-        would be captured and then never returned. This component is the documented exception,
-        copy-if-missing at 0600.
-        """
+    def test_no_named_snapshot_component_stages_it(self):
+        """At snapshot's own call site too: `CORE_FILES` is copied verbatim, manifest or not."""
         from personalclaw.snapshot import CORE_FILES
 
-        assert "credentials.json" in CORE_FILES["security"]
+        staged = {f for files in CORE_FILES.values() for f in files}
+        assert "credentials.json" not in staged
 
-    def test_the_component_help_names_it(self):
-        """The picker's own description is the surface a user chooses components from — a
-        component that silently carries one more secret than it says it does is a bad prompt."""
+    def test_the_component_help_says_no_credential_is_captured(self):
+        """The picker's own description is the surface a user chooses components from."""
         from personalclaw.snapshot import COMPONENT_HELP
 
-        assert "credentials.json" in COMPONENT_HELP["security"]
+        assert "credentials.json" not in COMPONENT_HELP["security"]
+        assert "no credential" in COMPONENT_HELP["security"]
 
     def test_the_merge_strategy_is_unreachable_for_a_secret(self):
         """WHY declaring this one is not the guess the issue warns against.

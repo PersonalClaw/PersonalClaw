@@ -153,11 +153,14 @@ class TestResolvePrimitive:
         """The recoverable-not-transactional claim, exercised: a store write that lands while
         the queue update fails reports a refusal and stays re-appliable."""
         rec = _seed_conflict(home)
-        monkeypatch.setattr(conflicts_mod.ConflictQueue, "update", lambda self, r: False)
-        first = resolver.resolve_conflict(home, rec.id, resolver.CHOICE_TAKE_REMOTE)
+        # A `monkeypatch.context()`, NOT `monkeypatch.undo()`: undo() drops every patch on the
+        # shared monkeypatch — this file's `home` pins and conftest's `config_dir` isolation
+        # included — so the second resolve ran against the real ~/.personalclaw.
+        with monkeypatch.context() as m:
+            m.setattr(conflicts_mod.ConflictQueue, "update", lambda self, r: False)
+            first = resolver.resolve_conflict(home, rec.id, resolver.CHOICE_TAKE_REMOTE)
         assert not first.ok and first.code == "write_failed"
         assert json.loads((home / "tasks" / "t1.json").read_text())["title"] == "theirs"
-        monkeypatch.undo()
         second = resolver.resolve_conflict(home, rec.id, resolver.CHOICE_TAKE_REMOTE)
         assert second.ok
         assert json.loads((home / "tasks" / "t1.json").read_text())["title"] == "theirs"

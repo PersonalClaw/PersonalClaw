@@ -113,4 +113,21 @@ describe('the middle removal rung exists as a real control (issue 2541)', () => 
     // …and it is an alert, so a screen reader is told rather than shown.
     expect(code).toMatch(/role="alert"/)
   })
+
+  it('says the saved credentials are deleted — "your data is kept" is not "your tokens are kept"', () => {
+    // Both removal rungs delete what the app keeps in the credential store: the keep-data rung
+    // delegates its removal to `force_uninstall`, which purges the app's owned keys. So the
+    // keep-data dialog must not let "Your data is kept" stand as a promise about tokens. Gated on
+    // the preview's count (names only), so it is claimed only when there is something to delete.
+    expect(api).toContain('secrets?: number')
+    expect(code).toMatch(/!!facts\?\.secrets &&/)
+    expect(code).toContain('saved credential is deleted')
+    const py = readFileSync(resolve(__dirname, '../../../../src/personalclaw/apps/app_manager.py'), 'utf8')
+    const force = py.slice(py.indexOf('def force_uninstall'), py.indexOf('def _manifest_of'))
+    expect(force, 'the rung the dialog describes really purges').toMatch(
+      /secret_refs\.purge\(secret_refs\.app_owned_prefixes\(name\)\)/,
+    )
+    const keep = py.slice(py.indexOf('def uninstall_keep_data'), py.indexOf('def force_uninstall'))
+    expect(keep, 'and the keep-data rung reaches it').toMatch(/if not force_uninstall\(name, caller=caller\)/)
+  })
 })

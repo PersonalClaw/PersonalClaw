@@ -1948,19 +1948,26 @@ def describe_app_data(name: str) -> dict[str, Any]:
     empty means a keep-data uninstall will REFUSE (#2585), so the dialog states that and
     where the copies are instead of letting the user press a button whose only feedback is
     a ``False`` the HTTP layer renders as "not installed".
+
+    ``secrets`` counts the credentials this app keeps in the credential store (its settings'
+    tokens, its instances' keys). Both removal rungs delete them, the keep-data one included,
+    so the dialog can say so before the click. A count of key NAMES — no value is read.
     """
+    from personalclaw.config import secret_refs
+
     try:
         data = app_dir(name) / _APP_DATA_DIRNAME
         parked = str(_preserved_data_dir(name))
         unconsumed = [str(p) for p in _unconsumed_data_copies(name)]
     except ValueError:
-        return {"present": False, "entries": 0, "path": "", "unconsumed": []}
+        return {"present": False, "entries": 0, "path": "", "unconsumed": [], "secrets": 0}
     present = data.is_dir()
     return {
         "present": present,
         "entries": _dir_entry_count(data) if present else 0,
         "path": parked,
         "unconsumed": unconsumed,
+        "secrets": secret_refs.count_owned(secret_refs.app_owned_prefixes(name)),
     }
 
 
@@ -2290,7 +2297,19 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     # thing it could previously miss.
     _discard_preserved_data(name)
     _collect_app_packages()
-    _audit("force_uninstall", "ok", name, caller=caller)
+    # The app's secrets — its settings' tokens and its instances' keys — live in the
+    # credential store, not in data/, so removing files alone would leave them behind with
+    # nothing referencing them. Both removal rungs end here (the keep-data rung delegates its
+    # removal to this function), so a keep-data uninstall keeps the user's data and still
+    # drops the credentials: its parked settings hold references that resolve to "unset",
+    # and a reinstall asks for the tokens again. Deactivate (`uninstall`) keeps them, like
+    # it keeps every file.
+    from personalclaw.config import secret_refs
+
+    secrets_removed = secret_refs.purge(secret_refs.app_owned_prefixes(name))
+    _audit(
+        "force_uninstall", "ok", name, caller=caller, detail=f"secrets_removed={secrets_removed}"
+    )
     return True
 
 

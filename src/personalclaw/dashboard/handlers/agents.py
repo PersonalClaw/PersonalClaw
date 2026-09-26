@@ -11,6 +11,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.edit_spec import (
     ConfigValueError,
@@ -407,8 +408,8 @@ async def api_agent_config(request: web.Request) -> web.Response:
                 pc_cfg["removedTools"] = removed_per_key
             else:
                 pc_cfg.pop("removedTools", None)
-            pc_cfg_path.write_text(json.dumps(pc_cfg, indent=2) + "\n", encoding="utf-8")
-            installed_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+            atomic_write(pc_cfg_path, json.dumps(pc_cfg, indent=2) + "\n")
+            atomic_write(installed_path, json.dumps(config, indent=2) + "\n")
             # Restart ACP agent sessions so new config takes effect
             await _h._reset_all_sessions(request)
             return web.json_response({"ok": True, "applied": True})
@@ -471,8 +472,7 @@ async def api_default_agent(request: web.Request) -> web.Response:
         data["default_agent"] = name
         if isinstance(data.get("agent"), dict):
             data["agent"].pop("default_agent", None)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        atomic_write(path, json.dumps(data, indent=2) + "\n")
         return web.json_response({"ok": True, "default_agent": name})
     cfg = AppConfig.load()
     return web.json_response({"default_agent": cfg.default_agent})

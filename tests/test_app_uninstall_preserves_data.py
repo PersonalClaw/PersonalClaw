@@ -450,6 +450,7 @@ def test_describe_app_data_separates_present_from_entries(tmp_path):
         "entries": 0,
         "path": "",
         "unconsumed": [],
+        "secrets": 0,
     }
 
 

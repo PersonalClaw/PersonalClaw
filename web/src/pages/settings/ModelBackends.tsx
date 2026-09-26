@@ -157,12 +157,17 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
     //   2. `_drop_provider_active_models(name)` removes EVERY active-model ref for it across EVERY use
     //      case, so a use case pointed at one of its models silently loses that choice. That is the
     //      user's configuration changing, not just a capability going away, and nothing else says so;
-    //   3. does NOT touch the credential store. Worth stating because it is actionable — a user who
-    //      removes a provider to revoke access still has the key saved — and because the app's house
-    //      style pairs what goes with what stays. Conditional on `credential_status`, which the row
-    //      already renders as a badge, so it is only claimed when a credential really is stored.
+    //   3. deletes the key(s) this instance kept in the credential store — `secret_refs.purge` of the
+    //      instance's own prefix. Worth stating because it is actionable: removing a provider revokes
+    //      the key saved for it, and adding it back means entering the key again. Conditional on
+    //      `stored_secrets` (names only, from the list route), so it is only claimed when a key really
+    //      is stored — and a reference the instance held to a Secrets-panel credential is neither
+    //      counted there nor deleted, so the sentence never overstates what goes.
     const selections = ' Any use case set to one of its models loses that selection.'
-    const key = provider.credential_status === 'ok' ? ' Its saved credential stays in the store.' : ''
+    const saved = provider.stored_secrets?.length ?? 0
+    const key = saved === 0 ? '' : saved === 1
+      ? ' The key saved for it is deleted too.'
+      : ` The ${saved} credentials saved for it are deleted too.`
     if (!(await confirmDelete('provider', provider.name, {
       body: `Models it provides will no longer be available.${selections}${key}`,
     }))) return

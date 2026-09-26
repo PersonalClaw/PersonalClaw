@@ -478,10 +478,11 @@ def openai_family_providers() -> list[dict[str, str]]:
     providers = data.get("providers") if isinstance(data, dict) else None
     if not isinstance(providers, list):
         return []
+    from personalclaw.config.secret_refs import resolve_provider_records
+
     out: list[dict[str, str]] = []
-    for p in providers:
-        if not isinstance(p, dict):
-            continue
+    # Resolved: the adapters authenticate with the stored key, not its `{{secret:…}}` reference.
+    for p in resolve_provider_records(providers):
         name = str(p.get("name", ""))
         ptype = str(p.get("type", ""))
         if not name or ptype not in OPENAI_FAMILY_TYPES:

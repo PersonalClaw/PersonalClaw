@@ -1659,6 +1659,17 @@ async def start_dashboard(
     from personalclaw.providers.routes import register_routes as register_extension_routes
 
     load_all_extensions()
+    # Move any secret an earlier release left inline in a settings file (a provider key in
+    # config.json, an app's tokens in its data/config.json, an instance's key) into the
+    # credential store. HERE: after extensions load, so every app's declared-sensitive fields
+    # are known, and before the registry sync below reads config.json. Idempotent and
+    # fail-safe per file — a key it cannot move keeps working where it is.
+    from personalclaw.config.secret_refs import migrate_plaintext_secrets
+
+    try:
+        migrate_plaintext_secrets()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving plaintext secrets into the credential store failed", exc_info=True)
     # Sync config.json provider entries into the LLM registry IMMEDIATELY after
     # extensions load (types are now registered). Must happen BEFORE any handler
     # resolves a provider (e.g. embedding/knowledge auto-embed at boot).
