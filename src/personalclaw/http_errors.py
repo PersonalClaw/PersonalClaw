@@ -100,6 +100,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── the owner's security posture (config/edit_spec.py) ──
+    # An app-scoped caller wrote a field holding a `SecurityControl`, or answered an approval
+    # with a standing grant. 403 in either direction: the field is the owner's to change, and
+    # the message names it so the app's developer reads a policy rather than a bug.
+    "security_setting_owner_only": (
+        "The field is a security setting only the owner can change; an app cannot, in either "
+        "direction."
+    ),
     # ── session deletion (dashboard/handlers/sessions.py) ──
     # A LIVE session carries no history file, so `delete_session` declines it. That is a
     # real resource this route refuses, which is a DIFFERENT fact from a key that never

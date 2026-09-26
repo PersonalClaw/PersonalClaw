@@ -5,6 +5,7 @@
 
 import { apiVersionHeaders } from './apiVersion'
 import { errEnvelope, errText } from './errText'
+import { withSecurityConsent } from './securityConsent'
 import { activePersonaTheme } from '../design/personalities'
 
 // Every request helper below spreads `SK`, so folding the API-version declaration
@@ -5876,8 +5877,13 @@ export const api = {
   savedAgents: () => get<{ agents: Array<{ name: string; description?: string; model?: string }> }>('/api/agents').then((d) => d.agents),
   // full native-agent CRUD (the Agents builder): returns the complete profiles + default
   agents: () => get<{ agents: SavedAgent[]; default_agent: string }>('/api/agents'),
-  createAgent: (body: Record<string, unknown>) => post<{ ok: boolean }>('/api/agents', body),
-  updateAgent: (name: string, body: Record<string, unknown>) => put<{ ok: boolean }>(`/api/agents/${encodeURIComponent(name)}`, body),
+  // An agent's `approval_mode` is the approval policy stored per agent: a looser one is asked for
+  // exactly like a looser config field (`securityConsent.ts`).
+  createAgent: (body: Record<string, unknown>) =>
+    withSecurityConsent((c) => post<{ ok: boolean }>('/api/agents', c ? { ...body, confirm: true } : body)),
+  updateAgent: (name: string, body: Record<string, unknown>) =>
+    withSecurityConsent((c) => put<{ ok: boolean }>(`/api/agents/${encodeURIComponent(name)}`,
+      c ? { ...body, confirm: true } : body)),
   deleteAgent: (name: string) => del(`/api/agents/${encodeURIComponent(name)}`),
   setDefaultAgent: (name: string) => put<{ ok: boolean; default_agent: string }>('/api/config/default-agent', { agent: name }),
   // Agent routing (AGENT-ROUTING) — suggestion-suppression endpoints. The suggestion
@@ -5944,7 +5950,12 @@ export const api = {
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
-  patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
+  // A write that LOOSENS a security setting is answered `400 confirmation_required`; the consent
+  // step asks the owner in the gateway's words and resends (`securityConsent.ts`). `confirmed` is
+  // for a surface that already asked its own question.
+  patchConfig: (path: string, value: unknown, confirmed = false) =>
+    withSecurityConsent((c) => patch<Record<string, any>>('/api/config/personalclaw',
+      c ? { path, value, confirm: true } : { path, value }), confirmed),
   // `agent.yolo` has a writer of its own because turning it ON carries the owner's consent: the
   // PATCH refuses `value: true` without `confirm: true` (400 `confirmation_required`). Call it only
   // through `pages/settings/agentYolo.ts`'s `setAgentYolo`, which asks first — `yoloOneWriter.test.ts`
@@ -7907,7 +7918,9 @@ export const api = {
   consolidateMemory: (key: string) => post<{ ok?: boolean; key?: string; error?: string }>('/api/memory/consolidate', { key }),
   securityStats: () => get<SecurityStats>('/api/security/stats'),
   deniedCommands: () => get<DeniedCommands>('/api/security/denied-commands'),
-  setUserDeniedCommands: (patterns: string[]) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.denied_commands', value: patterns }),
+  // Removing a pattern loosens the denylist, so it goes through the consent step with every other
+  // security write (`patchConfig`).
+  setUserDeniedCommands: (patterns: string[]) => api.patchConfig('security.denied_commands', patterns),
   securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
   // SH-2 — the credential store. Both writes send `confirm: true`: the flag is the
   // protocol-level record that the user was shown the snapshot step, and the backend
@@ -7917,8 +7930,8 @@ export const api = {
     post<CredentialMoveResult>('/api/security/credentials/migrate', { confirm: true }),
   rollbackCredentialsToKeychain: () =>
     post<CredentialMoveResult>('/api/security/credentials/rollback', { confirm: true }),
-  setCredentialKeychain: (on: boolean) =>
-    patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.credential_keychain', value: on }),
+  // Turning the keychain OFF sends new credentials to .env — the gateway asks for consent.
+  setCredentialKeychain: (on: boolean) => api.patchConfig('security.credential_keychain', on),
   // MBR-1 — which MCP servers may interrupt a tool call to ask the user a question
   // (`elicitation/create`). The grant is per SERVER, so the wire value is the whole
   // allowlist and the caller adds/removes one name: a boolean here would be the global
@@ -7928,8 +7941,10 @@ export const api = {
   mcpElicitationServers: () =>
     get<Record<string, any>>('/api/config/personalclaw').then(
       (c) => (c?.security?.mcp_elicitation_servers ?? []) as string[]),
-  setMcpElicitationServers: (names: string[]) =>
-    patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.mcp_elicitation_servers', value: names }),
+  // A new name on the list is a new grant. `confirmed` is the Tools page's own "Let … ask you
+  // questions?" dialog, so the owner is not asked a second time.
+  setMcpElicitationServers: (names: string[], confirmed = false) =>
+    api.patchConfig('security.mcp_elicitation_servers', names, confirmed),
   // EI-10 — the secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",
@@ -7953,7 +7968,10 @@ export const api = {
   // with a placeholder state, so no surface can render a grant control for something
   // the gateway cannot deliver.
   desktopState: () => get<DesktopStateWire>('/api/desktop/state'),
-  setSecurityEgress: (cfg: EgressPolicyConfig) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.egress', value: cfg }),
+  // Allowing a host or private addresses, or dropping a denied host, widens the guard. `confirmed`
+  // is the panel's own "Allow egress to all private networks?" dialog.
+  setSecurityEgress: (cfg: EgressPolicyConfig, confirmed = false) =>
+    api.patchConfig('security.egress', cfg, confirmed),
   // Tool-output projection rules (TokenJuice OP6). Read from the whole-config GET
   // (tools.projection_rules); written via the config PATCH allowlist.
   projectionRules: () => get<Record<string, any>>('/api/config/personalclaw').then(

@@ -171,6 +171,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An installed app can no longer change your security settings, and every write that loosens
+  one asks you first.** An app that declared `/api/config` could `PATCH` any setting on that
+  path: turn YOLO on, drop the 2FA requirement, let egress reach your LAN, raise every guardrail
+  budget. The YOLO consent flag did not stop it, because anything holding a session can send the
+  flag. The same posture had side doors an app could reach with an ordinary declaration: the chat
+  approval mode (`/api/chat/mode` with `yolo`), answering a pending approval with `yolo` or
+  `trust_agent`, an agent's `approval_mode`, project trust, autonomy grants, standing approval
+  rules, resuming after an incident stop, external-access clients, the agent's `allowedTools`, and
+  device pairing codes, which let an app backend sign itself in as you. Internal routes also
+  dropped the identity of an app token passed as `?token=`, so `/api/tools/invoke` ran any tool
+  for an app as if you had called it. Now a request carrying an app identity is refused `403` for
+  every one of these, in either direction, with a Security Event Log row naming the app and the
+  setting. Ordinary settings stay writable, and no shipped app wrote any of these.
+  For you, any write that loosens a security setting now needs `"confirm": true`, not just YOLO:
+  the list is declared once, beside each field's validation (`config/edit_spec.py`), and Settings
+  asks in the gateway's own words before it resends. So a surface that never asked before now
+  asks: raising a budget or a sandbox ceiling, removing a denied-command pattern, allowing an
+  egress host, turning on an external-access surface or sync. Tightening never asks. Password
+  sign-in asks when you turn it **on**, because that opens a way in; turning it off keeps its
+  lockout warning. Behaviour change to security controls: a script that loosens one of these
+  through `PATCH /api/config/personalclaw` or `/api/agents` must send the flag, and an app that
+  wrote one now gets `403 security_setting_owner_only`. `personalclaw config set` is unchanged.
+  What this does not cover: an app's page code runs inside the dashboard and still arrives as you
+  (see `docs/security/limitations.md` §4).
 - **The Settings home's YOLO switch now asks before turning auto-approve-everything on, and the
   server refuses to turn it on without that consent.** The Agent defaults tile's "YOLO
   auto-approve all" switch sent `PATCH agent.yolo true` about 40 ms after one click — no dialog,

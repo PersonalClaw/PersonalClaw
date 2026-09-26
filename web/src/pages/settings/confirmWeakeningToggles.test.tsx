@@ -12,8 +12,13 @@ import type { ConfirmOptions } from '../../ui/dialog'
 //
 // Each test below gates on the SAME shape the credential-move rail already proves: a declined
 // confirm must leave the write untouched, and the TIGHTENING direction (2FA on, YOLO off, private
-// networks off, password sign-in on) must stay one-click — a confirm there would be friction with
-// no security value.
+// networks off) must stay one-click — a confirm there would be friction with no security value.
+//
+// Password sign-in is the one whose panel dialog guards the OTHER way. Turning it OFF can lock the
+// owner out, so the panel asks then — a lockout warning. Turning it ON is the direction that opens a
+// way in, and the gateway asks that consent itself (`config/edit_spec.py`, `securityConsent.ts`), so
+// the panel adds no dialog of its own there. A panel that asked its own security question forwards
+// it as `patchConfig`'s third argument, so the owner is never asked twice.
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
@@ -45,7 +50,7 @@ describe('ToggleRow.confirmOn — the shared opt-in gate', () => {
     expect(patch, 'declining the dialog must not touch the config').not.toHaveBeenCalled()
   })
 
-  it('turning ON and confirming writes exactly once', async () => {
+  it('turning ON and confirming writes exactly once, carrying the consent', async () => {
     const { ToggleRow, confirmSpy } = await mountToggle(true)
     const patch = patchFor()
     const { container } = render(
@@ -57,7 +62,7 @@ describe('ToggleRow.confirmOn — the shared opt-in gate', () => {
       await flush()
     })
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(patch).toHaveBeenCalledWith('f', true, expect.any(Function), 'YOLO mode')
+    expect(patch).toHaveBeenCalledWith('f', true, expect.any(Function), 'YOLO mode', true)
   })
 
   it('turning OFF never confirms — tightening stays one-click', async () => {
@@ -197,7 +202,8 @@ describe('AgentDefaultsPanel — YOLO mode and propose-fix-branches', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(1)
     const req = confirmSpy.mock.calls[0][0]
     expect(req.body).toMatch(/branch/i)
-    expect(patchConfig).toHaveBeenCalledWith('agent.self_qa.fix_branch_enabled', true)
+    // The row's own dialog is forwarded, so the gateway does not ask a second time.
+    expect(patchConfig).toHaveBeenCalledWith('agent.self_qa.fix_branch_enabled', true, true)
   })
 })
 
@@ -253,13 +259,14 @@ describe('AccountPanel — password sign-in and the 2FA requirement', () => {
     expect(patchConfig).toHaveBeenCalledWith('auth.login_enabled', false)
   })
 
-  it('turning password sign-in ON never confirms — tightening stays one-click', async () => {
+  it('turning password sign-in ON opens no panel dialog — its consent is the gateway’s', async () => {
     const { patchConfig, confirmSpy } = await mountPanel(true, { login_enabled: false })
     await act(async () => {
       screen.getByRole('switch', { name: 'Offer password sign-in' }).click()
       await flush()
     })
-    expect(confirmSpy, 'enabling sign-in is not the relaxing direction').not.toHaveBeenCalled()
+    expect(confirmSpy, 'the panel dialog is the lockout warning, which only OFF needs').not.toHaveBeenCalled()
+    // No consent flag: the panel asked nothing, so `patchConfig`'s consent step asks the owner.
     expect(patchConfig).toHaveBeenCalledWith('auth.login_enabled', true)
   })
 
@@ -280,7 +287,8 @@ describe('AccountPanel — password sign-in and the 2FA requirement', () => {
       await flush()
     })
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(patchConfig).toHaveBeenCalledWith('auth.require_totp', false)
+    // The panel's dialog IS the consent, forwarded so the gateway does not ask again.
+    expect(patchConfig).toHaveBeenCalledWith('auth.require_totp', false, true)
   })
 
   it('turning the 2FA requirement ON never confirms — tightening stays one-click', async () => {
@@ -290,7 +298,7 @@ describe('AccountPanel — password sign-in and the 2FA requirement', () => {
       await flush()
     })
     expect(confirmSpy, 'requiring 2FA is not the relaxing direction').not.toHaveBeenCalled()
-    expect(patchConfig).toHaveBeenCalledWith('auth.require_totp', true)
+    expect(patchConfig).toHaveBeenCalledWith('auth.require_totp', true, false)
   })
 })
 
@@ -339,8 +347,9 @@ describe('SecurityPanel — allow all private networks', () => {
     const box = screen.getByRole('checkbox', { name: /allow all private networks/i })
     await act(async () => { fireEvent.click(box); await flush() })
     expect(confirmSpy).toHaveBeenCalledTimes(1)
+    // …carrying the consent, so the gateway does not ask a second time.
     expect(setSecurityEgress).toHaveBeenCalledWith(
-      expect.objectContaining({ allow_private: true }),
+      expect.objectContaining({ allow_private: true }), true,
     )
   })
 
@@ -359,7 +368,7 @@ describe('SecurityPanel — allow all private networks', () => {
     await act(async () => { fireEvent.click(box); await flush() })
     expect(confirmSpy, 'turning it off is not the relaxing direction').not.toHaveBeenCalled()
     expect(setSecurityEgress).toHaveBeenCalledWith(
-      expect.objectContaining({ allow_private: false }),
+      expect.objectContaining({ allow_private: false }), false,
     )
   })
 })

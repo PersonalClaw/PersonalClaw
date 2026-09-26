@@ -159,9 +159,11 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
         + 'No other server is affected.',
       confirmLabel: 'Allow questions',
     }))) return
+    // A grant was just consented to in the dialog above; the flag says so, so the gateway's own
+    // consent step does not ask again. Revoking needs no consent.
     const ok = await reportingWrite(
       `${granted ? 'stop' : 'let'} "${s.name}" ${granted ? 'asking' : 'ask'} you questions`,
-      () => api.setMcpElicitationServers(next))
+      () => api.setMcpElicitationServers(next, !granted))
     if (ok) setTimeout(load, 400)
   }
 

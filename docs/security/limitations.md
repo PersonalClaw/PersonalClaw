@@ -64,13 +64,24 @@ what the Store shows you. The other half is a closed **owner-only** registry
 (`apps/permissions.OWNER_ONLY_API_PATHS`) of capabilities no declaration reaches at
 all, not even `"*"`: the terminal and its sessions, computer-use, the credential
 store and secrets vault, the security audit log and SEL rotation, your login
-password and second factor, gateway restart, and local token minting. Holding any
-of those would make every other line in a manifest moot, so there is nothing to
-scope — and before it existed, an app declaring `/api/ws` (the event socket)
-prefix-matched `/api/ws/terminal/{id}` and got an interactive shell running as you.
-A manifest that names one of these paths now fails to install. None of this touches
-your own access to those surfaces; the refusal applies only to requests carrying an
-app identity.
+password and second factor, gateway restart, and local token minting. Your security
+posture is in the same class: the chat approval mode (auto-approve-everything),
+resuming after an incident stop, project trust, autonomy promotions, standing
+approve/deny rules, device pairing codes, external-access clients, and the agent's
+runtime config (`allowedTools`, the servers it launches). Holding any of those would
+make every other line in a manifest moot, so there is nothing to scope — and before
+the registry existed, an app declaring `/api/ws` (the event socket) prefix-matched
+`/api/ws/terminal/{id}` and got an interactive shell running as you. A manifest that
+names one of these paths now fails to install. None of this touches your own access
+to those surfaces; the refusal applies only to requests carrying an app identity.
+
+The security settings that live in `config.json` are refused field by field instead,
+because `/api/config` also carries ordinary settings an app may legitimately write: an
+app-scoped `PATCH` of a field that is a security setting (YOLO, the approval mode,
+sign-in and 2FA, egress, the keychain, sandbox ceilings, guardrail budgets, external
+access, sync) answers `403`, in either direction, as does an app writing an agent's
+`approval_mode` or answering a pending approval with a standing grant such as `yolo`.
+Every such refusal leaves a Security Event Log row naming the app and the field.
 
 **What this means for you:** treat an installed app's `network: true` as a stated
 intent you are consenting to, the same way you would trust any program you choose
