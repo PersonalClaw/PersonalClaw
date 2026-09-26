@@ -99,10 +99,10 @@ class NotificationKind:
     #: answer (a tool call awaiting Allow/Deny, a workflow gate, a folder awaiting Trust, a room
     #: stopped until they reply). It is listed and notified the moment it is raised, and only the
     #: user may close it — so it is never ``verifiable``. A REFUTED verdict files a verified row
-    #: as filtered and withholds its notification, and the model call runs synchronously inside
-    #: the emit, holding the gateway's loop until it answers: a verdict could hide a pending
-    #: approval and would delay every one. Nor is there a claim to check: that an approval is
-    #: pending is a fact the registry holds, not something a model can know better.
+    #: as filtered and withholds its notification, and a verified row's notification waits for
+    #: the verdict: a verdict could hide a pending approval and would delay every one. Nor is
+    #: there a claim to check: that an approval is pending is a fact the registry holds, not
+    #: something a model can know better.
     decision: bool = False
     #: Dotted module that owns a production emission path for this kind. ``None`` means
     #: resolution-only: old persisted wire values still resolve, but the kind is not a
