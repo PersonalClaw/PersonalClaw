@@ -15,6 +15,7 @@ import math
 import os
 import re
 import struct
+import weakref
 from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
@@ -68,6 +69,32 @@ try:
 except ImportError:
     faiss = None  # type: ignore[assignment]
     _HAS_FAISS = False
+
+
+def faiss_available() -> bool:
+    """Whether the faiss index exists at all. Without it semantic recall searches the SQLite
+    embeddings directly (`_sqlite_vector_search`), so an empty index is not a desync."""
+    return _HAS_FAISS and _HAS_NUMPY
+
+
+#: The store whose in-memory faiss index semantic recall reads, per database, in THIS process.
+#: Several `VectorMemoryStore` instances can open one `memory.db`, each with its own copy of the
+#: index, so "the index" is ambiguous until the gateway names the one it hands to `MemoryStore`
+#: (:meth:`VectorMemoryStore.serve_recall`). The Doctor's consistency probe and its Fix act on
+#: THAT one — a probe that read another instance's copy could report a green the user's recall
+#: does not have. Weak, so a store that is dropped leaves nothing behind.
+_RECALL_STORES: "weakref.WeakValueDictionary[str, VectorMemoryStore]" = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _db_key(db_path: Path) -> str:
+    return str(Path(db_path).resolve())
+
+
+def recall_store(db_path: Path) -> "VectorMemoryStore | None":
+    """The store serving semantic recall for ``db_path`` in this process, or ``None``."""
+    return _RECALL_STORES.get(_db_key(db_path))
 
 
 def _path_home_pclaw():
@@ -139,6 +166,13 @@ _HUMAN_AUTHORED_SOURCES = frozenset({"user_explicit", "vault_edit"})
 _MAX_EVENTS = 10_000
 _DEFAULT_CONFIDENCE_THRESHOLD = 0.8
 _DEFAULT_DEDUP_THRESHOLD = 0.88
+
+#: The tag of an episodic row that records an OCCURRENCE (a workflow run's spec) rather than a
+#: memory. The write path's vector dedup exists to merge the same memory said twice in other
+#: words; applied to occurrences it merges two runs of one plan into one and starves the
+#: repetition detector that counts them (`learning.mining.index_run_spec`). So such a row is
+#: exempt from that dedup — its exact-text dedup still refuses the same occurrence written twice.
+OCCURRENCE_TAG = "occurrence"
 _DEFAULT_EPISODIC_MAX = 10_000
 _DEFAULT_EPISODIC_LIMIT = 8  # must match MemoryConfig.episodic_max_results default
 _EPISODIC_RELEVANCE_THRESHOLD = 0.55  # min cosine sim for short texts (empirical)
@@ -763,7 +797,7 @@ class VectorMemoryStore(MemoryProvider):
     def __init__(
         self,
         db_path: Path | None = None,
-        confidence_threshold: float = _DEFAULT_CONFIDENCE_THRESHOLD,
+        confidence_threshold: float | None = None,
         extra_prefixes: list[str] | None = None,
         dedup_threshold: float = _DEFAULT_DEDUP_THRESHOLD,
         episodic_max: int = _DEFAULT_EPISODIC_MAX,
@@ -772,6 +806,7 @@ class VectorMemoryStore(MemoryProvider):
     ):
         self._db_path = db_path or (config_dir() / _DB_FILE)
         self._faiss_path = self._db_path.parent / _FAISS_FILE
+        # None = read `memory.semantic_confidence_threshold` live (see `confidence_threshold`).
         self._confidence_threshold = confidence_threshold
         self._dedup_threshold = dedup_threshold
         self._episodic_max = episodic_max
@@ -893,6 +928,29 @@ class VectorMemoryStore(MemoryProvider):
     @graph_enabled.setter
     def graph_enabled(self, value: bool | None) -> None:
         self._graph_enabled = None if value is None else bool(value)
+
+    @property
+    def confidence_threshold(self) -> float:
+        """The confidence a LEARNED semantic fact needs before it is kept (``validate_semantic``).
+
+        Read live from ``memory.semantic_confidence_threshold`` when not pinned, so Settings →
+        Memory changes it on the next write rather than at a restart — and so every store
+        instance applies one value. It used to be pinned at construction by the two servers and
+        defaulted to 0.8 by every other instance, while its only control was a Vector Memory app
+        field nothing read (settings B10). Fail-safe to the default: an unreadable config must
+        not turn the gate off.
+        """
+        if self._confidence_threshold is not None:
+            return self._confidence_threshold
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            return float(AppConfig.load().memory.semantic_confidence_threshold)
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "confidence threshold: config unreadable — using the default", exc_info=True
+            )
+            return _DEFAULT_CONFIDENCE_THRESHOLD
 
     @property
     def graph(self) -> "MemoryGraph":
@@ -1136,9 +1194,21 @@ class VectorMemoryStore(MemoryProvider):
         return self.get_events(limit=limit, offset=offset)
 
     def close(self) -> None:
+        # Vectors added since the last periodic save exist only in memory; a close is the last
+        # chance to persist them. (A crash still loses them from the FILE — `load_faiss_index`
+        # reconciles that against the database on the next open.)
+        if self._faiss_writes_since_save:
+            self.save_faiss_index()
+        if _RECALL_STORES.get(_db_key(self._db_path)) is self:
+            del _RECALL_STORES[_db_key(self._db_path)]
         if self._db:
             self._db.close()
             self._db = None
+
+    def serve_recall(self) -> None:
+        """Name this store as the one semantic recall reads in this process (see
+        :data:`_RECALL_STORES`). The gateway calls it where it hands the store to `MemoryStore`."""
+        _RECALL_STORES[_db_key(self._db_path)] = self
 
     @property
     def db(self) -> sqlite3.Connection:
@@ -1183,10 +1253,11 @@ class VectorMemoryStore(MemoryProvider):
                 SemanticRejectCode.RESERVED_PREFIX,
                 "Reserved key prefix requires user_explicit source",
             )
-        if source != "user_explicit" and confidence < self._confidence_threshold:
+        threshold = self.confidence_threshold
+        if source != "user_explicit" and confidence < threshold:
             return (
                 SemanticRejectCode.CONFIDENCE,
-                f"Confidence {confidence:.2f} below threshold {self._confidence_threshold}",
+                f"Confidence {confidence:.2f} below threshold {threshold}",
             )
         vj = value_json if value_json is not None else json.dumps(value)
         vj_bytes = len(vj.encode("utf-8"))
@@ -2056,16 +2127,39 @@ class VectorMemoryStore(MemoryProvider):
 
     # ── FAISS Index ──
 
+    def _embedded_rows(self) -> list:
+        """Every live episodic row that carries a vector, oldest first."""
+        return self.db.execute(
+            "SELECT id, embedding FROM episodic_memories "
+            "WHERE is_deleted = 0 AND embedding IS NOT NULL ORDER BY created_at, id"
+        ).fetchall()
+
+    def _data_dimension(self, rows: list) -> int:
+        """The width the index must have: the one the stored vectors HAVE.
+
+        🔴 THE DESYNC'S ROOT CAUSE. The width used to be a constructor constant (`embedding_dim`,
+        default 384) that nothing kept in step with the model producing the vectors — the gateway
+        builds its store without the argument. With a 768- or 1024-dim model bound, every write
+        saved its vector to SQLite and then skipped the faiss add for the width mismatch, and a
+        re-index rebuilt the index at the same stale 384 and skipped every row again: "0 indexed
+        vs 2 embedded" after a re-index, with consolidation (which filters rows by the same width)
+        skipping them too. The data is the authority, so it decides: the newest row's width, i.e.
+        the model bound now. Rows of another width (a model switch not yet re-embedded) are
+        skipped and counted — a re-embed is what indexes them.
+        """
+        if not rows:
+            return self._embedding_dim
+        return len(rows[-1]["embedding"]) // 4  # float32
+
     def build_faiss_index(self) -> int:
-        """Rebuild FAISS index from all episodic embeddings in SQLite. Returns count."""
+        """Rebuild the FAISS index from the episodic embeddings in SQLite, at THEIR width.
+        Returns the number of vectors indexed."""
         if not _HAS_FAISS or not _HAS_NUMPY:
             return 0
+        rows = self._embedded_rows()
+        self._embedding_dim = self._data_dimension(rows)
         self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
         self._faiss_id_map = []
-        rows = self.db.execute(
-            "SELECT id, embedding FROM episodic_memories "
-            "WHERE is_deleted = 0 AND embedding IS NOT NULL"
-        ).fetchall()
         skipped = 0
         for row in rows:
             vec = np.frombuffer(row["embedding"], dtype=np.float32)
@@ -2076,12 +2170,30 @@ class VectorMemoryStore(MemoryProvider):
             self._faiss_id_map.append(row["id"])
         if skipped:
             logger.warning(
-                "Skipped %d embeddings with mismatched dimension (expected %d)",
+                "Skipped %d embeddings from a different model (the index is %d-dim); "
+                "re-embed to index them",
                 skipped,
                 self._embedding_dim,
             )
         logger.info("Built FAISS index with %d vectors", len(self._faiss_id_map))
         return len(self._faiss_id_map)
+
+    def rebuild_faiss_index(self) -> dict[str, int]:
+        """Rebuild the index from the stored vectors and persist it — the Doctor's Fix and the
+        maintenance job for a desynced index. Returns ``{indexed, embedded, other_model, dim}``."""
+        embedded = len(self._embedded_rows())
+        indexed = self.build_faiss_index()
+        self.save_faiss_index()
+        return {
+            "indexed": indexed,
+            "embedded": embedded,
+            "other_model": embedded - indexed if faiss_available() else 0,
+            "dim": self._embedding_dim,
+        }
+
+    def index_state(self) -> dict[str, Any]:
+        """Read-only view of the live index for the Doctor: its width and the ids it holds."""
+        return {"dim": self._embedding_dim, "ids": list(self._faiss_id_map)}
 
     def clear_embeddings(self) -> int:
         """Clear all stored embeddings and reset the FAISS index.
@@ -2132,17 +2244,8 @@ class VectorMemoryStore(MemoryProvider):
         total = len(rows)
         done = reembedded = failed = 0
         for row in rows:
-            vec = self._try_embed(row["text"])
-            if vec:
-                try:
-                    blob = np.array(vec, dtype=np.float32).tobytes()
-                    self.db.execute(
-                        "UPDATE episodic_memories SET embedding = ? WHERE id = ?",
-                        (blob, row["id"]),
-                    )
-                    reembedded += 1
-                except Exception:
-                    failed += 1
+            if self._store_reembedding(row["id"], self._try_embed(row["text"])):
+                reembedded += 1
             else:
                 failed += 1
             done += 1
@@ -2153,6 +2256,63 @@ class VectorMemoryStore(MemoryProvider):
         self.save_faiss_index()
         logger.info("Re-embedded %d/%d episodic memories (%d failed)", reembedded, total, failed)
         return {"reembedded": reembedded, "failed": failed, "total": total}
+
+    def _store_reembedding(self, mem_id: str, vec: "list[float] | None", dim: int = 0) -> bool:
+        """Write one re-embedded vector, normalized. False when there is none to write.
+
+        Normalized like every `write_episodic` vector: the index is an inner-product index, so an
+        unnormalized vector turns every similarity score — and the dedup threshold — into a
+        function of the model's output norm. ``dim`` rejects a vector of another width.
+        """
+        if not vec or (dim and len(vec) != dim):
+            return False
+        try:
+            arr = np.array(vec, dtype=np.float32)
+            norm = float(np.linalg.norm(arr))
+            blob = (arr / norm if norm > 0 else arr).tobytes()
+            self.db.execute(
+                "UPDATE episodic_memories SET embedding = ? WHERE id = ?", (blob, mem_id)
+            )
+        except Exception:
+            return False
+        return True
+
+    def reembed_other_model(self) -> dict[str, int]:
+        """Re-embed, with the model bound now, only the memories another model embedded.
+
+        A vector's width is its model's, so a row at another width than the bound model produces
+        was written by a model that is no longer bound: the index cannot hold it and semantic
+        recall cannot compare a query with it — only re-embedding its text brings it back. The
+        bound model's width is asked of the model (one probe embedding), not read off the newest
+        row, because the newest row can be the stale one. Rows already at that width are left
+        alone, so this costs one embedding per stale row, not one per memory. Does not rebuild
+        the index; the caller does. Returns ``{reembedded, failed, total, dim}``.
+        """
+        probe = self._try_embed("embedding width probe") if self.embed_fn is not None else None
+        if not probe:
+            return {"reembedded": 0, "failed": 0, "total": 0, "dim": 0}
+        dim = len(probe)
+        stale = [
+            r
+            for r in self.db.execute(
+                "SELECT id, text, embedding FROM episodic_memories WHERE is_deleted = 0 "
+                "AND embedding IS NOT NULL AND text IS NOT NULL AND text != ''"
+            ).fetchall()
+            if len(r["embedding"]) // 4 != dim
+        ]
+        reembedded = 0
+        for row in stale:
+            if self._store_reembedding(row["id"], self._try_embed(row["text"]), dim):
+                reembedded += 1
+        if reembedded:
+            self.db.commit()
+        logger.info("Re-embedded %d/%d memories from another model", reembedded, len(stale))
+        return {
+            "reembedded": reembedded,
+            "failed": len(stale) - reembedded,
+            "total": len(stale),
+            "dim": dim,
+        }
 
     def save_faiss_index(self) -> None:
         """Persist FAISS index to disk."""
@@ -2169,19 +2329,45 @@ class VectorMemoryStore(MemoryProvider):
             logger.warning("Failed to save FAISS index", exc_info=True)
 
     def load_faiss_index(self) -> bool:
-        """Load FAISS index from disk. Returns True if loaded, False if rebuilt."""
-        if not _HAS_FAISS:
+        """Load the persisted FAISS index, or rebuild it from SQLite. True when the file was used.
+
+        The file is a CACHE of the database, and it goes stale: vectors added since the last
+        periodic save live only in memory until then, a crash loses them from the file, and an
+        older build persisted a 384-dim index over 768-dim vectors. So a loaded index is used
+        only when it holds exactly the live embedded rows at their width; anything else is
+        rebuilt from the database AND saved, so the next open — and the Doctor's check of the
+        file — read what recall actually has.
+        """
+        if not faiss_available():
             return False
         id_map_path = self._faiss_path.with_suffix(".ids.json")
         if self._faiss_path.exists() and id_map_path.exists():
             try:
-                self._faiss_index = faiss.read_index(str(self._faiss_path))
-                self._faiss_id_map = json.loads(id_map_path.read_text(encoding="utf-8"))
-                logger.info("Loaded FAISS index: %d vectors", len(self._faiss_id_map))
-                return True
+                index = faiss.read_index(str(self._faiss_path))
+                id_map = json.loads(id_map_path.read_text(encoding="utf-8"))
+                rows = self._embedded_rows()
+                dim = self._data_dimension(rows)
+                expected = {r["id"] for r in rows if len(r["embedding"]) // 4 == dim}
+                if (
+                    int(index.d) == dim
+                    and int(index.ntotal) == len(id_map)
+                    and set(id_map) == expected
+                ):
+                    self._faiss_index, self._faiss_id_map, self._embedding_dim = index, id_map, dim
+                    logger.info("Loaded FAISS index: %d vectors", len(self._faiss_id_map))
+                    return True
+                logger.info(
+                    "FAISS index on disk is stale (%d vectors at %d-dim; %d rows embedded at "
+                    "%d-dim) — rebuilding it from the database",
+                    int(index.ntotal),
+                    int(index.d),
+                    len(expected),
+                    dim,
+                )
             except Exception:
                 logger.warning("FAISS index corrupted, rebuilding", exc_info=True)
         self.build_faiss_index()
+        self.save_faiss_index()
         return False
 
     # ── Episodic CRUD ──
@@ -2197,7 +2383,12 @@ class VectorMemoryStore(MemoryProvider):
         *,
         contributor: str | None = None,
     ) -> bool:
-        """Write an episodic memory with optional embedding and dedup."""
+        """Write an episodic memory with optional embedding and dedup.
+
+        A row tagged :data:`OCCURRENCE_TAG` skips the vector dedup (the exact-text one still
+        applies): it records something that HAPPENED, not something learned, and three runs of
+        one plan are three occurrences a repetition detector has to count.
+        """
         text = text.strip()
         if len(text) < _EPISODIC_TEXT_MIN or len(text) > _EPISODIC_TEXT_MAX:
             logger.debug(
@@ -2248,7 +2439,8 @@ class VectorMemoryStore(MemoryProvider):
             # is the right degradation — a possible duplicate memory is a far smaller
             # problem than a write that throws.
             if (
-                self._faiss_index is not None
+                OCCURRENCE_TAG not in clean_tags
+                and self._faiss_index is not None
                 and self._faiss_index.ntotal > 0  # type: ignore[attr-defined]
                 and vec.shape[0] == self._embedding_dim
             ):
@@ -2260,6 +2452,10 @@ class VectorMemoryStore(MemoryProvider):
                     if cosine_sim > self._dedup_threshold:
                         existing_id = self._faiss_id_map[int(idx)]
                         existing = self._get_episodic(existing_id)
+                        if existing and self._matches_tags(existing, [OCCURRENCE_TAG]):
+                            # A memory is never merged into an occurrence (or the occurrence
+                            # deleted for it): that would uncount a run the detector counts.
+                            continue
                         if existing and len(text) > len(existing["text"]) * 1.2:
                             self._delete_episodic_row(existing_id)
                             self._log_event(
@@ -2318,6 +2514,13 @@ class VectorMemoryStore(MemoryProvider):
         # above) and the SQLite embedding, so a later `reembed`/rebuild recovers the vector.
         if embedding_blob is not None and self._faiss_index is not None:
             vec = np.frombuffer(embedding_blob, dtype=np.float32).reshape(1, -1)
+            if vec.shape[1] != self._embedding_dim and self._faiss_index.ntotal == 0:  # type: ignore[attr-defined]  # noqa: E501
+                # An EMPTY index has no width to defend — its width is only the constructor's
+                # default. Adopt the vector's: this is a model bound after the store opened, and
+                # skipping here is how every write of a first-bound 768-dim model went unindexed.
+                self._embedding_dim = int(vec.shape[1])
+                self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
+                self._faiss_id_map = []
             if vec.shape[1] != self._embedding_dim:
                 logger.warning(
                     "Skipping FAISS add for episodic %s: embedding is %d-dim but the index is "

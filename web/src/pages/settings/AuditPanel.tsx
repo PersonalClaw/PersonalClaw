@@ -212,7 +212,7 @@ export function AuditPanel() {
   // `notify` rather than this file's `setError`: that state only renders through `LoadError` while
   // `!events`, so setting it after a successful load shows nothing at all.
   const rotate = async () => {
-    if (!(await confirm({ title: 'Archive the audit log and start a new chain?', body: 'The existing entries move to a timestamped archive file next to the log — they leave the dashboard verify and browse surface. The signing key is unchanged.', confirmLabel: 'Archive & reset' }))) return
+    if (!(await confirm({ title: 'Archive the audit log and start a new chain?', body: 'The existing entries move to a timestamped file in the audit archive, which snapshots keep — they leave the dashboard verify and browse surface. The signing key is unchanged.', confirmLabel: 'Archive & reset' }))) return
     try {
       const res = await api.selRotate()
       const archived = res.archive_path ? res.archive_path.split(/[/\\]/).pop() : ''

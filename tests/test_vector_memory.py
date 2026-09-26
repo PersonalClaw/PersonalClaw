@@ -518,14 +518,18 @@ class TestEmbeddingDimensionChange:
         assert len(store.get_episodic_list()) == 1
 
     def test_the_skip_is_logged_with_both_dimensions(self, tmp_path: Path, caplog) -> None:
-        """A silent skip would be its own bug — the operator needs to know to re-embed."""
+        """A silent skip would be its own bug — the operator needs to know to re-embed.
+
+        The index has to HOLD a vector first: an empty one has no width to defend, and adopts
+        the first vector's (settings B16 — the constructor's 384 default is not a real width)."""
         import logging
 
         store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=384)
         store.init()
+        store.write_episodic("A memory the index already holds at 384", embedding=[0.1] * 384)
         with caplog.at_level(logging.WARNING):
             store.write_episodic(
-                "Something worth remembering about the release", embedding=[0.0] * 1024
+                "Something worth remembering about the release", embedding=[0.1] * 1024
             )
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "1024" in text and "384" in text
@@ -568,6 +572,45 @@ class TestEmbeddingDimensionChange:
         )
         # Must complete rather than raising; the stale row is simply not clustered.
         store.promote_episodic_patterns()
+
+
+class TestOccurrencesAreNotMerged:
+    """The write path's vector dedup merges the same MEMORY said twice. An occurrence row (a
+    workflow run's spec, which the repetition detector counts) is exempt in both directions —
+    it once starved that detector to "1 similar plan; 2 needed" on three identical runs, the
+    moment the index held vectors at the model's width (settings B16)."""
+
+    _V = [1.0] + [0.1] * 7
+
+    def test_a_memory_said_twice_still_merges(self, tmp_path: Path) -> None:
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
+        store.init()
+        assert store.write_episodic("The deploy runs the migration step first", embedding=self._V)
+        assert not store.write_episodic(
+            "Deploys always run the migration step first", embedding=self._V
+        )
+        assert len(store.get_episodic_list()) == 1
+
+    def test_occurrences_of_one_plan_are_each_kept(self, tmp_path: Path) -> None:
+        from personalclaw.vector_memory import OCCURRENCE_TAG
+
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
+        store.init()
+        for run in ("r1", "r2", "r3"):
+            assert store.write_episodic(
+                f"run {run}\nfetch → transform → publish", embedding=self._V, tags=[OCCURRENCE_TAG]
+            ), run
+        # The same occurrence written twice is still refused, by the exact-text dedup.
+        assert not store.write_episodic(
+            "run r3\nfetch → transform → publish", embedding=self._V, tags=[OCCURRENCE_TAG]
+        )
+        # And a memory that happens to read alike neither merges into one nor deletes one.
+        assert store.write_episodic(
+            "A much longer memory about fetch, transform and publish steps that happens to embed "
+            "exactly like the run specs do",
+            embedding=self._V,
+        )
+        assert len(store.get_episodic_list()) == 4
 
 
 class TestEpisodicCRUD:

@@ -327,17 +327,22 @@ def _describe_adaptive(spec: dict[str, Any]) -> str:
     Names BOTH cadences and which one is live, because that is what an adaptive row's reader needs:
     "every 5m" alone would look like a misconfigured 5-minute poll rather than a system that is
     currently working harder because something is wrong.
+
+    Worded by what switches the clock — whether maintenance has work it can do — and not as
+    "healthy": the health score also counts failures only a person can clear (settings B16), and
+    those leave the clock on its long sleep, so "(now: healthy)" would contradict the Doctor.
     """
     healthy = _int_or_none(spec.get("interval_secs_healthy"))
     degraded = _int_or_none(spec.get("interval_secs_degraded"))
     if not healthy or not degraded:
         return "adaptive"
     live = (
-        "degraded"
-        if str(spec.get("health_state") or "").strip().lower() == "degraded"
-        else "healthy"
+        degraded if str(spec.get("health_state") or "").strip().lower() == "degraded" else healthy
     )
-    return f"adaptive — every {_mins(healthy)} healthy, {_mins(degraded)} degraded (now: {live})"
+    return (
+        f"adaptive — every {_mins(healthy)} with nothing to repair, {_mins(degraded)} while "
+        f"repairing (now: every {_mins(live)})"
+    )
 
 
 def _mins(secs: int) -> str:

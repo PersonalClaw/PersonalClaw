@@ -91,7 +91,7 @@ export function SchemaFields<S extends JsonSchema>({
     !requiredSet.has(name) && schemaMeta(schema).tags?.includes('advanced')
 
   // With nothing left to rank, keep the whole form visible instead of rendering an empty surface
-  // above a disclosure. `native-tasks` is the shipped one-field example of this shape.
+  // above a disclosure. First-party `duckduckgo-search` ships this shape: one advanced field.
   const allAdvanced = fields.length > 0 && fields.every(isAdvanced)
   const advancedFields = allAdvanced ? [] : fields.filter(isAdvanced)
   const visibleFields = allAdvanced ? fields : fields.filter((field) => !isAdvanced(field))

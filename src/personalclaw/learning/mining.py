@@ -244,21 +244,26 @@ def index_run_spec(run: Any, service: Any, *, journal: Any = None) -> bool:
         return False
     if service is None or not getattr(service, "has_vector", False):
         return False
+    from personalclaw.vector_memory import OCCURRENCE_TAG
+
     run_id = str(getattr(run, "id", "") or "")
-    # The run id leads the text, and that ordering is load-bearing. `write_episodic` dedupes on the
-    # lowercased first 80 chars (vector_memory.py:1957) and REJECTS a match — so two runs of
-    # the same template, whose spec text is by definition identical, would index exactly ONCE.
-    # Measured: three identical runs produced one row, and the detector then read "1 similar
-    # plan; 2 needed" on textbook repetition. Prefixing the unique run id makes each run its own row
-    # without weakening a dedup other callers depend on. The id is a stable token, so it costs the
-    # embedding nothing that the plan body does not dominate.
+    # Two things keep each run its own row, and both are load-bearing: a run spec is an
+    # OCCURRENCE, and `write_episodic`'s two dedups exist to merge the same MEMORY said twice. Two
+    # runs of one template have identical spec text by definition, so either dedup would index them
+    # once and the detector would read "1 similar plan; 2 needed" on textbook repetition — measured
+    # for each in turn. (1) The run id leads the text, so the exact-text dedup (the lowercased first
+    # 80 characters) tells two runs apart and still refuses the same run indexed twice. (2)
+    # `OCCURRENCE_TAG` exempts the row from the vector dedup (cosine > 0.88), which merges them
+    # however the text starts; it began to bite once the index held vectors at the embedding
+    # model's width (settings B16) — before that fix every non-384-dim vector was dropped, so it
+    # never ran.
     body = f"run {run_id}\n{text}"
     try:
         return bool(
             service.write_episodic(
                 body,
                 conversation_id=run_id,
-                tags=[RUN_SPEC_TAG, f"run:{run_id}"],
+                tags=[RUN_SPEC_TAG, f"run:{run_id}", OCCURRENCE_TAG],
                 importance=0.4,
                 source="consolidation",
             )

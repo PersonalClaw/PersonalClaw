@@ -437,7 +437,8 @@ def _doctor_maintenance() -> None:
             print("  deficits:    none measured")
             return
         for d in sorted(present, key=lambda d: (not d.reachable, -d.penalty)):
-            label = d.key.replace("_", " ")
+            # A failed Doctor check carries its probe title; a measured deficit only a key.
+            label = d.title or d.key.replace("_", " ")
             if d.reachable:
                 print(f"  deficit:     ⚠️  {label} ×{d.count} (−{d.penalty:.1f}, fixable now)")
             else:
@@ -445,8 +446,9 @@ def _doctor_maintenance() -> None:
                 # string, so the two surfaces cannot drift into two different explanations.
                 # On its own continuation line (this file's established shape for a fix hint)
                 # rather than appended: the sentence carries its own dash, and two in one row
-                # reads as a stutter.
-                print(f"  deficit:     ⏹  {label} ×{d.count}")
+                # reads as a stutter. The penalty is shown because it COUNTS: the score is the
+                # home's health, not only the part maintenance can repair.
+                print(f"  deficit:     ⏹  {label} ×{d.count} (−{d.penalty:.1f})")
                 print(f"               {d.blocked_by}")
         if any(d.reachable for d in present):
             print("               Fix: personalclaw doctor runs no jobs — use Settings → Doctor")

@@ -1,11 +1,13 @@
 """Health-scored remediation engine tests (PLATFORM-RESILIENCE §4).
 
-Pins the deficit→score math (reachable ceilings, unreachable-deficit exclusion), the
-dependency-ordered plan, the three stop conditions (target/cost/exhausted), the
+Pins the deficit→score math (ceilings; every deficit counts, reachable or not), the
+dependency-ordered plan, the stop conditions (target/cost/exhausted/nothing fixable), the
 cooldown storm-guard, and the ledger.
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 import pytest
 
@@ -40,12 +42,16 @@ def test_health_score_subtracts_reachable_penalties():
     assert rem.health_score(ds) == 85.0  # 100 - 5 - 10
 
 
-def test_unreachable_deficit_excluded_from_score():
+def test_an_unreachable_deficit_still_counts_against_the_score():
+    """Settings B16: the score counted only what the engine could fix, so a home with failures
+    nothing automatic can clear read 100. Whether the engine can ACT is `fixable_penalty`'s
+    question; the score answers how healthy the home is."""
     ds = [
-        Deficit(key="a", count=10, weight=1.0, max_penalty=20.0, reachable=False),  # ignored
+        Deficit(key="a", count=10, weight=1.0, max_penalty=20.0, reachable=False),  # penalty 10
         Deficit(key="b", count=3, weight=1.0, max_penalty=20.0),  # penalty 3
     ]
-    assert rem.health_score(ds) == 97.0  # only b counts (unfixable → not held against us)
+    assert rem.health_score(ds) == 87.0
+    assert rem.fixable_penalty(ds) == 3.0  # only b is the engine's to win back
 
 
 def test_health_score_clamped():
@@ -123,8 +129,11 @@ def test_run_skips_unreachable_deficit_job(monkeypatch):
     )
     result = rem.run_remediation(target_score=90, max_cost_usd=1.0, now=1000.0)
     assert ran["n"] == 0  # never ran — unfixable now
-    # Unreachable deficit doesn't count → already at target.
-    assert result.stopped_reason == "target_score already met"
+    # It still counts, so the target is NOT met — and the reason says a person is needed rather
+    # than claiming health the home does not have.
+    assert result.score_before == 80.0
+    assert result.stopped_reason == rem.NOTHING_FIXABLE
+    assert result.fixable_after == 0.0
 
 
 def test_run_respects_cooldown(monkeypatch):
@@ -265,13 +274,16 @@ def test_skills_tampered_deficit_is_a_detector_not_a_job(tmp_path, monkeypatch):
     """`verify_skill_integrity` is finally SCHEDULED — as a measured deficit on every engine
     pass and Doctor read — but deliberately job-less and unreachable: no job can un-tamper a
     skill, and re-baselining a mutated one would launder the tamper. So it must never burn
-    budget nor depress a score the engine cannot improve."""
+    budget; it does lower the score, which reports the home rather than the engine's reach."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     tampered = [d for d in rem.measure_deficits() if d.key == "skills_tampered"]
     assert tampered, "skill-integrity is not measured — verify_skill_integrity is unscheduled"
     d = tampered[0]
     assert d.reachable is False and d.job_id == ""
-    assert rem.health_score([d]) == 100.0  # unreachable → excluded from the score
+    # A tampered skill lowers the score (the home is no healthier for no job being able to help)
+    # but gives the engine nothing to win back, so it never schedules or burns anything.
+    one = dataclasses.replace(d, count=1)
+    assert rem.health_score([one]) < 100.0 and rem.fixable_penalty([one]) == 0.0
     assert not [j for j in rem.all_jobs() if j.fixes_deficit == "skills_tampered"]
 
 
