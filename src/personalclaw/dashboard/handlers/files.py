@@ -118,6 +118,57 @@ def _sel():
     return _pkg.sel()
 
 
+def _app_path_refusal(raw: str, *, tool: str) -> web.Response | None:
+    """``403`` and a Security Event Log row when an APP asked for a path the explorer refuses it;
+    ``None`` for the owner, whose refusal each endpoint answers exactly as before.
+
+    The owner's answer is a ``400`` that confirms nothing about the path. An app's is an app
+    refusal like every other one (the permission middleware, ``apps._foreign_app_config_refusal``):
+    the explorer hides the PersonalClaw home from an app (:func:`_dashboard_roots`), so an app
+    asking for ``config.json`` is asking for the owner's settings, and the owner's ``400`` with no
+    row naming the app made that read as a typo. Decided on who asked and which path only, never
+    on whether the file exists, so the ``403`` confirms no more than the ``400`` does.
+
+    Called BEFORE an endpoint writes its own denial row, so an app's refusal is recorded once,
+    under the app's name, rather than as a dashboard request."""
+    message = _app_path_refusal_message(raw, tool=tool)
+    if not message:
+        return None
+    return json_error("forbidden", message=message, status=403)
+
+
+def _app_path_refusal_message(raw: str, *, tool: str) -> str:
+    """Record an APP's refused path in the Security Event Log and return the sentence its ``403``
+    carries; ``""`` for the owner, with nothing recorded. The half of
+    :func:`_app_path_refusal` an endpoint with an error envelope of its own (the chunked upload's
+    ``UploadError``) uses.
+
+    WHO asked comes from ``permissions.request_app`` — the identity the gateway's permission
+    middleware scopes an app's request to — which is the same source :func:`_dashboard_roots`
+    filters the roots by. So the refusal cannot call a path an app refusal unless the roots it was
+    refused against were an app's, and the reverse."""
+    from personalclaw.apps.permissions import request_app
+
+    app_name = request_app()
+    if not app_name:
+        return ""
+    try:
+        _sel().log_api_access(
+            caller=f"app:{app_name}",
+            operation=f"files.{tool}",
+            outcome="denied",
+            source="app_permissions",
+            resources=raw,
+            error="outside the folders an app may reach",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for a refused app file access", exc_info=True)
+    return (
+        "an app reaches only the folders the file explorer shows it, and no credential file in "
+        f"them — not {raw}"
+    )
+
+
 def _path_home_pclaw() -> Path:
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
@@ -144,6 +195,9 @@ async def api_reveal_path(request: web.Request) -> web.Response:
     if not path or ".." in Path(path).parts:
         return web.json_response({"error": "invalid path"}, status=400)
     if is_sensitive_path(path):
+        refused = _app_path_refusal(path, tool="reveal_path")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="api",
             source="api",
@@ -171,6 +225,9 @@ async def api_reveal_path(request: web.Request) -> web.Response:
     # which passes an `entry.path` the explorer itself enumerated — and the explorer cannot leave
     # the roots.
     if _validate_dashboard_path(path) is None:
+        refused = _app_path_refusal(path, tool="reveal_path")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="api",
             source="api",
@@ -1322,6 +1379,9 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
 
     path = _validate_dashboard_path(raw_path)
     if not path:
+        refused = _app_path_refusal(raw_path, tool="file_watch")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_watch", outcome="denied", resources=raw_path
         )
@@ -1451,6 +1511,9 @@ async def api_file_read(request: web.Request) -> web.Response:
 
     path = _validate_dashboard_path(raw_path)
     if not path:
+        refused = _app_path_refusal(raw_path, tool="file_read")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_read",
@@ -1524,6 +1587,9 @@ async def api_file_raw(request: web.Request) -> web.Response:
         raw_path = _resolve_relative_path(raw_path)
     path = _h._validate_dashboard_path(raw_path)
     if not path:
+        refused = _app_path_refusal(raw_path, tool="file_raw")
+        if refused is not None:
+            return refused
         _log("denied", raw_path)
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     from personalclaw.security import is_sensitive_path as _isp  # noqa: F811
@@ -1627,6 +1693,9 @@ async def api_file_write(request: web.Request) -> web.Response:
 
     path = _validate_dashboard_path(body.get("path", ""))
     if not path:
+        refused = _app_path_refusal(str(body.get("path", "")), tool="file_write")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_write",
@@ -1698,6 +1767,9 @@ async def api_file_list(request: web.Request) -> web.Response:
 
     path = _validate_dashboard_path(raw_path)
     if not path:
+        refused = _app_path_refusal(raw_path, tool="file_list")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_list", outcome="denied", resources=raw_path
         )
@@ -2050,6 +2122,9 @@ async def api_file_git_status(request: web.Request) -> web.Response:
     raw = request.query.get("path", "").strip()
     path = _validate_dashboard_path(raw)
     if not path:
+        refused = _app_path_refusal(raw, tool="file_git_status")
+        if refused is not None:
+            return refused
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     repo = _git_repo_root(path)
     empty = {"repoRoot": "", "branch": "", "statuses": {}}
@@ -2111,6 +2186,9 @@ async def api_file_git_log(request: web.Request) -> web.Response:
     raw = request.query.get("path", "").strip()
     path = _validate_dashboard_path(raw)
     if not path:
+        refused = _app_path_refusal(raw, tool="file_git_log")
+        if refused is not None:
+            return refused
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     repo = _git_repo_root(path)
     if not repo or not _path_within_roots(repo):
@@ -2146,6 +2224,9 @@ async def api_file_git_commit(request: web.Request) -> web.Response:
     raw = request.query.get("path", "").strip()
     path = _validate_dashboard_path(raw)
     if not path:
+        refused = _app_path_refusal(raw, tool="file_git_commit")
+        if refused is not None:
+            return refused
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     h = request.query.get("hash", "").strip()
     # Hex-only (4-40 chars): a git short/full hash. Rejects flags + injection.
@@ -2202,6 +2283,9 @@ async def api_file_git_original(request: web.Request) -> web.Response:
     raw = request.query.get("path", "").strip()
     path = _validate_dashboard_path(raw)
     if not path:
+        refused = _app_path_refusal(raw, tool="file_git_original")
+        if refused is not None:
+            return refused
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     repo = _git_repo_root(path)
     if not repo or not _path_within_roots(repo):
@@ -2421,6 +2505,10 @@ async def api_file_content_search(request: web.Request) -> web.Response:
     raw = request.query.get("path", "").strip()
     allowed_roots = tuple(rp for _label, rp in _dashboard_roots())
     path = _validate_dashboard_path(raw, allowed_roots)
+    if not path:
+        refused = _app_path_refusal(raw, tool="file_content_search")
+        if refused is not None:
+            return refused
     if not path or not os.path.isdir(path):
         return web.json_response({"error": "invalid or forbidden directory"}, status=400)
     q = request.query.get("q", "").strip()
@@ -2628,6 +2716,10 @@ async def api_file_create(request: web.Request) -> web.Response:
         return json_error("invalid_name", message=refusal, status=400)
 
     parent = _validate_dashboard_path(parent_raw)
+    if not parent:
+        refused = _app_path_refusal(str(parent_raw), tool="file_create")
+        if refused is not None:
+            return refused
     if not parent or not os.path.isdir(parent):
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_create", outcome="denied", resources=parent_raw
@@ -2636,6 +2728,9 @@ async def api_file_create(request: web.Request) -> web.Response:
 
     target = _validate_dashboard_path(os.path.join(parent, name))
     if not target:
+        refused = _app_path_refusal(os.path.join(parent, name), tool="file_create")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_create",
@@ -2685,6 +2780,11 @@ async def api_file_move(request: web.Request) -> web.Response:
     src = _validate_dashboard_path(str(body.get("src", "")))
     dest = _validate_dashboard_path(str(body.get("dest", "")))
     if not src or not dest:
+        # The side that was refused — the source first, which is the one an app reads from.
+        refused_raw = str(body.get("src", "")) if not src else str(body.get("dest", ""))
+        refused = _app_path_refusal(refused_raw, tool="file_move")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_move",
@@ -2746,6 +2846,9 @@ async def api_file_delete(request: web.Request) -> web.Response:
 
     path = _validate_dashboard_path(str(body.get("path", "")))
     if not path:
+        refused = _app_path_refusal(str(body.get("path", "")), tool="file_delete")
+        if refused is not None:
+            return refused
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_delete",
@@ -2791,6 +2894,10 @@ async def api_file_upload(request: web.Request) -> web.Response:
     per-filetype by the shared upload policy (:func:`_upload_check`).
     """
     target_dir = _validate_dashboard_path(request.query.get("path", ""))
+    if not target_dir:
+        refused = _app_path_refusal(request.query.get("path", ""), tool="file_upload")
+        if refused is not None:
+            return refused
     if not target_dir or not os.path.isdir(target_dir):
         return web.json_response({"error": "invalid or forbidden directory"}, status=400)
 
@@ -2816,6 +2923,9 @@ async def api_file_upload(request: web.Request) -> web.Response:
                 )
             dest = _validate_dashboard_path(os.path.join(target_dir, filename))
             if not dest:
+                refused = _app_path_refusal(os.path.join(target_dir, filename), tool="file_upload")
+                if refused is not None:
+                    return refused
                 return web.json_response({"error": f"forbidden filename: {filename}"}, status=400)
             if os.path.exists(dest):
                 return web.json_response({"error": f"already exists: {filename}"}, status=409)

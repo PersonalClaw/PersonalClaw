@@ -214,9 +214,19 @@ export function disclosureOf(entry: AppCatalogEntry | undefined): AppDisclosure 
     hasUI: Boolean(entry.hasUI),
     uiComponents: entry.uiComponents ?? '',
     hasBackend: Boolean(entry.hasBackend),
+    backendSandbox: entry.backendSandbox ?? '',
+    providers: entry.providers ?? [],
     onInstall: entry.onInstall ?? '',
     onUpdate: entry.onUpdate ?? '',
+    onEnable: entry.onEnable ?? '',
+    onDisable: entry.onDisable ?? '',
+    onUninstall: entry.onUninstall ?? '',
+    cliSetup: entry.cliSetup ?? '',
+    cliDoctor: entry.cliDoctor ?? '',
+    sources: entry.sources ?? [],
     mcpServers: entry.mcpServers ?? [],
+    skills: entry.skills ?? [],
+    runsAsYou: entry.runsAsYou ?? '',
   }
 }
 
@@ -234,19 +244,49 @@ export function AppDisclosureView({ disclosure, action }: { disclosure: AppDiscl
       <PermissionList perms={disclosure.permissions ?? {}} hostUi={consentHostUi(disclosure)}
         pythonDeps={disclosure.pythonDependencies} />
       <RunsRow disclosure={disclosure} action={action} />
+      <SkillsRow skills={disclosure.skills} />
     </div>
   )
 }
 
-/** What the install runs on this machine beyond its grants: a server process of its own,
- *  the shell command its install (or update) hook executes in the app's folder, and each
- *  MCP server it adds to the assistant. Renders nothing when there is none of it. */
+const cmd = (text: string) => <code className="font-mono text-on-surface">{text}</code>
+
+/** The lifecycle hooks other than the one this review is for, each with when it runs. The
+ *  install (or update) hook is its own line because it runs NOW, as part of what is consented to. */
+const LATER_HOOKS: { key: 'onEnable' | 'onDisable' | 'onUninstall'; when: string }[] = [
+  { key: 'onEnable', when: 'each time the app is switched on' },
+  { key: 'onDisable', when: 'each time the app is switched off' },
+  { key: 'onUninstall', when: 'before the app is removed' },
+]
+
+/** What the install runs on this machine beyond its grants — its server, each provider module,
+ *  every lifecycle hook, the CLI steps, each source parser and each MCP server — led by the
+ *  server's own sentence saying which of it runs as you (`apps/disclosure._runs_as_you`), shown
+ *  verbatim so this row and the gateway cannot describe the code two ways. Renders nothing when
+ *  there is none of it. */
 function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action: DisclosureAction }) {
   const hook = action === 'update' ? d.onUpdate : d.onInstall
   const items: ReactNode[] = []
-  if (d.hasBackend) items.push('Starts its own server process, which keeps running while the app is on.')
+  if (d.hasBackend) {
+    items.push(d.backendSandbox
+      ? <>Starts its own server process inside the {cmd(d.backendSandbox)} sandbox, which keeps running while the app is on.</>
+      : 'Starts its own server process, which keeps running while the app is on.')
+  }
+  for (const p of d.providers) {
+    items.push(p.execution === 'sidecar'
+      ? <>Runs its {p.type} provider {cmd(p.implementation)} in a child process of the gateway.</>
+      : <>Loads its {p.type} provider {cmd(p.implementation)} into the gateway's own process.</>)
+  }
   if (hook) {
-    items.push(<>Runs <code className="font-mono text-on-surface">{hook}</code> in the app's folder during the {action}.</>)
+    items.push(<>Runs {cmd(hook)} in the app's folder during the {action}.</>)
+  }
+  for (const { key, when } of LATER_HOOKS) {
+    if (d[key]) items.push(<>Runs {cmd(d[key])} in the app's folder {when}.</>)
+  }
+  if (d.cliSetup) items.push(<>Runs {cmd(d.cliSetup)} when you run {cmd('personalclaw setup')}.</>)
+  if (d.cliDoctor) items.push(<>Runs {cmd(d.cliDoctor)} when you run {cmd('personalclaw doctor')}.</>)
+  for (const s of d.sources) {
+    items.push(<>Runs {cmd(s.script)} to read what its {s.name || 'source'} source fetches, with no network access.</>)
   }
   if (d.mcpServers.length) {
     items.push(
@@ -258,15 +298,38 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
       </>,
     )
   }
-  if (!items.length) return null
+  // The sentence can stand alone: the Python packages it names are listed in their own row.
+  if (!items.length && !d.runsAsYou) return null
   return (
     <div className="flex gap-s rounded-md border border-outline-variant bg-surface-high p-m" data-testid="consent-runs">
       <Server size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
       <div data-type="body-s" className="text-on-surface-low">
         <div className="text-on-surface">What it runs on this machine</div>
-        <ul className="mt-xs flex flex-col gap-xs">
-          {items.map((item, i) => <li key={i}>• {item}</li>)}
-        </ul>
+        {d.runsAsYou && <p className="mt-xs text-on-surface" data-testid="consent-runs-as-you">{d.runsAsYou}</p>}
+        {items.length > 0 && (
+          <ul className="mt-xs flex flex-col gap-xs">
+            {items.map((item, i) => <li key={i}>• {item}</li>)}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The skills installing the app adds to your skills — instructions every agent may load and
+ *  follow. An app ships skills only here, in its manifest (`POST /api/skills*` is owner-only),
+ *  so this row is the whole of what an app can teach your agents. */
+function SkillsRow({ skills }: { skills: string[] }) {
+  if (!skills.length) return null
+  return (
+    <div className="flex gap-s rounded-md border border-outline-variant bg-surface-high p-m" data-testid="consent-skills">
+      <Sparkles size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+      <div data-type="body-s" className="text-on-surface-low">
+        <div className="text-on-surface">What it teaches your agents</div>
+        <div className="mt-xs">
+          Adds {skills.length === 1 ? 'a skill' : `${skills.length} skills`} your agents can load and follow as
+          instructions: {skills.map((s, i) => <span key={s}>{i > 0 ? ', ' : ''}{cmd(s)}</span>)}.
+        </div>
       </div>
     </div>
   )
@@ -285,10 +348,18 @@ function disclosureFacts(d: AppDisclosure): { key: string; label: string }[] {
     })),
     ...d.pythonDependencies.map((p) => ({ key: `py:${p.spec}`, label: `Python package ${p.spec}` })),
     ...(d.hasUI || d.uiComponents ? [{ key: 'ui', label: 'Runs in this dashboard page' }] : []),
-    ...(d.hasBackend ? [{ key: 'backend', label: 'Its own server process' }] : []),
+    ...(d.hasBackend ? [{ key: `backend:${d.backendSandbox}`, label: d.backendSandbox ? `Its own server process, in the ${d.backendSandbox} sandbox` : 'Its own server process' }] : []),
+    ...d.providers.map((p) => ({ key: `provider:${p.type}:${p.implementation}:${p.execution}`, label: `Provider module ${p.implementation}` })),
     ...(d.onInstall ? [{ key: `oninstall:${d.onInstall}`, label: `Install command: ${d.onInstall}` }] : []),
     ...(d.onUpdate ? [{ key: `onupdate:${d.onUpdate}`, label: `Update command: ${d.onUpdate}` }] : []),
+    ...(d.onEnable ? [{ key: `onenable:${d.onEnable}`, label: `Switch-on command: ${d.onEnable}` }] : []),
+    ...(d.onDisable ? [{ key: `ondisable:${d.onDisable}`, label: `Switch-off command: ${d.onDisable}` }] : []),
+    ...(d.onUninstall ? [{ key: `onuninstall:${d.onUninstall}`, label: `Uninstall command: ${d.onUninstall}` }] : []),
+    ...(d.cliSetup ? [{ key: `clisetup:${d.cliSetup}`, label: `personalclaw setup step: ${d.cliSetup}` }] : []),
+    ...(d.cliDoctor ? [{ key: `clidoctor:${d.cliDoctor}`, label: `personalclaw doctor step: ${d.cliDoctor}` }] : []),
+    ...d.sources.map((s) => ({ key: `source:${s.name}:${s.script}`, label: `Source parser ${s.script}` })),
     ...d.mcpServers.map((s) => ({ key: `mcp:${s.name}:${s.launches}`, label: `MCP server “${s.name}”` })),
+    ...d.skills.map((s) => ({ key: `skill:${s}`, label: `Skill ${s}` })),
   ]
 }
 
@@ -517,8 +588,10 @@ export function permissionRows(perms: AppSummary['permissions']): string[] {
   if (perms.mcpTools?.length) rows.push(`MCP tools: ${perms.mcpTools.join(', ')}`)
   // #3501. One grant, so one bullet — no tier to interpolate. This read `Memory: ${…}`
   // and rendered the declared tier verbatim, which meant a user could be shown (and
-  // approve) `Memory: app-scoped` for a grant the gateway refused on every path.
-  if (perms.memory) rows.push('Memory')
+  // approve) `Memory: app-scoped` for a grant the gateway refused on every path. It says what
+  // the grant reaches: memory your agents recall, and the lessons context assembly hands every
+  // agent as rules (`/api/lessons` needs this grant too — `permissions.MEMORY_API_PATHS`).
+  if (perms.memory) rows.push('Read and change your memory — what your agents recall, including the lessons they follow')
   if (perms.storage) rows.push('Storage')
   if (perms.cron) rows.push('Scheduled jobs')
   // An app's agent runs approve their own tool calls and hold the write grant

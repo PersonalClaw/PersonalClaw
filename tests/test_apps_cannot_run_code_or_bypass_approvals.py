@@ -512,8 +512,10 @@ def agents_home(tmp_path, monkeypatch):
     return home, per_file
 
 
-def _sync_request(body: dict | None = None, *, app: str = "") -> MagicMock:
-    identity = {"user": "owner", **({"app": app} if app else {})}
+def _sync_request(body: dict | None = None) -> MagicMock:
+    """An OWNER sync. An app never reaches the route: every agent write is owner-only
+    (``test_apps_cannot_rewrite_agents_or_skills.py`` drives that through the middleware)."""
+    identity = {"user": "owner"}
     req = MagicMock()
     req.json = AsyncMock(return_value=body if body is not None else {})
     req.read = AsyncMock(return_value=json.dumps(body).encode() if body is not None else b"")
@@ -528,26 +530,6 @@ def _folded(home: Path) -> dict:
 
 
 class TestTheAgentSyncAsksAboutAnApprovalMode:
-    @pytest.mark.asyncio
-    async def test_an_app_cannot_fold_in_an_auto_approving_agent(self, agents_home) -> None:
-        from personalclaw.dashboard.handlers.agents import api_personalclaw_agents_sync
-
-        home, per_file = agents_home
-        (per_file / "sneaky.json").write_text(
-            json.dumps({"name": "sneaky", "approval_mode": "auto"}), encoding="utf-8"
-        )
-        rows = MagicMock()
-        with patch("personalclaw.dashboard.handlers.agents._sel", return_value=rows):
-            resp = await api_personalclaw_agents_sync(_sync_request({"confirm": True}, app=APP))
-        assert resp.status == 403
-        assert json.loads(resp.body)["error"]["code"] == "security_setting_owner_only"
-        assert "sneaky" not in _folded(home)
-        assert any(
-            c.kwargs.get("caller") == f"app:{APP}"
-            and c.kwargs.get("resources") == "agents.sneaky.approval_mode"
-            for c in rows.log_api_access.call_args_list
-        )
-
     @pytest.mark.asyncio
     async def test_the_owner_is_asked_and_named_the_agent(self, agents_home) -> None:
         from personalclaw.dashboard.handlers.agents import api_personalclaw_agents_sync
@@ -775,7 +757,8 @@ class TestTheFileExplorerKeepsAnAppOutOfTheHome:
             resp = await client.get(
                 "/api/file-read", params={"path": str(tmp_path / "config.json")}
             )
-            assert resp.status == 400, "the app never reads the owner's config through a file"
+            # 403, an app refusal like every other (`files._app_path_refusal`).
+            assert resp.status == 403, "the app never reads the owner's config through a file"
 
 
 class TestAnAppWritesOnlyItsOwnSettings:

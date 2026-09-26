@@ -356,10 +356,11 @@ class TestEveryControlIsRefusedToAnApp:
 # ── An agent profile's approval mode is the same control, stored per agent ──────────
 
 
-def _agent_request(body: Any, *, app: str = "", method: str = "POST", match: dict | None = None):
+def _agent_request(body: Any, *, method: str = "POST", match: dict | None = None):
+    """An OWNER request to an agent handler."""
     from unittest.mock import AsyncMock
 
-    identity = {"user": "owner", **({"app": app} if app else {})}
+    identity = {"user": "owner"}
     req = MagicMock()
     req.method = method
     req.json = AsyncMock(return_value=body)
@@ -389,65 +390,10 @@ def _stored_approval_mode(home, name: str) -> str:
 
 
 class TestAnAgentsApprovalModeIsTheOwners:
-    @pytest.mark.asyncio
-    async def test_an_app_cannot_create_an_auto_approving_agent(self, agents_home, sel_rows):
-        from personalclaw.dashboard.handlers.agents import api_personalclaw_agents_create
-
-        resp = await api_personalclaw_agents_create(
-            _agent_request({"name": "sneaky", "approval_mode": "auto", "confirm": True}, app=APP)
-        )
-        assert resp.status == 403
-        assert not (agents_home / "config.json").exists(), "nothing may be written"
-        assert _denials_naming(sel_rows, caller=f"app:{APP}", field="agents.sneaky.approval_mode")
-
-    @pytest.mark.asyncio
-    async def test_an_app_cannot_make_an_agent_auto_approve(self, agents_home, sel_rows):
-        from personalclaw.dashboard.handlers.agents import (
-            api_personalclaw_agent_update,
-            api_personalclaw_agents_create,
-        )
-
-        assert (await api_personalclaw_agents_create(_agent_request({"name": "a1"}))).status == 200
-        resp = await api_personalclaw_agent_update(
-            _agent_request(
-                {"approval_mode": "auto", "confirm": True},
-                app=APP,
-                method="PUT",
-                match={"name": "a1"},
-            )
-        )
-        assert resp.status == 403
-        assert _stored_approval_mode(agents_home, "a1") == ""
-
-    @pytest.mark.asyncio
-    async def test_an_app_cannot_patch_a_per_file_agents_approval_mode(self, agents_home):
-        from personalclaw.agent import agents_dir
-        from personalclaw.dashboard.handlers.agents import api_agent_detail
-
-        before = (agents_dir() / "helper.json").read_text(encoding="utf-8")
-        resp = await api_agent_detail(
-            _agent_request(
-                {"approval_mode": "auto", "confirm": True},
-                app=APP,
-                method="PATCH",
-                match={"name": "helper"},
-            )
-        )
-        assert resp.status == 403
-        assert (agents_dir() / "helper.json").read_text(encoding="utf-8") == before
-
-    @pytest.mark.asyncio
-    async def test_an_app_still_edits_an_agents_description(self, agents_home):
-        from personalclaw.dashboard.handlers.agents import (
-            api_personalclaw_agent_update,
-            api_personalclaw_agents_create,
-        )
-
-        assert (await api_personalclaw_agents_create(_agent_request({"name": "a1"}))).status == 200
-        resp = await api_personalclaw_agent_update(
-            _agent_request({"description": "hi"}, app=APP, method="PUT", match={"name": "a1"})
-        )
-        assert resp.status == 200
+    """The owner's half. An app reaches no agent write at all — every route is owner-only in
+    ``apps/permissions.ROUTE_AUTHZ``, driven through the real middleware in
+    ``test_apps_cannot_rewrite_agents_or_skills.py`` — because an agent's prompt and tools are
+    as much the owner's as its approval mode."""
 
     @pytest.mark.asyncio
     async def test_the_owner_confirms_an_auto_approving_agent(self, agents_home):

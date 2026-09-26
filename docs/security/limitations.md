@@ -71,8 +71,10 @@ approve/deny rules, device pairing codes, external-access clients, and the agent
 runtime config (`allowedTools`, the servers it launches). So is code that runs as you,
 and your own access: the MCP servers the gateway launches (`/api/mcp`, reads included,
 since a remote server's headers hold its bearer token), your backups (export, import and
-restore), who may message your agent from a chat channel, and taking back an autonomy
-grant or undoing what an automation did. Holding any of those would make every other
+restore), who may message your agent from a chat channel, taking back an autonomy grant or
+undoing what an automation did, and bringing your setup over from other agent tools
+(`/api/onboarding/import`, which copies their MCP servers, skills and instructions in).
+Holding any of those would make every other
 line in a manifest moot, so there is nothing to scope — and before the registry existed,
 an app declaring `/api/ws` (the event socket) prefix-matched `/api/ws/terminal/{id}` and
 got an interactive shell running as you. A manifest that names one of these paths now
@@ -86,20 +88,36 @@ code you minted, and stop all unattended work with `POST /api/incident`. It may 
 define, edit, arm or run an automation, save a workflow, start or steer a run, start a
 goal loop, install, enable or update an app or a pack, connect or disconnect a chat
 channel, or sign out one of your devices. Its scheduled work is the `crons` its manifest
-declares, which install consent lists. Every write route in these families has to be
-declared one way or the other: one that is not is refused to every app until someone
-declares it, and `tests/test_security_posture_rail.py` fails the build on it.
+declares, which install consent lists.
+
+What your agents are told is in the same class, because an agent carries out its
+instructions with your tools under your approval settings. An app may not create, edit,
+sync or delete one of your agents (its system prompt, tools, skills, model or approval
+mode), write an agent definition or make one of them your agent, install, write, accept
+or remove a skill, write a prompt or a snippet, change which system prompt your chats,
+unattended runs and judges start from, launch a prompt template (which starts a goal
+loop), or rewrite the routing notes your orchestrator reads. It may still read those, check
+a skill's integrity, and decline a proposed skill. An app ships its skills in its
+manifest, which install consent lists by name, and runs agent work through its own
+`agent` permission. A lesson is memory that every agent is handed as a rule, so
+`/api/lessons` needs the `memory` grant, the same as `/api/memory`.
+
+Every write route in these families has to be declared one way or the other: one that is
+not is refused to every app until someone declares it, and
+`tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
 because `/api/config` also carries ordinary settings an app may legitimately write: an
 app-scoped `PATCH` of a field that is a security setting (YOLO, the approval mode,
 sign-in and 2FA, egress, the keychain, sandbox ceilings, guardrail budgets, external
-access, sync) answers `403`, in either direction, as does an app writing an agent's
-`approval_mode` or answering a pending approval with a standing grant such as `yolo`.
+access, sync) answers `403`, in either direction, as does an app answering a pending
+approval with a standing grant such as `yolo`.
 Every other setting is the app's only if its manifest names it in `permissions.config`,
 the list install consent shows: `GET /api/config/personalclaw` hands an app those fields
 and nothing else, and a write to any other answers `403 config_field_not_declared`.
-Every such refusal leaves a Security Event Log row naming the app and the field.
+Every such refusal leaves a Security Event Log row naming the app and the field. The file
+explorer shows an app no folder that holds your PersonalClaw home, and refuses an app
+the same way: `403`, with a row naming the app and the path it asked for.
 
 **What this means for you:** treat an installed app's `network: true` as a stated
 intent you are consenting to, the same way you would trust any program you choose
@@ -369,17 +387,25 @@ holding your tokens. Delete them, or change any token that has left your hands i
 ## 7. An app's own code runs as you
 
 Everything §2 describes bounds an app's **token**: what the app may reach by asking the
-gateway. None of it bounds the app's **code**. An app can bring four kinds, and all four
+gateway. None of it bounds the app's **code**. An app can bring six kinds, and all six
 run under your own account:
 
 - provider modules, imported into the gateway's own process
-  (`providers/loader.py::_load_ext_module`);
+  (`providers/loader.py::_load_ext_module`), or run as a child of it when the manifest says
+  `execution: sidecar`;
 - a backend, started as a process on this machine (`apps/backend_runtime.py`);
 - the MCP servers in its manifest's `mcpServers`, each a command the gateway launches with
   the gateway's own environment, which carries the stored credentials PersonalClaw exports
   for its child processes (`apps/mcp_bridge.py`, `mcp_client.py`, `config/loader.py`);
 - setup hooks (`setup.onInstall` and the rest), shell commands run at install, update,
-  enable, disable and uninstall (`apps/app_manager.py::_run_hook`).
+  enable, disable and uninstall (`apps/app_manager.py::_run_hook`);
+- CLI steps (`cli.setup`, `cli.doctor`), imported and run when you run `personalclaw setup`
+  or `personalclaw doctor` (`app_cli.py`);
+- a connector pack's source parsers (`sources`), scripts the gateway runs on what the pack's
+  sources fetch, fenced off from the network but not from your files
+  (`knowledge_providers/pack_parse.py`).
+
+The Python packages an app installs load into the gateway's process too (§3).
 
 That code can read and write every file in your PersonalClaw home. It can switch YOLO on
 by editing `config.json`, with no `PATCH /api/config/personalclaw` to refuse; it can add
@@ -388,9 +414,10 @@ the key that signs every session token, and sign one as you. The home's private 
 modes keep other accounts on the machine out, not your own processes. None of the
 refusals in §2 applies, because none of this goes through the API.
 
-**What is enforced:** an app cannot add code through the gateway after you install it.
-Its MCP servers and its scheduled jobs come from the manifest you consented to, and
-defining either through the API is owner-only (§2). A backend that names a sandbox tier
+**What is enforced:** an app cannot add code or instructions through the gateway after you
+install it. Its MCP servers, its scheduled jobs and the skills it gives your agents come
+from the manifest you consented to, and defining any of them through the API is owner-only
+(§2), as is writing your agents and the system prompts they start from. A backend that names a sandbox tier
 (`backend.sandbox`, such as `docker`) launches inside that tier rather than on the host,
 with its `network` permission deciding its egress and its `storage` permission its one
 writable folder (`apps/backend_runtime.py::build_backend_sandbox_spec`). A named tier that
@@ -400,20 +427,25 @@ name in `sandbox.env_passthrough` (`sandbox.py::build_child_env`), and a backend
 MCP server both run under the resource-ceiling shim (`sandbox.py::spawn_shim_argv`).
 
 **What is not enforced:** anything about the code itself. A backend that names no
-sandbox, a provider module, an MCP server and a setup hook have your files and your
-network, and an MCP server and a setup hook also get the gateway's full environment.
+sandbox, a provider module, an MCP server, a setup hook and a CLI step have your files and
+your network, and an MCP server and a setup hook also get the gateway's full environment.
+A source parser has your files and no network.
 
 **What the consent surface tells you:** the install dialog reads `apps/disclosure.describe`
-and has a row titled *What it runs on this machine*. It says when the app starts a server
-process of its own, shows the shell command its install (or update) hook runs, verbatim,
-and names each MCP server it adds with the command line or URL that server launches. The
-network row beside it says the app's code can reach the network whatever it declares.
-
-**What the consent surface does not tell you yet:** that this code runs under your
-account with your files, and that the permissions above it do not bound it. It also does
-not list provider modules, so an app that ships only a provider shows no row at all, and
-it does not show the enable, disable and uninstall hooks. This page is where those facts
-are written down, which is not the same as saying them where you consent.
+and has a row titled *What it runs on this machine*. It leads with the gateway's own
+sentence saying which of the app's code runs as you, that it can read and change your
+files, your PersonalClaw settings included, and that the permissions listed beside it
+limit what the app asks the gateway for, not what that code does
+(`apps/disclosure._runs_as_you`). Below it the row names every kind: the server process it
+starts, and the sandbox tier it runs in when it names one; each provider module, with the
+entry point the gateway loads and whether it runs inside the gateway or as a child of it;
+the shell command of each lifecycle hook, verbatim, with when it runs (the install or
+update now, switching the app on, switching it off, removing it); the steps it adds to
+`personalclaw setup` and `personalclaw doctor`; each source parser; and each MCP server
+with the command line or URL it launches. A row titled *What it teaches your agents* lists
+the skills it installs by name. The Store card reads the same projection, and an update
+that adds any of it asks again. The network row says the app's code can reach the network
+whatever it declares.
 
 **What this means for you:** installing an app that brings code is running a program
 as yourself. The supply-chain scanner (quarantine → scan → consent → install, with
@@ -429,9 +461,8 @@ patched inline in a docs change. Every item above has a named future direction
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
 weight's sha256 when it loads, for the gap in #5; a store that can hold a multi-line value,
-for the part of #6 that is ours to close; per-app OS isolation for every
-kind of app code, which today only a backend that names a sandbox tier has, and a consent row
-that names all of that code and says it runs as you, for #7). This page will shrink as those
-land.
+for the part of #6 that is ours to close; per-app OS isolation for every kind of app code,
+which today only a backend that names a sandbox tier has, for #7). This page will shrink as
+those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

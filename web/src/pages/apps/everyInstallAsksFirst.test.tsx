@@ -45,6 +45,8 @@ const DISCLOSURE: AppDisclosure = {
   }],
   pythonDependencies: [],
   hasUI: true, uiComponents: '', hasBackend: true, onInstall: 'bash setup.sh', onUpdate: '', mcpServers: [],
+    backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
+    cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
 }
 
 const ENTRY: AppCatalogEntry = {

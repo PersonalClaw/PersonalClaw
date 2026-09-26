@@ -838,6 +838,11 @@ export interface AppCronSummary {
 }
 /** One MCP server an app adds to the assistant's tools, and what it starts or connects to. */
 export interface AppMcpServer { name: string; launches: string }
+/** One provider module an app registers: what it provides, the `module:factory` entry point the
+ *  gateway loads, and whether it runs `in-process` (imported into the gateway) or as a `sidecar`. */
+export interface AppProviderModule { type: string; implementation: string; execution: string }
+/** One connector-pack parser: the source it parses for and the script the gateway runs. */
+export interface AppSourceParser { name: string; script: string }
 /** What installing an app GRANTS it and RUNS for it — `apps/disclosure.describe`, the one
  *  projection the Store card, the install review and the install gate all read. Every key is
  *  also an `AppCatalogEntry` field of the same name, so a card and the dialog cannot
@@ -850,10 +855,26 @@ export interface AppDisclosure {
   uiComponents: string
   /** Its own server process, started on install and kept running while it is enabled. */
   hasBackend: boolean
-  /** The shell command the install (or update) runs in the app's folder, verbatim; `''` for none. */
+  /** The sandbox tier that server launches inside; `''` when it runs on the host. */
+  backendSandbox: string
+  providers: AppProviderModule[]
+  /** The shell command each lifecycle hook runs in the app's folder, verbatim; `''` for none. */
   onInstall: string
   onUpdate: string
+  onEnable: string
+  onDisable: string
+  onUninstall: string
+  /** The `module:function` run by `personalclaw setup` / `personalclaw doctor`; `''` for none. */
+  cliSetup: string
+  cliDoctor: string
+  sources: AppSourceParser[]
   mcpServers: AppMcpServer[]
+  /** The skills it installs for your agents to follow, by the name each installs under. */
+  skills: string[]
+  /** Which of the above runs as you, and that the permissions do not bound it — composed
+   *  server-side from this same projection (`apps/disclosure._runs_as_you`) and shown verbatim.
+   *  `''` when the app brings no such code. */
+  runsAsYou: string
 }
 /** One declared `pythonDependencies` entry, classified server-side by
  *  `app_manager.describe_python_dependencies`.
@@ -909,9 +930,19 @@ export interface AppCatalogEntry {
   /** What the install RUNS beyond its grants — see `AppDisclosure`. Absent/empty for a
    *  registry pointer, whose manifest is read when the install is reviewed. */
   hasBackend?: boolean
+  backendSandbox?: string
+  providers?: AppProviderModule[]
   onInstall?: string
   onUpdate?: string
+  onEnable?: string
+  onDisable?: string
+  onUninstall?: string
+  cliSetup?: string
+  cliDoctor?: string
+  sources?: AppSourceParser[]
   mcpServers?: AppMcpServer[]
+  skills?: string[]
+  runsAsYou?: string
   // APE-4: the declared quality bar, so a Store card can badge it BEFORE install.
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
   // manifest hasn't been fetched) → no badges, which is honest either way.
