@@ -27,6 +27,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from personalclaw.triggers.models import Trigger
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +115,35 @@ def deploy_triggers(stage: str, home: Path | None = None) -> dict[str, list[str]
 
     _audit_deploy(stage, deployed, skipped)
     return {"deployed": deployed, "skipped": skipped}
+
+
+def deployed_triggers(stage: str, home: Path | None = None) -> list["Trigger"]:
+    """The live Automations rows a pack's trigger deploy added, still in the store.
+
+    Read the way :func:`deploy_triggers` writes them: each staged file's own trigger id, looked up
+    in the live store. A staged file that does not parse named nothing (the deploy skipped it), and
+    an id that is no longer in the store is a row the user already removed.
+    """
+    from personalclaw.triggers.models import parse_trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    if home is None:
+        from personalclaw.config.loader import config_dir
+
+        home = config_dir()
+
+    store = TriggerStore(home)
+    live: list[Trigger] = []
+    for path in sorted(staged_triggers_dir(home, stage).glob("*.json")):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
+        trigger, _issues = parse_trigger(raw)
+        loaded = store.get(trigger.id) if trigger.id else None
+        if loaded is not None:
+            live.append(loaded.trigger)
+    return live
 
 
 def _audit_deploy(stage: str, deployed: list[str], skipped: list[str]) -> None:

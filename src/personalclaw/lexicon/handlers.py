@@ -173,6 +173,14 @@ async def api_lexicon_update_correction(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def api_lexicon_delete_correction(request: web.Request) -> web.Response:
+    """DELETE /api/lexicon/corrections/{id} — forget one learned correction."""
+    svc = get_lexicon_service()
+    if not svc.store.delete_correction(request.match_info["id"]):
+        return web.json_response({"error": "correction not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
 async def api_lexicon_reset(request: web.Request) -> web.Response:
     """POST /api/lexicon/reset — drop all terms + corrections (rebuild repopulates graph).
 
@@ -212,4 +220,5 @@ def register_lexicon_routes(app: web.Application) -> None:
     app.router.add_get("/api/lexicon/corrections", api_lexicon_corrections)
     app.router.add_post("/api/lexicon/corrections", api_lexicon_add_correction)
     app.router.add_patch("/api/lexicon/corrections/{id}", api_lexicon_update_correction)
+    app.router.add_delete("/api/lexicon/corrections/{id}", api_lexicon_delete_correction)
     app.router.add_post("/api/lexicon/reset", api_lexicon_reset)

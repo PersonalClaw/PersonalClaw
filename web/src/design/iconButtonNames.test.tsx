@@ -160,7 +160,8 @@ describe('the rail: no icon-only button ships without a name', () => {
       buttons.filter((b) => !b.named && b.titled).map((b) => `${rel}:${b.line}`))
     // 5, down from 9: the four title-only buttons (refresh, details, delete, retry) of the
     // Ollama-only model manager went with that file — it was unreachable, and Ollama's card is now
-    // `LocalModelManager`, whose buttons are named.
-    expect(titledOnly.length, `title-only icon buttons:\n  ${titledOnly.join('\n  ')}`).toBe(5)
+    // `LocalModelManager`, whose buttons are named. 4, down from 5: a saved theme's delete in
+    // `DesignPanel` is named after its theme — its title said "Delete saved theme" on every tile.
+    expect(titledOnly.length, `title-only icon buttons:\n  ${titledOnly.join('\n  ')}`).toBe(4)
   })
 })

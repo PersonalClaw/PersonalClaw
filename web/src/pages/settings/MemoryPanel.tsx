@@ -448,9 +448,10 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // `vector_memory.delete_semantic` is a TOMBSTONE: `UPDATE semantic_memory SET is_deleted = 1`,
       // the row keeps its `value_json`, and `_log_event("delete", "semantic", key, existing["value_json"]…)`
       // records the prior value as well. So the data survives in two places — and this very panel
-      // ships the undo: the History tab's `canUndo` is
+      // ships the undo: the Audit tab's `canUndo` is
       // `ev.memory_type === 'semantic' && UNDOABLE.has(ev.event_type)`, and `UNDOABLE` contains
-      // `'delete'`.
+      // `'delete'`. The copy names the tab by its label in `TOP_TABS` — it said "the History tab
+      // below" for a tab called Audit, in the strip above.
       //
       // 🪤 OVERSTATING A LOSS IS ITS OWN DEFECT, not a safe error. Warnings work by being scarce; one
       // that cries irreversible over a one-click undo is what teaches people to click through the ones
@@ -458,7 +459,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // cannot be undone. That sibling is the discriminator: this is a precise correction, not a
       // blanket softening of danger copy.
       if (!(await confirmDelete('memory', selected.fact.key, {
-        body: 'The agent stops using it right away. This one is reversible — the History tab below has an Undo for it.',
+        body: 'The agent stops using it right away. This one is reversible — the Audit tab has an Undo for it.',
       }))) return
       try { await api.deleteSemantic(selected.fact.key) } catch (e) { return fail('memory', e) }
     } else if (selected.kind === 'episodic' && selected.episodic) {
@@ -473,7 +474,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // memory is a sentence rather than a name.
       // 🔑 THIS ONE KEEPS THE DEFAULT "This cannot be undone." AND MUST — it is the discriminator that
       // makes the two corrections above precise rather than a softening of danger copy. Episodic delete
-      // is also a tombstone, but `undo_event` refuses a non-semantic event and the History tab's
+      // is also a tombstone, but `undo_event` refuses a non-semantic event and the Audit tab's
       // `canUndo` gates on `ev.memory_type === 'semantic'`, so there is no route back. Three deletes in
       // one function, two of which were saying the wrong thing; do not "finish the job" on this one.
       if (!(await confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40)))) return
@@ -493,7 +494,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // only clears `is_deleted`; it does not restore observations. So undo brings the RULE back at
       // reset confidence, and the copy has to carry that or it trades one lie for another.
       if (!(await confirmDelete('lesson', rowSubject([selected.lesson.rule], 40), {
-        body: 'The agent stops applying it right away. The History tab below can undo this, but the lesson '
+        body: 'The agent stops applying it right away. The Audit tab can undo this, but the lesson '
           + 'comes back with its confidence reset — forgetting one deliberately voids the observations '
           + 'that earned it.',
       }))) return

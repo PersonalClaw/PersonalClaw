@@ -454,11 +454,20 @@ def test_parse_default_window_accepts_the_compact_config_form(value, expected):
     assert (window.start, window.end) == expected
 
 
-@pytest.mark.parametrize("value", ["", "garbage", "25:00-08:00", "22:00", "-", None])
-def test_a_malformed_default_window_means_NO_default(value):
-    """Fail-safe: a window that accidentally matched all day would suppress every automation and
-    look exactly like a broken scheduler."""
+@pytest.mark.parametrize("value", ["", "   ", None])
+def test_an_empty_default_window_means_NO_default(value):
     assert parse_default_window(value) is None
+
+
+@pytest.mark.parametrize(
+    "value", ["garbage", "25:00-08:00", "22:00", "-", "10pm-7am", "22:00-22:00"]
+)
+def test_a_malformed_default_window_is_refused_naming_the_form_that_works(value):
+    """The Settings write refuses with this, so the message is what the user reads. The scheduler's
+    fail-safe reading of a value that got past it is `default_quiet_window`'s, pinned in
+    `test_default_quiet_window_is_validated_on_save.py`."""
+    with pytest.raises(ValueError, match=r"HH:MM-HH:MM in 24-hour time, e\.g\. 22:00-07:00"):
+        parse_default_window(value)
 
 
 def test_a_triggers_own_setting_always_beats_the_default(monkeypatch):

@@ -183,6 +183,26 @@ def record_install(pack: InstalledPack, home: Path | None = None) -> None:
     atomic_write(path, json.dumps(existing, indent=2, ensure_ascii=False) + "\n")
 
 
+def forget_install(pack_name: str, home: Path | None = None) -> bool:
+    """Drop one pack's record from the ledger — uninstall's last step. Returns whether it was there.
+
+    An unreadable ledger is left as it is and reads as "not there": rewriting it here would
+    replace every other pack's record with nothing.
+    """
+    from personalclaw.atomic_write import atomic_write
+
+    path = _ledger_path(home)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(loaded, dict) or pack_name not in loaded:
+        return False
+    del loaded[pack_name]
+    atomic_write(path, json.dumps(loaded, indent=2, ensure_ascii=False) + "\n")
+    return True
+
+
 class BindingError(Exception):
     """A setup answer that the pack's own declaration does not accept."""
 

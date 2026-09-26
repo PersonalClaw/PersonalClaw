@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **855 registrations** over **693 distinct paths** — 848 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **857 registrations** over **694 distinct paths** — 850 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -41,18 +41,18 @@ The 127 families the surface divides into, largest first.
 | `/api/providers` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
+| `/api/packs` | 13 | 13 |
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
-| `/api/packs` | 12 | 12 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
+| `/api/lexicon` | 10 | 6 |
 | `/api/notifications` | 10 | 7 |
 | `/api/rooms` | 10 | 8 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
-| `/api/lexicon` | 9 | 6 |
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/channels` | 8 | 8 |
 | `/api/onboarding` | 8 | 7 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -570,6 +570,7 @@ The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/lessons` | add a lesson to memory.db ``lesson.*``. |
 | `GET` | `/api/lexicon/corrections` | list learned corrections (most-corrected first). |
 | `POST` | `/api/lexicon/corrections` | {heard, meant, always?} — record a learned fix |
+| `DELETE` | `/api/lexicon/corrections/{id}` | forget one learned correction. |
 | `PATCH` | `/api/lexicon/corrections/{id}` | {auto_apply} — toggle 'always fix this'. |
 | `POST` | `/api/lexicon/rebuild` | resync graph-sourced terms from knowledge entities |
 | `POST` | `/api/lexicon/reset` | drop all terms + corrections (rebuild repopulates graph). |
@@ -746,6 +747,7 @@ The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/packs/{name}/finish-setup` | Return a pack's re-runnable setup interview (the "Finish setup" chip). |
 | `POST` | `/api/packs/{name}/roster/deploy` | One-click team deploy: promote a pack's ``always`` roster tier (§4.2). |
 | `POST` | `/api/packs/{name}/triggers/deploy` | Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7). |
+| `POST` | `/api/packs/{name}/uninstall` | Uninstall a pack, never a copy you edited. DRY-RUN unless ``confirm`` is true. |
 | `POST` | `/api/packs/{name}/update` | The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true. |
 | `GET` | `/api/proactive/digest` | §5.1's card, assembled from the last digest run. |
 | `POST` | `/api/proactive/digest/reply` | one tap or one typed reply. Body ``{run_id, text}``. |

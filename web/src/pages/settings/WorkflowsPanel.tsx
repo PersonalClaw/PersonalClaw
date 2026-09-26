@@ -122,7 +122,7 @@ export function WorkflowsPanel() {
             hint="How long a pending approval stays live. A week by default, because the realistic case is being away. 0 means it never expires. A destructive confirmation auto-rejects on expiry; an ordinary one keeps waiting." />
           <TextRow label="Default quiet hours" cfg={cfg} field="default_quiet_windows" patch={patch} mono
             placeholder="22:00-08:00"
-            hint="A quiet window applied to new automations that set none of their own, as HH:MM-HH:MM. A window may wrap midnight. Empty means no default — an automation you created deliberately should run when you told it to. Per-trigger settings always win." />
+            hint="A quiet window applied to new automations that set none of their own, as HH:MM-HH:MM in 24-hour time — 22:00-07:00, not 10pm-7am. A window may wrap midnight. Empty means no default — an automation you created deliberately should run when you told it to. Per-trigger settings always win." />
           <TextRow label="Default duty gate" cfg={cfg} field="duty_gate_default" patch={patch} mono
             placeholder="manual"
             hint="The are-you-on-duty check applied to new automations that name none. Empty means no gate; manual is the built-in on/off toggle, and apps can supply others. The gate always fails open, so a broken calendar app can never silence everything." />

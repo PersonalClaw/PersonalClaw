@@ -44,7 +44,7 @@ const base: InstalledPackRec = {
   installed_at: '2026-08-01T09:30:00Z',
 }
 
-const text = (p: InstalledPackRec) => render(<PackRow pack={p} />).container.textContent ?? ''
+const text = (p: InstalledPackRec) => render(<PackRow pack={p} onChanged={() => {}} />).container.textContent ?? ''
 
 describe('components — what the pack installed', () => {
   it('lists every installed component', () => {
@@ -57,7 +57,7 @@ describe('components — what the pack installed', () => {
   it('omits the Installed line for a pack that installed nothing', () => {
     // Asserted on the LABEL boundary, not the bare word: "Installed" is also the prefix of the
     // "Installed 8/1/2026" date line, so a substring check here passes/fails for the wrong reason.
-    const { container } = render(<PackRow pack={{ ...base, components: [] }} />)
+    const { container } = render(<PackRow pack={{ ...base, components: [] }} onChanged={() => {}} />)
     expect([...container.querySelectorAll('span')].map((s) => s.textContent))
       .not.toContain('Installed')
     expect(container.textContent).toContain('Installed 8/1/2026')  // the date line survives
@@ -97,7 +97,7 @@ describe('connectors — how each one resolved, not just which failed', () => {
   })
 
   it('tones a skipped connector as a warning and leaves the others neutral', () => {
-    const { container } = render(<PackRow pack={base} />)
+    const { container } = render(<PackRow pack={base} onChanged={() => {}} />)
     const warned = [...container.querySelectorAll('.text-warn')].map((e) => e.textContent)
     expect(warned).toContain('netsuite')
     expect(warned).not.toContain('quickbooks')
@@ -151,7 +151,7 @@ describe('the detail block gate', () => {
     const { container } = render(<PackRow pack={{
       name: 'bare', version: '0.1', components: [], connectors: [], connector_markers: [],
       setup_skill: '', setup_pending: false, installed_at: '',
-    }} />)
+    }} onChanged={() => {}} />)
     // The name row survives; nothing else is invented.
     expect(container.textContent).toContain('bare')
     expect(container.querySelector('.border-t')).toBeNull()

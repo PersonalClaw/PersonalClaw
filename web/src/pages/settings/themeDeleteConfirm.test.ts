@@ -72,7 +72,9 @@ describe('a saved theme is not deleted on one click', () => {
   })
 
   it('the control is still the same hover-revealed trash, not a new affordance', () => {
-    // The fix is a confirmation, not a redesign: the tile keeps its icon button and its title.
-    expect(CODE).toMatch(/title="Delete saved theme"/)
+    // The fix is a confirmation, not a redesign: the tile keeps its icon button and its title —
+    // which now names the theme, since a bare "Delete saved theme" on every tile said none of them.
+    expect(CODE).toMatch(/title=\{`Delete saved theme \$\{scheme\.label\}`\}/)
+    expect(CODE).toMatch(/opacity-0 group-hover:opacity-100 focus-within:opacity-100/)
   })
 })

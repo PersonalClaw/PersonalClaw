@@ -10,7 +10,7 @@
  *   · **a lesson** — `delete_lesson` calls `delete_semantic` per match, so its event is
  *     `memory_type='semantic'` and undoes by the same route.
  *
- * And this very panel ships the undo: the History tab's `canUndo` is
+ * And this very panel ships the undo: the Audit tab's `canUndo` is
  * `ev.memory_type === 'semantic' && UNDOABLE.has(ev.event_type)`, with `'delete'` in `UNDOABLE`.
  *
  * 🪤 OVERSTATING A LOSS IS ITS OWN DEFECT, not the safe direction to err in. Warnings work by being
@@ -33,7 +33,7 @@
  * 🔑 THE ENTITY DELETE (#524) IS THE SECOND IRREVERSIBLE ONE, and it is irreversible for a DIFFERENT
  * reason than episodic — which is why it gets its own assertion instead of being folded into that one.
  * Episodic rests on `undo_event` refusing a non-semantic event: the event EXISTS, the applier declines
- * it. `MemoryGraph.delete_entity` logs no event at all, so there is no History row to offer Undo on in
+ * it. `MemoryGraph.delete_entity` logs no event at all, so there is no Audit row to offer Undo on in
  * the first place. Both copies say "This cannot be undone." truthfully, from two different facts, and
  * both facts are asserted below.
  *
@@ -65,7 +65,24 @@ const forNoun = (noun: string) => {
   return found[0][0]
 }
 
+/** The panel's tab labels, read from `TOP_TABS` itself. The copy used to send people to "the History
+ *  tab below" — there is no History tab, the undo lives under **Audit**, and the strip is ABOVE the
+ *  studio — while this rail pinned the wrong name as a literal. Reading the label from the strip is
+ *  what keeps the copy and the tab from drifting apart again. */
+const tabLabels = [...(code.match(/const TOP_TABS[\s\S]*?\n\]/)?.[0] ?? '').matchAll(/label: '([^']+)'/g)].map((m) => m[1])
+const AUDIT = tabLabels.find((l) => l === 'Audit')
+/** Every "the <X> tab" a copy string names. */
+const tabsNamed = (src: string) => [...src.matchAll(/\b[Tt]he (\w+) tab\b/g)].map((m) => m[1])
+
 describe("every delete's copy matches whether it can be undone", () => {
+  it('🔴 every tab a delete names is a tab the strip has', () => {
+    expect(AUDIT, 'the Audit tab is in TOP_TABS (vacuity)').toBe('Audit')
+    const named = calls.flatMap((m) => tabsNamed(m[0]))
+    expect(named.length, 'the reversible deletes do name a tab').toBeGreaterThan(0)
+    for (const tab of named) expect(tabLabels, `"the ${tab} tab" is a tab on this panel`).toContain(tab)
+    expect(code, 'and the tabs are above the studio, not below it').not.toMatch(/tab below/)
+  })
+
   it('found all four deletes', () => {
     expect(calls.map((m) => m[1])).toEqual(['memory', 'episodic memory', 'lesson', 'entity'])
   })
@@ -75,13 +92,13 @@ describe("every delete's copy matches whether it can be undone", () => {
     // It must pass a body at all — taking the default IS the defect.
     expect(fact, 'a custom body is passed').toMatch(/body:/)
     expect(fact, 'and it names the undo').toMatch(/reversible/i)
-    expect(fact, 'pointing at where the undo lives').toMatch(/History tab/)
+    expect(tabsNamed(fact), 'pointing at the tab the undo lives in, by its real name').toEqual([AUDIT])
   })
 
   it('🪤 the lesson delete says reversible AND names the confidence reset', () => {
     const lesson = forNoun('lesson')
     expect(lesson, 'a custom body is passed').toMatch(/body:/)
-    expect(lesson).toMatch(/History tab/)
+    expect(tabsNamed(lesson), 'the tab it names is one the strip has').toEqual([AUDIT])
     // The half that stops this being a second overclaim. Undo restores the rule, not its standing.
     expect(lesson, 'the caveat that makes "undo" honest here').toMatch(/confidence reset/)
   })
@@ -102,7 +119,8 @@ describe("every delete's copy matches whether it can be undone", () => {
     // The other half: unlike the fact and the lesson, this one has no route back, so the custom
     // body must carry the claim the default would have made — and must not soften it.
     expect(entity, 'irreversibility is still stated').toMatch(/This cannot be undone\./)
-    expect(entity, 'and no undo is promised').not.toMatch(/reversible|History tab/i)
+    expect(entity, 'and no undo is promised').not.toMatch(/reversible/i)
+    expect(tabsNamed(entity), 'nor a tab to find one in').toEqual([])
   })
 })
 
@@ -142,7 +160,7 @@ describe('VACUITY: the undo this copy promises actually exists', () => {
 
   it('🔑 an entity delete logs NO event, which is why its copy says so', () => {
     // The episodic claim rests on `undo_event` declining an event that exists; this one rests on
-    // there being no event to decline. The History tab lists `memory_events` rows, so a delete that
+    // there being no event to decline. The Audit tab lists `memory_events` rows, so a delete that
     // writes none can never surface an Undo. If this ever started logging, the entity copy would
     // become the overclaim in the OTHER direction — a real undo, hidden behind "cannot be undone".
     const fn = graph.match(/def delete_entity\(self[\s\S]*?(?=\n    # |\n    def )/)?.[0] ?? ''
@@ -151,7 +169,7 @@ describe('VACUITY: the undo this copy promises actually exists', () => {
     expect(fn, 'and the links pointing at it are really dropped').toMatch(/DELETE FROM mem_links WHERE to_entity/)
     expect(fn, 'no event is logged, so there is nothing to undo').not.toMatch(/_log_event/)
     // Belt and braces on the same claim from the panel's side: even if an entity event ever appeared,
-    // the History tab's Undo is gated to semantic events, so it would still never be offered here.
+    // the Audit tab's Undo is gated to semantic events, so it would still never be offered here.
     expect(code, "and the panel's undo is gated to semantic events, which excludes entities")
       .toMatch(/ev\.memory_type === 'semantic'/)
   })

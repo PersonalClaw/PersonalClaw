@@ -34,11 +34,14 @@ Pure functions plus one provider registry. Nothing here fires or writes.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Awaitable, Callable
+
+logger = logging.getLogger(__name__)
 
 #: How long a duty-gate provider gets before its verdict is abandoned and the fire proceeds. Short
 #: on purpose: this runs on EVERY fire, so a slow gate is a latency tax on the whole automation
@@ -1063,26 +1066,43 @@ def _covers_whole_week(windows: list[QuietWindow]) -> bool:
 # ── config defaults (the fifth config point — S61k's lesson) ──
 
 
-def parse_default_window(value: str) -> QuietWindow | None:
-    """`"22:00-08:00"` → a `QuietWindow`, or None when unparseable.
+#: The one form a default quiet window is written in. Every refusal below ends with it, because the
+#: refusal is what the Settings field shows the person who typed the value.
+DEFAULT_WINDOW_FORM = "HH:MM-HH:MM in 24-hour time, e.g. 22:00-07:00"
+
+
+def parse_default_window(value: str | None) -> QuietWindow | None:
+    """`"22:00-08:00"` → a `QuietWindow`; empty → None, meaning no default.
 
     The config form is a single compact range rather than the full JSON shape, because this is a
     Settings text field and a user typing JSON into one is a worse experience than a narrower
-    format.
+    format. The dash may also be an en dash or the word `to`.
 
-    An unparseable value reads as NO default — the fail-safe direction. A malformed window that
-    accidentally matched all day would suppress every automation and look exactly like a broken
-    scheduler, which is the hardest failure in this file to diagnose from the outside.
+    Anything else raises `ValueError` saying what is wrong and naming the form that works. This is
+    the ONE reading of the setting: the Settings write refuses with it
+    (`dashboard/handlers/core.py::_quiet_window_sanitizer`) and the scheduler applies with it
+    (:func:`default_quiet_window`). When the write only checked "a string of at most 64
+    characters", `10pm-7am` saved with a 200 and then read as no window at all, so the field showed
+    quiet hours that held nothing.
     """
     raw = (value or "").strip()
     if not raw:
         return None
     for separator in ("-", "–", "to"):
         if separator in raw:
-            start, _, end = raw.partition(separator)
-            window = QuietWindow(start=start.strip(), end=end.strip())
-            return window if window.valid else None
-    return None
+            start, _, end = (part.strip() for part in raw.partition(separator))
+            for part in (start, end):
+                if parse_hhmm(part) is None:
+                    shown = f"{part!r} is not a time" if part else "a time is missing"
+                    raise ValueError(f"{shown} — write the window as {DEFAULT_WINDOW_FORM}")
+            window = QuietWindow(start=start, end=end)
+            if not window.valid:
+                raise ValueError(
+                    f"a window from {start} to {end} covers no time — write it as "
+                    f"{DEFAULT_WINDOW_FORM}"
+                )
+            return window
+    raise ValueError(f"{raw!r} is not a time window — write it as {DEFAULT_WINDOW_FORM}")
 
 
 def _workflows_config() -> object | None:
@@ -1110,7 +1130,16 @@ def default_quiet_window() -> QuietWindow | None:
     config = _workflows_config()
     if config is None:
         return None
-    return parse_default_window(str(getattr(config, "default_quiet_windows", "") or ""))
+    raw = str(getattr(config, "default_quiet_windows", "") or "")
+    try:
+        return parse_default_window(raw)
+    except ValueError:
+        # Only a value that never went through the Settings write gets here: a hand edit of
+        # config.json, or one saved before the write was validated. It reads as NO default, the
+        # fail-safe direction — a malformed window that accidentally matched all day would
+        # suppress every automation and look exactly like a broken scheduler.
+        logger.warning("default quiet window %r is unreadable; applying none", raw)
+        return None
 
 
 def default_duty_gate() -> str:
