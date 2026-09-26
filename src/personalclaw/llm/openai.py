@@ -25,6 +25,7 @@ from personalclaw.llm.base import (
     CancelOutcome,
     LLMEvent,
     ModelProvider,
+    wire_temperature,
 )
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import PromptCache
@@ -183,6 +184,11 @@ class OpenAIProvider(ModelProvider):
         # One-shot image content part for the next turn (MI-4). None on every ordinary
         # turn, which is what keeps the untouched wire shape byte-identical.
         self._pending_image: str = ""
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The ``temperature`` every request carries: ``extra_options`` is forwarded verbatim."""
+        return wire_temperature(self._extra_options.get("temperature"))
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 

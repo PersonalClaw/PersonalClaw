@@ -38,6 +38,17 @@ from personalclaw.llm.events import (  # noqa: F401
 from personalclaw.llm.events import AgentEvent as LLMEvent  # noqa: F401
 from personalclaw.llm.prompt_cache import PromptCache
 
+
+def wire_temperature(value: object) -> float | None:
+    """A request-bound ``temperature`` value as the float it is, or ``None`` when it is none.
+
+    ``bool`` is refused even though it is an ``int``: ``True`` is not a temperature.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 CancelOutcome = Literal["acked", "timeout", "no_turn", "error"]
 
 
@@ -161,6 +172,22 @@ class ModelProvider(ABC):
         literal text "/compact" (#470).
         """
         return False
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The sampling temperature this instance puts on the request, or ``None`` if it sends none.
+
+        ``None`` by default, and — like :meth:`stage_image_part`'s ``False`` — the default is
+        the safety property: a provider that never declared where a temperature goes cannot be
+        credited with sampling at one. A caller that ASKED for a temperature (best-of-N's
+        ladder, threaded as the ``temperature`` build kwarg) reads this back through the
+        model-call record the guard keeps (:mod:`personalclaw.guardrails.calls`) and says so
+        when it differs, instead of presenting N answers at the provider default as a sweep.
+
+        A statement about the REQUEST, not the model: an endpoint can still ignore the field,
+        which no client can observe — a zero spread across a slate is then the visible sign.
+        """
+        return None
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         """Execute a slash command and yield streaming events.

@@ -18,14 +18,15 @@ Why every design choice is what it is:
   in ``model_calls.jsonl``. There is deliberately no raw-provider shortcut here: a
   primitive whose whole hazard IS cost must not be the one call that escapes the
   meter.
-* **Temperature-varied for real.** The ladder is threaded to the provider as a
-  genuine sampling parameter (``one_shot_completion(temperature=…)`` →
-  ``extra_options["temperature"]`` → the request kwargs both protocol clients
-  already forward). Caveat named honestly: an Anthropic model in extended-thinking
-  mode *forbids* a custom temperature and drops it (``llm/anthropic.py``), so on such
-  a binding the ladder collapses and candidates may come back near-identical — the
-  judgment slate then simply shows a zero spread, which is exactly the signal the
-  outcome log exists to surface.
+* **Temperature-varied for real — and CHECKED.** The ladder is threaded to the provider
+  as a genuine sampling parameter (``one_shot_completion(temperature=…)`` → the
+  ``temperature`` build kwarg → each adapter's own request field). Threading is not
+  delivery: the bundled ollama factory once dropped the kwarg, and every candidate went
+  out at the model's default — N paid calls, one answer. So each candidate records
+  ``sampled_at``, the temperature the guard saw the adapter put on the request
+  (``ModelProvider.sampling_temperature``), and the envelope's ``note`` says so when the
+  slate is not the ladder it asked for. A provider that never declares where a
+  temperature goes is reported as not sending one — the honest default.
 * **Partial-tolerant, fail-open.** One failed sample loses that candidate, never the
   call: survivors are judged and a winner is still returned. If *all* N fail, the
   result is an explicit no-candidate envelope (``winner=None`` + ``note``) rather
@@ -88,28 +89,74 @@ def _temperatures(n: int) -> list[float]:
 
 async def _sample_one(prompt: str, idx: int, temperature: float, use_case: str) -> dict[str, Any]:
     """One guarded, temperature-pinned completion. Never raises — a failure becomes a
-    candidate carrying its ``error`` so the slate stays N-wide and legible."""
+    candidate carrying its ``error`` so the slate stays N-wide and legible.
+
+    The call is made inside its OWN ``guardrails.calls`` log, which is how the candidate learns
+    what the guard saw go out: ``sampled_at`` is the temperature the provider adapter put on the
+    request (``None`` when it sent none). Asking is not the same as sending — the ollama factory
+    once dropped the kwarg entirely, and every candidate went out at the model's default — so
+    the slate reports the sent value beside the requested one. The key is ABSENT when no guarded
+    call was observed at all (an unguarded resolution path): unknown, never guessed.
+    """
+    from personalclaw.guardrails.calls import DONE, capture_model_calls
     from personalclaw.llm_helpers import one_shot_completion
 
-    try:
-        text = await one_shot_completion(prompt, use_case=use_case, temperature=temperature)
-    except Exception as exc:  # noqa: BLE001 — a dead candidate must not kill the slate
-        logger.warning(
-            "best_of_n: candidate %d (temp %.2f) failed: %s: %s",
-            idx,
-            temperature,
-            type(exc).__name__,
-            exc,
-        )
-        return {
-            "idx": idx,
-            "temperature": temperature,
-            "text": "",
-            "error": f"{type(exc).__name__}: {exc}",
-        }
+    candidate: dict[str, Any] = {"idx": idx, "temperature": temperature, "text": "", "error": ""}
+    with capture_model_calls() as calls:
+        try:
+            text = await one_shot_completion(prompt, use_case=use_case, temperature=temperature)
+        except Exception as exc:  # noqa: BLE001 — a dead candidate must not kill the slate
+            logger.warning(
+                "best_of_n: candidate %d (temp %.2f) failed: %s: %s",
+                idx,
+                temperature,
+                type(exc).__name__,
+                exc,
+            )
+            text = None
+            candidate["error"] = f"{type(exc).__name__}: {exc}"
+    answered = [c for c in calls.calls if c.state == DONE]
+    if answered:
+        candidate["sampled_at"] = answered[-1].temperature
+    if text is None:
+        return candidate
     if not (text or "").strip():
-        return {"idx": idx, "temperature": temperature, "text": "", "error": "empty completion"}
-    return {"idx": idx, "temperature": temperature, "text": text, "error": ""}
+        candidate["error"] = "empty completion"
+        return candidate
+    candidate["text"] = text
+    return candidate
+
+
+def _sampling_note(candidates: list[dict[str, Any]]) -> str:
+    """Say so when the provider did not sample at the temperatures the ladder asked for.
+
+    Only OBSERVED candidates count (``sampled_at`` present): a slate whose calls could not be
+    seen is not evidence either way. When none of them carried its rung, the slate is N answers
+    at the provider's default temperature, and presenting it as a sweep would be the pretence
+    the ladder exists to avoid.
+    """
+    observed = [c for c in candidates if "sampled_at" in c]
+    missed = [c for c in observed if c["sampled_at"] != c["temperature"]]
+    if not missed:
+        return ""
+    if len(missed) == len(observed):
+        return (
+            "not temperature-varied: the model provider did not send the requested "
+            f"temperatures, so the {len(observed)} candidates are samples at its default"
+        )
+    return (
+        f"{len(missed)} of {len(observed)} candidates were not sent at their requested temperature"
+    )
+
+
+def _failure_summary(candidates: list[dict[str, Any]]) -> str:
+    """The distinct errors behind an all-failed slate, so the node's failure names its cause."""
+    seen: list[str] = []
+    for cand in candidates:
+        err = str(cand.get("error") or "").strip()
+        if err and err not in seen:
+            seen.append(err)
+    return "; ".join(seen)[:300]
 
 
 async def _judge_candidates(
@@ -266,10 +313,13 @@ async def best_of_n(
     Returns:
         ``{winner, winner_idx, candidates, judgments, judged, n, note}``. ``winner`` is
         the winning candidate's text, or ``None`` when every sample failed (``note``
-        then says so). ``candidates`` is always N wide, each ``{idx, temperature, text,
-        error}``; ``judgments`` carries ``{idx, score, reason, reasoning}`` per scored
-        candidate. Plain JSON shapes throughout so the MCP tool, the skill and the
-        HC-5 workflow template all consume one contract.
+        then says so, with the candidates' errors). ``candidates`` is always N wide, each
+        ``{idx, temperature, text, error}`` plus ``sampled_at`` — the temperature the
+        request actually carried, ``None`` if it carried none — whenever the call was
+        observed at the guard; ``note`` says so when those differ from the ladder.
+        ``judgments`` carries ``{idx, score, reason, reasoning}`` per scored candidate.
+        Plain JSON shapes throughout so the MCP tool, the skill and the HC-5 workflow
+        template all consume one contract.
     """
     n = max(1, min(int(n or 1), MAX_N))
     temps = _temperatures(n)
@@ -299,7 +349,10 @@ async def best_of_n(
 
     survivors = [c for c in candidates if c["text"].strip()]
     if not survivors:
-        note = f"no candidate: all {n} sampling calls failed"
+        # The distinct candidate errors ride on the note, because the note IS the node's failure:
+        # "all 2 sampling calls failed" alone cannot tell a dead provider from a bad prompt.
+        cause = _failure_summary(candidates)
+        note = f"no candidate: all {n} sampling calls failed" + (f" — {cause}" if cause else "")
         logger.warning("best_of_n: %s", note)
         _record_outcome(
             n=n,
@@ -329,6 +382,7 @@ async def best_of_n(
         note = f"{failed} of {n} candidates failed; judged the {len(survivors)} that returned"
     else:
         note = ""
+    note = "; ".join(part for part in (note, _sampling_note(survivors)) if part)
     _record_outcome(
         n=n,
         criteria=judge_criteria,

@@ -93,6 +93,11 @@ class RunStats:
     Two aggregates over ONE journal that answer the token question differently is the defect —
     `ledger.reader.run_totals` reports `tokens: null` where this projection reported `0`, and this
     is the one a user reads, on `IntrospectPanel`'s Tokens cell.
+
+    `duration_secs` is NOT derived from the ledger. It is the run's own duration (`run_elapsed`),
+    passed in by the caller, because the ledger span measured something else: first event to last
+    event. A run cancelled mid-generation has no completed step, so the span was 0s while the run
+    header — reading the run row — said 10s, one page contradicting itself about one run.
     """
 
     run_id: str
@@ -109,6 +114,10 @@ class RunStats:
     steps_completed: int = 0
     steps_failed: int = 0
     steps_cached: int = 0
+    #: Model calls a cancel cut off mid-generation (`step_cancelled`). Each spent tokens nobody
+    #: reported, which is why a non-zero count also clears `tokens_recorded` and `priced` — and
+    #: why the cost sentence names it rather than calling the run free.
+    calls_cut_off: int = 0
     duration_secs: float = 0.0
     first_byte_ms: float = 0.0
     models: list[str] = field(default_factory=list)
@@ -144,6 +153,7 @@ class RunStats:
             "steps_completed": self.steps_completed,
             "steps_failed": self.steps_failed,
             "steps_cached": self.steps_cached,
+            "calls_cut_off": self.calls_cut_off,
             "duration_secs": round(self.duration_secs, 3),
             "first_byte_ms": round(self.first_byte_ms, 1),
             "models": list(self.models),
@@ -153,12 +163,30 @@ class RunStats:
         }
 
 
-def run_stats(run_id: str, events: list[dict[str, Any]]) -> RunStats:
+def run_elapsed(run: Any, now: float) -> float:
+    """A run's duration: the ONE number every surface renders for it.
+
+    Ended: `elapsed_seconds`, which the controller's single terminal writer stamps from
+    `started_at` → `completed_at` and the run header shows. Started and not ended: the time since
+    it started. Never started: zero.
+    """
+    from personalclaw.workflows.models import TERMINAL_RUN_STATUSES
+
+    if getattr(run, "status", None) in TERMINAL_RUN_STATUSES:
+        return max(0.0, float(getattr(run, "elapsed_seconds", 0.0) or 0.0))
+    started = _epoch(getattr(run, "started_at", None))
+    return max(0.0, now - started) if started is not None else 0.0
+
+
+def run_stats(run_id: str, events: list[dict[str, Any]], *, elapsed_secs: float) -> RunStats:
     """Project one run's ledger into stats.
 
     Takes the event list rather than reading the journal, so the arithmetic is testable
     without a run
     on disk — and so a caller that already has the ledger does not read it twice.
+
+    `elapsed_secs` is the run's duration from :func:`run_elapsed`, REQUIRED so no caller can
+    re-derive a second duration for the same run (see `RunStats.duration_secs`).
 
     Verified steps are counted by BINDING, not by adjacency: a node whose output a later
     gate consumed
@@ -167,22 +195,40 @@ def run_stats(run_id: str, events: list[dict[str, Any]]) -> RunStats:
     a correctly-verified reviewer as debt, and a debt number that flags correct structure
     gets ignored.
     """
-    stats = RunStats(run_id=run_id)
+    stats = RunStats(run_id=run_id, duration_secs=max(0.0, float(elapsed_secs)))
     models: list[str] = []
     verified_nodes: set[str] = set()
     completed_nodes: list[str] = []
     first_ts: float | None = None
-    last_ts: float | None = None
     first_output_ts: float | None = None
+    own = f"{run_id}-evt-"
 
     for event in events or []:
         if not isinstance(event, dict):
             continue
         kind = str(event.get("kind") or "")
-        ts = _epoch(event.get("ts"))
+        # Only this run's OWN records time it. A fork's ledger opens with the parent's records of
+        # what it inherited, stamped on the parent's clock (their `event_id` names the parent), so
+        # a Retry child that ran for 75 s read "To first output 121000 ms" beside "Duration 1m 15s".
+        event_id = str(event.get("event_id") or "")
+        ts = _epoch(event.get("ts")) if not event_id or event_id.startswith(own) else None
         if ts is not None:
             first_ts = ts if first_ts is None else min(first_ts, ts)
-            last_ts = ts if last_ts is None else max(last_ts, ts)
+        if kind == "step_cancelled":
+            # A step the cancel stopped mid-flight: its open generations spent what nobody
+            # reported, so what its finished calls reported is a floor and so are the totals
+            # (`ledger.reader.run_totals` folds it alike).
+            cut_off = int(event.get("model_calls_open", 0) or 0)
+            stats.calls_cut_off += cut_off
+            if event.get("tokens") is None or cut_off:
+                stats.tokens_recorded = False
+            stats.tokens += int(event.get("tokens") or 0)
+            if event.get("cost_usd") is None or cut_off:
+                stats.priced = False
+            stats.cost_usd += float(event.get("cost_usd") or 0.0)
+            model = str(event.get("model") or "")
+            if model and model not in models:
+                models.append(model)
         if kind == "step_completed":
             stats.steps_completed += 1
             stats.tokens += int(event.get("tokens", 0) or 0)
@@ -216,8 +262,6 @@ def run_stats(run_id: str, events: list[dict[str, Any]]) -> RunStats:
                 verified_nodes.add(str(target))
     stats.models = models
     stats.unverified_steps = len([n for n in completed_nodes if n not in verified_nodes])
-    if first_ts is not None and last_ts is not None:
-        stats.duration_secs = max(0.0, last_ts - first_ts)
     if first_ts is not None and first_output_ts is not None:
         stats.first_byte_ms = max(0.0, (first_output_ts - first_ts) * 1000.0)
     return stats

@@ -229,7 +229,7 @@ describe('the run cockpit mounts the review triage panel', () => {
       run_id: 'run-1', workflow: 'demo', status: 'complete', spec_version: 1,
       nodes: [{ instance_path: 'root', node_id: 'build', state: 'done' }],
     })
-    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} />)
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
     const trigger = await screen.findByTitle(/Review — accept or reject/i)
     // Nothing is fetched until the panel is opened: the read costs a live `git diff`.

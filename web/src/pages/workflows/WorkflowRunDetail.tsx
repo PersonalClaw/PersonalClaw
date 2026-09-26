@@ -48,9 +48,12 @@ function confirmationPreview(error: unknown): WorkflowCascadePreview | null {
  *
  *  A terminal run does not subscribe at all: its stream would close immediately anyway, and
  *  the status it already has is final. */
-export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
+export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = null }: {
   runId: string
   onBack: () => void
+  /** Open another run's page — where Fork and Retry take the user, because the run they create
+   *  is a different run with its own Start, controls and outcome. */
+  onOpenRun: (runId: string) => void
   /** The node named by `?node=<id>` (WV-10) — the chat card's active-node deep link. Seeds and
    *  then follows the inspector's open node, so arriving from that link lands ON the node rather
    *  than on the run with nothing open. Absent on every other entry into this page. */
@@ -228,12 +231,42 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
     if (ok) await act('Cancel', () => api.cancelWorkflowRun(runId))
   }, [act, runId])
 
+  // Fork lands ON the child: it is a draft, and its own page is where Start and the prelaunch
+  // policy editor live. Left on the parent, the only trace of the new run was a toast naming its id.
+  // Not routed through `act`, whose refetch reads THIS run and could land after the navigation,
+  // painting the parent over the child.
   const fork = useCallback(async () => {
-    await act('Fork', async () => {
+    setBusy(true)
+    try {
       const res = await api.forkWorkflowRun(runId, { note: 'branched from the run view' })
       notify(`Forked to ${res.child_run_id}. Not isolated: ${res.shared_axes.length} shared axes.`)
-    })
-  }, [act, runId])
+      onOpenRun(res.child_run_id)
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Fork failed', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }, [runId, onOpenRun])
+
+  // Retry = a NEW attempt. A finished run never runs again (`models.RESUMABLE_ENDED_RUN_STATUSES` is
+  // empty by design) and rewind needs a live controller, so the verbs that apply are fork + start:
+  // the child keeps every step the parent finished and re-runs what did not. Offered only for a
+  // failure the engine itself calls retryable (`retryableFailure` below), where the same work can
+  // succeed once its cause clears. If the start is refused the user still lands on the child's
+  // draft, whose Start button is the same call, with the refusal in the notice.
+  const retry = useCallback(async () => {
+    setBusy(true)
+    let child = ''
+    try {
+      child = (await api.forkWorkflowRun(runId, { note: 'retry after a transient failure' })).child_run_id
+      await api.startDraftWorkflowRun(child)
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Retry failed', 'error')
+    } finally {
+      setBusy(false)
+    }
+    if (child) onOpenRun(child)
+  }, [runId, onOpenRun])
 
   // Launch a run that has not executed yet (#372). Unconfirmed, unlike Cancel: starting is the
   // affirmative action the draft exists for, and a confirm on the primary verb of a surface reads
@@ -287,6 +320,16 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
     const read = readAttention(run?.attention)
     return read?.kind === 'escalation' ? read : null
   }, [run])
+
+  // Did the step the run stopped at fail in a way a fresh attempt can clear? The engine's own
+  // verdict (`failure.retryable`, from `models.RETRYABLE_CLASSES`) read off the node, not a class
+  // list re-derived here that would drift from it.
+  const retryableFailure = useMemo(() => {
+    if (!run || run.status !== 'failed' || !escalation) return false
+    return (run.nodes ?? []).some(
+      (n) => n.node_id === escalation.nodeId && n.state === 'failed' && n.failure?.retryable === true,
+    )
+  }, [run, escalation])
 
   // The graph's Approve/Deny reads the continuations this view ALREADY fetches on every refetch —
   // no second request. A `waiting` node is only ANSWERABLE when a live resume token exists for it:
@@ -467,7 +510,13 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
                 on a run that exhausted its retries the line above is EMPTY, which is the whole
                 defect: `_finish(status)` takes no `error` on that path, so the escalation was
                 the only account and nothing read it. */}
-            {escalation && <EscalationPanel read={escalation} runError={run.error ?? ''} />}
+            {escalation && (
+              <EscalationPanel
+                read={escalation}
+                runError={run.error ?? ''}
+                retry={retryableFailure ? { onRetry: retry, busy } : undefined}
+              />
+            )}
 
             <div data-type="caption" className="flex flex-wrap items-center gap-l text-on-surface-low">
               <span>run <span className="font-mono">{run.run_id}</span></span>
@@ -528,7 +577,12 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
               {shownRows.map(({ node: n, depth, descendants, collapsible }) => {
                 const nl = nodeLook(n.state)
                 const NIcon = nl.icon
-                const canReenter = !isTerminal(run.status) && !!n.node_id
+                // Re-entry (edit / rewind / run-from) is a mutation the LIVE controller applies at its
+                // drain point, so it exists only while the run is active. A draft has no controller
+                // yet and a finished run has none any more: offered on a fork's draft, Rewind
+                // answered 409 "start the run before rewind" on every click. A draft's verb is
+                // Start; a finished run's are Fork and, for a retryable failure, Retry.
+                const canReenter = !isTerminal(run.status) && !isPrelaunch(run.status) && !!n.node_id
                 const isCollapsed = collapsed.has(n.instance_path)
                 const summary = collapsible ? summarize(descendants, nodes) : null
                 return (

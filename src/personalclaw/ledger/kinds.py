@@ -19,6 +19,10 @@ STEP_COMPLETED = "step_completed"
 STEP_FAILED = "step_failed"
 STEP_SKIPPED = "step_skipped"
 STEP_CACHED = "step_cached"
+#: A step that was IN FLIGHT when its run was cancelled: how many model calls it had open and
+#: what its finished ones used. Without it a cancel left only an unmirrored `step_started`, so a
+#: run cut off mid-generation read as having done — and spent — nothing.
+STEP_CANCELLED = "step_cancelled"
 #: One try at one node — typed, so a retry gets actionable feedback rather than prose,
 #: and so the flywheel can later see WHICH corrections actually worked (WF2-R4).
 STEP_ATTEMPT = "step_attempt"
@@ -194,6 +198,7 @@ LEDGER_KINDS = frozenset(
         STEP_FAILED,
         STEP_SKIPPED,
         STEP_CACHED,
+        STEP_CANCELLED,
         STEP_ATTEMPT,
         STEP_ESCALATED,
         GATE_REJECTED,

@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from personalclaw.ledger.kinds import LEDGER_KINDS, STEP_CACHED, STEP_COMPLETED, STEP_FAILED
+from personalclaw.ledger.kinds import (
+    LEDGER_KINDS,
+    STEP_CACHED,
+    STEP_CANCELLED,
+    STEP_COMPLETED,
+    STEP_FAILED,
+)
 from personalclaw.ledger.writer import EVENTS_FILE, JOURNAL_FILE, LedgerStore
 
 
@@ -120,6 +126,18 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
             failures += 1
         elif kind == STEP_CACHED:
             cached += 1
+        elif kind == STEP_CANCELLED:
+            # A step the cancel stopped mid-flight spent what its model calls used: measured for
+            # the calls that finished, UNKNOWN for a generation it cut off — so any cut-off call
+            # makes the row a floor. Otherwise folded by the same absent/null rule as a completed
+            # step, so a cancelled run cannot report itself free.
+            cut_off = int(rec.get("model_calls_open") or 0) > 0
+            if rec.get("tokens") is None or cut_off:
+                tokens_recorded = False
+            tokens += int(rec.get("tokens") or 0)
+            if rec.get("cost_usd") is None or cut_off:
+                priced = False
+            cost += float(rec.get("cost_usd") or 0.0)
     return {
         "tokens": tokens if tokens_recorded else None,
         "tokens_recorded": tokens_recorded,

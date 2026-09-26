@@ -271,7 +271,7 @@ describe('WorkflowRunDetail node rows expose the Inspect affordance', () => {
 
   it('offers Inspect on a terminal node and clicking it opens the drawer (fetches that node)', async () => {
     workflowRun.mockResolvedValue(runWith('done'))
-    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} />)
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
     const trigger = await screen.findByTitle(/Inspect this node/i)
     fireEvent.click(trigger)
@@ -284,7 +284,7 @@ describe('WorkflowRunDetail node rows expose the Inspect affordance', () => {
 
   it('does NOT offer Inspect on a non-terminal node (the endpoint would 409)', async () => {
     workflowRun.mockResolvedValue(runWith('running'))
-    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} />)
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
     // the row rendered…
     await waitFor(() => expect(workflowRun).toHaveBeenCalled())

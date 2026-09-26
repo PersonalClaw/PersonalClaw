@@ -1,4 +1,5 @@
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, RotateCcw } from 'lucide-react'
+import { Button } from '../../ui/Button'
 import type { EscalationRead } from './attentionMeta'
 
 /** What the engine knew when it gave up (#565).
@@ -20,9 +21,17 @@ import type { EscalationRead } from './attentionMeta'
  *  `detail` is shown only when it differs from the run's error line, which is where the same
  *  string appears when the run failed loudly. Two copies of one sentence reads as two problems.
  *
- *  Read-only, deliberately: see `attentionMeta.ts` on why the record's five `options` are not
- *  rendered as controls. */
-export function EscalationPanel({ read, runError = '' }: { read: EscalationRead; runError?: string }) {
+ *  The record's five `options` are still not rendered as controls — see `attentionMeta.ts`: no
+ *  endpoint accepts one back. The ONE control here is `retry`, which the page passes only when the
+ *  failed step's own class is retryable, and which is built from verbs that work on a finished run
+ *  (fork + start). A panel titled "needs a decision" that offered no decision it could carry out
+ *  left a transient failure — a provider that was down for a minute — with no way forward but
+ *  starting over from the template page. */
+export function EscalationPanel({ read, runError = '', retry }: {
+  read: EscalationRead
+  runError?: string
+  retry?: { onRetry: () => void; busy: boolean }
+}) {
   const detail = read.detail.trim() && read.detail.trim() !== runError.trim() ? read.detail.trim() : ''
 
   return (
@@ -102,6 +111,24 @@ export function EscalationPanel({ read, runError = '' }: { read: EscalationRead;
             </li>
           ))}
         </ol>
+      )}
+
+      {retry && (
+        <div className="flex flex-wrap items-center gap-s border-outline-variant border-t pt-s">
+          <Button
+            variant="ghost-accent"
+            size="sm"
+            onClick={retry.onRetry}
+            loading={retry.busy}
+            title="Start a new run that keeps every finished step and re-runs the rest"
+          >
+            <RotateCcw size={13} /> Retry
+          </Button>
+          <p data-type="caption" className="text-on-surface-low">
+            A new run keeps every finished step and re-runs the rest. Retry once the cause above has
+            cleared.
+          </p>
+        </div>
       )}
     </section>
   )

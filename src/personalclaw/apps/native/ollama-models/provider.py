@@ -139,6 +139,10 @@ _OUTPUT_TYPE_KEY = "output_type"
 #: The unschema'd JSON mode ollama accepts in place of a schema object.
 _JSON_MODE = "json"
 
+#: The request-body object ollama reads its sampling parameters from (`temperature`, `top_p`,
+#: `num_ctx`, …). A sampling parameter placed at the top level of the body is ignored.
+_WIRE_OPTIONS = "options"
+
 
 def native_format(requested: object) -> object | None:
     """Normalize a requested output shape into ollama's native ``format`` value.
@@ -408,6 +412,15 @@ class OllamaProvider(ModelProvider):
         # Flipped True the first time the server rejects a tools request for
         # this model, so subsequent complete() turns skip the doomed first try.
         self._tools_unsupported: bool = False
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The ``options.temperature`` every request from this instance carries, if any."""
+        wire = self._extra_options.get(_WIRE_OPTIONS)
+        value = wire.get("temperature") if isinstance(wire, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
 
     # ── Local-model management (the uniform download-surface contract) ─────────
     #
@@ -988,6 +1001,26 @@ def _factory(
         options.pop(_FORMAT_FIELD, None)
         options.pop(_OUTPUT_TYPE_KEY, None)
         options.update(_requested)
+
+    # A per-call sampling TEMPERATURE arrives the same way (HARNESS-CRAFT §2.1: best-of-N needs
+    # N genuinely different samples), and on ollama's wire it is not a top-level field: it lives
+    # in the request's `options` object. This factory used to read neither — the kwarg was
+    # dropped, and a proxy in front of a live ollama saw every best-of-n candidate request carry
+    # only `model`, `messages` and `stream`, so N paid calls sampled ONE answer N times. The
+    # per-call value wins over an entry-level one: the caller asking for THIS temperature is
+    # more specific than the instance default (the SDK's branded factory makes the same call).
+    _temperature = kwargs.get("temperature")
+    if isinstance(_temperature, (int, float)) and not isinstance(_temperature, bool):
+        _wire = options.get(_WIRE_OPTIONS)
+        options[_WIRE_OPTIONS] = {
+            **(_wire if isinstance(_wire, dict) else {}),
+            "temperature": float(_temperature),
+        }
+    # Routing and label fields are not request parameters: everything left in `options` is
+    # `setdefault`-ed onto the request body, so `default_model` (which the "Add instance" form
+    # writes) reached the wire as a top-level key on every call.
+    for _label in ("model", "default_model", "type", "name"):
+        options.pop(_label, None)
 
     logger.debug("Ollama factory: model=%r endpoint=%r", model, endpoint)
     return OllamaProvider(

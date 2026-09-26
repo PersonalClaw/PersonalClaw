@@ -41,6 +41,7 @@ from personalclaw.guardrails.budgets import (
     current_run_key,
     get_meter,
 )
+from personalclaw.guardrails.calls import ABANDONED, DONE, FAILED, OPEN, ModelCall, open_call
 from personalclaw.guardrails.failure import (
     BudgetExceededError,
     CircuitOpenError,
@@ -64,6 +65,12 @@ _DEFAULT_TIMEOUT_SECS = 300.0
 
 def _new_audit_id() -> str:
     return uuid.uuid4().hex[:16]
+
+
+def _mark(call: ModelCall | None, state: str) -> None:
+    """Settle a published call that did not complete. A call already settled keeps its state."""
+    if call is not None and call.state == OPEN:
+        call.state = state
 
 
 def _iso_now() -> str:
@@ -147,6 +154,9 @@ class ModelCallGuard(ModelProvider):
         # Mirror the wrapped provider's tool support so the loop treats the guard
         # exactly as it would the inner provider.
         self.supports_tools = getattr(inner, "supports_tools", False)
+        # A local model's calls are PRICED at zero (nothing is billed); a hosted model with no
+        # price row is unpriced. Decided once, the way the scan mode's local rule is.
+        self._local = _is_local_provider(inner)
         # The routing query class of the CURRENT call, set by the entry point that has
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
         # audit row (MODEL-ROUTING-TELEMETRY §2, MRT-1b). "" until a call classifies.
@@ -210,6 +220,12 @@ class ModelCallGuard(ModelProvider):
         declares a False default, so a wrapped request-only model would otherwise be assembled a
         full context it is never handed."""
         return getattr(self._inner, "request_only", False) is True
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """Explicit pass-through for the same reason as ``supports_native_commands``: the ABC's
+        ``None`` default would otherwise answer for every guarded provider."""
+        return getattr(self._inner, "sampling_temperature", None)
 
     async def served_context_window(self) -> int | None:
         """Explicit pass-through: the ABC's ``None`` would hide the inner provider's served
@@ -356,6 +372,10 @@ class ModelCallGuard(ModelProvider):
         started = now_ms()
         tokens_in = tokens_out = 0
         recorded = False
+        # The call is published to whoever bound a `guardrails.calls` log — the workflow step
+        # that is making it, a best-of-N candidate — only now, past every refusal above: a
+        # breaker or budget refusal sent nothing to a provider and is not a model call.
+        call = open_call(self._provider_name, self._model, temperature=self.sampling_temperature)
 
         try:
             while True:
@@ -401,6 +421,7 @@ class ModelCallGuard(ModelProvider):
                         strategy,
                         dollars=dollars,
                     )
+                    self._settle_call(call, event, tokens_in, tokens_out, dollars)
                     recorded = True
                 yield event
         except TimeoutError:
@@ -410,6 +431,7 @@ class ModelCallGuard(ModelProvider):
                 self._audit(
                     audit_id, 1, FailureMode.TIMEOUT, now_ms() - started, 0, 0, False, strategy
                 )
+                _mark(call, FAILED)
             raise ModelCallTimeout(
                 f"model call for use case {self._use_case!r} (provider "
                 f"{self._provider_name!r}) exceeded {self._timeout_secs:.0f}s"
@@ -418,8 +440,12 @@ class ModelCallGuard(ModelProvider):
             # Cooperative cancellation / caller closed the guard mid-stream: not a
             # provider failure — don't trip the breaker. If the terminal COMPLETE was
             # already seen (the common case: consumer breaks then closes the gen), the
-            # success was already recorded; otherwise record nothing (genuine abort).
+            # success was already recorded; otherwise record nothing (genuine abort) — except
+            # on the call record, where an abandoned generation is exactly what a cancel's
+            # accounting has to count.
             await self._aclose(source)
+            if not recorded:
+                _mark(call, ABANDONED)
             raise
         except Exception:
             if not recorded:
@@ -434,6 +460,7 @@ class ModelCallGuard(ModelProvider):
                     False,
                     strategy,
                 )
+                _mark(call, FAILED)
             raise
 
         # Stream ended via StopAsyncIteration. If no COMPLETE event ever arrived,
@@ -451,6 +478,37 @@ class ModelCallGuard(ModelProvider):
                 True,
                 strategy,
             )
+            self._settle_call(call, None, tokens_in, tokens_out, 0.0)
+
+    def _settle_call(
+        self,
+        call: ModelCall | None,
+        event: LLMEvent | None,
+        tokens_in: int,
+        tokens_out: int,
+        dollars: float,
+    ) -> None:
+        """Close the published call record with what the provider reported.
+
+        ``priced`` follows ``usage_ledger.record_turn``'s rule (a provider-reported cost, or a
+        price-table row) plus the one fact only this layer holds: a LOCAL model bills nothing,
+        so its zero is a measurement rather than an unpriced blank.
+        """
+        if call is None:
+            return
+        reported_cost = float(getattr(event, "cost_usd", 0.0) or 0.0) if event else 0.0
+        try:
+            from personalclaw.pricing import has_pricing
+
+            listed = has_pricing(self._model)
+        except Exception:  # noqa: BLE001 — pricing is telemetry, never load-bearing
+            listed = False
+        call.state = DONE
+        call.input_tokens = int(tokens_in)
+        call.output_tokens = int(tokens_out)
+        call.usage_reported = bool(tokens_in or tokens_out)
+        call.cost_usd = float(dollars)
+        call.priced = self._local or reported_cost > 0.0 or listed
 
     def _estimate_dollars(self, event: LLMEvent, tokens_in: int, tokens_out: int) -> float:
         """Dollar estimate for one completed call. Provider-reported ``cost_usd``

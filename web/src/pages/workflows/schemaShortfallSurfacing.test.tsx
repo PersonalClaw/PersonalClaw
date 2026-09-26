@@ -94,7 +94,7 @@ async function mountRunDetail(nodes: WorkflowNodeState[]) {
   })
   const { WorkflowRunDetail } = await import('./WorkflowRunDetail')
   await act(async () => {
-    render(<WorkflowRunDetail runId="r1" onBack={() => {}} />)
+    render(<WorkflowRunDetail runId="r1" onBack={() => {}} onOpenRun={() => {}} />)
     await new Promise((res) => setTimeout(res, 0))
   })
 }

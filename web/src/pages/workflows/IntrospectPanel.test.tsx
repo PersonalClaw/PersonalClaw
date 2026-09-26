@@ -24,7 +24,7 @@ vi.mock('../../lib/api', async (importActual) => {
 function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospection {
   const stats = {
     run_id: 'r1', tokens: 1200, tokens_recorded: true, cached_tokens: 100, cost_usd: 0.0342, priced: true,
-    steps_completed: 4, steps_failed: 1, steps_cached: 1, duration_secs: 92.5,
+    steps_completed: 4, steps_failed: 1, steps_cached: 1, calls_cut_off: 0, duration_secs: 92.5,
     first_byte_ms: 830, models: ['claude-sonnet'], unverified_steps: 3,
     verification_debt: 0.75, cache_hit_rate: 0.2,
   }

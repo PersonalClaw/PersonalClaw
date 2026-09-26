@@ -63,7 +63,9 @@ export type AttentionRead = EscalationRead | AskRead | null
 /** Why the engine gave up, in words. Every key is a token that can actually reach an
  *  escalation artifact, measured from the two `_escalate` call sites in `controller.py`:
  *
- *  • `retries_exhausted` — the node path (`controller.py`, the retry budget);
+ *  • `retries_exhausted` / `not_retried` — the node path (`controller.py`): the retry budget was
+ *    spent, or there was none to spend (no budget declared, or a failure class a retry cannot
+ *    fix). They are two tokens because "every retry was spent" on a single attempt is false;
  *  • `iterations_failed` — also `controller.py`, from `_surface_loop`;
  *  • the four `check_breaker` verdicts in `resilience.py`; and
  *  • the three `loop/tick.py` convergence reasons that reach `_surface_loop`.
@@ -74,6 +76,7 @@ export type AttentionRead = EscalationRead | AskRead | null
  */
 export const ESCALATION_REASON: Record<string, string> = {
   retries_exhausted: 'every retry was spent and the step still failed',
+  not_retried: 'the step failed on its only attempt',
   /** `max_iterations` is the loop spending its budget ON WORK. A loop that spent it FAILING gets
    *  `iterations_failed` instead — `_surface_loop` re-derives the token, because the two are one
    *  token apart and miles apart to a reader: the first says "your task was too big", the second

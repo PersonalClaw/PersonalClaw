@@ -142,7 +142,7 @@ async def test_the_reason_vocabulary_is_what_the_frontend_maps():
     #: Each is asserted to really be in that file, so a rename there reds here instead of leaving a
     #: sentence for a token nothing produces.
     controller_src = (_SRC / "workflows" / "controller.py").read_text()
-    controller = {"retries_exhausted", "iterations_failed"}
+    controller = {"retries_exhausted", "not_retried", "iterations_failed"}
     for token in sorted(controller):
         assert f'"{token}"' in controller_src, (
             f"{token!r} is listed here as a controller token but controller.py no longer spells it "

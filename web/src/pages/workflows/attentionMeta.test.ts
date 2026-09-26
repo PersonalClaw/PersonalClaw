@@ -66,6 +66,16 @@ describe('an escalation is read as a diagnosis', () => {
     expect(attentionLine(ESCALATION)).toBe('Stopped: every retry was spent and the step still failed')
   })
 
+  it('does not claim retries were spent when the step was never retried', () => {
+    // One attempt and no retry budget (or a class a retry cannot fix): "every retry was spent"
+    // would be a false sentence, and it was what a best-of-n outage showed with zero retries.
+    const once = { ...ESCALATION, reason: 'not_retried' }
+    const read = readAttention(once)
+    if (read?.kind !== 'escalation') throw new Error('not read as an escalation')
+    expect(read.headline).toBe('the step failed on its only attempt')
+    expect(attentionLine(once)).toBe('Stopped: the step failed on its only attempt')
+  })
+
   it('survives a record with no attempts and no detail', () => {
     // The breaker path escalates with an empty `attempts` list when it trips before any attempt
     // was recorded. A panel that assumed at least one row would crash on exactly the runs it
