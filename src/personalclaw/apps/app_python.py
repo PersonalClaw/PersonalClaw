@@ -163,14 +163,18 @@ def child_argv(entry: Path) -> list[str]:
     return [sys.executable, "-m", CHILD_MODULE, str(entry)]
 
 
-def hook_env() -> dict[str, str] | None:
-    """The environment for an app's setup hook, or ``None`` to inherit the gateway's unchanged.
+def app_packages_env() -> dict[str, str] | None:
+    """The environment for a command that must import the app packages, or ``None`` to inherit
+    the gateway's unchanged (no app package is installed).
 
-    A hook is a shell command, so :data:`CHILD_MODULE` cannot wrap it, and ``PYTHONPATH`` is the
-    one mechanism that reaches a ``python`` it runs — which is how a hook can import what the app
-    declared (the installer runs the dependency step before ``onInstall`` for exactly that). Its
-    entries precede site-packages inside that one process; a hook is not started through the
-    resource-ceiling shim, so there is no platform code in it for a package to shadow.
+    For a child :data:`CHILD_MODULE` cannot wrap: an app's setup hook (a shell command), or an
+    app provider running one of its declared packages as ``python -m <package>`` (piper-tts).
+    ``PYTHONPATH`` is the one mechanism that reaches such a ``python`` — which is how a hook can
+    import what the app declared (the installer runs the dependency step before ``onInstall``
+    for exactly that). Its entries precede site-packages inside that one process; neither child
+    is started through the resource-ceiling shim, so there is no platform code in it for a
+    package to shadow. Published on ``personalclaw.sdk.util``: piper-tts re-derived it by hand
+    (#124), from where ``importlib`` found the package.
     """
     dirs = _existing_site_dirs()
     if not dirs:

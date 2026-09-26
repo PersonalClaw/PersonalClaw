@@ -665,15 +665,17 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
         )
         # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
         return web.json_response({"error": relayed_failure_copy(redact_err)}, status=500)
-    # Resolve channel: use owner DM if no channel specified
+    # Resolve channel: the owner's DM, on the channel that knows the owner's id there — and
+    # the upload through the same handle that opened it.
     channel = ""
     try:
-        creds = AppConfig.load().load_credentials()
-        owner_id = creds.get("PERSONALCLAW_OWNER_ID", "")
-        if owner_id:
-            channel = await delivery.open_dm(owner_id)
+        from personalclaw.channel_delivery import open_owner_dm
+
+        opened = await open_owner_dm()
+        if opened is not None:
+            delivery, channel = opened
     except Exception:
-        pass
+        logger.debug("notify_attachment: opening the owner's DM failed", exc_info=True)
     if not channel:
         _sel().log_tool_invocation(
             session_key="api",

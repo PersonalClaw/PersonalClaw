@@ -88,6 +88,7 @@ jobs:
                             # read-only regardless — both calls are GETs, so that is enough.
     outputs:
       frontend: ${{ steps.verdict.outputs.frontend }}
+      sdk: ${{ steps.sdk.outputs.sdk }}
     steps:
       # Depth 1 deliberately: the classifier reads a path LIST, never history, so the
       # `fetch-depth: 0` the `harness` job needs would be pure latency in front of three jobs.
@@ -142,6 +143,63 @@ jobs:
           esac
           echo "verdict: $verdict"
           printf '%s\n' "$verdict" >> "$GITHUB_OUTPUT"
+      # The same path list answers `apps-contract`'s question: can this diff change a published
+      # SDK signature? A trigger-list is sound here (see scripts/ci_touches_sdk.py) because the
+      # signature snapshot every such change must regenerate lives under src/personalclaw/sdk/.
+      # Same fail-safe as above: anything but the two legal answers runs the job.
+      - name: does the diff change what the apps build against
+        id: sdk
+        run: |
+          verdict=$(python3 scripts/ci_touches_sdk.py < /tmp/changed.txt) || verdict=""
+          case "$verdict" in
+            sdk=true|sdk=false) ;;
+            *) verdict="sdk=true" ;;
+          esac
+          echo "verdict: $verdict"
+          printf '%s\n' "$verdict" >> "$GITHUB_OUTPUT"
+
+  apps-contract:
+    # The first-party apps' SDK contract checks, run against THIS core (#3599 → PersonalClawApps
+    # #124). Core and the apps release separately, so an SDK change could break an app with
+    # nothing here noticing: #3599 changed `compress_thread_history`'s parameter type, every
+    # import still resolved and every call still bound, and Slack lost every restored thread's
+    # history. This checks out PersonalClawApps' main and runs, over every bundle, the testkit's
+    # static rails (imports published, calls bind), the CHANGELOG rule (an SDK change names the
+    # apps it affects), and each bundle's own tests/test_sdk_contract.py — the contract checks,
+    # not every app's suite. A problem on an SDK symbol this change did not touch is the app's
+    # own and is reported, not charged, so one app's bug cannot red every core PR.
+    needs: [changes]
+    if: ${{ needs.changes.outputs.sdk == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: PersonalClaw/PersonalClawApps
+          path: .ci-apps
+      - name: fetch the base commit (its SDK snapshot and CHANGELOG are the baseline)
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "${BASE_SHA:-}" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          else
+            git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
+            echo "ref=origin/main" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: the apps' SDK contract, against this core
+        run: >-
+          uv run python scripts/apps_sdk_contract.py --apps-dir .ci-apps
+          --base-ref "${{ steps.base.outputs.ref }}" --install-deps
 
   lint:
     runs-on: ubuntu-latest

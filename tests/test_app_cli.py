@@ -194,3 +194,234 @@ def test_malformed_cli_ref_is_a_warning_not_a_crash(_isolate, capsys):
     )
     app_cli.run_app_setup_steps()  # must not raise
     assert "bad-ref" in capsys.readouterr().out
+
+
+# ── an app's step imports its own package (#124) ────────────────────────────────
+
+
+def _install_packaged_app(root, name, *, step_file, step_body, cli):
+    """An app whose step imports its OWN package — the shape of every channel app's
+    ``cli_setup.py`` (``from telegram_runtime.settings import …``). ``demo_runtime`` exists
+    only in the app's directory, so the import resolves only with that directory on the path."""
+    d = _install_app(root, name, module_file=step_file, module_body=step_body, cli=cli)
+    pkg = d / "demo_runtime"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "settings.py").write_text("TOKEN_KEY = 'DEMO_TOKEN'\n", encoding="utf-8")
+    (pkg / "lazy.py").write_text("GREETING = 'lazy import resolved'\n", encoding="utf-8")
+    return d
+
+
+@pytest.fixture
+def _no_demo_runtime():
+    """``demo_runtime`` is a top-level name: drop it from sys.modules around each test, so one
+    test's import can neither satisfy nor poison the next."""
+    import sys
+
+    for key in [k for k in sys.modules if k == "demo_runtime" or k.startswith("demo_runtime.")]:
+        del sys.modules[key]
+    yield
+    for key in [k for k in sys.modules if k == "demo_runtime" or k.startswith("demo_runtime.")]:
+        del sys.modules[key]
+
+
+def test_a_setup_step_that_imports_its_own_package_runs(_isolate, capsys, _no_demo_runtime):
+    """#124: `personalclaw setup --app telegram-channel` printed "setup step unavailable — No
+    module named 'telegram_runtime'" because the loader exec'd the step without the app's dir on
+    sys.path. The import at module top AND one inside the step (at call time) must resolve."""
+    import sys
+
+    d = _install_packaged_app(
+        _isolate,
+        "pkg-app",
+        step_file="cli_setup.py",
+        step_body=(
+            "from demo_runtime.settings import TOKEN_KEY\n"
+            "def run(ctx):\n"
+            "    from demo_runtime.lazy import GREETING\n"
+            "    ctx.save_credential(TOKEN_KEY, 'abc')\n"
+            "    ctx.print(GREETING)\n"
+        ),
+        cli={"setup": "cli_setup:run"},
+    )
+    assert app_cli.run_app_setup_steps(only_app="pkg-app") == []
+    out = capsys.readouterr().out
+    assert "unavailable" not in out and "lazy import resolved" in out
+    assert "DEMO_TOKEN=abc" in (_isolate / ".env").read_text(encoding="utf-8")
+    assert str(d) not in sys.path, "the app dir must be held for the step only, not left behind"
+
+
+def test_a_doctor_probe_that_imports_its_own_package_runs(_isolate, capsys, _no_demo_runtime):
+    _install_packaged_app(
+        _isolate,
+        "pkg-probe",
+        step_file="cli_doctor.py",
+        step_body=(
+            "from personalclaw.sdk.cli import DoctorLine\n"
+            "from demo_runtime.settings import TOKEN_KEY\n"
+            "def probe():\n"
+            "    from demo_runtime.lazy import GREETING\n"
+            "    return [DoctorLine(TOKEN_KEY, 'ok', GREETING)]\n"
+        ),
+        cli={"doctor": "cli_doctor:probe"},
+    )
+    issues = app_cli.run_app_doctor_probes()
+    out = capsys.readouterr().out
+    assert issues == [] and "probe error" not in out
+    assert "DEMO_TOKEN" in out and "lazy import resolved" in out
+
+
+def test_an_unavailable_step_exits_non_zero_with_its_reason(_isolate, capsys, _no_demo_runtime):
+    """It printed the reason and exited 0, so a script (or a person) read setup as done."""
+    from personalclaw.cli_setup import _setup
+
+    _install_app(
+        _isolate,
+        "broken-app",
+        module_file="cli_setup.py",
+        module_body="import no_such_package_anywhere\ndef run(ctx):\n    pass\n",
+        cli={"setup": "cli_setup:run"},
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        _setup(only_app="broken-app")
+    assert exit_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "broken-app: setup step unavailable — ModuleNotFoundError" in out
+    assert "no_such_package_anywhere" in out
+
+
+def test_a_step_that_raises_exits_non_zero(_isolate, capsys):
+    from personalclaw.cli_setup import _setup
+
+    _install_app(
+        _isolate,
+        "raises-app",
+        module_file="cli_setup.py",
+        module_body="def run(ctx):\n    raise RuntimeError('token rejected')\n",
+        cli={"setup": "cli_setup:run"},
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        _setup(only_app="raises-app")
+    assert exit_info.value.code == 1
+    assert "setup step failed — RuntimeError: token rejected" in capsys.readouterr().out
+
+
+def test_naming_an_app_with_no_step_exits_non_zero(_isolate, capsys):
+    from personalclaw.cli_setup import _setup
+
+    with pytest.raises(SystemExit) as exit_info:
+        _setup(only_app="not-installed")
+    assert exit_info.value.code == 1
+    assert "not-installed" in capsys.readouterr().out
+
+
+def test_a_step_that_runs_exits_zero(_isolate, capsys):
+    """The control: a step that completes does not exit at all."""
+    from personalclaw.cli_setup import _setup
+
+    _install_app(
+        _isolate,
+        "fine-app",
+        module_file="cli_setup.py",
+        module_body="def run(ctx):\n    ctx.print('fine')\n",
+        cli={"setup": "cli_setup:run"},
+    )
+    _setup(only_app="fine-app")
+    assert "fine" in capsys.readouterr().out
+
+
+def test_the_full_wizard_names_failed_app_steps_and_exits_non_zero(_isolate, capsys, monkeypatch):
+    """One broken app never aborts the wizard, but the wizard no longer ends on "Done!"."""
+    from personalclaw import cli_setup
+
+    for step in (
+        "_setup_workspace_dir",
+        "_ensure_default_agent_in_config",
+        "_setup_timezone",
+        "_maybe_setup_dashboard_url",
+        "_maybe_setup_custom_domain",
+    ):
+        monkeypatch.setattr(cli_setup, step, lambda *a, **k: None)
+    monkeypatch.setattr("personalclaw.agent.rebuild_agent_config", lambda clean=False: "agent.json")
+    _install_app(
+        _isolate,
+        "a-broken",
+        module_file="cli_setup.py",
+        module_body="def run(ctx):\n    raise RuntimeError('boom')\n",
+        cli={"setup": "cli_setup:run"},
+    )
+    _install_app(
+        _isolate,
+        "b-fine",
+        module_file="cli_setup.py",
+        module_body="def run(ctx):\n    ctx.print('b-fine ran')\n",
+        cli={"setup": "cli_setup:run"},
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        cli_setup._setup()
+    assert exit_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "b-fine ran" in out  # the wizard went on past the broken app
+    assert "these app steps did not run" in out and "a-broken: setup step failed" in out
+    assert "Done!" not in out
+
+
+# ── SetupContext.delete_credential ──────────────────────────────────────────────
+
+
+def test_a_setup_step_can_delete_a_plain_named_credential(_isolate, capsys):
+    """An earlier release saved Slack's token under the plain name `SLACK_BOT_TOKEN`, which no
+    uninstall can attribute to the app — the step had no way to clean it up."""
+    from personalclaw.config.credentials import get_credential, save_credential
+
+    save_credential("OLD_PLAIN_TOKEN", "leftover")
+    _install_app(
+        _isolate,
+        "cleaner",
+        module_file="cli_setup.py",
+        module_body=(
+            "def run(ctx):\n"
+            "    ctx.print(f\"removed={ctx.delete_credential('OLD_PLAIN_TOKEN')}\")\n"
+            "    ctx.print(f\"again={ctx.delete_credential('OLD_PLAIN_TOKEN')}\")\n"
+        ),
+        cli={"setup": "cli_setup:run"},
+    )
+    assert app_cli.run_app_setup_steps(only_app="cleaner") == []
+    out = capsys.readouterr().out
+    assert "removed=True" in out and "again=False" in out
+    assert get_credential("OLD_PLAIN_TOKEN") == ""
+
+
+def test_a_setup_step_cannot_delete_a_key_a_setting_owns(_isolate, capsys):
+    """An owned key (`PCSECRET_…`) is the value behind some app's `sensitive` setting; deleting
+    it from under the record would leave that setting pointing at nothing."""
+    from personalclaw.config.credentials import OWNED_KEY_PREFIX, get_credential, save_credential
+
+    owned = f"{OWNED_KEY_PREFIX}APP_SOMEONE_ELSE_TOKEN"
+    save_credential(owned, "theirs")
+    _install_app(
+        _isolate,
+        "grabby",
+        module_file="cli_setup.py",
+        module_body=f"def run(ctx):\n    ctx.delete_credential({owned!r})\n",
+        cli={"setup": "cli_setup:run"},
+    )
+    failures = app_cli.run_app_setup_steps(only_app="grabby")
+    assert failures and "owned by a settings record" in failures[0]
+    assert get_credential(owned) == "theirs"
+
+
+def test_a_context_built_without_a_store_refuses_to_delete():
+    """An app's own test builds a SetupContext without the runner's delete; a silent False
+    would read as "there was nothing to delete"."""
+    from personalclaw.sdk.cli import SetupContext
+    from personalclaw.sdk.settings import ProviderSettings
+
+    ctx = SetupContext(
+        app_name="t",
+        get_credential=lambda k: "",
+        save_credential=lambda k, v: None,
+        settings=ProviderSettings,
+    )
+    with pytest.raises(RuntimeError, match="no credential store"):
+        ctx.delete_credential("ANY")

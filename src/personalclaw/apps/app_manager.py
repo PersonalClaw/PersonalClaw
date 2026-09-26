@@ -275,7 +275,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     before this ever runs (install gate); a hook that errors aborts the op.
 
     The hook's environment names the app packages on ``PYTHONPATH``
-    (``app_python.hook_env``), so a hook that runs Python can import what the app
+    (``app_python.app_packages_env``), so a hook that runs Python can import what the app
     declared — the dependency step runs before ``onInstall``/``onUpdate`` for that.
     """
     if not cmd.strip():
@@ -290,7 +290,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
             timeout=max(1, timeout),
             capture_output=True,
             text=True,
-            env=app_python.hook_env(),
+            env=app_python.app_packages_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise AppLifecycleError(f"{env_name} hook timed out after {timeout}s") from exc

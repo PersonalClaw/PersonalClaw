@@ -4825,9 +4825,10 @@ class AppConfig:
         creds: dict[str, str] = dict(_dotenv_credentials())
         creds.update(_keychain_credentials())
 
-        for key in _CREDENTIAL_KEYS:
-            val = os.environ.get(key)
-            if val:
+        for key, val in os.environ.items():
+            # A channel's own owner key (``PERSONALCLAW_OWNER_ID_<PROVIDER>``) is named per
+            # channel, so it is matched by prefix rather than listed.
+            if val and (key in _CREDENTIAL_KEYS or key.startswith(f"{CRED_OWNER_ID}_")):
                 creds[key] = val
 
         # Propagate NAMED credentials into the process environment so spawned children

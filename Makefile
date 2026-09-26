@@ -32,7 +32,7 @@ DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
 .PHONY: help format lock lint test test-e2e test-visual build clean harness-validate gates \
-        mutation-check bundled-model \
+        mutation-check bundled-model sdk-snapshot apps-contract \
         serve serve-fresh serve-web \
         web-build spa-check backend-build pyinstaller \
         desktop desktop-dist desktop-dist-linux \
@@ -138,6 +138,20 @@ mutation-check:
 ## ratchet, and every baseline is shrink-only and FORBIDDEN to raise.
 gates:
 	$(PYTHON) scripts/gate_report.py
+
+## sdk-snapshot: rewrite src/personalclaw/sdk/signatures.json from the live SDK and print what
+## changed. tests/test_sdk_signature_snapshot.py fails until you do, so every SDK change is a
+## reviewed diff; it refuses a parameter whose type changed in place (see the script).
+sdk-snapshot:
+	$(PYTHON) scripts/sdk_signature_snapshot.py
+
+## apps-contract: run the first-party apps' SDK contract checks against this tree — what CI's
+## `apps-contract` job runs on an SDK change. APPS_DIR is a PersonalClawApps checkout; BASE is the
+## ref the change is measured against.
+APPS_DIR ?= ../PersonalClawApps
+BASE ?= origin/main
+apps-contract:
+	$(PYTHON) scripts/apps_sdk_contract.py --apps-dir "$(APPS_DIR)" --base-ref "$(BASE)"
 
 ## bundled-model: pre-fetch the default chat model into a home, without a browser (OU-14)
 ## Normally users fetch it on first use from the chat screen or Settings > Models, where the

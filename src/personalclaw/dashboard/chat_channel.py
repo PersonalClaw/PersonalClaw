@@ -125,10 +125,17 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
     body = await json_object_body(request)
     channel = body.get("channel")
 
+    # A named channel goes through the connected handle; the owner's DM through the channel
+    # that knows the owner's id there (one shared id, used on whichever channel was first,
+    # addressed users of one platform on another).
+    from personalclaw.channel_delivery import owner_route
+
+    route = None if channel else owner_route()
+    delivery, owner_id = route if route is not None else (state.channel_delivery, "")
     history_key = _history_key_for(session.key)
     thread_ts = await handoff_to_channel(
-        state.channel_delivery,
-        state.owner_id,
+        delivery,
+        owner_id,
         state.conversation_log,
         history_key,
         title=session.title if session._titled else "",

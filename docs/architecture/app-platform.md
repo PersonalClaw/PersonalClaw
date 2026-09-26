@@ -239,6 +239,14 @@ backend has no access to the gateway's SecurityEventLog).
   credentials, settings (`ProviderSettings` — each app's persisted store),
   security helpers, and `provider_helpers.register_branded_app` for
   protocol-thin branded model apps.
+- **Its signatures are a reviewed contract**: every name each `sdk` module publishes
+  is recorded in `src/personalclaw/sdk/signatures.json`
+  (`scripts/sdk_signature_snapshot.py`), `tests/test_sdk_signature_snapshot.py`
+  fails until a change is regenerated into it, and writing it refuses a parameter
+  that changed type in place (an old caller would still bind). CI's `apps-contract`
+  job runs the first-party apps' SDK contract checks against a change that touches
+  the SDK (`scripts/apps_sdk_contract.py`). The rule for contributors:
+  [CONTRIBUTING.md](../../CONTRIBUTING.md#sdk-changes).
 - **Frontend**: `web/src/app/appSdk.tsx` — a contributed UI gets
   `createAppApi` / `createAppEvents` and mounts via `mount(el, ctx)`; the host
   resolves bare `react` / `@personalclaw/app-sdk` imports so app UIs don't

@@ -695,19 +695,23 @@ async def api_send_message(request: web.Request) -> web.Response:
             state.notify(notification_kinds.AGENT, title, text)
             if state.channel_delivery:
                 try:
+                    delivery = state.channel_delivery
                     if target_channel:
                         channel = target_channel
                     elif target_user:
-                        channel = await state.channel_delivery.open_dm(target_user)
-                    elif state.owner_id:
-                        channel = await state.channel_delivery.open_dm(state.owner_id)
+                        channel = await delivery.open_dm(target_user)
                     else:
-                        channel = ""
+                        # The owner's DM goes through the channel that knows the owner's id
+                        # THERE, and the message through the same handle that opened it.
+                        from personalclaw.channel_delivery import open_owner_dm
+
+                        opened = await open_owner_dm()
+                        delivery, channel = opened if opened is not None else (delivery, "")
 
                     if channel:
                         channel_attempted = True
                         if blocks:
-                            channel_ts = await state.channel_delivery.deliver_rich(
+                            channel_ts = await delivery.deliver_rich(
                                 channel,
                                 blocks,
                                 text,
@@ -717,7 +721,7 @@ async def api_send_message(request: web.Request) -> web.Response:
                                 reply_broadcast=reply_broadcast,
                             )
                         else:
-                            channel_ts = await state.channel_delivery.deliver_text(
+                            channel_ts = await delivery.deliver_text(
                                 channel,
                                 text,
                                 thread_ts=thread_ts,

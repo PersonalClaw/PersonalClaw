@@ -140,6 +140,23 @@ class ProviderRegistry:
             self._disable_one(rec)
         return True
 
+    def rebuild(self, name: str) -> list[tuple[Any, Any]]:
+        """Re-create an enabled app's live provider instances from its CURRENT settings.
+
+        An instance is built from its settings once, at enable, and cached here, so a saved
+        setting (a new API key, a new bot token) reaches nothing until the instance is rebuilt.
+        Returns ``(old, new)`` per provider in the app's chain, so the caller can move what an
+        instance owns — a channel's running inbound receiver — onto its replacement. A disabled
+        or unknown app has nothing live to rebuild: ``[]``.
+        """
+        primary = self._extensions.get(name)
+        if primary is None or not primary.enabled:
+            return []
+        old = [rec.provider_instance for rec in primary.chain()]
+        self.disable(name)
+        self.enable(name)
+        return list(zip(old, [rec.provider_instance for rec in primary.chain()]))
+
     def deregister(self, name: str) -> bool:
         """Disable AND forget an extension entirely (for uninstall).
 

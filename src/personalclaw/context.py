@@ -809,6 +809,18 @@ async def compress_thread_history(
     from personalclaw.llm_helpers import stream_and_collect  # circular import
     from personalclaw.session import BACKGROUND_KEY  # circular import
 
+    # #3599 changed this parameter from a ConversationLog to the turns themselves and kept its
+    # place, so an old call still binds and used to fail on the first line below, inside an
+    # app's catch-all. Refused here instead, and logged naming the app that called.
+    if not isinstance(prior_turns, list) or not all(isinstance(m, dict) for m in prior_turns):
+        from personalclaw.apps.sdk_calls import refuse_argument
+
+        raise refuse_argument(
+            "compress_thread_history",
+            "prior_turns",
+            "the session's prior turns as a list of {role, content} dicts (since #3599)",
+            prior_turns,
+        )
     recent = model_window(
         [m for m in prior_turns if m.get("role") in MODEL_VIEW_ROLES], _COMPRESSION_MAX_MESSAGES
     )
@@ -1568,6 +1580,10 @@ class ContextBuilder:
         text: str,
         is_new_session: bool,
         session_key: str | None = None,
+        # Keyword-only from here: #3599 inserted `prior_transcript` mid-list, shifting the 14
+        # parameters after it, so a positional call past `compressed_history` would have bound
+        # its values to different names without a word. No caller passes more than three.
+        *,
         channel_id: str | None = None,
         agent: str | None = None,
         resumed: bool = False,

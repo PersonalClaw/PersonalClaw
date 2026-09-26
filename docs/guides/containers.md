@@ -266,12 +266,14 @@ Two orthogonal switches, both in `config.json` inside the volume (or Settings �
 ## Slack channel (optional)
 
 **There is no second container for this, and no extra service to start.** The Slack
-listener runs *inside the gateway process*: the gateway reads `SLACK_APP_TOKEN`,
-`SLACK_BOT_TOKEN` and `PERSONALCLAW_OWNER_ID` from the credential store at startup and
-enables itself when the two tokens are present (`src/personalclaw/gateway.py`). The
-transport itself is registered by the **Slack channel app**, not by core —
-`register_default_transports()` registers only the Web UI, and enabling the channel app is
-what calls `register_transport` (`src/personalclaw/channel_transports/__init__.py`).
+listener runs *inside the gateway process*, driven by the **Slack channel app**: the gateway
+starts every enabled channel app's receiver at boot, and the app reads its own tokens — from
+its settings, or from `SLACK_APP_TOKEN` / `SLACK_BOT_TOKEN` in the credential store or the
+environment, which is how a container passes them. Core reads no channel's tokens: whether a
+channel is configured is the channel's own answer (its health). The transport is registered
+by the app, not by core — `register_default_transports()` registers only the Web UI, and
+enabling the channel app is what calls `register_transport`
+(`src/personalclaw/channel_transports/__init__.py`).
 
 So on a container install:
 
@@ -289,8 +291,14 @@ docker compose -f deploy/compose/compose.yaml up -d --force-recreate personalcla
 
 Then install and enable the Slack channel app from **Store** in the dashboard, the same way
 as any other channel. Tokens come from <https://api.slack.com/apps> after creating a
-Socket-Mode app. Without `PERSONALCLAW_OWNER_ID` the handler refuses every message, by
-design.
+Socket-Mode app. Without an owner id the handler refuses every message, by design.
+
+A channel keeps its own owner id under `PERSONALCLAW_OWNER_ID_<PROVIDER>`
+(`PERSONALCLAW_OWNER_ID_SLACK`, `…_TELEGRAM`, `…_DISCORD`), and core addresses the owner's
+notifications on a channel with that channel's own, falling back to `PERSONALCLAW_OWNER_ID`
+when it has none. `PERSONALCLAW_OWNER_ID` is the one key every channel used to share, and a
+channel app that has not moved to its own key still reads only that one — so set it, and add
+the per-channel key when a second channel needs a different owner id.
 
 ## Troubleshooting
 

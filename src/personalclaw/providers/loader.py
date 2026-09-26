@@ -11,7 +11,6 @@ with the :class:`~personalclaw.providers.registry.ProviderRegistry`.
 import importlib
 import importlib.util
 import logging
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -19,6 +18,7 @@ from personalclaw.apps.manager import app_dir, list_apps
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.native_contract import (
     NATIVE_DIR,
+    app_dir_on_path,
     bundle_module_file,
     load_bundle_module,
 )
@@ -99,15 +99,8 @@ def _load_ext_module(ext: "RegisteredProvider", module_path: str) -> Any:
         return load_bundle_module(ext_dir, ext.name, module_path)
     # Not a file in the app's dir → a dotted package path, or a package DIRECTORY module
     # reached through the app dir on sys.path.
-    added = False
-    if ext_dir and str(ext_dir) not in sys.path:
-        sys.path.insert(0, str(ext_dir))
-        added = True
-    try:
+    with app_dir_on_path(ext_dir):
         return importlib.import_module(module_path)
-    finally:
-        if added and ext_dir and str(ext_dir) in sys.path:
-            sys.path.remove(str(ext_dir))
 
 
 def load_factory(ext: "RegisteredProvider") -> Callable[..., Any]:
@@ -384,6 +377,37 @@ def bootstrap_cli_providers() -> None:
         sync_entries_from_config()
     except Exception:
         logger.debug("config provider-entry sync failed", exc_info=True)
+
+
+def build_channel_transports() -> list[Any]:
+    """The installed + enabled channel apps' transports, BUILT but not registered.
+
+    For a short-lived process that asks a channel a question without booting the provider
+    registry — ``personalclaw setup`` asking whether any channel is configured. Built through
+    the same handler the registry enables them with (the app's factory over its saved
+    settings), so a transport answers here exactly as it does in the gateway; nothing is
+    registered and no receiver starts. An app whose transport cannot be built is skipped,
+    and says why.
+    """
+    from personalclaw.apps import app_python
+    from personalclaw.providers.registry import ChannelTypeHandler, RegisteredProvider
+
+    app_python.activate()
+    built: list[Any] = []
+    for manifest, enabled in discover_installed_extensions():
+        if not enabled:
+            continue
+        for cfg in manifest.all_providers():
+            if cfg.type != "channel":
+                continue
+            ext = RegisteredProvider(name=manifest.name, manifest=manifest, provider_config=cfg)
+            try:
+                built.append(ChannelTypeHandler().create(ext))
+            except Exception:
+                logger.warning(
+                    "channel app %s: transport could not be built", ext.name, exc_info=True
+                )
+    return built
 
 
 def _repair_app_packages_logged(repair: Callable[[], list[str]]) -> None:

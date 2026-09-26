@@ -67,7 +67,7 @@ the authority where the two could disagree: it carries the machine-readable inve
 | `disconnect()` | graceful close at shutdown | **MUST** | yes — clause 2 |
 | `send(OutboundMessage)` | the one outbound primitive every surface can rely on; returns `bool`, and never raises for a well-formed message | **MUST** | yes — clause 2 |
 | `capabilities()` | machine-readable feature gate — core routes and feature-gates off it, so it must be *honest*, not aspirational | **MUST** | yes — clause 3 |
-| `health()` | the Channels page pill. `{state, detail}` with `state` in `ready` / `offline` / `error`; a fourth state renders as an unknown grey pill | **MUST** | yes — clause 5 |
+| `health()` | the Channels page pill, AND core's only answer to "is this channel configured" (the gateway's dashboard-only line, `setup`'s remote-URL prompt, `doctor`'s remote-bind warning). `{state, detail}` with `state` in `ready` / `offline` / `error`; a fourth state renders as an unknown grey pill. Return `offline` only when you have nothing to connect with (no token, no account): `error` (half-up) and `ready` both read as configured | **MUST** | yes — clause 5 |
 | `test()` | the "Test" button — an active probe. `{ok: bool, detail: str}`, and it MUST agree with `health()`: a green Test on an offline channel is a lie | **MUST** | yes — clause 5 |
 | `info()` | static listing; MUST project `name`, `display_name`, `connected`, `capabilities()` without relabelling any of them | **MUST** | yes — clause 1 |
 | `connected` (property) | the default `health()`/`test()`/`info()` all derive from it | **SHOULD** — override it, or override `health()` so it stops mattering | **no** — in no kit tuple |
@@ -128,9 +128,16 @@ gateway boot          →  connect()                     (returns bool; a False 
                       →  start_inbound(services)       (once, AFTER core services are up)
 Channels page render  →  info(), capabilities(), health()
 "Test" button         →  test()                        (must agree with health())
+settings saved        →  a NEW instance from the saved settings; if the old one's inbound was
+                         running: old.stop_inbound() → new.start_inbound(services)
 every inbound message →  your handler → guard_inbound(...) → session
 gateway shutdown      →  stop_inbound() → disconnect()
 ```
+
+Saving your settings (Configure → Save on the Apps page, or the provider form) rebuilds your
+transport from what was saved, and hands the running receiver to the new instance — so a new
+token reaches inbound too, without a restart. `stop_inbound()` has to actually stop what
+`start_inbound()` started: the old instance is dropped right after.
 
 Notes that bite:
 
@@ -192,8 +199,13 @@ What that one call gets you, and what you must not re-implement:
   attributed form will not match; use `security.is_fenced`. The kit reads your module's
   source for a `fenced_text` reference precisely to catch a refactor that reverts to
   `cm.text`.
-- **Owner identity** comes from the credential store (`CRED_OWNER_ID`), not from your
-  settings.
+- **Owner identity** comes from the credential store, ONE KEY PER CHANNEL: save your owner's
+  user id under `owner_id_credential(PROVIDER)` and read it with `owner_id_for(PROVIDER)`
+  (both from `personalclaw.sdk.channel`; `PROVIDER` is the key you pass to
+  `deliver_channel_inbound`). Core addresses the owner's notifications on your channel with
+  the same key. `CRED_OWNER_ID` is the one key every channel used to share — setting up a
+  second channel overwrote the first one's owner — and `owner_id_for` falls back to it only
+  while your channel has none of its own.
 
 Linking the channel to the dashboard: build a session link with the token-auth helpers
 (`generate_token`, `LINK_WINDOW_SECS`) over `dashboard_origin()`, and give the owner a way
@@ -289,6 +301,13 @@ app-creation guide in the apps repository; the channel-specific parts are:
   Both shapes are read everywhere, including by the completeness advisory below.
 - **Secrets go in the credential store**, never in `app.json` or the settings schema.
   Prompt for them from your `cli_setup` contribution and probe them from `cli_doctor`.
+  A step runs with your app's directory on `sys.path` (while it imports and while it runs),
+  so it may import your own package; one that cannot load or raises makes
+  `personalclaw setup` exit non-zero, naming your app and the exception.
+  `SetupContext.delete_credential(name)` removes a secret an EARLIER release saved under a
+  plain name — it refuses a key one of your settings owns (clear the setting instead).
+- A thread-title generator: parse the model's reply with `parse_title` from
+  `personalclaw.sdk.channel`, the dashboard's own parser, rather than a copy of it.
 - Declare the **minimum** permissions. The Store renders them as the consent surface a
   user reads before installing.
 - Ship `test_provider.py` (the kit call above), a `README.md` that documents any capability

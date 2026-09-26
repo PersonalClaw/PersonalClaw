@@ -374,10 +374,28 @@ def _make_send_app(state) -> web.Application:
 
 
 def _mock_state(channel_delivery=None, owner_id=""):
+    """A dashboard state whose owner is reached the way the real one reaches it: through the
+    channel registry, with the owner id that channel keeps for ITSELF (``owner_route``). So the
+    delivery is registered as ``slack`` and the owner id stored under Slack's own key."""
     state = MagicMock()
     state.channel_delivery = channel_delivery
     state.owner_id = owner_id
+    if channel_delivery is not None:
+        from personalclaw.channel_delivery import register
+
+        register(channel_delivery, provider="slack")
+    if owner_id:
+        os.environ[_SLACK_OWNER_KEY] = owner_id
     return state
+
+
+_SLACK_OWNER_KEY = "PERSONALCLAW_OWNER_ID_SLACK"
+
+
+@pytest.fixture(autouse=True)
+def _forget_the_slack_owner():
+    yield
+    os.environ.pop(_SLACK_OWNER_KEY, None)
 
 
 def _seed_cron_trigger(

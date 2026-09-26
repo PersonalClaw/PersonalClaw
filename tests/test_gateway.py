@@ -132,16 +132,12 @@ class TestGatewayOrchestratorInit:
         assert orch._no_crons is True
         assert orch._no_open is True
 
-    def test_slack_disabled_without_tokens(self):
-        # Slack client/state now live in the slack-channel app's SlackRuntime; the
-        # orchestrator no longer owns a `.slack` attribute. Core only tracks the
-        # token-derived enabled flag.
-        orch = _make_orchestrator(slack_enabled=False)
-        assert orch._slack_enabled is False
-
-    def test_slack_enabled_with_tokens(self):
+    def test_core_reads_no_channels_credentials(self):
+        """Whether a channel is configured is the channel app's own answer (its health), so
+        the orchestrator holds none of a vendor's tokens — it used to read SLACK_APP_TOKEN and
+        SLACK_BOT_TOKEN to decide, and could not see a Slack configured on the Apps page."""
         orch = _make_orchestrator(slack_enabled=True)
-        assert orch._slack_enabled is True
+        assert not any("slack" in name.lower() for name in vars(orch))
 
     def test_owner_id_stored(self):
         orch = _make_orchestrator(slack_enabled=True, owner_id="U123")
@@ -489,13 +485,17 @@ class TestDeliverResult:
         ds.notify.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_channel_dm_delivery(self):
+    async def test_channel_dm_delivery(self, monkeypatch):
+        # The owner's DM goes through a channel that knows the owner's id THERE
+        # (`channel_delivery.owner_route`), read live from that channel's own key.
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
-        orch._channel_delivery = _mock_channel_delivery()
+        delivery = _mock_channel_delivery()
+        orch.register_channel_delivery(delivery, provider="slack")
+        monkeypatch.setenv("PERSONALCLAW_OWNER_ID_SLACK", "U1")
         orch.dashboard_state = None
         await orch._deliver_result("Title", "task", "result", "channel")
-        orch._channel_delivery.open_dm.assert_awaited()
-        orch._channel_delivery.deliver_notification.assert_awaited()
+        delivery.open_dm.assert_awaited_once_with("U1")
+        delivery.deliver_notification.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_channel_thread_delivery(self):
@@ -510,13 +510,15 @@ class TestDeliverResult:
         assert call_args[0][3] == "1234.5678"
 
     @pytest.mark.asyncio
-    async def test_default_deliver_channel_and_dashboard(self):
+    async def test_default_deliver_channel_and_dashboard(self, monkeypatch):
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
-        orch._channel_delivery = _mock_channel_delivery()
+        delivery = _mock_channel_delivery()
+        orch.register_channel_delivery(delivery, provider="slack")
+        monkeypatch.setenv("PERSONALCLAW_OWNER_ID_SLACK", "U1")
         ds = _mock_dashboard_state()
         orch.dashboard_state = ds
         await orch._deliver_result("Title", "task", "result", "")
-        orch._channel_delivery.deliver_notification.assert_awaited()
+        delivery.deliver_notification.assert_awaited()
         ds.notify.assert_called_once()
 
     @pytest.mark.asyncio

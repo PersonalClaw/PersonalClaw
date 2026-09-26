@@ -7,26 +7,30 @@ core CLI commands without living in core:
   For each installed + enabled app whose manifest declares ``cli.setup``
   (``"module:function"``), it imports the function from the app's own dir and
   calls it with a :class:`personalclaw.sdk.cli.SetupContext`. A failing step
-  prints a warning and setup continues — one broken app never aborts the wizard.
+  prints a warning and setup continues — one broken app never aborts the wizard —
+  and the step is returned, so the command can exit non-zero naming it.
 
 - ``run_app_doctor_probes`` — called by ``personalclaw doctor``. For each such
   app declaring ``cli.doctor``, it imports + calls the probe with a hard timeout
   and exception guard, expecting a ``list[DoctorLine]``, and renders a per-app
   section. A hung/raising probe becomes one ``fail`` line — doctor never hangs.
 
-The app's module is loaded from its own dir under a namespaced module name
-(mirroring ``providers.loader._load_ext_module``) so two apps that both ship a
-``cli_setup.py`` cannot collide in ``sys.modules``. Executing an app's declared
-setup/doctor code at the user's explicit request is within the existing trust
-model — the app already passed the install-time supply-chain scan.
+The app's module is loaded the way the gateway loads an app's provider module
+(``apps.native_contract.load_bundle_module``): from its own dir, under a namespaced
+module name so two apps that both ship a ``cli_setup.py`` cannot collide in
+``sys.modules``, with the app's directory on ``sys.path`` while it imports AND while
+the step runs, so a step that imports its own package works here exactly as it does in
+the gateway. Executing an app's declared setup/doctor code at the user's explicit
+request is within the existing trust model — the app already passed the install-time
+supply-chain scan.
 """
 
-import importlib.util
 import logging
 import threading
 from typing import Any, Callable
 
 from personalclaw.apps.manager import app_dir, list_apps
+from personalclaw.apps.native_contract import app_dir_on_path, load_bundle_module
 from personalclaw.sdk.cli import DoctorLine, SetupContext
 
 logger = logging.getLogger(__name__)
@@ -53,38 +57,68 @@ def _enabled_apps_with(field: str) -> list[tuple[str, str]]:
 
 
 def _import_app_callable(app_name: str, ref: str) -> Callable[..., Any]:
-    """Import ``module:function`` from the installed app's own dir under a
-    namespaced module name so two apps sharing a module filename can't collide.
+    """Import ``module:function`` from the installed app's own dir.
 
-    Raises on a malformed ref, a missing file, or a missing attribute — the
-    caller turns that into a warning (setup) or a fail line (doctor)."""
+    Raises on a malformed ref, a missing file, a module that fails to import, or a
+    missing attribute — the caller turns that into a warning (setup) or a fail line
+    (doctor)."""
     if ":" not in ref:
         raise ValueError(f"cli entry {ref!r} must be 'module:function'")
     module_path, _, func_name = ref.partition(":")
     module_path, func_name = module_path.strip(), func_name.strip()
     if not module_path or not func_name:
         raise ValueError(f"cli entry {ref!r} must be 'module:function'")
-    base = app_dir(app_name)
-    file_path = base / (module_path.replace(".", "/") + ".py")
-    if not file_path.is_file():
-        raise FileNotFoundError(f"{file_path} not found for app {app_name!r}")
-    mod_name = f"_pclaw_app_{app_name.replace('-', '_')}__{module_path.replace('.', '_')}"
-    spec = importlib.util.spec_from_file_location(mod_name, file_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {file_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_bundle_module(app_dir(app_name), app_name, module_path)
     fn = getattr(module, func_name, None)
     if not callable(fn):
         raise AttributeError(f"{func_name!r} not found in {module_path} for app {app_name!r}")
     return fn
 
 
-def run_app_setup_steps(only_app: str = "") -> None:
+def _reason(exc: BaseException) -> str:
+    """``ModuleNotFoundError: No module named 'x'`` — the class is half of the reason."""
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _scoped_delete_credential(app_name: str) -> Callable[[str], bool]:
+    """``SetupContext.delete_credential`` for one app's setup step.
+
+    A setup step needs it to clear what an earlier release of the same step saved under a
+    plain, unowned name (a channel token under its bare variable name), which no uninstall can
+    attribute to the app. It may not delete a key a settings record OWNS (``PCSECRET_…``):
+    that key is managed through its setting, and removing it from under the record would leave
+    the setting pointing at nothing — possibly another app's. Every delete is audited by name;
+    no value is read.
+    """
+    from personalclaw.config.credentials import delete_credential, is_owned_key
+    from personalclaw.sel import sel
+
+    def _delete(key: str) -> bool:
+        if is_owned_key(key):
+            raise ValueError(
+                f"{key} is owned by a settings record; clear that setting instead of deleting "
+                "the credential"
+            )
+        removed = delete_credential(key)
+        sel().log_api_access(
+            caller="cli:setup",
+            operation=f"app_cli_setup:{app_name}:delete_credential",
+            outcome="removed" if removed else "absent",
+            source="cli",
+            resources=key,
+        )
+        return removed
+
+    return _delete
+
+
+def run_app_setup_steps(only_app: str = "") -> list[str]:
     """Run each installed + enabled app's ``cli.setup`` step (alphabetical).
 
     ``only_app`` restricts the run to that one app (``personalclaw setup --app``).
-    A step that raises prints ``⚠️ <app>: <err>`` and setup continues.
+    A step that cannot be loaded or that raises prints ``⚠️ <app>: <why>`` and setup
+    continues. Returns one ``"<app>: <why>"`` line per step that did not complete — and
+    one for an ``only_app`` that declares no step — so the command can exit non-zero.
     """
     from personalclaw.config.credentials import get_credential, save_credential
     from personalclaw.providers.settings import ProviderSettings
@@ -94,8 +128,9 @@ def run_app_setup_steps(only_app: str = "") -> None:
     if only_app:
         steps = [(n, r) for (n, r) in steps if n == only_app]
         if not steps:
-            print(f"  ⚠️  No installed+enabled app named {only_app!r} declares a cli.setup step.")
-            return
+            why = f"no installed+enabled app named {only_app!r} declares a cli.setup step"
+            print(f"  ⚠️  {why[0].upper()}{why[1:]}.")
+            return [f"{only_app}: {why}"]
 
     def _safe_input(prompt: str) -> str:
         """Prompt, but return "" on a non-interactive run (closed/empty stdin)
@@ -108,17 +143,21 @@ def run_app_setup_steps(only_app: str = "") -> None:
             print()  # close the dangling prompt line
             return ""
 
+    failures: list[str] = []
     for app_name, ref in steps:
+        base = app_dir(app_name)
         try:
             fn = _import_app_callable(app_name, ref)
         except Exception as exc:  # noqa: BLE001 — one bad app must not abort setup
-            print(f"  ⚠️  {app_name}: setup step unavailable — {exc}")
+            why = f"setup step unavailable — {_reason(exc)}"
+            print(f"  ⚠️  {app_name}: {why}")
+            failures.append(f"{app_name}: {why}")
             sel().log_api_access(
                 caller="cli:setup",
                 operation=f"app_cli_setup:{app_name}",
                 outcome="error",
                 source="cli",
-                error=str(exc),
+                error=_reason(exc),
             )
             continue
         ctx = SetupContext(
@@ -127,9 +166,11 @@ def run_app_setup_steps(only_app: str = "") -> None:
             save_credential=save_credential,
             settings=ProviderSettings,
             input=_safe_input,
+            delete_credential=_scoped_delete_credential(app_name),
         )
         try:
-            fn(ctx)
+            with app_dir_on_path(base):
+                fn(ctx)
             sel().log_api_access(
                 caller="cli:setup",
                 operation=f"app_cli_setup:{app_name}",
@@ -137,14 +178,17 @@ def run_app_setup_steps(only_app: str = "") -> None:
                 source="cli",
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"  ⚠️  {app_name}: setup step failed — {exc}")
+            why = f"setup step failed — {_reason(exc)}"
+            print(f"  ⚠️  {app_name}: {why}")
+            failures.append(f"{app_name}: {why}")
             sel().log_api_access(
                 caller="cli:setup",
                 operation=f"app_cli_setup:{app_name}",
                 outcome="error",
                 source="cli",
-                error=str(exc),
+                error=_reason(exc),
             )
+    return failures
 
 
 def _run_probe_with_timeout(fn: Callable[[], Any], timeout: float) -> Any:
@@ -179,9 +223,10 @@ def run_app_doctor_probes() -> list[str]:
         print(f"\n{app_name}")
         try:
             fn = _import_app_callable(app_name, ref)
-            lines = _run_probe_with_timeout(lambda: fn(), _DOCTOR_TIMEOUT_SECS)
+            with app_dir_on_path(app_dir(app_name)):
+                lines = _run_probe_with_timeout(lambda: fn(), _DOCTOR_TIMEOUT_SECS)
         except Exception as exc:  # noqa: BLE001
-            print(f"  {_STATUS_GLYPH['fail']} probe error: {exc}")
+            print(f"  {_STATUS_GLYPH['fail']} probe error: {_reason(exc)}")
             issues.append(f"{app_name} doctor probe error")
             continue
         if not isinstance(lines, list):

@@ -333,6 +333,32 @@ Two runtime facts that save debugging time:
   the dataclass (+ `_meta`), `load()`, `to_dict()`, and a write path —
   `test_config_roundtrip.py` enforces most of this generically.
 
+### <a name="sdk-changes"></a>SDK changes: a reviewed diff, with the apps named
+
+`personalclaw.sdk.*` is what the first-party apps (the PersonalClawApps repository) and
+third-party apps build against, and they ship separately from core. So a change there is a
+change to someone else's program, and it is handled as one:
+
+- **Every published signature is checked in**, in `src/personalclaw/sdk/signatures.json`.
+  `tests/test_sdk_signature_snapshot.py` fails until it matches the code — including when
+  what changed is a core function the SDK only RE-EXPORTS (#3599 edited `context.py` alone).
+  Regenerate it with `make sdk-snapshot` and read the diff it prints.
+- **A type change must break old callers loudly.** A parameter that keeps its place and
+  changes its type — or a new parameter inserted before others — still binds for an old
+  caller, which then fails or misbehaves inside the function, where an app can swallow the
+  error. Rename the parameter AND make it keyword-only (or add the new one at the end,
+  keyword-only). `make sdk-snapshot` refuses the silent shape unless you pass
+  `--allow-silent-break` for a genuine widening.
+- **The CHANGELOG entry names the apps the change affects.** Every SDK change needs an entry
+  under `## [Unreleased]`; one that removes or changes something (not only adds) names each
+  app that uses it. CI's `apps-contract` job computes that list from the apps' own imports
+  and calls, and fails an entry that leaves one out.
+- **CI runs the apps' contract on it.** On any change under `src/personalclaw/sdk/`, the
+  `apps-contract` job checks out PersonalClawApps and runs, against your core, its SDK
+  contract rails over every bundle and each bundle's `tests/test_sdk_contract.py`. Run it
+  locally with `make apps-contract APPS_DIR=../PersonalClawApps`. A problem on a symbol your
+  change did not touch is reported as the app's own and does not fail your PR.
+
 ### Mutation testing: never edit the source by hand
 
 If you are checking whether a test can actually FAIL — deliberately breaking a line

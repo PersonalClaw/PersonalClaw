@@ -136,9 +136,11 @@ def _setup(
     ``only_app`` runs ONLY that installed app's ``cli.setup`` step, skipping the
     core steps and every other app (``personalclaw setup --app <name>``).
     """
-    # `--app <name>`: run just that app's setup step, nothing else.
+    # `--app <name>`: run just that app's setup step, nothing else. A step that could not run
+    # exits non-zero with the reason already printed: "unavailable" with exit 0 read as done.
     if only_app:
-        run_app_setup_steps(only_app=only_app)
+        if run_app_setup_steps(only_app=only_app):
+            sys.exit(1)
         return
 
     from personalclaw.agent import rebuild_agent_config  # circular import: agent imports cli
@@ -198,7 +200,9 @@ def _setup(
     # after the core credential/model steps. This is the generic seam that
     # replaced core's former hardcoded channel-app setup — a channel app now ships
     # its own token/config prompts via `cli.setup` (see PROVIDER-BOUNDARY-COMPLETION).
-    run_app_setup_steps()
+    # One broken app never aborts the wizard, but the run does not end on "Done!" and exit 0
+    # when a step did not run: the failures are named again at the end and the exit is 1.
+    app_failures = run_app_setup_steps()
 
     # 4. Timezone
     _setup_timezone()
@@ -208,6 +212,12 @@ def _setup(
 
     _maybe_setup_custom_domain()
 
+    if app_failures:
+        print("\nSetup finished, but these app steps did not run:")
+        for line in app_failures:
+            print(f"  ⚠️  {line}")
+        print("Fix them, then run: personalclaw setup --app <name>")
+        sys.exit(1)
     print("\nDone! Try: personalclaw doctor && personalclaw gateway")
     _print_dashboard_pointer()
 
@@ -412,12 +422,16 @@ def _maybe_setup_dashboard_url() -> None:
     configured (remote token auth is delivered through a channel — without one
     the dashboard is local-only, so no URL is needed)."""
 
+    import asyncio
+
+    from personalclaw.channel_transports import configured_channels
+    from personalclaw.providers.loader import build_channel_transports
+
     cfg_file = config_path()
     cfg = AppConfig.load()
-    creds = cfg.load_credentials()
-    has_channel = bool(creds.get("SLACK_APP_TOKEN") and creds.get("SLACK_BOT_TOKEN"))
-
-    if not has_channel:
+    # Each channel app answers for itself (its own health), so a channel configured through
+    # its settings counts; core used to look for two Slack credential names.
+    if not asyncio.run(configured_channels(build_channel_transports())):
         return  # No channel → local-only, no URL needed
 
     # Detect if this looks like a remote host
