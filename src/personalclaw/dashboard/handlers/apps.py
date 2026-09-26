@@ -675,9 +675,11 @@ async def api_app_install(request: web.Request) -> web.Response:
         request,
         error=result.error,
     )
+    payload = result.to_dict()
     if result.ok:
         _reconcile_app_crons(request)  # register a freshly-installed app's crons now
-    return web.json_response(result.to_dict(), status=status)
+        payload["providerErrors"] = await _provider_errors(result.name)
+    return web.json_response(payload, status=status)
 
 
 async def api_app_update(request: web.Request) -> web.Response:
@@ -718,9 +720,27 @@ async def api_app_update(request: web.Request) -> web.Response:
 
     status = 200 if result.ok else (409 if result.needs_consent else 400)
     _sel_log("apps.update", "ok" if result.ok else "error", name, request, error=result.error)
+    payload = result.to_dict()
     if result.ok:
         _reconcile_app_crons(request)  # a manifest edit may add/remove/retime crons
-    return web.json_response(result.to_dict(), status=status)
+        payload["providerErrors"] = await _provider_errors(name)
+    return web.json_response(payload, status=status)
+
+
+async def _provider_errors(name: str) -> list[str]:
+    """Why any provider the app just registered serves nothing, one sentence each.
+
+    Read after the new tool providers' names are checked (``providers.routes.admit_tool_names``),
+    so a tool provider refused because a name it offers belongs to another provider is in the
+    answer to the change that registered it. The app itself is installed and on; only that
+    provider is not, and its card in Settings → Providers keeps the same sentence.
+    """
+    from personalclaw.providers.registry import get_provider_registry
+    from personalclaw.providers.routes import admit_tool_names
+
+    await admit_tool_names()
+    ext = get_provider_registry().get(name)
+    return [rec.error for rec in ext.chain() if rec.error] if ext is not None else []
 
 
 async def api_app_enable(request: web.Request) -> web.Response:
@@ -736,7 +756,9 @@ async def api_app_enable(request: web.Request) -> web.Response:
     if not ok:
         return web.json_response({"error": f"enable failed for {name!r}"}, status=400)
     _reconcile_app_crons(request)  # register the app's manifest crons now, not at next restart
-    return web.json_response({"ok": True, "name": name, "enabled": True})
+    return web.json_response(
+        {"ok": True, "name": name, "enabled": True, "providerErrors": await _provider_errors(name)}
+    )
 
 
 async def api_app_disable(request: web.Request) -> web.Response:

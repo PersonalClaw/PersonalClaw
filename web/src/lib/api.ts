@@ -1048,6 +1048,9 @@ export interface AppInstallResult {
   // it is empty on success or when there was no log to show.
   log_excerpt?: string
   fix_prompt?: string
+  /** On success: why a provider the app registered serves nothing, one sentence each — a tool it
+   *  offers has a name another provider holds. The app is installed and on; that provider is not. */
+  providerErrors?: string[]
 }
 export interface SkillInstallResult {
   ok?: boolean; path?: string; error?: string
@@ -8752,7 +8755,7 @@ export const api = {
   installApp: (source: string, consent: string) => _installReq('/api/apps', { source, consent }),
   updateApp: (name: string, source: string, consent: string) =>
     _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, consent }),
-  enableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/enable`),
+  enableApp: (name: string) => post<{ ok: boolean; providerErrors?: string[] }>(`/api/apps/${encodeURIComponent(name)}/enable`),
   disableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/disable`),
   // The three removal rungs (issue #2541), each a different promise about `data/`:
   //   uninstallApp(name)        → deactivate. Nothing leaves disk.

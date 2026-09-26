@@ -399,6 +399,8 @@ def _build_native_runtime(
 
     from personalclaw.agents.native.builtin_tools import (
         PLATFORM_CATEGORIES,
+        PLATFORM_DISPLAY_NAME,
+        PLATFORM_PROVIDER_NAME,
         NativeBuiltinToolProvider,
     )
     from personalclaw.agents.native.runtime import NativeAgentRuntime
@@ -563,8 +565,8 @@ def _build_native_runtime(
         session_key=session_key or "",
         extra_roots=[Path(r) for r in (extra_tool_roots or [])],
         categories=PLATFORM_CATEGORIES,
-        provider_name="personalclaw-filesystem",
-        display="Filesystem & Shell Tools",
+        provider_name=PLATFORM_PROVIDER_NAME,
+        display=PLATFORM_DISPLAY_NAME,
     )
     tool_providers = tool_surface(platform)
 
