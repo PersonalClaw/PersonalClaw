@@ -1103,6 +1103,8 @@ def test_member_bindings_report_the_model_and_runtime_each_member_actually_holds
         "model": "gemma4:12b",
         "provider": "native",
         "description": "numbers",
+        # Set only for a pin that cannot run (`provider_bridge.agent_model_problem`).
+        "model_unavailable": None,
     }
     # An empty model is a REAL state (the binding runs on the configured default for its use
     # case), so it is passed through rather than substituted.

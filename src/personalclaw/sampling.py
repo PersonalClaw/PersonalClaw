@@ -66,6 +66,8 @@ MAX_N = 5
 
 OUTCOMES_FILENAME = "sampling_outcomes.jsonl"
 _MAX_OUTCOME_LINES = 2_000
+#: How much of an all-failed slate's causes the note (the step's failure) carries.
+_FAILURE_SUMMARY_CAP = 300
 
 # A FIXED, index-keyed ladder rather than random jitter: reproducibility is the whole
 # point of a deterministic winner. Index 0 stays low-temperature so the "one candidate
@@ -201,13 +203,25 @@ def _slate_failure(candidates: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _failure_summary(candidates: list[dict[str, Any]]) -> str:
-    """The distinct errors behind an all-failed slate, so the node's failure names its cause."""
+    """The distinct errors behind an all-failed slate, so the node's failure names its cause.
+
+    Capped, and cut at a line or clause boundary with the elision marked. A model that cannot be
+    built fails with its own WHAT/WHY/FIX envelope, which runs past the cap, and a cut mid-word
+    ended the step's failure on "…or change 'X''s typ". The fix is not lost: it travels whole on
+    the slate's ``failure``, which the step shows as its suggested fix.
+    """
     seen: list[str] = []
     for cand in candidates:
         err = str(cand.get("error") or "").strip()
         if err and err not in seen:
             seen.append(err)
-    return "; ".join(seen)[:300]
+    text = "; ".join(seen)
+    if len(text) <= _FAILURE_SUMMARY_CAP:
+        return text
+    head = text[:_FAILURE_SUMMARY_CAP]
+    cut = max(head.rfind("\n"), head.rfind("; "))
+    kept = head[:cut] if cut > 0 else head.rsplit(" ", 1)[0]
+    return f"{kept.rstrip()} …"
 
 
 async def _judge_candidates(

@@ -25,7 +25,7 @@ function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospecti
   const stats = {
     run_id: 'r1', tokens: 1200, tokens_recorded: true, cached_tokens: 100, cost_usd: 0.0342, priced: true,
     steps_completed: 4, steps_failed: 1, steps_cached: 1, calls_cut_off: 0, duration_secs: 92.5,
-    first_byte_ms: 4000, models: ['claude-sonnet'], unverified_steps: 3,
+    first_byte_ms: 4000, models: ['claude-sonnet'], substitutions: [] as string[], unverified_steps: 3,
     verification_debt: 0.75, cache_hit_rate: 0.2,
   }
   const proof = {
@@ -185,6 +185,27 @@ describe('the nine questions reach the DOM', () => {
     // walk away. An empty string here would render as a question with no answer.
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText('this run is complete')).toBeTruthy()
+  })
+})
+
+describe('a step a fallback served is named beside the models', () => {
+  // Measured on main: a run whose step completed on the second entry of the user's model chain
+  // read "Models: fake-model-1" and nothing else, as if that were the model it asked for.
+  const LINE = "ran on fake-oai:fake-model-1 instead of broken-app:model-x: provider 'broken-app' declares type 'brokenapp', and no installed app registers that type"
+
+  it('says which model answered instead of which', async () => {
+    const base = payload()
+    introspect = async () => ({ ...base, stats: { ...base.stats, substitutions: [LINE] } })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    const line = await screen.findByTestId('introspect-model-substituted')
+    expect(line).toHaveTextContent(LINE)
+    expect(line.className).toContain('text-warning')
+  })
+
+  it('says nothing on a run whose steps got the model they asked for', async () => {
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Duration')).toBeTruthy())
+    expect(screen.queryByTestId('introspect-model-substituted')).toBeNull()
   })
 })
 

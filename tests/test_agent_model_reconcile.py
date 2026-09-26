@@ -1,9 +1,10 @@
-"""Built-in / pinned agent model: auto-reconcile + editable (#53).
+"""Built-in / pinned agent model: one availability rule + editable (#53).
 
 Two behaviors:
-  * Runtime auto-reconcile — an agent pinning a model that's no longer in the
-    active chat set falls back to the chat binding instead of handing a dead id
-    to the client (``provider_bridge._reconcile_agent_model``).
+  * The availability rule — a pin that is no longer in the active chat set is reported as
+    unavailable (``provider_bridge.named_model_problem``) instead of being handed to the client as a
+    dead id. What serves instead, and how that is said, is
+    ``tests/test_a_named_model_is_said_not_swapped.py``.
   * Editable — reserved system agents stay locked EXCEPT their ``model`` field,
     so a user can swap which model a built-in agent runs on.
 """
@@ -17,34 +18,64 @@ from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.providers import provider_bridge as pb
 
-# ── Runtime reconcile ──
+# ── The availability rule ──
 
 
-def test_reconcile_keeps_active_pin(monkeypatch):
+def test_an_active_pin_is_available(monkeypatch):
     monkeypatch.setattr(pb, "_active_chat_model_ids", lambda: {"glm-5", "native:glm-5"})
-    assert pb._reconcile_agent_model("glm-5") == "glm-5"
+    assert pb.named_model_problem("glm-5") is None
 
 
-def test_reconcile_drops_stale_pin(monkeypatch):
+def test_a_stale_pin_is_unavailable_and_says_why(monkeypatch):
     monkeypatch.setattr(pb, "_active_chat_model_ids", lambda: {"glm-6"})
-    # glm-5 no longer active → reconcile to "" (caller falls back to chat binding)
-    assert pb._reconcile_agent_model("glm-5") == ""
+    # glm-5 no longer active: unavailable, with the reason the surfaces show.
+    why, fix = pb.named_model_problem("glm-5")
+    assert "not one of the chat models set up in Settings → Models" in why
+    assert "Settings → Models" in fix
 
 
-def test_reconcile_empty_passes_through(monkeypatch):
+def test_no_pin_has_no_problem(monkeypatch):
     monkeypatch.setattr(pb, "_active_chat_model_ids", lambda: {"glm-6"})
-    assert pb._reconcile_agent_model("") == ""
+    assert pb.named_model_problem("") is None
 
 
-def test_reconcile_noop_when_no_active_models(monkeypatch):
-    # Nothing configured yet → don't second-guess the pin.
+def test_a_pin_is_not_second_guessed_when_no_chat_model_is_set_up(monkeypatch):
+    # Nothing configured yet → there is no list for the pin to be outside of.
     monkeypatch.setattr(pb, "_active_chat_model_ids", lambda: set())
-    assert pb._reconcile_agent_model("glm-5") == "glm-5"
+    assert pb.named_model_problem("glm-5") is None
 
 
-def test_reconcile_accepts_qualified_pin(monkeypatch):
+def test_a_qualified_active_pin_is_available(monkeypatch):
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+
+    registry = ProviderRegistry()
+    registry.register_type(
+        ProviderCapability(
+            type="myprov-type",
+            capabilities=frozenset({Capability.CHAT}),
+            supports_streaming=True,
+            supports_tools=False,
+            supports_embeddings=False,
+            supports_vision=False,
+            max_context_tokens=8192,
+        ),
+        lambda **_kw: object(),
+    )
+    registry.register_entry(ProviderEntry(name="myprov", type="myprov-type", model="glm-5"))
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
     monkeypatch.setattr(pb, "_active_chat_model_ids", lambda: {"glm-5", "myprov:glm-5"})
-    assert pb._reconcile_agent_model("myprov:glm-5") == "myprov:glm-5"
+    assert pb.named_model_problem("myprov:glm-5") is None
+
+
+def test_an_active_pin_whose_provider_is_gone_is_unavailable(monkeypatch):
+    """A chat chain entry IS a ref: its provider missing from the registry is why it cannot run."""
+    from personalclaw.llm.registry import ProviderRegistry
+
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", ProviderRegistry)
+    monkeypatch.setattr(pb, "_active_chat_model_ids", lambda: {"glm-5", "myprov:glm-5"})
+    why, _fix = pb.named_model_problem("myprov:glm-5")
+    assert "myprov" in why
 
 
 # ── Fallback chat model must AGREE with the resolved inner provider ──

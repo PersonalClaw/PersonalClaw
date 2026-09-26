@@ -20,6 +20,9 @@ The rule for a dispatch the guard measured, per field:
   A floor nobody reported anything towards is `null`, not `0`.
 * `model` / `provider`: every one the calls used, in first-use order. Known for a cut-off call too:
   the guard knows what it called before the provider answers.
+* `model_substituted`: every "ran on X instead of Y: why" the calls carried — a call served by a
+  later entry of the chain the user built because the model the step asked for could not serve.
+  Written only when there is one, so a step that ran on what it asked for keeps its row.
 
 A dispatched stage is the exception, because its calls run in a subagent: see `subagent_usage`.
 """
@@ -44,6 +47,8 @@ class StepUsage:
     #: Calls the attempt's end cut off before they finished. Non-zero makes `tokens` and
     #: `cost_usd` a floor.
     calls_cut_off: int = 0
+    #: "ran on X instead of Y: why" for each call that served in place of the model asked for.
+    substitutions: tuple[str, ...] = ()
 
     def fields(self) -> dict[str, Any]:
         """The ledger fields, under the names `step_cancelled` has always used."""
@@ -53,6 +58,7 @@ class StepUsage:
             "model": self.model,
             "provider": self.provider,
             "cost_usd": None if self.cost_usd is None else round(float(self.cost_usd), 6),
+            **({"model_substituted": list(self.substitutions)} if self.substitutions else {}),
         }
 
     def billable(self, estimate: int = 0) -> int:
@@ -88,6 +94,7 @@ def measured(calls: CallLog, *, estimate: int = 0) -> StepUsage:
         model=", ".join(calls.models),
         provider=", ".join(calls.providers),
         calls_cut_off=cut_off,
+        substitutions=tuple(calls.substitutions),
     )
 
 

@@ -264,6 +264,14 @@ describe('what a member row says about its reach — three different facts, not 
       .toBe('gemma4:12b')
   })
 
+  it('says a pinned model cannot run, and what answers meanwhile', () => {
+    // Measured on main: the panel named the pin while every turn ran on the chat model.
+    expect(memberModelLabel({
+      name: 'a', configured: true, model: 'fake-oai:no-such-model', provider: 'native',
+      model_unavailable: { why: 'it is not one of the chat models set up in Settings → Models', fix: 'add it in Settings → Models' },
+    })).toBe('fake-oai:no-such-model · unavailable — answering on the chat model')
+  })
+
   it('renders an ACP runtime as the CLI the user picked, and an inherited one as nothing', () => {
     expect(memberRuntimeLabel({ name: 'a', configured: true, model: '', provider: 'acp:claude-code' }))
       .toBe('claude-code')

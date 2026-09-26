@@ -2663,6 +2663,7 @@ class RunController:
         # settles out of band through several paths and only its DONE path sets it, so a rewound
         # stage that then fails must not keep the previous attempt's notice on its row.
         inst.schema_shortfall = ""
+        inst.model_substituted = []
         if item.has_item and not inst.item_label:
             # Stamped once, at first launch. The items list is re-resolved from a binding on
             # every tick, so after an upstream output changes the label would be unrecoverable
@@ -3249,6 +3250,7 @@ class RunController:
             # Read before the cancel reaches the calls: each one still open is cut off by it.
             usage = measured(entry.calls)
             inst.tokens = usage.billable()
+            inst.model_substituted = list(usage.substitutions)
             self.run.total_tokens += inst.tokens
             self.journal.step_failed(
                 path,
@@ -3397,6 +3399,7 @@ class RunController:
         # What this attempt's model calls used, for the row that ends it and the run's charge —
         # whichever way it ended, a retried attempt included (`step_usage`).
         usage = measured(entry.calls, estimate=result.tokens)
+        inst.model_substituted = list(usage.substitutions)  # "ran on X instead of Y", for the row
         # Retry, when the failure class says it is worth spending on. The attempt is
         # RECORDED before the retry so the next one can be corrected rather than blind —
         # a blind retry re-sends the same prompt and reproduces the same failure.
@@ -3553,6 +3556,7 @@ class RunController:
                 resolved_prompt_scan=result.prompt_scan_categories,
                 output_ref=ref,
                 schema_shortfall=result.schema_shortfall,
+                model_substituted=usage.substitutions,
             )
             self._project_task(item, inst, result)
         else:
@@ -3608,6 +3612,7 @@ class RunController:
                 **(
                     {"schema_shortfall": result.schema_shortfall} if result.schema_shortfall else {}
                 ),
+                **({"model_substituted": inst.model_substituted} if inst.model_substituted else {}),
             },
         )
 

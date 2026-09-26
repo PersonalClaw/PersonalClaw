@@ -124,6 +124,10 @@ class RunStats:
     duration_secs: float = 0.0
     first_byte_ms: float | None = None
     models: list[str] = field(default_factory=list)
+    #: "ran on X instead of Y: why", distinct, for every call a later entry of the user's chain
+    #: served because the model the step asked for could not. `models` names who answered; this
+    #: says who did not, which `models` cannot.
+    substitutions: list[str] = field(default_factory=list)
     #: Nodes that completed with no executed evidence behind them — verification DEBT. The number
     #: LEARNING-FLYWHEEL's evaluator consumes from this surface.
     unverified_steps: int = 0
@@ -162,6 +166,7 @@ class RunStats:
                 round(self.first_byte_ms, 1) if self.first_byte_ms is not None else None
             ),
             "models": list(self.models),
+            "substitutions": list(self.substitutions),
             "unverified_steps": self.unverified_steps,
             "verification_debt": self.verification_debt,
             "cache_hit_rate": self.cache_hit_rate,
@@ -270,6 +275,9 @@ def _fold_usage(stats: RunStats, event: dict[str, Any], models: list[str]) -> No
     model = str(event.get("model") or "")
     if model and model not in models:
         models.append(model)
+    for sentence in event.get("model_substituted") or []:
+        if sentence and sentence not in stats.substitutions:
+            stats.substitutions.append(str(sentence))
 
 
 def _epoch(raw: Any) -> float | None:

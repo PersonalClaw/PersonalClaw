@@ -37,6 +37,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator
 
 from personalclaw.history import speaker_of
+from personalclaw.llm.base import ModelSubstitution
 from personalclaw.rooms.store import (
     HUMAN_SPEAKER,
     ROOM_NOTE_ROLE,
@@ -278,6 +279,12 @@ async def run_member_turn(
     prompt = build_member_prompt(room, member, read_messages(room_id))
 
     async with member_session(sessions, room_id, member_name) as provider:
+        # The member's own model could not run and another answers this turn: said on the
+        # transcript, in the member's slot and before its reply, because the members panel keeps
+        # showing the model the member was given and the reply would otherwise read as its.
+        substitution = getattr(provider, "model_substitution", None)
+        if isinstance(substitution, ModelSubstitution):
+            _note(room_id, member_name, substitution.notice())
         with posture.member_spend_scope(key, profile):
             reply = await stream_and_collect(
                 provider, prompt, approval_policy=policy, on_tool_approval=gate

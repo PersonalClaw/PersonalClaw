@@ -207,6 +207,7 @@ class Journal(LedgerWriter):
         output_ref: str = "",
         schema_shortfall: str = "",
         model_calls_open: int = 0,
+        model_substituted: tuple[str, ...] | list[str] = (),
     ) -> None:
         """The ledger's primary record. Every field here is required by the flywheel's
         refiner (§5 Run Ledger) — `cost_usd` is backend-authoritative with a rate-table
@@ -240,6 +241,10 @@ class Journal(LedgerWriter):
         a floor — the same field and the same reading `step_failed` and `step_cancelled` carry.
         Written only when non-zero, like `schema_shortfall` and for the same reason: a step whose
         calls all finished keeps the row it always had.
+
+        `model_substituted` is every "ran on X instead of Y: why" the step's calls carried: the
+        model it asked for could not serve and a later entry of the user's chain did. `model` alone
+        named the entry that answered as if it were the one asked for. Written only when non-empty.
         """
         self.write(
             STEP_COMPLETED,
@@ -261,6 +266,7 @@ class Journal(LedgerWriter):
             output_ref=output_ref,
             **({"model_calls_open": int(model_calls_open)} if model_calls_open else {}),
             **({"schema_shortfall": schema_shortfall} if schema_shortfall else {}),
+            **({"model_substituted": list(model_substituted)} if model_substituted else {}),
         )
 
     def step_failed(
