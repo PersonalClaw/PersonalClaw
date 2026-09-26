@@ -6,6 +6,7 @@ import { spring, physics, expr } from '../design/motion'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, NaturalVoicePill, effortsForAgent, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
+import { DROP_GROW_PX, RISE_GROW_PX, riseScale } from './composer/rise'
 import { useMicRecorder } from './composer/useMicRecorder'
 import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
@@ -80,6 +81,18 @@ export function Composer({
 
   const inputRef = useRef<MarkdownInputHandle>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // The composer's own width, so its awake springs grow it by a bounded number of px
+  // (`composer/rise.ts`) instead of a fraction that, at `full` width, spent its gutter.
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => setWidth(entries[0]?.contentRect.width ?? 0))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Hands-free (MULTIMODAL-IO §4.1): the loop is a composer-local mode, so the
   // toggle and the mode live together. Dictation lands in the draft (the surface
@@ -249,16 +262,18 @@ export function Composer({
   )
 
   return (
-    <div className="relative w-full" style={{ maxWidth: 'var(--content-width)' }}>
+    <div ref={rootRef} className="relative w-full" style={{ maxWidth: 'var(--content-width)' }}>
       {/* Two "awake" states drive the composer's motion, both scaled through expr()
           (bold rises tall, refined barely): FOCUS = "rises to meet you"; DRAG-OVER =
           "opens its arms to receive" — a bigger lift + fuller ring than focus, since
-          a file is about to land. Springs on a bounce tier so it settles with life. */}
+          a file is about to land. Springs on a bounce tier so it settles with life.
+          The scale's GROWTH is capped in px (`riseScale`) so a wide composer rises
+          without crossing the page gutter it sits in. */}
       <motion.div
         layout
         animate={{
           y: dragOver ? -expr(11, 0.4) : focused ? -expr(6, 0.4) : 0,
-          scale: dragOver ? 1 + expr(0.028, 0.4) : focused ? 1 + expr(0.016, 0.4) : 1,
+          scale: dragOver ? riseScale(expr(0.028, 0.4), DROP_GROW_PX, width) : focused ? riseScale(expr(0.016, 0.4), RISE_GROW_PX, width) : 1,
         }}
         transition={physics.playful}
         className="relative"
@@ -276,8 +291,11 @@ export function Composer({
           }}
           transition={dragOver ? { opacity: { duration: 1.4, ease: 'easeInOut', repeat: Infinity }, borderRadius: spring.spatialDefault } : spring.spatialDefault}
           style={{ background: 'conic-gradient(from 0deg, var(--ring-stop-1), var(--ring-stop-2), var(--ring-stop-3), var(--ring-stop-4), var(--ring-stop-1))' }} />
+        {/* Awake shadow is the composer's OWN token, not the cards' `--shadow-lift`: that
+            one reaches ~60px and was cut into a hard line by the page gutter the composer
+            sits in. The wide glow is the halo's job (DotGlow), which fades before edges. */}
         <motion.div
-          animate={{ boxShadow: (focused || dragOver) ? 'var(--shadow-lift)' : 'var(--shadow-rest)', borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'var(--radius-xli)' }}
+          animate={{ boxShadow: (focused || dragOver) ? 'var(--shadow-composer-focus)' : 'var(--shadow-rest)', borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'var(--radius-xli)' }}
           transition={spring.spatialDefault}
           className="relative flex flex-col gap-s bg-surface-container px-m py-s"
           onDragEnter={onDragEnter} onDragOver={canAttach ? (e) => e.preventDefault() : undefined}

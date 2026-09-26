@@ -198,10 +198,22 @@
   --shadow-composer: 0 2px 8px -2px rgb(0 0 0 / 0.16);
   --shadow-menu: 0 0 20px rgb(0 0 0 / 0.28);
   --shadow-sheet: 0 16px 40px rgb(0 0 0 / 0.42);
-  /* composer rest/lift shadows (lift adds a primary-tinted glow) */
+  /* rest/lift shadows (lift adds a primary-tinted glow) — grounded cards at rest, and the
+     lift a card rises to on hover/drag */
   --shadow-rest: 0 2px 8px -2px rgb(0 0 0 / 0.16);
   --shadow-lift: 0 22px 55px -14px rgb(0 0 0 / 0.6),
     0 0 48px -6px color-mix(in srgb, var(--color-primary) 50%, transparent);
+  /* The COMPOSER's awake (focus / drag-over) shadow. Not `--shadow-lift`, for a measured
+     reason: the composer sits in the page gutter (`px-l`, 16px) — docked 16px above the page
+     bottom, and 16px from the rail at the shipped `full` width — and the page box clips
+     anything past that. `--shadow-lift` reaches ~60px, so it was cut into a straight line
+     there: in light mode a 60%-black band ending at the page bottom ((186,180,180) on a
+     (240,244,248) canvas), and a coral step at the rail in both themes. This one is sized to
+     what is left of the gutter after the capped rise (`ui/composer/rise.ts`, 4–6px): a
+     contact shadow and a tight coral rim, both under 1% by 12px out. The WIDE glow around
+     the composer is the halo's (`ui/DotGlow`), which fades out before every edge instead. */
+  --shadow-composer-focus: 0 4px 10px -4px rgb(0 0 0 / 0.4),
+    0 0 10px -1px color-mix(in srgb, var(--color-primary) 55%, transparent);
 
   /* ── elevation model (brand-identity-rebrand §3.1): neumorphic GROUND vs
         glass SKY. Neumorphic = soft dual shadow (ambient + faint inset highlight),

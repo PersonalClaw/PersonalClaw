@@ -6,9 +6,9 @@ import { messageEnter, spring } from '../../design/motion'
 import { MessageBody, type TurnPaste } from '../../pages/chat/PasteChip'
 
 /** Entrance for the JUST-SENT bubble: it travels UP from near the composer into
- *  its transcript slot (rise + slight grow), in concert with the glow that splits
- *  off the composer. A spring gives it weight + a soft settle. Older user bubbles
- *  use the quiet default `messageEnter`. */
+ *  its transcript slot (rise + slight grow), so the message visibly leaves the
+ *  composer it was typed in. A spring gives it weight + a soft settle. Older user
+ *  bubbles use the quiet default `messageEnter`. */
 /*  A FUNCTION, not an object literal, because `spring.spatialSlow` is a getter that reads
  *  `prefers-reduced-motion` at access time (FM-7). Held as a module-scope literal it would
  *  resolve the gate ONCE at import and freeze that answer for the session, so a user who
@@ -39,7 +39,7 @@ export function isLongUserMessage(text: string): boolean {
  *  max-width 452px). The ONLY bubbled side in NE chat. Content renders as
  *  markdown (same renderer as assistant turns), with first/last-child margins
  *  collapsed so a one-line message sits snug. `fromComposer` makes the newest
- *  sent bubble travel up from the composer (Stage 3 glow-travel). */
+ *  sent bubble travel up from the composer. */
 export function MessageUser({ children, fromComposer = false, onFileClick, pastes, optimized, onExpand }: {
   children: string; fromComposer?: boolean; onFileClick?: (path: string) => void; pastes?: TurnPaste[]; optimized?: string
   /** Called when the reader unfolds a long message — a decision to read it, which the host

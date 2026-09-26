@@ -197,6 +197,12 @@ const APPROVAL_SLIDER = [
   { key: 'yolo', label: 'YOLO', icon: Zap, title: 'YOLO — auto-approve everywhere; auto-expires, re-enable to extend' },
 ]
 
+/** The transcript's bottom fade: opaque down to its bottom padding (`py-2xl` on the turn
+ *  column), transparent at the edge. Keyed to that padding so the resting view — scrolled
+ *  to the newest turn — is never faded; see the scroller for why the edge fades at all.
+ *  (A mask reads only alpha, so `black` here is "keep", not a colour.) */
+const TRANSCRIPT_END_FADE = 'linear-gradient(to bottom, black calc(100% - var(--spacing-2xl)), transparent)'
+
 // Task mode — ORTHOGONAL to approval (which gates *whether* a tool auto-approves).
 // Task mode gates *which* tools run + how the agent frames the work, layered on the
 // active agent. Plan moved here from the approval slider (it was never an approval
@@ -740,17 +746,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const followNewTurn = () => { followTurnRef.current = true }
   // WS link state — false while the socket is down (drives the reconnecting cue).
   const [wsConnected, setWsConnected] = useState(true)
-  // glow-travel target (Stage 3): while a turn is in flight, this ref points at
-  // the active turn's DOM node so a glow SPLITS OFF the composer and travels to
-  // sit behind it; cleared on done so the split-off light fades and the composer
-  // glow stands alone. DotGlow reads `.current` live each animation frame.
-  const glowTargetRef = useRef<HTMLDivElement | null>(null)
-  // a SMALL, fixed-size, centered anchor at the top of the active turn. The glow
-  // targets THIS (not the growing/right-aligned turn box) so the pool stays a
-  // compact, symmetric, stable shape — no content-fit cutout, no expand-as-it-
-  // streams. Mounted only while streaming; React re-points it to the newest last
-  // turn as turns append.
-  const glowAnchorRef = useRef<HTMLDivElement | null>(null)
   // activity panel (Stage 5) — Index/Files/Links, chat-only, toggled from header.
   // URL-backed (?activity=1, push → Back closes it; refresh restores it).
   const [activityOpen, setActivityOpen] = useQueryFlag(query, setQuery, 'activity')
@@ -1883,13 +1878,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   useEffect(() => {
     setPasteBlocks((prev) => (prev.length ? pruneBlocks(input, prev) : prev))
   }, [input])
-
-  // Glow-travel: aim the split-off light at the active turn's small anchor while
-  // streaming; clear it when the turn finishes so the light fades out (DotGlow
-  // lerps the fade) and the composer glow stands alone. Re-points as turns append.
-  useEffect(() => {
-    glowTargetRef.current = streaming ? glowAnchorRef.current : null
-  }, [streaming, turns])
 
   // "Show full result" (tool-io-rendering TC4): a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
@@ -3328,8 +3316,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      <DotGlow intensity={composerFocused ? 1.6 : 1} composerRef={composerRef} focusRef={glowTargetRef} />
-
       {/* keepCornerPadding: the chat's docked panels (Activity, File peek) are flex
           siblings BELOW this bar — they never sit over the shell's fixed top-right
           corner. So the header must always reserve the corner clearance, else its
@@ -3487,6 +3473,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             The header control that closes the drawer lives ABOVE this row, so the user is never
             shut out. */}
         <div className="relative flex min-w-0 flex-1 flex-col" inert={mapOpen && isMobile && started}>
+          {/* The composer's light, staged in THIS column rather than the page: its box is
+              the stage `DotGlow` fades the halo out inside of, so a docked panel beside the
+              column (Activity, file peek, chat history, the mobile map drawer — all opaque
+              `SidePanel`s) bounds the halo instead of slicing it at the panel's edge. */}
+          <DotGlow intensity={composerFocused ? 1.6 : 1} focused={composerFocused} composerRef={composerRef} />
           {loadingHistory ? (
             // Opening an existing session: paint the chat frame instantly (header +
             // docked composer are already live around this column) and skeleton the
@@ -3535,7 +3526,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               {/* `data-transcript-scroll` names THIS element as the one `scrollRef` points at, so
                   the browser gate can assert scroll-fixity and the jump against the real scroll
                   container instead of guessing which ancestor scrolls. */}
-              <div ref={scrollRef} data-transcript-scroll className="relative min-w-0 flex-1 overflow-y-auto">
+              {/* The transcript FADES OUT over its own bottom padding (`py-2xl` below) instead of
+                  stopping at a scroll clip. That edge sits in the halo's brightest band, right
+                  above the docked composer, and the clip sliced whatever crossed it — a code
+                  block or a bubble cut flat, above a strip of glow. At rest nothing is faded
+                  (the newest turn ends above the padding); anything scrolled past dissolves
+                  into the halo instead of ending in a line. */}
+              <div ref={scrollRef} data-transcript-scroll className="relative min-w-0 flex-1 overflow-y-auto"
+                style={{ maskImage: TRANSCRIPT_END_FADE, WebkitMaskImage: TRANSCRIPT_END_FADE }}>
                 <AnimatePresence>
                   {/* `ui/FindBar` is surface-agnostic; chat supplies what a turn's searchable
                       text is (`findSegments`) and which node to scroll to. Both references are
@@ -3559,13 +3557,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                       // Session Map still lights that question — the registry itself is a ref.
                       <div key={i} className="relative" data-transcript-turn={turn.role}
                         ref={(el) => { const c = markCoordOf(turn, i); if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c) }}>
-                        {/* small, fixed, centered glow anchor at the top of the
-                            ACTIVE turn — the traveling light targets this stable
-                            point (not the growing turn box), so the pool stays
-                            compact + symmetric and never expands as text streams. */}
-                        {isLast && streaming && (
-                          <div ref={glowAnchorRef} aria-hidden className="pointer-events-none absolute left-1/2 -top-2 size-px -translate-x-1/2" />
-                        )}
                         {turn.role === 'user' ? (
                           editingTurn === i ? (
                             <UserEditor initial={turnTextOf(turn)} onCancel={() => setEditingTurn(null)}

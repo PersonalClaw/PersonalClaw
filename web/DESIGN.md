@@ -211,10 +211,12 @@ A hybrid model: tonal layering does the everyday work (the surface ramp IS eleva
 - **Rest** (`0 2px 8px -2px rgb(0 0 0 / 0.16)`): the composer and grounded cards at rest.
 - **Menu** (`0 0 20px rgb(0 0 0 / 0.28)`): popovers and dropdowns.
 - **Sheet** (`0 16px 40px rgb(0 0 0 / 0.42)`): modals and large sheets.
-- **Lift** (deep ambient + coral-tinted glow at 50%): the composer's focused state — the one shadow allowed to carry brand color.
+- **Lift** (deep ambient + coral-tinted glow at 50%): a card rising under the pointer or a drag.
+- **Composer focus** (`--shadow-composer-focus`: contact shadow + tight coral rim): the composer's focused and drag-over state. Sized to the 16px page gutter the composer sits in — docked above the page bottom, and beside the rail at the default `full` width — because the page box clips anything past it, and a shadow that outruns its gutter is cut into a hard line.
 
 ### Named Rules
 **The Glow-Is-Alive Rule.** Coral-tinted glow (`--glow`) appears only when the agent is active or the user is focused into an input — never as static decoration.
+**The Contained-Light Rule.** The wide glow around the composer is the halo (`ui/DotGlow`), and it fades to nothing before every edge of the column it lights. A glow never ends in a line: not at the rail, not at the page bottom, not at a docked panel. Light also needs a surface to come from — a glow with no emitter reads as a stain behind the content, so there is one light, and it is the composer's.
 
 ## 5. Components
 
