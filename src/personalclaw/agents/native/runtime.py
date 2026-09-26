@@ -84,6 +84,10 @@ from personalclaw.llm.prompt_cache import (
 )
 from personalclaw.token_estimate import CONSERVATIVE_CHARS_PER_TOKEN
 from personalclaw.tool_providers.base import RiskLevel
+from personalclaw.tool_providers.portable_schema import (
+    ToolSchemaRejected,
+    tools_named_in_rejection,
+)
 from personalclaw.workflows.compaction import is_context_overflow
 
 if TYPE_CHECKING:
@@ -397,6 +401,8 @@ class NativeAgentRuntime(AgentProvider):
         # can't see or call it. Core-locked tools + the locked platform provider are
         # never disabled (the tool_prefs guards ignore them). Load once; fail-open.
         from personalclaw.tool_providers import tool_prefs
+        from personalclaw.tool_providers.portable_schema import offered_tool_definitions
+        from personalclaw.tool_providers.registry import app_of
 
         disabled_keys = tool_prefs.load_disabled()
         disabled_provs = tool_prefs.load_disabled_providers()
@@ -416,6 +422,7 @@ class NativeAgentRuntime(AgentProvider):
             except Exception:  # noqa: BLE001 - a broken provider must not kill start
                 logger.debug("native: tool provider %s list failed", prov_name, exc_info=True)
                 continue
+            enabled = []
             for t in tools:
                 # Prefer the tool's own provider tag; fall back to the provider
                 # instance name (matches how GET /api/tools keys the disable set).
@@ -423,6 +430,13 @@ class NativeAgentRuntime(AgentProvider):
                 if tool_prefs.is_disabled(pkey, t.name, disabled_keys, disabled_provs):
                     dropped.append(t.name)
                     continue
+                enabled.append(t)
+            # THE TOOL SEAM: a provider validates the whole tool block, so one schema it
+            # cannot accept fails every turn. Every tool — built-in or app — is brought inside
+            # the portable profile here, where the request is assembled; one that cannot be
+            # repaired stays out of the schema AND the index, with one log line naming it.
+            for t in offered_tool_definitions(enabled, provider=prov_name, app=app_of(prov_name)):
+                pkey = getattr(t, "provider", "") or prov_name
                 defs.append(t)
                 index[t.name] = prov
                 # Same provider key the disable gate resolved (tool tag, else the
@@ -554,7 +568,13 @@ class NativeAgentRuntime(AgentProvider):
                             "Group name → true (active) / false (inactive). Omitted "
                             "groups deactivate."
                         ),
-                        "additionalProperties": {"type": "boolean"},
+                        # One declared boolean per group this session HAS. An open map
+                        # (`additionalProperties`) has no portable schema — a strict provider
+                        # rejects the whole request over it (tool_providers.portable_schema).
+                        "properties": {
+                            g.name: {"type": "boolean", "description": f"{_n_tools(len(g.tools))}"}
+                            for g in self._groups
+                        },
                     }
                 },
                 "required": ["groups"],
@@ -1045,6 +1065,24 @@ class NativeAgentRuntime(AgentProvider):
                             started_ms=attempt_started,
                             passed=False,
                         )
+                        # A provider refusing one of THIS request's tool definitions: the
+                        # identical request fails identically, so there is no retry, and the
+                        # raw dump is replaced by a sentence naming the tool (the seam should
+                        # have kept it out — so it is PersonalClaw's bug, and says so).
+                        rejected = tools_named_in_rejection(str(exc), tools_kwarg or [])
+                        if rejected:
+                            from personalclaw.tool_providers import tool_prefs
+
+                            logger.warning(
+                                "native: the provider rejected the tool definition(s) %s — not "
+                                "retrying: %r",
+                                rejected,
+                                exc,
+                            )
+                            raise ToolSchemaRejected(
+                                rejected,
+                                can_turn_off=not any(tool_prefs.is_locked(n) for n in rejected),
+                            ) from exc
                         if not can_retry:
                             raise
                         inference_retried = True
@@ -1212,7 +1250,10 @@ class NativeAgentRuntime(AgentProvider):
             # No retrieval reduction: the assembled (group-filtered) schema stands.
             surfaced_defs = list(pool)
             if grouped:
-                surfaced_defs.append(self._reset_tools_def)
+                # `reset_tools` names the session's groups as declared properties, so it rides
+                # only when there is a group to name (an object with none is not portable).
+                if self._groups:
+                    surfaced_defs.append(self._reset_tools_def)
                 tools_kwarg = tool_definitions_to_openai_schema(surfaced_defs) or None
             else:
                 tools_kwarg = self._tool_schema or None
@@ -1225,7 +1266,7 @@ class NativeAgentRuntime(AgentProvider):
             # by capability — and dispatch via _tool_index works for ANY tool name,
             # surfaced or not. So the model can never conclude a capability is absent.
             surfaced = [*selected_defs, self._tool_search_def, self._tool_schema_def]
-            if grouped:
+            if grouped and self._groups:
                 surfaced.append(self._reset_tools_def)
             tools_kwarg = tool_definitions_to_openai_schema(surfaced) or None
             exclude = {getattr(d, "name", "") for d in surfaced}

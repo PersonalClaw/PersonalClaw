@@ -13,6 +13,7 @@ Provides:
 - Response truncation to prevent resource exhaustion
 """
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -160,6 +161,36 @@ class ToolSchema:
     fields: list[FieldSpec] = field(default_factory=list)
 
 
+def decode_json_text(value: Any) -> Any:
+    """A tool argument declared as JSON TEXT, decoded to the value it carries.
+
+    The portable tool-schema profile (:mod:`personalclaw.tool_providers.portable_schema`) has no
+    form for a free-form object, a map, or an untyped value — a strict provider rejects the whole
+    request over one — so such a parameter is declared a ``string`` of JSON text, and a model sends
+    text. A caller that is not a model (the Tools page's invoke route, a workflow node, a test) may
+    still pass the structured value itself, which passes through untouched. Text that does not
+    parse is returned as-is, so the caller's own type check names what was wrong with it.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text.startswith("```"):
+        # ```json\n{...}\n``` — the fence models add to JSON they were asked for as text.
+        body = text.split("\n", 1)[1] if "\n" in text else ""
+        text = body.rsplit("```", 1)[0].strip()
+    if not text:
+        return value
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):
+        return value
+
+
+def _is_container_type(expected: ItemType) -> bool:
+    kinds = expected if isinstance(expected, tuple) else (expected,)
+    return bool(kinds) and all(k in (dict, list) for k in kinds)
+
+
 def validate_field(value: Any, spec: FieldSpec) -> Any:
     """Validate and normalize a single field value. Returns cleaned value."""
     if value is None:
@@ -188,6 +219,15 @@ def validate_field(value: Any, spec: FieldSpec) -> Any:
                     value = float(_s)
             except (ValueError, TypeError):
                 pass  # fall through to the type check, which will raise cleanly
+
+    # Container coercion, for the same reason: a free-form object or list has no portable schema,
+    # so its tool declares it JSON text and a model sends a string (`decode_json_text`). Decode it
+    # into the container this field wants; text that decodes to anything else falls through to
+    # the type check, which names the real mismatch.
+    if isinstance(value, str) and _is_container_type(spec.type):
+        decoded = decode_json_text(value)
+        if isinstance(decoded, spec.type):
+            value = decoded
 
     # Type check
     if not isinstance(value, spec.type):

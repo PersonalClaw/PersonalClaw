@@ -94,9 +94,10 @@ def test_create_returns_none_when_no_enabled_instances(_cfg_home, monkeypatch):
 def test_register_and_deregister_normalize_a_list(_cfg_home, monkeypatch):
     _stub_factory(monkeypatch)
     registered: list[str] = []
+    apps: list[str] = []
     monkeypatch.setattr(
         "personalclaw.tool_providers.registry.register_provider",
-        lambda p: registered.append(p.name),
+        lambda p, app="": (registered.append(p.name), apps.append(app)),
     )
     unregistered: list[str] = []
     monkeypatch.setattr(
@@ -109,6 +110,9 @@ def test_register_and_deregister_normalize_a_list(_cfg_home, monkeypatch):
     )
     handler.register(_Ext("openai-tools"), [p1, p2])
     assert registered == [p1.name, p2.name]
+    # Every instance is registered under the app that owns it — the tool seam names that app
+    # when one of its tools has a schema no model request can carry.
+    assert apps == ["openai-tools", "openai-tools"]
     handler.deregister(_Ext("openai-tools"), [p1, p2])
     assert unregistered == [p1.name, p2.name]
 

@@ -541,11 +541,11 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Optional title for the notification",
                     },
+                    # JSON TEXT: a rich-message block is a free-form object, which has no
+                    # portable schema (tool_providers.portable_schema). The validator decodes it.
                     "blocks": {
-                        "type": "array",
-                        "description": "Optional rich-message blocks array (Block Kit format). When provided, the message is sent as a rich message with text as fallback.",  # noqa: E501
-                        "items": {"type": "object"},
-                        "maxItems": 50,
+                        "type": "string",
+                        "description": "Optional rich-message blocks (Block Kit format), as JSON text: an array of up to 50 block objects. When provided, the message is sent as a rich message with text as fallback.",  # noqa: E501
                     },
                     "channel": {
                         "type": "string",
@@ -710,10 +710,14 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "workflow_name": {"type": "string"},
+                    # JSON TEXT: an op's keys depend on its kind, and a free-form object has no
+                    # portable schema (tool_providers.portable_schema).
                     "ops": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "Typed engine ops. Each: {op, node_id?, fields?, ...}.",
+                        "type": "string",
+                        "description": (
+                            "Typed engine ops, as JSON text: an array of objects, each "
+                            "{op, node_id?, fields?, ...}."
+                        ),
                     },
                     "rationale": {
                         "type": "string",
@@ -1435,11 +1439,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     if name == "propose_template_diff":
         from personalclaw.learning import refiner_tools
+        from personalclaw.validation import decode_json_text
 
-        ops = args.get("ops")
+        ops = decode_json_text(args.get("ops"))
         if not isinstance(ops, list) or not ops:
             return tool_failure(
-                "'ops' must be a non-empty array of typed ops.", code="WF_REFINE_NO_OPS"
+                "'ops' must be a non-empty JSON array of typed ops.", code="WF_REFINE_NO_OPS"
             )
         result = refiner_tools.file_template_diff(
             str(args.get("workflow_name", "") or ""),

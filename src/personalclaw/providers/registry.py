@@ -291,7 +291,9 @@ class ToolTypeHandler(_TypeHandler):
 
         providers = instance if isinstance(instance, list) else [instance]
         for provider in providers:
-            register_provider(provider)
+            # The app is named here because this is the only place it is known — the tool
+            # seam names it when one of its tools has a schema no model request can carry.
+            register_provider(provider, app=ext.name)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.tool_providers.registry import unregister_provider

@@ -415,6 +415,11 @@ its typed `ToolTypeHandler` — model providers, transports, search providers,
 inbox sources, actions, prompts, skills. Provider REST surfaces live in
 `providers/routes.py` / `entity_routes.py` / `instance_routes.py`.
 
+A tool provider is registered under its app's name, and every tool it lists passes the tool
+seam before a model request carries it: a schema outside the portable profile is repaired or
+left out, with one log line naming the app and the tool — see
+[tool-schema-wire.md](tool-schema-wire.md).
+
 ## Related docs
 
 - What belongs in an app vs core: [provider-boundary.md](provider-boundary.md)

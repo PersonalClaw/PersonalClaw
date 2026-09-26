@@ -314,7 +314,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Propose a typed diff to a template, citing the runs that motivate it",
                 "args": {
                     "workflow_name": "code-project",
-                    "ops": [{"op": "update_node", "node_id": "build", "fields": {"retries": 2}}],
+                    "ops": '[{"op": "update_node", "node_id": "build", "fields": {"retries": 2}}]',
                     "rationale": "The build step fails transiently; a retry clears it.",
                     "run_ids": ["r1", "r2", "r3"],
                 },
@@ -413,7 +413,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Build a spreadsheet with numbers kept numeric",
                 "args": {
                     "name": "Regional sales",
-                    "sheets": {"Sales": [["Region", "Q1"], ["EMEA", 120]]},
+                    "sheets": '{"Sales": [["Region", "Q1"], ["EMEA", 120]]}',
                 },
             },
         ],
@@ -443,7 +443,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
             {
                 "summary": "Render monthly totals as a bar chart",
                 "args": {
-                    "data": {"Jan": 120, "Feb": 150, "Mar": 180},
+                    "data": '{"Jan": 120, "Feb": 150, "Mar": 180}',
                     "hint": "show as a bar chart of monthly totals",
                 },
             },
@@ -456,7 +456,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "examples": [
             {
                 "summary": "Render a saved prompt with variables",
-                "args": {"prompt_id": "review", "vars": {"file": "server.py"}},
+                "args": {"prompt_id": "review", "vars": '{"file": "server.py"}'},
             },
         ],
     },
@@ -469,17 +469,11 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Validate a two-stage spec without saving it",
                 "args": {
                     "name": "triage-inbox",
-                    "root": {
-                        "kind": "sequence",
-                        "id": "main",
-                        "children": [
-                            {
-                                "kind": "infer",
-                                "id": "classify",
-                                "config": {"prompt": "Classify: {{inputs.text}}"},
-                            }
-                        ],
-                    },
+                    # JSON text, as the tool declares it (a node tree has no portable schema).
+                    "root": (
+                        '{"kind": "sequence", "id": "main", "children": [{"kind": "infer", '
+                        '"id": "classify", "config": {"prompt": "Classify: {{inputs.text}}"}}]}'
+                    ),
                     "save": False,
                 },
             },
@@ -511,7 +505,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "examples": [
             {
                 "summary": "Start a run in the background",
-                "args": {"name": "triage-inbox", "inputs": {"since": "1h"}},
+                "args": {"name": "triage-inbox", "inputs": '{"since": "1h"}'},
             },
         ],
     },
@@ -538,13 +532,10 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Preview what editing a pending prompt would re-run",
                 "args": {
                     "run_id": "a1b2c3d4",
-                    "ops": [
-                        {
-                            "op": "update_node",
-                            "node_id": "produce",
-                            "fields": {"prompt": "Be concise."},
-                        }
-                    ],
+                    "ops": (
+                        '[{"op": "update_node", "node_id": "produce", '
+                        '"fields": {"prompt": "Be concise."}}]'
+                    ),
                     "preview_only": True,
                 },
             },
@@ -617,7 +608,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "examples": [
             {
                 "summary": "Approve a waiting gate",
-                "args": {"run_id": "a1b2c3d4", "answer": True},
+                "args": {"run_id": "a1b2c3d4", "answer": "true"},
             },
         ],
     },
@@ -1100,7 +1091,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "examples": [
             {
                 "summary": "Rename an automation",
-                "args": {"id": "file:summarize-notes", "patch": {"name": "Notes summarizer"}},
+                "args": {"id": "file:summarize-notes", "patch": '{"name": "Notes summarizer"}'},
             },
         ],
     },
