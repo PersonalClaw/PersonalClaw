@@ -108,8 +108,11 @@ const RUNG: Record<number, string> = { 4: 'xs', 8: 's', 12: 'm', 16: 'l', 20: 'x
  *  mode this number is dated and sha-stamped to avoid — re-measure and re-state, never bump.)
  *  History, each re-stated DOWN by a landed slice: 3135 (`a9c03d57e`, ceiling only) → 3069 → 3055
  *  → 3015 → 3002 (onboarding's import step moved whole onto the rungs; measured on `c2a599568`
- *  plus that change). */
-const MAPPABLE_CEILING = 3002
+ *  plus that change) → 2977 (the rewritten install-consent module, `pages/apps/installConsent`,
+ *  put every rung value on its rungs — its two remaining raw values share an element with a
+ *  `gap-1.5` half-step, so they stay in one regime — and the Store's new saved-credentials row
+ *  took `gap-s` beside its `p-m`; measured on `ab2536010` plus that change). */
+const MAPPABLE_CEILING = 2977
 
 /** NOT a gate. The half-step population, recorded so the owner question has a number attached and
  *  so a later pass can see whether it moved. Adding rungs to the ramp would convert most of it. */

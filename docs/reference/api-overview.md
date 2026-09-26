@@ -97,8 +97,13 @@ has cost someone a debugging session.
   (`off` | `staged`) is written through `PATCH /api/config/personalclaw`; the dedicated
   `/api/update/auto` route was retired.
 - **Installed apps run from `$PERSONALCLAW_HOME/apps/<name>/`, not your workspace
-  clone.** Push code changes with `POST /api/apps/{name}/update`
-  `{source, confirm: true}`. Editing the clone does nothing to the running app.
+  clone.** Push code changes with `POST /api/apps/{name}/update` `{source}`. An edit
+  that changes what the app gets (permissions, scheduled jobs, packages, hooks, UI)
+  answers 409 with the review; re-send it with the `consent` that review carries.
+  Editing the clone does nothing to the running app.
+- **An install needs consent, always.** `POST /api/apps/preview {source}` returns what
+  the app would get plus a `consent` digest of the exact bytes; `POST /api/apps`
+  `{source, consent}` installs only those bytes. A request without it installs nothing.
 - **Task comment authors are server-derived.** `POST /api/tasks/{task_id}/comments`
   rejects an `author` in the body; the configured username wins.
 - **Locked dashboard presets refuse mutation.** `PUT`/`DELETE` on a locked

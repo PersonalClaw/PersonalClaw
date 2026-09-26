@@ -326,16 +326,18 @@ def test_an_unparseable_spec_still_discloses_and_does_not_claim_core_ownership()
 
 def test_the_catalog_carries_the_disclosure_to_every_scanned_card() -> None:
     """The three scan paths (git, local, native) build a `CatalogEntry` from a manifest, and
-    all three read the consent facts from ONE helper — which is what stops a fourth scan
-    site from surfacing permissions and crons while forgetting the packages. Asserted
-    structurally, because the defect being fixed was precisely an omission."""
+    all three splat the consent facts from ONE projection (`disclosure.describe`, which the
+    install dialog reads too) — which is what stops a fourth scan site from surfacing
+    permissions and crons while forgetting the packages. Asserted structurally, because the
+    defect being fixed was precisely an omission."""
     import inspect
 
     from personalclaw.apps import catalog
 
     src = inspect.getsource(catalog)
-    assert src.count("_perms, _crons, _deps = _manifest_consent(m)") == 3
-    assert src.count("pythonDependencies=_deps,") == 3
+    assert src.count("**describe(m),") == 3
+    # …and no scan site hand-builds a consent field beside it.
+    assert "pythonDependencies=" not in src
     # A registry POINTER must NOT get one: its manifest is unread, and `consentKnown=False`
     # is what the frontend reads to say "unknown" rather than "none".
     pointer = inspect.getsource(catalog._pointer_to_entry)
@@ -351,16 +353,14 @@ def test_the_catalog_carries_the_disclosure_to_every_scanned_card() -> None:
 
 
 def test_a_scanned_manifest_with_deps_reaches_the_wire_classified() -> None:
-    """End to end through the real helper: manifest → `_manifest_consent` → the wire shape
+    """End to end through the real helper: manifest → `disclosure.describe` → the wire shape
     the consent UI reads."""
-    from personalclaw.apps import catalog
+    from personalclaw.apps.disclosure import describe
 
-    _perms, _crons, deps = catalog._manifest_consent(
-        _manifest([f"{_CORE_NAME}>=1.24", "openai>=1.0"])
-    )
+    deps = describe(_manifest([f"{_CORE_NAME}>=1.24", "openai>=1.0"]))["pythonDependencies"]
     assert deps == [
         {"spec": f"{_CORE_NAME}>=1.24", "coreOwned": True},
         {"spec": "openai>=1.0", "coreOwned": False},
     ]
     # And the no-dep case stays empty rather than becoming a placeholder.
-    assert catalog._manifest_consent(_manifest([]))[2] == []
+    assert describe(_manifest([]))["pythonDependencies"] == []

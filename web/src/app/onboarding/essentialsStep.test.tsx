@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
-import type { AppCatalogEntry } from '../../lib/api'
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
+import type { AppCatalogEntry, AppInstallResult } from '../../lib/api'
 
 // ── OU-2, the essential-apps onboarding step ─────────────────────────────────
 //
@@ -9,12 +9,14 @@ import type { AppCatalogEntry } from '../../lib/api'
 // which is exactly the shape where an "install the essentials for me" convenience
 // creeps in. Three properties are load-bearing and each is asserted below:
 //
-//  · NOTHING INSTALLS WITHOUT A CLICK. Mounting the step, expanding a lane, and
-//    opening a card's disclosure must produce zero install requests. This is the
-//    central rail — falsify it by installing from an effect and this file goes red.
-//  · PER-APP CONSENT IS THE STORE'S SURFACE. The disclosure a card shows is the
-//    Store's own PermissionList/CronConsentList, so its copy is asserted verbatim:
-//    a second, quieter consent path would be a second thing to keep honest.
+//  · NOTHING INSTALLS WITHOUT A CLICK AND A CONFIRMATION. Mounting the step, expanding a
+//    lane, and opening a card's consent dialog must produce zero install requests; only
+//    the dialog's own Install sends one. This is the central rail — falsify it by
+//    installing from an effect, or from the card click itself, and this file goes red.
+//  · PER-APP CONSENT IS THE STORE'S SURFACE. A card's Install opens the Store's own
+//    consent dialog (`useAppInstall`), so its copy is asserted verbatim: a second,
+//    quieter consent path would be a second thing to keep honest — and this card's
+//    inline disclosure was one.
 //  · THE MODEL LANE COMPLETES IN-FLOW over three EXISTING endpoints — install →
 //    create provider (the key) → Test → bind — and never a fourth invented one.
 //
@@ -22,6 +24,7 @@ import type { AppCatalogEntry } from '../../lib/api'
 // faster-whisper (stt-only) in the chat-model lane and dead-end at binding.
 
 const installApp = vi.fn()
+const previewApp = vi.fn()
 const appCatalog = vi.fn()
 const modelProviderTypes = vi.fn()
 const createModelProvider = vi.fn()
@@ -47,6 +50,7 @@ const cancelModelDownload = vi.fn()
 vi.mock('../../lib/api', () => ({
   api: {
     installApp: (...a: unknown[]) => installApp(...a),
+    previewApp: (...a: unknown[]) => previewApp(...a),
     appCatalog: () => appCatalog(),
     modelProviderTypes: () => modelProviderTypes(),
     createModelProvider: (...a: unknown[]) => createModelProvider(...a),
@@ -104,6 +108,26 @@ const EMBEDDER = entry({ name: 'sentence-transformers', providerType: 'model', p
 
 const CATALOG = { bundled: [], gitSources: [], localApps: [OPENAI, WHISPER, PIPER, BRAVE, DISCORD, EMBEDDER], remoteApps: [], gitApps: [] }
 
+const DIGEST = 'e'.repeat(64)
+
+/** What the server reads from a card's staged manifest (`POST /api/apps/preview`) — the review
+ *  the consent dialog discloses, and the digest a confirmed install sends back. */
+function reviewOf(source: string, over: Partial<AppInstallResult> = {}): AppInstallResult {
+  const e = [OPENAI, WHISPER, PIPER, BRAVE, DISCORD, EMBEDDER].find((x) => x.source === source)
+  if (!e) throw new Error(`no fixture app at ${source}`)
+  return {
+    ok: false, name: e.name, error: '', needs_consent: true,
+    scan: { verdict: 'clean', tier: 'community', findings: [], signature: { state: 'unsigned', signer: '', reason: '' } },
+    displayName: e.displayName, version: e.version, previous: null, consent: DIGEST,
+    disclosure: {
+      permissions: e.permissions ?? {},
+      crons: (e.crons ?? []).map((c) => ({ ...c, scheduled: Boolean(e.permissions?.cron) })),
+      pythonDependencies: [], hasUI: false, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
+    },
+    ...over,
+  }
+}
+
 // #3529 — `ollama-models` ships `native: true` (pre-installed), so it is NEVER in the
 // catalog above (`resolve_catalog_entries`'s "Library exclusion") while its type IS
 // registered (`GET /api/model-provider-types` walks the loaded provider registry, not the
@@ -128,13 +152,20 @@ function renderStep(over: Partial<Parameters<typeof EssentialsStep>[0]> = {}) {
   return { ...r, onDone, onSkip, onProgress }
 }
 
-/** Cards appear in lane order (model, search, speech, channel), each lane sorted by
- *  display name: 0 OpenAI · 1 Brave Search · 2 Faster Whisper · 3 Piper TTS · 4 Discord. */
-const CARD = { openai: 0, brave: 1, whisper: 2, piper: 3, discord: 4 } as const
+/** Each card's Install button names its app. */
+const CARD = { openai: 'OpenAI', brave: 'Brave Search', whisper: 'Faster Whisper', piper: 'Piper TTS', discord: 'Discord' } as const
 
-async function openCard(which: keyof typeof CARD) {
-  const reviews = await screen.findAllByRole('button', { name: /^Review$/ })
-  fireEvent.click(reviews[CARD[which]])
+/** A card's own Install: it opens the Store's consent dialog, and nothing is installed yet. */
+async function reviewCard(which: keyof typeof CARD): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole('button', { name: `Install ${CARD[which]}` }))
+  await waitFor(() => expect(screen.getByRole('dialog').textContent).toMatch(/Security scan:/))
+  return screen.getByRole('dialog')
+}
+
+/** …then the dialog's own Install — the confirmation that sends the one install request. */
+async function installCard(which: keyof typeof CARD) {
+  const dialog = await reviewCard(which)
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Install$/ }))
 }
 
 beforeEach(() => {
@@ -159,6 +190,7 @@ beforeEach(() => {
   setActiveModel.mockResolvedValue({ ok: true })
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   installApp.mockResolvedValue({ ok: true, name: 'openai-models', error: '', needs_consent: false, scan: null })
+  previewApp.mockImplementation((source: string) => Promise.resolve(reviewOf(source)))
   // The lane's PROOF: by default the build check passes, so every test above walks the flow
   // exactly as it did before verification existed. The tests that falsify it override this.
   onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['openai:gpt-5'] })
@@ -215,20 +247,33 @@ describe('nothing installs without an explicit click', () => {
     expect(onProgress, 'nor record an app the user never chose').not.toHaveBeenCalled()
   })
 
-  it('fires no install request when a card\'s disclosure is opened', async () => {
+  it('fires no install request while a card\'s consent dialog is open', async () => {
     renderStep()
-    await openCard('openai')
-    await screen.findByText('Permissions the gateway enforces')
+    const dialog = await reviewCard('openai')
+    expect(within(dialog).getByText('Permissions the gateway enforces')).toBeTruthy()
     await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    // The card click asked the server for a REVIEW of the app — never for an install.
+    expect(previewApp).toHaveBeenCalledWith('/apps/openai-models', undefined)
     expect(installApp, 'reviewing an app is not consenting to install it').not.toHaveBeenCalled()
   })
 
-  it('installs exactly one app, once, when its own Install button is clicked', async () => {
+  it('installs exactly one app, once, when the dialog is confirmed', async () => {
     renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     await waitFor(() => expect(installApp).toHaveBeenCalledTimes(1))
-    expect(installApp).toHaveBeenCalledWith('/apps/openai-models', false)
+    // …consenting to exactly the bytes the dialog showed.
+    expect(installApp).toHaveBeenCalledWith('/apps/openai-models', DIGEST)
+  })
+
+  it('cancelling the dialog installs nothing and records nothing', async () => {
+    const { onProgress } = renderStep()
+    const dialog = await reviewCard('brave')
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Cancel$/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(installApp).not.toHaveBeenCalled()
+    expect(onProgress).not.toHaveBeenCalled()
+    // The card is still there to choose again.
+    expect(screen.getByRole('button', { name: 'Install Brave Search' })).toBeTruthy()
   })
 
   it('leaves the resume-point write to the flow shell', async () => {
@@ -236,8 +281,7 @@ describe('nothing installs without an explicit click', () => {
     // `POST /api/onboarding/state` call site. Two writers for one document is how a
     // partial merge starts clobbering itself.
     renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(saveOnboardingState).not.toHaveBeenCalled()
   })
@@ -248,38 +292,40 @@ describe('nothing installs without an explicit click', () => {
 describe('per-app install consent is preserved', () => {
   it('discloses the enforced permissions with the Store\'s own wording', async () => {
     renderStep()
-    await openCard('openai')
-    // The Store's PermissionList, not a paraphrase of it.
-    expect(await screen.findByText('Permissions the gateway enforces')).toBeTruthy()
-    expect(screen.getByText(/API: \/api\/models/)).toBeTruthy()
-    expect(screen.getByText(/Network access: declared/)).toBeTruthy()
-    expect(screen.getByText(/advisory only/)).toBeTruthy()
-    expect(screen.getByText(/behind the security scanner/)).toBeTruthy()
+    const dialog = await reviewCard('openai')
+    // The Store's dialog, not a paraphrase of it.
+    expect(within(dialog).getByText('Permissions the gateway enforces')).toBeTruthy()
+    expect(within(dialog).getByText(/API: \/api\/models/)).toBeTruthy()
+    expect(within(dialog).getByText(/Network access: declared/)).toBeTruthy()
+    expect(within(dialog).getAllByText(/advisory only/).length).toBeGreaterThan(0)
+    expect(within(dialog).getByText(/Nothing is installed until you choose Install/)).toBeTruthy()
+    expect(within(dialog).getByText(/Security scan: clean/)).toBeTruthy()
   })
 
   it('discloses the recurring jobs an app will run before it is installed', async () => {
     renderStep()
-    // Brave declares a cron: the schedule must be visible pre-install.
-    await openCard('brave')
-    expect(await screen.findByText('Scheduled jobs')).toBeTruthy()
-    expect(screen.getByText(/every hour/)).toBeTruthy()
+    // Brave declares a cron: the schedule, and the fact that installing turns it on, are
+    // visible before anything installs.
+    const dialog = await reviewCard('brave')
+    expect(within(dialog).getByText('Scheduled jobs')).toBeTruthy()
+    expect(within(dialog).getByText(/every hour/)).toBeTruthy()
+    expect(within(dialog).getByText(/Installing turns on a scheduled job/)).toBeTruthy()
     expect(installApp).not.toHaveBeenCalled()
   })
 
-  it('routes a scanner WARNING through the Store consent modal and re-attempts only on confirm', async () => {
-    installApp.mockResolvedValueOnce({
-      ok: false, name: 'openai-models', error: '', needs_consent: true,
+  it('shows a scanner WARNING in the same dialog and installs only on "Install anyway"', async () => {
+    previewApp.mockImplementation((source: string) => Promise.resolve(reviewOf(source, {
       scan: { verdict: 'warning', findings: [{ surface: 'py', severity: 'medium', rule: 'subprocess', path: 'p.py', evidence: 'run()' }] },
-    })
+    })))
     const { onProgress } = renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
-    const anyway = await screen.findByRole('button', { name: /Install anyway/ })
-    expect(installApp).toHaveBeenCalledTimes(1)
-    expect(onProgress, 'a blocked install records no progress').not.toHaveBeenCalled()
+    const dialog = await reviewCard('openai')
+    const anyway = within(dialog).getByRole('button', { name: /Install anyway/ })
+    expect(installApp).not.toHaveBeenCalled()
+    expect(onProgress, 'a review records no progress').not.toHaveBeenCalled()
     fireEvent.click(anyway)
-    await waitFor(() => expect(installApp).toHaveBeenCalledTimes(2))
-    expect(installApp).toHaveBeenLastCalledWith('/apps/openai-models', true)
+    await waitFor(() => expect(installApp).toHaveBeenCalledTimes(1))
+    expect(installApp).toHaveBeenLastCalledWith('/apps/openai-models', DIGEST)
+    await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'openai-models' } }))
   })
 })
 
@@ -288,8 +334,7 @@ describe('per-app install consent is preserved', () => {
 describe('the model lane completes entirely in-flow', () => {
   async function walkModelLane() {
     const h = renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     const key = await screen.findByLabelText('OpenAI API Key')
     fireEvent.change(key, { target: { value: 'sk-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
@@ -410,8 +455,7 @@ describe('an emptied credential field clears the stored value, not just the form
 
   async function reenterConfigureProvider() {
     renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
   }
 
   it('sends an explicit clear for a sensitive field the user typed into then blanked', async () => {
@@ -450,16 +494,14 @@ describe('an emptied credential field clears the stored value, not just the form
 describe('each lane records only its own progress field', () => {
   it('records the model app by name the moment it installs', async () => {
     const { onProgress } = renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'openai-models' } }))
   })
 
   it('records a search install as a flag, naming no other lane', async () => {
     installApp.mockResolvedValue({ ok: true, name: 'brave-search', error: '', needs_consent: false, scan: null })
     const { onProgress } = renderStep()
-    await openCard('brave')
-    fireEvent.click(await screen.findByRole('button', { name: /Install Brave Search/ }))
+    await installCard('brave')
     await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { search: true } }))
     // A partial patch at BOTH levels: this lane must not echo back model/speech/channel.
     for (const [patch] of onProgress.mock.calls) expect(Object.keys(patch.essentials)).toEqual(['search'])
@@ -468,16 +510,14 @@ describe('each lane records only its own progress field', () => {
   it('records a speech install as a flag', async () => {
     installApp.mockResolvedValue({ ok: true, name: 'faster-whisper', error: '', needs_consent: false, scan: null })
     const { onProgress } = renderStep()
-    await openCard('whisper')
-    fireEvent.click(await screen.findByRole('button', { name: /Install Faster Whisper/ }))
+    await installCard('whisper')
     await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { speech: true } }))
   })
 
   it('records a channel install by app name', async () => {
     installApp.mockResolvedValue({ ok: true, name: 'discord-channel', error: '', needs_consent: false, scan: null })
     const { onProgress } = renderStep()
-    await openCard('discord')
-    fireEvent.click(await screen.findByRole('button', { name: /Install Discord/ }))
+    await installCard('discord')
     await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { channel: 'discord-channel' } }))
   })
 })
@@ -491,8 +531,7 @@ describe('skipping every optional lane still reaches the next step', () => {
     fireEvent.click(cont)
     expect(onDone, 'the required rail is not yet satisfied').not.toHaveBeenCalled()
 
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
@@ -613,7 +652,7 @@ describe('OU-13 — local + LAN Ollama zero-key on-ramp', () => {
     detectLocalModel.mockResolvedValue({ detected: false })
     renderStep()
     // The catalog renders exactly as today.
-    const reviews = await screen.findAllByRole('button', { name: /^Review$/ })
+    const reviews = await screen.findAllByRole('button', { name: /^Install / })
     expect(reviews.length).toBeGreaterThan(0)
     await waitFor(() => expect(detectLocalModel).toHaveBeenCalled())
     // No auto-bind card was injected on the no-Ollama path.
@@ -626,7 +665,7 @@ describe('OU-13 — local + LAN Ollama zero-key on-ramp', () => {
   it('known-false: NO network scan fires on first boot (localhost probe only)', async () => {
     detectLocalModel.mockResolvedValue({ detected: false })
     renderStep()
-    await screen.findAllByRole('button', { name: /^Review$/ })
+    await screen.findAllByRole('button', { name: /^Install / })
     await waitFor(() => expect(detectLocalModel).toHaveBeenCalled())
     // The loopback probe ran; the outbound LAN scan did NOT — it needs the explicit click.
     expect(scanLocalModels).not.toHaveBeenCalled()
@@ -658,8 +697,8 @@ describe('OU-13 — local + LAN Ollama zero-key on-ramp', () => {
     await waitFor(() => expect(scanLocalModels).toHaveBeenCalledTimes(1))
     expect(await screen.findByText(/No local model found on your network/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Use this model/ })).toBeNull()
-    // The catalog Review buttons are still there — the empty scan altered nothing.
-    expect((await screen.findAllByRole('button', { name: /^Review$/ })).length).toBeGreaterThan(0)
+    // The catalog's Install buttons are still there — the empty scan altered nothing.
+    expect((await screen.findAllByRole('button', { name: /^Install / })).length).toBeGreaterThan(0)
   })
 
   it('known-true LAN: a discovered endpoint offers a one-click no-key bind of THAT endpoint', async () => {
@@ -883,8 +922,7 @@ describe('the model lane reads ready only after a build check', () => {
     let release: (v: unknown) => void = () => {}
     onboardingModelCheck.mockReturnValue(new Promise((r) => { release = r }))
     const { onDone } = renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
@@ -910,8 +948,7 @@ describe('the model lane reads ready only after a build check', () => {
       fix: "set 'openai' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models",
     }))
     const { onDone } = renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
@@ -1060,8 +1097,7 @@ describe('an empty discovery result is disambiguated, not asserted', () => {
     testModelProvider.mockResolvedValueOnce({ ok: true, status: 'connected', message: 'Reachable' })
     testModelProvider.mockResolvedValue(probe as never)
     const h = renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     await waitFor(() => expect(chatModels).toHaveBeenCalled())
@@ -1100,8 +1136,7 @@ describe('an empty discovery result is disambiguated, not asserted', () => {
 describe('an untested connection is not reported as a passed test', () => {
   it('does not promise a real connection test the button cannot always run', async () => {
     renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     await screen.findByLabelText('OpenAI API Key')
     // The earlier copy promised "test the connection for real before moving on" — untrue for a
     // provider type whose test answers `no_probe` (nothing ran).
@@ -1112,8 +1147,7 @@ describe('an untested connection is not reported as a passed test', () => {
   it('tells the user the model list is the first evidence when nothing could be tested', async () => {
     testModelProvider.mockResolvedValue({ ok: true, status: 'no_probe', message: 'No connectivity probe available for this provider type' })
     renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     // A function matcher, because the provider name is its own text node: `{provider} has no…`
@@ -1128,8 +1162,7 @@ describe('an untested connection is not reported as a passed test', () => {
     // test route and every diagnosis speak. An app name here binds something that never
     // resolves — and the failure surfaces far from this screen.
     renderStep()
-    await openCard('openai')
-    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await installCard('openai')
     fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     await waitFor(() => expect(createModelProvider).toHaveBeenCalled())

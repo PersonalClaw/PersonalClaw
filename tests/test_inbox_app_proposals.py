@@ -79,11 +79,11 @@ def test_validate_rejects_a_duplicate_suffix():
 
 def test_declared_proposals_reach_the_pre_install_consent_payload():
     """The Store's install-consent panel is the ONLY place a user sees what an app may
-    raise, so the field has to survive ``catalog._manifest_consent`` — not merely
-    ``to_dict``."""
-    from personalclaw.apps.catalog import _manifest_consent
+    raise, so the field has to survive ``disclosure.describe`` — the projection both the
+    catalog card and the install dialog read — not merely ``to_dict``."""
+    from personalclaw.apps.disclosure import describe
 
-    perms, _crons, _deps = _manifest_consent(_manifest(proposals=[{"kind_suffix": "draft"}]))
+    perms = describe(_manifest(proposals=[{"kind_suffix": "draft"}]))["permissions"]
     assert perms["proposals"] == [{"kind_suffix": "draft", "label": "draft"}]
 
 
@@ -180,7 +180,7 @@ def _install(tmp_path: Path, name: str, *, proposals: list[dict] | None = None):
     if proposals is not None:
         mani["permissions"] = {"proposals": proposals, "api": ["/api/inbox/proposals"]}
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
-    res = app_manager.install(d)
+    res = app_manager.install(d, confirm=True)
     assert res.ok, res.error
 
 

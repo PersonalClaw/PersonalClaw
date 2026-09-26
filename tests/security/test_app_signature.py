@@ -396,7 +396,7 @@ class TestVerifyRunsBeforeInstall:
         self, bundle: Path, keys: Path, app_home: Path, trace: dict
     ) -> None:
         _sign(bundle, keys)
-        res = app_manager.install(bundle, origin="local")
+        res = app_manager.install(bundle, origin="local", confirm=True)
         assert res.ok, res.error
         assert trace["order"][:2] == ["verify", "scan"], trace["order"]
         assert trace["live_dir_existed_at_verify"] is False
@@ -447,7 +447,7 @@ class TestVerifyRunsBeforeInstall:
         """An update is a fresh fetch of mutable content, so it re-passes the whole gate —
         otherwise "update" is the way around signing."""
         _sign(bundle, keys)
-        assert app_manager.install(bundle, origin="local").ok
+        assert app_manager.install(bundle, origin="local", confirm=True).ok
 
         (bundle / "scripts" / "setup.sh").write_text("echo tampered\n", encoding="utf-8")
         res = app_manager.update(bundle, name="demo-app", origin="local", confirm=True)
@@ -463,7 +463,7 @@ class TestVerifyRunsBeforeInstall:
         tree's digest manifest must reproduce the one that was signed."""
         _sign(bundle, keys)
         signed_manifest = (bundle / MANIFEST_FILENAME).read_bytes()
-        assert app_manager.install(bundle, origin="local").ok
+        assert app_manager.install(bundle, origin="local", confirm=True).ok
         live = app_manager.app_dir("demo-app")
         installed = {
             rel: hashlib.sha256((live / rel).read_bytes()).hexdigest()
@@ -480,7 +480,7 @@ class TestUnsignedStaysInstallable:
     def test_unsigned_installs_at_community_tier(
         self, bundle: Path, keys: Path, app_home: Path
     ) -> None:
-        res = app_manager.install(bundle, origin="local")
+        res = app_manager.install(bundle, origin="local", confirm=True)
         assert res.ok, res.error
         assert res.scan is not None
         assert res.scan.signature.state is SignatureState.UNSIGNED
@@ -493,7 +493,7 @@ class TestUnsignedStaysInstallable:
         """The whole point of signing: proven provenance buys the tier the curated
         registry already has. It never LOWERS a tier a bundle already earned."""
         _sign(bundle, keys)
-        res = app_manager.install(bundle, origin="local")
+        res = app_manager.install(bundle, origin="local", confirm=True)
         assert res.ok, res.error
         assert res.scan is not None
         assert res.scan.tier is TrustTier.OFFICIAL

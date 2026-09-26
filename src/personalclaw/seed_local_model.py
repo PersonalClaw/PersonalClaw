@@ -373,14 +373,27 @@ def bind_local_model(
     wrote: list[str] = []
     if source is not None:
         from personalclaw.apps import app_manager
+        from personalclaw.supply_chain import Verdict
 
-        result = app_manager.install(source, origin="local", caller="seed_local_model")
+        # `--seed-local-model` is the operator asking for exactly this app, which is consent
+        # to install it — bound to the bytes reviewed here. It is NOT consent to scanner
+        # warnings nobody has read, so a warning still refuses, as it always did.
+        review = app_manager.preview(source, origin="local")
+        if review.scan is not None and review.scan.verdict is Verdict.WARNING:
+            result, why = review, "install needs consent: scanner raised warnings"
+        elif review.consent:
+            result = app_manager.install(
+                source, origin="local", consent=review.consent, caller="seed_local_model"
+            )
+            why = result.error
+        else:
+            result, why = review, review.error
         if not result.ok:
             return BindResult(
                 status=SKIPPED_NO_PROVIDER_APP,
                 detail=(
                     f"installing {PROVIDER_APP!r} from {source} failed "
-                    f"({result.error or 'unknown error'}) — nothing was written."
+                    f"({why or 'unknown error'}) — nothing was written."
                 ),
                 endpoint=endpoint,
                 model=chat_model,

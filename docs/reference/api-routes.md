@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **853 registrations** over **692 distinct paths** — 846 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **854 registrations** over **693 distinct paths** — 847 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -30,7 +30,7 @@ The 127 families the surface divides into, largest first.
 | `/api/workflows` | 44 | 39 |
 | `/api/models` | 34 | 28 |
 | `/api/artifacts` | 25 | 16 |
-| `/api/apps` | 22 | 14 |
+| `/api/apps` | 23 | 15 |
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
 | `/api/skills` | 19 | 15 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 846 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 847 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -191,13 +191,14 @@ The 846 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/approvals` | list pending tool approvals. |
 | `POST` | `/api/approvals/{id}/{action}` | approve or reject. |
 | `GET` | `/api/apps` | installed apps with manifest summary + runtime state. |
-| `POST` | `/api/apps` | install from ``{source, confirm?}``. |
+| `POST` | `/api/apps` | install from ``{source, consent}``. |
 | `GET` | `/api/apps/catalog` | available-to-install apps (Store): bundled-but-not- |
 | `DELETE` | `/api/apps/local-sources` | remove a local app-source dir. |
 | `GET` | `/api/apps/local-sources` | the configured local app-source directories. |
 | `POST` | `/api/apps/local-sources` | add a local app-source dir ``{path}`` (a |
 | `GET` | `/api/apps/message` | drain THIS app's inbox (read-once). |
 | `POST` | `/api/apps/message` | send a typed message ``{to, type, payload}`` to |
+| `POST` | `/api/apps/preview` | review ``{source, name?}`` before anything is installed. |
 | `DELETE` | `/api/apps/sources` | remove a user git source URL. |
 | `GET` | `/api/apps/sources` | the configured git source URLs (defaults + user). |
 | `POST` | `/api/apps/sources` | add a user git source URL ``{url}``. |
@@ -211,7 +212,7 @@ The 846 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/apps/{name}/enable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/token` | mint an app-scoped identity token. |
 | `GET` | `/api/apps/{name}/uninstall-preview` | classify shared deps (A3) and report what the app's ``data/`` holds. |
-| `POST` | `/api/apps/{name}/update` | atomic update from ``{source, confirm?}``. |
+| `POST` | `/api/apps/{name}/update` | atomic update from ``{source, consent?}``. |
 | `GET` | `/api/artifacts` | metadata-only rows; ``q`` searches metadata and body. |
 | `POST` | `/api/artifacts` | create (or bump an existing file-backed artifact). |
 | `GET` | `/api/artifacts/deployed` | the deployed-app listing (slug + in-gateway URL). |

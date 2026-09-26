@@ -212,7 +212,6 @@ def test_every_destructive_door_calls_the_predicate():
         "dashboard/handlers/knowledge.py",
         "dashboard/handlers/durability.py",
         "dashboard/handlers/doctor.py",
-        "dashboard/handlers/apps.py",
         "dashboard/handlers/packs.py",
         "dashboard/handlers/core.py",
         "dashboard/handlers/browse_mirror.py",
@@ -226,3 +225,36 @@ def test_every_destructive_door_calls_the_predicate():
         "workflows/handlers.py",
     ):
         assert expected in callers, f"{expected} no longer gates on the shared predicate"
+
+
+def test_the_app_install_doors_gate_on_a_reviewed_digest_not_on_confirm():
+    """`dashboard/handlers/apps.py` left the list above by CONVERSION, not deletion — and this is
+    what says so, so its absence there cannot hide a door that stopped gating.
+
+    Its two doors (`POST /api/apps` and `POST /api/apps/{name}/update`) called the predicate, and a
+    clean-scanning app then installed on no confirmation at all. They now commit only against the
+    `consent` digest `POST /api/apps/preview` returned for the reviewed bytes — a string a boolean
+    cannot forge — so `confirm: true` must NOT be a way in, and the predicate must not be called
+    there. The behaviour (a bare or `confirm: true` POST is a 409 that installs nothing) is pinned
+    in `test_app_install_needs_consent.py`; this pins the structure the list above used to.
+    """
+    path = SRC / "dashboard" / "handlers" / "apps.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    doors = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name in ("api_app_install", "api_app_update")
+    }
+    assert set(doors) == {"api_app_install", "api_app_update"}, "a door was renamed — re-point this"
+    for name, fn in doors.items():
+        called = {
+            node.func.id
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "_consent_token" in called, f"{name} no longer reads the reviewed-bytes consent"
+        assert not called & {
+            "confirm_granted",
+            "confirm_granted_query",
+        }, f"{name} accepts a boolean confirm again — a yes that was never shown the review"

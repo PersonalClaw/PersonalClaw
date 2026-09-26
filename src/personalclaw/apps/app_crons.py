@@ -37,13 +37,20 @@ logger = logging.getLogger(__name__)
 _APP_JOB_PREFIX = "app:"
 
 
+def schedules(manifest: Any, cron: Any) -> bool:
+    """Whether reconciliation registers ``cron`` as a live, ENABLED trigger once ``manifest``'s
+    app is installed and on. The one predicate for it: the install-consent disclosure
+    (``apps/disclosure.describe``) reads this to say "installing turns on this scheduled job",
+    so that sentence and the trigger store cannot disagree about which jobs run."""
+    return bool(manifest.permissions.cron and cron.name and (cron.every or cron.cron_expr))
+
+
 def _desired_app_crons() -> dict[str, dict]:
     """The app triggers that SHOULD exist: for every enabled app that declares the
     ``cron`` permission, one entry per manifest cron. Keyed by trigger id
     ``app:<app>:<cron>`` → the params to register."""
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.manager import _read_installed, apps_dir
-    from personalclaw.apps.permissions import checker_for
 
     root = apps_dir()
     if not root.is_dir():
@@ -55,17 +62,14 @@ def _desired_app_crons() -> dict[str, dict]:
         meta = _read_installed(entry.name)
         if meta is None or not meta.enabled:
             continue
-        checker = checker_for(meta.name)
-        if checker is None or not checker.can_use_cron():
-            continue
         manifest = _manifest_of(meta.name)
         if manifest is None:
             continue
         for cron in manifest.crons:
-            if not cron.name:
+            # The `cron` permission, a name to key the trigger by and a cadence to fire on —
+            # `schedules` is the same predicate install consent discloses.
+            if not schedules(manifest, cron):
                 continue
-            if not (cron.every or cron.cron_expr):
-                continue  # nothing to schedule on
             job_name = f"{_APP_JOB_PREFIX}{meta.name}:{cron.name}"
             desired[job_name] = {
                 # The action in the STORE's shape, matching what the migration produces for an

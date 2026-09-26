@@ -530,8 +530,10 @@ def _render_index(manifest: dict[str, Any]) -> str:
             "",
             "- **Installed apps run from `$PERSONALCLAW_HOME/apps/<name>/`, not the "
             "workspace tree.** Push code edits with `POST /api/apps/{name}/update` "
-            "`{source, confirm:true}` — editing the workspace clone does nothing to "
-            "the running app.",
+            "`{source}` — editing the workspace clone does nothing to the running app. "
+            "An edit that changes what the app gets (or that the scanner warns about) "
+            "answers `409` with a review; it updates only when re-sent with that "
+            "review's `consent` digest, which is the owner's to give.",
             "- **`static/dist` is a SYMLINK to `web/dist`, not a copy.** A `cp -R` "
             "leaves a frozen dir that shadows it and serves a stale SPA. Rebuild the "
             "frontend in place; never replace the symlink with a copy.",

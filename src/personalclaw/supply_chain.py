@@ -102,6 +102,35 @@ class Reachability(str, Enum):
     UNPARSEABLE = "unparseable"
 
 
+class RuntimeUse(str, Enum):
+    """Whether anything the APP RUNS loads the file a finding sits in.
+
+    A different question from :class:`Reachability`, answered separately on purpose.
+    Reachability asks whether one DANGEROUS match can execute; this asks whether the
+    gateway — or anything it starts for the app — ever loads the FILE at all. The consent
+    surface groups findings by it, because ``subprocess.run`` inside the app's own
+    ``test_provider.py`` is a fact about its tests, not about what installing it does.
+
+    Proved the way reachability is: from the AST and the manifest, never from a filename,
+    and default-deny. A module named ``test_evil.py`` that the provider imports is
+    :data:`LOADED`; a file is :data:`UNLOADED` only when nothing the app runs can reach it
+    and the bundle gives no way to reach it that the analysis cannot see. Disclosure only:
+    it never changes a severity or a verdict.
+    """
+
+    #: Not asked — the finding is not in a Python file, or there is no bundle to reason over.
+    NOT_ANALYSED = "not_analysed"
+    #: Something the app runs points at the file: app.json, an entry point, or a module
+    #: they load names or imports it.
+    LOADED = "loaded"
+    #: Proved: nothing the app runs imports, names or starts the file.
+    UNLOADED = "unloaded"
+    #: Nothing the analysis can see points at the file, but the bundle leaves a way to load
+    #: one that it cannot follow — so "never loaded" is not claimed. Its own state, never
+    #: folded into UNLOADED, for the reason UNPARSEABLE is never folded into UNREACHABLE.
+    UNTRACEABLE = "untraceable"
+
+
 @dataclass
 class Finding:
     """One matched signal. ``severity`` is this finding's own classification;
@@ -110,7 +139,10 @@ class Finding:
     ``reachability`` records what the execution-reachability pass concluded about this
     match and ``reachability_reason`` the sentence a reviewer needs to check it. Both are
     disclosure, never a softener: a finding re-scored to WARNING keeps its rule, path,
-    surface and evidence byte-for-byte, so the user is still told and still consents."""
+    surface and evidence byte-for-byte, so the user is still told and still consents.
+
+    ``runtime`` / ``runtime_reason`` say whether anything the app runs loads this file
+    (:class:`RuntimeUse`) — disclosure too, so it touches nothing else on the finding."""
 
     surface: str  # "script" | "manifest" | "frontmatter" | "supply_chain"
     severity: Verdict
@@ -119,6 +151,8 @@ class Finding:
     evidence: str  # the matched snippet (truncated, for the UX)
     reachability: Reachability = Reachability.NOT_ANALYSED
     reachability_reason: str = ""
+    runtime: RuntimeUse = RuntimeUse.NOT_ANALYSED
+    runtime_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +163,8 @@ class Finding:
             "evidence": self.evidence,
             "reachability": self.reachability.value,
             "reachability_reason": self.reachability_reason,
+            "runtime": self.runtime.value,
+            "runtime_reason": self.runtime_reason,
         }
 
 
@@ -961,6 +997,12 @@ def _note_call(
         facts.sinks.add(f"{name} spawning {program!r}")
 
 
+def _dotted_prefixes(module: str) -> set[str]:
+    """``a.b.c`` → ``{"a", "a.b", "a.b.c"}`` — every package an import of ``module`` runs."""
+    parts = [p for p in module.split(".") if p]
+    return {".".join(parts[: i + 1]) for i in range(len(parts))}
+
+
 def _analyse_python(text: str) -> _FileFacts:
     """AST facts for one Python file. An unparseable file returns ``parsed=False`` and
     nothing else — the caller must treat that as its own outcome, never as "no sinks"."""
@@ -992,12 +1034,17 @@ def _analyse_python(text: str) -> _FileFacts:
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split(".")[0]
-                facts.imports.update({root, alias.name})
+                # Every dotted PREFIX, not just the root and the leaf: `import a.b.c` runs
+                # `a/__init__.py` and `a/b/__init__.py` first, and the runtime-use pass has to
+                # see that package init is loaded too. Stems carry no dots, so L3's
+                # `stem in imports` reads exactly what it read before.
+                facts.imports.update({root, *_dotted_prefixes(alias.name)})
                 if root in _DYNAMIC_MODULES:
                     facts.dynamic.add(f"imports {root}")
         elif isinstance(node, ast.ImportFrom):
             root = (node.module or "").split(".")[0]
             facts.imports.add(root)
+            facts.imports.update(_dotted_prefixes(node.module or ""))
             for alias in node.names:
                 facts.imports.add(alias.name)
                 if alias.name == "*":
@@ -1050,6 +1097,92 @@ def _manifest_tokens(manifest_text: str | None) -> set[str]:
     return out
 
 
+# ── Runtime use — does anything the APP RUNS load this file? ────────────────
+#
+# The question the install-consent surface needs answered to group findings honestly:
+# `subprocess.run` inside the app's own `test_provider.py` describes its test suite, not
+# what installing the app does, and presenting the two identically is how a consent
+# screen ends up describing a test fixture as the app "reading your credentials". So it
+# is answered the way reachability is — structurally, never from a filename, and
+# default-deny: a module named `test_evil.py` that the provider imports is LOADED.
+#
+# THE RULE. Build the set of Python files the app's own runtime can load, starting from
+# what the platform runs — every file `app.json` names (provider/backend/cli/hooks/MCP
+# servers all name their files there), the convention entry points below, and anything a
+# script or config in the bundle names — and following every import edge (each dotted
+# name an import could resolve to, its packages included: `import a.b.c` runs `a` and
+# `a.b` first) and every string literal naming a file. A file outside that set is
+# UNLOADED. No file is UNLOADED at all when the bundle leaves a way in the analysis
+# cannot see:
+#
+#   * the import graph is not trustworthy (L4 — dynamic imports, `sys.path` edits, a
+#     Python file the walk could not read);
+#   * something invokes a TEST RUNNER, which loads `test_*.py` by convention;
+#   * a shell script or `package.json` mentions Python, or a JS file can start a process —
+#     either can run any script by a path it builds;
+#   * a LOADED module can start a program with a command it builds while running (an L2
+#     sink), so it could start any file in the bundle.
+
+#: Python files the platform runs by NAME rather than because `app.json` points at them.
+#: `worker.py` is `apps.background.WORKER_ENTRY_POINT`, pinned against it by a test.
+_CONVENTION_ENTRY_NAMES = frozenset({"worker.py", "__main__.py"})
+#: A test runner discovers `test_*.py` without anything naming them.
+_TEST_RUNNER_RE = re.compile(r"\b(?:py\.?test|unittest|nose2?|tox)\b", re.I)
+_PYTHON_RE = re.compile(r"\bpython[0-9.]*\b", re.I)
+_CHILD_PROCESS_RE = re.compile(r"\bchild_process\b")
+#: Loaders whose text is a PROGRAM that could start a Python script: shells and other
+#: script languages (read for a Python/test-runner mention) and JS (read for a way to start
+#: a process). Config formats are data and never execute on their own.
+_SHELL_LOADER_SUFFIXES = frozenset(
+    {".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd", ".mk", ".rb", ".pl", ".php", ".lua"}
+)
+_JS_LOADER_SUFFIXES = frozenset({".js", ".mjs", ".cjs", ".ts"})
+#: The `app.json` keys whose strings the platform EXECUTES (hooks, server commands,
+#: backend/CLI entry points, pack-source scripts) — descriptions and tags are not read.
+_MANIFEST_EXEC_KEYS = frozenset({"setup", "mcpServers", "backend", "cli", "sources"})
+
+
+def _module_names(rel: str) -> set[str]:
+    """Every name an ``import`` could use to load the Python file at ``rel`` — each dotted
+    SUFFIX of its path, because the gateway puts the app root on ``sys.path`` and a module
+    may put its own directory there. Over-inclusive on purpose: a false "loaded" costs a
+    grouping, a false "unloaded" would misstate what installing the app runs."""
+    parts = list(Path(rel).with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return {".".join(parts[i:]) for i in range(len(parts))}
+
+
+def _file_names(rel: str) -> set[str]:
+    """How a string could name the file at ``rel``: its bundle path, file name and stem."""
+    path = Path(rel)
+    return {rel, path.name, path.stem}
+
+
+def _manifest_exec_strings(manifest_text: str | None) -> list[str]:
+    """Every string under an EXECUTED key of ``app.json`` (:data:`_MANIFEST_EXEC_KEYS`)."""
+    try:
+        data = json.loads(manifest_text or "")
+    except ValueError:
+        return []
+    out: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, str):
+            out.append(node)
+        elif isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    if isinstance(data, dict):
+        for key in sorted(_MANIFEST_EXEC_KEYS & set(data)):
+            walk(data[key])
+    return out
+
+
 class _BundleReach:
     """The per-bundle reachability analysis: built once from the texts the scan already
     read, then queried per DANGEROUS finding.
@@ -1063,14 +1196,18 @@ class _BundleReach:
         self,
         *,
         py_texts: dict[str, str],
-        loader_blobs: Iterable[str],
+        loader_texts: dict[str, str],
         manifest_text: str | None,
         opaque: Iterable[str],
     ) -> None:
         self._py_texts = py_texts
         self._facts = {rel: _analyse_python(text) for rel, text in py_texts.items()}
-        self._loader_blob = "\n".join(loader_blobs)
+        self._loader_texts = loader_texts
+        self._loader_blob = "\n".join(loader_texts.values())
+        self._manifest_text = manifest_text
         self._manifest = _manifest_tokens(manifest_text)
+        self._opaque = sorted(opaque)
+        self._runtime: tuple[dict[str, str], str] | None = None
         # L4: a Python or loader file the walk could not read (oversize, unreadable) is a
         # hole in the graph, not an absence of edges.
         self._untrustworthy: str | None = next(
@@ -1176,6 +1313,130 @@ class _BundleReach:
             "bundle reaches it, and importing it runs nothing (L1-L5)",
         )
 
+    # ── runtime use (see "Runtime use" above) ──
+
+    def runtime_use(self, rel: str) -> tuple[RuntimeUse, str]:
+        """:class:`RuntimeUse` for the file at ``rel``, plus the sentence that justifies it."""
+        if not rel.endswith(".py"):
+            return RuntimeUse.NOT_ANALYSED, ""
+        if self._runtime is None:
+            self._runtime = self._runtime_closure()
+        loaded, untraceable = self._runtime
+        if rel in loaded:
+            return RuntimeUse.LOADED, loaded[rel]
+        if untraceable:
+            return RuntimeUse.UNTRACEABLE, untraceable
+        return (
+            RuntimeUse.UNLOADED,
+            "nothing the app runs loads this file: app.json does not name it, and no entry "
+            "point, script or module the app loads imports, names or starts it",
+        )
+
+    def _runtime_closure(self) -> tuple[dict[str, str], str]:
+        """Every Python file something the app runs points at, each with why, plus — when
+        the bundle leaves a way to load a file the edges cannot show — the reason no other
+        file may be called unloaded (``""`` when the set is complete)."""
+        if "*" in self._manifest:
+            return {}, "app.json is unreadable, so what the app runs is unknown"
+        loaded: dict[str, str] = {}
+        queue: list[str] = []
+
+        def load(rel: str, why: str) -> None:
+            if rel in loaded or rel not in self._facts:
+                return
+            loaded[rel] = why
+            queue.append(rel)
+
+        for rel in sorted(self._facts):
+            why = self._runtime_root(rel)
+            if why:
+                load(rel, why)
+        while queue:
+            src = queue.pop(0)
+            facts = self._facts[src]
+            for rel in sorted(self._facts):
+                if rel in loaded:
+                    continue
+                if _module_names(rel) & facts.imports:
+                    load(rel, f"{src} imports it")
+                elif _file_names(rel) & facts.string_literals:
+                    load(rel, f"{src} names it")
+        return loaded, self._why_untraceable(loaded)
+
+    def _why_untraceable(self, loaded: dict[str, str]) -> str:
+        """Why a file outside ``loaded`` might still be loaded, or ``""`` when it cannot be."""
+        by_convention = self._loads_by_convention()
+        if by_convention:
+            return by_convention
+        unread_loader = next((rel for rel in self._opaque if not rel.endswith(".py")), None)
+        if unread_loader:
+            return f"{unread_loader} is too large or unreadable to check what it runs"
+        # Only what LOADED code does can hide an edge: a test-only `conftest.py` that edits
+        # `sys.path` never runs when the app does. But a loaded module that loads code
+        # dynamically, or can start a program with a command it builds while running, could
+        # reach ANY file in the bundle — so then none can be ruled out.
+        for rel in sorted(loaded):
+            facts = self._facts[rel]
+            if not facts.parsed:
+                return f"{rel} does not parse, so what it imports is unknown"
+            if facts.dynamic:
+                return (
+                    f"{rel} loads code in a way this check cannot follow "
+                    f"({sorted(facts.dynamic)[0]})"
+                )
+            if facts.sinks:
+                return (
+                    f"{rel} can start a program with a command it builds while running "
+                    f"({sorted(facts.sinks)[0]})"
+                )
+        # A Python file the walk could not read is invisible to the edges above, so if
+        # anything the app runs points at one, what it goes on to load is unknown.
+        for rel in self._opaque:
+            names = _module_names(rel) | _file_names(rel)
+            if self._runtime_root(rel) or any(
+                names & (self._facts[src].imports | self._facts[src].string_literals)
+                for src in loaded
+            ):
+                return f"{rel} is loaded by the app but too large or unreadable to check"
+        return ""
+
+    def _runtime_root(self, rel: str) -> str:
+        """Why the platform loads ``rel`` without another Python file pointing at it, or ``""``."""
+        if Path(rel).name in _CONVENTION_ENTRY_NAMES:
+            return f"the platform runs an app's {Path(rel).name} by name"
+        if (_module_names(rel) | _file_names(rel)) & self._manifest:
+            return "app.json names it"
+        for loader, text in sorted(self._loader_texts.items()):
+            if any(name in text for name in _file_names(rel)):
+                return f"{loader} names it"
+        return ""
+
+    def _loads_by_convention(self) -> str:
+        """Why the bundle could load a file nothing NAMES, or ``""`` when it cannot."""
+        for command in _manifest_exec_strings(self._manifest_text):
+            if _TEST_RUNNER_RE.search(command):
+                return (
+                    f"app.json runs a test runner ({command.strip()[:60]}), which loads "
+                    "test files by convention"
+                )
+        for rel, text in sorted(self._loader_texts.items()):
+            path = Path(rel)
+            suffix = path.suffix.lower()
+            if suffix in _JS_LOADER_SUFFIXES:
+                if _CHILD_PROCESS_RE.search(text):
+                    return f"{rel} can start processes, so it could run any script in the bundle"
+                continue
+            if (
+                suffix in _SHELL_LOADER_SUFFIXES
+                or path.name in _LOADER_NAMES
+                or path.name == "package.json"
+            ):
+                if _TEST_RUNNER_RE.search(text):
+                    return f"{rel} runs a test runner, which loads test files by convention"
+                if _PYTHON_RE.search(text):
+                    return f"{rel} mentions Python, so it could start any script in the bundle"
+        return ""
+
 
 def _rule_spans(text: str, rule: str) -> list[tuple[int, int]]:
     """Every span in ``text`` this rule could have reported, re-derived by re-running the
@@ -1213,14 +1474,7 @@ def _on_comment_only_line(text: str, pos: int) -> bool:
     return stripped.startswith("#") or stripped.startswith("//")
 
 
-def _scope_by_reachability(
-    findings: list[Finding],
-    *,
-    py_texts: dict[str, str],
-    loader_blobs: list[str],
-    manifest_text: str | None,
-    opaque: list[str],
-) -> list[Finding]:
+def _scope_by_reachability(findings: list[Finding], *, reach: _BundleReach | None) -> list[Finding]:
     """Annotate every DANGEROUS script finding with its execution reachability, and
     re-score the provably-inert ones — :data:`_INERT_STATES` — to :data:`_REACH_FLOOR`
     (WARNING).
@@ -1229,17 +1483,14 @@ def _scope_by_reachability(
     touched. Nothing is ever raised and nothing is ever dropped — the only edit is
     DANGEROUS → WARNING on positive proof, which keeps the finding on the consent surface.
 
-    The analysis is built only when there is a DANGEROUS script finding to ask about, so a
-    clean bundle pays nothing, and once per scan rather than once per finding.
+    ``reach`` is the bundle's analysis, built once per scan by the caller and shared with
+    :func:`_annotate_runtime_use` — ``None`` when there are no findings to ask about, so a
+    clean bundle pays nothing.
     """
-    if not any(f.severity is Verdict.DANGEROUS and f.surface == "script" for f in findings):
+    if reach is None or not any(
+        f.severity is Verdict.DANGEROUS and f.surface == "script" for f in findings
+    ):
         return findings
-    reach = _BundleReach(
-        py_texts=py_texts,
-        loader_blobs=loader_blobs,
-        manifest_text=manifest_text,
-        opaque=opaque,
-    )
     out: list[Finding] = []
     for finding in findings:
         if finding.severity is not Verdict.DANGEROUS or finding.surface != "script":
@@ -1249,6 +1500,23 @@ def _scope_by_reachability(
         severity = _REACH_FLOOR if state in _INERT_STATES else finding.severity
         out.append(
             replace(finding, severity=severity, reachability=state, reachability_reason=reason)
+        )
+    return out
+
+
+def _annotate_runtime_use(findings: list[Finding], *, reach: _BundleReach | None) -> list[Finding]:
+    """Stamp every finding in a Python file with whether anything the app runs loads that
+    file (:class:`RuntimeUse`). Order, count, severity, rule, path and evidence are all left
+    exactly as they are — this is disclosure for the consent surface, never a softener."""
+    if reach is None:
+        return findings
+    out: list[Finding] = []
+    for finding in findings:
+        use, reason = reach.runtime_use(finding.path)
+        out.append(
+            finding
+            if use is RuntimeUse.NOT_ANALYSED
+            else replace(finding, runtime=use, runtime_reason=reason)
         )
     return out
 
@@ -1805,7 +2073,7 @@ class SkillScanner:
         # must answer for exactly the content the rules judged, with no second read for a
         # payload to change under.
         py_texts: dict[str, str] = {}
-        loader_blobs: list[str] = []
+        loader_texts: dict[str, str] = {}
         manifest_text: str | None = None
         opaque: list[str] = []  # Python/loader files the walk could not read (L4)
 
@@ -1835,7 +2103,7 @@ class SkillScanner:
                 if path.suffix.lower() == ".py":
                     py_texts[rel] = text
                 elif _is_loader_name(path.name):
-                    loader_blobs.append(text)
+                    loader_texts[rel] = text
                 if rel == "app.json":
                     manifest_text = text
                 if path.suffix.lower() in _SCRIPT_EXTS or _is_under_scripts(rel):
@@ -1851,13 +2119,20 @@ class SkillScanner:
                     surfaces.add(surface)
                     findings.extend(self._scan_text(text, rel, surface))
 
-        findings = _scope_by_reachability(
-            findings,
-            py_texts=py_texts,
-            loader_blobs=loader_blobs,
-            manifest_text=manifest_text,
-            opaque=opaque,
+        # ONE analysis of the bundle, shared by both passes, and only when there is a
+        # finding to ask about.
+        reach = (
+            _BundleReach(
+                py_texts=py_texts,
+                loader_texts=loader_texts,
+                manifest_text=manifest_text,
+                opaque=opaque,
+            )
+            if findings
+            else None
         )
+        findings = _scope_by_reachability(findings, reach=reach)
+        findings = _annotate_runtime_use(findings, reach=reach)
         verdict = self._aggregate(findings, tier)
         return ScanReport(
             verdict=verdict,

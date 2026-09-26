@@ -550,7 +550,8 @@ class Permissions:
     # is mounted READ-ONLY into the consumer's backend env as
     # ``PERSONALCLAW_APP_SHARED_DIR_<SHARER>`` (writes stay broker-only, APE-9), and the
     # SDK hands the consumer a read-only handle (``sdk.util.shared_app_data_dir``). Both
-    # reach install consent via ``to_dict`` → ``catalog._manifest_consent`` → the Store.
+    # reach install consent via ``to_dict`` → ``disclosure.describe`` → the Store and the
+    # install dialog.
     storageShared: bool = False  # noqa: N815
     storageRead: list[str] = field(default_factory=list)  # noqa: N815
     # DC-2: native desktop capabilities this app may read/use through the gateway

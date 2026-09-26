@@ -51,7 +51,8 @@ def test_install_registers_mcp_servers(tmp_path):
             servers={
                 "gdrive": {"command": "gdrive-mcp", "args": []},
             },
-        )
+        ),
+        confirm=True,
     )
     servers = _live_servers(tmp_path)
     assert "notesync:gdrive" in servers
@@ -59,7 +60,9 @@ def test_install_registers_mcp_servers(tmp_path):
 
 
 def test_disable_enable_toggles_mcp(tmp_path):
-    app_manager.install(_app(tmp_path, "notesync", servers={"gdrive": {"url": "http://x"}}))
+    app_manager.install(
+        _app(tmp_path, "notesync", servers={"gdrive": {"url": "http://x"}}), confirm=True
+    )
     assert mcp_bridge.app_mcp_server_keys("notesync") == ["notesync:gdrive"]
     app_manager.disable("notesync")
     assert mcp_bridge.app_mcp_server_keys("notesync") == []
@@ -68,16 +71,20 @@ def test_disable_enable_toggles_mcp(tmp_path):
 
 
 def test_uninstall_removes_mcp(tmp_path):
-    app_manager.install(_app(tmp_path, "notesync", servers={"gdrive": {"url": "http://x"}}))
+    app_manager.install(
+        _app(tmp_path, "notesync", servers={"gdrive": {"url": "http://x"}}), confirm=True
+    )
     app_manager.uninstall("notesync")
     assert mcp_bridge.app_mcp_server_keys("notesync") == []
 
 
 def test_namespacing_no_collision(tmp_path):
     # Two apps each ship a server named "gdrive" — both coexist, namespaced.
-    app_manager.install(_app(tmp_path, "app-a", servers={"gdrive": {"url": "http://a"}}))
     app_manager.install(
-        _app(tmp_path, "app-b", subdir="s2", servers={"gdrive": {"url": "http://b"}})
+        _app(tmp_path, "app-a", servers={"gdrive": {"url": "http://a"}}), confirm=True
+    )
+    app_manager.install(
+        _app(tmp_path, "app-b", subdir="s2", servers={"gdrive": {"url": "http://b"}}), confirm=True
     )
     servers = _live_servers(tmp_path)
     assert "app-a:gdrive" in servers and "app-b:gdrive" in servers
@@ -90,7 +97,7 @@ def test_namespacing_no_collision(tmp_path):
 
 
 def test_no_mcp_servers_is_noop(tmp_path):
-    app_manager.install(_app(tmp_path, "plain"))
+    app_manager.install(_app(tmp_path, "plain"), confirm=True)
     assert mcp_bridge.app_mcp_server_keys("plain") == []
 
 
@@ -106,7 +113,8 @@ def test_stdio_server_gets_app_dir_cwd(tmp_path):
             servers={
                 "local": {"command": "python3", "args": ["backend/mcp_server.py"]},
             },
-        )
+        ),
+        confirm=True,
     )
     servers = _live_servers(tmp_path)
     spec = servers["selfhosted:local"]
@@ -125,7 +133,8 @@ def test_remote_and_absolute_cwd_servers_untouched(tmp_path):
                 "remote": {"url": "http://x"},
                 "pinned": {"command": "foo", "cwd": "/opt/custom"},
             },
-        )
+        ),
+        confirm=True,
     )
     servers = _live_servers(tmp_path)
     assert "cwd" not in servers["mixed:remote"]

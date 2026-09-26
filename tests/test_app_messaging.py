@@ -58,13 +58,13 @@ def test_permissions_roundtrip_carries_app_messaging():
 
 def test_declared_targets_reach_the_pre_install_consent_payload():
     """APE-12. The Store's PRE-install panel renders ``CatalogEntry.permissions``, which
-    is built by ``catalog._manifest_consent`` from the scanned manifest — so the targets
+    is built by ``disclosure.describe`` from the scanned manifest — so the targets
     have to survive that extraction, not just ``Permissions.to_dict()``.
 
     ``mail-*`` must arrive VERBATIM: the frontend re-reads the trailing ``*`` to say
     "any app whose name starts with mail-", so a payload that pre-flattened or dropped
     it would make the UI understate the grant."""
-    from personalclaw.apps.catalog import _manifest_consent
+    from personalclaw.apps.disclosure import describe
 
     m = AppManifest.from_dict(
         {
@@ -75,7 +75,7 @@ def test_declared_targets_reach_the_pre_install_consent_payload():
             "permissions": {"appMessaging": ["receiver", "mail-*"]},
         }
     )
-    perms, _crons, _deps = _manifest_consent(m)
+    perms = describe(m)["permissions"]
     assert perms["appMessaging"] == ["receiver", "mail-*"]
 
 
@@ -135,7 +135,7 @@ def _install(tmp_path: Path, name: str, *, app_messaging: list[str] | None = Non
     if app_messaging is not None:
         mani["permissions"] = {"appMessaging": app_messaging}
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
-    res = app_manager.install(d)
+    res = app_manager.install(d, confirm=True)
     assert res.ok, res.error
 
 

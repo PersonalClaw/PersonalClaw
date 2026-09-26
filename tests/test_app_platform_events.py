@@ -203,7 +203,7 @@ def _install(tmp_path: Path, name: str, *, subscriptions: list[str] | None = Non
     if block:
         mani["permissions"] = block
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
-    res = app_manager.install(d)
+    res = app_manager.install(d, confirm=True)
     assert res.ok, res.error
 
 

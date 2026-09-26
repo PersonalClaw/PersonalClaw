@@ -822,6 +822,29 @@ export interface AppCronSummary {
    *  `every`-seconds form (the surface words that itself) and for an expression that could
    *  not be described — the raw `cron_expr` is the honest fallback there. */
   cadence?: string
+  /** Whether installing actually switches this job ON — the same predicate the trigger store
+   *  registers by (`app_crons.schedules`). `false` for a job declared without the `cron`
+   *  permission: it is inert, and "it runs" would be a false sentence. */
+  scheduled?: boolean
+}
+/** One MCP server an app adds to the assistant's tools, and what it starts or connects to. */
+export interface AppMcpServer { name: string; launches: string }
+/** What installing an app GRANTS it and RUNS for it — `apps/disclosure.describe`, the one
+ *  projection the Store card, the install review and the install gate all read. Every key is
+ *  also an `AppCatalogEntry` field of the same name, so a card and the dialog cannot
+ *  describe one manifest two ways. */
+export interface AppDisclosure {
+  permissions: AppPermissionsWire
+  crons: AppCronSummary[]
+  pythonDependencies: AppPythonDependency[]
+  hasUI: boolean
+  uiComponents: string
+  /** Its own server process, started on install and kept running while it is enabled. */
+  hasBackend: boolean
+  /** The shell command the install (or update) runs in the app's folder, verbatim; `''` for none. */
+  onInstall: string
+  onUpdate: string
+  mcpServers: AppMcpServer[]
 }
 /** One declared `pythonDependencies` entry, classified server-side by
  *  `app_manager.describe_python_dependencies`.
@@ -874,6 +897,12 @@ export interface AppCatalogEntry {
    *  permission block cannot express, so consent has to state it separately. */
   hasUI?: boolean
   uiComponents?: string
+  /** What the install RUNS beyond its grants — see `AppDisclosure`. Absent/empty for a
+   *  registry pointer, whose manifest is read when the install is reviewed. */
+  hasBackend?: boolean
+  onInstall?: string
+  onUpdate?: string
+  mcpServers?: AppMcpServer[]
   // APE-4: the declared quality bar, so a Store card can badge it BEFORE install.
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
   // manifest hasn't been fetched) → no badges, which is honest either way.
@@ -914,7 +943,18 @@ export interface AppCatalog {
    *  Store is broken" rather than "remove that one". `reason` is `unreachable` | `budget`. */
   unavailableSources?: { source: string; reason: string }[]
 }
-export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
+/** One scanner finding. `reachability` answers whether a DANGEROUS-band match can EXECUTE
+ *  (`unreachable`/`commentary` are proofs it cannot — inert text); `runtime` answers whether
+ *  anything the app runs LOADS the file (`unloaded` is a proof it never does — the app's own
+ *  tests and fixtures; `untraceable` means that could not be established). Both are
+ *  disclosure, never a softener: the severity is untouched either way. */
+export interface AppScanFinding {
+  surface: string; severity: string; rule: string; path: string; evidence: string
+  reachability?: 'not_analysed' | 'reachable' | 'unreachable' | 'commentary' | 'unparseable'
+  reachability_reason?: string
+  runtime?: 'not_analysed' | 'loaded' | 'unloaded' | 'untraceable'
+  runtime_reason?: string
+}
 /** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the
  *  in-tree key's identity (only meaningful when signed); `reason` is the refusal text an
  *  `invalid` state must show. An `invalid` state means the install was REFUSED — it is
@@ -925,8 +965,20 @@ export interface AppScanReport {
   signature?: AppSignature | null
 }
 export interface AppInstallResult {
-  ok: boolean; name: string; error: string; needs_consent: boolean
+  ok: boolean; name: string; error: string
+  /** Nothing was committed: the owner must review `disclosure` + `scan` and consent to
+   *  exactly the bundle whose digest is `consent`. */
+  needs_consent: boolean
   scan: AppScanReport | null
+  /** What the owner consents OVER, read by the server from the staged bytes — never from the
+   *  catalog, which has nothing for a registry pointer or a pasted URL. `previous` is the
+   *  installed version's disclosure, on an update review. `consent` is the staged bundle's
+   *  digest: echo it back and the install commits only if the bytes are still those. */
+  displayName?: string
+  version?: string
+  disclosure?: AppDisclosure | null
+  previous?: AppDisclosure | null
+  consent?: string
   // P21 platform gate: set when the app installs on the user's LOCAL machine
   // (installMode=client) or doesn't support this server's OS — the server can't
   // install it, so it hands back a copy-paste one-liner to run in a terminal.
@@ -8475,13 +8527,18 @@ export const api = {
   apps: () => get<{ apps: (AppSummary & { platform?: boolean })[] }>('/api/apps')
     .then((d) => d.apps.map((a) => (a.native ?? a.platform) ? { ...a, native: true } : a)),
   app: (name: string) => get<AppDetail>(`/api/apps/${encodeURIComponent(name)}`),
-  // install/update return the InstallResult body on ANY status (the scan report +
-  // needs_consent ride in the 400/409 body, so we must NOT throw on non-2xx —
-  // the modal needs them to render findings + the consent flow). Network failures
-  // still surface as a thrown error with ok:false.
-  installApp: (source: string, confirm = false) => _installReq('/api/apps', { source, confirm }),
-  updateApp: (name: string, source: string, confirm = false) =>
-    _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, confirm }),
+  // The review every install — and every update — starts with: what installing `source`
+  // (or updating `name` to it) grants and runs, the scan of those exact bytes, and the
+  // `consent` digest the commit must echo. Commits nothing. A bundle it could read always
+  // answers 200, a refusal included; an unreadable source rejects with the envelope's message.
+  previewApp: (source: string, name?: string) =>
+    post<AppInstallResult>('/api/apps/preview', name ? { source, name } : { source }),
+  // install/update return the InstallResult body on ANY status (a 409 carries the fresh
+  // review when the bytes changed since `consent` was issued, so we must NOT throw on
+  // non-2xx). Network failures still surface as a thrown error with ok:false.
+  installApp: (source: string, consent: string) => _installReq('/api/apps', { source, consent }),
+  updateApp: (name: string, source: string, consent: string) =>
+    _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, consent }),
   enableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/enable`),
   disableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/disable`),
   // The three removal rungs (issue #2541), each a different promise about `data/`:
