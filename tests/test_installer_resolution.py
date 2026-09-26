@@ -132,3 +132,55 @@ def test_pip_is_probed_as_a_module_not_a_path_executable(env, monkeypatch):
     )
     monkeypatch.setattr(_installer.importlib.util, "find_spec", lambda name: None)
     assert _installer.installer_name() == ""
+
+
+# ── app packages: a --prefix install resolved AGAINST this environment ────────────
+
+
+def test_prefix_installs_use_pip_even_when_uv_is_present(env):
+    """uv's ``--prefix`` treats nothing as installed (measured: it re-installed ``requests``
+    and its whole closure beside a base environment that already had them), so the app
+    package install is pip-only — the ONE caller that must not prefer uv."""
+    env(uv=True, pip=True)
+    assert _installer.prefix_install_argv(["--prefix", "/p", "pkg"]) == [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--prefix",
+        "/p",
+        "pkg",
+    ]
+
+
+def test_a_pip_less_environment_runs_the_bundled_pip_wheel(env, tmp_path, monkeypatch):
+    """`uv tool install personalclaw` makes a venv with no pip module; its Python still ships
+    ensurepip's pip wheel, and pip runs straight from that wheel."""
+    env(uv=True, pip=False)
+    wheel = tmp_path / "pip-99.0-py3-none-any.whl"
+    monkeypatch.setattr(_installer, "_bundled_pip_wheel", lambda: wheel)
+    assert _installer.prefix_install_argv(["pkg"]) == [
+        sys.executable,
+        str(wheel / "pip"),
+        "install",
+        "pkg",
+    ]
+
+
+def test_the_bundled_wheel_is_found_where_ensurepip_keeps_it():
+    """The real lookup, on the interpreter running the tests — the vacuity floor for the case
+    above: if this Python ships a bundled wheel at all, the probe must find it."""
+    import ensurepip
+    from pathlib import Path
+
+    bundled = sorted((Path(ensurepip.__file__).parent / "_bundled").glob("pip-*.whl"))
+    assert _installer._bundled_pip_wheel() == (bundled[-1] if bundled else None)
+
+
+def test_no_pip_and_no_bundled_wheel_names_the_remedy(env, monkeypatch):
+    env(uv=True, pip=False)
+    monkeypatch.setattr(_installer, "_bundled_pip_wheel", lambda: None)
+    with pytest.raises(_installer.NoInstallerError) as ei:
+        _installer.prefix_install_argv(["pkg"])
+    message = str(ei.value)
+    assert "ensurepip" in message and sys.executable in message

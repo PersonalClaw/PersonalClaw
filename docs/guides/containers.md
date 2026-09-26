@@ -89,6 +89,14 @@ is the only volume, so a folder you bind anywhere else — `/home/personalclaw`,
 exists only inside that container and is gone when it is recreated. The project page
 then says the folder no longer exists, and **Change** binds a new one.
 
+The volume also holds the Python packages installed apps bring: the image's own environment
+(`/opt/venv`) is read-only to the gateway's user, so an app's `pythonDependencies`
+install into `/data/app-python`, and a new container on the same volume loads them
+again. If a new image ships a different Python, or drops a package an app relied
+on, the gateway reinstalls what is missing in the background after it starts (it
+needs network for that). `personalclaw snapshot` leaves this directory out: it is
+rebuilt from the installed apps rather than restored.
+
 ```bash
 docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway du -sh /data   # inspect state size
 docker volume ls | grep personalclaw_home                                              # find the volume

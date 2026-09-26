@@ -27,9 +27,19 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO / "pyproject.toml"
 APP_MANAGER = REPO / "src" / "personalclaw" / "apps" / "app_manager.py"
+# The installer spans three modules: the lifecycle and its guard, where app packages go and
+# how pip is run over them, and which pip runs. An undeclared import in any of them refuses
+# app installs on a clean wheel exactly as one in app_manager.py did.
+INSTALLER_MODULES = (
+    APP_MANAGER,
+    REPO / "src" / "personalclaw" / "apps" / "app_python.py",
+    REPO / "src" / "personalclaw" / "_installer.py",
+)
 
 # Modules that are stdlib, or first-party, and so need no declaration.
 _STDLIB_OR_FIRST_PARTY = {"importlib", "personalclaw", "__future__"}
@@ -88,9 +98,13 @@ def test_packaging_is_a_declared_core_dependency() -> None:
     )
 
 
-def test_every_third_party_module_the_installer_imports_is_declared() -> None:
+@pytest.mark.parametrize("module", INSTALLER_MODULES, ids=lambda p: p.name)
+def test_every_third_party_module_the_installer_imports_is_declared(module: Path) -> None:
     """The general rule, so the next such import cannot ship undeclared either."""
-    imported = _modules_imported_by(APP_MANAGER)
+    imported = _modules_imported_by(module)
+    assert (
+        "packaging" in imported or module.name == "_installer.py"
+    ), f"{module.name} no longer imports packaging — this rail's population moved; re-read it"
     declared = _declared_core_dependencies()
     missing = sorted(
         m
@@ -100,7 +114,7 @@ def test_every_third_party_module_the_installer_imports_is_declared() -> None:
         and m not in _stdlib_names()
     )
     assert missing == [], (
-        f"app_manager.py imports {missing}, which [project].dependencies does not declare. "
+        f"{module.name} imports {missing}, which [project].dependencies does not declare. "
         "The installer's dependency guard fails closed, so an undeclared import refuses app "
         "installs on a clean wheel while working fine in a dev checkout."
     )

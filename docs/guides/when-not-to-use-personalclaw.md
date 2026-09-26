@@ -193,8 +193,10 @@ non-enforcements matter most here:
   provider code is imported **in-process** by the gateway, so its outbound calls *are*
   the gateway's. The consent surface labels this advisory rather than implying
   containment.
-- An app's declared Python dependencies pip-install into the **shared** virtualenv the
-  gateway runs from. There is no per-app `site-packages`.
+- An app's declared Python dependencies pip-install into one directory every app shares
+  (`<home>/app-python`), which the gateway loads into its **own process** after its own
+  packages. An app can add a package but not replace one the gateway uses; once loaded,
+  its code is importable by everything in that process.
 - An app's frontend bundle runs in the dashboard's **own page**, not a separate origin.
 - ACP agents under auto-approve rely on system-prompt framing, not rails.
 

@@ -5,8 +5,8 @@ import type { GuardedResult } from '../../lib/useGuardedInstall'
 
 // #492 made `hostUi` a REQUIRED ConsentModal prop, and the app-dependency disclosure made
 // `pythonDeps` a second one: every consent surface has to answer whether the app ships
-// browser code that runs in the dashboard page, and whether installing it pip-installs a
-// package into the venv the gateway runs out of. An optional prop would let a new surface
+// browser code that runs in the dashboard page, and whether installing it pip-installs
+// packages the gateway then loads into its own process. An optional prop would let a new surface
 // silently drop either disclosure. These cases are about other disclosures, so they pass the
 // "caller supplied no reading" value — `PermissionList` then renders neither row, which is
 // the deliberate fail-silent (never a false "no browser code" / "no packages" about an app

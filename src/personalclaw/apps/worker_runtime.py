@@ -433,7 +433,11 @@ class WorkerSupervisor:
                 logger.info("app %s worker %s held back: %s", rec.app, rec.worker, pause_reason)
                 _notify_paused(rec.app, rec.worker, pause_reason)
             return False
-        cmd = BackendSupervisor._launch_cmd("", rec.entry)
+        # An app that declares python dependencies starts its worker so the app packages load
+        # after the interpreter's own (``app_python.child_argv``), exactly as a backend does.
+        manifest = _manifest_for(rec.app)
+        app_packages = bool(manifest is not None and manifest.dependencies.pythonDependencies)
+        cmd = BackendSupervisor._launch_cmd("", rec.entry, app_packages=app_packages)
         if cmd is None:
             logger.warning(
                 "app %s worker %s: cannot determine launcher for %s",
@@ -443,7 +447,7 @@ class WorkerSupervisor:
             )
             return False
         try:
-            env = self._child_env(rec)
+            env = self._child_env(rec, app_packages=app_packages)
         except Exception:  # noqa: BLE001 — a broken env is a refused start, not a crash
             logger.warning("app %s worker %s: child env failed", rec.app, rec.worker, exc_info=True)
             return False
@@ -473,7 +477,7 @@ class WorkerSupervisor:
         logger.info("app %s worker %s started: pid=%s", rec.app, rec.worker, proc.pid)
         return True
 
-    def _child_env(self, rec: SupervisedWorker) -> dict[str, str]:
+    def _child_env(self, rec: SupervisedWorker, *, app_packages: bool = False) -> dict[str, str]:
         """The worker's environment: the child-env ALLOWLIST plus what this site computes.
 
         Same allowlist as an app backend (``build_child_env``) — a worker is third-party
@@ -509,6 +513,10 @@ class WorkerSupervisor:
         # APE-10 read-only shared mounts: the same grant, computed by the same function the
         # backend site uses, so the two children of one app never disagree about it.
         extra.update(shared_storage_env(rec.app))
+        if app_packages:
+            from personalclaw.apps import app_python
+
+            extra.update(app_python.child_env())
         env = build_child_env(site="app-worker", extra=extra)
         if not storage_ok:
             # The gate is enforced where the name would become a variable — an operator's

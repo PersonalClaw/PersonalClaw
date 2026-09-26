@@ -11,7 +11,9 @@ half and lives in the runtime, not here.
 Process model — deliberately the same shape as an app **backend**
 ================================================================
 ``backend_runtime._launch_cmd`` starts a child as ``[sys.executable, <entry script>]`` — a
-*script path*, not an imported symbol — and hands the child its whole context through
+*script path*, not an imported symbol; for an app that declares python dependencies it is
+``[sys.executable, -m, personalclaw._app_python_child, <entry script>]``, which runs the same
+script as ``__main__`` with the app packages loaded — and hands the child its whole context through
 **environment variables** ("so it never guesses a path relative to ``__file__``"). A worker
 follows that convention exactly rather than inventing a second one: the app ships an entry
 script, and the script's ``__main__`` block hands its worker object to :func:`run_worker`::

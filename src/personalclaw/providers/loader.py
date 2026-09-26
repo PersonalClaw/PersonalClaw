@@ -295,9 +295,15 @@ def register_extension_providers() -> None:
 
     Idempotent: the provider registry dedupes by app name and each app module guards
     its own module-level registration against re-import.
+
+    The installed apps' Python packages (``<home>/app-python``) join the import path
+    FIRST — after the interpreter's own entries — because the imports below are where
+    an app's module needs them.
     """
+    from personalclaw.apps import app_python
     from personalclaw.providers.registry import get_provider_registry
 
+    app_python.activate()
     registry = get_provider_registry()
 
     # Seed native apps as real installed apps (first run only; seed-once
@@ -374,6 +380,15 @@ def bootstrap_cli_providers() -> None:
         logger.debug("config provider-entry sync failed", exc_info=True)
 
 
+def _repair_app_packages_logged(repair: Callable[[], list[str]]) -> None:
+    try:
+        repaired = repair()
+        if repaired:
+            logger.info("Reinstalled missing Python packages for apps: %s", repaired)
+    except Exception:
+        logger.warning("app package repair failed", exc_info=True)
+
+
 def load_all_extensions() -> None:
     """Main entry point: discover + register all extensions AND launch the gateway's
     long-lived app-backend subprocesses + watchdogs. Called once during gateway startup.
@@ -397,6 +412,23 @@ def load_all_extensions() -> None:
         logger.debug("app update recovery failed", exc_info=True)
 
     register_extension_providers()
+
+    # Rebuild whatever the installed apps' Python packages are missing — a new image's Python,
+    # a changed core dependency, a restored snapshot. Off the boot path: it can run pip for
+    # minutes, and the apps it repairs are re-enabled in place when it finishes.
+    try:
+        import threading
+
+        from personalclaw.apps.app_manager import repair_app_packages
+
+        threading.Thread(
+            target=_repair_app_packages_logged,
+            args=(repair_app_packages,),
+            name="app-packages-repair",
+            daemon=True,
+        ).start()
+    except Exception:
+        logger.debug("app package repair did not start", exc_info=True)
 
     # Relaunch enabled apps' backend subprocesses (they don't survive a gateway
     # restart) so an installed+enabled app's reverse-proxy is live from startup.

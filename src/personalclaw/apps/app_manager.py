@@ -102,7 +102,7 @@ class InstallResult:
     error: str = ""
     needs_consent: bool = False  # a warning verdict the caller must confirm
     restart_required: bool = (
-        False  # a new python dep was installed; gateway must restart to import it
+        False  # an app package the gateway had already loaded was replaced; restart to reload it
     )
     # P21 platform gate: set when the app can't be server-installed here (installMode=client,
     # or this OS isn't in the app's `os` list). The install did NOT commit; the UI shows the
@@ -254,9 +254,15 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     Mirrors the run-script/bash bounded discipline: a timeout-bounded subprocess
     in the app's own dir. The scanner has already vetted the staged content
     before this ever runs (install gate); a hook that errors aborts the op.
+
+    The hook's environment names the app packages on ``PYTHONPATH``
+    (``app_python.hook_env``), so a hook that runs Python can import what the app
+    declared — the dependency step runs before ``onInstall``/``onUpdate`` for that.
     """
     if not cmd.strip():
         return
+    from personalclaw.apps import app_python
+
     try:
         proc = subprocess.run(  # noqa: S602 — intentional: vetted third-party setup hook
             cmd,
@@ -265,6 +271,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
             timeout=max(1, timeout),
             capture_output=True,
             text=True,
+            env=app_python.hook_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise AppLifecycleError(f"{env_name} hook timed out after {timeout}s") from exc
@@ -273,9 +280,6 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
         raise AppLifecycleError(
             f"{env_name} hook exited {proc.returncode}: {tail}", log_excerpt=tail
         )
-
-
-_PIP_TIMEOUT = 600  # seconds — a heavy wheel (torch) can take minutes
 
 
 def _core_requirement_pins() -> dict[str, "Requirement"]:
@@ -307,18 +311,20 @@ def _core_requirement_pins() -> dict[str, "Requirement"]:
 
 
 def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) -> None:
-    """Refuse an app whose declared deps would MOVE a core gateway dependency (EI-12 D3).
+    """Refuse an app that pins a core gateway dependency to a version core does not run (EI-12 D3).
 
-    The deps land in the **shared** venv the gateway is running out of, so a pin
-    that pip must resolve by changing a core dependency changes the gateway's own
-    dependency set — under a live process that has already imported those modules.
-    The rule is exactly that property: for any app requirement naming a
-    core-declared dependency, the version **currently installed** must satisfy the
-    app's specifier, so pip has nothing to move. Anything else is refused before a
-    single byte is installed.
+    App packages install into ``<home>/app-python`` (``apps/app_python.py``), which the gateway
+    loads AFTER its own environment — so core's installed copy of a package always wins the
+    import, and a pin it does not satisfy could never take effect: the app would run on core's
+    version whatever it asked for. The rule is exactly that property: for any app requirement
+    naming a core-declared dependency, the version **currently installed** must satisfy the
+    app's specifier. Anything else is refused before pip runs, with the reason in the sentence.
+    (pip itself runs with every distribution the gateway can import pinned, so a TRANSITIVE
+    dependency that needs another version of one is refused too — by the resolver, named in
+    ``app_python.explain_failure``.)
 
     Fail-closed on purpose. A requirement that names a core dependency and cannot
-    be *proven* harmless is refused, not installed: an unparseable specifier (which
+    be *proven* compatible is refused, not installed: an unparseable specifier (which
     ``AppManifest.validate()`` does not vet) and a core name whose installed version
     cannot be read both deny. Requirements that do not collide with a core name are
     untouched — the guard's whole population is the collision set.
@@ -333,7 +339,7 @@ def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) ->
     except Exception as exc:  # noqa: BLE001 — no evaluator ⇒ cannot clear a core pin
         raise AppLifecycleError(
             f"cannot verify app {manifest.name}'s python dependencies against core's "
-            f"({exc}); refusing rather than risk moving a gateway dependency"
+            f"({exc}); refusing rather than install packages the gateway cannot check"
         ) from exc
 
     from importlib.metadata import PackageNotFoundError
@@ -360,9 +366,9 @@ def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) ->
         if not req.specifier.contains(have, prereleases=True):
             raise AppLifecycleError(
                 f"app {manifest.name} pins {spec!r}, which conflicts with the "
-                f"{req.name} {have} this gateway runs (core declares {pin}). Installing "
-                f"it would change a core dependency under the running gateway, so the "
-                f"install is refused."
+                f"{req.name} {have} this gateway runs (core declares {pin}). An app's "
+                f"packages load after PersonalClaw's own, so that pin could never take "
+                f"effect, and the install is refused. A newer version of the app may fix this."
             )
 
 
@@ -370,10 +376,10 @@ def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
     """The app's declared ``pythonDependencies``, each tagged with whether CORE owns it —
     the install-consent disclosure for :func:`_install_python_deps`.
 
-    Installing an app runs ``pip install`` into the **shared** venv the gateway is
-    running out of, under a live process that has already imported those modules. That
-    is materially more consequential than most of what the consent dialog already
-    enumerates, and the dialog said nothing about it: it listed gateway permissions,
+    Installing an app runs ``pip install`` into ``<home>/app-python``, and the gateway loads
+    what lands there into its OWN process (after its own packages, so nothing it already uses
+    is replaced). That is materially more consequential than most of what the consent dialog
+    already enumerates, and the dialog said nothing about it: it listed gateway permissions,
     app messaging, desktop and network reach and dashboard code, and never that a
     third-party package lands in the interpreter holding the owner's credentials,
     filesystem and network. ``docs/security/limitations.md`` §3 documents the
@@ -385,8 +391,8 @@ def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
     alarming, and it is read from :func:`_core_requirement_pins` — the SAME authority
     :func:`_reject_core_dependency_conflicts` gates on, never a hand-kept list:
 
-      * ``False`` — core does not declare this name, so pip genuinely installs new code
-        into the gateway's interpreter. The provider SDKs (``openai``, ``anthropic``,
+      * ``False`` — core does not declare this name, so pip may genuinely install new code
+        the gateway's interpreter will load. The provider SDKs (``openai``, ``anthropic``,
         ``slack-sdk``) land here: they are core *extras*, which
         :func:`_core_requirement_pins` excludes on purpose.
       * ``True`` — core declares it (``Pillow``, ``numpy``). Nothing new enters: the
@@ -425,83 +431,45 @@ def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
 
 
 def _install_python_deps(manifest: AppManifest) -> bool:
-    """Pip-install an app's declared ``pythonDependencies`` into the shared core
-    venv. Core ships lean; the app that needs a heavy lib brings it.
+    """Make an app's declared ``pythonDependencies`` importable. Core ships lean; the app that
+    needs a heavy lib brings it — into ``<home>/app-python``, never into the environment the
+    gateway runs from (``apps/app_python.py`` owns where, how, and why).
 
-    The venv is shared with the running gateway, so this is admission-gated:
-    :func:`_reject_core_dependency_conflicts` refuses a pin that would move a
-    dependency core itself declares before anything is installed. An app may bring
-    any library core does not own; it may not re-pin one core does.
+    Admission-gated before pip runs: :func:`_reject_core_dependency_conflicts` refuses a pin on
+    a dependency core itself declares that the installed version does not satisfy. An app may
+    bring any library core does not own; it may not re-pin one core does.
 
-    Returns True iff a package was actually installed (⇒ the gateway must RESTART
-    to import it — the running process already imported its module set). If every
-    requirement is already satisfied, this is a no-op and returns False. Best-effort
-    on already-satisfied detection; when unsure it installs (pip itself is the
-    final arbiter and skips already-present pins fast).
+    A no-op — no pip, no network — when the gateway or an installed app already provides every
+    requirement. Returns True iff the gateway must RESTART for the change to take effect (a
+    package it had already loaded was replaced); a first install is importable in place.
+    Failures raise :class:`AppLifecycleError` whose message is the sentence the user reads and
+    whose ``log_excerpt`` is set only when pip's log is the useful next step.
     """
     reqs = list(manifest.dependencies.pythonDependencies)
     if not reqs:
         return False
 
-    # Before anything is installed: refuse a pin that would move a CORE dependency
-    # out from under the running gateway (EI-12 D3).
+    # Before anything is installed: refuse a pin on a CORE dependency that core's installed
+    # version does not satisfy — it could never take effect (EI-12 D3).
     _reject_core_dependency_conflicts(manifest, reqs)
 
-    # Which requirements are already satisfied? Only then can we skip the restart.
-    try:
-        from importlib.metadata import PackageNotFoundError
-        from importlib.metadata import version as _dist_version
-
-        from packaging.requirements import Requirement  # bundled via pip
-
-        missing: list[str] = []
-        for spec in reqs:
-            try:
-                req = Requirement(spec)
-                have = _dist_version(req.name)
-                if req.specifier and not req.specifier.contains(have, prereleases=True):
-                    missing.append(spec)
-            except PackageNotFoundError:
-                missing.append(spec)
-            except Exception:  # noqa: BLE001 — unparseable spec → let pip decide
-                missing.append(spec)
-    except Exception:  # noqa: BLE001 — packaging/metadata unavailable → install all
-        missing = reqs
-
-    if not missing:
-        logger.info("app %s: all %d python deps already satisfied", manifest.name, len(reqs))
-        return False
-
-    # Resolve the installer rather than assuming stdlib pip: a uv-created venv
-    # ships none, which made every dep-declaring app un-installable on the
-    # project's own documented dev setup (issue #46).
-    from personalclaw._installer import NoInstallerError, install_argv, installer_name
+    from personalclaw.apps import app_python
 
     try:
-        argv = install_argv(["--disable-pip-version-check", *missing])
-    except NoInstallerError as exc:
-        raise AppLifecycleError(str(exc)) from exc
+        return app_python.ensure(manifest.name, reqs, label=manifest.displayName or manifest.name)
+    except app_python.PackageInstallError as exc:
+        raise AppLifecycleError(str(exc), log_excerpt=exc.log_excerpt) from exc
 
-    logger.info(
-        "app %s: installing python deps %s via %s", manifest.name, missing, installer_name()
-    )
+
+def _collect_app_packages() -> None:
+    """Drop app packages no installed app still needs. Best-effort: a lifecycle step that
+    already succeeded (or already failed for its own reason) must not fail on the cleanup."""
     try:
-        proc = subprocess.run(  # noqa: S603 — deps come from a scanned+vetted manifest
-            argv,
-            timeout=_PIP_TIMEOUT,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AppLifecycleError(
-            f"python dependency install timed out after {_PIP_TIMEOUT}s: {missing}"
-        ) from exc
-    if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip()[-400:]
-        raise AppLifecycleError(
-            f"dependency install failed for {missing}: {tail}", log_excerpt=tail
-        )
-    return True
+        from personalclaw.apps import app_python
+
+        app_python.collect()
+    except Exception:  # noqa: BLE001 — the next collection (at boot, at latest) retries it
+        logger.warning("collecting unused app packages failed", exc_info=True)
 
 
 def _core_version_gate(manifest: AppManifest, *, action: str) -> None:
@@ -873,13 +841,14 @@ def install(
         # hook commonly seeds it.
         (dest / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
 
-        # 5a. Install declared python deps into the shared venv (core is lean; the
+        # 5a. Install declared python deps into <home>/app-python (core is lean; the
         # app brings its heavy libs). Before the onInstall hook so a hook can import
-        # them. A newly-installed dep needs a gateway restart to become importable.
+        # them. The rollback collects whatever a half-finished pip run left behind.
         try:
             restart_required = _install_python_deps(manifest)
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
+            _collect_app_packages()
             _audit("install", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
@@ -895,6 +864,7 @@ def install(
             )
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
+            _collect_app_packages()  # …and the packages only this app needed
             _audit("install", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
@@ -1289,6 +1259,19 @@ def update(
                 error="update needs consent: scanner raised warnings",
             )
 
+        # The new version's python deps, BEFORE anything of the installed version is touched.
+        # This used to run after the swap, with the rollback already dropped, so a dependency
+        # failure left the new code live, installed.json un-bumped and the result `ok=False`.
+        # Here a failure refuses the update and the installed version is exactly as it was.
+        try:
+            restart_required = _install_python_deps(manifest)
+        except AppLifecycleError as exc:
+            _collect_app_packages()
+            _audit("update", "error", name, caller=caller, error=str(exc))
+            return InstallResult(
+                ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
+            )
+
         # Preserve the old app's data/ into the new tree (state survives updates).
         old_data = live / _APP_DATA_DIRNAME
         if old_data.is_dir():
@@ -1345,22 +1328,22 @@ def update(
                 _start_backend(old_manifest)  # bring the old backend back up
                 _seed_app_prompts(old_manifest, name)  # restore old app's prompts
                 _seed_app_skills(old_manifest, name)  # restore old app's skills
+            _collect_app_packages()  # what only the refused new version needed
             _audit("update", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False,
                 name=name,
                 scan=report,
                 error=f"update failed, rolled back: {exc}",
-                # onUpdate-hook / dep-install failures carry the subprocess tail; a
-                # swap OSError does not (getattr → ""). Surfaces the same Fix-with-AI seed.
+                # An onUpdate-hook failure carries the subprocess tail; a swap OSError
+                # does not (getattr → ""). Surfaces the same Fix-with-AI seed.
                 log_excerpt=getattr(exc, "log_excerpt", ""),
             )
 
         # Success: drop the rollback, re-register new, bump installed.json.
         shutil.rmtree(rollback, ignore_errors=True)
-        # Install any python deps the new version added (before provider re-register
-        # so a freshly-imported provider can see them). A new dep ⇒ restart needed.
-        restart_required = _install_python_deps(manifest)
+        # Only now: the old version's tree (and the packages only it needed) is gone.
+        _collect_app_packages()
         meta = _read_installed(name)
         if meta is not None:
             meta.version = manifest.version
@@ -1785,6 +1768,67 @@ def recover_interrupted_updates() -> list[str]:
     return recovered
 
 
+def repair_app_packages() -> list[str]:
+    """Reinstall whatever the installed apps' Python packages are missing (called at boot).
+
+    ``<home>/app-python`` is a function of the installed apps' manifests AND of the running
+    interpreter, so an image upgrade can invalidate it without anything being uninstalled: a new
+    Python finds no packages in its own layout (``lib/python3.14`` after ``3.13``), and a core
+    dependency an app relied on can be dropped or moved. A restored snapshot carries the apps
+    but — deliberately — not their packages. So this reinstalls what is missing in one pip run
+    over every installed app, collects what nothing needs any more, and re-enables the providers
+    of the apps it repaired: their import failed during discovery, and it now succeeds in place.
+
+    Blocking (it can run pip for minutes), so the gateway calls it on a background thread; with
+    nothing missing — every boot of an unchanged image — it only collects, which is cheap.
+    Returns the names of the apps it repaired.
+    """
+    from personalclaw.apps import app_python
+
+    broken = app_python.broken_apps()
+    if not broken:
+        _collect_app_packages()
+        return []
+    logger.warning(
+        "app packages missing, reinstalling: %s",
+        {declared.name: missing for declared, missing in broken},
+    )
+    try:
+        app_python.install_everything()
+    except app_python.PackageInstallError as exc:
+        for declared, missing in broken:
+            reason = (
+                f"{declared.label}'s Python packages are missing (the gateway's Python or its own "
+                f"packages changed since it was installed), and reinstalling them failed: {exc}"
+            )
+            logger.error("app %s: %s (missing: %s)", declared.name, reason, ", ".join(missing))
+            _mark_provider_error(declared.name, reason)
+            _audit("repair_packages", "error", declared.name, error=str(exc))
+        _collect_app_packages()
+        return []
+    _collect_app_packages()
+    still_broken = {declared.name for declared, _ in app_python.broken_apps()}
+    repaired = [declared.name for declared, _ in broken if declared.name not in still_broken]
+    for name in repaired:
+        meta = _read_installed(name)
+        manifest = _manifest_of(name)
+        if meta is not None and meta.enabled and manifest is not None and manifest.all_providers():
+            _provider_registry().enable(name)
+        _audit("repair_packages", "ok", name)
+    return repaired
+
+
+def _mark_provider_error(name: str, message: str) -> None:
+    """Replace a not-enabled provider's raw import error with the sentence that explains it."""
+    try:
+        primary = _provider_registry().get(name)
+        for record in primary.chain() if primary is not None else []:
+            if not record.enabled:
+                record.error = message
+    except Exception:  # noqa: BLE001 — a status annotation must not break the repair
+        logger.debug("app %s: provider error annotation failed", name, exc_info=True)
+
+
 def enable(name: str, *, caller: str = "app_manager") -> bool:
     meta = _read_installed(name)
     if meta is None:
@@ -2189,7 +2233,11 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     app) and user-installed ones are LEFT; only deps this app solely owned are
     eligible for removal (the caller/marketplace does the actual dep removal — the
     ledger decides *which*). A force-removed default-seeded app stays gone (the
-    seed-once marker is not cleared)."""
+    seed-once marker is not cleared).
+
+    The app's Python packages go with it: once its tree is removed, every package in
+    ``<home>/app-python`` that no remaining app needs is collected. Both removal rungs
+    arrive here — :func:`uninstall_keep_data` delegates its removal to this function."""
     meta = _read_installed(name)
     if meta is None:
         return False
@@ -2241,6 +2289,7 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     # Unchanged for every caller: this path already deletes, and it now deletes the one
     # thing it could previously miss.
     _discard_preserved_data(name)
+    _collect_app_packages()
     _audit("force_uninstall", "ok", name, caller=caller)
     return True
 
