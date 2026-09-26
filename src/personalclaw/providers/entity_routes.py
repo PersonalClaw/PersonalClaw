@@ -596,10 +596,18 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
                     )
                 # A verify opt-in on a kind that carries no checkable claim is a
                 # configuration error, not a silent no-op: reject it so the user learns the
-                # toggle does not apply rather than seeing it "saved" and never firing.
+                # toggle does not apply rather than seeing it "saved" and never firing. A
+                # decision says why, since it is the one case a user would reasonably expect
+                # to be checkable ("second-opinion my approvals").
                 if verify and not kinds_by_key[key].verifiable:
+                    why = (
+                        ": it asks for your decision, and a decision is always listed and "
+                        "delivered"
+                        if kinds_by_key[key].decision
+                        else ""
+                    )
                     return web.json_response(
-                        {"error": f"notification kind '{key}' is not verifiable"}, status=400
+                        {"error": f"notification kind '{key}' is not verifiable{why}"}, status=400
                     )
             sound = raw.get("sound")
             if sound is not None and (

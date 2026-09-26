@@ -1,10 +1,16 @@
 """Second-opinion verification for attention notifications (INU-6).
 
-An attention item raised by a background agent asserts a *claim* — "a new skill would help
-you", "this run needs your approval because X". Some of those claims are wrong: a proposal
-built on a misread, an agent-request premise that no longer holds. This module lets a rule
-ask a cheap model, before the notification fires, whether the claim is clearly refuted, and
-withholds only the ones that are.
+An attention item raised by a background agent can assert a *claim* — "a new skill would help
+you", "this plan would save you a step". Some of those claims are wrong: a proposal built on a
+misread, a suggestion whose premise no longer holds. This module lets a rule ask a cheap model,
+before the notification fires, whether the claim is clearly refuted, and withholds only the ones
+that are.
+
+**Never a decision.** An approval, a workflow gate, a trust prompt or a paused room is not a
+claim: it is work parked on the user's answer, and that it is pending is a fact the system
+holds. Such a kind is registered ``decision=True`` and can never be ``verifiable``
+(``notification_kinds.register`` refuses the pair), so this module is never asked about one —
+no verdict can hide it, and no model call stands in front of it.
 
 **REFUTED-only.** The verdict set is closed — ``confirmed`` / ``refuted`` / ``skipped`` —
 and only an affirmative ``refuted`` withholds. ``confirmed`` and every ambiguous or
