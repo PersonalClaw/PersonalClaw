@@ -1,0 +1,171 @@
+{
+  "numStartups": 412,
+  "installMethod": "native",
+  "autoUpdates": true,
+  "theme": "dark",
+  "hasCompletedOnboarding": true,
+  "lastOnboardingVersion": "2.0.14",
+  "firstStartTime": "2025-06-02T01:14:09.338Z",
+  "userID": "ce4a9dd388f9cc5870214a065572e32bf1e35010e9a3b2924a64511c82c608a1",
+  "lastReleaseNotesSeen": "2.1.270",
+  "hasOpenedAgentsView": true,
+  "promptQueueUseCount": 37,
+  "oauthAccount": {
+    "accountUuid": "4b6abdb5-f48e-4224-9276-d867b58123f3",
+    "emailAddress": "noor@haddad-okoye.ca",
+    "organizationUuid": "d1db4cad-a845-4833-8178-b13729158861",
+    "organizationRole": "admin",
+    "workspaceRole": null,
+    "organizationName": "noor@haddad-okoye.ca's Organization",
+    "displayName": "Noor",
+    "billingType": "stripe_subscription"
+  },
+  "tipsHistory": {
+    "plan-mode-for-complex-tasks": 188,
+    "memory-command": 24,
+    "custom-agents": 97
+  },
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "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Zx"
+      }
+    },
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "ctx7sk-9b2e4f61-7a3c-4d8e-b5f0-1c6a2d9e3f47"
+      }
+    },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "todoist": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "todoist-mcp",
+        "--api-token=4c1f9e2a7b3d8c6e5f0a1b2c3d4e5f6a7b8c9d0e"
+      ]
+    }
+  },
+  "projects": {
+    "/Users/noor/src/feedsmith": {
+      "allowedTools": [],
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": [
+        "feedsmith-dev-db",
+        "playwright"
+      ],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 1,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false,
+      "exampleFiles": [
+        "fetch.py",
+        "digest.py",
+        "store.py",
+        "cli.py",
+        "parse.py"
+      ],
+      "lastSessionId": "6277d318-971a-44e8-b375-0e64f38466e9",
+      "lastCost": 0.4296,
+      "lastAPIDuration": 405161,
+      "lastDuration": 4191949,
+      "lastLinesAdded": 0,
+      "lastLinesRemoved": 0,
+      "lastTotalInputTokens": 128122,
+      "lastTotalOutputTokens": 1571,
+      "lastTotalCacheCreationInputTokens": 38938,
+      "lastTotalCacheReadInputTokens": 210856,
+      "lastTotalWebSearchRequests": 0,
+      "lastStartTime": "2026-09-16T02:02:58.100Z"
+    },
+    "/Users/noor/work/carrier-webhooks": {
+      "allowedTools": [],
+      "mcpContextUris": [],
+      "mcpServers": {
+        "grafana": {
+          "type": "http",
+          "url": "https://grafana.cartwheel.internal/api/mcp",
+          "headers": {
+            "Authorization": "Bearer glsa_Q3v8Tn2Lk9Wx4Rb7Zc1Ym6Hd0Fp5Js_2e7a9c1b"
+          }
+        },
+        "kafka-dev": {
+          "type": "stdio",
+          "command": "uvx",
+          "args": [
+            "kafka-mcp",
+            "--bootstrap",
+            "localhost:9092"
+          ],
+          "env": {}
+        }
+      },
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 1,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false,
+      "exampleFiles": [
+        "consumer.py",
+        "handlers.py",
+        "dhl.py",
+        "db.py",
+        "routes.py"
+      ],
+      "lastSessionId": "e14cc044-8f72-4a82-a4af-ea47a7ddc701",
+      "lastCost": 0.8368,
+      "lastAPIDuration": 412075,
+      "lastDuration": 2495370,
+      "lastLinesAdded": 25,
+      "lastLinesRemoved": 8,
+      "lastTotalInputTokens": 257766,
+      "lastTotalOutputTokens": 1744,
+      "lastTotalCacheCreationInputTokens": 62626,
+      "lastTotalCacheReadInputTokens": 1432656,
+      "lastTotalWebSearchRequests": 0,
+      "lastStartTime": "2026-09-09T18:22:40.568Z"
+    },
+    "/Users/noor": {
+      "allowedTools": [],
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": false,
+      "projectOnboardingSeenCount": 1,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false,
+      "exampleFiles": [],
+      "lastSessionId": "80aa7bec-27c9-4094-86e2-35fb104eed4f",
+      "lastCost": 0.4671,
+      "lastAPIDuration": 351517,
+      "lastDuration": 1659617,
+      "lastLinesAdded": 1,
+      "lastLinesRemoved": 1,
+      "lastTotalInputTokens": 164873,
+      "lastTotalOutputTokens": 909,
+      "lastTotalCacheCreationInputTokens": 54172,
+      "lastTotalCacheReadInputTokens": 1165086,
+      "lastTotalWebSearchRequests": 0,
+      "lastStartTime": "2026-08-11T12:52:40.085Z"
+    }
+  }
+}

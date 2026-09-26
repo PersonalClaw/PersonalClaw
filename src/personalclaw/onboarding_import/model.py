@@ -36,10 +36,13 @@ class ImportCategory(str, Enum):
     on an unmapped member). A category with no destination is not declared here.
     """
 
-    INSTRUCTIONS = "instructions"  # CLAUDE.md / AGENTS.md → memory store
+    INSTRUCTIONS = "instructions"  # CLAUDE.md / AGENTS.md / rules → memory store
     MEMORIES = "memories"  # a tool's own memory notes → memory store
-    MCP_SERVERS = "mcp_servers"  # .mcp.json / config.toml → ~/.personalclaw/mcp.json
+    MCP_SERVERS = "mcp_servers"  # .claude.json / .mcp.json / config.toml → <home>/mcp.json
     SKILLS = "skills"  # skills/<name>/ → skills/imported/<source>/<name>/
+    AGENTS = "agents"  # subagent definitions → config.json agents (the Agents page)
+    PROMPTS = "prompts"  # slash commands / custom prompts → <home>/prompts/<name>.yaml
+    CONVERSATIONS = "conversations"  # session transcripts → <home>/sessions (Chat history)
     SETTINGS = "settings"  # foreign settings → the review queue, never live config
 
 
@@ -113,9 +116,10 @@ def fingerprint_of(source: str, category: ImportCategory | str, key: str) -> str
 class ImportItem:
     """One importable thing found by a scanner. Pure data — no store, no session.
 
-    ``text`` is the redacted body (instructions/memories); ``payload`` is the
-    secret-stripped structured value (mcp_servers/settings); ``path`` is the source
-    directory for skills. Exactly one of the three is populated per category.
+    ``text`` is the redacted body (instructions, memories, an agent's or a prompt's
+    instructions); ``payload`` is the secret-stripped structured value (an MCP server, the
+    settings, an agent's description, a conversation's messages); ``path`` is the source
+    directory for skills.
     """
 
     source: str
@@ -125,6 +129,22 @@ class ImportItem:
     text: str = ""
     payload: dict = field(default_factory=dict)
     path: str = ""
+    #: The name the item takes at its destination — an MCP server's name, an agent's, a
+    #: prompt's. Empty means ``key``. Separate from ``key`` because a key must be unique per
+    #: source and category while two scopes of one tool can hold a server of the same name:
+    #: they are two items with two fingerprints and ONE destination, so the second is a
+    #: conflict or already there, never a silent overwrite.
+    name: str = ""
+    #: Where in the tool the item was found, in words ("Local scope · /Users/you/work/api",
+    #: "Project · ~/src/app"). Empty when the tool has one place for this kind. Value-free.
+    origin: str = ""
+    #: What the import leaves out of this item or changes about it, in words true before and
+    #: after the import ("Claude Code's tools list is not carried over"). Value-free.
+    note: str = ""
+    #: Whether the step starts with this item ticked. False for an item the other tool itself
+    #: never let run — a project's own ``.mcp.json`` server nobody approved there — so bringing
+    #: it over is a choice the user makes, not one the step makes for them.
+    preselect: bool = True
     #: How many credential/exfiltration-URL redactions were applied to ``text``.
     #: A count, never the matched value.
     redactions: int = 0
@@ -138,6 +158,11 @@ class ImportItem:
     def fingerprint(self) -> str:
         return fingerprint_of(self.source, self.category, self.key)
 
+    @property
+    def target(self) -> str:
+        """The name this item takes at its destination (:attr:`name`, else :attr:`key`)."""
+        return self.name or self.key
+
     def to_dict(self) -> dict:
         return {
             "fingerprint": self.fingerprint,
@@ -145,6 +170,9 @@ class ImportItem:
             "category": self.category.value,
             "key": self.key,
             "title": self.title or self.key,
+            "origin": self.origin,
+            "note": self.note,
+            "preselected": self.preselect,
             "secrets_skipped": self.secrets_skipped,
             "redactions": self.redactions,
         }
@@ -203,6 +231,28 @@ def withheld_notes(*, secrets_skipped: int, redactions: int) -> list[str]:
     return notes
 
 
+@dataclass(frozen=True)
+class NotImported:
+    """A kind of thing the scan FOUND in the tool and does not bring over, and why.
+
+    The difference between "we left this behind" and "we never looked" is the whole point:
+    a scanner that reads four of a tool's six kinds and says nothing about the other two
+    reads, to the person choosing, as a tool that only had four. So every kind a scanner
+    knows the tool keeps and PersonalClaw has no place for is counted and named here, and
+    the step shows it beside what does come over.
+    """
+
+    #: The kind, in the user's words ("Prompt history").
+    what: str
+    #: How many were found — prompts, files, rules — so "left behind" has a size.
+    count: int
+    #: Why it is not imported, as a sentence true before and after the import.
+    why: str
+
+    def to_dict(self) -> dict:
+        return {"what": self.what, "count": self.count, "why": self.why}
+
+
 @dataclass
 class ScanResult:
     """What one source's scanner found. Serializable, secret-free, comparable.
@@ -225,6 +275,8 @@ class ScanResult:
     redactions: int = 0
     #: Human-readable, value-free explanations ("skipped 1 credential file").
     notes: list[str] = field(default_factory=list)
+    #: What the tool holds that is not brought over, each with its count and reason.
+    not_imported: list[NotImported] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         """Per-category item counts. The step counts from ``items`` instead, because its
@@ -265,6 +317,7 @@ class ScanResult:
             "secrets_skipped": self.secrets_skipped,
             "redactions": self.redactions,
             "notes": list(self.notes),
+            "not_imported": [entry.to_dict() for entry in self.not_imported],
         }
 
 

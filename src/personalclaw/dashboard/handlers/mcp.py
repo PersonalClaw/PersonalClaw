@@ -1549,6 +1549,7 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             {
               "name": "my-mcp-server",
               "personalclaw": true,     // desired presence in ~/.personalclaw/mcp.json
+              "from": "3f2a…",          // optional: the Import list row being imported
               "ccGlobal": true,         // optional: desired presence in ~/.claude.json
               "toolOverrides": {        // optional: per-tool enable/disable
                 "SkillsTool": false,
@@ -1567,10 +1568,17 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
 
     Removing a server is ``DELETE /api/mcp/servers/{name}``, not a change here.
 
+    An import from the Tools page's list carries ``"from": <the row's id>``: the server is then
+    copied exactly as that row showed it, from whichever of Claude Code's scopes it came from —
+    user, local or a project's ``.mcp.json`` (``mcp_discovery.importable_spec``).
+
     After all changes are written, ``rebuild_agent_config`` is called once so the agent config
     (``~/.personalclaw/agents/personalclaw.json``) reflects the new merged state. Returns a
     summary with per-change outcomes.
     """
+    from personalclaw.mcp_discovery import importable_spec
+    from personalclaw.onboarding_import.model import FINGERPRINT_RE
+
     try:
         body = await request.json()
     except Exception:
@@ -1643,9 +1651,35 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             # serves the Tools-page "Import from Claude Code" action. Without this,
             # importing a Claude-Code-only server would be a no-op (nothing to
             # enable in the PClaw scope).
+            #
+            # `from` is the Import list's id for one server in one of Claude Code's scopes: a
+            # local- or project-scope server is found by nothing that searches by name, and two
+            # scopes can hold one name. The definition is read again from Claude Code's own
+            # files (`importable_spec`), so the request names a row and never a path or a spec.
             preserved_spec: dict | None = None
+            listed = change.get("from")
+            if listed is not None and not (
+                isinstance(listed, str) and FINGERPRINT_RE.fullmatch(listed)
+            ):
+                results.append(
+                    {"name": name, "error": "'from' must be an id from the Import list."}
+                )
+                continue
             if desired_mc and not _scope_has_entry(name, _canonical_mcp_json()):
-                preserved_spec = _find_server_spec_anywhere(name)
+                if listed is None:
+                    preserved_spec = _find_server_spec_anywhere(name)
+                else:
+                    found = importable_spec(listed)
+                    if found is None or found[0] != name:
+                        results.append(
+                            {
+                                "name": name,
+                                "error": f"Claude Code no longer has the '{name}' server this "
+                                "list showed. Reload the list to see what it has now.",
+                            }
+                        )
+                        continue
+                    preserved_spec = found[1]
 
             # Flipping PersonalClaw on needs the entry to exist or the disabled override
             # removed. Flipping it off writes disabled:true, keeping the config for later.

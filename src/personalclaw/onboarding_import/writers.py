@@ -31,6 +31,11 @@ Destinations
                      ``agent.py`` already merges at highest priority)
 ``skills``           ``skills/imported/<source>/<name>/`` via ``install_scanned``
                      — the same supply-chain gate as a Store skill
+``agents``           ``config.json`` → ``agents.<name>``: the profile the Agents
+                     page lists, as ``POST /api/agents`` would create it
+``prompts``          ``prompts/<name>.yaml``: a prompt you run as ``@name``
+``conversations``    ``sessions/dashboard_<source>-<id>.jsonl``: a chat in your
+                     history, readable and resumable
 ``settings``         ``onboarding/staged/<source>-<key>.json`` — a REVIEW QUEUE.
                      Foreign settings never reach live config, so for this
                      category ``imported`` means "staged for a human", which is
@@ -234,6 +239,7 @@ def _write_memory(item: ImportItem, dest: str) -> WriteResult:
     from personalclaw.memory import MemoryStore
     from personalclaw.memory_providers.filesystem import FilesystemMemoryProvider
     from personalclaw.memory_record import MemoryKind, MemoryRecord
+    from personalclaw.skills.loader import SkillsLoader
 
     doc = _memory_doc_path(item)
     text = _memory_doc_text(item)
@@ -243,13 +249,16 @@ def _write_memory(item: ImportItem, dest: str) -> WriteResult:
     doc.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(doc, text)
 
-    summary = re.sub(r"\s+", " ", item.text).strip()[:_SUMMARY_CHARS]
+    # The record is the searchable line, so it says what the note IS: a topic file's
+    # frontmatter is the tool's bookkeeping, and its body is the memory.
+    summary = re.sub(r"\s+", " ", SkillsLoader.strip_frontmatter(item.text)).strip()
+    label = f"{item.title or item.key}, {item.origin}" if item.origin else item.title or item.key
     FilesystemMemoryProvider(store).put(
         [
             MemoryRecord(
                 id=f"import:{item.source}:{item.fingerprint}",
                 kind=MemoryKind.NOTE,
-                text=f"Imported from {item.source} ({item.key}): {summary}",
+                text=f"Imported from {item.source} ({label}): {summary[:_SUMMARY_CHARS]}",
                 source=f"onboarding_import:{item.source}",
                 category=item.category.value,
             )
@@ -279,7 +288,8 @@ def _load_mcp_config(path: Path) -> dict[str, Any] | None:
 
 
 def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
-    dest = f"{_rel_to_home(mcp_config_path())}#mcpServers.{item.key}"
+    name = item.target
+    dest = f"{_rel_to_home(mcp_config_path())}#mcpServers.{name}"
     if data is None:
         return Plan(
             ItemState.CONFLICT,
@@ -287,7 +297,7 @@ def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
             "the existing mcp.json could not be parsed, so it is left untouched",
         )
     servers = data.get("mcpServers")
-    existing = servers.get(item.key) if isinstance(servers, dict) else None
+    existing = servers.get(name) if isinstance(servers, dict) else None
     if isinstance(existing, dict):
         # Compared in LOGICAL form: the file holds the server's values as credential-store
         # references, so the stored spec never equals the scanned one byte for byte. A spec
@@ -296,7 +306,7 @@ def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
         from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_spec
 
         try:
-            same = resolve_mcp_spec(item.key, existing) == resolve_mcp_spec(item.key, item.payload)
+            same = resolve_mcp_spec(name, existing) == resolve_mcp_spec(name, item.payload)
         except ForeignSecretReference:
             same = False
         if same:
@@ -324,7 +334,7 @@ def _write_mcp_server(item: ImportItem, dest: str) -> WriteResult:
     servers = data.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
-    servers[item.key] = dict(item.payload)
+    servers[item.target] = dict(item.payload)
     data["mcpServers"] = servers
     # The MCP document writer: every env value the scan kept reaches the file as a
     # credential-store reference (`config.secret_refs`) — a value the secret-NAME floor let
@@ -446,6 +456,224 @@ class _ImportedSkillsMarketplace(SkillsMarketplace):
         )
 
 
+# ── agents → config.json agents (the profiles the Agents page lists) ─────────
+
+#: The agent-name rule every path that introduces a profile applies (``POST /api/agents``, the
+#: file-store sync, ``AgentDefinition.validate``): lowercase letters, digits and dashes.
+_AGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+
+def _agent_named(name: str, agents: dict[str, Any]) -> str | None:
+    """The profile ``name`` resolves to, case-insensitively — how every agent route matches one."""
+    lowered = name.lower()
+    return next((existing for existing in agents if existing.lower() == lowered), None)
+
+
+def _plan_agent(item: ImportItem) -> Plan:
+    from personalclaw.agents.defaults import RETIRED_AGENT_NAMES, is_reserved_agent
+    from personalclaw.config.loader import AppConfig
+
+    name = item.target
+    dest = f"config.json#agents.{name}"
+    if not _AGENT_NAME_RE.fullmatch(name):
+        return Plan(
+            ItemState.REJECTED,
+            dest,
+            "its name has no letters or digits PersonalClaw can name an agent with",
+        )
+    if name in {retired.lower() for retired in RETIRED_AGENT_NAMES}:
+        return Plan(ItemState.REJECTED, dest, "its name is a retired PersonalClaw agent name")
+    if is_reserved_agent(name):
+        return Plan(
+            ItemState.CONFLICT,
+            dest,
+            "a built-in PersonalClaw agent has this name, and it is kept",
+        )
+    if _agent_named(name, AppConfig.load().agents) is not None:
+        if _ours(item.fingerprint):
+            return Plan(ItemState.EXISTING, dest, "already imported")
+        return Plan(
+            ItemState.CONFLICT, dest, "an agent of this name is already here, and it is kept"
+        )
+    return Plan(ItemState.NEW, dest)
+
+
+def _write_agent(item: ImportItem, dest: str) -> WriteResult:
+    """Add the agent as a profile, exactly as ``POST /api/agents`` would with these two fields.
+
+    Only its description and instructions come over (the scan's note says what does not), so
+    every other field — the approval mode above all — is the profile default, as for any agent
+    created on the Agents page. ``source`` is stamped ``local``, as the file-store sync stamps it:
+    the profile is yours now.
+    """
+    from personalclaw.config.loader import AgentProfile, AppConfig
+
+    cfg = AppConfig.load()
+    # A read-modify-write of the whole config: the plan is re-asked of THIS read, so an agent
+    # that appeared since the scan is kept, never overwritten.
+    if _agent_named(item.target, cfg.agents) is not None:
+        return _result(
+            item,
+            WriteOutcome.CONFLICT,
+            dest,
+            "an agent of this name is already here, and it is kept",
+        )
+    cfg.agents[item.target] = AgentProfile(
+        description=str(item.payload.get("description") or ""),
+        system_prompt=item.text,
+        source="local",
+    )
+    cfg.save()
+    _record(item, dest)
+    return _result(item, WriteOutcome.IMPORTED, dest)
+
+
+# ── prompts → prompts/<name>.yaml (run in chat as @name) ─────────────────────
+
+
+def _plan_prompt(item: ImportItem) -> Plan:
+    from personalclaw.prompt_providers.native_provider import prompt_file
+
+    try:
+        path = prompt_file(item.target)
+    except ValueError:
+        return Plan(
+            ItemState.REJECTED,
+            f"prompts/{item.target}.yaml",
+            "its name has no letters or digits PersonalClaw can name a prompt with",
+        )
+    dest = _rel_to_home(path)
+    if path.exists():
+        if _ours(item.fingerprint):
+            return Plan(ItemState.EXISTING, dest, "already imported")
+        return Plan(
+            ItemState.CONFLICT, dest, "a prompt of this name is already here, and it is kept"
+        )
+    return Plan(ItemState.NEW, dest)
+
+
+def _write_prompt(item: ImportItem, dest: str) -> WriteResult:
+    from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
+    from personalclaw.prompt_providers.native_provider import NativePromptProvider
+
+    variables = [
+        PromptVariable.from_dict(v)
+        for v in item.payload.get("variables") or []
+        if isinstance(v, dict) and v.get("name")
+    ]
+    template = PromptTemplate(
+        name=item.target,
+        kind="user",
+        description=str(item.payload.get("description") or ""),
+        content=item.text,
+        variables=variables,
+        tags=["imported"],
+    )
+    try:
+        NativePromptProvider().create_prompt(template)
+    except ValueError:
+        # Created since the plan read the directory: the one already there is kept.
+        return _result(
+            item,
+            WriteOutcome.CONFLICT,
+            dest,
+            "a prompt of this name is already here, and it is kept",
+        )
+    _record(item, dest)
+    return _result(item, WriteOutcome.IMPORTED, dest)
+
+
+# ── conversations → sessions/ (Chat history) ─────────────────────────────────
+
+
+def conversation_key(item: ImportItem) -> str:
+    """The session key an imported conversation lives under: in the ``dashboard_`` namespace, so
+    Chat lists it with your own, and named for the tool it came from so it cannot collide with a
+    conversation started here."""
+    return f"dashboard_{_slug(item.source).replace('_', '-')}-{_slug(item.target)}"
+
+
+def _plan_conversation(item: ImportItem) -> Plan:
+    from personalclaw.history import session_path
+
+    path = session_path(conversation_key(item))
+    dest = _rel_to_home(path)
+    if path.exists():
+        if _ours(item.fingerprint):
+            return Plan(ItemState.EXISTING, dest, "already imported")
+        return Plan(
+            ItemState.CONFLICT, dest, "a conversation with this id is already here, and it is kept"
+        )
+    return Plan(ItemState.NEW, dest)
+
+
+def _epoch(stamp: str) -> float | None:
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+#: The transcript class each role renders with — what a chat written here carries.
+_CONVERSATION_CLS = {"user": "msg msg-u", "assistant": "msg msg-a", "tool": "msg msg-tool"}
+
+
+def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
+    """Write the conversation as a chat transcript, dated as it was held.
+
+    The file's modified time is the conversation's last message, so the history lists it where
+    it happened rather than at the top as "just now". It is marked consolidated through its last
+    message: bringing old conversations over is not new material for the memory consolidator,
+    which reads a chat only from where it last stopped — so a chat continued here is read from
+    the first new turn on.
+    """
+    from personalclaw.history import import_conversation
+
+    payload = item.payload
+    messages = [
+        {
+            "role": m["role"],
+            "content": m["content"],
+            "ts": m.get("ts") or "",
+            "cls": _CONVERSATION_CLS.get(m["role"], "msg msg-a"),
+        }
+        for m in payload.get("messages") or []
+        if isinstance(m, dict) and m.get("role") in _CONVERSATION_CLS
+    ]
+    key = conversation_key(item)
+    try:
+        import_conversation(
+            key,
+            metadata={
+                "created_at": payload.get("created_at") or "",
+                "title": item.title,
+                "last_consolidated": len(messages),
+                "imported_from": {
+                    "source": item.source,
+                    "session": item.target,
+                    "cwd": payload.get("cwd") or "",
+                },
+            },
+            messages=messages,
+            modified=_epoch(str(payload.get("updated_at") or "")),
+        )
+    except FileExistsError:
+        return _result(
+            item,
+            WriteOutcome.CONFLICT,
+            dest,
+            "a conversation with this id is already here, and it is kept",
+        )
+    _record(item, dest)
+    try:
+        from personalclaw import session_search
+
+        session_search.reindex_session(key)
+    except Exception:  # noqa: BLE001 — the index is derived; the heartbeat's pass catches up
+        logger.debug("could not index imported conversation %s", key, exc_info=True)
+    return _result(item, WriteOutcome.IMPORTED, dest)
+
+
 # ── settings → the review queue (never live config) ──────────────────────────
 
 
@@ -508,6 +736,9 @@ _PLANNERS: dict[ImportCategory, Callable[[ImportItem], Plan]] = {
     ImportCategory.MEMORIES: _plan_memory,
     ImportCategory.MCP_SERVERS: _plan_mcp_server,
     ImportCategory.SKILLS: _plan_skill,
+    ImportCategory.AGENTS: _plan_agent,
+    ImportCategory.PROMPTS: _plan_prompt,
+    ImportCategory.CONVERSATIONS: _plan_conversation,
     ImportCategory.SETTINGS: _plan_settings,
 }
 _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
@@ -515,6 +746,9 @@ _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
     ImportCategory.MEMORIES: _write_memory,
     ImportCategory.MCP_SERVERS: _write_mcp_server,
     ImportCategory.SKILLS: _write_skill,
+    ImportCategory.AGENTS: _write_agent,
+    ImportCategory.PROMPTS: _write_prompt,
+    ImportCategory.CONVERSATIONS: _write_conversation,
     ImportCategory.SETTINGS: _write_settings,
 }
 

@@ -99,6 +99,11 @@ eval_results/
 .claude/
 .playwright-mcp/
 playwright-responses/
+# ...except the fake home directories the onboarding importers are tested against. They are
+# laid out exactly as Claude Code and Codex write them, so they carry the very names the two
+# rules above keep a developer's OWN tool state out of the repo by: `.claude/` and `.mcp.json`.
+!tests/fixtures/agent_tool_homes/**/.claude/
+!tests/fixtures/agent_tool_homes/**/.mcp.json
 
 # Bare local dev gateway home (make serve creates $(CURDIR)/.dev-home).
 # GLOB, not a fixed name: every dev home holds live credentials (.local_secret,

@@ -745,18 +745,20 @@ function importedValues(s: ImportableMcpServer): string {
 }
 
 /** Collapsed "Discovered in <backend>" list — MCP servers configured in an
- *  external backend (Claude Code) but not yet in PersonalClaw. Importing one
- *  copies its spec into ~/.personalclaw/mcp.json so the native loop can run it. */
+ *  external backend (Claude Code) but not yet in PersonalClaw, from every scope it keeps them in:
+ *  yours everywhere, yours in one project, and a project's own `.mcp.json`. Importing one
+ *  copies its spec into ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and
+ *  imported by its `id`, because two scopes can hold a server of the same name. */
 function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServer[]; onImported: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
 
   const importOne = async (s: ImportableMcpServer) => {
-    setBusy(s.name)
+    setBusy(s.id)
     // Reported, not swallowed: an import that did not land (a refusal, or a 200 whose change carries
     // an `error`, which `importMcpServer` throws) used to leave the row sitting here with no word.
     try {
-      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s.name))) onImported()
+      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s))) onImported()
     } finally { setBusy(null) }
   }
 
@@ -776,7 +778,7 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
           </p>
           <div className="flex flex-col gap-2">
             {servers.map((s) => (
-              <div key={s.name} className="flex items-center gap-3 rounded-lg bg-surface-container px-m py-2.5">
+              <div key={s.id} className="flex items-center gap-3 rounded-lg bg-surface-container px-m py-2.5">
                 <Server size={15} className="shrink-0 text-on-surface-low" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -784,6 +786,9 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{s.backend}</span>
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low" title={TRANSPORT_HINT}>{transportLabel(s.transport)}</span>
                   </div>
+                  {/* Which of the backend's scopes it is in: yours everywhere, yours in one project,
+                      or a project's own file. Two rows of one name differ only here. */}
+                  <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={s.origin}>{s.origin}</p>
                   {/* The server line is a URL or a command line — the most tail-heavy string on the
                       surface, and the half that says WHICH server this is. It did not clip with this
                       seed's data, but it truncates by the same rule and a `title` costs nothing; the
@@ -794,8 +799,11 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                   {importedValues(s) && (
                     <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={importedValues(s)}>{importedValues(s)}</p>
                   )}
+                  {/* What to know before importing: a project's server nobody approved, a variable
+                      nothing sets. Wrapped, not truncated — it is a sentence to read. */}
+                  {s.note && <p data-type="caption" className="mt-0.5 text-on-surface-var">{s.note}</p>}
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => importOne(s)} loading={busy === s.name}><Download size={13} /> Import
+                <Button variant="secondary" size="sm" onClick={() => importOne(s)} loading={busy === s.id}><Download size={13} /> Import
                 </Button>
               </div>
             ))}

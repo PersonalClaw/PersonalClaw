@@ -70,8 +70,14 @@ _SKILL_MD = "---\nname: {name}\ndescription: {desc}\n---\n# {name}\nSteps.\n"
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 
+#: Where Claude Code keeps one project's auto-memory, relative to its config directory.
+_MEMORY_DIR = Path("projects") / "-Users-me-app" / "memory"
+_MEMORY_KEY = "projects/-Users-me-app/memory/prefs.md"
+
+
 def _seed_claude_root(root: Path) -> None:
-    """A fixture ``~/.claude``: instructions, memories, MCP, skills, settings — plus a
+    """A fixture ``~/.claude``, laid out as Claude Code writes one — instructions, a project's
+    auto-memory, a user-scope MCP server in ``.claude.json``, a skill, settings — plus a
     credential in every place a real one shows up."""
     root.mkdir(parents=True, exist_ok=True)
     (root / "CLAUDE.md").write_text(
@@ -79,9 +85,13 @@ def _seed_claude_root(root: Path) -> None:
         f"- The staging key is {SECRET} (do not share).\n",
         encoding="utf-8",
     )
-    (root / "memories").mkdir()
-    (root / "memories" / "prefs.md").write_text("User prefers concise answers.\n", encoding="utf-8")
-    (root / ".mcp.json").write_text(
+    (root / _MEMORY_DIR).mkdir(parents=True)
+    (root / _MEMORY_DIR / "prefs.md").write_text(
+        "User prefers concise answers.\n", encoding="utf-8"
+    )
+    # `.claude.json` sits IN the config directory when that is named explicitly, as
+    # `$CLAUDE_CONFIG_DIR` names it — and a scan root is named the same way.
+    (root / ".claude.json").write_text(
         json.dumps(
             {
                 "mcpServers": {
@@ -292,11 +302,8 @@ def test_import_creates_memories_mcp_entries_and_imported_skills(
     assert "Always run the linter" in doc.read_text(encoding="utf-8")
     prefs = (home / "workspace" / "memory" / "preferences.md").read_text(encoding="utf-8")
     assert "Imported from claude_code (CLAUDE.md)" in prefs
-    assert (
-        home / "workspace" / "memory" / "imported" / "claude_code" / "memories__prefs.md"
-    ).is_file() or (
-        home / "workspace" / "memory" / "imported" / "claude_code" / "memories-prefs.md"
-    ).is_file()
+    imported = home / "workspace" / "memory" / "imported" / "claude_code"
+    assert [p.name for p in imported.iterdir() if p.name.endswith("prefs.md")]
 
     # MCP entries: the user-owned override file the agent config merges.
     mcp = json.loads(mcp_config_path().read_text(encoding="utf-8"))
@@ -557,7 +564,7 @@ def test_each_item_carries_its_own_withheld_count(claude_root: Path) -> None:
     assert by_key["tidy-notes"].secrets_skipped == 1  # the .env inside the skill
     assert by_key["settings.json"].secrets_skipped == 1  # apiKeyHelper
     assert by_key["CLAUDE.md"].redactions >= 1  # the key in the prose, redacted
-    assert by_key["memories/prefs.md"].secrets_skipped == 0
+    assert by_key[_MEMORY_KEY].secrets_skipped == 0
     assert result.secrets_skipped == 4
     assert result.secrets_outside_items() == 1  # .credentials.json, never opened
     # A count, never the value — on the wire as in memory.
