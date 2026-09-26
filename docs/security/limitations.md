@@ -180,6 +180,11 @@ gateway uses.
   package two apps share is one both accept — or the install is refused, naming the
   conflict. One interpreter can hold only one version of a module, so this is the
   honest form of isolation between apps, not a weaker one.
+- An update installs exactly the versions its new manifest pins, older or newer. pip
+  runs from the gateway's environment and will not uninstall anything outside it, so it
+  writes the new version over the old copy in `app-python`. The installer then removes
+  the old copy itself, by that copy's own file list, deleting nothing outside
+  `app-python` and no file the new version lists.
 
 Before pip runs, `app_manager._reject_core_dependency_conflicts` also refuses any
 declared requirement that names a core-declared dependency unless the version already
