@@ -2045,7 +2045,17 @@ async def start_dashboard(
         """Terminate every app-backend subprocess on gateway stop. Without this the
         backends (snippet-lab/standup-notes/… server.py) were spawned on enable but
         never reaped on shutdown — so each gateway restart ORPHANED another set
-        (reparented to init), leaking dozens of processes over a dev session."""
+        (reparented to init), leaking dozens of processes over a dev session.
+
+        The watchdogs boot started go FIRST: left running, the backend one revived every
+        backend terminated here 30s later, and all three outlived the gateway that started
+        them — each boot in one process adding three sweepers that never ended."""
+        try:
+            from personalclaw.providers.loader import stop_extension_watchdogs
+
+            stop_extension_watchdogs()
+        except Exception:
+            logger.debug("watchdog shutdown failed", exc_info=True)
         try:
             from personalclaw.apps.backend_runtime import get_backend_supervisor
 

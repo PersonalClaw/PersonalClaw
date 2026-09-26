@@ -5,7 +5,7 @@ import importlib
 import os
 import shutil
 import sys
-import time
+import tempfile
 from pathlib import Path
 
 import native_omp_guard
@@ -30,6 +30,13 @@ from hypothesis import HealthCheck, settings
 # it works: tests/test_pycache_guard.py.
 PYCACHE_PREFIX = pycache_guard.activate()
 
+# ── Real-home guard (CRE-8) ─────────────────────────────────────────────
+# SECOND, and before `personalclaw` is first imported: from here on, every open, sqlite
+# connect, directory creation or listing, rename and delete aimed under the developer's real
+# `~/.personalclaw` is refused — in any thread — and charged to the test that made it, which
+# fails by name. Mechanism, attribution rules and what it cannot see: tests/real_home_guard.py.
+real_home_guard.GUARD.install()
+
 # ── Imported-checkout provenance rail (#2634) ──────────────────────────
 # An editable install points at a mutable working tree. In a git worktree, that can make
 # pytest import ``personalclaw`` from the shared checkout while collecting tests from this
@@ -46,6 +53,67 @@ if not _IMPORTED_PACKAGE_ROOT.is_relative_to(_INVOKING_REPO_ROOT):
         f"  imported package root: {_IMPORTED_PACKAGE_ROOT}\n"
         f"  invoking repository root: {_INVOKING_REPO_ROOT}"
     )
+
+
+def _caller_chose_a_home() -> bool:
+    """Whether the home was chosen explicitly: ``$PERSONALCLAW_HOME`` set (to anything, the
+    real home included), or ``$HOME``/``Path.home()`` repointed. Only an UNCHOSEN home is
+    redirected — see ``_isolate_real_home_writers`` for why an explicit choice passes through."""
+    return (
+        bool(os.environ.get("PERSONALCLAW_HOME")) or Path.home() != real_home_guard.REAL_HOME.parent
+    )
+
+
+# ── Import-window home (CRE-8, the half no fixture can reach) ───────────
+# `_isolate_real_home_writers` redirects an unchosen home for each TEST. Six modules resolve the
+# home at IMPORT, during collection, before any fixture exists: `agent` (`_USER_DIR` and the
+# prompt/overrides/`_DEFAULT_HOOKS_DIR` paths built from it), `agents.marketplace` (its local
+# registry), `dashboard.handlers.hooks` (`_HOOK_STORE_PATH`), `dashboard.handlers.mcp`
+# (`_GLOBAL_MCP_JSON`), and both skill roots (`skills.marketplace`, `skills.native`). Measured
+# under the guard above on a full run: every worker mkdir'd the real `~/.personalclaw` at import
+# (so a fresh machine or CI runner has one created just by collecting), and 150+ tests read the
+# owner's real skills, agent hooks and `mcp.json` through those frozen paths. Converting the six
+# is a product change with ~17 test sites that patch the constants
+# (`test_agent_paths_resolve_at_call_time.py` records the debt); this closes the suite's exposure
+# without it: until collection finishes, an unchosen home is ONE per-process scratch directory.
+# After that the per-test redirect takes over — and a resolution that happens outside every test
+# (an orphaned thread, a late first import between tests) reaches the real home, where the guard
+# refuses it and names who did it. That is deliberate: a quarantine for those would hide them.
+_config_loader = importlib.import_module("personalclaw.config.loader")
+_IMPORT_WINDOW: dict[str, object] = {"open": True, "home": None}
+_config_dir_after_the_window = _config_loader.config_dir
+
+
+def _import_window_config_dir() -> Path:
+    if _IMPORT_WINDOW["open"] and not _caller_chose_a_home():
+        if _IMPORT_WINDOW["home"] is None:
+            _IMPORT_WINDOW["home"] = Path(tempfile.mkdtemp(prefix="pclaw-import-home-"))
+        return _IMPORT_WINDOW["home"]  # type: ignore[return-value]
+    return _config_dir_after_the_window()
+
+
+_config_loader.config_dir = _import_window_config_dir
+for _module in list(sys.modules.values()):
+    if getattr(_module, "config_dir", None) is _config_dir_after_the_window and getattr(
+        _module, "__name__", ""
+    ).startswith("personalclaw"):
+        _module.config_dir = _import_window_config_dir
+
+
+def pytest_collection_finish(session):
+    """Close the import window: from the first test on, homes resolve per test."""
+    _IMPORT_WINDOW["open"] = False
+
+
+def pytest_unconfigure(config):
+    home = _IMPORT_WINDOW["home"]
+    if home is not None:
+        shutil.rmtree(home, ignore_errors=True)  # type: ignore[arg-type]
+
+
+def pytest_configure(config):
+    config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
+
 
 # NOTE: this suite is standalone — it must collect + pass on a clone of this
 # package alone, with NO sibling apps/ directory. Channel/provider seams are
@@ -145,14 +213,16 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     rails, and it would also silently redefine the unrelated ``Path.home()/".aws"`` and
     ``Path.home()/".ssh"`` paths that the artifact/task sensitivity tests assert on).
 
-    What a fixture CANNOT reach, and therefore was fixed at source instead: a home resolved
-    into a module-level constant at import time. The rail below caught 147 real-home entries
-    still landing in ``subagents/`` after this fixture was in place, because
-    ``subagent_persistence`` froze ``config_dir() / "subagents"`` at first import — before any
-    fixture exists. Three such constants were converted to call-time resolvers
-    (``subagent_persistence._subagents_dir``, ``session_map._sessions_dir``, and a dead
-    ``schedule._DEFAULT_DIR`` whose import-time ``config_dir()`` mkdir'd the real home merely
-    by importing the module). If a new leak appears here, check for that shape first.
+    What a fixture CANNOT reach: a home resolved into a module-level constant at import time.
+    The real-home rail this suite used to run caught 147 real-home entries still landing in
+    ``subagents/`` after this fixture was in place, because ``subagent_persistence`` froze
+    ``config_dir() / "subagents"`` at first import — before any fixture exists. Three such
+    constants were converted to call-time resolvers (``subagent_persistence._subagents_dir``,
+    ``session_map._sessions_dir``, and a dead ``schedule._DEFAULT_DIR`` whose import-time
+    ``config_dir()`` mkdir'd the real home merely by importing the module); the ones still
+    frozen resolve inside the import window at the top of this file instead. A thread that
+    outlives its test is the other shape this fixture cannot reach, because the patch is undone
+    under it — ``tests/real_home_guard.py`` names the test that started it.
 
     Ordering matters: this fixture is declared BEFORE ``_reset_sel_singleton`` so it is set
     up first and torn down LAST. The singleton is cleared around every test, so the next
@@ -162,7 +232,6 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     import personalclaw.config.loader as config_loader
     import personalclaw.sel as sel_mod
 
-    real_home = real_home_guard.REAL_HOME
     holder: list[Path] = []
 
     def tmp_home() -> Path:
@@ -172,22 +241,19 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
             holder.append(tmp_path_factory.mktemp("pclaw-home"))
         return holder[0]
 
-    def caller_chose_a_home() -> bool:
-        return bool(os.environ.get("PERSONALCLAW_HOME")) or Path.home() != real_home.parent
-
     original_config_dir = config_loader.config_dir
     original_sel_dir = sel_mod._default_dir
 
     def guarded_config_dir() -> Path:
-        if caller_chose_a_home():
+        if _caller_chose_a_home():
             return original_config_dir()
         # NB: return the tmp dir WITHOUT delegating first — config_dir() mkdirs whatever
         # it resolves, so delegating would create ~/.personalclaw on a machine that has
-        # none (the rail's own "absent home" case) before we could redirect it.
+        # none before we could redirect it.
         return tmp_home()
 
     def guarded_sel_dir() -> Path:
-        if caller_chose_a_home():
+        if _caller_chose_a_home():
             return original_sel_dir()
         return tmp_home()
 
@@ -246,7 +312,7 @@ def _isolate_trigger_store(tmp_path_factory, monkeypatch):
     against a store built from `gateway.config_dir()`, so `test_gateway`'s unisolated `_init_cron`
     calls wrote `system:notification-digest` into the USER's real store (reproduced by deleting the
     file and running that one file). Four occurrences of this hazard now; the rule is the docstring
-    above, and the check is `ls ~/.personalclaw` after any suite run that adds a writer."""
+    above, and the real-home guard (tests/real_home_guard.py) fails the test that writes one."""
     store_home = tmp_path_factory.mktemp("pclaw-triggers")
     monkeypatch.setattr("personalclaw.triggers.boot_migrate.config_dir", lambda: store_home)
     monkeypatch.setattr(
@@ -475,7 +541,7 @@ def _forbid_real_model_roots(monkeypatch):
     rather than to all of ``$HOME``: a developer's checkout usually lives under ``$HOME``,
     so a blanket home-rejection would fire on an ordinary relative path and get disabled.
     Detection is a separate module so it can be driven against a fake root and proven to
-    fire (``tests/test_local_model_root_guard.py``) — the same reason the real-home rail
+    fire (``tests/test_local_model_root_guard.py``) — the same reason the real-home guard
     keeps its detection in ``real_home_guard``.
 
     The reach is ONE attribute lookup deep, which is the rail's one soft edge: a module-level
@@ -880,56 +946,11 @@ def _restore_local_model_registry() -> object:
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)
 
 
-# ── Real-home rail (CRE-8) ──────────────────────────────────────────────
-# `_isolate_real_home_writers` above fixes the leaks that exist today; this pair of
-# hooks is what NOTICES the next one. Detection lives in `tests/real_home_guard.py`
-# so it can be driven against a fake root and proven to fire
-# (`tests/test_real_home_guard.py`) — a guard that only ever runs against the tree it
-# guards cannot be distinguished from a guard that never fires.
-#
-# TEETH, deliberately: this fails the run rather than printing a warning. The
-# population after the fixture above is ZERO (measured over the full suite), so the
-# rail has nothing to grandfather, and a report nobody is forced to read is how the
-# 44,402-byte leak survived long enough to need this atom. `ALLOWED_RESIDUE` exists
-# for a NAMED, individually justified residue and is currently empty; a blanket
-# allowance would turn the rail back into a baseline.
-_real_home_since_ns: int | None = None
-
-
 def pytest_sessionstart(session):
-    """Arm the rail. Controller only — xdist workers share the one real home, so a
-    per-worker arm/report would multiply one leak into N identical reports."""
-    global _real_home_since_ns
-    # Torch-free-core rail, the one case no per-test transition can attribute: a
-    # hazard module already resident before the first test, imported by a plugin or
-    # by conftest itself. Checked in EVERY process — each xdist worker carries its
-    # own sys.modules, and it is a worker that aborts.
+    """Torch-free-core rail, the one case no per-test transition can attribute: a hazard
+    module already resident before the first test, imported by a plugin or by conftest
+    itself. Checked in EVERY process — each xdist worker carries its own sys.modules, and
+    it is a worker that aborts."""
     pre_resident = native_omp_guard.resident(sys.modules)
     if pre_resident:
         raise RuntimeError(native_omp_guard.explain(pre_resident, "session start"))
-    if os.environ.get("PYTEST_XDIST_WORKER"):
-        return
-    _real_home_since_ns = time.time_ns()
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """Report anything the run created/modified/grew under the REAL home, and fail."""
-    if _real_home_since_ns is None:
-        return
-    root = real_home_guard.REAL_HOME
-    changes = real_home_guard.scan_changes(root, _real_home_since_ns)
-    report = real_home_guard.format_report(root, changes)
-    # Persist before printing: the exitstatus below fails the run WITHOUT failing any
-    # test, so the JUnit XML cannot carry the offending paths and STDOUT is the one
-    # place they would otherwise live (#3386).
-    written = real_home_guard.write_report(session.config.rootpath, report)
-    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
-    if reporter is not None:
-        reporter.write_sep("=", "real-home rail", red=bool(changes))
-        reporter.write_line(report)
-        if written is not None:
-            reporter.write_line(f"real-home rail report written to {written}")
-    else:  # pragma: no cover - only when the terminal plugin is disabled
-        print(report)
-    if changes:
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED

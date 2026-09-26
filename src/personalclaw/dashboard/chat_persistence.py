@@ -993,12 +993,16 @@ def save_session_to_history(
         # Keep cross-session search current (SESSION-MANAGEMENT §C1). Runs after the
         # cache invalidation so the re-read sees the file we just wrote, and after
         # the write so a search-index failure can never cost a transcript.
-        # Restricted sessions are refused inside index_turn.
+        # Restricted sessions, and a log rooted outside the home, are refused inside index_turn.
         try:
             from personalclaw import session_search
 
             session_search.index_turn(
-                history_key, "", "", memory_mode=getattr(session, "memory_mode", "")
+                history_key,
+                "",
+                "",
+                memory_mode=getattr(session, "memory_mode", ""),
+                log=state.conversation_log,
             )
         except Exception:  # noqa: BLE001
             logger.debug("session search index skipped for %s", history_key, exc_info=True)

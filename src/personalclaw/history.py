@@ -224,6 +224,16 @@ class ConversationLog:
         """Create sessions directory if missing."""
         self._dir.mkdir(parents=True, exist_ok=True)
 
+    def is_home_log(self) -> bool:
+        """Whether this is the active home's own transcript store (``<home>/sessions``), as
+        opposed to one rooted elsewhere by an explicit ``base_dir`` — a room, an eval cell, a
+        test's or a script's scratch directory. Home-wide derived state (the session-search
+        index) describes only the home's own store."""
+        try:
+            return self._dir.resolve() == _sessions_dir().resolve()
+        except OSError:
+            return False
+
     def _path(self, key: str) -> Path:
         return self._dir / f"{_safe_key(key)}.jsonl"
 

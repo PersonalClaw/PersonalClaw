@@ -712,7 +712,7 @@ def _screenshot_dir() -> Path:
     ``$PERSONALCLAW_HOME`` set after first import is ignored for the life of the process.
     MEASURED in CI, which is where the difference shows: with no ``~/.personalclaw`` to
     begin with, the capture handler created the developer's real home just by resolving
-    this path — the real-home rail below caught it as `dir-entries-changed screenshots`.
+    this path — the suite's real-home rail caught it as `dir-entries-changed screenshots`.
     """
     return _path_home_pclaw() / "screenshots"
 

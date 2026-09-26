@@ -770,10 +770,12 @@ def test_the_real_home_is_never_touched(store, home):
 
     The subject under test deletes and rewrites files under `config_dir()`. If the env
     override failed to bind — the classic import-time-frozen-path failure — this suite would
-    be writing a projection into the owner's real vault.
+    be writing a projection into the owner's real vault. The suite-wide real-home guard
+    (tests/real_home_guard.py) fails this test if the sync opens, creates or lists anything
+    under the real ~/.personalclaw, so the test no longer lists it itself to compare; the
+    stat below needs no read of the owner's files.
     """
     real = Path.home() / ".personalclaw"
-    before = sorted(p.name for p in real.iterdir()) if real.is_dir() else None
 
     _note(store, "Alpha")
     v = _vault(store, home)
@@ -781,6 +783,4 @@ def test_the_real_home_is_never_touched(store, home):
 
     assert str(kv.vault_path_from_config()).startswith(str(home))
     assert v.path.is_relative_to(home)
-    after = sorted(p.name for p in real.iterdir()) if real.is_dir() else None
-    assert after == before
     assert not (real / "knowledge-vault").exists()

@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
+from personalclaw.periodic_sweep import PeriodicSweep
 
 if TYPE_CHECKING:
     from personalclaw.sandbox_providers import SandboxSpec
@@ -484,24 +485,23 @@ def get_backend_supervisor() -> BackendSupervisor:
 
 _WATCHDOG_INTERVAL = 30  # seconds between sweeps
 
+# The sweep is looked up per pass (not bound here), so it is always the module's current one.
+_WATCHDOG = PeriodicSweep("app-backend-watchdog", _WATCHDOG_INTERVAL, lambda: _check_and_revive())
+
 
 def start_backend_watchdog() -> threading.Thread:
-    """Start a daemon thread that checks backend health every 30s and
-    relaunches any that crashed. Returns the thread (for testing)."""
-    import time
+    """Start the daemon sweep that relaunches crashed backends every 30s — or return the one
+    already running, since two would race to revive the same backend.
 
-    def _loop() -> None:
-        while True:
-            time.sleep(_WATCHDOG_INTERVAL)
-            try:
-                _check_and_revive()
-            except Exception:
-                logger.debug("backend watchdog sweep failed", exc_info=True)
+    Ended by :func:`stop_backend_watchdog`, which the gateway's cleanup calls: a watchdog that
+    outlives its gateway revives, 30s later, every backend the shutdown just terminated.
+    """
+    return _WATCHDOG.start()
 
-    t = threading.Thread(target=_loop, name="app-backend-watchdog", daemon=True)
-    t.start()
-    logger.info("app-backend watchdog started (interval=%ds)", _WATCHDOG_INTERVAL)
-    return t
+
+def stop_backend_watchdog() -> None:
+    """Stop the sweep :func:`start_backend_watchdog` started. Idempotent."""
+    _WATCHDOG.stop()
 
 
 def _check_and_revive() -> None:

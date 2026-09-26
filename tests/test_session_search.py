@@ -422,6 +422,59 @@ class TestHeartbeatWiring:
         await service._beat()  # must not raise
 
 
+# ── The index describes the transcript store it was handed ───────────────────
+
+
+class TestTheIndexFollowsTheTranscript:
+    """``save_session_to_history`` hands ``index_turn`` the store it just wrote.
+
+    Measured in a developer's REAL ``~/.personalclaw/session_search.db``: three rows
+    (``dashboard:chat-9-9``, ``dashboard:chat-p-1``, ``dashboard:s23``), every one with
+    ``chars=0``. Each came from a scratch script that built a ``DashboardState`` over a
+    ``ConversationLog(base_dir=<temp dir>)`` — isolating the transcript — but never set
+    ``PERSONALCLAW_HOME``. The save wrote the transcript to the temp dir; the index then
+    re-read the session through the HOME's store, which had never held it, and wrote the
+    empty result into the home's index. The index alone escaped the isolation the caller chose.
+    """
+
+    @staticmethod
+    def _state(log):
+        from unittest.mock import MagicMock
+
+        from personalclaw.dashboard.state import DashboardState
+
+        return DashboardState(sessions=MagicMock(count=0), start_time=0.0, conversation_log=log)
+
+    @staticmethod
+    def _save(state, name: str) -> None:
+        from personalclaw.dashboard.chat_persistence import save_session_to_history
+
+        session = state.get_or_create_session(name)
+        session.append("user", "watermelon pricing for the quarterly plan")
+        session.append("assistant", "Two tiers, both seasonal.")
+        save_session_to_history(state, session)
+
+    def test_a_transcript_kept_outside_the_home_never_enters_its_index(self, tmp_path):
+        scratch = ConversationLog(base_dir=tmp_path / "scratch")
+        self._save(self._state(scratch), "chat-p-1")
+
+        assert scratch.read_messages("dashboard:chat-p-1"), "premise: the transcript was saved"
+        assert ss.stats()["sessions"] == 0, "a row for a transcript this home does not have"
+
+    def test_the_home_s_own_transcript_is_indexed_with_its_content(self, tmp_path):
+        """The other direction: the refusal must not cost the home its own search."""
+        home_log = ConversationLog()  # the active home's store (PERSONALCLAW_HOME, above)
+        assert home_log.is_home_log()
+        self._save(self._state(home_log), "chat-9-9")
+
+        assert [r["key"] for r in ss.search_sessions("watermelon")] == ["dashboard:chat-9-9"]
+        assert ss.stats()["indexed_chars"] > 0
+
+    def test_a_log_rooted_elsewhere_is_not_the_home_s(self, tmp_path):
+        assert not ConversationLog(base_dir=tmp_path / "room").is_home_log()
+        assert ConversationLog(base_dir=ConversationLog()._dir).is_home_log()
+
+
 # ── Regressions found by driving the real gateway ────────────────────────────
 
 

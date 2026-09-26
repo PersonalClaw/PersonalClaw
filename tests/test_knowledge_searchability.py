@@ -455,10 +455,10 @@ class TestTheRailIsNotVacuous:
 def test_the_real_home_is_never_touched(tmp_path):
     """Assert the isolation rather than trusting it: this suite ingests files and writes a
     knowledge db, so a home override that failed to bind would be writing into the owner's
-    real library."""
-    real = Path.home() / ".personalclaw"
-    before = sorted(p.name for p in real.iterdir()) if real.is_dir() else None
-
+    real library. The db must land under tmp_path; and the suite-wide real-home guard
+    (tests/real_home_guard.py) fails this test if the ingest opens, creates or even lists
+    anything under the real ~/.personalclaw — which is why the test no longer lists it
+    itself to compare."""
     store = _store_for(tmp_path)
     item_id = _ingest_file(
         store, tmp_path, UNINDEXED_DOC, item_type="document", mime="text/markdown"
@@ -468,5 +468,3 @@ def test_the_real_home_is_never_touched(tmp_path):
 
     assert str(knowledge_db_path(tmp_path)).startswith(str(tmp_path))
     assert os.path.exists(knowledge_db_path(tmp_path))
-    after = sorted(p.name for p in real.iterdir()) if real.is_dir() else None
-    assert after == before

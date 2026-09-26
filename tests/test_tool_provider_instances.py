@@ -213,9 +213,9 @@ async def _model_provider_client(tmp_path):
     # `rebuild_agent_config()` writes through `agent.agents_dir()` — no longer a MODULE-LEVEL
     # constant frozen at import (`agent.py:93`) — patching `config_dir` alone
     # leaves it pointing at the REAL home, so the write escapes tmp_path and the
-    # conftest real-home rail fails the whole session (`agents/personalclaw.json`
-    # modified). Redirect the frozen constants too; `_USER_DIR` keeps the merge
-    # from reading the real user's `mcp.json` into the rebuilt config.
+    # real-home guard refuses it and fails the test (`agents/personalclaw.json`). Redirect
+    # the frozen constants too; `_USER_DIR` keeps the merge from reading the real user's
+    # `mcp.json` into the rebuilt config.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),

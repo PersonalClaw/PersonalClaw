@@ -49,9 +49,9 @@ def _usage_store_stays_in_tmp(tmp_path, monkeypatch):
     """The turn-time use counter writes beside the skills dir — keep it in tmp.
 
     `SkillUsageStore()` resolves its own path from `skills_dir()`, so an unpatched run
-    would record uses into whatever home the process resolves. The suite's real-home rail
-    already redirects that, but a test that exercises the use counter should not depend on
-    another fixture for its isolation.
+    would record uses into whatever home the process resolves. Conftest's
+    ``_isolate_real_home_writers`` already redirects that, but a test that exercises the use
+    counter should not depend on another fixture for its isolation.
     """
     counter_home = tmp_path / "usage-home"
     counter_home.mkdir()

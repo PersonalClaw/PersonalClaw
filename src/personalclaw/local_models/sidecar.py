@@ -55,6 +55,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.periodic_sweep import PeriodicSweep
+
 logger = logging.getLogger(__name__)
 
 #: Seconds to wait for a child to exit after SIGTERM before SIGKILL.
@@ -613,28 +615,28 @@ def stop_all_sidecars() -> None:
 _WATCHDOG_INTERVAL = 30  # seconds between sweeps, matching the app-backend watchdog
 
 
+def _sweep_and_log() -> None:
+    for decision in sweep_sidecars():
+        if decision.get("action") != "noop":
+            logger.info("sidecar watchdog: %s", decision)
+
+
+_WATCHDOG = PeriodicSweep("model-sidecar-watchdog", _WATCHDOG_INTERVAL, _sweep_and_log)
+
+
 def start_sidecar_watchdog() -> threading.Thread:
-    """Daemon thread that revives crashed sidecar children every 30s.
+    """Daemon sweep that revives crashed sidecar children every 30s — or the one already running.
 
     Same semantics as the app-backend watchdog: relaunch on crash, never survive the
-    gateway. A sweep over an empty table is free, so this is harmless when no app
-    declares ``execution: sidecar``.
+    gateway (:func:`stop_sidecar_watchdog` runs from its cleanup). A sweep over an empty
+    table is free, so this is harmless when no app declares ``execution: sidecar``.
     """
+    return _WATCHDOG.start()
 
-    def _loop() -> None:
-        while True:
-            time.sleep(_WATCHDOG_INTERVAL)
-            try:
-                for decision in sweep_sidecars():
-                    if decision.get("action") != "noop":
-                        logger.info("sidecar watchdog: %s", decision)
-            except Exception:  # noqa: BLE001 — a sweep failure must not kill the thread
-                logger.debug("sidecar watchdog sweep failed", exc_info=True)
 
-    thread = threading.Thread(target=_loop, name="model-sidecar-watchdog", daemon=True)
-    thread.start()
-    logger.info("model-sidecar watchdog started (interval=%ds)", _WATCHDOG_INTERVAL)
-    return thread
+def stop_sidecar_watchdog() -> None:
+    """Stop the sweep :func:`start_sidecar_watchdog` started. Idempotent."""
+    _WATCHDOG.stop()
 
 
 # ---------------------------------------------------------------------------

@@ -78,6 +78,7 @@ from personalclaw.apps.background import (
 )
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
+from personalclaw.periodic_sweep import PeriodicSweep
 
 logger = logging.getLogger(__name__)
 
@@ -726,22 +727,22 @@ def get_worker_supervisor() -> WorkerSupervisor:
     return _supervisor
 
 
+_WATCHDOG = PeriodicSweep(
+    "app-worker-watchdog", _WATCHDOG_INTERVAL, lambda: get_worker_supervisor().sweep()
+)
+
+
 def start_worker_watchdog() -> threading.Thread:
-    """Start the daemon thread that sweeps every ``_WATCHDOG_INTERVAL`` seconds.
+    """Start the daemon sweep that runs every ``_WATCHDOG_INTERVAL`` seconds — or return the
+    one already running.
 
-    The equivalent of ``start_backend_watchdog``, and it wants the same call site:
-    ``providers/loader.py`` starts that one at boot. Returned for testing.
+    The equivalent of ``start_backend_watchdog``, with the same call site
+    (``providers/loader.py`` at boot) and the same end: :func:`stop_worker_watchdog` from the
+    gateway's cleanup, so no sweep outlives the gateway that started it.
     """
+    return _WATCHDOG.start()
 
-    def _loop() -> None:
-        while True:
-            time.sleep(_WATCHDOG_INTERVAL)
-            try:
-                get_worker_supervisor().sweep()
-            except Exception:  # noqa: BLE001 — one bad sweep must not end the watchdog
-                logger.debug("app-worker watchdog sweep failed", exc_info=True)
 
-    t = threading.Thread(target=_loop, name="app-worker-watchdog", daemon=True)
-    t.start()
-    logger.info("app-worker watchdog started (interval=%ds)", _WATCHDOG_INTERVAL)
-    return t
+def stop_worker_watchdog() -> None:
+    """Stop the sweep :func:`start_worker_watchdog` started. Idempotent."""
+    _WATCHDOG.stop()
