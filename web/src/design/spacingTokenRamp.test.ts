@@ -107,8 +107,9 @@ const RUNG: Record<number, string> = { 4: 'xs', 8: 's', 12: 'm', 16: 'l', 20: 'x
  *  measured 745 commits earlier; by the time it was read the tree was at 3135. That is the failure
  *  mode this number is dated and sha-stamped to avoid — re-measure and re-state, never bump.)
  *  History, each re-stated DOWN by a landed slice: 3135 (`a9c03d57e`, ceiling only) → 3069 → 3055
- *  → 3015. */
-const MAPPABLE_CEILING = 3015
+ *  → 3015 → 3002 (onboarding's import step moved whole onto the rungs; measured on `c2a599568`
+ *  plus that change). */
+const MAPPABLE_CEILING = 3002
 
 /** NOT a gate. The half-step population, recorded so the owner question has a number attached and
  *  so a later pass can see whether it moved. Adding rungs to the ramp would convert most of it. */

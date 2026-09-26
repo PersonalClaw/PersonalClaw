@@ -201,9 +201,11 @@ const docs: UiDoc[] = [
       { name: 'onChange', description: 'Fires with the next boolean. Propagation is already stopped for you.' },
       { name: 'ariaLabel', description: 'Required in practice — a bare tick has no accessible name of its own, so name what it selects (e.g. `Select ${title}`).' },
       { name: 'className', description: 'Extra classes for visibility rules (e.g. reveal-on-hover inside a list row).' },
+      { name: 'indeterminate', description: 'The mixed state, for a tick that stands for a partly-chosen group. Set as the DOM property browsers expose as "mixed" — never `aria-checked`, which is non-conforming on a native checkbox. Pass `checked={false}` with it so a click selects the whole group.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for Checkbox for multi-select in a list rather than a raw <input type="checkbox"> — it carries the accent tone, the focus-visible ring, and the propagation guard that clickable rows need.' },
+      { guidance: true, description: 'A parent tick over a list of child ticks is tri-state: checked when every child is, `indeterminate` when some are, unchecked when none are. A click on a mixed parent chooses them all.' },
       { guidance: true, description: 'Use Switch instead when the control applies a setting on the spot; use Checkbox when the user is marking things to act on afterwards.' },
       { guidance: false, description: 'Do not re-add onClick={e => e.stopPropagation()} at the call site — the primitive owns it, and duplicating it hides the contract.' },
     ],

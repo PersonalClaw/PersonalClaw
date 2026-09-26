@@ -23,7 +23,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from personalclaw.onboarding_import.floors import read_json_safely, read_text_safely, refuses
+from personalclaw.onboarding_import.floors import (
+    read_json_safely,
+    read_json_tables_safely,
+    read_text_safely,
+    refuses,
+)
 from personalclaw.onboarding_import.model import ImportCategory, ImportItem, ScanResult
 
 NAME = "claude_code"
@@ -35,6 +40,8 @@ _INSTRUCTION_FILES = ("CLAUDE.md",)
 _MEMORIES_DIR = "memories"
 _SKILLS_DIR = "skills"
 _MCP_FILE = ".mcp.json"
+#: The one table of ``.mcp.json`` that holds servers; everything else in it is not imported.
+_MCP_TABLE = "mcpServers"
 _SETTINGS_FILE = "settings.json"
 
 
@@ -129,23 +136,20 @@ def _scan_mcp(base: Path, result: ScanResult) -> None:
     path = base / _MCP_FILE
     if not path.is_file():
         return
-    data, skipped = read_json_safely(path)
-    result.secrets_skipped += skipped
-    if not isinstance(data, dict):
-        return
-    servers = data.get("mcpServers")
-    if not isinstance(servers, dict):
-        return
-    for name, spec in sorted(servers.items()):
-        if not isinstance(spec, dict) or not str(name).strip():
-            continue
+    # Per ENTRY, so each server says how many of its own credentials stay behind — the one a
+    # user will have to re-enter. The source total is unchanged: `split.total` is exactly the
+    # whole-document strip this used to count in one sum.
+    split = read_json_tables_safely(path, (_MCP_TABLE,))
+    result.secrets_skipped += split.total
+    for name, spec, withheld in split.entries:
         result.items.append(
             ImportItem(
                 source=NAME,
                 category=ImportCategory.MCP_SERVERS,
-                key=str(name),
-                title=str(name),
+                key=name,
+                title=name,
                 payload=spec,
+                secrets_skipped=withheld,
             )
         )
 
@@ -169,6 +173,7 @@ def _scan_skills(base: Path, result: ScanResult) -> None:
                 key=skill_dir.name,
                 title=skill_dir.name,
                 path=str(skill_dir),
+                secrets_skipped=withheld,
             )
         )
 
@@ -188,5 +193,6 @@ def _scan_settings(base: Path, result: ScanResult) -> None:
             key=_SETTINGS_FILE,
             title=f"{DISPLAY_NAME} settings",
             payload=data,
+            secrets_skipped=skipped,
         )
     )

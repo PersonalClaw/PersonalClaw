@@ -4841,14 +4841,21 @@ export interface LocalModelEndpoint { endpoint: string; model: string }
 export interface LocalModelDetection { detected: boolean; endpoint?: string; model?: string }
 /** `POST /api/onboarding/local-model/bind` — the credential-free bind outcome. */
 export interface LocalModelBindResult { ok: boolean; status: string; model: string; provider: string }
+/** What importing ONE item would do right now, read off the destination before anything is
+ *  written — by the same planner the import then consults, so the state shown is the state
+ *  acted on. Only `new` is a choice: `existing` and `conflict` write nothing whatever is
+ *  picked, and `rejected` is refused by a floor. */
+export type OnboardingImportItemState = 'new' | 'existing' | 'conflict' | 'rejected'
 /** One thing another local agent tool holds that PersonalClaw could adopt (PEP-5).
- *  `existing` is the server's answer, from the fingerprint ledger of what THIS
- *  importer already wrote — so a re-entered first run marks an item instead of
- *  offering it again. `redactions` is a COUNT; the matched values never leave the
- *  scanner. */
+ *  `fingerprint` is the item's stable id — minted server-side from source, category and key,
+ *  reproduced by every re-scan, and the ONLY thing a pick sends back. `secrets_skipped` and
+ *  `redactions` are COUNTS of what was left out of THIS item; the values never leave the
+ *  scanner. `detail` says why a non-`new` item will not be written, in words true both
+ *  before and after an import. */
 export interface OnboardingImportItem {
   fingerprint: string; source: string; category: string; key: string; title: string
-  redactions: number; existing: boolean
+  state: OnboardingImportItemState; destination: string; detail: string
+  secrets_skipped: number; redactions: number
 }
 /** What one source's scanner found. `detected` is computed server-side (present on
  *  this machine AND holding something), so "did we find it" is decided once. */
@@ -4873,10 +4880,16 @@ export interface OnboardingImportOutcome {
   outcome: 'imported' | 'existing' | 'conflict' | 'rejected'
   destination: string; detail: string
 }
-/** `POST /api/onboarding/import` — per-item outcomes plus what was withheld. */
+/** `POST /api/onboarding/import` — the whole choice, as the server's own re-scan saw it:
+ *  `results` for every picked item it found, `unselected` for everything it found that was
+ *  NOT picked (each with the state it had before the writes, so "left out" and "already here"
+ *  stay apart), and `missing` for every picked fingerprint it could not find — reported, never
+ *  dropped. `counts` tallies `results` only. The withheld counts follow the pick. */
 export interface OnboardingImportReport {
   counts: Record<string, number>
   results: OnboardingImportOutcome[]
+  unselected: OnboardingImportItem[]
+  missing: string[]
   secrets_skipped: number; redactions: number
   notes: string[]
 }
@@ -6615,9 +6628,9 @@ export const api = {
   /** What other local agent tools on this machine hold (PEP-5). Read-only in both
    *  directions — it writes neither their config nor our home. */
   onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
-  /** Import the picked categories. The server RE-SCANS: only the two selection axes
-   *  travel, never items, so a caller can never name a directory to copy in. */
-  runOnboardingImport: (body: { sources: string[]; categories: string[] }) =>
+  /** Import the picked items. The server RE-SCANS and keeps only the fingerprints its own
+   *  scan found: ids travel, never items, so a caller can never name a directory to copy in. */
+  runOnboardingImport: (body: { fingerprints: string[] }) =>
     post<OnboardingImportReport>('/api/onboarding/import', body),
   /** The model step's VERIFICATION — build what chat would build, and report the verdict.
    *  Always 200: a refusal is a body, not a throw, because the three envelope lines are

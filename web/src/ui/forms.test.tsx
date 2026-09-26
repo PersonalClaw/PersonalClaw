@@ -414,4 +414,24 @@ describe('Checkbox', () => {
     expect(box.type).toBe('checkbox')
     expect(box.checked).toBe(true)
   })
+
+  it('shows MIXED through the DOM property, and a click on it chooses the whole group', () => {
+    // The property is what a browser exposes as "mixed"; `aria-checked` on a native checkbox is
+    // non-conforming, so the primitive must not reach for it.
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <Checkbox checked={false} indeterminate onChange={onChange} ariaLabel="Bring over skills" />,
+    )
+    const box = screen.getByLabelText('Bring over skills') as HTMLInputElement
+    expect(box.indeterminate).toBe(true)
+    expect(box.hasAttribute('aria-checked')).toBe(false)
+    fireEvent.click(box)
+    expect(onChange).toHaveBeenCalledWith(true)
+    // A parent that answers the click by STAYING mixed keeps the box mixed — the click cleared the
+    // property natively, so the primitive re-applies it after every render, not only on a change.
+    rerender(<Checkbox checked={false} indeterminate onChange={onChange} ariaLabel="Bring over skills" />)
+    expect(box.indeterminate).toBe(true)
+    rerender(<Checkbox checked onChange={onChange} ariaLabel="Bring over skills" />)
+    expect(box.indeterminate).toBe(false)
+  })
 })

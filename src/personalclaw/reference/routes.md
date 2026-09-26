@@ -571,8 +571,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/notifications/settings` — _(no summary)_
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
-- `GET /api/onboarding/import` — what each source holds, and what is already ours.
-- `POST /api/onboarding/import` — import the picked categories and report outcomes.
+- `GET /api/onboarding/import` — what each source holds, and what importing each item does.
+- `POST /api/onboarding/import` — import the picked items and report outcomes.
 - `GET /api/onboarding/local-model` — is a local Ollama reachable on localhost?
 - `POST /api/onboarding/local-model/bind` — credential-free bind of an endpoint.
 - `POST /api/onboarding/local-model/scan` — opt-in LAN sweep for an Ollama.

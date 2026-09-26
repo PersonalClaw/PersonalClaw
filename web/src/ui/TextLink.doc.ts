@@ -21,6 +21,7 @@ const doc: UiDoc = {
     { name: 'disabled', description: 'Dims to 50% and disables — button form only (an <a> has no disabled state).' },
     { name: 'aria-label', description: 'Accessible name when the visible label alone does not say what the link opens (an icon-only or terse "open" link beside a row). Plumbed to the rendered <a>/<button>.' },
     { name: 'aria-expanded', description: 'For a link used as a disclosure toggle (e.g. a "Show N more" reveal): the expanded state, plumbed to the rendered <a>/<button> so the control announces it rather than relying on a flipping label alone.' },
+    { name: 'aria-controls', description: 'The id of the region a disclosure link opens — the other half of the `aria-expanded` pairing, so assistive tech can go from the control to what it governs (the pairing `DisclosureCard` carries).' },
     { name: 'title', description: 'Native tooltip text.' },
     { name: 'className', description: 'Extra layout (ml-auto, mt-1.5, normal-case) — tokens only, no raw hex/px.' },
   ],

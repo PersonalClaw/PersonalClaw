@@ -11,9 +11,11 @@ Three properties define it, and each has a test that fails when it breaks:
   rather than silently losing it (:mod:`.floors`).
 - **Idempotence.** Item identity is ``sha256(source\\0category\\0key)``; a re-scan
   yields the same set and a re-import writes nothing new (:mod:`.model`,
-  :mod:`.writers`).
+  :mod:`.writers`). The same fingerprint is what a user's pick carries, and the
+  import honours only fingerprints its own re-scan found (:mod:`.engine`).
 - **Never clobber.** A destination that already holds something different reports
-  ``conflict`` and keeps what's there (:mod:`.writers`).
+  ``conflict`` and keeps what's there — and says so BEFORE the import too, because
+  the scan shows each item's plan from the planner the writer consults (:mod:`.writers`).
 
 Reading the foreign root is strictly read-only: importing from another tool must
 never modify that tool's configuration.
@@ -26,37 +28,45 @@ touches our home.
 from __future__ import annotations
 
 from personalclaw.onboarding_import.engine import (
-    already_imported,
     detected,
+    plans,
     run_import,
     scan_all,
     scan_source,
     select_items,
 )
 from personalclaw.onboarding_import.model import (
+    FINGERPRINT_RE,
     ImportCategory,
     ImportItem,
     ImportReport,
+    ItemState,
+    Plan,
     ScanResult,
     WriteOutcome,
     WriteResult,
     fingerprint_of,
+    offer,
 )
 from personalclaw.onboarding_import.registry import ImportSource, get_source, list_sources
 
 __all__ = [
+    "FINGERPRINT_RE",
     "ImportCategory",
     "ImportItem",
     "ImportReport",
     "ImportSource",
+    "ItemState",
+    "Plan",
     "ScanResult",
     "WriteOutcome",
     "WriteResult",
-    "already_imported",
     "detected",
     "fingerprint_of",
     "get_source",
     "list_sources",
+    "offer",
+    "plans",
     "run_import",
     "scan_all",
     "scan_source",
