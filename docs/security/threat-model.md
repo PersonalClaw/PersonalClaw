@@ -130,6 +130,10 @@ Installable content (apps, skills) from arbitrary sources:
   content is staged in quarantine, scanned there, and only moved into place if it
   passes — so the scanned bytes are the installed bytes (no time-of-check/
   time-of-use gap).
+- **Staging never follows a link** (`apps/staging.py`): the quarantine copy is made
+  from one survey of the whole bundle, so a symlink or a hard link cannot pull a file
+  from outside the bundle into the installed app. A link to one of the bundle's own
+  files stays a link, and anything else is refused, naming the path.
 - **Scanner verdicts** (`supply_chain.py`: `SkillScanner`, `Verdict`): `clean` /
   `warning` (consent required) / **`dangerous` (terminal, non-overridable)**;
   `TrustTier` modulates strictness.
@@ -174,7 +178,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
 | **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode) | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`) | enforced |
-| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree | `apps/app_manager.py::install`; `supply_chain.py` (`SkillScanner`, `Verdict`) | enforced |
+| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree; staging never follows a link out of the bundle | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`) | enforced |
 | **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist | `security.py`; `sandbox.py` | enforced |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py` | enforced |
 | **ASI07** Insecure inter-agent / inbound comms | Fail-closed inbound surface + fencing at ingestion | *(owned by MCP-READONLY-INBOUND + EXTERNAL-ACCESS)* | in progress (plans 41, 24) |

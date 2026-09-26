@@ -16,6 +16,7 @@ job, behind the scanner gate.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -101,6 +102,12 @@ def resolve(source: str) -> ResolvedSource:
         resolved = _clone_git(base)
         if subdir:
             target = resolved.path / subdir
+            # The `#subdirectory` is text a registry index supplies verbatim, so it is
+            # untrusted: `../` or a link in the clone must not make a folder BESIDE the
+            # clone the bundle that gets staged.
+            if not _within(resolved.path, target):
+                _rmtree(resolved.path)
+                raise SourceError(f"subdirectory {subdir!r} leads outside the cloned repo")
             if not target.is_dir():
                 _rmtree(resolved.path)
                 raise SourceError(f"subdirectory '{subdir}' not found in cloned repo")
@@ -150,6 +157,12 @@ def _clone_git(url: str) -> ResolvedSource:
     # staged/installed copy clean.
     _rmtree(tmp / ".git")
     return ResolvedSource(path=tmp, origin="external", cleanup=True)
+
+
+def _within(root: Path, target: Path) -> bool:
+    """Whether ``target``, resolved through every link, is ``root`` or inside it."""
+    real_root = os.path.realpath(root)
+    return os.path.commonpath([real_root, os.path.realpath(target)]) == real_root
 
 
 def _rmtree(path: Path) -> None:

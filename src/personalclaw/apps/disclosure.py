@@ -84,8 +84,9 @@ def bundle_digest(root: Path) -> str:
     reviewed copy is consent to exactly those bytes and no others.
 
     Nothing is skipped: the digest covers what the commit step moves into place, hidden
-    files included. The stager copies THROUGH symlinks, so a staged tree holds none; one
-    found anyway is hashed as the link it is, never followed out of the bundle."""
+    files included. The stager keeps a link to one of the bundle's own files as that link
+    (:mod:`apps.staging`), so a link is hashed as what it is — its path and its text, never
+    followed — and a link and a copy of the file it names are different bundles."""
     h = hashlib.sha256()
     for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
         rel = path.relative_to(root).as_posix().encode("utf-8")

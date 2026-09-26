@@ -30,6 +30,17 @@ backend**.
 
 - **Quarantine first** — staged under `~/.personalclaw/apps/.quarantine/`;
   dangerous content never touches the live tree.
+- **Staging never follows a link** (`apps/staging.py`) — install, update and the
+  install preview copy the bundle from one survey of the whole tree, taken before
+  anything is written, and every later gate reads that copy. A link to one of the
+  bundle's own files is kept as that link. Anything that brings in bytes from
+  elsewhere, or could, is refused with the offending path named: an absolute link,
+  a link that leaves the bundle for even one step, a link to a folder (the scan does
+  not descend into one), a link to nothing, a loop, a hard link to an outside file, a
+  pipe, socket or device, a link into or out of `data/`, and `data` or
+  `installed.json` as a link. A `repo#subdirectory` pointer must stay inside its
+  clone. The gateway's own copies of an app's `data/` (update, keep-data uninstall,
+  restore) copy links as links.
 - **The scan** is the shared `SkillScanner` (`supply_chain.py`). A *dangerous*
   verdict (or an invalid signature) is a terminal refusal, **non-overridable**.
   Each finding carries whether the code it sits in can run (`reachability`) and

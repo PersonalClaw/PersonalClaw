@@ -131,8 +131,9 @@ authority, and it is *persistent*, surviving restarts. The concrete bad outcome:
 content the scanner rated `dangerous` gets installed anyway, or content mutates
 between scan and install.
 
-**Entry points.** `apps/app_manager.py::install`, `supply_chain.py`,
-`skills/`, `apps/catalog.py`, `packs/`.
+**Entry points.** `apps/app_manager.py::install`, `apps/staging.py` (the one copy
+of a bundle into quarantine, and its link policy), `supply_chain.py`, `skills/`,
+`apps/catalog.py`, `packs/`.
 
 **What a reviewer should try to break.**
 

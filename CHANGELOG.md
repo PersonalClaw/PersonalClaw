@@ -233,6 +233,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Installing an app never copies files from outside its bundle.** Staging an app, whether for
+  an install, an update or the review the install dialog shows, copied the bundle with
+  `shutil.copytree`, which follows symbolic links. A bundle shipping `data/key ->
+  ~/.ssh/id_ed25519`, or `-> ../../../../config.json`, therefore arrived in the installed app
+  holding that file's bytes, where the app's own code could read them, while anyone looking at
+  the bundle saw only the link. Staging now checks the whole bundle before it writes anything
+  (`apps/staging.py`) and copies exactly what it checked. A link to one of the bundle's own
+  files installs as that link. The install, update and review are refused, naming the offending
+  path, when the bundle has a link that is absolute or leaves the bundle even for one step, a
+  link to a folder (the content scan does not look inside one), a link to nothing, a loop, a
+  hard link to a file outside the bundle, a named pipe, socket or device file, a link into or
+  out of the app's `data/` folder, or `data` or `installed.json` shipped as a link. A registry
+  pointer whose `#subdirectory` leaves the cloned repository is refused too. When the gateway
+  copies an app's own `data/` (on update, keep-data uninstall and reinstall), a link the app
+  left there is now copied as a link instead of as the bytes it names. Behaviour change: a
+  bundle that relied on a link being followed must ship the file or folder itself. No bundled
+  or first-party app ships a link.
 - **An installed app can no longer change your security settings, and every write that loosens
   one asks you first.** An app that declared `/api/config` could `PATCH` any setting on that
   path: turn YOLO on, drop the 2FA requirement, let egress reach your LAN, raise every guardrail
