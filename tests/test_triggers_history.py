@@ -9,8 +9,11 @@ since only schedules had rows. And `FireRecord`, the typed row S62 designed for 
 **exported and never constructed** (`grep 'FireRecord('` outside its module: nothing).
 
 The load-bearing tests are the two honesty ones: a counter must not become N fabricated rows
-(`test_a_fire_counter_becomes_ONE_summary_row`), and `launched` must not become `ran`
+(`test_a_hook_with_history_is_marked_incomplete`), and `launched` must not become `ran`
 (`test_launched_maps_to_deferred_not_ran`).
+
+A data-event trigger is a row in the one trigger store now, so its fires are ordinary run rows in
+the same ledger a cron's are — the one-summary-row projection its old counter needed is gone.
 """
 
 from __future__ import annotations
@@ -24,14 +27,13 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.dashboard.handlers import triggers as T
-from personalclaw.event_triggers import EventTrigger, EventTriggerStore
+from personalclaw.event_triggers import MEMORY_UPDATE, event_spec
 from personalclaw.hooks import ScriptHook, ScriptHookStore
 from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
 from personalclaw.triggers.history import (
     HOOK_STATUS_TO_OUTCOME,
     SCHEDULE_STATUS_TO_OUTCOME,
-    event_trigger_to_record,
     feed_response,
     hook_to_record,
     is_inert,
@@ -40,7 +42,8 @@ from personalclaw.triggers.history import (
     schedule_run_to_record,
     unified_feed,
 )
-from personalclaw.triggers.models import FIRE_OUTCOMES, INERT_OUTCOMES, Outcome, RunWeight
+from personalclaw.triggers.models import FIRE_OUTCOMES, INERT_OUTCOMES, Outcome, RunWeight, Trigger
+from personalclaw.triggers.store import TriggerStore
 
 NOW = time.time()
 
@@ -280,39 +283,20 @@ def test_an_unmapped_run_status_is_loud(caplog):
     assert any("teleported" in r.getMessage() for r in caplog.records)
 
 
-# ── the event projection ──
+# ── an event trigger's runs ──
 
 
-def test_a_fire_counter_becomes_ONE_summary_row():
-    """🔴 Deliberately one row for N fires. The store keeps `fire_count` + `last_fired_at` and
-    nothing else, so N rows would mean N invented timestamps — a fabricated history is worse
-    than an honest summary."""
-    trigger = EventTrigger(
-        id="e1",
-        pattern="memory",
-        action_provider="run-prompt",
-        action_config={},
-        fire_count=5,
-        last_fired_at=NOW,
-    )
-    rec = event_trigger_to_record(trigger)
-    assert rec is not None
-    assert rec.counters == {"fire_count": 5}
-    assert rec.incomplete is True
-    assert "counter, not per-fire rows" in rec.reason
-
-
-def test_an_event_summary_is_ledger_weight_not_a_run():
-    """A reader or health rollup treating it as a run would double-count every fire behind it."""
-    trigger = EventTrigger(
-        id="e1", pattern="x", action_provider="p", action_config={}, fire_count=3, last_fired_at=NOW
-    )
-    assert event_trigger_to_record(trigger).weight == RunWeight.LEDGER.value
-
-
-def test_an_event_trigger_that_never_fired_projects_NOTHING():
-    trigger = EventTrigger(id="e1", pattern="x", action_provider="p", action_config={})
-    assert event_trigger_to_record(trigger) is None
+def test_an_event_triggers_fires_are_real_rows_not_a_counter():
+    """🔴 SUPERSEDED: a data-event trigger used to keep only a fire COUNTER in a store of its own,
+    projected here as ONE summary row marked `incomplete` — N rows would have meant N invented
+    timestamps. It is a row in the one trigger store now, so every fire leaves its own run record:
+    N fires are N real rows, each a FULL run with its own time."""
+    runs = [
+        _run(run_id=f"f{i}", job_id="event:e1", trigger="ok", started_at=NOW - i) for i in range(3)
+    ]
+    feed = unified_feed(schedule_runs=runs)
+    assert [r.run_id for r in feed] == ["f0", "f1", "f2"]
+    assert all(r.weight == RunWeight.FULL.value and not r.incomplete for r in feed)
 
 
 # ── the merged feed ──
@@ -322,26 +306,23 @@ def _feed():
     hook = ScriptHook(
         id="h1", name="fmt", event="Stop", run_count=4, last_run=NOW - 300, last_status="ok"
     )
-    event = EventTrigger(
-        id="e1",
-        pattern="m",
-        action_provider="p",
-        action_config={},
-        fire_count=5,
-        last_fired_at=NOW - 600,
-    )
-    runs = [_run(run_id="r2", started_at=NOW - 30, status="failure", error="boom"), _run()]
-    return unified_feed(schedule_runs=runs, hooks=[hook], event_triggers=[event])
+    runs = [
+        _run(run_id="r2", started_at=NOW - 30, status="failure", error="boom"),
+        _run(),
+        # A data-event trigger's fire: a run row in the same ledger, under its store id.
+        _run(run_id="r3", job_id="event:e1", trigger="ok", started_at=NOW - 600),
+    ]
+    return unified_feed(schedule_runs=runs, hooks=[hook])
 
 
-def test_all_three_kinds_appear_in_one_feed():
+def test_a_hook_an_event_trigger_and_a_cron_appear_in_one_feed():
     """The criterion, stated directly."""
-    kinds = {r.trigger_id.split(":", 1)[0] for r in _feed()}
-    assert kinds == {"schedule", "lifecycle", "event"}
+    ids = {r.trigger_id for r in _feed()}
+    assert ids == {"schedule:j1", "schedule:event:e1", "lifecycle:h1"}
 
 
 def test_every_row_has_the_SAME_shape():
-    """ "the same record shape" — asserted as one distinct key set across all three kinds."""
+    """ "the same record shape" — asserted as one distinct key set across every kind."""
     shapes = {tuple(sorted(r.to_dict())) for r in _feed()}
     assert len(shapes) == 1
 
@@ -392,8 +373,8 @@ def test_one_bad_row_does_not_empty_the_feed():
 
 def test_the_response_names_which_kinds_and_how_many_are_summaries():
     payload = feed_response(_feed())
-    assert payload["kinds"] == ["event", "lifecycle", "schedule"]
-    assert payload["summaries"] == 2  # the hook's last-run row and the event counter
+    assert payload["kinds"] == ["lifecycle", "schedule"]
+    assert payload["summaries"] == 1  # the hook's last-run row; every ledger row is a real run
     assert payload["total"] == len(payload["runs"])
 
 
@@ -413,7 +394,7 @@ def test_outcome_counts_omits_zero_rows():
 
 @pytest.fixture
 def app_with_all_kinds(tmp_path, monkeypatch):
-    """A real app with a real hook store, a real event store, and REAL run records.
+    """A real app with a real hook store, a real trigger store, and REAL run records.
 
     All three projections read real state. The schedule half used to fake
     `ScheduleService.list_all_runs`, but S105 re-pointed the history endpoint at `ScheduleRunStore`
@@ -421,10 +402,11 @@ def app_with_all_kinds(tmp_path, monkeypatch):
     Writing the rows the store's own `append()` writes is strictly stronger: it also pins the
     on-disk shape, which a hand-built dict does not.
 
-    Both home seams are redirected. `PERSONALCLAW_HOME` covers `_event_store()`; the explicit
-    `T.config_dir` patch covers the run store, because conftest's autouse `_isolate_trigger_store`
-    has already pointed that at a DIFFERENT tmp dir (last-wins is the documented way to override
-    it). Measured: with only the env var, `schedule_total` was 0 while every other assertion passed.
+    Both home seams are redirected. `PERSONALCLAW_HOME` covers the process home; the explicit
+    `T.config_dir` patch covers the trigger and run stores, because conftest's autouse
+    `_isolate_trigger_store` has already pointed that at a DIFFERENT tmp dir (last-wins is the
+    documented way to override it). Measured: with only the env var, `schedule_total` was 0 while
+    every other assertion passed.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr(T, "config_dir", lambda: pathlib.Path(tmp_path))
@@ -438,18 +420,16 @@ def app_with_all_kinds(tmp_path, monkeypatch):
     hooks._save()
     hooks.create({"name": "never", "event": "Stop", "provider": "run-prompt"})
 
-    events = EventTriggerStore(cfg / "event_triggers.json")
-    events.save(
-        [
-            EventTrigger(
-                id="e1",
-                pattern="memory",
-                action_provider="run-prompt",
-                action_config={},
-                fire_count=5,
-                last_fired_at=NOW - 600,
-            )
-        ]
+    # A data-event trigger: a row in the one store, whose fire (`r3` below) is a ledger row.
+    TriggerStore(base_dir=cfg).upsert(
+        Trigger(
+            id="event:e1",
+            name="Memory watch",
+            kind="event",
+            enabled=True,
+            spec=event_spec(MEMORY_UPDATE),
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
     )
 
     class FakeCrons:
@@ -466,7 +446,11 @@ def app_with_all_kinds(tmp_path, monkeypatch):
     # Real run records, written the way the runtime writes them (oldest first — the store returns
     # newest-first, so this yields the r2-then-r1 order the assertions below expect).
     runs = ScheduleRunStore(cfg)
-    for row in (_run(), _run(run_id="r2", started_at=NOW - 30, status="failure", error="boom")):
+    for row in (
+        _run(run_id="r3", job_id="event:e1", trigger="ok", started_at=NOW - 600),
+        _run(),
+        _run(run_id="r2", started_at=NOW - 30, status="failure", error="boom"),
+    ):
         asyncio.run(runs.append(ScheduleRun.from_dict(row)))
 
     app = web.Application()
@@ -498,8 +482,11 @@ def test_the_endpoint_returns_all_three_kinds(app_with_all_kinds):
     app, _hook_id = app_with_all_kinds
     status, body = _get(app, "/api/triggers/history?limit=20")
     assert status == 200
-    assert body["kinds"] == ["event", "lifecycle", "schedule"]
-    assert body["summaries"] == 2
+    assert body["kinds"] == ["lifecycle", "schedule"]
+    assert body["summaries"] == 1
+    assert "Memory watch" in {
+        row["trigger_name"] for row in body["runs"]
+    }, "the data-event trigger's run is missing from the feed"
 
 
 def test_the_endpoint_rows_share_one_shape(app_with_all_kinds):
@@ -510,10 +497,11 @@ def test_the_endpoint_rows_share_one_shape(app_with_all_kinds):
 
 
 def test_the_endpoint_reports_the_schedule_total_separately(app_with_all_kinds):
-    """Mixing the paginated schedule total with two summary rows would make the pager overshoot."""
+    """Mixing the paginated ledger total with the hook's summary row would make the pager
+    overshoot."""
     app, _hook_id = app_with_all_kinds
     _status, body = _get(app, "/api/triggers/history")
-    assert body["schedule_total"] == 2
+    assert body["schedule_total"] == 3
     assert body["total"] == len(body["runs"])
 
 
@@ -549,10 +537,11 @@ def test_filtering_to_one_hook_does_not_pull_in_other_kinds(app_with_all_kinds):
     assert len(body["runs"]) == 1
 
 
-def test_filtering_to_a_schedule_excludes_hooks_and_events(app_with_all_kinds):
+def test_filtering_to_a_schedule_excludes_hooks_and_other_triggers(app_with_all_kinds):
     app, _hook_id = app_with_all_kinds
     _status, body = _get(app, "/api/triggers/history?trigger_id=schedule:j1")
     assert body["kinds"] == ["schedule"]
+    assert {row["trigger_id"] for row in body["runs"]} == {"schedule:j1"}
 
 
 def test_a_bad_limit_is_a_400(app_with_all_kinds):

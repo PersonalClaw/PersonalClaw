@@ -423,21 +423,13 @@ def test_spawn_call_site_consults_the_ceiling():
 
 
 def _fire_a_real_event_trigger(tmp_path, monkeypatch, action_config: dict):
-    """Fire a real `web`/memory event trigger through the real engine + the real seam.
+    """Fire a real memory event trigger through the real router + the real seam.
 
-    Deliberately NOT a constructed profile call: `EventTriggerEngine.on_event` →
-    `event_triggers._fire` → `guardrails.denylist.enforce_action` is the production path,
-    and the point is that the seam itself now hands the guardrails a session identity.
+    Deliberately NOT a constructed profile call: a memory write on the bus → the gateway's event
+    router → `gateway._fire_store_trigger` → `guardrails.denylist.enforce_action` is the production
+    path, and the point is that the seam itself hands the guardrails a session identity.
     """
-    import asyncio
-
-    from personalclaw.event_triggers import (
-        MEMORY_KEY_PATTERN,
-        SOURCE_MEMORY,
-        EventTrigger,
-        EventTriggerEngine,
-        EventTriggerStore,
-    )
+    from fakes import fire_memory_event_trigger
 
     executed: list[dict] = []
 
@@ -446,24 +438,7 @@ def _fire_a_real_event_trigger(tmp_path, monkeypatch, action_config: dict):
             executed.append(dict(cfg))
 
     monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda n: _Provider())
-    store = EventTriggerStore(path=tmp_path / "event_triggers.json")
-    store.upsert(
-        EventTrigger(
-            id="real-trigger",
-            pattern=MEMORY_KEY_PATTERN,
-            key_glob="x.*",
-            action_provider="bash",
-            action_config=action_config,
-            debounce_secs=0,
-        )
-    )
-    engine = EventTriggerEngine(store=store)
-
-    async def go():
-        engine.on_event(source=SOURCE_MEMORY, event_type="create", key="x.y", value="v", now=10.0)
-        await asyncio.sleep(0.05)
-
-    asyncio.run(go())
+    fire_memory_event_trigger("bash", config=action_config, trigger_id="real-trigger")
     return executed
 
 

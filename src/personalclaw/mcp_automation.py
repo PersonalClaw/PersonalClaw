@@ -42,6 +42,24 @@ def _store() -> Any:
     return TriggerStore(base_dir=config_dir())
 
 
+def _event_spec_hint() -> str:
+    """How an `event` spec is shaped, derived from the pattern table so it cannot drift from it.
+
+    Without it an agent asked for "when a project.acme memory changes" has to guess the keys, and a
+    guess the validator refuses costs a round trip for a shape the table already knows.
+    """
+    from personalclaw.event_triggers import EVENT_PATTERNS, PATTERN_MATCHER
+
+    patterns = ", ".join(
+        f"{pattern} ({PATTERN_MATCHER[pattern]})" if PATTERN_MATCHER[pattern] else pattern
+        for pattern in EVENT_PATTERNS
+    )
+    return (
+        ' For kind `event`: {"pattern": P} plus the one matcher key P reads, P one of '
+        f"{patterns}; the source is derived from the pattern."
+    )
+
+
 def _list_tools() -> list[dict[str, Any]]:
     """§4's eight-tool namespace. `automation_pause`/`automation_resume` share a handler but are
     separate tools, so an agent reads the intent from the name it called."""
@@ -82,7 +100,7 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": (
                             "Optional explicit trigger spec when `kind` is given, as JSON text "
-                            "(one object)."
+                            "(one object)." + _event_spec_hint()
                         ),
                     },
                 },

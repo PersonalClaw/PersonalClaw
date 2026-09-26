@@ -380,6 +380,7 @@ def create(
     cadence_to_cron: Any = None,
     resume: dict[str, Any] | None = None,
     ttl_secs: float = 0,
+    gates: dict[str, Any] | None = None,
 ) -> AutomationToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
@@ -399,6 +400,7 @@ def create(
         return AutomationToolResult(False, "Error: name is required.")
 
     resolved_spec = dict(spec or {})
+    resolved_gates = dict(gates or {})
     because = ""
     if kind:
         resolved_kind = kind
@@ -416,6 +418,16 @@ def create(
             if err:
                 return AutomationToolResult(False, f"Error: {err}", {"cadence": routed.cadence})
             resolved_spec = {"kind": "cron", "expr": expr, **resolved_spec}
+
+    if resolved_kind == "event":
+        # An event spec names its pattern; the source follows from it, and an author who names one
+        # must not have to repeat what it implies (`event_triggers.with_derived_source`). The burst
+        # guard is the KIND's default rather than a per-surface one, so an event trigger made in
+        # chat and one made on the Triggers page start with the same debounce.
+        from personalclaw.event_triggers import DEFAULT_DEBOUNCE_SECS, with_derived_source
+
+        resolved_spec = with_derived_source(resolved_spec)
+        resolved_gates.setdefault("debounce_secs", DEFAULT_DEBOUNCE_SECS)
 
     if created_by == "agent":
         active = _active_agent_count(store)
@@ -499,6 +511,7 @@ def create(
         # it is stamped from the store's `machine_id` at create — never caller-set. Empty → "".
         origin_harness=_origin_harness_for(store),
         spec=resolved_spec,
+        gates=resolved_gates,
         workflow=dict(workflow),
         # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3 — S116). Authoring a trigger IS the
         # opt-in: the user picked this action. Without it, every trigger this function creates
@@ -648,6 +661,12 @@ def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> AutomationT
             if refusal is not None:
                 return refusal
     if "spec" in applied:
+        if row.trigger.kind == "event" and isinstance(applied["spec"], dict):
+            # The same derivation `create` applies: an edit that names a pattern has named its
+            # source, and requiring it again would refuse the edit for a key the author never chose.
+            from personalclaw.event_triggers import with_derived_source
+
+            applied["spec"] = with_derived_source(applied["spec"])
         # The row's OWN kind, not one the patch could carry: `_SETTABLE` does not admit `kind`, so
         # the spec being edited is always this trigger's, and `semantic_spec_issues` returns nothing
         # for a non-clock kind — a `file` glob is untouched by the cron rule.
@@ -670,11 +689,22 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
     Resume goes through `store.set_enabled`, which REFUSES to enable a row that failed to parse
     (S87). That refusal is surfaced rather than swallowed: silently leaving a "resumed" automation
     disabled is the class of lie this program keeps hunting.
+
+    A resume of a trigger whose `max_fires` budget is SPENT restores the budget. An event trigger
+    switches itself off when its last allowance fires ("tell me the NEXT time X"), and resuming it
+    without clearing the count would flip `enabled` and change nothing — every later fire would meet
+    the budget gate. The person pressing Resume has asked for it to run again.
     """
     row = store.get(trigger_id)
     if row is None:
         return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
     saved = store.set_enabled(trigger_id, not paused)
+    if saved is not None and not paused:
+        from personalclaw.triggers.service import budget_spent
+
+        if budget_spent(saved):
+            saved.run_count = 0
+            store.upsert(saved)
     if saved is None:
         # 🔴 MEASURED: `set_enabled` returns None — not a trigger with `enabled` unchanged — when it
         # refuses a broken row (S87). My first draft compared `saved.enabled`, a branch that could
@@ -917,7 +947,6 @@ def history(
     n: int = 10,
     schedule_runs: list[dict[str, Any]] | None = None,
     hooks: list[Any] | None = None,
-    event_triggers: list[Any] | None = None,
 ) -> AutomationToolResult:
     """`automation_history` — §4: "run/fire rows incl. typed outcomes (agents self-debug)".
 
@@ -938,7 +967,6 @@ def history(
     records = unified_feed(
         schedule_runs=schedule_runs,
         hooks=hooks,
-        event_triggers=event_triggers,
         limit=max(1, n) * 10,
     )
     mine = [r for r in records if _same_trigger(r.trigger_id, trigger_id)][: max(1, n)]

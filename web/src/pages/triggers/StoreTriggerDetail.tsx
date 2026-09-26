@@ -7,12 +7,12 @@ import { confirmDelete } from '../../ui/dialog'
 import { api, type ActionProvider, type Trigger as WireTrigger, type TriggerRunResult } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
 import { triggerStatusMeta, explainsCause } from '../schedule/scheduleMeta'
-import { actionLabel } from './triggerMeta'
+import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
 import { DryRunResult } from './DryRunResult'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
-/** Inspector for a store-backed trigger (file/web_watch/idle/…) in the SidePanel.
+/** Inspector for a store-backed trigger (file/web_watch/idle/…, a data event) in the SidePanel.
  *
  *  Read-only by design: these automations are AUTHORED in chat ("when a file in ~/notes changes,
  *  summarize it…") through the automation_* tools, so the create/edit surface is the conversation,
@@ -46,6 +46,16 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
   // a user comes to learn why. Yields to `broken`, as the list's badge does.
   const warnings = broken.length === 0 ? (trigger.warnings ?? []) : []
   const paths = Array.isArray(trigger.spec?.paths) ? (trigger.spec!.paths as string[]) : []
+  // A `manual` trigger never fires on its own (`Trigger.fires_automatically`), so it has no
+  // "firing" state to report and its Enabled switch would change nothing — a control that does
+  // nothing is worse than none. Run now is how it runs.
+  const isManual = trigger.store_kind === 'manual'
+  // A data event is described by the pattern it listens for and the one matcher that pattern
+  // reads, from the same table the create form uses. An unknown pattern is shown as stored.
+  const spec = (trigger.spec ?? {}) as Record<string, unknown>
+  const eventPattern = trigger.store_kind === 'event' ? String(spec.pattern ?? '') : ''
+  const pm = EVENT_PATTERN_META.find((row) => row.pattern === eventPattern) ?? null
+  const matcher = pm ? eventMatcherValue(spec, pm.matcher) : ''
 
   async function toggle() {
     setBusy(true)
@@ -86,9 +96,13 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
         ? 'Quarantined — a payload matched an injection pattern; re-author it to resume'
         : trigger.state === 'parked'
           ? 'Parked — a resource it needs is busy; it resumes on its own'
-          : trigger.enabled
-            ? 'Firing on its own'
-            : 'Paused — it will not fire until re-enabled'
+          : isManual
+            ? 'Runs only when you run it — it never fires on its own'
+            : !trigger.enabled
+              ? 'Paused — it will not fire until re-enabled'
+              : eventPattern
+                ? 'Listening — it fires when a matching event arrives'
+                : 'Firing on its own'
 
   async function run(isDry: boolean) {
     setBusy(true)
@@ -186,9 +200,11 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
             so a toggle here would report a change it cannot make. A `disabled` Toggle was the
             other option and is worse — it says "you may not", where the truth is "this is not
             yours to set". */}
-        {readOnly
-          ? <span className="shrink-0 text-on-surface-var text-[0.8125rem]">{trigger.enabled ? 'Enabled' : 'Disabled'}</span>
-          : <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />}
+        {isManual
+          ? null
+          : readOnly
+            ? <span className="shrink-0 text-on-surface-var text-[0.8125rem]">{trigger.enabled ? 'Enabled' : 'Disabled'}</span>
+            : <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />}
       </div>
 
       {readOnly && (
@@ -200,7 +216,20 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
       )}
 
       <Section label="When it runs">
-        <div data-type="body-m" className="text-on-surface">{storeKindLabel(trigger.store_kind)}</div>
+        <div data-type="body-m" className="text-on-surface">
+          {eventPattern ? (pm ? pm.label : `A data event (${eventPattern})`) : storeKindLabel(trigger.store_kind)}
+        </div>
+        {pm && <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{pm.desc}</div>}
+        {pm?.matcher && (
+          <div className="mt-1 text-[0.8125rem]">
+            <span className="text-on-surface-low">{pm.matcherLabel}: </span>
+            {/* An AppEvent's empty glob is its documented catch-all; every other matcher is
+                required, so an empty one only appears on a row that failed validation. */}
+            {matcher
+              ? <span className="font-mono text-on-surface break-all">{matcher}</span>
+              : <span className="text-on-surface-low">{pm.matcherRequired ? 'none — this trigger cannot fire' : 'every event'}</span>}
+          </div>
+        )}
         {paths.length > 0 && (
           <ul className="mt-1 flex flex-col gap-0.5">
             {paths.map((p) => (
@@ -270,6 +299,7 @@ function storeKindLabel(kind?: string): string {
     run_completed: 'When a workflow run finishes',
     view: 'When its surface is viewed',
     webhook: 'When its webhook receives a request',
+    manual: 'Only when you run it',
   }
   return map[kind ?? ''] ?? (kind || 'Automation')
 }

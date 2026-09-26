@@ -330,7 +330,7 @@ Create an automation from ONE natural-language message. Use for 'when a file in 
 - `kind` (string, optional) — Optional explicit kind, bypassing NL routing (file/clock/event/web_watch/idle/webhook/run_completed).
 - `message` (string, optional) — What the automation should do when it fires.
 - `name` (string, required) — A short name for the automation.
-- `spec` (string, optional) — Optional explicit trigger spec when `kind` is given, as JSON text (one object).
+- `spec` (string, optional) — Optional explicit trigger spec when `kind` is given, as JSON text (one object). For kind `event`: {"pattern": P} plus the one matcher key P reads, P one of MemoryUpdate, MemoryKeyPattern (key_glob), ContentMatch (content_re), InboxMessage, InboxSender (sender_glob), InboxAddress (address_glob), AppEvent (event_glob); the source is derived from the pattern.
 - `when` (string, optional) — Plain English for WHEN it runs: a cadence ('every weekday at 9') or an event ('when a file in ~/notes changes').
 
 **Example — Create a file-watch automation in one message:**

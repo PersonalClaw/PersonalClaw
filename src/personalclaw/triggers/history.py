@@ -1,32 +1,32 @@
-"""One run-history feed across all three trigger kinds (AUTO §7 criterion 4 — S84).
+"""One run-history feed across the trigger kinds (AUTO §7 criterion 4 — S84).
 
 Criterion 4: "A hook, an event trigger, and a cron all show run history in the same feed with the
 same record shape and typed outcomes."
 
-**Measured before writing — three incompatible shapes and one unused vocabulary.**
+**Measured before writing — incompatible shapes and one unused vocabulary.**
 
-* `schedule` writes a `ScheduleRun` — `run_id`, `job_id`, `trigger`, `started_at`, `finished_at`,
-  `duration_ms`, `status`, `summary`, `trace`, `error` — with `status` from
-  `{success, failure, timeout, launched}`.
+* Every row in the one trigger store — a clock, a file watch, an event trigger, … — writes a
+  `ScheduleRun` per fire: `run_id`, `job_id`, `trigger`, `started_at`, `finished_at`,
+  `duration_ms`, `status`, `summary`, `trace`, `error`, with `status` from
+  `{success, failure, timeout, launched}` or a typed suppression.
 * `lifecycle` (hooks) keeps NO run store. `ScriptHook` carries `last_run`/`last_status`/`run_count`
   plus a transient `ScriptHookResult` (`exit_code`, `duration_ms`, `stderr`) that is never saved.
-* `event` keeps a COUNTER: `fire_count` + `last_fired_at`, no per-fire rows at all.
+
+(A data-event trigger used to live in a store of its own that kept only a fire COUNTER, projected
+here as one synthetic summary row. It is a store row now, so its fires are ordinary run rows.)
 
 And `FireRecord` — the typed row S62 designed for exactly this, with `FIRE_OUTCOMES` — is
 **exported and
 never constructed**: `grep "FireRecord("` outside its own module returns nothing. So the shared
 shape the criterion asks for already existed on paper and nothing produced it.
 
-**This module projects, it does not migrate.** Each kind keeps its own store; the
-projections map what each one HAS onto the common row, and `unified_feed` merges them
-newest-first. A migration that rewrote three stores into one is the unified-store program
-S83 recorded as unbuilt. A projection is what makes the feed honest meanwhile, because the
-alternative is the schedule-only feed the criterion calls wrong.
+**This module projects, it does not migrate.** The projections map what each store HAS onto the
+common row, and `unified_feed` merges them newest-first.
 
-**Honesty over uniformity, in two places.**
+**Honesty over uniformity.**
 
-1. **A counter is not a run.** An `event` trigger's `fire_count` becomes ONE synthetic row carrying
-   the count, marked `incomplete=True` and `weight=ledger`, never N fabricated rows with invented
+1. **A counter is not a run.** A hook's `run_count` becomes ONE row for its most recent run,
+   marked `incomplete=True` when earlier runs are gone, never N fabricated rows with invented
    timestamps. `FireRecord.incomplete` exists for this: "a count that was cut short … a reader is
    never misled by a number that stopped early".
 2. **`launched` is not `ran`.** The schedule store's honest T7 status — the action started a
@@ -359,46 +359,10 @@ def hook_to_record(hook: Any) -> FireRecord | None:
     )
 
 
-def event_trigger_to_record(trigger: Any) -> FireRecord | None:
-    """Project an event trigger's fire COUNTER onto one synthetic row, or None if it never fired.
-
-    Deliberately ONE row for N fires. The store keeps `fire_count` + `last_fired_at` and nothing
-    else, so N rows would mean N invented timestamps — a fabricated history is worse than an
-    honest summary,
-    and `incomplete=True` plus the count in `counters` says exactly what is known.
-
-    `weight=ledger` rather than `full`: this row is a bookkeeping summary, not a run the user can
-    open. A reader or health rollup treating it as a run would double-count every fire behind it.
-    """
-    count = int(getattr(trigger, "fire_count", 0) or 0)
-    last = getattr(trigger, "last_fired_at", None)
-    if count <= 0 and not last:
-        return None
-    tid = str(getattr(trigger, "id", "") or "")
-    return FireRecord(
-        id=f"event:{tid}:summary",
-        trigger_id=f"event:{tid}",
-        # An `EventTrigger` carries NO `name` field — checked against the dataclass. The product
-        # already has a convention for this: the Triggers list serializes the event kind as
-        # `"name": t.id` (`handlers/triggers.py:_serialize_event`), so the bare id IS its display
-        # name. Reusing that beats inventing a second answer for the same question, which is the
-        # whole reason this name is resolved in ONE place.
-        trigger_name=_redact(tid),
-        outcome=Outcome.RAN.value,
-        reason=f"{count} fire(s) recorded; this store keeps a counter, not per-fire rows",
-        weight=RunWeight.LEDGER.value,
-        started_at=_iso(last),
-        finished_at=_iso(last),
-        counters={"fire_count": count},
-        incomplete=True,
-    )
-
-
 def unified_feed(
     *,
     schedule_runs: list[dict[str, Any]] | None = None,
     hooks: list[Any] | None = None,
-    event_triggers: list[Any] | None = None,
     limit: int = 50,
 ) -> list[FireRecord]:
     """Every kind's history as one list, newest first.
@@ -421,14 +385,6 @@ def unified_feed(
             record = hook_to_record(hook)
         except Exception:  # noqa: BLE001
             logger.debug("could not project a hook", exc_info=True)
-            continue
-        if record is not None:
-            records.append(record)
-    for trigger in event_triggers or []:
-        try:
-            record = event_trigger_to_record(trigger)
-        except Exception:  # noqa: BLE001
-            logger.debug("could not project an event trigger", exc_info=True)
             continue
         if record is not None:
             records.append(record)

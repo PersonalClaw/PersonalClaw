@@ -6,9 +6,12 @@ rather than to fix a defect:
 
     hooks._run_provider (lifecycle)                  incident_active   + enforce_action
     gateway._fire_store_trigger (clock/file/event)   incident_active   + enforce_action (AG-12)
-    event_triggers.execute_event_action              incident_active   + enforce_action
     handlers/triggers._dispatch_store_action (manual) manual_refusal
     handlers/hooks                                   -- reads metadata only, never executes
+
+(`event_triggers.execute_event_action` was a third unattended seam until a data-event trigger
+became a row in the one store: its fires now run through `gateway._fire_store_trigger` like every
+other store trigger, so the module no longer resolves or runs a provider at all.)
 
 The `enforce_action` column is AG-12's addition, and it is a SECOND invariant over the same sites:
 `POLICY_CHECKS` below is satisfied by ANY one check, which is right for its question ("does this
@@ -43,8 +46,7 @@ import pytest
 #: `test_the_catalog_site_does_not_execute` below.
 EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "the lifecycle-hook fire path"),
-    ("personalclaw.gateway", "the clock/file trigger fire path"),
-    ("personalclaw.event_triggers", "the data-event fire path"),
+    ("personalclaw.gateway", "the clock/file/event trigger fire path"),
     ("personalclaw.dashboard.handlers.triggers", "the manual Run path"),
     # INU-7: approving an inbox proposal whose apply case is `action` dispatches a provider
     # directly (not through `triggers.tools.run`), so it is a real execution site. User-clicked,
@@ -100,8 +102,7 @@ POLICY_CHECKS: tuple[str, ...] = (
 #: AG-12 restored it; this rail is what stops the next retirement dropping it again.
 DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "script hooks"),
-    ("personalclaw.gateway", "clock / file / webhook / chained triggers"),
-    ("personalclaw.event_triggers", "memory-event triggers"),
+    ("personalclaw.gateway", "clock / file / webhook / chained / data-event triggers"),
     ("personalclaw.dashboard.tile_refresh", "TTL dashboard tiles"),
     ("personalclaw.proactive.autoexec", "trivial-tier triage auto-execution"),
 )

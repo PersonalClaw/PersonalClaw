@@ -182,8 +182,7 @@ describe('an automation whose agent approves itself asks the same way', () => {
   const writers: Array<[string, () => Promise<unknown>, unknown]> = [
     ['createSchedule', () => api.createSchedule({ name: 't', every: 300, approval_mode: 'auto' }), { ok: true, trigger }],
     ['updateSchedule', () => api.updateSchedule('t', { approval_mode: 'auto' }), { ok: true, trigger }],
-    ['createEvent', () => api.createEvent({ pattern: 'AppEvent', action: { provider: 'invoke-agent', config: { approval_mode: 'auto' } } }), trigger],
-    ['updateEventTrigger', () => api.updateEventTrigger('e1', { action: { provider: 'invoke-agent', config: { approval_mode: 'auto' } } }), { ok: true, trigger }],
+    ['createEvent', () => api.createEvent({ pattern: 'AppEvent', action: { provider: 'invoke-agent', config: { approval_mode: 'auto' } } }), { ok: true, trigger: { ...trigger, kind: 'store' } }],
     ['createHook', () => api.createHook({ name: 'h', event: 'stop', provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
     ['updateHook', () => api.updateHook('h', { provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
     ['saveWorkflowDef', () => api.saveWorkflowDef({ name: 'w', root: { kind: 'stage', id: 's', config: { approval_mode: 'auto' } }, save: true }), { saved: true, valid: true, issues: [] }],

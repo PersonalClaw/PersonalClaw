@@ -38,11 +38,30 @@ relative to `PersonalClaw/src/personalclaw/`.
   decides what, if anything, to send.
 - **`schedule_history.py`** — run history; **`schedule_script.py`** /
   **`schedule_trigger.py`** — script- and trigger-shaped jobs.
-- **`event_triggers.py`** — data-event triggers: `MemoryUpdate` (any memory
-  write), `MemoryKeyPattern` (a write whose key matches a glob, e.g.
-  `project.acme.*`), `ContentMatch` (value matches a regex/substring). A
-  `max_fires` budget auto-disables a trigger once exhausted ("alert me the
-  NEXT time X").
+- **Event triggers** — a `kind: "event"` row in the one trigger store
+  (`triggers.json`), made by the Triggers page's **Data event** form, the
+  chat's `automation_create` or `POST /api/triggers`. It fires when
+  PersonalClaw's own state changes: a memory write (`MemoryUpdate`,
+  `MemoryKeyPattern` — a key glob such as `project.acme.*`, `ContentMatch` — a
+  value regex), an accepted inbox message (`InboxMessage`, `InboxSender`,
+  `InboxAddress`) or an app's trigger-source event (`AppEvent`, a glob on
+  `app:<app>:<event>`). The pattern grammar and the bus are
+  `event_triggers.py`; every source calls its `emit_event`. In the gateway the
+  router (`triggers/event_fire.py`) matches the store's event rows, admits each
+  match through the gate walk a clock fire takes (`service.admit_fire`:
+  incident, spacing, rate, quiet hours, budget, overlap claim, capability
+  fence) and runs it through the one store dispatch
+  (`gateway._fire_store_trigger`) — injection screen, fence, denylist, rung
+  ladder, run record, delivery — so an event fire leaves a history row like
+  any other. `gates.max_fires` switches the trigger off once spent ("alert me
+  the NEXT time X"); `gates.debounce_secs` (5 s unless set) collapses a burst,
+  and at most 30 event fires a minute run across all event triggers. A process
+  with no gateway — the CLI, or the `mcp-core` server an agent's memory tools
+  run in — parks an event a stored trigger wants in `trigger-spool.jsonl`, and
+  the gateway's next tick re-emits it. A legacy `event_triggers.json` is
+  absorbed into the store once at boot and renamed `.migrated`. An
+  agent-lifecycle event (a session ending, a tool call) is a **lifecycle**
+  trigger, not an event trigger.
 - **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
   one-shot LLM call, **validated with croniter before use** (a hallucinated
   expression never reaches the store).

@@ -4,11 +4,10 @@
 trigger spec patterns match; payload is data."*
 
 **The rule HOLDS, and this file is the guard rather than a fix.** Verified rather than assumed: the
-regex in `matches` comes from `trigger.content_re`, the glob from `trigger.key_glob`, and the
-payload
-is only ever matched AGAINST. `render_template` does not re-expand a substituted value either
-(checked in S126), so a payload carrying `$OTHER_KEY` cannot reach a second key's contents. Saying
-"it already holds" plainly matters — inventing a fix here would be worse than finding none.
+regex in `matches` comes from the row's `spec.content_re`, the glob from its `spec.key_glob`, and
+the payload is only ever matched AGAINST. `render_template` does not re-expand a substituted value
+either (checked in S126), so a payload carrying `$OTHER_KEY` cannot reach a second key's contents.
+Saying "it already holds" plainly matters — inventing a fix here would be worse than finding none.
 
 🔴 WHAT THE AUDIT DID FIND: a real ReDoS surface on the memory-write path. Measured on `matches`
 itself, with an author regex of `(a+)+$` — a shape people write by accident, not an attack:
@@ -19,12 +18,11 @@ itself, with an author regex of `(a+)+$` — a shape people write by accident, n
     value len 28: 10.122s
     value len 30: 40.7s
 
-`matches` runs on every memory write (`vector_memory` → `emit_event` →
-`on_event`), and
-the value was not length-bounded. **A length cap does NOT fix exponential backtracking** — that is
-recorded on `CONTENT_MATCH_SCAN_LIMIT` rather than pretended otherwise — so catastrophic
-patterns are
-caught where they are AUTHORED.
+`matches` runs on every memory write (`vector_memory` → `emit_event` → the gateway's event
+router, or the spool's want-check in a process without one), and the value was not
+length-bounded. **A length cap does NOT fix exponential backtracking** — that is recorded on
+`CONTENT_MATCH_SCAN_LIMIT` rather than pretended otherwise — so catastrophic patterns are caught
+where they are AUTHORED.
 """
 
 from __future__ import annotations
@@ -38,10 +36,11 @@ from personalclaw.event_triggers import (
     CONTENT_MATCH_SCAN_LIMIT,
     MEMORY_KEY_PATTERN,
     SOURCE_MEMORY,
-    EventTrigger,
     catastrophic_regex_hint,
+    event_spec,
 )
 from personalclaw.event_triggers import matches as _matches
+from personalclaw.triggers.models import Trigger
 
 
 def matches(t, **kw):
@@ -50,8 +49,9 @@ def matches(t, **kw):
     return _matches(t, source=kw.pop("source", SOURCE_MEMORY), **kw)
 
 
-def _trigger(**kw) -> EventTrigger:
-    return EventTrigger(id=kw.pop("id", "e:t"), pattern=kw.pop("pattern", CONTENT_MATCH), **kw)
+def _trigger(pattern: str = CONTENT_MATCH, matcher: str = "") -> Trigger:
+    """A `kind: "event"` store row whose spec carries `pattern` and its one matcher."""
+    return Trigger(id="event:t", name="t", kind="event", spec=event_spec(pattern, matcher))
 
 
 # ── rule (d): the payload never supplies a pattern ──
@@ -59,7 +59,7 @@ def _trigger(**kw) -> EventTrigger:
 
 def test_the_PATTERN_comes_from_the_TRIGGER_not_the_value():
     """The rule's core. A value that looks like a regex is matched as literal data."""
-    t = _trigger(content_re="deploy")
+    t = _trigger(matcher="deploy")
     assert matches(t, event_type="set", key="k", value="deploy finished") is True
     # The value's own regex-ish text is not compiled — it is the haystack, never the needle.
     assert matches(t, event_type="set", key="k", value=".*") is False
@@ -68,13 +68,13 @@ def test_the_PATTERN_comes_from_the_TRIGGER_not_the_value():
 def test_a_value_containing_a_REGEX_cannot_match_everything():
     """🔴 If the value were ever used as the pattern, `.*` in a memory write would fire every
     ContentMatch trigger on the machine."""
-    t = _trigger(content_re="^SPECIFIC$")
+    t = _trigger(matcher="^SPECIFIC$")
     assert matches(t, event_type="set", key="k", value=".*") is False
     assert matches(t, event_type="set", key="k", value="(?s).*") is False
 
 
 def test_the_KEY_GLOB_comes_from_the_trigger_too():
-    t = _trigger(pattern=MEMORY_KEY_PATTERN, key_glob="project.acme.*")
+    t = _trigger(MEMORY_KEY_PATTERN, "project.acme.*")
     assert matches(t, event_type="set", key="project.acme.x", value="v") is True
     assert matches(t, event_type="set", key="project.other.x", value="v") is False
     # A value shaped like a glob changes nothing.
@@ -105,13 +105,13 @@ def test_a_payload_value_cannot_inject_CONTEXT():
 def test_the_scan_is_LENGTH_CAPPED():
     """A sane regex over a multi-megabyte value is a linear cost this bounds. (It does NOT bound a
     catastrophic one — see the module docstring.)"""
-    t = _trigger(content_re="NEEDLE")
+    t = _trigger(matcher="NEEDLE")
     beyond = "x" * (CONTENT_MATCH_SCAN_LIMIT + 100) + "NEEDLE"
     assert matches(t, event_type="set", key="k", value=beyond) is False
 
 
 def test_a_match_INSIDE_the_cap_still_fires():
-    t = _trigger(content_re="NEEDLE")
+    t = _trigger(matcher="NEEDLE")
     assert matches(t, event_type="set", key="k", value="NEEDLE at the front") is True
 
 
@@ -173,30 +173,73 @@ def test_the_hint_says_HOW_TO_FIX_IT():
 # ── the hint is WIRED, not inert ──
 
 
-def test_the_CREATE_handler_surfaces_the_hint():
-    """🔴 A hint nothing returns is the inert-control defect this program keeps finding."""
-    import inspect
+def test_the_CREATE_handler_surfaces_the_hint(tmp_path, monkeypatch):
+    """🔴 A hint nothing returns is the inert-control defect this program keeps finding. Driven
+    through the Triggers page's create route, not read off its source."""
+    import asyncio
+    import json
+    import types
 
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    import personalclaw.config.loader as loader
     from personalclaw.dashboard.handlers import triggers as T
 
-    src = inspect.getsource(T._create_event)
-    assert "_regex_hint" in src and "warning" in src
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
+    app = web.Application()
+    app["state"] = types.SimpleNamespace(push_refresh=lambda *k: None)
+    req = make_mocked_request("POST", "/api/triggers", app=app)
+    req["user"] = "tester"
+    body = {
+        "trigger_type": "event",
+        "name": "slow",
+        "pattern": CONTENT_MATCH,
+        "content_re": r"(a+)+$",
+        "action": {"provider": "notify", "config": {"title_template": "x"}},
+    }
+
+    async def _json():
+        return body
+
+    req.json = _json  # type: ignore[assignment]
+    resp = asyncio.run(T.api_trigger_create(req))
+    assert resp.status == 201
+    assert "quantifier" in json.loads(resp.body.decode())["warning"]
 
 
-def test_the_UPDATE_handler_surfaces_the_hint_too():
+def test_an_EDIT_that_introduces_the_pattern_is_warned_on_the_row(tmp_path):
     """An edit that INTRODUCES a catastrophic pattern must say so, or the author only finds out when
-    their memory writes get slow."""
-    import inspect
+    their memory writes get slow. The warning is the row's own validation issue, so the Triggers
+    page's warning chip and the doctor's `spec_warning` both carry it."""
+    from personalclaw.triggers import tools as Tools
+    from personalclaw.triggers.store import TriggerStore
 
-    from personalclaw.dashboard.handlers import triggers as T
-
-    src = inspect.getsource(T._update_event)
-    assert "_regex_hint" in src and "warning" in src
+    store = TriggerStore(base_dir=tmp_path)
+    made = Tools.create(
+        store,
+        name="watch",
+        kind="event",
+        spec={"pattern": CONTENT_MATCH, "content_re": "deploy"},
+        workflow={"inline": {"provider": "notify", "config": {}}},
+        created_by="user",
+    )
+    assert made.ok, made.text
+    trigger_id = made.data["trigger"]["id"]
+    assert not store.get(trigger_id).warnings
+    edited = Tools.update(
+        store,
+        trigger_id=trigger_id,
+        patch={"spec": {"pattern": CONTENT_MATCH, "content_re": r"(a+)+$"}},
+    )
+    assert edited.ok, edited.text
+    assert any("quantifier" in w.message for w in store.get(trigger_id).warnings)
 
 
 def test_a_catastrophic_pattern_is_WARNED_not_REFUSED():
     """Refusing would break triggers people already have — the same warn-and-keep-working reasoning
     S119 recorded for a verbatim webhook token. The trigger still matches."""
-    t = _trigger(content_re=r"(a+)+$")
+    t = _trigger(matcher=r"(a+)+$")
     assert matches(t, event_type="set", key="k", value="aaa!") is False  # ran, did not raise
-    assert catastrophic_regex_hint(t.content_re), "and the author was warned"
+    assert catastrophic_regex_hint(t.spec["content_re"]), "and the author was warned"
