@@ -541,7 +541,12 @@ def request_login(
             "node_id": node_id,
             "choices": ["I have signed in", "Cancel this run"],
         },
-        attempts=[{"summary": f"opened {slug} and found that it {blocker}"}],
+        # The attempt ledger's own key names — `outcome` + `note`, the pair
+        # `publish.ledger_row` mints and `needs_input.summarize_attempts` reads. Any other key
+        # is read by nothing: the card falls back to its placeholder and the `_REASON_BLOCKER`
+        # wording never reaches the one surface a stuck user actually reads. The wording lives
+        # in `note` because that is the clause that explains the result.
+        attempts=[{"outcome": f"opened {slug}", "note": f"it {blocker}"}],
         evidence={
             "site": slug,
             "url": safe_url,
