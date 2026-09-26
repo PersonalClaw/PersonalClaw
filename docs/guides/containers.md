@@ -298,7 +298,9 @@ A channel keeps its own owner id under `PERSONALCLAW_OWNER_ID_<PROVIDER>`
 notifications on a channel with that channel's own, falling back to `PERSONALCLAW_OWNER_ID`
 when it has none. `PERSONALCLAW_OWNER_ID` is the one key every channel used to share, and a
 channel app that has not moved to its own key still reads only that one — so set it, and add
-the per-channel key when a second channel needs a different owner id.
+the per-channel key when a second channel needs a different owner id. A notification for the
+owner tries each connected channel in turn until one delivers it; when none can (no channel
+knows an owner id it can reach), it lands in the Inbox with a sentence saying why.
 
 ## Troubleshooting
 

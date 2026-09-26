@@ -487,7 +487,7 @@ class TestDeliverResult:
     @pytest.mark.asyncio
     async def test_channel_dm_delivery(self, monkeypatch):
         # The owner's DM goes through a channel that knows the owner's id THERE
-        # (`channel_delivery.owner_route`), read live from that channel's own key.
+        # (`channel_delivery.reach_owner`), read live from that channel's own key.
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
         delivery = _mock_channel_delivery()
         orch.register_channel_delivery(delivery, provider="slack")

@@ -1,6 +1,7 @@
 """Channel integration — link sessions, handoff, channel listing."""
 
 import logging
+from typing import Any
 
 from aiohttp import web
 
@@ -26,9 +27,6 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
     delivery = state.channel_delivery
     if not delivery:
         return web.json_response({"error": "Channel not connected"}, status=503)
-    owner_id = getattr(state, "owner_id", None)
-    if not owner_id:
-        return web.json_response({"error": "owner not configured"}, status=500)
 
     session_key = _history_key_for(name)
 
@@ -47,18 +45,32 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
 
     body = await request.json() if request.content_length else {}
     raw_channel = body.get("channel", "")
-    if not raw_channel or raw_channel == "dm":
-        target_channel = await delivery.open_dm(owner_id)
-    else:
-        target_channel = raw_channel
-
     # redact_and_truncate applies both redact_exfiltration_urls + redact_credentials
     title = redact_and_truncate(session.title or name, max_chars=200)
-    thread_ts = await delivery.deliver_text(
-        target_channel, f"\U0001f9f5 *{title}*\nSession linked from dashboard."
-    )
-    if not thread_ts:
-        return web.json_response({"error": "failed to create thread"}, status=500)
+    opening = f"\U0001f9f5 *{title}*\nSession linked from dashboard."
+    if not raw_channel or raw_channel == "dm":
+        # The owner's DM on the first channel that reaches the owner, with the id that channel
+        # keeps for them — it used to be the first channel with the one shared id, which is
+        # another platform's user id on every channel but one.
+        from personalclaw.channel_delivery import reach_owner
+
+        async def _open_thread(owner_delivery: Any, dm: str) -> str:
+            ts = await owner_delivery.deliver_text(dm, opening)
+            if not ts:
+                raise RuntimeError("the channel created no thread")
+            return str(ts)
+
+        owner = await reach_owner(_open_thread)
+        if not owner.delivered:
+            return web.json_response(
+                {"error": owner.sentence() or "Channel not connected"}, status=502
+            )
+        delivery, target_channel, thread_ts = owner.delivery, owner.channel, owner.result
+    else:
+        target_channel = raw_channel
+        thread_ts = await delivery.deliver_text(target_channel, opening)
+        if not thread_ts:
+            return web.json_response({"error": "failed to create thread"}, status=500)
 
     state.sessions.set_channel_link(session_key, thread_ts, target_channel)
     session._channel_linked = True
@@ -114,7 +126,8 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     if not state.channel_delivery:
         return web.json_response({"error": "Channel not connected"}, status=503)
-    if not state.conversation_log:
+    conversation_log = state.conversation_log
+    if not conversation_log:
         return web.json_response({"error": "no conversation log"}, status=500)
 
     try:
@@ -124,26 +137,42 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
 
     body = await json_object_body(request)
     channel = body.get("channel")
-
-    # A named channel goes through the connected handle; the owner's DM through the channel
-    # that knows the owner's id there (one shared id, used on whichever channel was first,
-    # addressed users of one platform on another).
-    from personalclaw.channel_delivery import owner_route
-
-    route = None if channel else owner_route()
-    delivery, owner_id = route if route is not None else (state.channel_delivery, "")
     history_key = _history_key_for(session.key)
-    thread_ts = await handoff_to_channel(
-        delivery,
-        owner_id,
-        state.conversation_log,
-        history_key,
-        title=session.title if session._titled else "",
-        channel=channel,
-        sessions=state.sessions,
-    )
-    if not thread_ts:
-        return web.json_response({"error": "handoff failed"}, status=500)
+    if not conversation_log.read_messages(history_key):
+        return web.json_response(
+            {"error": "This conversation has no messages to hand off yet."}, status=400
+        )
+
+    async def _handoff(delivery: Any, target: str) -> str:
+        ts = await handoff_to_channel(
+            delivery,
+            "",
+            conversation_log,
+            history_key,
+            title=session.title if session._titled else "",
+            channel=target,
+            sessions=state.sessions,
+        )
+        if not ts:
+            raise RuntimeError("the channel created no thread")
+        return ts
+
+    # A named channel goes through the connected handle; the owner's DM through the first
+    # channel that reaches the owner, with the id that channel keeps for them.
+    if channel:
+        try:
+            thread_ts = await _handoff(state.channel_delivery, channel)
+        except RuntimeError:
+            return web.json_response({"error": "handoff failed"}, status=500)
+    else:
+        from personalclaw.channel_delivery import reach_owner
+
+        owner = await reach_owner(_handoff)
+        if not owner.delivered:
+            return web.json_response(
+                {"error": owner.sentence() or "Channel not connected"}, status=502
+            )
+        thread_ts = owner.result
 
     sel().log_api_access(
         caller="dashboard",

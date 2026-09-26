@@ -375,7 +375,7 @@ def _make_send_app(state) -> web.Application:
 
 def _mock_state(channel_delivery=None, owner_id=""):
     """A dashboard state whose owner is reached the way the real one reaches it: through the
-    channel registry, with the owner id that channel keeps for ITSELF (``owner_route``). So the
+    channel registry, with the owner id that channel keeps for ITSELF (``reach_owner``). So the
     delivery is registered as ``slack`` and the owner id stored under Slack's own key."""
     state = MagicMock()
     state.channel_delivery = channel_delivery
@@ -480,20 +480,26 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_slack_error(self):
+        """The only channel cannot open the owner's DM: the message goes to the Inbox, and the
+        response says so and why (it used to answer 502 and deliver it nowhere)."""
         slack = MagicMock()
         slack.open_dm = AsyncMock(side_effect=Exception("fail"))
         state = _mock_state(channel_delivery=slack, owner_id="U123")
         app = _make_send_app(state)
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/send-message", json={"text": "hello"})
-            assert resp.status == 502
+            assert resp.status == 200
             data = await resp.json()
-            assert data["ok"] is False
-            assert "fail" in data["error"]
+            assert data["ok"] is True and data["channel"] is False and data["inbox"] is True
+            assert data["detail"] == (
+                "No channel could deliver this to you: slack could not open a conversation with "
+                "the owner id it has. The gateway log has the errors."
+            )
+            assert state._inbox_svc.inbox.add.called
 
     @pytest.mark.asyncio
     async def test_send_message_slack_post_error(self):
-        """502 when open_dm succeeds but post_message raises."""
+        """open_dm succeeds but the send raises: to the Inbox, saying the channel could not send."""
         slack = MagicMock()
         slack.open_dm = AsyncMock(return_value="C123")
         slack.deliver_text = AsyncMock(side_effect=Exception("slack_api_error"))
@@ -501,10 +507,10 @@ class TestSendMessage:
         app = _make_send_app(state)
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/send-message", json={"text": "hello"})
-            assert resp.status == 502
+            assert resp.status == 200
             data = await resp.json()
-            assert data["ok"] is False
-            assert "slack_api_error" in data["error"]
+            assert data["inbox"] is True and data["channel"] is False
+            assert "slack could not send it" in data["detail"]
 
     @pytest.mark.asyncio
     async def test_send_message_with_blocks(self):

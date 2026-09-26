@@ -577,6 +577,9 @@ async def api_send_message(request: web.Request) -> web.Response:
     job_name = None
     channel_attempted = False
     channel_error = ""
+    # Set when no channel could reach the owner and the message went to the Inbox instead:
+    # the sentence saying why, which the response carries.
+    inbox_detail = ""
     try:
         # ───────────────────────────────────────────────────────────────────
         # send_message delivery contract
@@ -693,43 +696,48 @@ async def api_send_message(request: web.Request) -> web.Response:
                 title = f"⏰ {safe_name}"
                 text += "\n\n_(session closed — delivered as notification)_"
             state.notify(notification_kinds.AGENT, title, text)
+
+            async def _send(delivery: Any, channel: str) -> Any:
+                if blocks:
+                    return await delivery.deliver_rich(
+                        channel,
+                        blocks,
+                        text,
+                        thread_ts=thread_ts,
+                        unfurl_links=unfurl_links,
+                        unfurl_media=unfurl_media,
+                        reply_broadcast=reply_broadcast,
+                    )
+                return await delivery.deliver_text(
+                    channel,
+                    text,
+                    thread_ts=thread_ts,
+                    unfurl_links=unfurl_links,
+                    unfurl_media=unfurl_media,
+                    reply_broadcast=reply_broadcast,
+                )
+
             if state.channel_delivery:
                 try:
                     delivery = state.channel_delivery
-                    if target_channel:
-                        channel = target_channel
-                    elif target_user:
-                        channel = await delivery.open_dm(target_user)
+                    if target_channel or target_user:
+                        channel = target_channel or await delivery.open_dm(target_user)
+                        if channel:
+                            channel_attempted = True
+                            channel_ts = await _send(delivery, channel)
+                            sent_channel = True
                     else:
-                        # The owner's DM goes through the channel that knows the owner's id
-                        # THERE, and the message through the same handle that opened it.
-                        from personalclaw.channel_delivery import open_owner_dm
+                        # The owner's DM, on the first channel that reaches the owner — the
+                        # message through the same handle that opened it — else the Inbox.
+                        from personalclaw.channel_delivery import deliver_to_owner
 
-                        opened = await open_owner_dm()
-                        delivery, channel = opened if opened is not None else (delivery, "")
-
-                    if channel:
-                        channel_attempted = True
-                        if blocks:
-                            channel_ts = await delivery.deliver_rich(
-                                channel,
-                                blocks,
-                                text,
-                                thread_ts=thread_ts,
-                                unfurl_links=unfurl_links,
-                                unfurl_media=unfurl_media,
-                                reply_broadcast=reply_broadcast,
-                            )
-                        else:
-                            channel_ts = await delivery.deliver_text(
-                                channel,
-                                text,
-                                thread_ts=thread_ts,
-                                unfurl_links=unfurl_links,
-                                unfurl_media=unfurl_media,
-                                reply_broadcast=reply_broadcast,
-                            )
-                        sent_channel = True
+                        owner = await deliver_to_owner(_send, title=title, text=text, state=state)
+                        channel_attempted = not owner.no_channel
+                        sent_channel = owner.delivered
+                        channel_ts = owner.result if owner.delivered else None
+                        inbox_detail = owner.sentence() if owner.inboxed else ""
+                        if not owner.delivered and not owner.inboxed:
+                            channel_error = owner.sentence()
                 except Exception as exc:
                     channel_attempted = True
                     channel_error = str(exc)
@@ -749,17 +757,19 @@ async def api_send_message(request: web.Request) -> web.Response:
                 tool_name="send_message",
                 outcome=(
                     "completed"
-                    if sent_channel or sent_session or not channel_attempted
+                    if sent_channel or sent_session or inbox_detail or not channel_attempted
                     else "error"
                 ),
                 downstream_service=(
-                    "session" if sent_session else ("channel" if sent_channel else "dashboard")
+                    "session"
+                    if sent_session
+                    else ("channel" if sent_channel else ("inbox" if inbox_detail else "dashboard"))
                 ),
                 resources=base_res + thread_hint,
             )
         except Exception:
             logger.warning("SEL logging failed for send_message", exc_info=True)
-    if channel_attempted and not sent_channel:
+    if channel_attempted and not sent_channel and not inbox_detail:
         safe_error, _ = redact_credentials(channel_error)
         safe_error, _ = redact_exfiltration_urls(safe_error)
         return web.json_response(
@@ -769,6 +779,10 @@ async def api_send_message(request: web.Request) -> web.Response:
     resp_body: dict[str, Any] = {"ok": True, "channel": sent_channel, "session": sent_session}
     if channel_ts:
         resp_body["ts"] = channel_ts
+    if inbox_detail:
+        # Delivered, to the Inbox, and the response says so and why: no channel reached you.
+        resp_body["inbox"] = True
+        resp_body["detail"] = inbox_detail
     return web.json_response(resp_body)
 
 

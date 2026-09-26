@@ -1254,6 +1254,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return f"Failed: {resp}"
         if resp.get("session"):
             return "Message injected into target session."
+        if resp.get("inbox"):
+            # Connected channels, none of which reached the owner: it went to the Inbox.
+            return f"Message delivered to the Inbox. {resp.get('detail', '')}".strip()
         # Explicit session="channel" is the opt-out, not a failure — surface
         # the actual outcome (channel delivery + notification) instead of the
         # "session unavailable" fallback message.

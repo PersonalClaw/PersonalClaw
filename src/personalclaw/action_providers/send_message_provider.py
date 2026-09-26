@@ -9,12 +9,14 @@ Non-blocking native action. ``action_config`` shape::
         "title": "Agent"       # optional heading
     }
 
-Delivery goes through the provider-agnostic ``state.channel_delivery``
-(:class:`~personalclaw.channel_delivery.ChannelDelivery`) — the provider is
-vendor-neutral about *which* channel backend, it just asks the wired delivery
-to open a DM + post text. When no channel is configured it falls back to a
-dashboard notification so the action still surfaces. Text is redacted
-(credentials + exfiltration URLs) before send.
+Delivery goes through the provider-agnostic
+:class:`~personalclaw.channel_delivery.ChannelDelivery` — the provider is
+vendor-neutral about *which* channel backend. The owner's DM (no ``channel`` or
+``user``) goes to the first connected channel that reaches the owner
+(``channel_delivery.deliver_to_owner``), and to the Inbox, saying why, when none
+does. When no channel is configured it falls back to a dashboard notification so
+the action still surfaces. Text is redacted (credentials + exfiltration URLs)
+before send.
 """
 
 from __future__ import annotations
@@ -89,14 +91,31 @@ class SendMessageActionProvider(ActionProvider):
             )
 
         try:
-            target = channel
-            if not target:
-                owner = user or getattr(state, "owner_id", "") or ""
-                if not owner:
+            if not channel and not user:
+                # The owner's DM, on the first channel that reaches the owner with the id that
+                # channel keeps for them — else the Inbox, saying why. It used to DM the one
+                # shared id through whichever channel sorted first.
+                from personalclaw.channel_delivery import deliver_to_owner
+
+                owner = await deliver_to_owner(
+                    lambda owner_delivery, dm: owner_delivery.deliver_text(dm, body),
+                    title=title or "Agent message",
+                    text=text,
+                    state=state,
+                )
+                if owner.inboxed:
                     return ActionResult(
-                        success=False, error="send-message: no channel/user and no owner to DM"
+                        success=True,
+                        exit_code=0,
+                        stdout=f"delivered to the Inbox: {owner.sentence()}",
                     )
-                target = await delivery.open_dm(owner)
+                if not owner.delivered:
+                    return ActionResult(
+                        success=False,
+                        error=f"send-message: {owner.sentence() or 'no channel is connected'}",
+                    )
+                return ActionResult(success=True, exit_code=0, stdout=f"sent: {text[:80]}")
+            target = channel or await delivery.open_dm(user)
             if not target:
                 return ActionResult(
                     success=False, error="send-message: could not resolve a delivery target"

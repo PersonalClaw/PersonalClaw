@@ -705,47 +705,51 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
         )
         # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
         return web.json_response({"error": relayed_failure_copy(redact_err)}, status=500)
-    # Resolve channel: the owner's DM, on the channel that knows the owner's id there — and
-    # the upload through the same handle that opened it.
-    channel = ""
-    try:
-        from personalclaw.channel_delivery import open_owner_dm
-
-        opened = await open_owner_dm()
-        if opened is not None:
-            delivery, channel = opened
-    except Exception:
-        logger.debug("notify_attachment: opening the owner's DM failed", exc_info=True)
-    if not channel:
+    safe_filename = filename
+    if redact(safe_filename) != safe_filename:
         _sel().log_tool_invocation(
             session_key="api",
             source="api",
             tool_name="notify_attachment",
             tool_kind="channel",
-            outcome="skipped",
-            error="no_channel",
+            outcome="denied",
+            downstream_service="channel",
+            error="sensitive_filename_rejected",
         )
-        return web.json_response({"ok": True, "skipped": "no_channel"})
+        return web.json_response({"error": "filename contains sensitive content"}, status=400)
+    # The owner's DM on the first channel that reaches them — the upload through the same handle
+    # that opened it — and the Inbox, saying why, when none does.
+    from personalclaw.channel_delivery import deliver_to_owner
+
     try:
-        safe_filename = filename
-        if redact(safe_filename) != safe_filename:
+        outcome = await deliver_to_owner(
+            lambda delivery, dm: delivery.upload_attachment(
+                dm,
+                str(resolved),
+                filename=safe_filename,
+                thread_ts=thread_ts or "",
+                title=safe_filename,
+            ),
+            title=f"File: {safe_filename}",
+            text=str(resolved),
+            state=state,
+        )
+        if not outcome.delivered:
             _sel().log_tool_invocation(
                 session_key="api",
                 source="api",
                 tool_name="notify_attachment",
                 tool_kind="channel",
-                outcome="denied",
-                downstream_service="channel",
-                error="sensitive_filename_rejected",
+                outcome="skipped",
+                error="no_channel" if outcome.no_channel else "no_channel_reached_the_owner",
             )
-            return web.json_response({"error": "filename contains sensitive content"}, status=400)
-        await delivery.upload_attachment(
-            channel,
-            str(resolved),
-            filename=safe_filename,
-            thread_ts=thread_ts or "",
-            title=safe_filename,
-        )
+            if outcome.no_channel:
+                return web.json_response({"ok": True, "skipped": "no_channel"})
+            # 200 with the sentence, not an error status: the MCP tool reads this body, and a 5xx
+            # reaches it only as "HTTP Error 502". The file is in the outbox and the Inbox says so.
+            return web.json_response(
+                {"ok": False, "error": outcome.sentence(), "inbox": outcome.inboxed}
+            )
         _sel().log_tool_invocation(
             session_key="api",
             source="api",
@@ -753,7 +757,7 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
             tool_kind="channel",
             outcome="completed",
             downstream_service="channel",
-            resources=f"channel={channel} file={file_path}",
+            resources=f"channel={outcome.provider}:{outcome.channel} file={file_path}",
         )
         return web.json_response({"ok": True})
     except Exception as e:

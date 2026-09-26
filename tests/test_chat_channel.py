@@ -49,10 +49,15 @@ class TestChannelLink:
         session = state.get_or_create_session("s1")
         session.append("user", "hello")
         session.drain()
-        state.channel_delivery = MagicMock()
-        state.channel_delivery.open_dm = AsyncMock(return_value="C123")
-        state.channel_delivery.deliver_text = AsyncMock(return_value="ts123")
-        state.owner_id = "U123"
+        # The owner's DM is reached the way the gateway reaches it: through the channel registry,
+        # with the owner id the channel keeps for itself.
+        from personalclaw.channel_delivery import register
+
+        delivery = MagicMock()
+        delivery.open_dm = AsyncMock(return_value="C123")
+        delivery.deliver_text = AsyncMock(return_value="ts123")
+        register(delivery, provider="slack")
+        monkeypatch.setenv("PERSONALCLAW_OWNER_ID_SLACK", "U123")
         state.sessions.get_channel_link = MagicMock(return_value=(None, None))
         state.sessions.set_channel_link = MagicMock()
         state.push_sessions_update = MagicMock()
@@ -62,6 +67,8 @@ class TestChannelLink:
             data = await resp.json()
             assert data["ok"] is True
             assert data["thread_ts"] == "ts123"
+            assert data["channel"] == "C123"
+        delivery.open_dm.assert_awaited_once_with("U123")
 
 
 class TestChannelReplyTargets:

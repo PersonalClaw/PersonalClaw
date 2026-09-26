@@ -22,6 +22,8 @@ provider's channel id.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -285,51 +287,158 @@ def delivery_for(provider: str) -> "ChannelDelivery | None":
 
 
 def owner_reachable() -> "ChannelDelivery | None":
-    """Any connected channel that can reach the owner, or None.
+    """The first connected channel, or None — "is any channel connected".
 
-    The second resolution policy, and deliberately a different question from
-    :func:`delivery_for`: a cron result, a heartbeat summary or a subagent reply is addressed to
-    the OWNER, not to a thread — those sites all call `open_dm(owner_id)` and have no origin
-    channel to honour. Sorted so the pick is deterministic rather than dict-insertion-ordered,
-    which would make the same home behave differently across restarts depending on app load
-    order — the property that made #959 hard to see.
+    Deliberately a different question from :func:`delivery_for`, and not the way to reach the
+    owner either: a message FOR the owner goes through :func:`reach_owner`, which tries every
+    connected channel until one gets through, because the first one may know no owner or be
+    unable to reach the one it knows. Sorted so the pick is deterministic rather than
+    dict-insertion-ordered, which would make the same home behave differently across restarts
+    depending on app load order — the property that made #959 hard to see.
     """
     for key in sorted(_REGISTRY):
         return _REGISTRY[key]
     return None
 
 
-def owner_route() -> "tuple[ChannelDelivery, str] | None":
-    """The connected channel that can reach the owner, with the owner's id ON THAT CHANNEL.
+@dataclass(frozen=True)
+class OwnerDelivery:
+    """What happened to one message for the owner: which channel took it, or why none did."""
 
-    Chosen together because they must agree: a user id means nothing to another provider.
-    Every owner notification used to pick a channel with :func:`owner_reachable` and address it
-    to the one shared owner id, so with Slack and Telegram connected a cron result could go
-    through Slack addressed to a Telegram user. Each channel now has its own owner id
-    (``config.credentials.owner_id_for``); a connected channel that knows no owner is skipped,
-    because it cannot reach one. Sorted, like :func:`owner_reachable`, so the pick is stable.
+    #: The channel that delivered it (its registry key), ``""`` when none did.
+    provider: str = ""
+    #: That channel's handle and the DM it opened with the owner.
+    delivery: "ChannelDelivery | None" = None
+    channel: str = ""
+    #: What the send returned (a message ts, a thread ts…).
+    result: Any = None
+    #: One clause per connected channel that could not, in the order they were tried.
+    reasons: tuple[str, ...] = ()
+    #: Whether one of those channels raised, so the gateway log holds an error for it.
+    logged: bool = False
+    #: Whether it went to the Inbox because no channel could take it.
+    inboxed: bool = False
+
+    @property
+    def delivered(self) -> bool:
+        return bool(self.provider)
+
+    @property
+    def no_channel(self) -> bool:
+        """No channel was connected at all: nothing to fall back FROM, so nothing failed."""
+        return not self.provider and not self.reasons
+
+    def sentence(self) -> str:
+        """Why no channel delivered it, for the owner. ``""`` when one did or none is connected."""
+        if self.delivered or not self.reasons:
+            return ""
+        tail = " The gateway log has the errors." if self.logged else ""
+        return f"No channel could deliver this to you: {'; '.join(self.reasons)}.{tail}"
+
+
+def _channel_name(key: str) -> str:
+    """The name a channel is shown under — its transport's own display name, else its key."""
+    from personalclaw.channel_transports import get_transport
+
+    transport = get_transport(key)
+    return transport.display_name if transport is not None else key
+
+
+async def reach_owner(
+    send: "Callable[[ChannelDelivery, str], Awaitable[Any]]",
+) -> OwnerDelivery:
+    """Deliver to the owner through the FIRST connected channel that actually reaches them.
+
+    Every connected channel is tried in the stable order of their names until one delivers:
+    its owner id (``config.credentials.owner_id_for`` — the channel's own key, else the shared
+    one), the DM it opens with that id (``open_dm``), then ``send(delivery, dm)``. A channel
+    with no owner id, one whose ``open_dm`` answers ``""`` or raises, and one whose send raises
+    is passed over, with a clause saying so, and the next one is tried. The DM and the message
+    always go through the same handle.
+
+    This used to pick ONE channel — the first that knew any owner id — and stop there. With
+    email and Telegram connected and only the shared id set (another platform's user id), email
+    came first, its ``open_dm`` rightly refused an id that is not an address, and every owner
+    notification was dropped although Telegram could have delivered it. Core names no channel
+    here: each channel decides for itself whether the id it has reaches anyone.
     """
     from personalclaw.config.credentials import owner_id_for
 
+    reasons: list[str] = []
+    logged = False
     for key in sorted(_REGISTRY):
+        delivery = _REGISTRY.get(key)
+        if delivery is None:  # unregistered while an earlier channel was being tried
+            continue
+        name = _channel_name(key)
         owner = owner_id_for(key)
-        if owner:
-            return _REGISTRY[key], owner
-    return None
+        if not owner:
+            reasons.append(f"{name} has no owner id")
+            continue
+        try:
+            dm = await delivery.open_dm(owner)
+        except Exception:  # noqa: BLE001 - one channel's failure hands over to the next
+            logger.warning("channel %s: opening the owner's DM failed", key, exc_info=True)
+            dm, logged = "", True
+        if not dm:
+            reasons.append(f"{name} could not open a conversation with the owner id it has")
+            continue
+        try:
+            result = await send(delivery, dm)
+        except Exception:  # noqa: BLE001 - one channel's failure hands over to the next
+            logger.warning("channel %s: delivering to the owner failed", key, exc_info=True)
+            reasons.append(f"{name} could not send it")
+            logged = True
+            continue
+        return OwnerDelivery(
+            provider=key,
+            delivery=delivery,
+            channel=dm,
+            result=result,
+            reasons=tuple(reasons),
+            logged=logged,
+        )
+    return OwnerDelivery(reasons=tuple(reasons), logged=logged)
 
 
-async def open_owner_dm() -> "tuple[ChannelDelivery, str] | None":
-    """Open a DM with the owner through :func:`owner_route`: ``(delivery, dm_channel_id)``.
+async def deliver_to_owner(
+    send: "Callable[[ChannelDelivery, str], Awaitable[Any]]",
+    *,
+    title: str,
+    text: str,
+    state: Any = None,
+) -> OwnerDelivery:
+    """Deliver a notification for the owner: the first channel that reaches them, else the Inbox.
 
-    The two travel together — deliver the message through the SAME handle that opened the DM.
-    ``None`` when no connected channel knows its owner, or the channel could not open the DM.
+    :func:`reach_owner` picks the channel. When channels are connected and none of them could
+    deliver, the notification goes to the Inbox (the native source, ``state`` or the one wired at
+    startup), ending with the sentence saying why each channel could not — it is never dropped.
+    With no channel connected at all nothing failed: the caller's dashboard delivery is the
+    delivery, and the Inbox is left alone.
+
+    ``title`` and ``text`` are what the Inbox item shows, already redacted by the caller as it
+    redacts what it sends.
     """
-    route = owner_route()
-    if route is None:
-        return None
-    delivery, owner = route
-    channel = await delivery.open_dm(owner)
-    return (delivery, channel) if channel else None
+    outcome = await reach_owner(send)
+    if outcome.delivered or outcome.no_channel:
+        return outcome
+    from personalclaw.inbox_providers.native_source import post_to_inbox
+
+    # The reason is part of the message, after it: the Inbox shows an item's `context` under
+    # "Context the agent used", which this is not.
+    message = "\n\n".join(part for part in (title, text, outcome.sentence()) if part)
+    try:
+        item = post_to_inbox(message, kind="notification", sender_name="PersonalClaw", state=state)
+    except Exception:  # noqa: BLE001 - the log line below is then the only record left
+        logger.exception("owner notification: posting it to the Inbox failed")
+        item = None
+    if item is None:
+        logger.error(
+            "owner notification %r reached no channel and not the Inbox: %s",
+            title,
+            outcome.sentence(),
+        )
+    return replace(outcome, inboxed=item is not None)
 
 
 def registered_providers() -> list[str]:

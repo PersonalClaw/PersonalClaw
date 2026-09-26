@@ -3203,18 +3203,20 @@ class GatewayOrchestrator:
             self.dashboard_state.notify(notification_kinds.HEARTBEAT, title, body)
 
     async def _notify_owner_dm(self, title: str, text: str) -> None:
-        """Deliver a notification to the owner's DM on a channel that knows who the owner is.
+        """Deliver a notification to the owner's DM, on the first channel that reaches them.
 
-        Through :func:`channel_delivery.open_owner_dm`, which picks the channel and the owner's
-        id on it together; the DM and the message go through the same handle.
+        Through :func:`channel_delivery.deliver_to_owner`: a channel that cannot reach the owner
+        hands over to the next, and when none can the notification goes to the Inbox saying why.
         """
-        from personalclaw.channel_delivery import open_owner_dm
+        from personalclaw.channel_delivery import deliver_to_owner
 
         try:
-            opened = await open_owner_dm()
-            if opened is not None:
-                delivery, channel = opened
-                await delivery.deliver_notification(channel, title, text)
+            await deliver_to_owner(
+                lambda delivery, dm: delivery.deliver_notification(dm, title, text),
+                title=title,
+                text=text,
+                state=self.dashboard_state,
+            )
         except Exception:
             logger.exception("Heartbeat channel delivery failed")
 
@@ -3654,29 +3656,30 @@ class GatewayOrchestrator:
                         # Post only the LLM's synthesized response to the channel
                         try:
                             # The session's own thread when it has one; otherwise the owner's
-                            # DM, on a channel that knows the owner's id there.
-                            target: "tuple[ChannelDelivery, str] | None" = None
+                            # DM, on the first channel that reaches the owner (the Inbox when
+                            # none does).
                             thread_channel = (
                                 self.sessions.get_channel(parent_key) if self.sessions else None
                             )
+                            elapsed = (
+                                info.elapsed
+                                if info.elapsed > 0
+                                else (time.monotonic() - info.started)
+                            )
                             if response and thread_channel and self._channel_delivery is not None:
-                                target = (self._channel_delivery, thread_channel)
-                            elif response:
-                                from personalclaw.channel_delivery import open_owner_dm
-
-                                target = await open_owner_dm()
-                            if target is not None and response:
-                                delivery, channel = target
-                                elapsed = (
-                                    info.elapsed
-                                    if info.elapsed > 0
-                                    else (time.monotonic() - info.started)
+                                await self._channel_delivery.deliver_subagent_reply(
+                                    thread_channel, response, parent_key, elapsed
                                 )
-                                await delivery.deliver_subagent_reply(
-                                    channel,
-                                    response,
-                                    parent_key,
-                                    elapsed,
+                            elif response:
+                                from personalclaw.channel_delivery import deliver_to_owner
+
+                                await deliver_to_owner(
+                                    lambda delivery, dm: delivery.deliver_subagent_reply(
+                                        dm, response, parent_key, elapsed
+                                    ),
+                                    title="Subagent reply",
+                                    text=response,
+                                    state=self.dashboard_state,
                                 )
                         except Exception:
                             logger.exception(
