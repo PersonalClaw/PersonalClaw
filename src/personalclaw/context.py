@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from personalclaw.agent import _shipped_prompt
 from personalclaw.config.loader import AppConfig, memory_dir_for_cwd
-from personalclaw.context_headroom import Component
+from personalclaw.context_headroom import Component, Window
 from personalclaw.hooks import (
     HOOK_INJECT_CONTEXT,
     HOOK_MODIFY,
@@ -18,7 +18,6 @@ from personalclaw.hooks import (
     safe_read_file,
 )
 from personalclaw.memory import MemoryStore
-from personalclaw.model_windows import active_chat_model_window
 from personalclaw.schedule import get_local_tz
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.skills import SkillsLoader
@@ -258,7 +257,7 @@ def _render_ambient(
     self_model: str = "",
     procedural: str = "",
     query: str = "",
-    window: int,
+    window: int | None,
 ) -> str:
     """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
 
@@ -360,6 +359,31 @@ WIDGET_DENSITIES: frozenset[str] = frozenset({"more", "less"})
 #: (measured: 2,861 assembled tokens against 7,872 of input room), so it is the threshold rather
 #: than a rounder number.
 _WIDGET_GUIDANCE_MIN_WINDOW = 8192
+
+
+def _widgets_left_out_notice(window: Window) -> str:
+    """The sentence a turn shows when the widget guidance did not fit — naming the real window.
+
+    It used to say "the bound model's 4,096-token context window" on every turn with host
+    Ollama SERVING 32,768: the number was the assembler's conservative floor, not the model's
+    window, and the model was often not bound at all. Now the number is the one this turn was
+    served with, the model is named, and a window that is only ASSUMED says so, because the
+    fix for "too small" (a bigger model) is not the fix for "unknown" (declare what it serves).
+    """
+    if window.tokens is not None:
+        return (
+            f"Inline-widget instructions were left out of this turn: {window.model_label}'s "
+            f"{window.tokens:,}-token context window cannot afford the 730 tokens they cost and "
+            f"still leave room for a reply. Bind a model with a window of at least "
+            f"{_WIDGET_GUIDANCE_MIN_WINDOW:,} tokens to get widgets back."
+        )
+    return (
+        f"Inline-widget instructions were left out of this turn: the window {window.model_label} "
+        f"is served with is not known yet, so this turn was budgeted for a conservative "
+        f"{window.budget_tokens or 0:,} tokens, which cannot afford the 730 tokens they cost. "
+        f"Set the window it serves in its provider's settings (Settings → Providers) to get "
+        f"widgets back."
+    )
 
 
 def _widget_guidance_affordable(window: int | None) -> bool:
@@ -909,6 +933,7 @@ class _Parts:
         name: str,
         compressible: bool = True,
         content_type: str = "",
+        is_request: bool = False,
     ) -> None:
         if text:
             self._items.append(
@@ -917,6 +942,7 @@ class _Parts:
                     text=text,
                     compressible=compressible,
                     content_type=content_type,
+                    is_request=is_request,
                 )
             )
 
@@ -929,8 +955,19 @@ class _Parts:
     def text(self) -> str:
         return "".join(c.text for c in self._items)
 
-    def components(self) -> list[Component]:
-        return list(self._items)
+    def deliver(self, components_out: list[Component] | None) -> str:
+        """The assembled prompt as it will be SENT, and its components as they will be measured.
+
+        CE2-8: the caller gets the NAMED components, not just the joined string, so the headroom
+        contract can refuse by naming a specific block. The multibyte normalization is applied per
+        component AND to the returned text, so what the contract measures is byte-for-byte what
+        would be sent.
+        """
+        if components_out is not None:
+            components_out.extend(
+                replace(c, text=c.text.translate(_MULTIBYTE_TABLE)) for c in self._items
+            )
+        return self.text().translate(_MULTIBYTE_TABLE)
 
 
 class ContextBuilder:
@@ -1035,8 +1072,9 @@ class ContextBuilder:
     ) -> dict[str, Any]:
         """Values supplied whenever a system prompt is rendered.
 
-        ``window`` is the bound chat model's context window, resolved once per assembly by
-        the caller; ``None`` resolves it here for the standalone callers (CLI, tests)."""
+        ``window`` is the window this turn is served with (``Window.budget_tokens``), resolved
+        once per turn by the caller; ``None`` means no window was resolved, which budgets as an
+        unknown window does."""
         return {
             "bot_name": self._bot_name,
             "widget_block": self._widget_block(session_key, window=window),
@@ -1083,9 +1121,7 @@ class ContextBuilder:
         # A window too small to afford the guidance gets none of it. See
         # `_WIDGET_GUIDANCE_MIN_WINDOW` for the measurement; the drop is reported to the user
         # from `build_message`, which is the one place holding the turn's notice channel.
-        if not _widget_guidance_affordable(
-            active_chat_model_window() if window is None else window
-        ):
+        if not _widget_guidance_affordable(window):
             return ""
 
         cfg = AppConfig.load()
@@ -1170,12 +1206,11 @@ class ContextBuilder:
         # CE2-8: filled with one legible line per assembly-time DROP (today: the
         # `_MAX_CONTEXT_CHARS` cut, which previously only reached a server log).
         dropped_out: list[str] | None = None,
-        # The bound chat model's context window, resolved ONCE per assembly by the caller.
-        # Threaded rather than re-read here because every window-scaled budget in this
-        # module must be scaled by the SAME number: two independent reads could straddle a
-        # binding change mid-turn and hand the memory sections and the ambient blocks
-        # different ideas of how much room the model has. `None` = resolve it here, which is
-        # what the standalone callers (CLI, tests) get.
+        # The window this turn is served with (`Window.budget_tokens`), resolved ONCE per turn
+        # by the caller through `context_headroom.resolve_window`. Threaded rather than re-read
+        # here because every window-scaled budget in this module must be scaled by the SAME
+        # number the budget check bounds by. `None` = no window was resolved (a standalone
+        # caller), which budgets as an unknown window: the calibrated baseline.
         window: int | None = None,
     ) -> str:
         """Build context for a new session (memory + skills + history).
@@ -1223,7 +1258,7 @@ class ContextBuilder:
 
         # ONE window for the whole assembly. Every budget below is scaled by it, so it is
         # read once and shared rather than re-resolved per consumer.
-        _window = active_chat_model_window() if window is None else window
+        _window = window
 
         # Agent identity and runtime — inject for ALL agents so the LLM
         # knows which agent it is and where it's running.  Without this,
@@ -1588,6 +1623,11 @@ class ContextBuilder:
         # The per-turn answer to "why did my skill not take effect", for callers that want
         # it structured rather than as the prose notice.
         skill_decisions_out: list["SkillDecision"] | None = None,
+        # The window THIS TURN is served with — `context_headroom.resolve_window`'s answer, the
+        # same object the budget check bounds by. Every budget below scales by its
+        # `budget_tokens`; a `request_only` window is assembled the request alone. `None` = the
+        # caller resolved no window (a standalone caller), which budgets as an unknown window.
+        window: Window | None = None,
     ) -> tuple[str, HookResult]:
         """Build the full message with context and hook processing.
 
@@ -1606,12 +1646,22 @@ class ContextBuilder:
         is_custom = agent and agent != "personalclaw"
         hook_result = self.hooks.on_message(text)
 
-        # ONE window for the whole turn's assembly: every budget and affordability rule
-        # below is scaled by it, and two independent reads could straddle a binding change
-        # mid-turn and disagree about how much room the model has.
-        _window = active_chat_model_window()
+        # ONE window for the whole turn's assembly: the one the budget check bounds by. Every
+        # budget and affordability rule below is scaled by it.
+        _window = window.budget_tokens if window is not None else None
+        _request = hook_result.text if hook_result.action == HOOK_MODIFY else text
 
         parts = _Parts()
+
+        if window is not None and window.request_only:
+            # A request-only model (`ModelProvider.request_only`) is handed the user's request
+            # and NOTHING else — its provider reads the request back out at the marker and
+            # discards the rest. Assembling the rest anyway measured, recorded and counted
+            # context the model never received: a "used 1 skill" chip for a skill it was never
+            # shown, a budget check refusing a message the model could have read.
+            parts.add(USER_REQUEST_MARKER + "\n", name="request header", compressible=False)
+            parts.add(_request, name="the user's request", compressible=False, is_request=True)
+            return parts.deliver(components_out), hook_result
 
         # Session context on first message only
         if is_new_session:
@@ -1953,24 +2003,24 @@ class ContextBuilder:
             parts.add(action_context + "\n\n", name="action button context", compressible=False)
 
         # The actual message (possibly modified by transform hook)
-        if parts:
-            if user_display_name:
-                parts.add(
-                    f"[CURRENT USER] {user_display_name}\n",
-                    name="current user",
-                    compressible=False,
-                )
+        if parts and user_display_name:
             parts.add(
-                USER_REQUEST_MARKER + "\n",
-                name="request header",
+                f"[CURRENT USER] {user_display_name}\n",
+                name="current user",
                 compressible=False,
             )
+        # EVERY turn, not only when context was injected. On a follow-up with nothing else to
+        # inject the request used to arrive unframed with the dashboard's widget guidance after
+        # it, and a small model answered the GUIDANCE: "capital of France" → Paris on turn 1,
+        # Tailwind HTML on turn 2. The marker is what tells any reader where the request is.
+        parts.add(
+            USER_REQUEST_MARKER + "\n",
+            name="request header",
+            compressible=False,
+        )
         # NEVER compressible: compressing what the user just said is not a compression,
         # it is answering a different question.
-        if hook_result.action == HOOK_MODIFY:
-            parts.add(hook_result.text, name="the user's request", compressible=False)
-        else:
-            parts.add(text, name="the user's request", compressible=False)
+        parts.add(_request, name="the user's request", compressible=False, is_request=True)
 
         # Widget instructions — dashboard only (channel/CLI can't render iframes)
         _is_dashboard = session_key and (
@@ -1981,13 +2031,13 @@ class ContextBuilder:
         # afford one cannot afford the other, and gating only one would leave a model told to emit
         # `<widget>` markup by a block whose syntax reference had been dropped.
         _widgets_affordable = _widget_guidance_affordable(_window)
-        if _is_dashboard and not _widgets_affordable and notices_out is not None:
-            notices_out.append(
-                f"Inline-widget instructions were left out of this turn: the bound model's "
-                f"{_window:,}-token context window cannot afford the 730 tokens they cost "
-                f"and still leave room for a reply. Bind a model with a window of at least "
-                f"{_WIDGET_GUIDANCE_MIN_WINDOW:,} tokens to get widgets back."
-            )
+        if (
+            _is_dashboard
+            and not _widgets_affordable
+            and notices_out is not None
+            and window is not None
+        ):
+            notices_out.append(_widgets_left_out_notice(window))
         if _is_dashboard and _widgets_affordable:
             parts.add(
                 "\n\n[WIDGETS] You can render rich HTML inline using "
@@ -2006,12 +2056,4 @@ class ContextBuilder:
                 compressible=False,
             )
 
-        # CE2-8: hand the caller the NAMED components, not just the joined string, so the
-        # headroom contract can refuse by naming a specific block. The multibyte
-        # normalization is applied per component AND to the returned text, so what the
-        # contract measures is byte-for-byte what would be sent.
-        if components_out is not None:
-            components_out.extend(
-                replace(c, text=c.text.translate(_MULTIBYTE_TABLE)) for c in parts.components()
-            )
-        return parts.text().translate(_MULTIBYTE_TABLE), hook_result
+        return parts.deliver(components_out), hook_result

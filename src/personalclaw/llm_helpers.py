@@ -803,7 +803,27 @@ def humanize_provider_error(exc: object) -> str:
 
     Never returns an empty string: an exception with no message is described from its
     class instead (:func:`_describe_unexplained_failure`).
+
+    Two classes are answered BEFORE the matcher, because the matcher would get them wrong:
+
+    * ``PromptExceedsWindow`` is already the user-facing sentence (model, limit, fix). Its
+      figures are this turn's own — "1,429 tokens" contains ``429``, which the substring map
+      below reads as a rate limit — so it passes through verbatim.
+    * ``MemoryError`` from an in-process model is numpy's allocator text ("Unable to allocate
+      26.0 GiB for an array with shape (9, 27862, 27862)") — true, and nothing a user can act on.
+      Answered before the empty-message rule too, since a bare ``MemoryError()`` is the same
+      failure with the same fix.
     """
+    from personalclaw.guardrails.failure import PromptExceedsWindow
+
+    if isinstance(exc, PromptExceedsWindow):
+        return str(exc)
+    if isinstance(exc, MemoryError):
+        return (
+            "This machine ran out of memory while the model was reading this conversation, so "
+            "no reply was produced. Shorten the message or start a new chat — or bind a model "
+            "that does not run on this machine in Settings → Models."
+        )
     raw = str(exc or "").strip()
     if not raw:
         return _describe_unexplained_failure(exc)

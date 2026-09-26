@@ -613,6 +613,31 @@ class TestHumanizeProviderError:
         out = humanize_provider_error(None)
         assert out and "failed" in out
 
+    def test_a_window_refusal_reaches_the_user_verbatim(self):
+        """The refusal is already the sentence: the model, its limit and the fix. Its figures
+        are this turn's own, and "1,429 tokens" contains ``429`` — which the substring map reads
+        as a rate limit, telling a user whose message is too long to wait and retry it."""
+        from personalclaw.sdk.model import PromptExceedsWindow
+
+        refusal = PromptExceedsWindow(
+            model="SmolLM2-135M-Instruct-Q8_0",
+            room_tokens=1_429,
+            request_tokens=2_000,
+            request_chars=8_000,
+        )
+        assert "1,429 tokens" in str(refusal)
+        assert humanize_provider_error(refusal) == str(refusal)
+
+    def test_running_out_of_memory_is_said_in_words(self):
+        """numpy's allocator text is true and nothing a user can act on."""
+        raw = "Unable to allocate 26.0 GiB for an array with shape (9, 27862, 27862)"
+        out = humanize_provider_error(MemoryError(raw))
+        assert "ran out of memory" in out
+        assert "GiB" not in out and "27862" not in out
+        assert "Settings → Models" in out
+        # A bare MemoryError() is the same failure with the same fix, not an unexplained one.
+        assert humanize_provider_error(MemoryError()) == out
+
 
 class TestHumanizeProviderErrorWithNoMessage:
     """An exception whose ``str()`` is empty still gets a sentence (day-56b evidence).

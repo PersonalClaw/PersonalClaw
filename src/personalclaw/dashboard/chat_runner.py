@@ -21,11 +21,12 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
-from personalclaw.context_headroom import HeadroomState
+from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import _build_history_prefix, save_session_to_history
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
+    stamp_finish_reason,
     stamp_turn_summary,
     stamp_turn_telemetry,
     summarize_session_turn,
@@ -96,6 +97,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
 )
+from personalclaw.llm.events import is_length_stop
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -121,6 +123,37 @@ logger = logging.getLogger(__name__)
 #: different answers for what "used" means. REFUSED is absent on purpose: the skill was
 #: NAMED to the agent but none of its content loaded.
 _SKILL_USED_STATES = (SkillLoadState.ADMITTED.value, SkillLoadState.REDUCED.value)
+
+
+def _skills_sent(decisions: list, headroom: object) -> list[dict]:
+    """The skills-used record for a turn: what the prompt that was actually SENT carried.
+
+    The allocator's decisions describe the ASSEMBLY. The budget check can then shrink a skill
+    block to fit the window (``FITS_AFTER_COMPRESSION``), and a record built from the assembly
+    alone said a skill loaded 4,200 tokens when the prompt that went out carried 900 — so a
+    compressed skill is recorded as ``reduced`` at its post-compression size. The component
+    name is the assembler's own ``"skill: <name>"`` label, the same key the notice prints.
+    """
+    compressed = {
+        getattr(c, "name", ""): int(getattr(c, "tokens_after", 0) or 0)
+        for c in (getattr(headroom, "compressed", ()) or ())
+    }
+    sent: list[dict] = []
+    for decision in decisions:
+        if not isinstance(decision, dict) or decision.get("state") not in _SKILL_USED_STATES:
+            continue
+        name = str(decision.get("name") or "")
+        entry = {
+            "name": name,
+            "state": str(decision.get("state") or ""),
+            "loaded_tokens": int(decision.get("loaded_tokens") or 0),
+        }
+        after = compressed.get(f"skill: {name}")
+        if after is not None:
+            entry["state"] = SkillLoadState.REDUCED.value
+            entry["loaded_tokens"] = after
+        sent.append(entry)
+    return sent
 
 
 def is_empty_turn(
@@ -2492,6 +2525,14 @@ async def run_chat(
                     # loop advance on an answer it never received.
                     session._last_turn_errored = True
                     return
+            # ── ONE window for this turn, asked of the runtime that will serve it ──
+            # Resolved once, BEFORE assembly, and handed to both the assembler and the budget
+            # check below: they used to resolve it separately and disagreed — for the unbound
+            # fallback model the check saw no model at all and passed a paste that OOM-killed
+            # the gateway, and for a local runtime the assembler budgeted for a fixed 4,096
+            # while the runtime served 32,768. The serving provider's own gauge divides by
+            # this same number, because the resolver's first answer is the provider's.
+            _window = await resolve_window(model_label, serving=client)
             # Assemble via the pluggable context engine (default = the monolithic
             # build_message; a custom engine that raises is quarantined to default
             # so the turn still gets context). Active-recall + structured-
@@ -2526,12 +2567,13 @@ async def run_chat(
                 ),
                 force_skill_ids=_force_skill_ids,
                 force_workflow_ids=_force_workflow_ids,
+                window=_window,
             )
             # ── CE2-8: the headroom contract, decided BEFORE the model call ──
             # The turn no longer discovers the context limit by failing at it: the seam
-            # measures the assembled prompt against the bound model's real window (minus
+            # measures the assembled prompt against the serving model's real window (minus
             # the reply reserve) and gets back one of three DECLARED states.
-            _headroom = await check_headroom(_assembled, model_ref=model_label)
+            _headroom = check_headroom(_assembled, window=_window)
             if _headroom.state is HeadroomState.CANNOT_FIT:
                 _refusal = _headroom.notice()
                 logger.warning("context headroom refusal in %s: %s", session.key, _refusal)
@@ -2579,15 +2621,7 @@ async def run_chat(
             # the hover list reads in the order the skills were admitted.
             _decisions = _assembled.metadata.get("skill_decisions")
             if isinstance(_decisions, list):
-                session._skills_used = [
-                    {
-                        "name": str(_d.get("name") or ""),
-                        "state": str(_d.get("state") or ""),
-                        "loaded_tokens": int(_d.get("loaded_tokens") or 0),
-                    }
-                    for _d in _decisions
-                    if isinstance(_d, dict) and _d.get("state") in _SKILL_USED_STATES
-                ]
+                session._skills_used = _skills_sent(_decisions, _headroom)
             if is_new:
                 ctx_len = _assembled.injected_chars
                 state.broadcast_ws(
@@ -4082,6 +4116,7 @@ async def run_chat(
                     _stop_reason
                     and _stop_reason != STOP_REASON_END_TURN
                     and not is_cancelled_stop(_stop_reason)
+                    and not is_length_stop(_stop_reason)
                 ):
                     logger.warning(
                         "Unexpected stop_reason %r for session %s",
@@ -4246,6 +4281,9 @@ async def run_chat(
         # holds the whole turn at this point — the user row, every tool row and every
         # flushed assistant segment — so it needs no turn-scoped accumulator of its own.
         stamp_turn_summary(session, summarize_session_turn(session))
+        # A reply cut at the model's output cap ends mid-sentence; the mark is what lets the
+        # transcript say so instead of reading as the model trailing off.
+        stamp_finish_reason(session, _stop_reason)
         # Save to history and trigger memory consolidation
         save_session_to_history(state, session)
         session._prompt_busy_retries = 0

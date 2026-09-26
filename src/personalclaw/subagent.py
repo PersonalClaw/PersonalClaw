@@ -2043,7 +2043,11 @@ class SubagentManager:
             prefix = render_snippet_block("subagent-system-prefix")
             prefix = (prefix + "\n\n") if prefix else _SYSTEM_PREFIX
             message = prefix + raw_task
-        full_message, _ = self._ctx_builder.build_message(message, is_new, session_key)
+        from personalclaw.context_headroom import resolve_window
+
+        full_message, _ = self._ctx_builder.build_message(
+            message, is_new, session_key, window=await resolve_window(serving=client)
+        )
 
         result_text = ""
         turns = 0

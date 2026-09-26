@@ -204,17 +204,22 @@ answers because nothing else is bound, the chat screen says so.
   empty toolset. It cannot read or write a file, run a command, search the web or call an
   app, and no approval prompt appears because there is nothing to approve. Asked to create
   a file, it replied with a Python snippet for you to run, and nothing was written.
-- The context PersonalClaw builds. The first turn of a chat is assembled into one prompt:
-  the agent's instructions, your memory and preferences, the skills chosen for the turn,
-  today's date, then your message. On a fresh home that came to about 20,000 characters. A
-  model this small, handed that much, continues the instructions instead of following
-  them, so the app cuts the prompt back to your message (`user_request()` in
-  `provider.py`). On the measured first turn the model saw 18 tokens. It does not know your
-  name, your notes or the date, and it does not know it is PersonalClaw either. Asked "What
-  can you do for me?", it offered to help with health questions.
-- Room. It gets 4,096 tokens of conversation, oldest turns dropped first (the **Prompt
-  budget** setting; the weight itself accepts 8,192), and a reply stops at 320 tokens
-  (**Maximum reply length**).
+- The context PersonalClaw builds. For other models, each turn is assembled into one
+  prompt: the agent's instructions, your memory and preferences, the skills chosen for the
+  turn, today's date, then your message. On a fresh home that came to about 20,000
+  characters. A model this small, handed that much, continues the instructions instead of
+  following them, so the app declares that it takes your message alone (`request_only` in
+  `provider.py`) and PersonalClaw sends it nothing else. On the measured first turn the
+  model saw 18 tokens. It does not know your name, your notes or the date, and it does not
+  know it is PersonalClaw either. Asked "What can you do for me?", it offered to help with
+  health questions.
+- Room. It reads 4,096 tokens at a time (the **Prompt budget** setting; the weight itself
+  accepts 8,192, and the setting cannot go higher). That includes its reply, which stops at
+  320 tokens (**Maximum reply length**), so about 3,770 tokens are left for the
+  conversation, and older turns are dropped first. A message that does not fit on its own is
+  refused before the model reads it, with a sentence giving the limit in tokens and roughly
+  in characters. For plain English prose at the defaults that was about 3,765 tokens, or
+  roughly 15,000 characters. A reply that stops at the maximum length is marked **Cut off**.
 
 **What it did with real requests**, measured on the shipped weight through the
 dashboard's chat route:
@@ -243,7 +248,9 @@ too.
 
 **What it costs:** it loads on your first message and stays loaded. The weights take 538 MB
 as float32, and loading them added 0.7 to 0.8 GiB to the resident size of the process that
-holds them (measured on an Apple silicon Mac).
+holds them (measured on an Apple silicon Mac). Reading a long prompt takes more on top of
+that: in a process holding only the model, a full 4,096-token prompt peaked at 1.3 GB
+resident and took 21 seconds, and an 8,192-token one peaked at 1.8 GB and took 62 seconds.
 
 **What is enforced:** the download never starts by itself. It is offered with its size
 (138 MiB) in onboarding, on the chat screen and in **Settings → Providers**, and runs only

@@ -350,9 +350,9 @@ class TestChannelHistoryContext:
 
     def test_context_builder_no_injection_without_history(self):
         """ContextBuilder works fine with no channel_history set."""
-        from personalclaw.context import ContextBuilder
+        from personalclaw.context import USER_REQUEST_MARKER, ContextBuilder
 
         builder = ContextBuilder()
         msg, _ = builder.build_message("hello", False, channel_id="C123")
 
-        assert msg.startswith("hello")
+        assert msg.startswith(f"{USER_REQUEST_MARKER}\nhello")

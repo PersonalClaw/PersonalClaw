@@ -1346,6 +1346,12 @@ def _resolve_from_config_registry(
             use_case,
         )
         return None
+    # The ONE point that knows both halves of the ref this provider serves — the entry it was
+    # built from and the model it was built for — so it is recorded here rather than re-derived
+    # downstream. The window resolver reads it to name the model that actually answers a turn,
+    # including the zero-config floor, which is a registry entry and never a binding.
+    served_model = str(config.get("model") or candidate.model or "")
+    served_ref = f"{candidate.name}:{served_model}" if served_model else candidate.name
 
     # §2 chokepoint: wrap the resolved provider for the non-interactive text axis
     # (breaker + hard timeout + audit + day-budget + outbound scan). Config-derived
@@ -1394,11 +1400,11 @@ def _resolve_from_config_registry(
                         _timeout_kw["timeout_secs"] = _secs
             except Exception:  # noqa: BLE001 — fail-open to the guard's own default
                 logger.debug("routing local timeout read failed", exc_info=True)
-        return wrap_model_call_guard(
+        guarded = wrap_model_call_guard(
             built,
             use_case=guard_use_case,
             provider_name=candidate.name,
-            model=str(config.get("model") or candidate.model or ""),
+            model=served_model,
             budget=budget,
             run_budget=run_budget,
             scan_mode=scan_mode,
@@ -1407,7 +1413,22 @@ def _resolve_from_config_registry(
             routed_fallback=guard_routed_fallback,
             **_timeout_kw,
         )
+        _stamp_served_ref(guarded, served_ref)
+        return guarded
+    _stamp_served_ref(built, served_ref)
     return built
+
+
+def _stamp_served_ref(provider: object, ref: str) -> None:
+    """Record ``ModelProvider.served_ref`` on a freshly built provider.
+
+    An object that refuses the attribute keeps no stamp, and the window resolver then names the
+    model from the chat binding instead — a less exact answer, never a failed resolution.
+    """
+    try:
+        provider.served_ref = ref  # type: ignore[attr-defined]
+    except (AttributeError, TypeError):
+        logger.debug("%s does not accept a served_ref stamp", type(provider).__name__)
 
 
 def create_provider_factory(default_use_case: str = "chat") -> ProviderFactory:

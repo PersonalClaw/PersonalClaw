@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from personalclaw.context import ContextBuilder
+from personalclaw.context import USER_REQUEST_MARKER, ContextBuilder
 from personalclaw.hooks import ContextRule, HookManager, HooksConfig
 from personalclaw.memory import MemoryStore
 from personalclaw.skills import SkillsLoader
@@ -334,9 +334,10 @@ class TestContextBuilder:
             skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
         )
         msg, hook = builder.build_message("hello", is_new_session=False)
-        # No memory context on subsequent messages
+        # No memory context on subsequent messages — and the request is still FRAMED: a
+        # follow-up that arrived unframed was answered as whatever guidance followed it.
         assert "lobsters" not in msg
-        assert msg.startswith("hello")
+        assert msg.startswith(f"{USER_REQUEST_MARKER}\nhello")
 
     def test_hook_inject_context(self, tmp_path):
         hooks_cfg = HooksConfig(
@@ -361,7 +362,7 @@ class TestContextBuilder:
             hooks=HookManager(hooks_cfg),
         )
         msg, hook = builder.build_message("deploy app", is_new_session=False)
-        assert msg.startswith("[DEPLOY]")
+        assert msg.startswith(f"{USER_REQUEST_MARKER}\n[DEPLOY]")
 
     def test_dashboard_cross_session_history(self, tmp_path):
         """New dashboard session gets history from other dashboard sessions."""

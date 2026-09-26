@@ -826,6 +826,16 @@ class OllamaProvider(ModelProvider):
             logger.debug("ollama: /api/ps served-window probe failed (%s)", exc)
         return None
 
+    async def served_context_window(self) -> int | None:
+        """The window this runtime serves the bound model with — the probe the gauge divides by.
+
+        This is what core's window resolver asks before a turn is assembled. Before it existed,
+        ``/api/ps`` fed only the gauge: with Ollama serving 32,768 the prompt builder budgeted
+        for its conservative 4,096 floor, dropped the widget instructions and told the user, on
+        every turn, that the model had a 4,096-token window.
+        """
+        return await self._served_window(self._model)
+
     async def _context_pct(
         self, model: str, input_tokens: int, messages: list[dict]
     ) -> float | None:

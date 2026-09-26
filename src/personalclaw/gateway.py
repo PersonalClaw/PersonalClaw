@@ -2348,7 +2348,11 @@ class GatewayOrchestrator:
             try:
                 client, is_new, _resumed = await self.sessions.get_or_create(session_key)
                 _acquired = True
-                full_message, _ = self.ctx_builder.build_message(task_text, is_new)
+                from personalclaw.context_headroom import resolve_window
+
+                full_message, _ = self.ctx_builder.build_message(
+                    task_text, is_new, window=await resolve_window(serving=client)
+                )
 
                 # Heartbeat is a pure UNATTENDED background loop — no user present.
                 # The approval policy is DERIVED from the session's SafetyProfile, not
@@ -3572,7 +3576,14 @@ class GatewayOrchestrator:
                         client, is_new, _resumed = await self.sessions.get_or_create(parent_key)
                         _acquired = True
                         if self.ctx_builder:
-                            msg, _ = self.ctx_builder.build_message(announce, is_new, parent_key)
+                            from personalclaw.context_headroom import resolve_window
+
+                            msg, _ = self.ctx_builder.build_message(
+                                announce,
+                                is_new,
+                                parent_key,
+                                window=await resolve_window(serving=client),
+                            )
                         else:
                             msg = announce
                         response = await asyncio.wait_for(
@@ -3693,7 +3704,14 @@ class GatewayOrchestrator:
                     client, is_new, _resumed = await self.sessions.get_or_create(parent_key)
                     acquired = True
                     if self.ctx_builder:
-                        msg, _ = self.ctx_builder.build_message(announce, is_new, parent_key)
+                        from personalclaw.context_headroom import resolve_window
+
+                        msg, _ = self.ctx_builder.build_message(
+                            announce,
+                            is_new,
+                            parent_key,
+                            window=await resolve_window(serving=client),
+                        )
                     else:
                         msg = announce
                     cron_response = await asyncio.wait_for(
