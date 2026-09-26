@@ -462,8 +462,8 @@ async def handle_test_instance(request: web.Request) -> web.Response:
         )
         return json_error(
             "provider_test_failed",
-            message="Reached the MCP server, but it did not report ready. Check its command "
-            "and configuration.",
+            message="The MCP server did not report ready. Check its "
+            + ("URL and headers." if probed.is_remote else "command and configuration."),
             status=502,
         )
 

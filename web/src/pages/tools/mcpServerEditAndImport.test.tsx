@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
 import { useState } from 'react'
-import { STORED_VALUE_MASK, buildMcpEdit, envFormFields, formatArgs, parseArgs } from './mcpServerEnv'
+import { STORED_VALUE_MASK, buildMcpEdit, buildMcpHeaderEdit, buildMcpHeaders, envFormFields, formatArgs, headerFormText, parseArgs, parseHeaderLines } from './mcpServerEnv'
 
 // ── An MCP server can be imported, edited and removed, and a stored value never reaches the page ──
 //
@@ -14,6 +14,10 @@ import { STORED_VALUE_MASK, buildMcpEdit, envFormFields, formatArgs, parseArgs }
 //   · There was no edit for an existing server. The edit form reads names, plain values, and for a
 //     stored value only that one is saved: the line shows a mask, and left as it is, the saved value
 //     is kept (`keepEnv`) — so the secret never comes to the browser and back.
+//   · A server at a URL could be neither added nor edited, and the import rows still carried each
+//     server's full command line and URL, where a token can sit (`--api-key …`, `?token=…`). Add and
+//     Edit take a transport now, and the rows show what the gateway sends: the transport and the
+//     address with every credential masked.
 
 describe('the edit form’s fields', () => {
   it('prefills a stored value as the mask and a plain one as itself', () => {
@@ -46,6 +50,34 @@ describe('the edit form’s fields', () => {
   })
 })
 
+// ── A server at a URL: its headers, which are all stored ─────────────────────────────────────────
+//
+// The edit form refused every remote server ("The edit form changes a server PersonalClaw starts with
+// a command"), and Add had no URL at all. A remote server's headers are how it authenticates, so every
+// value is in the credential store: the form shows each as the mask, and a line left holding it keeps
+// the saved value (`keepHeaders`) without the value ever reaching the page.
+
+describe('the Headers field', () => {
+  it('reads one Name: value per line, the way a header is written', () => {
+    expect(parseHeaderLines('Authorization: Bearer a:b\n: orphan\nno colon\n X-Api-Key :  k ')).toEqual({
+      Authorization: 'Bearer a:b', 'X-Api-Key': 'k',
+    })
+    expect(buildMcpHeaders('')).toEqual({ headers: undefined })
+  })
+
+  it('prefills a saved header as the mask and one without a value as empty', () => {
+    expect(headerFormText([{ name: 'Authorization', hasValue: true }, { name: 'X-Lost', hasValue: false }]))
+      .toBe(`Authorization: ${STORED_VALUE_MASK}\nX-Lost: `)
+  })
+
+  it('a line left holding the mask keeps the saved value, and a typed one replaces it', () => {
+    expect(buildMcpHeaderEdit(`Authorization: Bearer new\nX-Api-Key: ${STORED_VALUE_MASK}`)).toEqual({
+      headers: { Authorization: 'Bearer new' }, keepHeaders: ['X-Api-Key'],
+    })
+    expect(buildMcpHeaderEdit('')).toEqual({ headers: undefined, keepHeaders: undefined })
+  })
+})
+
 describe('arguments survive an edit that does not touch them', () => {
   it.each([
     [['-y', '@modelcontextprotocol/server-filesystem', '/tmp']],
@@ -72,8 +104,13 @@ const tools = [
   { name: 'gh_search', provider: 'gh', description: 'search', parameters: {}, requires_approval: false, risk_level: 'safe' },
 ]
 const importable = [{
-  name: 'cc-notion', backend: 'Claude Code', command: 'npx', args: ['-y', 'notion-mcp'], url: '',
+  name: 'cc-notion', backend: 'Claude Code', transport: 'stdio', command: 'npx', args: ['-y', 'notion-mcp', '--api-key', STORED_VALUE_MASK], url: '',
   env: [{ name: 'NOTION_TOKEN', hasValue: true }], headers: [],
+}, {
+  // What the gateway sends for a remote server: its URL with every credential in it already masked.
+  name: 'cc-hosted', backend: 'Claude Code', transport: 'http', command: '', args: [],
+  url: `https://mcp.example.com/mcp?token=${STORED_VALUE_MASK}`,
+  env: [], headers: [{ name: 'Authorization', hasValue: true }],
 }]
 
 function mockApi(definition: unknown) {
@@ -125,7 +162,7 @@ beforeEach(() => {
 describe('Edit on an MCP server', () => {
   it('shows a stored value as the mask, and saving untouched keeps it without sending it', async () => {
     mockApi({
-      name: 'gh', editable: true, command: 'npx', args: ['-y', 'gh-mcp', '/My Repos'],
+      name: 'gh', editable: true, transport: 'stdio', command: 'npx', args: ['-y', 'gh-mcp', '/My Repos'],
       env: [
         { name: 'GITHUB_TOKEN', plain: false, hasValue: true },
         { name: 'LOG_LEVEL', plain: true, value: 'debug' },
@@ -142,11 +179,39 @@ describe('Edit on an MCP server', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(saveMcpServer).toHaveBeenCalledTimes(1))
     expect(saveMcpServer).toHaveBeenCalledWith('gh', {
+      transport: 'stdio',
       command: 'uvx',
       args: ['-y', 'gh-mcp', '/My Repos'],
       env: { LOG_LEVEL: 'debug' },
       plainEnv: ['LOG_LEVEL'],
       keepEnv: ['GITHUB_TOKEN'],
+    })
+  })
+
+  it('edits a server at a URL: its headers show as the mask, and one left as it was is kept', async () => {
+    mockApi({
+      name: 'gh', editable: true, transport: 'http', url: 'https://mcp.example.com/mcp',
+      headers: [{ name: 'Authorization', hasValue: true }, { name: 'X-Api-Key', hasValue: true }],
+    })
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit gh' }))
+    const headersField = await screen.findByRole('textbox', { name: 'Headers' })
+    expect((headersField as HTMLTextAreaElement).value)
+      .toBe(`Authorization: ${STORED_VALUE_MASK}\nX-Api-Key: ${STORED_VALUE_MASK}`)
+    expect((screen.getByRole('textbox', { name: 'URL' }) as HTMLInputElement).value).toBe('https://mcp.example.com/mcp')
+    expect(screen.getByRole('radio', { name: 'HTTP' })).toHaveAttribute('aria-checked', 'true')
+    // No command field for a server PersonalClaw does not start.
+    expect(screen.queryByRole('textbox', { name: 'Command' })).toBeNull()
+
+    // Rotate the token: type over one mask, leave the other.
+    fireEvent.change(headersField, { target: { value: `Authorization: Bearer rotated\nX-Api-Key: ${STORED_VALUE_MASK}` } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveMcpServer).toHaveBeenCalledTimes(1))
+    expect(saveMcpServer).toHaveBeenCalledWith('gh', {
+      transport: 'http',
+      url: 'https://mcp.example.com/mcp',
+      headers: { Authorization: 'Bearer rotated' },
+      keepHeaders: ['X-Api-Key'],
     })
   })
 
@@ -159,14 +224,46 @@ describe('Edit on an MCP server', () => {
   })
 })
 
+describe('Add tool server', () => {
+  it('adds a server at a URL with its headers, and asks for no command', async () => {
+    mockApi({ name: 'gh', editable: false, reason: '-' })
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Add tool server' }))
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'hosted' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'SSE' }))
+    expect(screen.queryByRole('textbox', { name: 'Command' })).toBeNull()
+    fireEvent.change(screen.getByRole('textbox', { name: 'URL' }), { target: { value: ' https://mcp.example.com/sse ' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Headers' }), { target: { value: 'Authorization: Bearer t0k' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
+    await waitFor(() => expect(saveMcpServer).toHaveBeenCalledTimes(1))
+    expect(saveMcpServer).toHaveBeenCalledWith('hosted', {
+      transport: 'sse', url: 'https://mcp.example.com/sse', headers: { Authorization: 'Bearer t0k' },
+    })
+  })
+})
+
 describe('Import from another tool', () => {
+  it('shows each row as the gateway sends it: the transport, and the address with credentials masked', async () => {
+    mockApi({ name: 'gh', editable: false, reason: '-' })
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: /Discovered in other tools/ }))
+    const hosted = (await screen.findByText('cc-hosted')).closest('div.rounded-lg') as HTMLElement
+    const notion = screen.getByText('cc-notion').closest('div.rounded-lg') as HTMLElement
+    expect(within(hosted).getByText('HTTP')).toBeInTheDocument()
+    expect(within(hosted).getByText(`https://mcp.example.com/mcp?token=${STORED_VALUE_MASK}`)).toBeInTheDocument()
+    expect(within(hosted).getByText('Sends the Authorization header')).toBeInTheDocument()
+    expect(within(notion).getByText('Command')).toBeInTheDocument()
+    expect(within(notion).getByText(`npx -y notion-mcp --api-key ${STORED_VALUE_MASK}`)).toBeInTheDocument()
+  })
+
   it('lists the variables it brings by name, and says so when the import did not land', async () => {
     mockApi({ name: 'gh', editable: false, reason: '-' })
     importMcpServer.mockRejectedValue(new Error("No MCP server named 'cc-notion' was found to add."))
     await mount()
     fireEvent.click(screen.getByRole('button', { name: /Discovered in other tools/ }))
     expect(await screen.findByText('Sets NOTION_TOKEN')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Import/ }))
+    const row = screen.getByText('cc-notion').closest('div.rounded-lg') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: /Import/ }))
     await settle()
     expect(importMcpServer).toHaveBeenCalledWith('cc-notion')
     expect(notify).toHaveBeenCalledWith(

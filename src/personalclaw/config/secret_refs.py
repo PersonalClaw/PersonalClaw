@@ -733,6 +733,22 @@ def mcp_env_view(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
     return view
 
 
+def mcp_headers_view(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A remote server's ``headers`` as the edit form reads them: each header's name and whether a
+    value is saved for it. Every header value is stored (see above), so none is ever read here —
+    presence comes from the store's key names, as in :func:`mcp_env_view`."""
+    values = spec.get("headers")
+    if not isinstance(values, Mapping):
+        return []
+    held = set(credential_names())
+    view: list[dict[str, Any]] = []
+    for name, value in values.items():
+        key = ref_key(value)
+        present = key in held if key is not None else value not in (None, "")
+        view.append({"name": name, "hasValue": present})
+    return view
+
+
 def remove_mcp_servers(names: Iterable[str]) -> list[str]:
     """THE delete for MCP servers: out of both documents, and every value they own deleted.
 

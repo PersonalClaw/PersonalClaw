@@ -50,7 +50,7 @@ def test_create_sse_writes_url(_home):
     mi.create_instance(
         "remote", {"transport": "sse", "endpoint": "https://x/sse", "command": "", "args": ""}
     )
-    assert _read(_home)["mcpServers"]["remote"] == {"url": "https://x/sse"}
+    assert _read(_home)["mcpServers"]["remote"] == {"type": "sse", "url": "https://x/sse"}
 
 
 def test_create_rejects_bad_name(_home):

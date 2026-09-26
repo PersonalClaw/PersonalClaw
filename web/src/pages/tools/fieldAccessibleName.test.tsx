@@ -106,10 +106,11 @@ describe('ToolsPage uses the shared Field', () => {
 
   it('still wraps its inputs in Field, so the labels are published', () => {
     // Deleting the local Field without importing the shared one would ALSO remove the label text —
-    // this pins that the fields survived the swap. Nine in the Add form (the MCP form's "Plain
-    // values" field joined its "Environment" field when env values moved to the credential store),
-    // and four in the Edit form: Command, Arguments, Environment, Plain values.
-    expect((src.match(/<Field label=/g) ?? []).length).toBe(13)
+    // this pins that the fields survived the swap. Twelve in the Add form: the MCP server's Name and
+    // Transport, then URL and Headers for a server at a URL, or Command, Arguments, Environment and
+    // Plain values for one started with a command, and the OpenAI tool server's four. Seven in the
+    // Edit form: the same MCP fields but Name.
+    expect((src.match(/<Field label=/g) ?? []).length).toBe(19)
   })
 })
 

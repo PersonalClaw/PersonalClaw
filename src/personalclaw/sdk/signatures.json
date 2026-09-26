@@ -1286,8 +1286,8 @@
     {"annotation": "list[dict[str, Any]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tools"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "error"},
     {"annotation": "str", "default": "'agent'", "kind": "positional_or_keyword", "name": "source"},
-    {"annotation": "dict[str, bool]", "default": "<factory>", "kind": "positional_or_keyword", "name": "presence"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "disabled_tools"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "disabled_tools"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "transport"}
    ],
    "returns": "None"
   },

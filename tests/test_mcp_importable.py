@@ -40,7 +40,7 @@ def test_discover_importable_returns_cc_servers_not_in_pclaw(tmp_path, monkeypat
             "bogus": {"description": "no command or url"},
         },
     )
-    monkeypatch.setattr(disc, "_IMPORT_JSON_PATHS", ((cc, "Claude Code"),))
+    monkeypatch.setattr(disc, "_import_sources", lambda: ((cc, "Claude Code"),))
     # No PClaw-scope servers configured.
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
@@ -59,7 +59,7 @@ def test_discover_importable_excludes_already_known(tmp_path, monkeypatch):
     _write(cc, {"shared": {"command": "npx"}})
     pclaw = tmp_path / "mcp.json"
     _write(pclaw, {"shared": {"command": "npx"}})
-    monkeypatch.setattr(disc, "_IMPORT_JSON_PATHS", ((cc, "Claude Code"),))
+    monkeypatch.setattr(disc, "_import_sources", lambda: ((cc, "Claude Code"),))
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (pclaw,))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
 
@@ -67,7 +67,9 @@ def test_discover_importable_excludes_already_known(tmp_path, monkeypatch):
 
 
 def test_discover_importable_no_source_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(disc, "_IMPORT_JSON_PATHS", ((tmp_path / "absent.json", "Claude Code"),))
+    monkeypatch.setattr(
+        disc, "_import_sources", lambda: ((tmp_path / "absent.json", "Claude Code"),)
+    )
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
     assert disc.discover_importable_servers() == []

@@ -7,6 +7,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from aiohttp import web
 
@@ -534,6 +535,11 @@ async def api_mcp_importable(request: web.Request) -> web.Response:
     backend-only server. The Tools UI lists them as import suggestions; choosing
     one POSTs ``/api/mcp/apply`` with ``personalclaw: true`` to copy the spec
     into ``~/.personalclaw/mcp.json`` so it becomes a first-class PClaw server.
+
+    Each row carries what the picker shows and no credential: its transport, the command's name
+    and its arguments, or its URL, each with every credential in it masked, and the names of the
+    variables and headers it sets (``mcp_discovery.discover_importable_servers``). The import
+    reads the whole definition server-side.
     """
     from personalclaw.mcp_discovery import discover_importable_servers
 
@@ -773,16 +779,18 @@ def _not_editable_reason(name: str, spec: dict[str, Any]) -> str | None:
     The sentence is the edit button's answer, so each clause has to be true of this server.
     """
     from personalclaw.agent import _MANAGED_MCP_SERVERS
+    from personalclaw.mcp_discovery import MCP_TRANSPORTS, mcp_transport
 
     if name in _MANAGED_MCP_SERVERS:
         return "PersonalClaw manages this server itself and sets it up again on every start."
     if ":" in name:
         app = name.split(":", 1)[0]
         return f"The '{app}' app provides this server and sets it up from its own definition."
-    if spec.get("url") and not spec.get("command"):
+    transport = mcp_transport(spec)
+    if transport not in MCP_TRANSPORTS:
         return (
-            "This is a remote server at a URL. The edit form changes a server PersonalClaw "
-            "starts with a command."
+            f"This server uses the '{transport}' transport, which PersonalClaw cannot connect "
+            "over, so there is nothing here to edit."
         )
     return None
 
@@ -819,39 +827,236 @@ def _rebuild_agent_config_logged() -> None:
         logger.warning("rebuild_agent_config failed after an MCP server write", exc_info=True)
 
 
+#: What each transport's definition is made of. A PUT carrying the other transport's fields is
+#: refused rather than half-read, so a form that sends both cannot save one and drop the other.
+_STDIO_FIELDS = ("command", "args", "env", "plainEnv", "keepEnv")
+_REMOTE_FIELDS = ("url", "headers", "keepHeaders")
+
+#: An HTTP header name: RFC 9110's ``token``.
+_HEADER_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+
+def _stray_fields(body: dict[str, Any], fields: tuple[str, ...]) -> list[str]:
+    return [f for f in fields if body.get(f) not in (None, "", [], {})]
+
+
+def _url_problem(url: str) -> str | None:
+    """Why ``url`` cannot be a remote server's address, or ``None`` when it can."""
+    if not url:
+        return "a server at a URL needs its URL"
+    if any(ch.isspace() or ord(ch) < 32 for ch in url):
+        return "the URL cannot hold spaces or control characters"
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # reading it is the check: a malformed port raises
+    except ValueError:
+        return "the URL is not a valid address"
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return "the URL must start with http:// or https:// and name a host"
+    return None
+
+
+def _stdio_request(body: dict[str, Any]) -> dict[str, Any] | web.Response:
+    """A stdio server's PUT body, validated, or the refusal."""
+    stray = _stray_fields(body, _REMOTE_FIELDS)
+    if stray:
+        return json_error(
+            "invalid_transport",
+            message=f"{', '.join(stray)}: a server started with a command has none. Send "
+            "transport 'http' or 'sse' for a server at a URL.",
+            status=400,
+        )
+    command = body.get("command", "")
+    if not command or not isinstance(command, str):
+        return web.json_response({"error": "command is required"}, status=400)
+    args = body.get("args") or []
+    env = body.get("env") or {}
+    plain = body.get("plainEnv") or []
+    keep = body.get("keepEnv") or []
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        return json_error(
+            "invalid_field_type", message="args must be a list of strings", status=400
+        )
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+    ):
+        return json_error(
+            "invalid_env", message="env must map variable names to string values", status=400
+        )
+    for field_name, names in (("plainEnv", plain), ("keepEnv", keep)):
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            return json_error(
+                "invalid_env", message=f"{field_name} must be a list of variable names", status=400
+            )
+    return {"command": command, "args": args, "env": env, "plainEnv": plain, "keepEnv": keep}
+
+
+def _remote_request(body: dict[str, Any]) -> dict[str, Any] | web.Response:
+    """A remote server's PUT body, validated, or the refusal."""
+    stray = _stray_fields(body, _STDIO_FIELDS)
+    if stray:
+        return json_error(
+            "invalid_transport",
+            message=f"{', '.join(stray)}: a server at a URL has none. Send transport 'stdio' "
+            "for a server PersonalClaw starts with a command.",
+            status=400,
+        )
+    url = body.get("url", "")
+    problem = _url_problem(url.strip()) if isinstance(url, str) else "the URL must be a string"
+    if problem is not None:
+        return json_error("invalid_url", message=problem, status=400)
+    headers = body.get("headers") or {}
+    keep = body.get("keepHeaders") or []
+    if not isinstance(headers, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in headers.items()
+    ):
+        return json_error(
+            "invalid_headers", message="headers must map header names to string values", status=400
+        )
+    if not isinstance(keep, list) or not all(isinstance(n, str) for n in keep):
+        return json_error(
+            "invalid_headers", message="keepHeaders must be a list of header names", status=400
+        )
+    spellings: dict[str, set[str]] = {}
+    for header in [*headers, *keep]:
+        if not _HEADER_NAME_RE.fullmatch(header):
+            return json_error(
+                "invalid_headers", message=f"{header!r} is not a header name", status=400
+            )
+        spellings.setdefault(header.lower(), set()).add(header)
+    twice = sorted(min(names) for names in spellings.values() if len(names) > 1)
+    if twice:
+        # Header names are case-insensitive: two spellings would reach the server as one header
+        # sent twice.
+        return json_error("invalid_headers", message=f"{twice[0]}: sent twice", status=400)
+    for header, value in headers.items():
+        if not value.strip():
+            return json_error(
+                "invalid_headers", message=f"{header}: enter a value, or remove it", status=400
+            )
+        if any(ch in value for ch in "\r\n"):
+            # A line break would end the header and start another one the user never wrote.
+            return json_error(
+                "invalid_headers",
+                message=f"{header}: a header value cannot hold a line break",
+                status=400,
+            )
+    return {"url": url.strip(), "headers": headers, "keepHeaders": keep}
+
+
+def _stdio_definition(
+    name: str, existing: dict[str, Any], requested: dict[str, Any]
+) -> dict[str, Any] | web.Response:
+    """The stdio definition to save: what was sent, with each ``keepEnv`` variable's saved value."""
+    from personalclaw.config.secret_refs import (
+        MCP_PLAIN_ENV,
+        ForeignSecretReference,
+        ref_key,
+        resolve_mcp_values,
+    )
+
+    env = existing.get("env")
+    current: dict[str, Any] = env if isinstance(env, dict) else {}
+    keep = requested["keepEnv"]
+    unkept = [n for n in keep if not _has_saved_value(current.get(n))]
+    if unkept:
+        return json_error(
+            "invalid_env",
+            message=f"{', '.join(unkept)}: no value is saved for this server to keep. "
+            "Enter a value.",
+            status=400,
+        )
+    marked_plain = set(requested["plainEnv"])
+    new_env: dict[str, Any] = {}
+    for var in keep:
+        value = current[var]
+        if var in marked_plain and ref_key(value) is not None:
+            # Marked plain now: the value leaves the store and is kept in the file — read as any
+            # start of the server reads it, against its own owner, so a reference to another
+            # owner's key cannot be turned into that key in plaintext here.
+            try:
+                value = resolve_mcp_values(name, "env", {var: value}).get(var, "")
+            except ForeignSecretReference as exc:
+                return json_error("secret_owned_elsewhere", message=str(exc), status=400)
+        new_env[var] = value
+    new_env.update(requested["env"])  # a value typed now replaces a kept one
+    definition: dict[str, Any] = {"command": requested["command"]}
+    if requested["args"]:
+        definition["args"] = requested["args"]
+    if new_env:
+        definition["env"] = new_env
+        marked = sorted(n for n in marked_plain if n in new_env)
+        if marked:
+            definition[MCP_PLAIN_ENV] = marked
+    return definition
+
+
+def _remote_definition(
+    existing: dict[str, Any], requested: dict[str, Any], transport: str
+) -> dict[str, Any] | web.Response:
+    """The remote definition to save: ``type`` and ``url``, and the headers sent with each
+    ``keepHeaders`` one's saved value. Every header value goes to the credential store."""
+    saved = existing.get("headers")
+    current: dict[str, Any] = saved if isinstance(saved, dict) else {}
+    keep = requested["keepHeaders"]
+    unkept = [n for n in keep if not _has_saved_value(current.get(n))]
+    if unkept:
+        return json_error(
+            "invalid_headers",
+            message=f"{', '.join(unkept)}: no value is saved for this server to keep. "
+            "Enter a value.",
+            status=400,
+        )
+    headers: dict[str, Any] = {n: current[n] for n in keep}
+    headers.update(requested["headers"])  # a value typed now replaces a kept one
+    definition: dict[str, Any] = {"type": transport, "url": requested["url"]}
+    if headers:
+        definition["headers"] = headers
+    return definition
+
+
 async def api_mcp_server_detail(request: web.Request) -> web.Response:
     """GET/PUT/DELETE /api/mcp/servers/{name} — read, add or edit, or remove one MCP server.
 
-    GET is what the edit form reads: ``command``, ``args`` and ``env`` as ``[{name, plain,
-    value | hasValue}]`` — a plain variable's value, and for a stored one only whether a value is
-    saved. A stored value never leaves the server. ``editable`` is false, with a ``reason``, for a
-    server the form does not own (PersonalClaw's own, an app's, a remote one).
+    GET is what the edit form reads, with the server's ``transport`` (``stdio``, ``http`` or
+    ``sse``). A stdio server's ``command``, ``args`` and ``env`` as ``[{name, plain, value |
+    hasValue}]`` — a plain variable's value, and for a stored one only whether a value is saved. A
+    remote server's ``url`` and ``headers`` as ``[{name, hasValue}]``. A stored value never leaves
+    the server. ``editable`` is false, with a ``reason``, for a server the form does not own
+    (PersonalClaw's own, an app's, one over a transport PersonalClaw has no client for).
 
-    PUT adds or edits a stdio server, the one write path for both. Body::
+    PUT adds or edits a server, the one write path for both. A stdio server's body::
 
-        { "command": "node", "args": ["server.js"], "env": {"KEY": "val"},
-          "plainEnv": ["LOG_LEVEL"], "keepEnv": ["API_KEY"] }
+        { "transport": "stdio", "command": "node", "args": ["server.js"],
+          "env": {"KEY": "val"}, "plainEnv": ["LOG_LEVEL"], "keepEnv": ["API_KEY"] }
 
-    Every ``env`` value is saved in the credential store and ``mcp.json`` holds a reference to it,
-    except the variables ``plainEnv`` names, which stay in the file as settings. ``keepEnv`` names
-    variables whose saved value stays as it is — the edit form sends a secret it only showed
+    and a remote one's::
+
+        { "transport": "http", "url": "https://mcp.example.com/mcp",
+          "headers": {"Authorization": "Bearer …"}, "keepHeaders": ["X-Api-Key"] }
+
+    ``transport`` defaults to ``stdio``. Every ``env`` value is saved in the credential store and
+    ``mcp.json`` holds a reference to it, except the variables ``plainEnv`` names, which stay in
+    the file as settings; every header value is saved there too. ``keepEnv`` and ``keepHeaders``
+    name values whose saved value stays as it is — the edit form sends a secret it only showed
     masked this way, so its value never makes the round trip. A kept variable marked plain has its
-    stored value moved into the file. Keys the form does not own (``disabled``, ``disabledTools``,
-    ``autoApprove``, ``cwd``) are kept, and the agent config's copy is rebuilt to match.
+    stored value moved into the file. The definition is replaced whole, so switching a server's
+    transport leaves nothing of the old one behind. Keys the form does not own (``disabled``,
+    ``disabledTools``, ``autoApprove``, ``cwd``) are kept, and the agent config's copy is rebuilt
+    to match.
 
     DELETE removes the server from ``mcp.json`` and the agent config and deletes the values it
     owns in the credential store (``secret_refs.remove_mcp_servers``, the one delete).
     """
     from personalclaw.config.secret_refs import (
         MCP_DEFINITION_KEYS,
-        MCP_PLAIN_ENV,
         ForeignSecretReference,
         mcp_env_view,
-        ref_key,
+        mcp_headers_view,
         remove_mcp_servers,
-        resolve_mcp_values,
         store_mcp_spec,
     )
+    from personalclaw.mcp_discovery import MCP_TRANSPORTS, mcp_transport
 
     name = request.match_info["name"]
     if not name or not name.strip():
@@ -879,11 +1084,23 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         reason = _not_editable_reason(name, spec)
         if reason is not None:
             return web.json_response({"name": name, "editable": False, "reason": reason})
+        transport = mcp_transport(spec)
+        if transport != "stdio":
+            return web.json_response(
+                {
+                    "name": name,
+                    "editable": True,
+                    "transport": transport,
+                    "url": str(spec.get("url") or ""),
+                    "headers": mcp_headers_view(spec),
+                }
+            )
         args = spec.get("args")
         return web.json_response(
             {
                 "name": name,
                 "editable": True,
+                "transport": transport,
                 "command": spec.get("command", ""),
                 "args": [str(a) for a in args] if isinstance(args, list) else [],
                 "env": mcp_env_view(spec),
@@ -947,28 +1164,16 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
-    command = body.get("command", "")
-    if not command or not isinstance(command, str):
-        return web.json_response({"error": "command is required"}, status=400)
-    args = body.get("args") or []
-    env = body.get("env") or {}
-    plain = body.get("plainEnv") or []
-    keep = body.get("keepEnv") or []
-    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+    transport = body.get("transport") or "stdio"
+    if transport not in MCP_TRANSPORTS:
         return json_error(
-            "invalid_field_type", message="args must be a list of strings", status=400
+            "invalid_transport",
+            message=f"transport must be one of {', '.join(MCP_TRANSPORTS)}",
+            status=400,
         )
-    if not isinstance(env, dict) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in env.items()
-    ):
-        return json_error(
-            "invalid_env", message="env must map variable names to string values", status=400
-        )
-    for field_name, names in (("plainEnv", plain), ("keepEnv", keep)):
-        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-            return json_error(
-                "invalid_env", message=f"{field_name} must be a list of variable names", status=400
-            )
+    requested = _stdio_request(body) if transport == "stdio" else _remote_request(body)
+    if isinstance(requested, web.Response):
+        return requested
 
     # Write to ~/.personalclaw/mcp.json — the PersonalClaw scope the native MCP
     # client actually spawns + lists tools from (mcp_client._personalclaw_mcp_specs).
@@ -982,52 +1187,30 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         existing = servers.get(name)
         if not isinstance(existing, dict):
             existing = _definition_of(name) or {}
-        reason = _not_editable_reason(name, {"command": command})
+        reason = _not_editable_reason(name, {"type": transport})
         if reason is not None:
             return json_error("mcp_server_not_editable", message=reason, status=409)
 
-        current = existing.get("env") if isinstance(existing.get("env"), dict) else {}
-        unkept = [n for n in keep if not _has_saved_value(current.get(n))]
-        if unkept:
-            return json_error(
-                "invalid_env",
-                message=f"{', '.join(unkept)}: no value is saved for this server to keep. "
-                "Enter a value.",
-                status=400,
-            )
-        marked_plain = set(plain)
-        new_env: dict[str, Any] = {}
-        for var in keep:
-            value = current[var]
-            if var in marked_plain and ref_key(value) is not None:
-                # Marked plain now: the value leaves the store and is kept in the file — read as
-                # any start of the server reads it, against its own owner, so a reference to
-                # another owner's key cannot be turned into that key in plaintext here.
-                try:
-                    value = resolve_mcp_values(name, "env", {var: value}).get(var, "")
-                except ForeignSecretReference as exc:
-                    return json_error("secret_owned_elsewhere", message=str(exc), status=400)
-            new_env[var] = value
-        new_env.update(env)  # a value typed now replaces a kept one
-
+        if transport == "stdio":
+            definition = _stdio_definition(name, existing, requested)
+        else:
+            definition = _remote_definition(existing, requested, transport)
+        if isinstance(definition, web.Response):
+            return definition
         # Keys the form does not own survive the edit; the definition is replaced whole, so a
-        # cleared argument list or a removed variable is gone rather than merged back.
+        # cleared argument list, a removed variable or header, or the other transport's fields
+        # are gone rather than merged back.
         entry: dict[str, Any] = {k: v for k, v in existing.items() if k not in MCP_DEFINITION_KEYS}
-        entry["command"] = command
-        if args:
-            entry["args"] = args
-        if new_env:
-            entry["env"] = new_env
-            marked = sorted(n for n in marked_plain if n in new_env)
-            if marked:
-                entry[MCP_PLAIN_ENV] = marked
+        entry.update(definition)
         try:
             # STRICT: a value typed now that the store cannot hold is refused, not left inline.
             entry = store_mcp_spec(name, entry, strict=True)
         except ForeignSecretReference as exc:
             return json_error("secret_owned_elsewhere", message=str(exc), status=400)
         except ValueError as exc:
-            return json_error("invalid_env", message=str(exc), status=400)
+            if transport == "stdio":
+                return json_error("invalid_env", message=str(exc), status=400)
+            return json_error("invalid_headers", message=str(exc), status=400)
         servers[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
 
@@ -1039,7 +1222,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         _sync_mcp_to_agent(name, True)
     await asyncio.to_thread(_rebuild_agent_config_logged)
 
-    logger.info("MCP register via REST: %s command=%s", name, command)
+    logger.info("MCP register via REST: %s (%s)", name, transport)
     sel().log_api_access(
         caller="dashboard",
         operation="mcp_server_register",
@@ -1051,13 +1234,22 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
 
 # ─── Batched scope apply ────────────────────────────────────────────────
 
+
 # NO `_canonical_mcp_json()` constant here: it was `Path.home() / ".personalclaw" /
 # "mcp.json"`, computed at import time, so it ignored PERSONALCLAW_HOME exactly as the
 # comment on `_canonical_mcp_json()` (above) says the old hardcode did — the same bug, fixed
 # in one function and left in three siblings. Call `_canonical_mcp_json()` instead.
-# The claude-code CLI's own global config; PersonalClaw reads/writes MCP server
-# specs here so servers stay in sync when that ACP backend is in use.
-_CC_GLOBAL_JSON = Path.home() / ".claude.json"
+def _cc_global_json() -> Path:
+    """The claude-code CLI's own global config; PersonalClaw reads/writes MCP server specs here
+    so servers stay in sync when that ACP backend is in use.
+
+    Resolved per call through the onboarding importer's resolver, the one reader of
+    ``$CLAUDE_CONFIG_DIR``. It was ``Path.home() / ".claude.json"`` frozen at import, so with
+    ``CLAUDE_CONFIG_DIR`` set, Import read another file than the one the list came from, and the
+    Claude Code toggle wrote a file Claude Code does not read."""
+    from personalclaw.onboarding_import.sources import claude_code
+
+    return claude_code.global_config_path()
 
 
 def _load_json_or_empty(path: Path) -> dict[str, Any]:
@@ -1151,7 +1343,7 @@ def _find_server_spec_anywhere(name: str) -> dict | None:
     → claude-code global.  Returns a shallow copy with ``disabled`` stripped (the caller
     decides whether to disable in its target scope).
     """
-    candidates = [_installed_agent_json(), _canonical_mcp_json(), _CC_GLOBAL_JSON]
+    candidates = [_installed_agent_json(), _canonical_mcp_json(), _cc_global_json()]
     for p in candidates:
         spec = _load_json_or_empty(p).get("mcpServers", {}).get(name)
         if isinstance(spec, dict) and (spec.get("command") or spec.get("url")):
@@ -1430,7 +1622,7 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
 
             if desired_cc is not None:
                 outcome["actions"]["ccGlobal"] = _set_scope_entry(
-                    _CC_GLOBAL_JSON,
+                    _cc_global_json(),
                     name,
                     enabled=desired_cc,
                     spec=_find_server_spec_anywhere(name),

@@ -144,7 +144,7 @@ def scopes(tmp_path, monkeypatch):
     mc_path = tmp_path / "personalclaw.mcp.json"
     cc_path = tmp_path / "cc_global.json"
     monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
-    monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_path)
+    monkeypatch.setattr(mcp_mod, "_cc_global_json", lambda: cc_path)
     monkeypatch.setattr(mcp_mod, "_get_mcp_lock", lambda: _NoLock())
     rebuild = MagicMock()
     monkeypatch.setattr(personalclaw.agent, "rebuild_agent_config", rebuild)
@@ -282,7 +282,7 @@ class TestHostileNameRejection:
         mc_path = tmp_path / "mc.json"
         cc_path = tmp_path / "cc.json"
         monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
-        monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_path)
+        monkeypatch.setattr(mcp_mod, "_cc_global_json", lambda: cc_path)
 
         import personalclaw.agent
 
@@ -315,7 +315,7 @@ class TestHostileNameRejection:
 
         mc_path = tmp_path / "mc.json"
         monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
-        monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", tmp_path / "cc.json")
+        monkeypatch.setattr(mcp_mod, "_cc_global_json", lambda: tmp_path / "cc.json")
         monkeypatch.setattr(mcp_mod, "_find_server_spec_anywhere", lambda n: {"command": "x"})
 
         import personalclaw.agent

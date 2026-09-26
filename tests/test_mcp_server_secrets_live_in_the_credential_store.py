@@ -22,8 +22,7 @@ import textwrap
 import zipfile
 
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestServer, make_mocked_request
+from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
@@ -265,39 +264,6 @@ def test_the_discovery_probe_spawns_with_the_resolved_value(home, echo_server):
     assert tool["description"] == f"token digest {_digest(TOKEN)}"
 
 
-def test_the_remote_probe_sends_the_resolved_header(home):
-    from personalclaw.mcp_discovery import McpServerInfo, probe_server
-
-    seen: list[str] = []
-
-    async def handler(request: web.Request) -> web.Response:
-        seen.append(request.headers.get("Authorization", ""))
-        body = await request.json()
-        if body.get("method") == "initialize":
-            return web.json_response({"jsonrpc": "2.0", "id": 1, "result": {}})
-        return web.json_response({"jsonrpc": "2.0", "id": 2, "result": {"tools": []}})
-
-    ref = _stored_ref("remote", "headers", "Authorization", HEADER_TOKEN)
-
-    async def run() -> str:
-        app = web.Application()
-        app.router.add_post("/mcp", handler)
-        server = TestServer(app)
-        await server.start_server()
-        try:
-            info = McpServerInfo(
-                name="remote",
-                url=str(server.make_url("/mcp")),
-                headers={"Authorization": ref},
-            )
-            return (await probe_server(info)).status
-        finally:
-            await server.close()
-
-    assert asyncio.run(run()) == "ok"
-    assert seen and set(seen) == {HEADER_TOKEN}
-
-
 # ── snapshots and exports carry no value ────────────────────────────────────
 
 
@@ -426,7 +392,7 @@ def test_the_claude_code_scope_gets_the_value_and_the_implicit_copy_does_not(
     from personalclaw.mcp_discovery import discover_servers_to_sync, register_servers_for_cc
 
     cc_json = tmp_path / "claude.json"
-    monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_json)
+    monkeypatch.setattr(mcp_mod, "_cc_global_json", lambda: cc_json)
     body = {"command": "npx", "env": {"GITHUB_TOKEN": TOKEN, "LOG_LEVEL": "info"}}
     assert _put("gh", {**body, "plainEnv": ["LOG_LEVEL"]}).status == 200
 

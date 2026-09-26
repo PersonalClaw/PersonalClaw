@@ -1228,12 +1228,14 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
                 mcps[name] = spec
 
     # Resolve MCP commands to absolute paths and validate
+    from personalclaw.mcp_discovery import mcp_transport  # circular: it imports this module
+
     valid_servers: dict[str, Any] = {}
     for name, spec in config.get("mcpServers", {}).items():
         if not isinstance(spec, dict):
             continue
-        # Remote Streamable HTTP servers — preserve as-is (url-based, no command)
-        if spec.get("url"):
+        # A server at a URL (Streamable HTTP or SSE) has no command to resolve — kept as it is.
+        if mcp_transport(spec) != "stdio":
             valid_servers[name] = spec
             continue
         cmd = spec.get("command", "")

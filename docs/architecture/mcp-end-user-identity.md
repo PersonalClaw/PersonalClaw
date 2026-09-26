@@ -174,11 +174,12 @@ The prohibition cuts both ways, and the outbound side is currently clean — wor
 precisely so a later change cannot quietly regress it.
 
 PersonalClaw acting as an MCP *client* reads server specs from `mcp.json`
-(`src/personalclaw/mcp_client.py:594-608`). Credential injection is **environment-only and
-stdio-only** (`src/personalclaw/mcp_client.py:307-309`). Remote transports get **no headers
-at all**: `streamablehttp_client(url)` and `sse_client(url)` are called with the URL alone
-(`src/personalclaw/mcp_client.py:281-293`), and the module contains no `Authorization` or
-`Bearer` handling whatsoever. The one env-injecting site on the ACP path passes
+(`mcp_client._personalclaw_mcp_specs`). What a server is sent comes from its own spec and
+nowhere else: a stdio server gets the `env` the spec declares, and a remote one the `headers`
+it declares, passed to `streamablehttp_client` / `sse_client` (`McpServerConn._open_transport`).
+Both are values the operator configured for *that* server, read from the credential store when
+the spec is loaded; the module has no other `Authorization` or `Bearer` handling, and nothing
+reads a header off an inbound request. The one env-injecting site on the ACP path passes
 non-credential locators only — home, port, session key
 (`src/personalclaw/acp/mcp_servers.py:73`, `:88`, `:92`).
 
@@ -377,10 +378,10 @@ targets. A future federated mode changes how the *owner* logs in; it must not ch
 the inbound surfaces accept.
 
 **C-2 — Core MUST NOT forward an inbound caller's credential to any upstream.**
-True by construction today: outbound remote MCP calls carry no headers
-(`src/personalclaw/mcp_client.py:281-293`) and injection is env-only/stdio-only
-(`src/personalclaw/mcp_client.py:307-309`). If an upstream needs authentication it uses a
-credential the operator configured for *that* upstream, never the caller's. Note the one
+True by construction today: an outbound remote MCP call carries only the `headers` its server's
+spec declares, and a stdio server gets only its spec's `env` (`McpServerConn._open_transport`).
+If an upstream needs authentication it uses a credential the operator configured for *that*
+upstream, never the caller's. Note the one
 adjacent spot that already reasons correctly and must stay that way: an empty `upstream`
 "never means 'pick one for me'" (`src/personalclaw/inbound/clients.py:84`).
 

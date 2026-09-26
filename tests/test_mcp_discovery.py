@@ -12,8 +12,6 @@ from personalclaw.mcp_discovery import (
     _cache_probe,
     _get_cached,
     _probe_cache,
-    _probe_remote,
-    _read_jsonrpc_response,
     discover_servers_to_sync,
     list_servers,
     probe_server,
@@ -37,12 +35,13 @@ class TestMcpServerInfo:
         )
         d = info.to_dict()
         assert d["name"] == "test-mcp"
-        assert d["command"] == "/usr/bin/test"
-        assert d["args"] == ["--foo"]
+        assert d["transport"] == "stdio"
         assert d["status"] == "ok"
         assert d["tools"] == ["tool_a", "tool_b"]
         assert d["source"] == "agent"
-        assert "url" not in d
+        # The browser gets a server's state, never its definition (arguments can carry a token).
+        for key in ("command", "args", "url", "headers", "cwd"):
+            assert key not in d
 
     def test_defaults(self) -> None:
         info = McpServerInfo(name="x")
@@ -64,9 +63,11 @@ class TestMcpServerInfo:
         )
         assert info.is_remote is True
         assert info.command == ""
+        # A URL that declares no transport is SSE, what it always meant to the native client.
+        assert info.transport == "sse"
         d = info.to_dict()
-        assert d["url"] == "https://mcp.deepwiki.com/mcp"
-        assert d["headers"] == {"Authorization": "Bearer tok"}
+        assert d["transport"] == "sse"
+        assert "url" not in d and "headers" not in d
 
     def test_is_remote_false_for_local(self) -> None:
         info = McpServerInfo(name="x", command="cmd")
@@ -83,11 +84,9 @@ class TestMcpServerInfo:
             "mcp.json",
         )
         assert info.cwd == "/opt/app"
-        assert info.to_dict()["cwd"] == "/opt/app"
-        # No cwd → field stays empty and is omitted from to_dict.
+        # No cwd → field stays empty.
         bare = _server_from_spec("x", {"command": "c"}, "mcp.json")
         assert bare.cwd == ""
-        assert "cwd" not in bare.to_dict()
 
     def test_is_remote_false_when_both(self) -> None:
         """If both url and command are set, treat as local (command takes precedence)."""
@@ -830,129 +829,12 @@ class TestProbeCache:
         assert servers[0].tools == ["a"]
 
 
-class TestReadJsonrpcResponse:
-    @pytest.mark.asyncio
-    async def test_json_content_type(self) -> None:
-        resp = MagicMock()
-        resp.content_type = "application/json"
-        resp.json = AsyncMock(return_value={"jsonrpc": "2.0", "id": 1, "result": {}})
-        result = await _read_jsonrpc_response(resp)
-        assert result == {"jsonrpc": "2.0", "id": 1, "result": {}}
-
-    @pytest.mark.asyncio
-    async def test_sse_content_type(self) -> None:
-        sse_body = (
-            "event: message\n" 'data: {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}\n' "\n"
-        )
-        resp = MagicMock()
-        resp.content_type = "text/event-stream"
-        resp.text = AsyncMock(return_value=sse_body)
-        result = await _read_jsonrpc_response(resp)
-        assert result["id"] == 1
-        assert result["result"] == {"tools": []}
-
-    @pytest.mark.asyncio
-    async def test_sse_picks_last_response(self) -> None:
-        """Multiple data lines — picks the last one with an id."""
-        sse_body = (
-            'data: {"jsonrpc": "2.0", "method": "log"}\n'
-            'data: {"jsonrpc": "2.0", "id": 1, "result": {"ok": true}}\n'
-        )
-        resp = MagicMock()
-        resp.content_type = "text/event-stream"
-        resp.text = AsyncMock(return_value=sse_body)
-        result = await _read_jsonrpc_response(resp)
-        assert result["result"] == {"ok": True}
-
-    @pytest.mark.asyncio
-    async def test_sse_empty_returns_empty_dict(self) -> None:
-        resp = MagicMock()
-        resp.content_type = "text/event-stream"
-        resp.text = AsyncMock(return_value="")
-        result = await _read_jsonrpc_response(resp)
-        assert result == {}
-
-
 class TestProbeRemote:
     def setup_method(self) -> None:
         _probe_cache.clear()
 
     def teardown_method(self) -> None:
         _probe_cache.clear()
-
-    @pytest.mark.asyncio
-    async def test_probe_remote_ok(self) -> None:
-        """Successful HTTP probe returns ok status and tools."""
-        server = McpServerInfo(name="remote", url="https://example.com/mcp")
-
-        init_resp = MagicMock()
-        init_resp.status = 200
-        init_resp.content_type = "application/json"
-        init_resp.json = AsyncMock(return_value={"jsonrpc": "2.0", "id": 1, "result": {}})
-        init_resp.__aenter__ = AsyncMock(return_value=init_resp)
-        init_resp.__aexit__ = AsyncMock(return_value=False)
-
-        tools_resp = MagicMock()
-        tools_resp.status = 200
-        tools_resp.content_type = "application/json"
-        tools_resp.json = AsyncMock(
-            return_value={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {"tools": [{"name": "search"}, {"name": "read"}]},
-            }
-        )
-        tools_resp.__aenter__ = AsyncMock(return_value=tools_resp)
-        tools_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(side_effect=[init_resp, tools_resp])
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("personalclaw.mcp_discovery.aiohttp.ClientSession", return_value=mock_session):
-            result = await _probe_remote(server)
-
-        assert result.status == "ok"
-        # _probe_remote now returns rich tool descriptors (name/description/
-        # inputSchema), not bare name strings.
-        assert [t["name"] for t in result.tools] == ["search", "read"]
-
-    @pytest.mark.asyncio
-    async def test_probe_remote_http_error(self) -> None:
-        """Non-200 response sets error status."""
-        server = McpServerInfo(name="remote", url="https://example.com/mcp")
-
-        resp = MagicMock()
-        resp.status = 500
-        resp.__aenter__ = AsyncMock(return_value=resp)
-        resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(return_value=resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("personalclaw.mcp_discovery.aiohttp.ClientSession", return_value=mock_session):
-            result = await _probe_remote(server)
-
-        assert result.status == "error"
-        assert "500" in result.error
-
-    @pytest.mark.asyncio
-    async def test_probe_remote_connection_error(self) -> None:
-        """Connection failure sets error status."""
-        server = McpServerInfo(name="remote", url="https://unreachable.example.com/mcp")
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(side_effect=ConnectionError("refused"))
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("personalclaw.mcp_discovery.aiohttp.ClientSession", return_value=mock_session):
-            result = await _probe_remote(server)
-
-        assert result.status == "error"
 
     @pytest.mark.asyncio
     async def test_probe_dispatches_to_remote(self) -> None:
@@ -1230,35 +1112,32 @@ class TestProbeServerTimeout:
 
 
 class TestProbeRemoteTimeout:
-    """Test that _probe_remote uses _get_probe_timeout() for HTTP timeout."""
+    """The remote probe is bounded by the configured probe timeout."""
 
     @pytest.mark.asyncio
     async def test_probe_remote_timeout_uses_config(self) -> None:
-        """Remote probe uses _get_probe_timeout() for aiohttp timeout."""
-        server = McpServerInfo(name="remote", url="https://example.com/mcp")
+        """A server that never answers reads ``timeout`` after ``_get_probe_timeout()``."""
+        from personalclaw.mcp_client import mcp_sdk_available
+        from personalclaw.mcp_discovery import _probe_remote
+
+        if not mcp_sdk_available():
+            pytest.skip("requires the 'mcp' SDK extra")
+        server = McpServerInfo(name="remote", url="https://example.com/mcp", transport="http")
+
+        async def never_answers(self):
+            await asyncio.sleep(30)
+            return []
 
         with (
-            patch("personalclaw.config.loader.AppConfig") as mock_cls,
-            patch("aiohttp.ClientSession") as mock_session_cls,
+            patch("personalclaw.mcp_discovery._get_probe_timeout", return_value=0.2),
+            patch("personalclaw.mcp_client.McpServerConn.list_tools", never_answers),
         ):
-            mock_cfg = MagicMock()
-            mock_cfg.dashboard.mcp_probe_timeout_secs = 60
-            mock_cls.load.return_value = mock_cfg
-
-            mock_session = AsyncMock()
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-            mock_session.post = MagicMock(side_effect=asyncio.TimeoutError)
-            mock_session_cls.return_value = mock_session
-
+            started = time.monotonic()
             result = await _probe_remote(server)
 
         assert result.status == "error"
         assert result.error == "timeout"
-        # Verify the configured timeout was actually used
-        timeout_used = mock_session_cls.call_args.kwargs.get("timeout")
-        assert timeout_used is not None
-        assert timeout_used.total == 60
+        assert time.monotonic() - started < 5, "the probe outlived its configured timeout"
 
 
 class TestFixStaleManagedCommand:

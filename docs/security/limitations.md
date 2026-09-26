@@ -396,11 +396,17 @@ A secret still appears in plaintext in these places:
   quoted.
 - **A value typed into `mcp.json` or `config.json` by hand** (`personalclaw config edit`, an
   editor) stays in the file until the gateway next starts and moves it.
+- **A token in an MCP server's arguments or URL.** Only `env` and `headers` values are stored.
+  A key passed as an argument (`--api-key …`) or carried in the URL (`?token=…`, `https://user:pw@…`)
+  stays in `mcp.json` as written, travels with an export, and shows in the server's edit form. The
+  import list and the list of configured servers mask or leave out both, but the file keeps them.
+  Put a token in an environment variable or a header instead.
 - **Claude Code's own config.** Putting an MCP server into Claude Code's scope
-  (`POST /api/mcp/apply` with `ccGlobal`) writes it into `~/.claude.json` with its values,
-  because Claude Code reads only its own file. That copy is outside PersonalClaw's home,
-  snapshots and exports, under Claude Code's own file permissions. The copy PersonalClaw makes
-  by itself when sessions restart (`~/.mcp.json`) carries only the plain values.
+  (`POST /api/mcp/apply` with `ccGlobal`) writes it into Claude Code's `.claude.json` (in your
+  home directory, or in `$CLAUDE_CONFIG_DIR` when that is set) with its values, because Claude
+  Code reads only its own file. That copy is outside PersonalClaw's home, snapshots and exports,
+  under Claude Code's own file permissions. The copy PersonalClaw makes by itself when sessions
+  restart (`~/.mcp.json`) carries only the plain values.
 
 **What this means for you:** after upgrading, treat snapshots and exports made before it as
 holding your tokens. Delete them, or change any token that has left your hands in one.
