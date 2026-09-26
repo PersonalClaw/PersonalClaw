@@ -31,7 +31,7 @@ from personalclaw.dashboard.chat_persistence import (
     save_session_to_history,
     session_key_exists,
 )
-from personalclaw.dashboard.chat_runner import run_chat
+from personalclaw.dashboard.chat_runner import app_conversation_posture, run_chat
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -45,7 +45,7 @@ from personalclaw.dashboard.chat_utils import (
     full_session_messages,
     persisted_history_key,
 )
-from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState, _ChatSession
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.request_validation import json_object_body
@@ -598,8 +598,15 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     excluded. Worker sessions (goal loops / code projects / campaigns) ARE included
     but tagged with their ``origin`` + ``source_id``/``source_label`` so the UI can
     default-hide them behind a filter and link each back to its cockpit.
+
+    An app caller gets the conversations it started and nothing else
+    (``DashboardState.session_creating_app``, ``ROUTE_AUTHZ``'s reason for this route). A
+    conversation an app started carries the app and its display name, which your history row
+    shows as "Started by …".
     """
     state: DashboardState = request.app["state"]
+    request_app = request.get("app", "")
+    app_names: dict[str, str] = {}
     # Archived sessions are excluded by DEFAULT — that is the whole point of
     # archiving. `?archived=1` returns only the archive (the Archived view); `?all=1`
     # returns both. Filtering here rather than in the client keeps the contract in one
@@ -638,7 +645,13 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
         if getattr(s, "memory_mode", "persistent") in ("incognito", "temporary"):
             seen.add(s.key)
             continue
+        # Marked seen either way, so the disk branch below cannot hand the app the same
+        # conversation from its file.
+        if request_app and s.created_by_app != request_app:
+            seen.add(s.key)
+            continue
         d = s.to_dict()
+        d.update(_started_by(s.created_by_app, app_names))
         # A channel-linked session keeps its channel origin even once resumed live,
         # so it stays grouped under the Channel scope rather than folding into
         # 'manual'.
@@ -696,6 +709,8 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             if name in seen:
                 continue
             meta = state.conversation_log.get_metadata(raw_key)
+            if request_app and meta.get(CREATED_BY_APP_META_KEY) != request_app:
+                continue
             if meta.get("closed"):
                 continue
             # Incognito/temporary histories are never surfaced in the list.
@@ -740,6 +755,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                     else 0.0
                 ),
                 "never_archive": bool(meta.get("never_archive")),
+                **_started_by(meta.get(CREATED_BY_APP_META_KEY), app_names),
             }
             if origin != "manual":
                 row["source_id"] = sid
@@ -749,6 +765,18 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             out.append(row)
 
     return web.json_response(out)
+
+
+def _started_by(creator: object, names: dict[str, str]) -> dict[str, str]:
+    """A history row's "Started by …" fields for a conversation whose creating app is *creator*,
+    or nothing for one of yours. *names* caches display names across one list's rows."""
+    if not isinstance(creator, str) or not creator:
+        return {}
+    if creator not in names:
+        from personalclaw.apps.app_manager import display_name_of
+
+        names[creator] = display_name_of(creator)
+    return {"created_by_app": creator, "created_by_app_name": names[creator]}
 
 
 async def api_chat_tool_result(request: web.Request) -> web.Response:
@@ -886,6 +914,12 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             if parent_meta:
                 forked_from_title = str(parent_meta.get("title") or "") or parent_key
 
+    # A conversation an app started runs under the APP's grant, whoever sends into it — your
+    # approval switches never reach it (`chat_runner.app_conversation_posture`). The chat names the
+    # app and says so above the composer, and the posture it restores is that grant's: it approves
+    # like Trust, or it asks. None for one of yours.
+    app_auto = app_conversation_posture(session)
+
     return web.json_response(
         {
             "key": session.key,
@@ -935,13 +969,22 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
                 else None
             ),
             "approval": (
-                "yolo"
-                if state.is_yolo_active()
+                ("trust" if app_auto else "normal")
+                if app_auto is not None
                 else (
-                    "trust"
-                    if session._trust
-                    else "trust_reads" if session._trust_reads else "normal"
+                    "yolo"
+                    if state.is_yolo_active()
+                    else (
+                        "trust"
+                        if session._trust
+                        else "trust_reads" if session._trust_reads else "normal"
+                    )
                 )
+            ),
+            **(
+                {**_started_by(session.created_by_app, {}), "app_auto_approves": app_auto}
+                if app_auto is not None
+                else {}
             ),
             # Memory mode so mode-gated affordances restore on reopen (e.g. the chat
             # page hides Fork on a non-persistent session — the backend refuses to
@@ -2143,8 +2186,10 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
         outcome="allowed",
         resources=f"session={name} workspace_dir={workspace_dir}",
     )
-    # Track recent working directories
-    if workspace_dir:
+    # Track recent working directories — yours. An app's conversation works where the app (or you,
+    # on its behalf) pointed it, and that folder is not one you chose to work in: filed among your
+    # recents, it would be offered to your next chat as one of yours.
+    if workspace_dir and not session.created_by_app:
         try:
             await asyncio.to_thread(_save_recent_project, workspace_dir)
         except Exception:

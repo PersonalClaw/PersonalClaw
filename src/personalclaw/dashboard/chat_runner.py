@@ -100,7 +100,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
 )
-from personalclaw.llm.events import is_length_stop
+from personalclaw.llm.events import TOOL_META_APPROVAL_WAIVED, is_length_stop
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -1664,6 +1664,20 @@ def app_conversation_posture(session: _ChatSession) -> bool | None:
     return app_conversation_auto_approves(creator)
 
 
+def auto_approval_reason(app_auto: bool | None, yolo_active: bool) -> str:
+    """Whose switch approved a call nobody was asked about — the ``reason`` its audit row names.
+
+    ``app_grant`` in a conversation an app started (its ``agent`` grant, see
+    :func:`app_conversation_posture`), else ``yolo`` while your YOLO is on, else ``trust``: your
+    Trust for this chat, or an agent's "always allow" seeded into it. One answer for both runtimes —
+    the ACP gate asks it when it auto-approves a permission request, and the native runtime's
+    waived asks (``TOOL_META_APPROVAL_WAIVED``) are recorded with it at their result.
+    """
+    if app_auto:
+        return "app_grant"
+    return "yolo" if yolo_active else "trust"
+
+
 async def run_chat(
     state: DashboardState,
     session: _ChatSession,
@@ -1813,6 +1827,9 @@ async def run_chat(
     last_heartbeat = time.time()
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
+    # tool_call_id -> the call's effective risk, logged with its `invoked` row and again with the
+    # `auto_approved` row a waived ask gets at its result (`TOOL_META_APPROVAL_WAIVED`).
+    _call_risk: dict[str, str] = {}
     # Host-authority bookkeeping for ACP turns (§2.2 / G27). An ACP CLI decides for
     # ITSELF which tools ask the client for permission; anything it never asks about
     # runs before the host has a decision point, so the deny-list, the task-mode gate
@@ -3029,6 +3046,14 @@ async def run_chat(
                 # already paused on the tool call awaiting the reply.
                 if event.title == "AskUserQuestion":
                     _emit_question_card(state, session.key, event.tool_input, event.tool_call_id)
+                _risk = resolve_effective_risk(
+                    getattr(event, "risk_level", "") or "",
+                    event.title,
+                    event.tool_kind,
+                    event.tool_input,
+                )
+                if event.tool_call_id:
+                    _call_risk[event.tool_call_id] = _risk
                 sel().log_tool_invocation(
                     session_key=session_key,
                     agent=_agent_label(session),
@@ -3041,14 +3066,7 @@ async def run_chat(
                     # runtime auto-approved under YOLO/policy=auto (which never reach
                     # the chat_runner approval gate). The one place risk is guaranteed
                     # logged for a forensic "what destructive tool ran" query.
-                    metadata={
-                        "risk": resolve_effective_risk(
-                            getattr(event, "risk_level", "") or "",
-                            event.title,
-                            event.tool_kind,
-                            event.tool_input,
-                        )
-                    },
+                    metadata={"risk": _risk},
                 )
                 # Fire PreToolUse hooks for auto-approved tools.
                 # NOTE: For EVENT_TOOL_CALL, hooks are informational only - the tool
@@ -3235,6 +3253,26 @@ async def run_chat(
                             break
                 # Fire PostToolUse hooks
                 _tool_name = _pending_tools.pop(event.tool_call_id, "")
+                _risk_of_call = _call_risk.pop(event.tool_call_id, "")
+                # The native runtime answered this call's ask from the session's policy, in its own
+                # loop, so no approval reached the gate above: record it the way that gate records
+                # its own auto-approvals, naming whose switch it was.
+                if _tmeta.get(TOOL_META_APPROVAL_WAIVED):
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=_tool_name or event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="auto_approved",
+                        request_id=event.tool_call_id,
+                        metadata={
+                            "reason": auto_approval_reason(
+                                _app_auto, _app_auto is None and state.is_yolo_active()
+                            ),
+                            "risk": _risk_of_call,
+                        },
+                    )
                 # Host-authority residue check (§2.2 / G27). A result for a call the
                 # host was never asked about means the CLI self-approved it. We cannot
                 # pre-block what the protocol never showed us — so we make the ABSENCE
@@ -3683,9 +3721,7 @@ async def run_chat(
                         # YOLO without a human prompt — the highest-value audit signal
                         # under the "risk is an indicator, floor covers everything" model.
                         metadata={
-                            "reason": (
-                                "app_grant" if _app_auto else ("yolo" if yolo_active else "trust")
-                            ),
+                            "reason": auto_approval_reason(_app_auto, yolo_active),
                             "risk": effective_risk,
                         },
                     )

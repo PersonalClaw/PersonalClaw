@@ -71,9 +71,11 @@ const docs: UiDoc[] = [
       { name: 'onChange', description: 'Fires with the newly selected value.' },
       { name: 'ariaLabel', description: 'Accessible name for the control.' },
       { name: 'disabled', description: 'Disable the pill.' },
+      { name: 'disabledReason', description: 'Why a disabled pill is unavailable. Keeps it focusable (aria-disabled) with the reason as its title, instead of dropping it from the tab order.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Prefer over HeaderSegmented when the option set is long or labels are wide.' },
+      { guidance: true, description: 'Give a disabled pill a disabledReason whenever the reason is not obvious from the page.' },
     ],
     anatomy: ['pill trigger (current mode + chevron)', 'Popover menu of options'],
   },

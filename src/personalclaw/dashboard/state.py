@@ -871,10 +871,12 @@ class _ChatSession:
             "natural_voice": self.natural_voice,
             "memory_mode": self.memory_mode,
             "forked_from": self.forked_from,
-            # Owning-app tag. Non-empty for hidden worker sessions (e.g.
-            # autonomous goal loops); the chat sidebar filters these out so they
-            # never appear as user conversations.
+            # The origin tag (a hidden worker's, a channel's, or the name of the app that started
+            # the conversation) — where it came from, not whose it is.
             "app": self._app,
+            # The app whose token started the conversation, or "" for yours: what decides an app's
+            # reach into it, and what the history row names ("Started by …").
+            "created_by_app": self.created_by_app,
         }
 
 
@@ -1953,8 +1955,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         session.created_by_app = (
             persisted_creator if persisted_creator is not None else created_by_app
         )
-        # An app's conversation is tagged with the app too, which is what keeps it out of your chat
-        # list — after a restart as well as before.
+        # An app's conversation carries the app as its origin tag too — what its turns' usage is
+        # attributed to, after a restart as well as before.
         session._app = app or session.created_by_app
         if memory_mode and memory_mode != "persistent":
             self._restricted_keys.add(f"dashboard:{name}")

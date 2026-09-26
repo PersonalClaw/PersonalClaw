@@ -14,10 +14,11 @@ keep it complete and honest:
 
 The same two declarations reach past config fields, and are railed here too:
 
-* **routes** — every WRITE route under an ``apps/permissions.SECURITY_ROUTE_FAMILIES`` root is
-  owner-only (a subtree row) or declared in ``ROUTE_AUTHZ`` — owner-only, or app-allowed with the
-  reason that is safe. A route added tomorrow fails here until someone decides which, and is
-  refused to every app at runtime in the meantime (``undeclared_security_write``);
+* **routes** — every WRITE route under an ``apps/permissions.SECURITY_ROUTE_FAMILIES`` root, and
+  every READ under one of the ``READ_DECLARED_FAMILIES`` (your conversations), is owner-only (a
+  subtree row) or declared in ``ROUTE_AUTHZ`` — owner-only, or app-allowed with the reason that is
+  safe. A route added tomorrow fails here until someone decides which, and is refused to every app
+  at runtime in the meantime (``undeclared_security_route``);
 * **an automation's posture** — ``automation_posture.POSTURE_SPECS`` is driven by a consent case
   per key, and the run overlay's ``supervisor_policy.POLICY_OVERRIDE_SECURITY`` covers every knob
   and is held to what the engine consumes.
@@ -165,11 +166,58 @@ def _family_write_routes() -> list[tuple[str, str]]:
     )
 
 
+def _family_read_routes(*, declared_families_only: bool = True) -> list[tuple[str, str]]:
+    """``(METHOD, canonical route)`` for every READ registered under a family whose reads are
+    declared route by route (the conversation families) — or, with ``declared_families_only``
+    off, under any security family, where a read MAY carry a row (``owns`` on a draft skill)."""
+    from personalclaw.apps.permissions import READ_DECLARED_FAMILIES, READ_METHODS, security_family
+    from personalclaw.manifest_reference import _routes_from_ast
+
+    return sorted(
+        (r["method"], r["path"])
+        for r in _routes_from_ast()
+        if r["method"] in READ_METHODS
+        and security_family(r["path"])
+        and (not declared_families_only or security_family(r["path"]) in READ_DECLARED_FAMILIES)
+    )
+
+
 def test_the_route_census_is_not_vacuous() -> None:
     routes = _family_write_routes()
     assert len(routes) >= 100, f"only {len(routes)} write routes under the families — vacuous"
     assert ("PUT", "/api/mcp/servers/{name}") in routes
     assert ("POST", "/api/triggers") in routes
+
+
+def test_the_read_census_is_not_vacuous() -> None:
+    reads = _family_read_routes()
+    assert len(reads) >= 30, f"only {len(reads)} reads under the conversation families — vacuous"
+    assert ("GET", "/api/chat/sessions/{session}") in reads
+    assert ("GET", "/api/sessions/search") in reads
+
+
+def test_the_read_declared_families_are_your_conversations() -> None:
+    from personalclaw.apps.permissions import READ_DECLARED_FAMILIES
+
+    assert READ_DECLARED_FAMILIES <= set(SECURITY_ROUTE_FAMILIES)
+    conversations = {"/api/chat", "/api/sessions", "/api/session", "/api/rooms", "/api/inbox"}
+    assert conversations <= READ_DECLARED_FAMILIES
+
+
+def test_every_read_in_a_conversation_family_declares_who_may_reach_it() -> None:
+    from personalclaw.apps.permissions import ROUTE_AUTHZ, owner_only_api_reason
+
+    undeclared = [
+        f"{method} {route}"
+        for method, route in _family_read_routes()
+        if not owner_only_api_reason(route) and f"{method} {route}" not in ROUTE_AUTHZ
+    ]
+    assert not undeclared, (
+        "reads under a conversation family that declare nothing (an app is refused them at "
+        "runtime until they do). Add each to apps/permissions.ROUTE_AUTHZ as OwnerOnly(what it "
+        "shows) or AppMay(why an app may, with `owns` when it names one conversation): "
+        f"{undeclared}"
+    )
 
 
 def test_every_write_route_in_a_security_family_declares_who_may_reach_it() -> None:
@@ -202,28 +250,44 @@ def test_every_route_declaration_is_real_and_says_why() -> None:
         security_family,
     )
 
-    registered = {f"{m} {r}" for m, r in _family_write_routes()}
+    # A read row is legal under any family: every read in a conversation family carries one, and
+    # elsewhere a read that names a conversation does (the draft skills a chat produced).
+    registered = {
+        f"{m} {r}"
+        for m, r in _family_write_routes() + _family_read_routes(declared_families_only=False)
+    }
     stale = sorted(k for k in ROUTE_AUTHZ if k not in registered)
     assert not stale, f"ROUTE_AUTHZ names routes nothing registers: {stale}"
     for key, authz in ROUTE_AUTHZ.items():
-        _method, route = key.split(" ", 1)
+        method, route = key.split(" ", 1)
         assert security_family(route), f"{key} is outside every security family"
         # A subtree row already decides it; a second declaration could only disagree.
         assert not owner_only_api_reason(route), f"{key} is shadowed by an owner-only subtree"
+        # HEAD answers from the GET row (`route_authz`), so a HEAD row could only disagree.
+        assert method != "HEAD", f"{key}: declare the GET; HEAD is the same read"
         assert isinstance(authz, (OwnerOnly, AppMay)), key
         text = authz.capability if isinstance(authz, OwnerOnly) else authz.reason
         assert text.strip(), f"{key}: a declaration must say what it grants or why it is safe"
 
 
 @pytest.mark.parametrize("family", sorted(SECURITY_ROUTE_FAMILIES))
-def test_a_new_write_in_any_family_fails_closed(family: str) -> None:
-    # Refused either way: by a subtree row that covers every route under it, or by the
-    # undeclared-write check until someone declares it.
-    from personalclaw.apps.permissions import owner_only_api_reason, undeclared_security_write
+def test_a_new_route_in_any_family_fails_closed(family: str) -> None:
+    # A write is refused either way: by a subtree row that covers every route under it, or by the
+    # undeclared-route check until someone declares it. A read is refused the same way under the
+    # conversation families, and is the allowlist's business anywhere else.
+    from personalclaw.apps.permissions import (
+        READ_DECLARED_FAMILIES,
+        owner_only_api_reason,
+        undeclared_security_route,
+    )
 
     route = f"{family}/{{id}}/a-route-added-tomorrow"
-    assert owner_only_api_reason(route) or undeclared_security_write("POST", route)
-    assert not undeclared_security_write("GET", route), "a READ is the allowlist's business"
+    assert owner_only_api_reason(route) or undeclared_security_route("POST", route)
+    if family in READ_DECLARED_FAMILIES:
+        assert undeclared_security_route("GET", route), "a read of your conversations is declared"
+        assert undeclared_security_route("HEAD", route), "HEAD is the same read"
+    else:
+        assert not undeclared_security_route("GET", route), "a READ is the allowlist's business"
 
 
 # ── an automation's posture ───────────────────────────────────────────────────────────

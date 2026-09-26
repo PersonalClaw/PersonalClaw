@@ -508,9 +508,9 @@ async def _conversation_denial(request: web.Request, app_name: str, route: str) 
     after. A body that is not a JSON object names nothing, so an optional target passes and the
     handler refuses the body itself.
     """
-    from personalclaw.apps.permissions import ROUTE_AUTHZ, AppMay
+    from personalclaw.apps.permissions import AppMay, route_authz
 
-    authz = ROUTE_AUTHZ.get(f"{request.method.upper()} {route}") if route else None
+    authz = route_authz(request.method, route)
     if not isinstance(authz, AppMay) or not authz.owns:
         return ""
     body: dict = {}

@@ -44,6 +44,13 @@ def is_length_stop(stop_reason: object) -> bool:
     return str(stop_reason or "").strip().lower() in LENGTH_STOP_REASONS
 
 
+#: The ``tool_meta`` key a TOOL_RESULT carries when the call would have asked first and the
+#: session's approval policy answered for it (``set_approval_policy("auto")``) — so no approval
+#: ever reached the chat runner's gate, which is the one place that knows WHOSE switch set the
+#: policy: the app's grant, your Trust, or YOLO. Absent for a call that asks nobody.
+TOOL_META_APPROVAL_WAIVED = "approval_waived"
+
+
 @dataclass
 class AgentEvent:
     """A neutral event from any agent/model backend's turn stream.
