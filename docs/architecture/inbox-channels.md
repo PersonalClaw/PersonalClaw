@@ -220,6 +220,12 @@ form:
   loop that needed an answer overnight used to leave no trace in the notification log at
   all, while its durable inbox row still counted toward the badge.
 
+A producer that must not lose a notice to quiet hours asks before it sends:
+`quiet_hours_now()` is the gate's own window test, and the task due-date notice
+(`tasks/due_notices.py`) uses it to WAIT — a `drop` posture inside the window
+leaves the notice unsent and unrecorded, and the first sweep after the window
+sends it. Mute and `min_severity` still mean "not at all" for it.
+
 Preferences persist in `entity_settings/notifications.json` with enum/HH:MM
 domain-guarded PUTs.
 

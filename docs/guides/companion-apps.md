@@ -321,11 +321,12 @@ alone.
 This one is measured, not stylistic:
 
 - The query-param path **binds** the token to the first client IP it sees
-  (`bind_token_ip`, `dashboard/token_auth.py:602`, called on first query-param use at
-  `dashboard/token_auth.py:1075`) and then denies on mismatch with `IP mismatch`
-  (`check_token_ip`, `:607`, enforced at `:1062`).
-- Cookie-borne requests skip that check entirely — *"the cookie itself is the credential, and
-  IP validation behind a proxy is unreliable"* (`dashboard/token_auth.py:1059-1061`).
+  (`bind_token_ip` in `dashboard/token_auth.py`, called by `token_auth_middleware` on the
+  first query-param use) and then denies on mismatch with `IP mismatch` (`check_token_ip`,
+  enforced by the same middleware).
+- Cookie-borne requests skip that check entirely — *"the credential itself is the proof, and
+  IP validation behind a proxy is unreliable"* (`token_auth_middleware`). So does a session
+  carried in an `Authorization: Bearer` header: the binding belongs to the entry link alone.
 
 A phone changes IP every time it moves between cell and Wi-Fi. A query-param device session
 would therefore die on every network change, while a cookie-borne one is untouched. Pairing
@@ -448,8 +449,8 @@ real TLS tunnel being killed under a live session
   shape turns an ordinary tunnel restart into an unhandled error. Neither shape is slow; if
   neither arrives, you are looking at the hang this contract exists to prevent, not a quiet link.
 - **Your device session survives the drop — keep it.** Reconnecting does not mean re-pairing. The
-  session is cookie-borne, and the cookie path deliberately skips IP binding
-  (`src/personalclaw/dashboard/token_auth.py:1072` reads `if not from_cookie and not
+  session is cookie-borne, and only the entry link is IP-bound (`token_auth_middleware` in
+  `src/personalclaw/dashboard/token_auth.py` reads `if from_query and not
   check_token_ip(...)`), so the same session still authenticates after a tunnel restart has moved
   your apparent address — which is exactly what happens when a phone changes network. This is the
   concrete reason the guide forbids `?token=` for a companion: that path *is* IP-bound, so a shell

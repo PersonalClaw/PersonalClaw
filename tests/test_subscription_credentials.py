@@ -87,6 +87,16 @@ def _isolated_source_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subcreds, "_SOURCES", {})
 
 
+@pytest.fixture(autouse=True)
+def _the_owner_allowed_the_example_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This file is about READING a declared store. Whether the owner allowed it at all is
+    `tests/test_personalclaw_stays_inside_its_home.py`'s, so the sign-in these tests declare is
+    allowed here (and only it: `test_an_unallowed_sign_in_is_never_opened` below)."""
+    from personalclaw import outside_home
+
+    monkeypatch.setattr(outside_home, "allowed_ids", lambda: {"sign-in:example-cli"})
+
+
 def _store(tmp_path: Path, payload: object, *, name: str = ".credentials.json") -> Path:
     path = tmp_path / name
     path.write_text(json.dumps(payload) if not isinstance(payload, str) else payload)
@@ -294,6 +304,26 @@ def test_both_api_key_spellings_are_stripped_from_extra_options(tmp_path: Path) 
 
 
 # ── 2. Fail soft and typed: nothing raises, and a parse error is never "signed in" ─────
+
+
+def test_an_unallowed_sign_in_is_never_opened(tmp_path: Path, monkeypatch) -> None:
+    """The same signed-in store, not allowed: nothing is opened, and the reason says where to
+    allow it."""
+    from personalclaw import outside_home
+
+    monkeypatch.setattr(outside_home, "allowed_ids", lambda: set())
+    _signed_in(tmp_path)
+    opened: list[str] = []
+    real_read_text = Path.read_text
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda self, *a, **k: opened.append(str(self)) or real_read_text(self, *a, **k),
+    )
+    auth = resolve_subscription_credential("example-cli")
+    assert not auth.logged_in and auth.secret == ""
+    assert "Settings → Security" in auth.reason
+    assert not [p for p in opened if p.endswith(".credentials.json")], opened
 
 
 def test_a_signed_in_source_resolves_the_token(tmp_path: Path) -> None:

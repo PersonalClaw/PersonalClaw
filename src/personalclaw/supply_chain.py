@@ -286,7 +286,13 @@ _WARNING_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 _INJECTION_PROSE: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("injection_ignore", re.compile(r"ignore\s+(?:all\s+)?previous\s+instructions", re.I)),
     ("injection_disregard", re.compile(r"disregard\s+(?:the\s+)?(?:above|prior|system)", re.I)),
-    ("injection_coerce", re.compile(r"you\s+must\s+(?:now\s+)?(?:run|execute|call|always)", re.I)),
+    # An order to RUN something. "You must always" alone is how style guidance is written
+    # ("You must always lead with customer impact"), and flagging it made a harmless skill a
+    # warning; "you must always run …" is still an order, so `always` qualifies the verb.
+    (
+        "injection_coerce",
+        re.compile(r"you\s+must\s+(?:(?:now|always)\s+){0,2}(?:run|execute|call)\b", re.I),
+    ),
     ("injection_override", re.compile(r"(?:new|updated)\s+system\s+prompt\s*:", re.I)),
 )
 

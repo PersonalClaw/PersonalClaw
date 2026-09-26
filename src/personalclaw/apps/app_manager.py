@@ -1784,56 +1784,6 @@ def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
     return changed
 
 
-def start_enabled_app_backends() -> list[str]:
-    """Launch the backend subprocess for every enabled installed app that
-    declares one (called once at gateway startup). Backends are subprocesses —
-    they don't survive a gateway restart, so an enabled app would otherwise show
-    'backend down' until manually re-enabled. Returns the names started.
-
-    Gated by ``PERSONALCLAW_SKIP_APP_BACKENDS`` (set by the test suite): a test
-    that exercises the extension loader must not spawn — or reap — the real
-    user's app backends."""
-    import os
-
-    from personalclaw.apps.manager import list_apps
-
-    if os.environ.get("PERSONALCLAW_SKIP_APP_BACKENDS"):
-        return []
-
-    started: list[str] = []
-    for app_info in list_apps():
-        if not app_info.get("enabled", False):
-            continue
-        manifest_data = app_info.get("manifest", {})
-        if not manifest_data.get("backend", {}).get("entryPoint"):
-            continue
-        name = app_info.get("name", "")
-        try:
-            manifest = AppManifest.from_dict(manifest_data)
-            # Core-version gate (#1778) — the boot-load path for an app that is ALREADY
-            # installed and enabled. Reached after a core downgrade (or an install that
-            # predates this gate): spawning the backend would produce exactly the
-            # arbitrary runtime failure inside the app that the gate exists to prevent,
-            # so it is skipped with a legible reason instead.
-            compat = manifest.core_compatibility()
-            if not compat.admits:
-                logger.warning("app %s: backend not started — %s", name, compat.reason)
-                continue
-            from personalclaw.apps.backend_runtime import get_backend_supervisor
-
-            sup = get_backend_supervisor()
-            # Reap any orphans a prior gateway left running for this app (crash /
-            # kill -9 / force-exit) BEFORE spawning a fresh one — otherwise each
-            # ungraceful restart stacks another backend (reparented to init).
-            entry = (app_dir(name) / manifest.backend.entryPoint).resolve()
-            sup.reap_orphans(name, entry)
-            if sup.start(manifest) is not None:
-                started.append(name)
-        except Exception:
-            logger.warning("app %s: startup backend launch failed", name, exc_info=True)
-    return started
-
-
 def recover_interrupted_updates() -> list[str]:
     """Reconcile leftover ``.{name}.rollback`` dirs from an update that crashed
     mid-swap (called at startup). If ``live`` is missing/empty, restore from the
@@ -1910,8 +1860,10 @@ def repair_app_packages() -> list[str]:
     for name in repaired:
         meta = _read_installed(name)
         manifest = _manifest_of(name)
-        if meta is not None and meta.enabled and manifest is not None and manifest.all_providers():
-            _provider_registry().enable(name)
+        if meta is not None and meta.enabled and manifest is not None:
+            # Started again through the one load, now that its imports resolve: its providers,
+            # and a worker that crash-looped on the missing package and was given up on.
+            app_runtime.reload(name, manifest)
         _audit("repair_packages", "ok", name)
     return repaired
 
@@ -1954,11 +1906,18 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
         except AppLifecycleError as exc:
             _audit("enable", "error", name, caller=caller, error=str(exc))
             return False
+    was_enabled = meta.enabled
     meta.enabled = True
     meta.updatedAt = _now_iso()
     _write_installed(name, meta)
     if manifest is not None:
-        app_runtime.load(manifest)
+        if was_enabled:
+            # Already running — a provider whose start failed is switched on again from Settings →
+            # Providers. Reloaded from its files, not retried on the code that failed: a second
+            # load on top of the first would leave the first load's instances running.
+            app_runtime.reload(name, manifest)
+        else:
+            app_runtime.load(manifest)
     _audit("enable", "ok", name, caller=caller)
     return True
 

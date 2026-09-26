@@ -1,4 +1,8 @@
-"""Tests for heartbeat task retention via HEARTBEAT_KEEP sentinel."""
+"""Tests for heartbeat task retention via HEARTBEAT_KEEP sentinel.
+
+The retention rule lives in `heartbeat.run_tasks`, which the `system:heartbeat-tasks` trigger runs
+(`action_providers/heartbeat_tasks_provider.py`); the heartbeat loop no longer reads the file.
+"""
 
 from pathlib import Path
 
@@ -53,14 +57,13 @@ class TestHeartbeatRetention:
         async def on_task(text: str, deliver: str) -> str:
             return "Done! Ticket resolved."
 
-        svc = HeartbeatService(on_task=on_task)
         hb_path = tmp_path / "HEARTBEAT.md"
         hb_path.write_text(_HEADER + "- Check ticket ABC\n")
 
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: hb_path
         try:
-            await svc._process_heartbeat_file()
+            await hb_mod.run_tasks(on_task)
         finally:
             hb_mod.heartbeat_path = original
 
@@ -74,14 +77,13 @@ class TestHeartbeatRetention:
         async def on_task(text: str, deliver: str) -> str:
             return "Ticket still Assigned. HEARTBEAT_KEEP"
 
-        svc = HeartbeatService(on_task=on_task)
         hb_path = tmp_path / "HEARTBEAT.md"
         hb_path.write_text(_HEADER + "- Check ticket ABC\n")
 
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: hb_path
         try:
-            await svc._process_heartbeat_file()
+            await hb_mod.run_tasks(on_task)
         finally:
             hb_mod.heartbeat_path = original
 
@@ -97,14 +99,13 @@ class TestHeartbeatRetention:
                 return "Still pending. HEARTBEAT_KEEP"
             return "All done!"
 
-        svc = HeartbeatService(on_task=on_task)
         hb_path = tmp_path / "HEARTBEAT.md"
         hb_path.write_text(_HEADER + "- Check pending ticket\n- Check resolved ticket\n")
 
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: hb_path
         try:
-            await svc._process_heartbeat_file()
+            await hb_mod.run_tasks(on_task)
         finally:
             hb_mod.heartbeat_path = original
 
@@ -119,14 +120,13 @@ class TestHeartbeatRetention:
         async def on_task(text: str, deliver: str) -> str:
             raise RuntimeError("connection error")
 
-        svc = HeartbeatService(on_task=on_task)
         hb_path = tmp_path / "HEARTBEAT.md"
         hb_path.write_text(_HEADER + "- Check ticket XYZ\n")
 
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: hb_path
         try:
-            await svc._process_heartbeat_file()
+            await hb_mod.run_tasks(on_task)
         finally:
             hb_mod.heartbeat_path = original
 
@@ -140,14 +140,13 @@ class TestHeartbeatRetention:
         async def on_task(text: str, deliver: str) -> None:
             pass
 
-        svc = HeartbeatService(on_task=on_task)
         hb_path = tmp_path / "HEARTBEAT.md"
         hb_path.write_text(_HEADER + "- Legacy task\n")
 
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: hb_path
         try:
-            await svc._process_heartbeat_file()
+            await hb_mod.run_tasks(on_task)
         finally:
             hb_mod.heartbeat_path = original
 
@@ -161,14 +160,13 @@ class TestHeartbeatRetention:
         async def on_task(text: str, deliver: str) -> str:
             return "Not done. HEARTBEAT_KEEP"
 
-        svc = HeartbeatService(on_task=on_task)
         hb_path = tmp_path / "HEARTBEAT.md"
         hb_path.write_text(_HEADER + "- Check ticket  <!-- deliver:C0EXAMPLE04 -->\n")
 
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: hb_path
         try:
-            await svc._process_heartbeat_file()
+            await hb_mod.run_tasks(on_task)
         finally:
             hb_mod.heartbeat_path = original
 
@@ -215,7 +213,7 @@ class TestCommitmentDeliveryHook:
         async def on_due() -> None:
             calls.append(1)
 
-        svc = HeartbeatService(on_task=None, on_due_commitments=on_due)
+        svc = HeartbeatService(on_due_commitments=on_due)
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: tmp_path / "HEARTBEAT.md"
         try:
@@ -231,7 +229,7 @@ class TestCommitmentDeliveryHook:
         async def on_due() -> None:
             raise RuntimeError("delivery boom")
 
-        svc = HeartbeatService(on_task=None, on_due_commitments=on_due)
+        svc = HeartbeatService(on_due_commitments=on_due)
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: tmp_path / "HEARTBEAT.md"
         try:
@@ -242,7 +240,7 @@ class TestCommitmentDeliveryHook:
     @pytest.mark.asyncio
     async def test_no_hook_is_noop(self, tmp_path: Path) -> None:
         """When the gateway didn't wire delivery (None), the beat still runs."""
-        svc = HeartbeatService(on_task=None)
+        svc = HeartbeatService()
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: tmp_path / "HEARTBEAT.md"
         try:

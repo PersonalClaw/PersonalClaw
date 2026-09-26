@@ -178,8 +178,11 @@ PersonalClaw acting as an MCP *client* reads server specs from `mcp.json`
 nowhere else: a stdio server gets the `env` the spec declares, and a remote one the `headers`
 it declares, passed to `streamablehttp_client` / `sse_client` (`McpServerConn._open_transport`).
 Both are values the operator configured for *that* server, read from the credential store when
-the spec is loaded; the module has no other `Authorization` or `Bearer` handling, and nothing
-reads a header off an inbound request. The one env-injecting site on the ACP path passes
+the spec is loaded. A server the operator signed in to with OAuth also gets that sign-in's bearer
+token (`mcp_oauth.connection_auth`, given to the same transport client as its `auth`): a token
+issued to PersonalClaw, for that server's resource alone, read from the credential store at each
+request. The module has no other `Authorization` or `Bearer` handling, and nothing reads a header
+off an inbound request. The one env-injecting site on the ACP path passes
 non-credential locators only — home, port, session key
 (`src/personalclaw/acp/mcp_servers.py:73`, `:88`, `:92`).
 
@@ -379,7 +382,8 @@ the inbound surfaces accept.
 
 **C-2 — Core MUST NOT forward an inbound caller's credential to any upstream.**
 True by construction today: an outbound remote MCP call carries only the `headers` its server's
-spec declares, and a stdio server gets only its spec's `env` (`McpServerConn._open_transport`).
+spec declares and, for a server the operator signed in to, that sign-in's own token, and a stdio
+server gets only its spec's `env` (`McpServerConn._open_transport`).
 If an upstream needs authentication it uses a credential the operator configured for *that*
 upstream, never the caller's. Note the one
 adjacent spot that already reasons correctly and must stay that way: an empty `upstream`

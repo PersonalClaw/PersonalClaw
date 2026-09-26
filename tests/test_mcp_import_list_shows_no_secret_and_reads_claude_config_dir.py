@@ -121,6 +121,7 @@ def world(tmp_path):
         PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"),
     )
     env.pop("CLAUDE_CONFIG_DIR", None)
+    env.pop("CODEX_HOME", None)
     return {"pclaw": pclaw, "user": user, "cc_dir": cc_dir, "driver": driver, "env": env}
 
 
@@ -244,14 +245,16 @@ def test_claude_code_is_read_and_written_where_claude_config_dir_puts_it(world) 
 
 
 def test_the_mcp_importer_asks_the_onboarding_resolver(monkeypatch, tmp_path) -> None:
-    """One resolver: the MCP importer's Claude Code file IS what the onboarding importer's module
-    answers, so a change to how Claude Code is found reaches both."""
+    """One resolver per tool: the MCP importer's Claude Code file and Codex home ARE what the
+    onboarding importer's modules answer, so a change to how either is found reaches both."""
     from personalclaw import mcp_discovery
-    from personalclaw.onboarding_import.sources import claude_code
+    from personalclaw.onboarding_import.sources import claude_code, codex
 
     elsewhere = tmp_path / "elsewhere.json"
+    codex_home = tmp_path / "codex-home"
     monkeypatch.setattr(claude_code, "global_config_path", lambda: elsewhere)
-    assert mcp_discovery._import_sources() == ((elsewhere, "Claude Code"),)
+    monkeypatch.setattr(codex, "resolve_root", lambda: codex_home)
+    assert mcp_discovery._import_sources() == ((elsewhere, "Claude Code"), (codex_home, "Codex"))
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
     assert mcp_mod._cc_global_json() == elsewhere

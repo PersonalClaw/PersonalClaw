@@ -9,11 +9,11 @@ family) runs in its OWN process that never did that, so its provider registry wa
 its knowledge retriever with no embedder at all, so the vector arm could not run even
 though the user had bound an embedding model.
 
-These tests assert the extracted, reusable registration path (:func:`register_extension_providers`)
+These tests assert the reusable registration path (:func:`register_extension_providers`)
 imports an enabled installed provider app's module in this process, skips a disabled
 one, that the CLI wrapper (:func:`bootstrap_cli_providers`) runs it plus the config sync
-the gateway runs, and that the gateway's own ``load_all_extensions`` still delegates to
-the shared path AND keeps launching its backend subprocesses + watchdogs.
+the gateway runs, and that the gateway's own ``load_all_extensions`` walks the same apps
+through the full load (``app_runtime.start_installed``) AND keeps starting the watchdogs.
 
 Home isolation: ``conftest``'s autouse fixture re-points ``config_dir`` (and thus
 ``apps_dir``) under a tmp home, so the fake app is written + discovered there.
@@ -92,11 +92,10 @@ def _install_provider_app(*, enabled: bool, receipt: Path) -> None:
 
 @pytest.fixture()
 def _only_the_probe_app(monkeypatch):
-    """Neutralise the native-app seeding + bundled discovery so the registration pass
-    processes ONLY the fake installed app under test — fast + hermetic. Restores the
-    process-global provider registry and drops the fake module afterwards."""
+    """Neutralise the native-app seeding so the registration pass processes ONLY the fake
+    installed app under test — fast + hermetic. Restores the process-global provider
+    registry and drops the fake module afterwards."""
     monkeypatch.setattr("personalclaw.apps.app_manager.seed_builtin_apps", lambda: [])
-    monkeypatch.setattr(loader, "discover_bundled_extensions", lambda: [])
     try:
         yield
     finally:
@@ -152,19 +151,19 @@ def test_bootstrap_cli_providers_registers_then_syncs_config(monkeypatch):
     assert order == ["register", "migrate", "sync"]
 
 
-def test_load_all_extensions_delegates_and_keeps_the_gateway_tail(monkeypatch):
-    """The refactor must not lose either half: ``load_all_extensions`` still runs the
-    shared registration path AND still launches the gateway's backend subprocesses +
-    watchdogs (which a plain CLI bootstrap deliberately does not)."""
+def test_load_all_extensions_loads_through_the_one_path_and_keeps_the_gateway_tail(monkeypatch):
+    """Neither half may be lost: ``load_all_extensions`` walks the installed apps through the
+    FULL load — the gateway's (``gateway=True``: each app's servers and processes too, which a
+    plain CLI bootstrap deliberately does not start) — AND still starts the watchdogs."""
     calls: list[str] = []
     monkeypatch.setattr(
         "personalclaw.apps.app_manager.recover_interrupted_updates",
         lambda: calls.append("recover") or [],
     )
-    monkeypatch.setattr(loader, "register_extension_providers", lambda: calls.append("register"))
+    monkeypatch.setattr("personalclaw.apps.app_manager.seed_builtin_apps", lambda: [])
     monkeypatch.setattr(
-        "personalclaw.apps.app_manager.start_enabled_app_backends",
-        lambda: calls.append("backends") or [],
+        "personalclaw.apps.app_runtime.start_installed",
+        lambda *, gateway=True: calls.append(f"start_installed(gateway={gateway})") or [],
     )
     monkeypatch.setattr(
         "personalclaw.apps.backend_runtime.start_backend_watchdog",
@@ -181,9 +180,23 @@ def test_load_all_extensions_delegates_and_keeps_the_gateway_tail(monkeypatch):
 
     loader.load_all_extensions()
 
-    assert "register" in calls, "the gateway path must delegate to register_extension_providers"
-    for expected in ("backends", "backend_watchdog", "worker_watchdog", "sidecar_watchdog"):
+    assert calls[:2] == ["recover", "start_installed(gateway=True)"], calls
+    for expected in ("backend_watchdog", "worker_watchdog", "sidecar_watchdog"):
         assert expected in calls, f"the gateway tail lost its {expected!r} launch"
+
+
+def test_register_extension_providers_starts_no_app_process(monkeypatch):
+    """The CLI walk is the same walk at the in-process depth: ``gateway=False``."""
+    seen: list[bool] = []
+    monkeypatch.setattr("personalclaw.apps.app_manager.seed_builtin_apps", lambda: [])
+    monkeypatch.setattr(
+        "personalclaw.apps.app_runtime.start_installed",
+        lambda *, gateway=True: seen.append(gateway) or [],
+    )
+
+    loader.register_extension_providers()
+
+    assert seen == [False]
 
 
 # ── The end-to-end target of #2912 / ES-3 ────────────────────────────────────────────
@@ -287,16 +300,15 @@ def _bind_embedding_selection() -> None:
 @pytest.fixture()
 def _embedding_app_env(monkeypatch):
     """Isolate the process-global state the embedding-resolution path touches so this test
-    is hermetic and leaks nothing: neutralise native-app seeding + bundled discovery,
-    snapshot/restore the media-scanner registry and the process-wide knowledge embedder
-    cache, and drop the directly-registered embedding provider + the fake module + the
-    extension registration afterwards."""
+    is hermetic and leaks nothing: neutralise native-app seeding, snapshot/restore the
+    media-scanner registry and the process-wide knowledge embedder cache, and drop the
+    directly-registered embedding provider + the fake module + the extension registration
+    afterwards."""
     import personalclaw.knowledge as _knowledge
     from personalclaw.embedding_providers import registry as _emb_registry
     from personalclaw.providers import media_scanners as _scanners
 
     monkeypatch.setattr("personalclaw.apps.app_manager.seed_builtin_apps", lambda: [])
-    monkeypatch.setattr(loader, "discover_bundled_extensions", lambda: [])
 
     scanners_before = {cap: list(fns) for cap, fns in _scanners._scanners.items()}
     # The knowledge embedder is cached process-wide keyed on the ACTIVE selection, not on

@@ -500,6 +500,25 @@ async def api_security_egress(_request: web.Request) -> web.Response:
     )
 
 
+async def api_security_outside_home(_request: web.Request) -> web.Response:
+    """GET /api/security/outside-home — the places outside the home it may be allowed to read.
+
+    Each place says whether it is allowed. Written through PATCH /api/config/personalclaw
+    ``security.outside_home``, which asks the owner to confirm an addition.
+
+    ``allowed`` is the whole saved list, which can name a place no longer offered (the sign-in
+    of an app since removed), so a write that changes one place keeps the others as they are."""
+    from personalclaw import outside_home
+
+    allowed = outside_home.allowed_ids()
+    return web.json_response(
+        {
+            "places": [p.to_dict(allowed=p.id in allowed) for p in outside_home.places()],
+            "allowed": sorted(allowed),
+        }
+    )
+
+
 # ── PersonalClaw Config API ──
 #: The three `agent.*` fields `PUT /api/config/personalclaw` owns. Their bounds are NOT restated
 #: here: all three are declared in `_EDITABLE_CONFIG`, so this used to be a second copy of the
@@ -969,6 +988,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             loosens_when_added(),
             "The added MCP server will be able to interrupt its own tool calls to ask you "
             "questions.",
+        ),
+    },
+    # Per place, like the elicitation grant: each id is one folder or sign-in outside the
+    # home (`outside_home.places()`), so allowing one never allows the others.
+    "security.outside_home": {
+        "type": "str_list",
+        "max_items": 50,
+        "security": SecurityControl(
+            loosens_when_added(),
+            "PersonalClaw will read the place you added, which is outside its own home.",
         ),
     },
     # The runtime-editable guardrail subset. Incident is
@@ -1969,13 +1998,12 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 
         try:
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            # Through `atomic_write`, NOT `agent._atomic_json_write`: the latter does its own
-            # mkstemp+rename and so never fires the post-write hook, which is the ONE seam
-            # time-travel's debounced committer subscribes to. With the bypass, every config
-            # change made from Settings — the primary writer of this file — landed on disk
-            # without ever reaching the `config` state-history root, so the root stayed empty
-            # and "roll back my settings" had nothing to roll back to. The PUT path two
-            # hundred lines up already writes this same file this same way.
+            # Through `atomic_write`, whose post-write hook is the ONE seam time-travel's
+            # debounced committer subscribes to. This used to go through a JSON writer that did
+            # its own mkstemp+rename, and with that bypass every config change made from
+            # Settings — the primary writer of this file — landed on disk without ever reaching
+            # the `config` state-history root, so "roll back my settings" had nothing to roll
+            # back to. The PUT path two hundred lines up writes this same file this same way.
             atomic_write(cfg_path, json.dumps(data, indent=2) + "\n", fsync=True)
         except OSError:
             _log_sel("error", f"{path_key}=write_failed")

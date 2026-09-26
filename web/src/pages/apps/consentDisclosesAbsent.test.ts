@@ -60,7 +60,7 @@ describe('install consent discloses absent permissions (issue 614)', () => {
     const consent = read('installConsent.tsx')
     expect(consent).toMatch(/r\.disclosure && <AppDisclosureView disclosure=\{r\.disclosure\}/)
     // …and what it is handed to review is a SOURCE, not a catalog row.
-    expect(consent).toMatch(/api\.previewApp\(target\.source, target\.update\)/)
+    expect(consent).toMatch(/api\.previewApp\(target\.source, target\.update, target\.listedBy\)/)
   })
 
   it('disclosureOf is the one authority for known-vs-not-known', () => {

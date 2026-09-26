@@ -32,6 +32,7 @@ DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
 .PHONY: help format lock lint test test-e2e test-visual build clean harness-validate gates \
+        asset-licenses asset-licenses-built \
         mutation-check bundled-model sdk-snapshot apps-contract \
         serve serve-fresh serve-web \
         web-build spa-check backend-build pyinstaller \
@@ -139,6 +140,16 @@ mutation-check:
 gates:
 	$(PYTHON) scripts/gate_report.py
 
+## asset-licenses: every tracked font, image, binary and fixture has a source, licence and
+## notice in ASSET_LICENSES.json (third-party files are pinned by sha256)
+asset-licenses:
+	$(PYTHON) scripts/check_asset_licenses.py
+
+## asset-licenses-built: the same, plus every font and binary `npm run build` emitted into
+## web/dist (run web-build first)
+asset-licenses-built:
+	$(PYTHON) scripts/check_asset_licenses.py --built-web
+
 ## sdk-snapshot: rewrite src/personalclaw/sdk/signatures.json from the live SDK and print what
 ## changed. tests/test_sdk_signature_snapshot.py fails until you do, so every SDK change is a
 ## reviewed diff; it refuses a parameter whose type changed in place (see the script).
@@ -163,9 +174,10 @@ bundled-model:
 	PERSONALCLAW_HOME="$(or $(PERSONALCLAW_HOME),$(CURDIR)/.dev-home)" \
 		$(PYTHON) scripts/fetch_bundled_model.py
 
-## build: build a distributable wheel + sdist
+## build: the canonical distribution build — clean, locked SPA build, sdist + wheel, both
+## inspected, the wheel rebuilt byte-identical from the sdist, then installed and served
 build:
-	$(PYTHON) -m build
+	UV=$(UV) $(PYTHON) scripts/verify_wheel.py --build
 
 ## clean: remove build artifacts and caches
 clean:

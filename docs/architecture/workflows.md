@@ -465,9 +465,36 @@ terminal session selects one per-session through the picker (`GET /api/sandbox/p
 
 ## Templates
 
-Six ship in `workflows/bundled/`, served read-only from the package — an
+The shipped templates live in `workflows/bundled/`, served read-only from the package — an
 upgrade ships new templates with no "did the user edit it?" reconciliation. A
-user who wants to change one instantiates it and edits their copy.
+user who wants to change one saves a copy under their own name and edits that:
+the definition page's **Edit a copy** opens the dashboard editor on it.
+
+### Editing a definition
+
+The editor (`web/src/pages/workflows/WorkflowDefEditor.tsx`) is a client of the
+two routes every other author uses: it reads `GET /api/workflows/{name}` and
+writes `POST /api/workflows`, whose `save: false` is its **Check**. It sends the
+WHOLE editable definition back — `runtime_hints`, `defaults`, `on_overlap` and
+`workspace` included, which `author_def` and the native store now carry rather
+than dropping — and places every returned issue by its `path`, the same `walk()`
+path the engine keys instances by.
+
+The read is stripped, so the definition the editor holds has
+`_has_<key>` flags where values were. `author_def` re-injects them before it
+validates anything (`secrets.reinject_secrets`): a node's values are found
+through the node's id and their place inside it, so a moved step keeps them,
+and everything else by its path in the document. The source is the definition
+named by `based_on` (a copy's template) or one recorded version
+(`based_on_version`, a restore), else the definition being saved. A flag with
+nothing to restore it from is refused as `WF_HIDDEN_VALUE_UNMATCHED` at its step,
+never written to disk as a field. Every definition's read carries at least one
+flag — `defaults.budget.max_tokens` matches the `token` hint — so this is the
+common path, not an edge case.
+
+A restore is an edit of a recorded version (`GET
+/api/workflows/{name}/versions/{version}`), and its save is a new version. The
+pinned pointer `versions/repin` moves is read by nothing that starts a run.
 
 Authoring conventions, the lint that enforces them, and the macro/block
 libraries are documented in

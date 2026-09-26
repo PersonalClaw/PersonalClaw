@@ -86,8 +86,8 @@ describe('Update starts from the source the gateway found', () => {
     expect(field.value).toBe('/somewhere/else/growth')
   })
 
-  it('starts empty when the gateway found no newer version', async () => {
-    await openInLibrary([app({ updateAvailable: false, latestVersion: '', latestSource: '' })])
+  it('starts empty when the gateway found no newer version and knows nowhere to update from', async () => {
+    await openInLibrary([app({ updateAvailable: false, latestVersion: '', latestSource: '', updateSource: '' })])
     expect(screen.queryByText('Update available')).toBeNull()
     fireEvent.click(updateButton())
     const field = await screen.findByLabelText(/New source/) as HTMLInputElement
@@ -124,6 +124,17 @@ describe('what an update could not take out of the gateway is said, not hidden',
     await openInLibrary([app({ restartReason: REASON })])
     expect(screen.getByText('Restart the gateway to finish')).toBeTruthy()
     expect(screen.getByText(`The installed version is running, but ${REASON}. Restart it from System status, top right.`)).toBeTruthy()
+  })
+
+  it("a turned-off app's panel does not say that it is running", async () => {
+    // Turning an app off unloads it too (the Apps page's Deactivate, and the Settings → Providers
+    // switch), and what it leaves running is a restart reason all the same — but the app is off.
+    mockApi([app({ enabled: false, restartReason: REASON })])
+    const { AppsSection } = await import('./AppsSection')
+    render(<AppsSection query={{ view: 'library', open: 'growth' }} setQuery={() => {}} navigate={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Restart the gateway to finish')).toBeTruthy())
+    expect(screen.getByText(`This app is turned off, but ${REASON}. Restart the gateway from System status, top right.`)).toBeTruthy()
+    expect(screen.queryByText(/The installed version is running/), 'a turned-off app read as running').toBeNull()
   })
 
   it('says nothing of the kind when nothing is left over', async () => {

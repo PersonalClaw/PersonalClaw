@@ -116,15 +116,65 @@ async def api_channel_reply_targets(request: web.Request) -> web.Response:
         return web.json_response([{"id": "dm", "name": "Direct Message"}])
 
 
+def _continue_there(
+    state: DashboardState, session: Any, *, provider: str, channel: str, thread_ts: str, dm: bool
+) -> None:
+    """Link the chat to the conversation a reply will arrive in, so it CONTINUES on the channel.
+
+    The handoff posted into the channel and recorded a link nothing inbound reads: the guarded door
+    finds a chat by the thread key a message carries (``channel_inbound._route_to_session``), and a
+    reply to a handoff opened a new chat. The key is the channel's call: in a DM that is one
+    conversation (``ChannelCapabilities.dm_thread_is_channel``) every message carries the DM itself,
+    elsewhere the thread the handoff opened. ``state.link_channel`` records it where the door and
+    the next restart read it. The chat's channel origin is set to the channel it continues on, if it
+    had none, so its replies go back out there too (``DashboardState.channel_provider_for``).
+    """
+    from personalclaw.channel_transports import get_transport
+
+    transport = get_transport(provider)
+    try:
+        dm_is_one_thread = bool(
+            dm and transport is not None and transport.capabilities().dm_thread_is_channel
+        )
+    except Exception:  # noqa: BLE001 - a broken capabilities() declares nothing
+        dm_is_one_thread = False
+    if not session._app:
+        session._app = provider
+    state.link_channel(session.key, channel if dm_is_one_thread else thread_ts, channel)
+    try:
+        save_session_to_history(state, session)  # the origin rides the meta line across restarts
+    except Exception:
+        logger.warning("chat %s: saving its channel origin failed", session.key, exc_info=True)
+
+
 async def api_chat_session_handoff(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/handoff — hand off session to channel DM thread."""
+    """POST /api/chat/sessions/{session}/handoff — continue a chat in a channel thread.
+
+    ``provider`` names the channel (the chat's "Continue on …" menu item does): the thread opens in
+    the owner's DM there, with the owner id that channel keeps. Without it, the first connected
+    channel that reaches the owner takes it. ``channel`` names a thread target instead of the DM,
+    and only together with ``provider`` — an id means nothing without the channel that issued it.
+    """
+    from personalclaw.channel_delivery import delivery_for, reach_owner
+    from personalclaw.http_errors import json_error
 
     state: DashboardState = request.app["state"]
     name = request.match_info.get("session", "")
     session = state.get_session(name) or state._sessions.get(name)
     if not session:
         return web.json_response({"error": "not found"}, status=404)
-    if not state.channel_delivery:
+    body = await json_object_body(request)
+    channel = str(body.get("channel") or "").strip()
+    provider = str(body.get("provider") or "").strip()
+    if channel and not provider:
+        return json_error(
+            "invalid_request",
+            message="Name the channel ('provider') the thread id belongs to.",
+            status=400,
+        )
+    if provider and delivery_for(provider) is None:
+        return json_error("channel_unknown", status=404)
+    if not provider and not state.channel_delivery:
         return web.json_response({"error": "Channel not connected"}, status=503)
     conversation_log = state.conversation_log
     if not conversation_log:
@@ -135,8 +185,6 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    body = await json_object_body(request)
-    channel = body.get("channel")
     history_key = _history_key_for(session.key)
     if not conversation_log.read_messages(history_key):
         return web.json_response(
@@ -151,29 +199,32 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
             history_key,
             title=session.title if session._titled else "",
             channel=target,
-            sessions=state.sessions,
         )
         if not ts:
             raise RuntimeError("the channel created no thread")
         return ts
 
-    # A named channel goes through the connected handle; the owner's DM through the first
-    # channel that reaches the owner, with the id that channel keeps for them.
+    # A thread target goes through the channel that issued it; the owner's DM through the channel
+    # named (or, with none named, the first that reaches the owner), with the id it keeps for them.
     if channel:
         try:
-            thread_ts = await _handoff(state.channel_delivery, channel)
+            thread_ts = await _handoff(delivery_for(provider), channel)
         except RuntimeError:
             return web.json_response({"error": "handoff failed"}, status=500)
+        took, where = provider, channel
     else:
-        from personalclaw.channel_delivery import reach_owner
-
-        owner = await reach_owner(_handoff)
+        owner = await reach_owner(_handoff, only=provider)
         if not owner.delivered:
-            return web.json_response(
-                {"error": owner.sentence() or "Channel not connected"}, status=502
+            return json_error(
+                "channel_handoff_failed",
+                message=owner.sentence() or "Channel not connected",
+                status=502,
             )
-        thread_ts = owner.result
+        thread_ts, took, where = owner.result, owner.provider, owner.channel
 
+    _continue_there(
+        state, session, provider=took, channel=where, thread_ts=thread_ts, dm=not channel
+    )
     sel().log_api_access(
         caller="dashboard",
         operation="chat.session_handoff",
@@ -181,4 +232,4 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
         source="dashboard",
         resources=session.key,
     )
-    return web.json_response({"ok": True, "thread_ts": thread_ts})
+    return web.json_response({"ok": True, "thread_ts": thread_ts, "provider": took})

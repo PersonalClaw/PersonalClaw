@@ -158,9 +158,8 @@ jobs:
           for i in $(seq 1 60); do grep -q PERSONALCLAW_READY /tmp/ready.json 2>/dev/null && break; sleep 1; done
           # Read port AND token together. `--test-mode` does NOT disable auth: an unauthenticated
           # GET /api/onboarding returns 403, so the walkthrough must authenticate or it would
-          # "fail" for a reason that has nothing to do with onboarding. Measured locally, only
-          # the `?token=` query form is accepted — `Authorization: Bearer` and
-          # `X-PersonalClaw-Token` both return 403 — so that is the form used here.
+          # "fail" for a reason that has nothing to do with onboarding. It authenticates the way
+          # every non-browser client does: `Authorization: Bearer <token>`, never `?token=`.
           eval "$(python3 - <<'PY'
           import json, pathlib, shlex
           for line in pathlib.Path('/tmp/ready.json').read_text().splitlines():
@@ -190,17 +189,20 @@ jobs:
           #
           # This is strictly better than the curl call it replaces, not just a substitute:
           # the token now travels in-process instead of on a command line, so it never
-          # appears in the step's echoed command, in `ps`, or in a shell history — and the
-          # URL is no longer something a failure path could print.
+          # appears in the step's echoed command, in `ps`, or in a shell history — and in a
+          # header rather than the URL, so no failure path that prints the URL can leak it.
           python3 - <<'PY'
-          import json, os, pathlib, sys, urllib.error, urllib.parse, urllib.request
+          import json, os, pathlib, sys, urllib.error, urllib.request
           port, token = os.environ["PORT"], os.environ["TOKEN"]
-          url = f"http://127.0.0.1:{port}/api/onboarding?" + urllib.parse.urlencode({"token": token})
+          req = urllib.request.Request(
+              f"http://127.0.0.1:{port}/api/onboarding",
+              headers={"Authorization": f"Bearer {token}"},
+          )
           try:
-              with urllib.request.urlopen(url, timeout=30) as r:
+              with urllib.request.urlopen(req, timeout=30) as r:
                   code, body = r.status, r.read()
           except urllib.error.HTTPError as e:
-              # Print the CODE only. The URL carries the token, so it is never echoed.
+              # Print the CODE only: a response body is the gateway's, not this step's to echo.
               print(f"::error::GET /api/onboarding returned {e.code} (expected 200)")
               sys.exit(1)
           except urllib.error.URLError as e:

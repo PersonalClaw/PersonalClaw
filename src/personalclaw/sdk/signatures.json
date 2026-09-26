@@ -539,7 +539,8 @@
    "queue_append": {
     "kind": "method",
     "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "content"}
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "content"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel"}
     ],
     "returns": "str"
    }
@@ -610,7 +611,9 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "edits"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "rich_text"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "typing_indicator"},
-    {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "max_text_len"}
+    {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "max_text_len"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "owner_pairing"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "dm_thread_is_channel"}
    ],
    "returns": "None"
   },
@@ -1289,7 +1292,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "error"},
     {"annotation": "str", "default": "'agent'", "kind": "positional_or_keyword", "name": "source"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "disabled_tools"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "transport"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "transport"},
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sign_in"}
    ],
    "returns": "None"
   },
@@ -2255,8 +2259,7 @@
    "count_prunable": {
     "kind": "method",
     "params": [
-     {"annotation": "int", "default": "365", "kind": "positional_or_keyword", "name": "keep_days"},
-     {"annotation": "int", "default": "50000", "kind": "positional_or_keyword", "name": "max_entries"}
+     {"annotation": "int", "default": "365", "kind": "positional_or_keyword", "name": "keep_days"}
     ],
     "returns": "int"
    },
@@ -2300,8 +2303,7 @@
    "prune": {
     "kind": "method",
     "params": [
-     {"annotation": "int", "default": "365", "kind": "positional_or_keyword", "name": "keep_days"},
-     {"annotation": "int", "default": "50000", "kind": "positional_or_keyword", "name": "max_entries"}
+     {"annotation": "int", "default": "365", "kind": "positional_or_keyword", "name": "keep_days"}
     ],
     "returns": "int"
    },
@@ -2584,6 +2586,13 @@
     ],
     "returns": "None"
    },
+   "register_turn_stop_hook": {
+    "kind": "method",
+    "params": [
+     {"annotation": "Callable[[str], int]", "kind": "positional_or_keyword", "name": "hook"}
+    ],
+    "returns": "None"
+   },
    "release": {
     "kind": "method",
     "params": [
@@ -2722,6 +2731,13 @@
      {"annotation": "str", "kind": "positional_or_keyword", "name": "session_id"}
     ],
     "returns": "str | None"
+   },
+   "forget_session_id": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
+    ],
+    "returns": "None"
    },
    "get": {
     "kind": "method",
@@ -3129,7 +3145,8 @@
    "cancel": {
     "kind": "async method",
     "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "agent_id"}
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "agent_id"},
+     {"annotation": "str", "default": "'Cancelled by user'", "kind": "keyword_only", "name": "reason"}
     ],
     "returns": "bool"
    },
@@ -5881,6 +5898,7 @@
     "params": [],
     "returns": "None"
    },
+   "sign_in_needed": {"kind": "property", "returns": "bool", "settable": false},
    "started": {"kind": "property", "returns": "bool", "settable": false},
    "touch": {
     "kind": "method",
@@ -6960,7 +6978,9 @@
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "pinned_ips"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "reason"},
     {"annotation": "str", "default": "'safe'", "kind": "positional_or_keyword", "name": "risk_level"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "recovery_hints"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "recovery_hints"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "category"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "address"}
    ],
    "returns": "None"
   },
@@ -6989,7 +7009,7 @@
   "params": [
    {"annotation": "str", "kind": "positional_or_keyword", "name": "url"},
    {"annotation": "EgressPolicy", "kind": "positional_or_keyword", "name": "policy"},
-   {"default": "<callable _resolve>", "kind": "keyword_only", "name": "resolver"}
+   {"default": "None", "kind": "keyword_only", "name": "resolver"}
   ],
   "returns": "GuardDecision"
  },
@@ -8632,6 +8652,13 @@
  },
  "personalclaw.sdk.util.atomic_write": {"kind": "alias", "of": "personalclaw.sdk.channel.atomic_write"},
  "personalclaw.sdk.util.config_dir": {"kind": "alias", "of": "personalclaw.sdk.channel.config_dir"},
+ "personalclaw.sdk.util.outside_home_path": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "place"}
+  ],
+  "returns": "Path | None"
+ },
  "personalclaw.sdk.util.sandbox_wrap_argv": {
   "kind": "function",
   "params": [

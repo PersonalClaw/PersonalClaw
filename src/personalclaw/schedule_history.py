@@ -73,10 +73,15 @@ class ScheduleRun:
     finished_at: float = 0.0
     duration_ms: int = 0
     # "success" | "failure" | "timeout": a verified synchronous outcome.
+    # "interrupted": a gateway restart cut the run off before it finished
+    #   (`triggers/reaper.RESTART_INTERRUPTED_STATUS`). Not retried on its own: it waits on
+    #   the Triggers page's review for the user to run it again or dismiss it.
+    # "ran_late": the review's Run now — a run standing in for a slot that did not run.
     # "launched": the run only STARTED background work (a fire-and-forget spawn —
     #   run-prompt / run-workflow / invoke-agent); the spawned turn's real outcome
     #   is recorded by ITS own run, not this one. Honest "started ≠ succeeded"
     #   status (T7) — a green "ran" must not imply the work succeeded.
+    # "skipped_noop": the action ran and had nothing to do (`status_for_result`).
     status: str = "success"
     summary: str = ""
     trace: str = ""
@@ -112,6 +117,38 @@ class ScheduleRun:
             trace=str(d.get("trace", "")),
             error=str(d.get("error", "")),
         )
+
+
+#: The `ActionResult.outcome` refinements a finished run records as its own status, rather than
+#: as a plain `success`. `launched` and `queued` started work that records its own outcome (T7,
+#: WV-14); `skip` ran and had nothing to do, recorded as the inert `skipped_noop`, which folds out
+#: of the default history and runs views — a minutely automation with nothing to do would
+#: otherwise bury the runs that did something.
+_RESULT_STATUS: dict[str, str] = {
+    "launched": "launched",
+    "queued": "queued",
+    "skip": "skipped_noop",
+}
+
+#: Every status `status_for_result` can return: the closed vocabulary `triggers/history.py`'s
+#: `SCHEDULE_STATUS_TO_OUTCOME` must translate (`test_triggers_status_vocabulary` reads this).
+RESULT_STATUSES: frozenset[str] = frozenset({"success", "failure", *_RESULT_STATUS.values()})
+
+
+def status_for_result(result: Any) -> str:
+    """The `ScheduleRun.status` a finished action records: `failure`, a refinement, or `success`.
+
+    ONE answer for both recorders — the autonomous fire (`gateway._record_fire_outcome`) and the
+    Run button (`dashboard/handlers/triggers._record_manual_run`) — so a fire and a hand-run of
+    the same action cannot record different statuses for the same result. The autonomous one
+    recorded every successful result as `success`, so a fire that only launched a workflow read as
+    one whose work had succeeded.
+    """
+    if result is None:
+        return "success"
+    if not bool(getattr(result, "success", True)):
+        return "failure"
+    return _RESULT_STATUS.get(str(getattr(result, "outcome", "") or ""), "success")
 
 
 def _redact_stored(text: str | None) -> str:

@@ -1461,13 +1461,14 @@ class SessionManager:
 
         The fresh session gets context re-injected via build_session_context()
         on the next user message, so no /compact call is needed.
-        Deletes the session_map entry to prevent false resumes with stale data.
+        Forgets the stored session id to prevent false resumes with stale data. A channel link
+        stays: deleting the whole entry stopped a channel chat's answers reaching the channel.
         """
         try:
             async with self._lock:
                 session = self._sessions.pop(key, None)
             if session:
-                self._session_map.delete(key)
+                self._session_map.forget_session_id(key)
                 await session.provider.shutdown()
                 logger.info("Recycled session %s (context overflow)", key)
                 if self._on_compacted is not None:

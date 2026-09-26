@@ -7,7 +7,9 @@ and the transcript's storage, plus the persistence of the round the arbiter driv
 budget, its speaker queue and the turn that is open; deciding who speaks next is
 :mod:`personalclaw.rooms.arbiter`, the posture VOCABULARY lives in
 :mod:`personalclaw.rooms.posture` — this module stores the declaration and never judges it —
-and the per-member transcript cursors are a later change, deliberately absent here.
+and how far each member has read the transcript is :mod:`personalclaw.rooms.cursors`, a
+sidecar beside the transcript rather than a field on this record: a cursor moves on every
+turn, while this record holds the roster that decides who may speak.
 
 **Nothing here is a new storage engine.** The transcript is a
 :class:`~personalclaw.history.ConversationLog` pointed at the room's own directory, so
@@ -26,6 +28,7 @@ lands at the path AGENT-ROOMS names)::
 
     rooms/index.json                    the room records, members included
     rooms/<id>/transcript.jsonl         the shared transcript
+    rooms/<id>/cursors.json             how far each member has read it (rooms.cursors)
     rooms/<id>/archive/                 lines an earlier version's size rotation trimmed
 
 A room id is a strict slug (:data:`_ROOM_ID_RE`), which is what lets the directory name
@@ -551,6 +554,12 @@ def remove_member(room_id: str, name: str) -> Room:
     ``room_member_not_found`` so the caller learns its member list is stale instead of
     reporting a successful removal of something that was never there — the same reading
     ``channel_trust``'s revoke route already established.
+
+    **The member's read cursor is left where it is**, so a removal writes one file and its answer
+    is its outcome. A cursor records what the member's own session was shown, and that session
+    can outlive the removal: re-added while it is still live, the member reads on from its cursor
+    (what was said while it was away lies past it), and re-added after it ended, it is fed the
+    whole room because its fresh session remembers nothing (``turn.member_feed``).
     """
     rooms = _read_index_strict()
     room = next((r for r in rooms if r.id == room_id), None)
@@ -639,8 +648,8 @@ def begin_turn(room_id: str) -> str:
     queued behind it: the caller runs one round per room at a time and :func:`end_turn` clears
     the field, so a value found here was left by a round that died mid-turn — the process
     stopped. That member is owed its turn first, and exactly once: a later entry for it in the
-    queue is dropped, because the reopened turn reads the whole transcript, including whatever
-    message queued it again.
+    queue is dropped, because the reopened turn is fed everything that member has not read,
+    including whatever message queued it again.
     """
     rooms = _read_index_strict()
     room = _require_indexed_room(rooms, room_id)

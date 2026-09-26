@@ -64,9 +64,23 @@ permission model holds in every auth mode.
 
 `dashboard/token_auth.py`:
 
+- **One credential, three carriers.** `_select_request_credentials` is the one rule
+  every auth path uses to pick the credential that authorizes a request. `?token=`
+  is the browser's entry link: bound to the first client address that uses it and
+  exchanged for the `HttpOnly` `pc_token_<port>` cookie. `Authorization: Bearer` is
+  for every client that is not a browser: it accepts exactly the sessions the cookie
+  accepts, judged by the same rules (signature, session lifetime, a live nonce), and
+  it is stateless — no cookie, no address binding — and keeps the token out of URLs.
+  A different owner token in the header beside `?token=` is refused
+  (`auth_credential_conflict`); a Bearer with nothing else to stand on that is not a
+  live owner session — expired, revoked, forged, an app's, another surface's — gets
+  the one `auth_bearer_invalid`, and no refusal echoes or audits the token. Only the
+  Bearer scheme is the gateway's: another scheme in the same header (a reverse
+  proxy's `Basic` login) is ignored, not refused.
 - `generate_token(user_id, ttl_seconds, app=...)` mints tokens with an
   optional **`app` claim**; app-scoped tokens bound a request to that app's
-  declared permissions.
+  declared permissions. In the Bearer header an app token only narrows the
+  owner session it is presented beside, for the same user.
 - App backends never see the owner's credential: the reverse proxy strips
   cookie + Authorization and injects a fresh 1-hour app-scoped token
   (see [app-platform.md](app-platform.md#the-reverse-proxy--token-model)).
@@ -190,7 +204,20 @@ chokepoint:
   (user-configured POSTs), `LOOPBACK_INTERNAL` (loopback only — **never
   widened** by config), `REGISTRY`/`LISTED` (exclusive allow-lists),
   `FETCH_ACTION` (the `net-fetch` action provider — exclusive over an EMPTY
-  base list, so an unconfigured instance reaches nowhere).
+  base list, so an unconfigured instance reaches nowhere), `LISTING` (git
+  fetching an app from where a registry listing says it lives — public hosts
+  only, plus the owner's allow-list and the host of the registry source they
+  added).
+- `net/git.py` is the same chokepoint for `git`, which owns its sockets: it
+  resolves names itself and follows redirects, so a check made before
+  `git clone` checks a name, not the connection. `run_git_guarded` points git
+  at a loopback CONNECT tunnel (`http.proxy`) that evaluates EVERY host git
+  connects to, redirect hops included, dials only the addresses the guard
+  returned, and allows port 443 only. Git runs HTTPS-only
+  (`GIT_ALLOW_PROTOCOL`), with no saved credentials, no global or system
+  config, and none of the environment that would route it around the tunnel
+  (`https_proxy`, `NO_PROXY`, injected `GIT_CONFIG_*`). Used for registry
+  listings (`apps/source.py`); an owner-typed URL clones as before.
 - The **exclusive** profiles — `LISTED`, `SYNC`, `FETCH_ACTION`, and the derived
   `capture`/`a2a-outbound` — are the ones where a caller, not a person, picks the
   URL. Each is `allow_only=True` over an empty base, so "nothing named yet" means

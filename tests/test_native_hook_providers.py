@@ -100,14 +100,18 @@ def test_the_store_fire_path_gives_a_command_the_legacy_mode_default():
     legacy dispatcher (gateway.py's `zt_timeout`/mode-default block) allowed a command 300s.
 
     Source-level because the alternative is booting a gateway to time a subprocess; the value is the
-    contract, and the two providers' own precedence is asserted directly above.
+    contract, and the two providers' own precedence is asserted directly above. The floor itself is
+    `firepath.action_timeout`, shared with the Run button, which passed none either.
     """
     import pathlib
 
     import personalclaw.gateway as G
+    from personalclaw.triggers.firepath import action_timeout
 
+    assert action_timeout("bash") == 300
+    assert action_timeout("notify") == 30
     src = pathlib.Path(G.__file__).read_text()
-    assert 'timeout = 300 if provider_name == "bash" else 30' in src
+    assert "timeout = action_timeout(provider_name)" in src
     assert "await provider.execute(config, ctx, timeout=timeout)" in src
     assert "await provider.execute(config, ctx)\n" not in src
 

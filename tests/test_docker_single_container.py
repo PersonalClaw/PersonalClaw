@@ -526,10 +526,19 @@ def test_the_version_only_arch_smoke_is_left_intact() -> None:
 # imported, not re-typed, so a reworded placeholder cannot leave these green.
 
 
-def _fake_http(monkeypatch: pytest.MonkeyPatch, routes: dict[str, tuple[int, str, str]]) -> None:
-    """Route `_get` by URL suffix match, so no container and no daemon are needed."""
+def _fake_http(
+    monkeypatch: pytest.MonkeyPatch,
+    routes: dict[str, tuple[int, str, str]],
+    calls: list[tuple[str, str]] | None = None,
+) -> None:
+    """Route `_get` by URL suffix match, so no container and no daemon are needed.
 
-    def _fake(url: str) -> tuple[int, str, str]:
+    *calls*, when given, records each request as ``(url, bearer token)``.
+    """
+
+    def _fake(url: str, *, token: str = "") -> tuple[int, str, str]:
+        if calls is not None:
+            calls.append((url, token))
         for suffix, response in routes.items():
             if suffix in url:
                 return response
@@ -749,7 +758,7 @@ def test_the_offer_step_refuses_a_fresh_volume_with_no_offer(
 ) -> None:
     """All-200, offer null: what the validator measured on three fresh boots."""
     body = json.dumps({"needs_model": True, "chat_download_offer": None})
-    _fake_http(monkeypatch, {"/api/onboarding?token=": (200, "application/json", body)})
+    _fake_http(monkeypatch, {"/api/onboarding": (200, "application/json", body)})
     with pytest.raises(SystemExit) as excinfo:
         smoke._assert_download_offer("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
     assert excinfo.value.code == 1
@@ -758,8 +767,11 @@ def test_the_offer_step_refuses_a_fresh_volume_with_no_offer(
 def test_the_offer_step_accepts_an_offer(monkeypatch: pytest.MonkeyPatch) -> None:
     offer = {"provider": "bundled-chat", "model": "SmolLM2", "bytes": 144_811_072}
     body = json.dumps({"needs_model": True, "chat_download_offer": offer})
-    _fake_http(monkeypatch, {"/api/onboarding?token=": (200, "application/json", body)})
+    calls: list[tuple[str, str]] = []
+    _fake_http(monkeypatch, {"/api/onboarding": (200, "application/json", body)}, calls)
     smoke._assert_download_offer("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+    # The API call carries the token in the header; only the browser entry link is a URL.
+    assert calls == [("http://127.0.0.1:1/api/onboarding", _SYNTHETIC_TOKEN)]
 
 
 def test_main_runs_both_steps_after_the_dashboard_ones() -> None:

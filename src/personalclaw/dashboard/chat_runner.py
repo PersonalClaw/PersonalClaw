@@ -1688,6 +1688,7 @@ async def run_chat(
     *,
     _prompt_depth: int = 0,
     regenerate_hint: str = "",
+    arrived_from_channel: bool = False,
 ) -> None:
     """Stream LLM response into *session*.  Survives browser disconnect.
 
@@ -1699,6 +1700,10 @@ async def run_chat(
     gate cannot be routed around. The positional `state, session, message` signature is
     still a contract — the door's injected `turn_runner` calls it by that shape —
     while `_prompt_depth` stays private as this function's own recursion counter.
+
+    ``arrived_from_channel`` says *message* came from the chat channel the session is linked
+    to. The mirror shows that channel what was typed anywhere else; this message is already
+    there, so it is not sent back. The answer is mirrored either way.
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
@@ -2841,12 +2846,13 @@ async def run_chat(
                 _mirror_thread, _mirror_chan = state.sessions.get_channel_link(session_key)
             if _mirror_thread and _mirror_chan and _mirror_delivery:
                 try:
-                    _mirror_msg = message[:500]
-                    _mirror_msg, _ = redact_exfiltration_urls(_mirror_msg)
-                    _mirror_msg, _ = redact_credentials(_mirror_msg)
-                    await _mirror_delivery.deliver_text(
-                        _mirror_chan, f"💬 _{_mirror_msg}_", _mirror_thread
-                    )
+                    if not arrived_from_channel:
+                        _mirror_msg = message[:500]
+                        _mirror_msg, _ = redact_exfiltration_urls(_mirror_msg)
+                        _mirror_msg, _ = redact_credentials(_mirror_msg)
+                        await _mirror_delivery.deliver_text(
+                            _mirror_chan, f"💬 _{_mirror_msg}_", _mirror_thread
+                        )
                     # Start a stream for real-time tool animations
                     _mirror_stream_ts = (
                         await _mirror_delivery.start_stream(
@@ -4770,8 +4776,14 @@ async def run_chat(
                     },
                 )
 
+            # A message the channel sent while this turn ran is not sent back to it. Merged
+            # with one typed here, the merged text is new to the channel, so it is.
+            from_channel = all(item.get("channel") for item in consumed)
             task = asyncio.create_task(
-                asyncio.wait_for(run_chat(state, session, next_msg), timeout=CHAT_TURN_TIMEOUT)
+                asyncio.wait_for(
+                    run_chat(state, session, next_msg, arrived_from_channel=from_channel),
+                    timeout=CHAT_TURN_TIMEOUT,
+                )
             )
             session.task = task
             state._background_tasks.add(task)

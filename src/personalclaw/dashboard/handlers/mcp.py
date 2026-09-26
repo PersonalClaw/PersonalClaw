@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import web
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
@@ -31,6 +32,10 @@ logger = logging.getLogger(__name__)
 # separately at validation time below.
 _VALID_MCP_NAME_RE = re.compile(r"^[@a-zA-Z0-9][@a-zA-Z0-9/_.-]*$")
 _MAX_MCP_NAME_LEN = 128
+
+# The name ONE server's routes take (`/api/mcp/servers/{name}` and its `sign-in`): letters, digits,
+# dashes and underscores, and one ':' for an app-contributed server (``{app}:{server}``).
+_SERVER_NAME_RE = re.compile(r"[a-zA-Z0-9_-]{1,64}(:[a-zA-Z0-9_-]{1,64})?")
 
 
 def _is_valid_mcp_name(name: str) -> bool:
@@ -147,6 +152,22 @@ def _get_mcp_lock() -> _McpFileLock:
 def _read_mcp_json() -> dict[str, Any]:
     """``mcp.json``'s servers for a LOOKUP (absent or unreadable → ``{}``)."""
     return _load_json_or_empty(_canonical_mcp_json()).get("mcpServers", {})
+
+
+def _with_sign_in(row: dict[str, Any], server: Any) -> dict[str, Any]:
+    """``row`` (a server's :meth:`McpServerInfo.to_dict`) with its OAuth sign-in as the Tools page
+    shows it — ``auth: {method, state}`` — for a server at a URL that has one or asked for one.
+    Presence only (``mcp_oauth.sign_in_state``): no token is read to draw the list."""
+    from personalclaw.config.secret_refs import MCP_SIGN_IN
+    from personalclaw.mcp_oauth import sign_in_state
+
+    if not getattr(server, "is_remote", False):
+        return row
+    spec = {"url": server.url, MCP_SIGN_IN: server.sign_in} if server.sign_in else {}
+    state = sign_in_state(server.name, spec, str(row.get("status") or ""))
+    if state is not None:
+        row["auth"] = state
+    return row
 
 
 # ── MCP Servers ──
@@ -302,7 +323,7 @@ async def _bg_mcp_probe() -> None:
                 s.error = str(r)[:200]
             else:
                 s = r
-            d = s.to_dict()
+            d = _with_sign_in(s.to_dict(), s)
             spec = mcp_specs.get(s.name, {})
             d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
             if isinstance(spec, dict) and spec.get("disabledTools"):
@@ -371,7 +392,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
         d["enabled"] = not is_disabled
         if is_disabled:
             d["status"] = "disabled"
-        d = as_agents_see_it(d)
+        d = as_agents_see_it(_with_sign_in(d, s))
         err = d.get("error")
         if err:
             err, _ = redact_credentials(err)
@@ -456,7 +477,7 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     mcp_specs = _read_mcp_json()
     result: list[dict[str, Any]] = []
     for s in servers:
-        d = s.to_dict()
+        d = _with_sign_in(s.to_dict(), s)
         spec = mcp_specs.get(s.name, {})
         d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
         if isinstance(spec, dict) and spec.get("disabledTools"):
@@ -469,23 +490,16 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     return web.json_response([as_agents_see_it(d) for d in result])
 
 
-async def api_mcp_probe_one(request: web.Request) -> web.Response:
-    """POST /api/mcp/probe/{name} — reconnect (re-probe) a SINGLE MCP server.
-
-    Lets the user recover one timed-out/errored provider without re-probing the
-    whole fleet (a slow server shouldn't force an all-provider re-probe). Updates
-    just this server's entry in the probe cache + merges its enabled/disabledTools
-    so the page reflects it immediately. 404 if no server by that name."""
+async def _probe_and_cache_one(name: str) -> dict[str, Any] | None:
+    """Probe ONE server and put its row in the probe cache, keeping the user's enable and
+    disabledTools choices (as :func:`api_mcp_probe` does). ``None`` when no server has the name."""
     global _mcp_probe_ts
-    name = request.match_info["name"].strip()
-    if not name:
-        return web.json_response({"error": "server name is required"}, status=400)
-    from personalclaw.mcp_discovery import as_agents_see_it, probe_one  # noqa: F811
+    from personalclaw.mcp_discovery import probe_one  # noqa: F811
 
     info = await probe_one(name)
     if info is None:
-        return web.json_response({"error": f"no MCP server {name!r} configured"}, status=404)
-    d = info.to_dict()
+        return None
+    d = _with_sign_in(info.to_dict(), info)
     # Preserve the user's enable/disabledTools choices (mirror api_mcp_probe).
     spec = _read_mcp_json().get(name, {})
     d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
@@ -501,6 +515,24 @@ async def api_mcp_probe_one(request: web.Request) -> web.Response:
     if not replaced:
         _mcp_probe_cache.append(d)
     _mcp_probe_ts = time.time()
+    return d
+
+
+async def api_mcp_probe_one(request: web.Request) -> web.Response:
+    """POST /api/mcp/probe/{name} — reconnect (re-probe) a SINGLE MCP server.
+
+    Lets the user recover one timed-out/errored provider without re-probing the
+    whole fleet (a slow server shouldn't force an all-provider re-probe). Updates
+    just this server's entry in the probe cache + merges its enabled/disabledTools
+    so the page reflects it immediately. 404 if no server by that name."""
+    name = request.match_info["name"].strip()
+    if not name:
+        return web.json_response({"error": "server name is required"}, status=400)
+    from personalclaw.mcp_discovery import as_agents_see_it  # noqa: F811
+
+    d = await _probe_and_cache_one(name)
+    if d is None:
+        return web.json_response({"error": f"no MCP server {name!r} configured"}, status=404)
     return web.json_response(as_agents_see_it(d))
 
 
@@ -556,12 +588,14 @@ async def api_mcp_sync(request: web.Request) -> web.Response:
     """POST /api/mcp/sync — apply MCP config changes and restart sessions.
 
     1. Discovers servers in mcp.json the agent config lacks, or holds a stale copy of.
-    2. Rebuilds the agent config from mcp.json and registers them for Claude Code.
+    2. Rebuilds the agent config from mcp.json.
     3. Resets all sessions so changes take effect.
+
+    Nothing is written outside the home: a server Claude Code should see goes into Claude Code's
+    own scope only when the owner puts it there (``/api/mcp/apply``).
     """
     from personalclaw.mcp_discovery import (  # noqa: F811
         discover_servers_to_sync,
-        register_servers_for_cc,
         sync_to_agent_config,
     )
 
@@ -571,7 +605,6 @@ async def api_mcp_sync(request: web.Request) -> web.Response:
         ok = sync_to_agent_config(to_sync)
         if ok:
             synced = len(to_sync)
-        register_servers_for_cc(to_sync)
 
     # Always reset sessions — even with no new servers, the user may have
     # toggled enable/disable which writes to personalclaw.json but requires
@@ -1072,6 +1105,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     """
     from personalclaw.config.secret_refs import (
         MCP_DEFINITION_KEYS,
+        MCP_SIGN_IN,
         ForeignSecretReference,
         mcp_env_view,
         mcp_headers_view,
@@ -1079,6 +1113,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         store_mcp_spec,
     )
     from personalclaw.mcp_discovery import MCP_TRANSPORTS, mcp_transport
+    from personalclaw.mcp_oauth import covers
 
     name = request.match_info["name"]
     if not name or not name.strip():
@@ -1089,7 +1124,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     # path-traversal or shell-meta tokens into the registry. A single ':' is
     # allowed because app-contributed servers are namespaced ``{app}:{server}``
     # (mcp_bridge) — without it the DELETE 400s before it can remove one.
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}(:[a-zA-Z0-9_-]{1,64})?", name):
+    if not _SERVER_NAME_RE.fullmatch(name):
         return web.json_response(
             {
                 "error": "MCP server name must be letters/digits/dashes/underscores, optionally one ':' namespace"  # noqa: E501
@@ -1224,6 +1259,13 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         # are gone rather than merged back.
         entry: dict[str, Any] = {k: v for k, v in existing.items() if k not in MCP_DEFINITION_KEYS}
         entry.update(definition)
+        grant = entry.get(MCP_SIGN_IN)
+        if isinstance(grant, dict) and (
+            transport == "stdio" or not covers(str(grant.get("resource") or ""), requested["url"])
+        ):
+            # The sign-in was granted for the old address, and its token must never be sent to
+            # another one. Leaving it out lets the write delete its tokens with it.
+            del entry[MCP_SIGN_IN]
         try:
             # STRICT: a value typed now that the store cannot hold is refused, not left inline.
             entry = store_mcp_spec(name, entry, strict=True)
@@ -1252,6 +1294,268 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         resources=name,
     )
     return web.json_response({"ok": True, "name": name}, status=200)
+
+
+# ─── Signing in to a remote server (OAuth) ──────────────────────────────
+
+
+def _dashboard_origin(request: web.Request) -> str:
+    """The address the browser reached the dashboard at: its ``Origin`` when it sent one (the
+    SPA's POST does), else the scheme and ``Host`` of this request."""
+    origin = request.headers.get("Origin", "").strip()
+    if origin and origin != "null":
+        return origin
+    return f"{request.scheme}://{request.host}"
+
+
+def _forget_connections(request: web.Request, name: str) -> None:
+    """After a sign-in or a sign-out: every live connection to ``name`` is closed (the next use
+    opens one with the new sign-in, its spawn breaker reset), what its last probe said is dropped
+    from both caches, and it is probed again in the background, so the Tools page sees it anew."""
+    from personalclaw.mcp_client import close_servers
+    from personalclaw.mcp_discovery import forget_probe
+
+    close_servers(lambda n: n == name)
+    forget_probe(name)
+    _mcp_probe_cache[:] = [row for row in _mcp_probe_cache if row.get("name") != name]
+    task = asyncio.create_task(_probe_and_cache_one(name))
+    # Held until it finishes: the loop keeps only a weak reference to a task.
+    tasks = getattr(request.app.get("state"), "_background_tasks", None)
+    held: set[asyncio.Task[Any]] = tasks if isinstance(tasks, set) else _SIGN_IN_PROBES
+    held.add(task)
+    task.add_done_callback(held.discard)
+
+
+#: The re-probes a sign-in started when the app has no background-task set to hold them.
+_SIGN_IN_PROBES: set[asyncio.Task[Any]] = set()
+
+
+async def api_mcp_server_sign_in(request: web.Request) -> web.Response:
+    """POST/DELETE /api/mcp/servers/{name}/sign-in — sign in to a remote server, or sign out.
+
+    The sign-in is OAuth's: see :mod:`personalclaw.mcp_oauth`.
+
+    POST starts a sign-in (``mcp_oauth.start_sign_in``) and answers ``{authorizationUrl,
+    redirectUri}``: the page the browser opens, and the address the authorization server sends it
+    back to (``GET /api/mcp/oauth/callback``). The body may carry ``clientId`` and
+    ``clientSecret``, an app the owner registered with the authorization server themselves, for one
+    that does not let PersonalClaw register itself (``mcp_sign_in_needs_client_id``, whose error
+    ``detail`` carries the ``redirectUri`` to register). The secret is held in memory until the
+    sign-in finishes, then stored in the credential store.
+
+    DELETE signs out: the server's ``signIn`` leaves ``mcp.json`` and the agent config, and the
+    tokens and client secret it stored are deleted from the credential store. The authorization
+    server still lists the grant until it is removed there.
+    """
+    from personalclaw.config.secret_refs import remove_mcp_sign_in
+    from personalclaw.mcp_oauth import SignInFailed, redirect_uri_for, start_sign_in
+
+    name = request.match_info["name"].strip()
+    if not _SERVER_NAME_RE.fullmatch(name):
+        return json_error(
+            "invalid_sign_in", message="That is not an MCP server's name.", status=400
+        )
+    spec = _definition_of(name)
+    if spec is None:
+        return json_error(
+            "not_found", message=f"No MCP server named '{name}' is configured.", status=404
+        )
+
+    if request.method == "DELETE":
+        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+
+        async with _get_mcp_lock():
+            async with _get_config_lock():
+                removed = await asyncio.to_thread(remove_mcp_sign_in, name)
+        _forget_connections(request, name)
+        sel().log_api_access(
+            caller="dashboard",
+            operation="mcp_sign_out",
+            outcome="completed" if removed else "not_found",
+            resources=name,
+        )
+        return web.json_response({"ok": True, "name": name, "signedOut": removed})
+
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        return json_error("invalid_sign_in", message="The body must be a JSON object.", status=400)
+    client_id, client_secret = body.get("clientId", ""), body.get("clientSecret", "")
+    if not isinstance(client_id, str) or not isinstance(client_secret, str):
+        return json_error(
+            "invalid_sign_in", message="clientId and clientSecret must be strings.", status=400
+        )
+    if client_secret.strip() and not client_id.strip():
+        return json_error(
+            "invalid_sign_in",
+            message="A client secret goes with a client ID: enter the ID too.",
+            status=400,
+        )
+    redirect_uri = redirect_uri_for(_dashboard_origin(request))
+    if redirect_uri is None:
+        return json_error(
+            "mcp_sign_in_needs_local_address",
+            message="Signing in sends your browser back to PersonalClaw, which must be at a "
+            "loopback address or on HTTPS for that. Open PersonalClaw on this computer at "
+            f"http://127.0.0.1:{request.app.get('port', '')} to sign in.",
+            status=400,
+        )
+    try:
+        url = await start_sign_in(
+            name,
+            spec,
+            redirect_uri=redirect_uri,
+            client_id=client_id.strip(),
+            client_secret=client_secret.strip(),
+        )
+    except SignInFailed as exc:
+        return _sign_in_refusal(exc)
+    return web.json_response({"authorizationUrl": url, "redirectUri": redirect_uri})
+
+
+def _sign_in_refusal(exc: Any) -> web.Response:
+    """A sign-in that could not start (``mcp_oauth.SignInFailed``) as the wire error. Each code is
+    written out rather than passed through, so the append-only rail sees every one."""
+    how = {"message": str(exc), "status": exc.status, "error_extra": exc.extra}
+    if exc.code == "mcp_sign_in_unsupported":
+        return json_error("mcp_sign_in_unsupported", **how)
+    if exc.code == "mcp_sign_in_not_offered":
+        return json_error("mcp_sign_in_not_offered", **how)
+    if exc.code == "mcp_sign_in_needs_client_id":
+        return json_error("mcp_sign_in_needs_client_id", **how)
+    if exc.code == "secret_owned_elsewhere":
+        return json_error("secret_owned_elsewhere", **how)
+    return json_error("mcp_sign_in_failed", **how)
+
+
+_SIGN_IN_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} · PersonalClaw</title>
+<style>
+:root {{ color-scheme: light dark; }}
+body {{ font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 34rem;
+  margin: 14vh auto; padding: 0 1.5rem; }}
+h1 {{ font-size: 1.25rem; margin: 0 0 0.5rem; }}
+p {{ margin: 0 0 0.75rem; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+<p>{message}</p>
+<p>{next_step}</p>
+</body>
+</html>
+"""
+
+
+def _sign_in_page(title: str, message: str, next_step: str, *, status: int) -> web.Response:
+    """The page the browser lands on after a sign-in. Static, with no script: every value on it
+    is escaped, and the gateway's own security headers apply to it as to any other response."""
+    import html
+
+    return web.Response(
+        text=_SIGN_IN_PAGE.format(
+            title=html.escape(title),
+            message=html.escape(message),
+            next_step=html.escape(next_step),
+        ),
+        content_type="text/html",
+        status=status,
+    )
+
+
+async def api_mcp_oauth_callback(request: web.Request) -> web.Response:
+    """GET /api/mcp/oauth/callback — where an authorization server sends the browser back to.
+
+    Reachable without a dashboard session (``token_auth._BYPASS_EXACT``): the browser coming back
+    from the authorization server may carry none — a dashboard opened at ``localhost`` has no
+    cookie for ``127.0.0.1``. That opens nothing. The request is only ever matched to a sign-in the
+    owner started from the Tools page, by its single-use 256-bit ``state``, within ten minutes, and
+    the code it carries is exchanged only with that sign-in's PKCE verifier, which never left this
+    process. Anything else lands on a page that says the sign-in expired, and changes nothing.
+
+    On success the tokens are in the credential store and the server's ``signIn`` in ``mcp.json``
+    (then the agent config); its connections are closed so the next use signs in, and it is probed
+    again, so the Tools page turns to ready.
+    """
+    from personalclaw.config.secret_refs import MCP_SIGN_IN
+    from personalclaw.mcp_oauth import (
+        SignInFailed,
+        canonical_resource,
+        finish_sign_in,
+        forget_sign_in_values,
+    )
+
+    try:
+        finished = await finish_sign_in(
+            {k: v for k, v in request.query.items() if isinstance(v, str)}
+        )
+    except SignInFailed as exc:
+        return _sign_in_page(
+            "Not signed in",
+            str(exc),
+            "Go back to PersonalClaw's Tools page to try again.",
+            status=exc.status,
+        )
+    except OSError as exc:
+        logger.warning("mcp: the sign-in could not be stored: %s", exc)
+        return _sign_in_page(
+            "Not signed in",
+            f"PersonalClaw could not store the sign-in in its credential store: {exc}.",
+            "Go back to PersonalClaw's Tools page to try again.",
+            status=500,
+        )
+    name = finished.server
+    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+
+    async with _get_mcp_lock():
+        try:
+            data = _load_json_for_update(_canonical_mcp_json())
+        except ConfigUnreadable as exc:
+            logger.warning("mcp: not saving the sign-in to %r: %s", name, exc)
+            await asyncio.to_thread(forget_sign_in_values, name)
+            return _sign_in_page(
+                "Not signed in",
+                f"PersonalClaw could not save the sign-in to {name}: its MCP settings file "
+                "cannot be read.",
+                "Fix or remove mcp.json in PersonalClaw's home, then sign in again.",
+                status=500,
+            )
+        servers = data.setdefault("mcpServers", {})
+        entry = servers.get(name)
+        if not isinstance(entry, dict):
+            entry = _definition_of(name)
+        same = isinstance(entry, dict) and canonical_resource(
+            str(entry.get("url") or "")
+        ) == canonical_resource(finished.server_url)
+        if not same:
+            await asyncio.to_thread(forget_sign_in_values, name)
+            return _sign_in_page(
+                "Not signed in",
+                f"{name} was removed, or its address changed, while you were signing in, so the "
+                "sign-in was not kept.",
+                "Go back to PersonalClaw's Tools page to sign in again.",
+                status=409,
+            )
+        entry = dict(entry)
+        entry[MCP_SIGN_IN] = finished.block
+        servers[name] = entry
+        _atomic_write(_canonical_mcp_json(), data)
+    async with _get_config_lock():
+        _sync_mcp_to_agent(name, True)
+    await asyncio.to_thread(_rebuild_agent_config_logged)
+    _forget_connections(request, name)
+    return _sign_in_page(
+        f"Signed in to {name}",
+        f"PersonalClaw can use {name}'s tools now.",
+        "You can close this tab and go back to PersonalClaw.",
+        status=200,
+    )
 
 
 # ─── Batched scope apply ────────────────────────────────────────────────
@@ -1350,12 +1654,8 @@ def _atomic_write(path: Path, data: dict) -> None:
 
         write_mcp_document(path, data)
         return
-    from personalclaw.agent import (  # noqa: F811  # circular: agent imports dashboard handlers
-        _atomic_json_write,
-    )
-
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_json_write(path, data)
+    atomic_json_write(path, data)
 
 
 def _find_server_spec_anywhere(name: str) -> dict | None:
@@ -1569,8 +1869,9 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
     Removing a server is ``DELETE /api/mcp/servers/{name}``, not a change here.
 
     An import from the Tools page's list carries ``"from": <the row's id>``: the server is then
-    copied exactly as that row showed it, from whichever of Claude Code's scopes it came from —
-    user, local or a project's ``.mcp.json`` (``mcp_discovery.importable_spec``).
+    copied exactly as that row showed it, from the tool and the scope it came from — Claude
+    Code's user, local or project ``.mcp.json`` scope, or Codex's ``config.toml``
+    (``mcp_discovery.importable_spec``).
 
     After all changes are written, ``rebuild_agent_config`` is called once so the agent config
     (``~/.personalclaw/agents/personalclaw.json``) reflects the new merged state. Returns a
@@ -1652,10 +1953,10 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             # importing a Claude-Code-only server would be a no-op (nothing to
             # enable in the PClaw scope).
             #
-            # `from` is the Import list's id for one server in one of Claude Code's scopes: a
-            # local- or project-scope server is found by nothing that searches by name, and two
-            # scopes can hold one name. The definition is read again from Claude Code's own
-            # files (`importable_spec`), so the request names a row and never a path or a spec.
+            # `from` is the Import list's id for one server in one tool's scope: a local- or
+            # project-scope server is found by nothing that searches by name, and two scopes
+            # (or two tools) can hold one name. The definition is read again from that tool's
+            # own files (`importable_spec`), so the request names a row, never a path or a spec.
             preserved_spec: dict | None = None
             listed = change.get("from")
             if listed is not None and not (
@@ -1674,8 +1975,8 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                         results.append(
                             {
                                 "name": name,
-                                "error": f"Claude Code no longer has the '{name}' server this "
-                                "list showed. Reload the list to see what it has now.",
+                                "error": f"The tool this list read no longer has the '{name}' "
+                                "server it showed. Reload the list to see what it has now.",
                             }
                         )
                         continue

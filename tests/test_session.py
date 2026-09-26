@@ -2157,6 +2157,35 @@ class TestCompaction:
         await mgr._compact_session("gone", 90.0)
         assert "gone" not in mgr._compacting
 
+    @pytest.mark.asyncio
+    async def test_compaction_keeps_a_channel_chats_link(self, cfg):
+        """The recycled session is never resumed, so its id goes. The chat is still the channel
+        thread's chat: deleting the whole entry stopped its answers reaching the channel."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        await mgr.get_or_create("dashboard:chat-1")
+        mgr.release("dashboard:chat-1")
+        mgr._session_map.set("dashboard:chat-1", "sid-replaced")
+        mgr.set_channel_link("dashboard:chat-1", "4242", "4242")
+
+        await mgr._compact_session("dashboard:chat-1", 100.0)
+
+        assert mgr.get_channel_link("dashboard:chat-1") == ("4242", "4242")
+        assert mgr.get_session_for_thread("4242") == "dashboard:chat-1"
+        assert mgr._session_map.get("dashboard:chat-1") is None, "resumed the replaced session"
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_compaction_forgets_a_chat_with_no_channel_entirely(self, cfg):
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        await mgr.get_or_create("dashboard:chat-2")
+        mgr.release("dashboard:chat-2")
+        mgr._session_map.set("dashboard:chat-2", "sid-replaced")
+
+        await mgr._compact_session("dashboard:chat-2", 100.0)
+
+        assert "dashboard:chat-2" not in mgr._session_map._data
+        await mgr.close_all()
+
 
 class TestCloseAllPersistence:
     """Tests for close_all session_map persistence."""

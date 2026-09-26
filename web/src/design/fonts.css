@@ -1,7 +1,11 @@
-/* PersonalClaw typography — self-hosted variable faces (all OFL/Apache, bundled).
+/* PersonalClaw typography — self-hosted faces, all under the SIL Open Font License 1.1.
+   Each file's source, version and sha256 are recorded in ASSET_LICENSES.json, and its
+   notice ships beside it in web/public/THIRD_PARTY_NOTICES.txt.
    DEFAULT: DM Sans (warm, rounded) — off Google Sans. Inter (neutral) + JetBrains
    Mono (code) are selectable in Appearance. Google Sans faces retained as a legacy
-   option. The NE signature — fractional variable weights — is preserved per face. */
+   option. The NE signature — fractional variable weights — holds on the variable faces
+   (DM Sans, JetBrains Mono, Google Sans Flex); inter.woff2 and google-sans-code.woff2
+   are static. */
 @font-face {
   font-family: "DM Sans";
   font-style: normal;

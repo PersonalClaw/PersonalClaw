@@ -702,7 +702,7 @@ DUPLICATE_FAMILIES: tuple[DuplicateFamily, ...] = (
             "history seam — the write landed on disk and no post-write hook ever fired, which "
             "is the swallowed-write defect with a green test on both sides. ``atomic_write.py`` "
             "is the ONE implementation that keeps that seam (and fsync durability) intact. "
-            "Five functions across four files still pair a temp-file creation with a rename "
+            "Four functions across three files still pair a temp-file creation with a rename "
             "themselves. Thin wrappers that DELEGATE to ``atomic_write`` are deliberately not "
             "counted — three exist and they are the shape we want, not a re-derivation."
         ),

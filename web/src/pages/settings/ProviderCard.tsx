@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, RefreshCw, Beaker, Plug, PlugZap, Loader2, HelpCircle } from 'lucide-react'
+import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, RefreshCw, Beaker, Plug, PlugZap, Loader2, HelpCircle, UserCheck, UserX } from 'lucide-react'
 import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
 import { reportingWrite } from '../../app/reportingWrite'
+import { setActivation } from '../../app/appActivation'
 import { Toggle } from './settingsUI'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ProviderConfigForm } from './ProviderConfigForm'
+import { ChannelOwnerSection } from './ChannelOwnerSection'
 import { fvs } from '../../design/fontWeight'
 
 /** One provider card: identity + enable toggle, with the provider's own
@@ -45,14 +47,15 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
     } finally { setMeasuring(false) }
   }
 
-  // Reported, and re-read either way. A refused enable (one of its tools has a name another
-  // provider holds) used to reject unhandled: the switch sprang back and nothing said why. The
-  // server's sentence is the toast, and the re-read puts the same sentence under the card.
+  // The switch is its app's: off unloads the app and on loads it from its files (`setActivation`,
+  // the Apps page's own call), so a provider never runs code its app no longer has. Reported, and
+  // re-read either way. A refused enable (one of its tools has a name another provider holds) used
+  // to reject unhandled: the switch sprang back and nothing said why. The server's sentence is the
+  // toast, and the re-read puts the same sentence under the card.
   const toggle = async () => {
     setBusy(true)
     try {
-      await reportingWrite(`turn ${who} ${ext.enabled ? 'off' : 'on'}`, () =>
-        ext.enabled ? api.disableProvider(ext.name) : api.enableProvider(ext.name))
+      await reportingWrite(`turn ${who} ${ext.enabled ? 'off' : 'on'}`, () => setActivation(ext))
       onChanged()
     } finally { setBusy(false) }
   }
@@ -139,8 +142,27 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
       {/* A save rebuilds the provider — for a channel, its receiver restarts on what was saved —
           so the card re-reads what the save changed instead of showing the status from before. */}
       {open && hasConfig && <ProviderConfigForm name={ext.name} onSaved={onChanged} />}
+      {/* A chat channel's owner — who it reaches you as, and pairing it. After the settings: a
+          channel pairs through its receiver, which runs once its token is saved. */}
+      {open && channel?.owner && (
+        <div className="mt-3"><ChannelOwnerSection channel={channel.name} onChanged={onChannelChanged} /></div>
+      )}
     </div>
   )
+}
+
+/** The owner half of a channel's status: who it reaches you as, or that it can't reach you. */
+function ownerStatusLine(channel: ChannelRuntime): string {
+  const owner = channel.owner
+  if (!owner) return ''
+  if (!owner.id) {
+    return channel.capabilities?.owner_pairing
+      ? 'No owner yet — pair one in Configure, or nothing your agent sends you reaches you here.'
+      : "No owner yet — nothing your agent sends you reaches you here."
+  }
+  return owner.source === 'shared'
+    ? `Reaches you as ${owner.id} (the id every channel used to share)`
+    : `Reaches you as ${owner.id}`
 }
 
 const CHANNEL_STATE_TONE: Record<string, string> = {
@@ -201,6 +223,12 @@ function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; on
               {busy === 'connect' ? <Loader2 size={11} className="animate-spin" /> : <PlugZap size={11} />} Connect
             </button>}
       </div>
+      {channel.owner && (
+        <div data-type="caption" className="flex w-full items-center gap-1.5 text-on-surface-low">
+          {channel.owner.id ? <UserCheck size={11} aria-hidden="true" /> : <UserX size={11} aria-hidden="true" />}
+          {ownerStatusLine(channel)}
+        </div>
+      )}
     </div>
   )
 }

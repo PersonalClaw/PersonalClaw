@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle, Send } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -88,7 +88,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -630,6 +630,12 @@ function RoomsRedirect({ navigate }: { navigate: (p: string, opts?: { replace?: 
   return null
 }
 
+/** How many of each chat's replies this tab still owes a reading, under Settings → Speech &
+ *  Transcription → "Speak replies aloud". A reply is owed when THIS tab sent the message it
+ *  answers, so a chat open in two tabs is read out once. Module scope, not a ref: a new chat's
+ *  first send remounts the session view under the created id, and its reply finishes there. */
+const repliesToSpeak = new Map<string, number>()
+
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion, liveRun, setLiveRun }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void; liveRun: string; setLiveRun: (s: string) => void }) {
   const data = useComposerData()
   const { name } = useIdentity()
@@ -1008,6 +1014,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // config default, so an unresolved read shows nothing rather than flashing times on and off.
   const { data: showTimestamps } = useQuery('chat:show-timestamps', () => api.dashboardConfig().then((c) => c.show_timestamps), { persist: true })
   const stampOf = (turn: { ts?: string }) => (showTimestamps ? turn.ts : undefined)
+  // The chat channels this chat can continue on — each connected channel with an owner to reach
+  // (the Web UI has none). Not Settings → Providers' `settings:channels` key: that read keeps its
+  // catch, so the `[]` it caches on a failure would reach this one as a success. A pairing on either
+  // page busts both with `invalidateKeys('settings:channels', true)`. A failed read offers no channel.
+  const { data: channelList, error: channelListError } = useQuery('settings:channels-owners', () => api.channels(), { persist: true })
+  const handoffChannels = channelListError ? [] : (channelList ?? []).filter((c) => c.owner)
   const showThinkingRef = useRef(false)
   useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => patchLastAssistant(textRun.flush(revealed)),
@@ -1451,6 +1463,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_done': {
         endTextRun()  // fully reveal any buffered tail before the turn closes
         markStreaming(false); setStatusText(''); setLatestActivity(null)
+        replyFinished(sessionRef.current, { last: true })
         setSteered([])  // steers belong to the turn they were injected into
         // Cancel-and-replace: this turn was superseded by a
         // rapid follow-up. The replacement was queued server-side and the next turn
@@ -1618,6 +1631,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // already on screen, and dropping the text run here would cut the answer that snapshot
         // resumed in two.
         if (d.ts && adoptedUserTs.current.has(String(d.ts))) break
+        // The reply before this queued message is finished: read it out if it is owed.
+        replyFinished(sessionRef.current, { last: false })
         dropTextRun()
         setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
         setTurns((prev) => [...prev, userTurn(content, d.ts ? String(d.ts) : undefined)])
@@ -2151,6 +2166,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         .then((r) => {
           setInput((cur) => (cur === t ? '' : cur))
           if (r?.steered) { setSteered((prev) => [...prev, t]); return }
+          // Queued or dispatched fresh, it gets a reply of its own; a steer does not.
+          const owedIn = r?.session || sessionRef.current
+          if (owedIn) oweSpokenReply(owedIn)
           if (r?.queued) return  // the paired queue_push frame renders the strip card
           // Dispatched as a fresh turn. Render exactly what the normal send path would:
           // the user's bubble, then arm streaming so its reply has somewhere to land.
@@ -2226,6 +2244,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // continuous stream, and not a frame from whenever sharing happened to start.
       // Awaited before sendChat so the slot is staged when the runner drains it.
       if (screenShare.sharing) await screenShare.captureAndStage(sid)
+      oweSpokenReply(sid)
       const sent = await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
       // Agent routing (569): the server emits its suggestion as the FIRST frame of the
       // send, which on a chat created BY this send is before the remounted ChatSession's
@@ -2450,6 +2469,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   async function stop() {
     markStreaming(false)
+    // A reply you stopped is not read out, and neither is the rest of a queue it ends.
+    if (sessionRef.current) repliesToSpeak.delete(sessionRef.current)
     if (sessionRef.current) await api.stopChat(sessionRef.current).catch(reportActionFailure('stop this turn'))
   }
 
@@ -2592,12 +2613,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Hands-free voice knobs. Cached + persisted like the other
   // config reads: a failed read falls back to the shipped phrase defaults so the
   // toggle still works rather than becoming deaf to every confirmation.
-  const { data: voiceCfgRaw } = useQuery('chat:voice-config', () => api.personalclawConfig().then((c) => c.voice as VoiceLoopConfig), { persist: true })
+  // "Speak replies aloud" rides the same read: it is a text-to-speech setting (`auto_speak`), and
+  // only counts while text-to-speech itself is on. A failed read leaves it off, like the phrases.
+  const { data: voiceCfgRaw } = useQuery('chat:voice-config', async () => {
+    const [cfg, tts] = await Promise.all([api.personalclawConfig(), api.useCaseSettings('tts')])
+    return { ...(cfg.voice as VoiceLoopConfig), speak_replies: !!tts.enabled && !!tts.auto_speak }
+  }, { persist: true })
   const voiceCfg: VoiceLoopConfig = {
     confirmation_phrases: voiceCfgRaw?.confirmation_phrases?.length ? voiceCfgRaw.confirmation_phrases : DEFAULT_CONFIRMATION_PHRASES,
     exit_phrases: voiceCfgRaw?.exit_phrases?.length ? voiceCfgRaw.exit_phrases : DEFAULT_EXIT_PHRASES,
     duplex_mute_enabled: voiceCfgRaw?.duplex_mute_enabled ?? true,
   }
+  const speakReplies = !!voiceCfgRaw?.speak_replies
   const [speakingTurn, setSpeakingTurn] = useState<number | null>(null)
   const speakGenRef = useRef(0)
 
@@ -2628,16 +2655,46 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {})
     speakGenRef.current++
     setSpeakingTurn(turnIndex)
-    // Surface TTS failures (no voice selected → 503, synth error) instead of
-    // silently doing nothing after the Speak button's brief spinner.
+    // Surface TTS failures instead of silently doing nothing after the Speak button's brief
+    // spinner. The two refusals are the server's own sentences, and each names its fix: no
+    // text-to-speech model set up (`tts_unbound`), or text-to-speech switched off (`tts_disabled`).
     return api.voiceSynthesize(text, s ?? '').catch((e: Error) => {
       setSpeakingTurn((cur) => (cur === turnIndex ? null : cur))
-      const msg = /TTS voice|no.*voice|Settings/i.test(e.message)
-        ? 'Text-to-speech needs a voice — choose one in Settings → AI & Models.'
-        : `Couldn’t play audio: ${e.message}`
-      setMicError(msg)
+      const refused = hasApiCode(e, 'tts_unbound') || hasApiCode(e, 'tts_disabled')
+      setMicError(refused ? e.message : `Couldn’t play audio: ${e.message}`)
       window.setTimeout(() => setMicError(null), 6000)
     })
+  }
+
+  // "Speak replies aloud": a reply this tab is owed a reading of is spoken once it has
+  // rendered, through the same path as its Speak button. `replyFinished` asks for it from a
+  // socket handler, where the finished text has not rendered yet; the effect runs after it has.
+  const [spokenReplyDue, setSpokenReplyDue] = useState(0)
+  const lastSpokenReply = useRef<number | null>(null)
+  function replyFinished(sid: string | null, { last }: { last: boolean }) {
+    if (!sid) return
+    const owed = repliesToSpeak.get(sid) ?? 0
+    if (last) repliesToSpeak.delete(sid)
+    else if (owed > 1) repliesToSpeak.set(sid, owed - 1)
+    else repliesToSpeak.delete(sid)
+    if (owed > 0) setSpokenReplyDue((n) => n + 1)
+  }
+  useEffect(() => {
+    if (!spokenReplyDue) return
+    const i = turns.map((t) => t.role).lastIndexOf('assistant')
+    const text = i >= 0 ? turnText(turns[i]) : ''
+    if (!text || lastSpokenReply.current === i) return
+    lastSpokenReply.current = i
+    void speak(text, i)
+    // Keyed on the request alone: `turns` changing afterwards must not read a reply twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spokenReplyDue])
+  // Priming inside the send gesture lets the reply's audio start when it arrives, seconds later.
+  function oweSpokenReply(sid: string) {
+    if (!speakReplies) return
+    const ctx = getAudioCtx()
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {})
+    repliesToSpeak.set(sid, (repliesToSpeak.get(sid) ?? 0) + 1)
   }
   // voice_chunk WAV stream → decode + schedule on the AudioContext timeline so
   // sentences play back-to-back without gaps or overlap. decodeAudioData is
@@ -2965,6 +3022,25 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // a row of the `…` menu, which has closed by the time the copy lands, so a confirmation drawn
     // on the control itself would say nothing there.
     notify('Chat link copied.', 'success')
+  }
+  // Continue this chat on a channel: it opens as a thread in your DM there. A channel that does not
+  // know who you are cannot reach you, so it says where to fix that instead of sending into nowhere.
+  async function handOff(c: ChannelRuntime) {
+    const s = sessionRef.current
+    if (!s) return
+    if (!c.owner?.id) {
+      notify(`${c.display_name} doesn't know who you are yet. Pair its owner in Settings → Providers → ${c.display_name} → Configure, then try again.`, 'error')
+      return
+    }
+    const ok = await confirm({
+      title: `Continue on ${c.display_name}?`,
+      body: `This chat opens as a thread in your ${c.display_name} direct messages, with its latest message. Reply there to keep going.`,
+      confirmLabel: 'Continue there',
+    })
+    if (!ok) return
+    if (await reportingWrite(`continue this chat on ${c.display_name}`, () => api.handoffSession(s, c.name))) {
+      notify(`This chat is in your ${c.display_name} messages now.`, 'success')
+    }
   }
   // Silently prime the next turn with background context — no visible message, no
   // turn triggered; consumed + prepended on the next user send.
@@ -3436,6 +3512,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             {started && sessionRef.current && (
               <HeaderControl icon={Link2} label="Copy chat link" priority="low" onClick={copyLink} />
             )}
+            {started && sessionRef.current && handoffChannels.map((c) => (
+              <HeaderControl key={`handoff-${c.name}`} icon={Send} label={`Continue on ${c.display_name}`} priority="low"
+                hint={c.owner?.id ? undefined : 'No owner paired yet'} onClick={() => void handOff(c)} />
+            ))}
             {started && sessionRef.current && (
               <HeaderControl icon={NotebookPen} label="Brief the agent" priority="low" onClick={briefAgent} />
             )}

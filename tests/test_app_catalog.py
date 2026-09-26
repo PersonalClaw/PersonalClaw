@@ -791,7 +791,8 @@ def test_local_source_registry_surfaces_remote_apps_without_dirscan(tmp_path):
 # the form the published registry itself requires (`staged-repos/registry/validate_registry.py`
 # `check_repo_url`): a plain https:// URL, no credentials, no port. A folder on this machine is
 # installed only as the owner's own act — Install from URL, or adding it as a source — never
-# because an index named it.
+# because an index named it. A listing that breaks the rule is kept, refused, so the Store can
+# say why (`tests/test_registry_listings_cannot_reach_local_hosts.py` owns the host half).
 
 
 @pytest.mark.parametrize(
@@ -812,17 +813,19 @@ def test_local_source_registry_surfaces_remote_apps_without_dirscan(tmp_path):
         "https:///acme/a.git",
     ],
 )
-def test_a_registry_listing_must_name_an_https_repository(repo):
-    assert catalog._parse_registry(json.dumps([{"name": "x", "repo": repo}])) == []
+def test_a_registry_listing_that_does_not_name_an_https_repository_is_refused(repo):
+    [pointer] = catalog._parse_registry(json.dumps([{"name": "x", "repo": repo}]))
+    assert pointer.refused.startswith("Not installable: "), pointer.refused
+    assert "token" not in pointer.refused  # a credential in the URL is never repeated
 
 
 @pytest.mark.parametrize("repo", ["", "https://github.com/acme/cool.git", "https://h.invalid/x"])
 def test_a_listing_naming_an_https_repository_or_its_own_source_is_kept(repo):
     parsed = catalog._parse_registry(json.dumps([{"name": "x", "repo": repo}]))
-    assert [p.name for p in parsed] == ["x"]
+    assert [(p.name, p.refused) for p in parsed] == [("x", "")]
 
 
-def test_a_listing_that_names_a_local_folder_never_becomes_a_store_card(tmp_path):
+def test_a_listing_that_names_a_local_folder_is_shown_refused(tmp_path):
     here = tmp_path / "somewhere" / "sneaky"
     here.mkdir(parents=True)
     manifest = {"name": "sneaky", "version": "1.0.0", "displayName": "S", "description": "x"}
@@ -840,8 +843,10 @@ def test_a_listing_that_names_a_local_folder_never_becomes_a_store_card(tmp_path
 
     remote = {a["name"]: a for a in catalog.available_catalog()["remoteApps"]}
 
-    assert "cool-app" in remote, "the index was never read"
-    assert "sneaky" not in remote, f"a card installs from {remote['sneaky']['pointer']!r}"
+    assert remote["cool-app"]["refused"] == "", "the index was never read"
+    assert remote["sneaky"]["refused"].startswith(
+        f"Not installable: this listing points at a folder on this computer ({here})."
+    ), remote["sneaky"]
 
 
 # ── A listing's provenance reaches the card ──────────────────────────────────
@@ -1387,10 +1392,14 @@ def test_a_registry_listed_app_still_hits_the_scanner_gate(tmp_path, monkeypatch
 
     monkeypatch.setattr(catalog, "_REGISTRY_GIT_SOURCE", str(repo))
     assert catalog.seed_default_git_sources() == [str(repo)]
+    # A listing's host is resolved when it is fetched; this one answers with a public address.
+    monkeypatch.setattr("personalclaw.net.guard._resolve", lambda host: ["140.82.112.3"])
     monkeypatch.setattr(
         app_source,
         "_clone_git",
-        lambda url: app_source.ResolvedSource(path=app_src, origin="external", cleanup=False),
+        lambda url, policy=None: app_source.ResolvedSource(
+            path=app_src, origin="external", cleanup=False
+        ),
     )
 
     card = next(

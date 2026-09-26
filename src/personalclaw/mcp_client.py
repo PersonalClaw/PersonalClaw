@@ -13,7 +13,9 @@ off a queue, with health/respawn and clean shutdown (drained by the gateway's re
 
 Transports: stdio (``command``/``args``/``env``), and a server at a ``url`` over Streamable HTTP
 or SSE, sent its ``headers`` on every request — which one is the spec's ``type``, read by
-:func:`personalclaw.mcp_discovery.mcp_transport`. The SDK is imported at the first connection,
+:func:`personalclaw.mcp_discovery.mcp_transport` — and, for a server its owner signed in to, the
+bearer token of that sign-in (:func:`personalclaw.mcp_oauth.connection_auth`, given to the same
+transport client as its ``auth``). The SDK is imported at the first connection,
 not at module load: it brings pydantic with it (~0.22 s), which a process that never connects to
 a server — most CLI commands — has no reason to pay.
 """
@@ -138,6 +140,9 @@ class McpServerConn:
         self._ready: asyncio.Event = asyncio.Event()
         self._tools: list[McpToolSpec] = []
         self._error: str = ""
+        # The last connection failed because the server wants its owner to sign in (again): it
+        # answered 401 with a Bearer challenge, or its sign-in has ended (mcp_oauth).
+        self._sign_in_needed = False
         self._closing = False
         # Idle reaping: bump on every use; the registry sweeper reaps when stale.
         self._last_used: float = time.monotonic()
@@ -149,6 +154,11 @@ class McpServerConn:
     @property
     def error(self) -> str:
         return self._error
+
+    @property
+    def sign_in_needed(self) -> bool:
+        """Whether the last connection failed because the server wants its owner to sign in."""
+        return self._sign_in_needed
 
     @property
     def last_used(self) -> float:
@@ -176,6 +186,7 @@ class McpServerConn:
             self._requests = asyncio.Queue()
             self._ready = asyncio.Event()
             self._error = ""
+            self._sign_in_needed = False
             self._closing = False
             self._task = asyncio.create_task(self._run(), name=f"mcp-conn-{self.name}")
         try:
@@ -282,7 +293,8 @@ class McpServerConn:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            self._error = _failure_text(exc, str(self.spec.get("url") or ""))
+            self._error = _failure_text(exc, str(self.spec.get("url") or ""), self.name)
+            self._sign_in_needed = _wants_sign_in(exc)
             logger.warning("MCP server '%s' connection failed: %s", self.name, self._error)
             self._ready.set()  # unblock waiters with the error recorded
 
@@ -298,18 +310,25 @@ class McpServerConn:
                 raise ValueError(f"an {transport} server needs a url")
             # How a remote server authenticates, sent on every request of the connection. The
             # registry's specs are resolved already (`_personalclaw_mcp_specs`), so these are the
-            # values, read from the credential store when the spec was loaded.
+            # values, read from the credential store when the spec was loaded. A server its owner
+            # signed in to also gets the sign-in's bearer token, which the auth reads from the
+            # store at each request and renews when it expires (`mcp_oauth`).
+            from personalclaw.mcp_oauth import connection_auth
+
             headers = {str(k): str(v) for k, v in (self.spec.get("headers") or {}).items()}
+            auth = connection_auth(self.name, self.spec)
             if transport == "http":
                 from mcp.client.streamable_http import streamablehttp_client
 
                 read, write, _ = await stack.enter_async_context(
-                    streamablehttp_client(url, headers=headers)
+                    streamablehttp_client(url, headers=headers, auth=auth)
                 )
                 return read, write
             from mcp.client.sse import sse_client
 
-            read, write = await stack.enter_async_context(sse_client(url, headers=headers))
+            read, write = await stack.enter_async_context(
+                sse_client(url, headers=headers, auth=auth)
+            )
             return read, write
         if transport != "stdio":
             raise ValueError(f"PersonalClaw cannot connect over the {transport!r} transport")
@@ -376,20 +395,43 @@ class McpServerConn:
                     fut.set_result((False, str(exc)[:500]))
 
 
-def _failure_text(exc: BaseException, url: str = "") -> str:
-    """One line saying why a connection failed — the Tools page shows it, and so does the log.
-
-    The SDK raises a transport failure out of an anyio task group, so what arrives is an
-    exception group whose own text is only "unhandled errors in a TaskGroup (1 sub-exception)";
-    the cause is its first leaf. An HTTP refusal reads as its status (``HTTP 401 Unauthorized``)
-    rather than httpx's sentence, which spells out the URL, and a URL can carry a token — so any
-    other message has the server's URL replaced by its masked form.
-    """
+def _leaf(exc: BaseException) -> BaseException:
+    """The cause of a transport failure: the SDK raises one out of an anyio task group, so what
+    arrives is an exception group whose first leaf is what went wrong."""
     while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
         exc = exc.exceptions[0]
+    return exc
+
+
+def _wants_sign_in(exc: BaseException) -> bool:
+    """Whether a connection failed because the server wants its owner to sign in: its sign-in has
+    ended (``mcp_oauth.SignInRequired``), or it answered 401 with a Bearer challenge."""
+    from personalclaw.mcp_oauth import SignInRequired, bearer_challenge
+
+    leaf = _leaf(exc)
+    if isinstance(leaf, SignInRequired):
+        return True
+    response = getattr(leaf, "response", None)
+    return getattr(response, "status_code", None) == 401 and bearer_challenge(response) is not None
+
+
+def _failure_text(exc: BaseException, url: str = "", server: str = "") -> str:
+    """One line saying why a connection failed — the Tools page shows it, and so does the log.
+
+    The cause is the first leaf of the SDK's exception group (:func:`_leaf`), whose own text is
+    only "unhandled errors in a TaskGroup (1 sub-exception)". An HTTP refusal reads as its status
+    (``HTTP 401 Unauthorized``) rather than httpx's sentence, which spells out the URL, and a URL
+    can carry a token — so any other message has the server's URL replaced by its masked form. A
+    401 with a Bearer challenge is the server asking its owner to sign in, and says so.
+    """
+    exc = _leaf(exc)
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
     if isinstance(status, int):
+        if status == 401 and _wants_sign_in(exc):
+            from personalclaw.mcp_oauth import sign_in_needed_text
+
+            return sign_in_needed_text(server or "This server")
         return f"HTTP {status} {getattr(response, 'reason_phrase', '') or ''}".strip()
     text = str(exc) or exc.__class__.__name__
     if url and url in text:
@@ -442,11 +484,16 @@ def _spec_hash(spec: dict[str, Any]) -> str:
     environment does. Uses sha256 over a sort-keyed JSON of only the fields that change what
     process/endpoint we talk to — NEVER Python ``hash()`` (its per-process salt would give a
     different key every run, breaking any cross-process/cross-surface sharing that keys off
-    this)."""
+    this).
+
+    A sign-in counts by who issued it to which client for which resource
+    (:func:`~personalclaw.mcp_oauth.sign_in_identity`): signing in opens a new connection, and a
+    renewal, which replaces the tokens while the connection is open, does not."""
     import hashlib
     import json
 
     from personalclaw.mcp_discovery import mcp_transport
+    from personalclaw.mcp_oauth import sign_in_identity
 
     material = {
         "command": spec.get("command", ""),
@@ -455,6 +502,7 @@ def _spec_hash(spec: dict[str, Any]) -> str:
         "url": spec.get("url", ""),
         "transport": mcp_transport(spec),
         "headers": spec.get("headers", {}),
+        "signIn": sign_in_identity(spec),
     }
     blob = json.dumps(material, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]

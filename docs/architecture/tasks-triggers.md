@@ -28,6 +28,21 @@ relative to `PersonalClaw/src/personalclaw/`.
 - **One registry, every surface** (`tasks/registry.py`) — the chat
   `task_create` tool and the Tasks UI share the same provider registry, so
   a task created in conversation is the same object the board shows.
+- **Due dates announce themselves** (`tasks/due_notices.py`) — a gateway
+  loop (`gateway._task_due_loop`: once the dashboard is up, then every five
+  minutes; off under `--no-crons`) sends one `tasks/due` notification per due
+  date: at 09:00 the day before a date-only due date (what the task form
+  writes), 24 hours before one with a time. What was sent is recorded as
+  `{task_id: due}` in `task_due_notices.json` (its own durability entry), so a
+  restart neither repeats a notice nor loses one — a notice missed while the
+  gateway was down goes out as it starts again, unless the due moment is more
+  than a day gone. Moving the date re-arms it; a record is dropped only once
+  its date can no longer be announced, never because one sweep did not see
+  the task. Quiet hours hold the notice until the
+  window ends (the gate would otherwise drop an INFO note); mute and a raised
+  minimum severity mean "not at all". Only the owner's open tasks are
+  announced, and only while the task's `due_reminder` is on — the per-task
+  opt-out beside the Due field in the task form.
 
 ## Triggers & schedules
 
@@ -89,11 +104,66 @@ sends no report — the action's own note is the notification, and it carries
 the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
 
+**A Run workflow action names its workflow, and is checked where it is saved.**
+Its form comes from the bundled `apps/native/run-workflow-action/app.json`: a
+picker of your workflows, then the chosen workflow's declared inputs as fields
+(`web/src/pages/workflows/workflowWidgets.tsx`). Saving or editing a trigger
+asks `run_workflow_provider.config_problem` the question the Run button's start
+asks (`workflows/contracts.start_problem`: the workflow exists, every required
+input is given, every input is its declared type), so a trigger that could
+never start its workflow is refused with that sentence instead of failing at
+every fire. A fire asks again, because the workflow can change after the
+trigger was saved, and starts the run with the declared defaults applied.
+
 **The 900s cadence floor is for model calls.** `MIN_CLOCK_INTERVAL_SECS`
 warns only when the action can call a model: providers listed in
 `triggers/models.py`'s `ZERO_TOKEN_PROVIDERS` (bash, notify, the digests, …)
 are exempt, and anything unlisted — app-contributed actions included — keeps
 the warning.
+
+### After a restart: missed and interrupted runs wait for you
+
+Two boot passes find work that did not happen, and neither re-runs it on its
+own: running a 3am job at 9am is sometimes right and sometimes exactly wrong,
+and a run a restart cut off may already have done part of its work.
+
+- **Missed slots.** `triggers/missed.review_at_boot` walks each active,
+  enabled schedule from its armed slot to now, on the interval grid or, for a
+  cron, by walking the expression (`missed.cron_slots`). A paused or disabled
+  schedule missed nothing, and neither did one whose next fire does the missed
+  one's work (`models.MISSED_FIRE_SUPERSEDED_PROVIDERS`: the HEARTBEAT.md
+  queue).
+- **Interrupted runs.** `triggers/reaper.terminalize_orphans` closes a run
+  whose process is gone with the status `interrupted`
+  (`RESTART_INTERRUPTED_STATUS`) and the reason in `error`. It is not
+  retried.
+
+Both land in `trigger-review.json` beside `triggers.json`
+(`triggers/review.py`): one card per trigger and kind, until you decide it.
+The "Missed scheduled runs" notice points at the Triggers page, where the
+cards sit above the list (`GET /api/triggers/review`). The boot passes run
+before the dashboard exists, so the gateway holds the notice and sends it once
+the dashboard is up (`GatewayOrchestrator._surface_held_boot_review`). **Run now** runs the
+action once, however many slots the card covers, and records it `ran_late`
+with the reason; **Dismiss** records `skipped_missed`. Both go through
+`missed.resolve_missed` and land in that automation's history
+(`POST /api/triggers/review`).
+
+### The HEARTBEAT.md queue is a system trigger
+
+`workspace/HEARTBEAT.md` is the queue the agent writes "keep checking until
+done" work to. It is read by one system trigger, `system:heartbeat-tasks`
+("Heartbeat tasks", every 60 s, created at boot by
+`action_providers/heartbeat_tasks_provider.reconcile_heartbeat_tasks_trigger`),
+so it is listed with the other automations, with its runs, and switched off
+or slowed there. The boot reconcile converges only its action, never its
+switch or its cadence. Each task still runs as the gateway's heartbeat turn
+(`heartbeat.set_task_runner`), and `HEARTBEAT_KEEP` keeps an unfinished task
+for the next pass. A pass over an empty queue reports `skip`, which the run
+history records as the inert `skipped_noop` (`schedule_history
+.status_for_result`, the one status rule the fire path and the Run button
+share), so it folds out of the default history. The heartbeat loop itself no
+longer reads the file.
 
 ### App-manifest crons
 

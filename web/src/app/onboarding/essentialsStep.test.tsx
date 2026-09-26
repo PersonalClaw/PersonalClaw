@@ -242,6 +242,15 @@ describe('lane classification reads declared capabilities, not providerType alon
     expect(lanes.search.map((e) => e.name)).toEqual(['brave-search'])
     expect(lanes.channel.map((e) => e.name)).toEqual(['discord-channel'])
   })
+
+  it('offers no listing the gateway refuses to fetch (the Store says why)', () => {
+    const refused = entry({
+      name: 'lan-models', displayName: 'LAN Models', sourceKind: 'git',
+      refused: 'Not installable: this listing downloads from a private network (10.0.0.4).',
+    })
+    const lanes = candidatesByLane({ bundled: [], gitSources: [], remoteApps: [OPENAI, refused] })
+    expect(lanes.model.map((e) => e.name)).toEqual(['openai-models'])
+  })
 })
 
 // ── the central rail: no auto-install ────────────────────────────────────────
@@ -262,7 +271,7 @@ describe('nothing installs without an explicit click', () => {
     expect(within(dialog).getByText('Permissions the gateway enforces')).toBeTruthy()
     await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     // The card click asked the server for a REVIEW of the app — never for an install.
-    expect(previewApp).toHaveBeenCalledWith('/apps/openai-models', undefined)
+    expect(previewApp).toHaveBeenCalledWith('/apps/openai-models', undefined, undefined)
     expect(installApp, 'reviewing an app is not consenting to install it').not.toHaveBeenCalled()
   })
 
@@ -271,7 +280,7 @@ describe('nothing installs without an explicit click', () => {
     await installCard('openai')
     await waitFor(() => expect(installApp).toHaveBeenCalledTimes(1))
     // …consenting to exactly the bytes the dialog showed.
-    expect(installApp).toHaveBeenCalledWith('/apps/openai-models', DIGEST)
+    expect(installApp).toHaveBeenCalledWith('/apps/openai-models', DIGEST, undefined)
   })
 
   it('cancelling the dialog installs nothing and records nothing', async () => {
@@ -333,7 +342,7 @@ describe('per-app install consent is preserved', () => {
     expect(onProgress, 'a review records no progress').not.toHaveBeenCalled()
     fireEvent.click(anyway)
     await waitFor(() => expect(installApp).toHaveBeenCalledTimes(1))
-    expect(installApp).toHaveBeenLastCalledWith('/apps/openai-models', DIGEST)
+    expect(installApp).toHaveBeenLastCalledWith('/apps/openai-models', DIGEST, undefined)
     await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'openai-models' } }))
   })
 })
@@ -412,7 +421,7 @@ describe('an installed app shows as installed and is never offered again', () =>
     const { onProgress } = renderStep()
     await installCard('whisper')
     await waitFor(() => expect(screen.getByRole('dialog').textContent).toMatch(/the source could not be fetched/i))
-    expect(previewApp).toHaveBeenCalledWith('/apps/faster-whisper', undefined)
+    expect(previewApp).toHaveBeenCalledWith('/apps/faster-whisper', undefined, undefined)
     expect(within(speechLane()).queryByText('Installed')).toBeNull()
     expect(onProgress).not.toHaveBeenCalled()
   })

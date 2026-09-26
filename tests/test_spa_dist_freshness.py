@@ -20,6 +20,7 @@ _newer_by_mtime_but_built_from_older_sources_is_stale` is that exact race, and i
 freshness is keyed off a content digest of the build inputs instead.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,19 @@ def test_a_freshly_built_bundle_is_fresh(tmp_path):
     state, ev = spa_dist_freshness(root)
     assert state == "fresh"
     assert ev["inputs_sha256"] == ev["built_from_sha256"]
+
+
+def test_the_build_stamp_says_only_what_the_bundle_was_built_from(tmp_path):
+    """The stamp ships inside ``web/dist``, so it is inside every wheel and sdist. A wall-clock
+    field made two builds of identical sources different artifacts, which is the one thing a
+    reproducible build must not be."""
+    root = _fake_repo(tmp_path)
+    _build(root)
+    first = (root / "web" / "dist" / ".build-inputs.json").read_bytes()
+    _build(root)
+
+    assert json.loads(first) == {"inputs_sha256": spa_build_input_digest(root)}
+    assert (root / "web" / "dist" / ".build-inputs.json").read_bytes() == first
 
 
 def test_a_source_edit_after_the_build_is_stale(tmp_path):

@@ -30,10 +30,11 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from personalclaw.process_facts import run_probe, working_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,6 @@ logger = logging.getLogger(__name__)
 _LOOPBACK_ADDRS: frozenset[str] = frozenset(
     {"*", "127.0.0.1", "0.0.0.0", "::", "::1", "[::]", "[::1]", "localhost"}  # noqa: S104
 )
-
-#: Seconds any probe may take. A wedged ``lsof`` must degrade this panel, never hang the
-#: request that asked for it.
-_PROBE_TIMEOUT = 4.0
 
 #: Ceiling on reported ports. A runaway process tree should not turn one drawer into a
 #: thousand links.
@@ -91,23 +88,6 @@ class PreviewScan:
             "scanned": self.scanned,
             "reason": self.reason,
         }
-
-
-def _run(argv: list[str]) -> str:
-    """Best-effort capture of *argv*'s stdout. Never raises; returns "" on any failure."""
-    try:
-        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell, no user-supplied words
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=_PROBE_TIMEOUT,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        logger.debug("web_preview: probe failed: %s", argv[0], exc_info=True)
-        return ""
-    # `lsof` exits non-zero when it merely found nothing, so stdout is read regardless.
-    return proc.stdout or ""
 
 
 def parse_lsof_listeners(out: str) -> list[tuple[int, str, int]]:
@@ -179,55 +159,12 @@ def parse_ss_listeners(out: str) -> list[tuple[int, str, int]]:
 def _listeners() -> tuple[list[tuple[int, str, int]], str]:
     """Every listening TCP socket with its owning pid. Returns (triples, reason-if-empty)."""
     if shutil.which("lsof"):
-        out = _run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-FpPn"])
+        out = run_probe(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-FpPn"])
         return parse_lsof_listeners(out), ""
     if shutil.which("ss"):
-        return parse_ss_listeners(_run(["ss", "-lntpH"])), ""
+        return parse_ss_listeners(run_probe(["ss", "-lntpH"])), ""
     # Honest degradation: the caller must be able to tell this apart from "found nothing".
     return [], "no port scanner available on this host (install lsof)"
-
-
-def parse_lsof_cwds(out: str) -> dict[int, str]:
-    """Parse ``lsof -a -p <pids> -d cwd -Fn`` into ``{pid: cwd}``."""
-    cwds: dict[int, str] = {}
-    pid = 0
-    for line in out.splitlines():
-        if not line:
-            continue
-        tag, rest = line[0], line[1:]
-        if tag == "p":
-            try:
-                pid = int(rest)
-            except ValueError:
-                pid = 0
-        elif tag == "n" and pid > 0:
-            cwds[pid] = rest
-    return cwds
-
-
-def _cwds(pids: list[int]) -> dict[int, str]:
-    """The working directory of each pid in *pids*.
-
-    ``pids`` MUST be non-empty: ``lsof -p ""`` does not select nothing, it selects EVERY
-    process — measured while building this, and it would have turned a scoped probe into a
-    host-wide one. The guard is here rather than at the call site so it cannot be forgotten.
-    """
-    if not pids:
-        return {}
-    proc_cwds: dict[int, str] = {}
-    linux_proc = Path("/proc")
-    if linux_proc.is_dir():
-        for pid in pids:
-            try:
-                proc_cwds[pid] = os.readlink(str(linux_proc / str(pid) / "cwd"))
-            except OSError:
-                continue
-        if proc_cwds:
-            return proc_cwds
-    if not shutil.which("lsof"):
-        return proc_cwds
-    joined = ",".join(str(p) for p in pids)
-    return parse_lsof_cwds(_run(["lsof", "-a", "-p", joined, "-d", "cwd", "-Fn"]))
 
 
 def _command(pid: int) -> str:
@@ -237,7 +174,7 @@ def _command(pid: int) -> str:
     carries tokens and paths, and this string is rendered in the cockpit and copied into bug
     reports.
     """
-    out = _run(["ps", "-o", "comm=", "-p", str(pid)]).strip()
+    out = run_probe(["ps", "-o", "comm=", "-p", str(pid)]).strip()
     return Path(out.splitlines()[0]).name[:64] if out else ""
 
 
@@ -281,7 +218,7 @@ def discover_ports(root: Path | str) -> PreviewScan:
 
     own = os.getpid()
     pids = sorted({pid for pid, _addr, _port in reachable if pid != own})
-    cwds = _cwds(pids)
+    cwds = working_dirs(pids)
     seen: set[int] = set()
     for pid, addr, port in sorted(reachable, key=lambda t: t[2]):
         if pid == own or port in seen or not _within(cwds.get(pid, ""), base):

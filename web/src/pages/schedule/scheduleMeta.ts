@@ -1,4 +1,4 @@
-import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle } from 'lucide-react'
+import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
@@ -75,7 +75,15 @@ export function deriveMode(j: ScheduleJob): ScheduleExecMode {
 }
 
 // ── last-run status dot ──
-export interface StatusMeta { label: string; tone: string; icon: LucideIcon }
+export interface StatusMeta {
+  label: string
+  tone: string
+  icon: LucideIcon
+  /** The status itself says nothing went wrong: the run finished late, started work that records
+   *  its own outcome, was held on purpose, or had nothing to do. `explainsCause` withholds a stale
+   *  `last_error` beside one, as it does beside a green tick. */
+  noFault?: true
+}
 
 /** A hook's `last_status` → the `Outcome` the BACKEND maps it to.
  *
@@ -128,12 +136,22 @@ export function statusMeta(s?: string | null): StatusMeta {
   // `scheduled_for` beside `started_at` precisely so lateness is a fact, not an impression, and a
   // run 40 minutes after its slot is a different story from one on time.
   if (s === 'ran') return { label: 'ran', tone: 'var(--color-ok)', icon: CheckCircle2 }
-  if (s === 'ran_late') return { label: 'ran late', tone: 'var(--color-warning)', icon: Clock }
+  if (s === 'ran_late') return { label: 'ran late', tone: 'var(--color-warning)', icon: Clock, noFault: true }
   if (s === 'failed') return { label: 'failed', tone: 'var(--color-danger)', icon: XCircle }
   if (s === 'timeout') return { label: 'timed out', tone: 'var(--color-danger)', icon: Clock }
+  // A run a gateway restart cut off (`reaper.RESTART_INTERRUPTED_STATUS`). It was recorded as
+  // `timeout`, a deadline it never blew. Danger, like the `failed` the runs feed maps it to
+  // (`SCHEDULE_STATUS_TO_OUTCOME`): the run did not finish. The glyph and the label say why, and
+  // the run waits on the Triggers page's review to be run again or dismissed.
+  if (s === 'interrupted') return { label: 'interrupted by a restart', tone: 'var(--color-danger)', icon: PowerOff }
+  // The day-budget pause, the one writer of this run status (`gateway._fire_store_trigger`):
+  // the fire was held because the daily automation budget is spent. The runs feed maps it to
+  // `deferred`, so it takes that tone; the row's `error` says when it resumes. It rendered as
+  // "never run" before, beside a fire that had in fact been held.
+  if (s === 'needs_input') return { ...statusMeta('deferred'), label: 'budget spent' }
   // "launched": started a background turn — honest "started ≠ succeeded" (T7).
   // Neutral tone, NOT ok-green: a green tick would imply the work succeeded.
-  if (s === 'launched') return { label: 'launched', tone: 'var(--color-info)', icon: Rocket }
+  if (s === 'launched') return { label: 'launched', tone: 'var(--color-info)', icon: Rocket, noFault: true }
   // 🔴 A SCREENED payload. The backend writes `blocked_injection` rows now, and without
   // this branch they fell through to "never run" — the worst possible label for a blocked attack:
   // the user reads "this automation has never run" when it in fact refused a hostile payload, and
@@ -142,8 +160,8 @@ export function statusMeta(s?: string | null): StatusMeta {
   // A suppressed fire (the archive split). Neutral, not an error: the automation is working as
   // configured — quiet hours held it, or a slot was busy — and a red badge would send the user
   // looking for a fault that is not there.
-  if (s && s.startsWith('skipped_')) return { label: s.slice(8).replace(/_/g, ' '), tone: 'var(--color-on-surface-low)', icon: PauseCircle }
-  if (s === 'deferred') return { label: 'deferred', tone: 'var(--color-info)', icon: PauseCircle }
+  if (s && s.startsWith('skipped_')) return { label: s.slice(8).replace(/_/g, ' '), tone: 'var(--color-on-surface-low)', icon: PauseCircle, noFault: true }
+  if (s === 'deferred') return { label: 'deferred', tone: 'var(--color-info)', icon: PauseCircle, noFault: true }
   if (s === 'refused') return { label: 'refused', tone: 'var(--color-warning)', icon: ShieldAlert }
   return { label: 'never run', tone: 'var(--color-on-surface-low)', icon: Circle }
 }
@@ -291,10 +309,14 @@ export function triggerStatusMeta(f: TriggerStatusFacts): StatusMeta {
  * itself, and the alarming half is the one a user reacts to.
  *
  * "never run" is excluded for the same reason from the opposite direction: a trigger that has not
- * fired since the daemon last wrote an error has nothing to explain YET.
+ * fired since the daemon last wrote an error has nothing to explain YET. So is a status that says
+ * nothing went wrong without being ok-green (`StatusMeta.noFault`): "ran late" beside last week's
+ * error is the same contradiction in amber.
  */
 export function explainsCause(m: StatusMeta): boolean {
-  return m.tone !== 'var(--color-ok)' && m.label !== 'never run' && m.label !== ''
+  // `noFault`: a late run, a launched or queued start, a held or inert fire. Their tone is not ok
+  // green, and gating on tone alone printed the last failure's reason beside a run that worked.
+  return !m.noFault && m.tone !== 'var(--color-ok)' && m.label !== 'never run' && m.label !== ''
 }
 
 // ── time helpers ──

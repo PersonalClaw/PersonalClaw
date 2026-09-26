@@ -13,22 +13,27 @@ resolution, imports included). Before this, every write defaulted to the umask m
 which carried its channel tokens — were 0644 on disk, world-readable, unless the author of
 each of those writers had remembered ``mode=0o600``. Most had not. The rule lives HERE rather
 than at each writer because the settings and credential stores funnel through ``_atomic_write``
-(``mcp.json``'s own writer asks :func:`private_mode_for` too): one rule at the chokepoint covers
-the writers that exist and the ones that do not yet, and no enumeration of "files that can hold
-a secret" can drift out of date. The three single-secret files with writers of their own —
-``.local_secret``, ``telemetry_salt`` and an app's ``.app_secret`` — create theirs 0600. A file
-written any other way (a log, a lock, a SQLite database, a few ``write_text`` caches) keeps the
-umask mode; the 0700 home it sits in is what shields it. An explicit mode wider than 0600 for a
-home path is REFUSED, not honoured — that refusal is the rail. Outside the home (an export the
-user saves into Downloads) the umask default still applies: that file is theirs to share.
+(``mcp.json`` and the agent configs too, through :func:`atomic_json_write`): one rule at the
+chokepoint covers the writers that exist and the ones that do not yet, and no enumeration of
+"files that can hold a secret" can drift out of date. The three single-secret files with writers
+of their own — ``.local_secret``, ``telemetry_salt`` and an app's ``.app_secret`` — create
+theirs 0600. A file written any other way (a log, a lock, a SQLite database, a few
+``write_text`` caches) keeps the umask mode; the 0700 home it sits in is what shields it. An
+explicit mode wider than 0600 for a home path is REFUSED, not honoured — that refusal is the
+rail. Outside the home (an export the user saves into Downloads) the umask default still
+applies: that file is theirs to share.
 """
 
+import json
 import logging
 import os
+import shutil
+import stat
 import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -160,9 +165,7 @@ def private_mode_for(path: Path | str, requested: int | None = None) -> int | No
     """The mode a write to ``path`` must use, or ``None`` when the home rule does not apply.
 
     Under the home: ``requested`` if it grants no group/other bit, else :class:`ValueError`;
-    :data:`PRIVATE_FILE_MODE` when nothing was requested. Shared with
-    ``agent._atomic_json_write`` — the ``mcp.json`` writer, which does its own temp-and-rename —
-    so the rule has one statement.
+    :data:`PRIVATE_FILE_MODE` when nothing was requested.
     """
     if not is_in_home(path):
         return None
@@ -211,6 +214,27 @@ def atomic_write_bytes(
     _atomic_write(path, data, text=False, fsync=fsync, mode=mode)
 
 
+def atomic_json_write(path: Path | str, data: Any) -> None:
+    """Write *data* as indented JSON with a trailing newline, atomically. The one JSON writer.
+
+    Under the PersonalClaw home the file is 0600 in a 0700 directory, like every home write.
+    Anywhere else the file belongs to another program (an ACP CLI's agent config, another
+    tool's MCP file), so a rewrite keeps the mode it already has — 0644 for a new file —
+    instead of changing who can read it. A rename the filesystem refuses (a single file
+    bind-mounted into a container answers ``EBUSY``) falls back to copying the new content
+    over the old, so the write still lands.
+    """
+    path = Path(path)
+    mode: int | None = None
+    if not is_in_home(path):
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            mode = 0o644
+    content = json.dumps(data, indent=2) + "\n"
+    _atomic_write(path, content, text=True, fsync=False, mode=mode, replace_fallback=True)
+
+
 def _atomic_write(
     path: Path | str,
     payload: "str | bytes",
@@ -218,6 +242,7 @@ def _atomic_write(
     text: bool,
     fsync: bool,
     mode: int | None,
+    replace_fallback: bool = False,
 ) -> None:
     path = Path(path)
     home_mode = private_mode_for(path, mode)  # raises BEFORE any byte lands
@@ -237,8 +262,14 @@ def _atomic_write(
             if fsync:
                 f.flush()
                 os.fsync(f.fileno())
-        os.replace(tmp, str(path))
-    except Exception:
+        try:
+            os.replace(tmp, str(path))
+        except OSError:
+            if not replace_fallback:
+                raise
+            shutil.copy2(tmp, str(path))
+            os.unlink(tmp)
+    except BaseException:  # an interrupted write must not leave its temp file behind either
         if fd >= 0:
             os.close(fd)
         try:

@@ -67,10 +67,10 @@ an already-delivered document has no consumer and only invites drift, so the app
 single copy. Every command in it was executed verbatim from an empty directory against a
 freshly-homed gateway, and the wall-clock numbers in the text are measured, not targets.
 
-The apps repo has no docs test tier, so nothing in **this** repo can pin that text. The same
-auth-shape invariant it depends on (`?token=` query parameter, never a Bearer header) is pinned
-here on the template README by
-`tests/test_app_from_template.py::test_the_staged_readme_uses_the_query_token_not_a_bearer_header`.
+The apps repo has no docs test tier, so nothing in **this** repo can pin that text. The template
+README's auth shape (the owner token in an `Authorization: Bearer` header, never in an API URL) is
+pinned here by
+`tests/test_app_from_template.py::test_the_staged_readme_sends_the_owner_token_in_the_header_not_the_url`.
 
 ## 3. `registry/` → `github.com/personalclaw/registry`
 

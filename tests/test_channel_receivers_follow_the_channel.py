@@ -320,13 +320,14 @@ def _running_on_the_registered_instance(wire: _Wire, name: str) -> bool:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["apps", "providers"])
-async def test_a_channel_enabled_after_boot_receives_a_message(home, wire, surface):
+async def test_a_channel_enabled_after_boot_receives_a_message(home, wire):
+    """Turned on from the Apps page or by its switch in Settings → Providers: both send the app's
+    enable, since a provider has no on/off of its own."""
     _installed(home, "probe-channel", "probe", token="tok-a", enabled=False)
     async with _gateway(wire) as gw:
         await gw.boot()
         assert wire.on("probe") == []
-        await gw.call("POST", f"/api/{surface}/probe-channel/enable")
+        await gw.call("POST", "/api/apps/probe-channel/enable")
         assert await _eventually(
             lambda: _running_on_the_registered_instance(wire, "probe")
         ), "the channel enabled after boot has no receiver"
@@ -369,15 +370,16 @@ async def test_a_token_saved_after_an_enable_after_boot_moves_the_receiver(home,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["apps", "providers"])
-async def test_disabling_a_channel_stops_its_receiver(home, wire, surface):
+async def test_disabling_a_channel_stops_its_receiver(home, wire):
+    """Turned off from the Apps page or by its switch in Settings → Providers: both send the app's
+    disable."""
     _installed(home, "probe-channel", "probe", token="tok-a")
     async with _gateway(wire) as gw:
         await gw.boot("probe")
         assert await _receives(gw, wire, "probe", "tok-a")
         assert delivery_for("probe") is not None
 
-        await gw.call("POST", f"/api/{surface}/probe-channel/disable")
+        await gw.call("POST", "/api/apps/probe-channel/disable")
         assert await _eventually(
             lambda: wire.on("probe") == []
         ), "the disabled channel's receiver is still attached"

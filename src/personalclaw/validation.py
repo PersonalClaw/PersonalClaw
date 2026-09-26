@@ -938,6 +938,11 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # registers it in `action_providers.registry` and lists it in `triggers/screen.py`'s
         # write-capable set.
         "self-remediation",
+        # The HEARTBEAT.md task queue's system trigger (`heartbeat_tasks_provider.py`). Same reason
+        # as `self-remediation` directly above: the system trigger that runs it goes through this
+        # validation, so a registered provider missing from this set is one the scheduler refuses
+        # to dispatch.
+        "heartbeat-tasks",
         # WATCHED-SOURCES §6.2 (the caller): the morning source digest. Registered here for
         # the same reason as the two directly above — the bundled system trigger that runs it
         # goes through this same validation, so a registered provider missing from this set is

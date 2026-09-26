@@ -676,8 +676,21 @@ def owner_id_for(provider: str) -> str:
     container passes it that way), then in the store — the precedence ``load_credentials``
     gives every named credential.
     """
-    for key in (owner_id_credential(provider), _loader.CRED_OWNER_ID):
+    return owner_id_source(provider)[0]
+
+
+def owner_id_source(provider: str) -> tuple[str, str]:
+    """:func:`owner_id_for`, and which key answered: ``"channel"`` (the channel's own),
+    ``"shared"`` (the one every channel wrote before each had its own), or ``("", "")``.
+
+    The status a channel shows says which, because a shared id can be another platform's user
+    id — the owner core then tries to reach on this channel is nobody here.
+    """
+    for key, source in (
+        (owner_id_credential(provider), "channel"),
+        (_loader.CRED_OWNER_ID, "shared"),
+    ):
         value = os.environ.get(key) or get_credential(key)
         if value:
-            return value
-    return ""
+            return value, source
+    return "", ""

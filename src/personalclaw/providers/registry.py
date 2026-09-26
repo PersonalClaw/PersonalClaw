@@ -585,7 +585,7 @@ class ChannelTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.channel_transports import register_transport
 
-        register_transport(instance)
+        register_transport(instance, app=ext.name)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.channel_transports import unregister_transport

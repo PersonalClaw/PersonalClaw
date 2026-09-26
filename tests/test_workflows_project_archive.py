@@ -160,12 +160,24 @@ def test_ROUND_TRIP_on_a_clean_home_keeps_every_entity_sha256_verified(
     ), f"nothing imported; refusals={[r.to_dict() for r in import_plan.refused]}"
     assert import_plan.refused == [], "a clean archive must refuse nothing"
 
-    dest = home_b / "projects" / "p-imported"
-    written = pa.commit_import(import_plan, extracted, project_root=dest)
+    from personalclaw.tasks.hierarchy import HierarchyStore
 
-    # The BRIEF, the OVERVIEW, the three ledgers, the TEMPLATE.
+    project_b, written = pa.import_project(
+        import_plan, extracted, store=HierarchyStore(), projects_root=home_b / "projects"
+    )
+    dest = home_b / "projects" / project_b.id
+
+    # The RECORD is the new project's, not the source's: the archive's copy used to be
+    # written over it verbatim, so the import read back with the source's id — two projects with
+    # one id on a machine that held both. Only the brief travels from it.
+    assert "project.json" in written
+    record = json.loads((dest / "project.json").read_text(encoding="utf-8"))
+    assert record["id"] == project_b.id != "p-round"
+    assert record["name"] == "Round Trip"
+    assert record["brief"] == "ship the archive"
+
+    # The OVERVIEW, the three ledgers, the TEMPLATE — byte-identical.
     for rel, expected in (
-        ("project.json", BRIEF),
         ("context/overview.md", OVERVIEW),
         ("context/decisions.md", DECISIONS),
         ("context/not-yet-specified.md", FOG),
@@ -245,7 +257,7 @@ def test_the_real_home_is_UNTOUCHED_by_a_round_trip(
     archive.write_bytes(raw)
     plan, extracted = pa.read_archive_plan(archive)
     pa.commit_import(plan, extracted, project_root=home_b / "projects" / "x")
-    assert (home_b / "projects" / "x" / "project.json").is_file()
+    assert (home_b / "projects" / "x" / "context" / "overview.md").is_file()
 
 
 # ── clause 1: extraction-time path safety, unique tmp, janitor cleanup ──
@@ -395,8 +407,8 @@ def test_an_ENCRYPTED_archive_round_trips(tmp_path: Path, project: Path):
     assert plan.ok
     dest = tmp_path / "dest"
     written = pa.commit_import(plan, extracted, project_root=dest)
-    assert "project.json" in written
-    assert (dest / "project.json").read_text(encoding="utf-8") == BRIEF
+    assert "context/overview.md" in written
+    assert (dest / "context" / "overview.md").read_text(encoding="utf-8") == OVERVIEW
 
 
 @pytest.mark.skipif(not pa.encryption_available(), reason="optional `cryptography` extra absent")

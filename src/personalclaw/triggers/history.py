@@ -68,6 +68,13 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     "success": Outcome.RAN.value,
     "failure": Outcome.FAILED.value,
     "timeout": Outcome.FAILED.value,
+    # A run a gateway restart cut off (`reaper.RESTART_INTERRUPTED_STATUS`). It did not finish,
+    # which is `FAILED`'s meaning in this vocabulary; the row's own status and `error` say it was
+    # the restart, and it waits on the review for the user to run it again or dismiss it.
+    "interrupted": Outcome.FAILED.value,
+    # The review's Run now (`dashboard/handlers/triggers._record_manual_run`): a run standing in for
+    # a slot that did not run, which `missed.resolve_missed` records as late.
+    "ran_late": Outcome.RAN_LATE.value,
     # See the module docstring: started ≠ succeeded.
     "launched": Outcome.DEFERRED.value,
     # `on_overlap: queue` held the start behind a run already in flight. DEFERRED's

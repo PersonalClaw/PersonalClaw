@@ -19,9 +19,9 @@ permissions:
 
 jobs:
   build:
-    # The wheel MUST carry web/dist: run the web build FIRST, then python -m build
-    # (setup.py's BuildWithWeb copies web/dist into the package). Verified locally:
-    # the wheel contains static/dist/index.html + JS assets.
+    # The wheel MUST carry web/dist: run the web build FIRST, then `uv build`
+    # (setup.py's BuildWithWeb copies web/dist into the package). `make build` is the same
+    # build plus the proof that the sdist rebuilds a byte-identical wheel.
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -38,6 +38,10 @@ jobs:
       - name: Classify the release tag (one parser — RUM-8)
         id: ver
         run: python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --github-output >> "$GITHUB_OUTPUT"
+      # Nothing ships without a licence record: every tracked font, image and binary here,
+      # then every font and binary the SPA build emits (ASSET_LICENSES.json). Stdlib only.
+      - name: Verify bundled asset licences
+        run: python3 scripts/check_asset_licenses.py
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -46,6 +50,8 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Verify the built SPA's asset licences
+        run: python3 scripts/check_asset_licenses.py --built-web
       - name: Install uv + build backend
         uses: astral-sh/setup-uv@v7
       - name: Build sdist + wheel (with web/dist)
@@ -58,7 +64,9 @@ jobs:
           uv build --out-dir dist
       - name: Verify the wheel contract (SPA packaged + Node-free serve)
         run: |
-          # Full C4 contract (scripts/verify_wheel.py): asserts the SPA is in the
+          # Full C4 contract (scripts/verify_wheel.py): inspects the wheel's contents and
+          # metadata against this checkout (every declared package, dashboard and
+          # bundled-app file, nothing else, a true RECORD), asserts the SPA is in the
           # wheel, installs it into a scratch venv from the wheel alone (this runner
           # has Node for the SPA build, but the verify venv installs only the wheel),
           # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +

@@ -123,7 +123,7 @@ const importable = [{
   env: [], headers: [],
 }]
 
-function mockApi(definition: unknown) {
+function mockApi(definition: unknown, rows: unknown[] = importable) {
   vi.doMock('../../app/appSdk', async (orig) => ({
     ...(await orig<Record<string, unknown>>()),
     notify: (...a: unknown[]) => notify(...a),
@@ -133,7 +133,7 @@ function mockApi(definition: unknown) {
     api: {
       toolsIndex: () => Promise.resolve({ tools, load_failures: [] }),
       mcpServers: () => Promise.resolve(servers),
-      importableMcp: () => Promise.resolve(importable),
+      importableMcp: () => Promise.resolve(rows),
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
@@ -296,6 +296,25 @@ describe('Import lists every scope Claude Code keeps servers in', () => {
     fireEvent.click(within(project).getByRole('button', { name: /Import/ }))
     await settle()
     expect(importMcpServer).toHaveBeenCalledWith(expect.objectContaining({ id: '9a8b7c6d5e4f3021' }))
+  })
+})
+
+describe('Import lists Codex servers too', () => {
+  it('names the tool, and a tool with one place for its servers gets no empty scope line', async () => {
+    mockApi({ name: 'gh', editable: false, reason: '-' }, [{
+      id: '5e7a1c0d9b3f2468', name: 'sentry', backend: 'Codex', scope: 'user', origin: '',
+      note: 'Its token comes from $SENTRY_ACCESS_TOKEN, which the environment PersonalClaw runs in does not set: add it as an Authorization header on the Tools page after importing.',
+      transport: 'http', command: '', args: [], url: 'https://mcp.sentry.dev/mcp',
+      env: [], headers: [{ name: 'X-Sentry-Org', hasValue: true }],
+    }])
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: /Discovered in other tools \(1\)/ }))
+    const row = (await screen.findByText('sentry')).closest('div.rounded-lg') as HTMLElement
+    expect(within(row).getByText('Codex')).toBeInTheDocument()
+    expect(within(row).getByText('HTTP')).toBeInTheDocument()
+    expect(within(row).getByText(/^Its token comes from \$SENTRY_ACCESS_TOKEN/)).toBeInTheDocument()
+    // The scope caption is for a tool that keeps servers in more than one place.
+    expect(row.querySelectorAll('p[title=""]')).toHaveLength(0)
   })
 })
 

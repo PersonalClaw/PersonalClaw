@@ -583,10 +583,36 @@ export interface RemediationSnapshot {
 /** `state` is the channel's own answer — `ready`, `offline` (nothing to connect with) or `error` —
  *  or `starting`, the gateway's while it starts the channel's receiver (then one of the three). */
 export interface ChannelHealth { state: string; detail?: string }
+/** Who core reaches the owner as on a channel, and which key that id came from: `channel` (its
+ *  own) or `shared` (the one key every channel wrote before each had its own — it may hold another
+ *  platform's id). An empty `id` means nothing core sends the owner reaches anyone there. */
+export interface ChannelOwnerRef { id: string; source: 'channel' | 'shared' | '' }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
-  capabilities?: Record<string, unknown>
+  /** `owner_pairing`: the owner can pair this channel from its Configure page. */
+  capabilities?: Record<string, unknown> & { owner_pairing?: boolean }
   health: ChannelHealth
+  /** The app the channel came from (`telegram-channel`); `''` for the in-app Web UI. */
+  app?: string
+  /** Absent on the Web UI, which has no owner to reach. */
+  owner?: ChannelOwnerRef
+}
+/** An owner pairing: live (`active`, until `expires_at`, with `attempts_left` wrong codes before
+ *  it is cancelled) or how the last one ended. Never carries the code. */
+export interface ChannelOwnerPairing {
+  active: boolean
+  expires_at: string
+  attempts_left: number
+  ended: '' | 'paired' | 'expired' | 'cancelled' | 'too_many_attempts'
+  ended_at: string
+}
+export interface ChannelOwnerStatus {
+  channel: string
+  display_name: string
+  owner_id: string
+  source: ChannelOwnerRef['source']
+  pairing_supported: boolean
+  pairing: ChannelOwnerPairing
 }
 /** One approved sender on a channel. `provider` is an opaque runtime key the transport
  *  picked ("telegram", "slack", "email") — NOT the app name, which carries a `-channel` suffix.
@@ -833,6 +859,9 @@ export interface AppSummary {
   latestVersion?: string
   /** Where the gateway found that newer version — the Update dialog starts from it. */
   latestSource?: string
+  /** Where an Update starts when no newer version was found: the source the app was installed
+   *  from. `""` when there is nowhere to update from (a folder that is gone, a shipped app). */
+  updateSource?: string
   // The app's declared quality bar. `{}`/absent = declared nothing → no badges.
   quality?: AppQualityWire
 }
@@ -985,6 +1014,15 @@ export interface AppCatalogEntry {
   maintainer?: string
   lastValidated?: string
   lastScanVerdict?: string
+  /** Why this registry listing cannot be installed, as one sentence (`apps/catalog.py`), or
+   *  absent/empty when it can. A listing that names a folder on this machine, this computer, a
+   *  private network or the cloud metadata service is still listed so the Store can say so; its
+   *  card offers no Install. Render the sentence verbatim. */
+  refused?: string
+  /** The registry whose listing named where this app downloads from. The install dialog sends
+   *  it back (`InstallTarget.listedBy`), so the gateway holds the fetch to the listing rules even
+   *  before it has read that index itself. Empty when the app downloads from the owner's source. */
+  listedBy?: string
 }
 /** The `/api/apps/catalog` payload. Spelled ONCE — the shape used to be written out inline at
  *  three call sites, which is how a new field (`networkSources`) reaches one consumer and not
@@ -1585,6 +1623,12 @@ export interface WorkRow {
   run_id: string; title: string; state: WorkState; origin: string; project_id: string
   claim: WorkClaim | null; collapsed: boolean; attention: boolean; resumable: boolean
   outcome: WorkOutcome | ''
+  /** WHAT the row is. `run_id` holds each source's own id, so this is what says where the row
+   *  opens and which resume applies — `origin` says who started the work, and a loop row is
+   *  `manual` exactly like a run a user started. */
+  source: 'run' | 'loop' | 'task'
+  /** A loop row's kind (a `code` loop opens in Code); empty for runs and tasks. */
+  kind: string
 }
 export interface WorkGroup { state: WorkState; count: number; attention: number; rows: WorkRow[] }
 export interface WorkSection { name: string; items: WorkRow[]; status: 'ok' | 'loading' | 'error'; error: string; loadedAt: number }
@@ -1614,6 +1658,8 @@ export interface TaskItem {
   // WHO created it — distinct from assignee, who does it.
   author?: string
   labels?: string[]; depends_on?: string[]; due?: string; url?: string
+  // Whether the due date is announced the day before; on unless the task opted out.
+  due_reminder?: boolean
   created_at?: string; updated_at?: string
   // rich / forward-looking (may be absent from the backend today)
   task_list?: string
@@ -1720,8 +1766,9 @@ export interface WorkflowDef {
     /** Whether this template is published as an A2A skill. Optional and
      *  DEFAULTS TO FALSE on both sides — an absent key means unpublished, which is what every
      *  template authored before A2A existed looks like. The detail page's toggle reads this and
-     *  writes it through `publishWorkflowToA2A`, never through `saveWorkflowDef`: the def this
-     *  page holds is the secret-STRIPPED read, so re-saving it would drop credential bindings. */
+     *  writes it through `publishWorkflowToA2A`, never through `saveWorkflowDef`: a one-bool
+     *  change must not re-validate the whole definition, and a template that was savable when it
+     *  was authored must not become unpublishable because the validator has grown since. */
     a2a_published?: boolean
   }
 }
@@ -2452,7 +2499,19 @@ export type McpTransport = 'stdio' | 'http' | 'sse'
 export interface McpServer {
   name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean
+  /** A server at a URL's OAuth sign-in, when it has one or asked for one (`status: 'signin'`). */
+  auth?: McpSignInState
 }
+/** A server's OAuth sign-in as `GET /api/mcp` says it (`mcp_oauth.sign_in_state`, presence only — no
+ *  token reaches the page): `signed_in`; `signed_out` — it was signed in, and the sign-in ended or its
+ *  address changed; `required` — the server asked for a sign-in nobody has done. */
+export interface McpSignInState { method: 'oauth'; state: 'signed_in' | 'signed_out' | 'required' }
+/** `POST /api/mcp/servers/{name}/sign-in`: the page the browser opens to sign in, and the address the
+ *  authorization server sends it back to. */
+export interface McpSignInStart { authorizationUrl: string; redirectUri: string }
+/** The `detail` of `mcp_sign_in_needs_client_id`: the authorization server does not let PersonalClaw
+ *  register itself, so the owner registers an app at `issuer` with `redirectUri`, and types its ID. */
+export interface McpSignInClientNeeded { redirectUri: string; issuer: string }
 /** One variable (or header) of a server: its NAME and whether it has a value — never the value,
  *  which is that server's token. The import reads it server-side; the edit form keeps it by name. */
 export interface McpValuePresence { name: string; hasValue: boolean }
@@ -2605,6 +2664,22 @@ function _triggerToHook(t: Trigger): HookItem {
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
 // the catalog of things a trigger can run. settingsSchema drives the config form.
+/** One decision a restart left on the Triggers page (`GET /api/triggers/review`). `latest` is the slot
+ *  a Run now stands in for (the newest missed slot, or when the interrupted run started); `count`
+ *  is how many slots the card covers, and `count_is_floor` marks it "at least". */
+export interface TriggerReviewCard {
+  trigger_id: string
+  kind: 'missed' | 'interrupted'
+  count: number
+  latest: number
+  oldest: number
+  reason: string
+  count_is_floor: boolean
+  name: string
+  /** The id the list opens the automation's panel with (`?open=`). */
+  open_id: string
+}
+
 export interface ActionProvider {
   name: string; display_name: string; supports_blocking: boolean
   settingsSchema: { type?: string; properties?: Record<string, unknown>; required?: string[] }
@@ -4441,6 +4516,12 @@ export interface DeniedCommands {
   user_additions: number
 }
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
+/** One place outside the PersonalClaw home the owner can let it READ (`personalclaw/outside_home.py`):
+ *  the skills folder other AI tools share, the machine-wide Hugging Face folder, a subscription
+ *  provider's sign-in. Off until allowed; `paths` is where it is on this machine. */
+export interface OutsideHomePlace { id: string; label: string; paths: string[]; detail: string; allowed: boolean }
+/** `allowed` is the whole saved list, which can name a place no longer offered, so a write keeps it. */
+export interface OutsideHomeState { places: OutsideHomePlace[]; allowed: string[] }
 /** Where this instance's credentials live, and whether the move is reversible.
  *
  *  `backend` is the RESOLVED outcome; `requested` is the intent. `blocked` is the mismatch
@@ -4905,6 +4986,9 @@ export interface ProviderTestResult { ok: boolean; status?: string; message: str
 export interface HfTokenSource {
   source: 'credential_store' | 'env' | 'hf_cli_file'
   present: boolean; valid: boolean; username: string; masked: string; active: boolean
+  /** Why an absent source was not read, when that is a setting and not a missing token: the
+   *  `huggingface-cli` file is outside the home until the owner allows it in Settings → Security. */
+  note?: string
 }
 export interface HfTokenStatus { sources: HfTokenSource[]; cleared?: boolean }
 // A local provider's health (LMMV §6). The endpoint never 500s: an unavailable/raising
@@ -5108,13 +5192,25 @@ export type OnboardingImportItemState = 'new' | 'existing' | 'conflict' | 'rejec
  *  scanner. `detail` says why a non-`new` item will not be written, in words true both
  *  before and after an import. `origin` is where in the tool it was found ("Local scope ·
  *  /Users/you/api", "Project · ~/src/app"), `note` what the import leaves out of it or changes,
- *  and `preselected` false for an item the other tool itself never let run — a project's MCP
- *  server nobody approved — so the step starts with it unticked. */
+ *  and `preselected` false for an item the other tool itself does not use as it stands — a
+ *  project's MCP server nobody approved, an AGENTS.md Codex reads an override of instead — so the
+ *  step starts with it unticked. */
 export interface OnboardingImportItem {
   fingerprint: string; source: string; category: string; key: string; title: string
   origin: string; note: string; preselected: boolean
   state: OnboardingImportItemState; destination: string; detail: string
   secrets_skipped: number; redactions: number
+  /** A skill's supply-chain scan, `null` for anything else. */
+  scan: OnboardingImportSkillScan | null
+}
+/** The supply-chain scan a skill's install will make, made when the tool was scanned, so the
+ *  step shows it before anything is chosen. A `dangerous` verdict is `rejected` in the plan. A
+ *  `warning` skill starts unticked and comes over only with its warnings accepted: the pick then
+ *  sends its `consent`. `findings` are the warnings and dangerous matches, evidence redacted. */
+export interface OnboardingImportSkillScan {
+  verdict: 'clean' | 'low' | 'warning' | 'dangerous'
+  findings: Array<{ rule: string; severity: 'warning' | 'dangerous'; path: string; evidence: string }>
+  consent: string
 }
 /** A kind of thing a source holds that is not brought over, with how many and why — so a
  *  tool whose prompt history stays behind reads as having one, not as never having had it. */
@@ -6668,6 +6764,13 @@ export const api = {
   connectChannel: (name: string) => post<{ ok: boolean; health?: ChannelHealth }>(`/api/channels/${encodeURIComponent(name)}/connect`),
   disconnectChannel: (name: string) => post<{ ok: boolean }>(`/api/channels/${encodeURIComponent(name)}/disconnect`),
   testChannel: (name: string) => post<{ ok: boolean; health?: ChannelHealth; detail?: string }>(`/api/channels/${encodeURIComponent(name)}/test`),
+  // A channel's owner, on its Configure page. The pairing code is in the POST's answer only — the
+  // owner sends it to the bot in a DM, and the page polls `channelOwner` until the pairing ends.
+  channelOwner: (name: string) => get<ChannelOwnerStatus>(`/api/channels/${encodeURIComponent(name)}/owner`),
+  startChannelOwnerPairing: (name: string) =>
+    post<{ code: string; expires_at: string; ttl_secs: number; pairing: ChannelOwnerPairing }>(`/api/channels/${encodeURIComponent(name)}/owner/pairing`),
+  cancelChannelOwnerPairing: (name: string) =>
+    del(`/api/channels/${encodeURIComponent(name)}/owner/pairing`),
 
   // ── Channel sender trust — who is allowed to talk to the agent, per channel ──
   // The allowlist was writable from two places (a pairing code, the unknown-sender
@@ -6683,6 +6786,10 @@ export const api = {
 
 
   // ── Chat turn-level controls ──
+  /** Continue a chat on a channel: it opens as a thread in your DM there, with the owner id that
+   *  channel keeps. `provider` is the channel's runtime name (`telegram`). */
+  handoffSession: (key: string, provider: string) =>
+    post<{ ok: boolean; thread_ts: string; provider: string }>(`/api/chat/sessions/${encodeURIComponent(key)}/handoff`, { provider }),
   /** Silently prime the next turn with background context (no visible message, no turn). */
   briefSession: (key: string, content: string, source = 'user-brief') =>
     post<{ ok: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}/context`, { content, source, ephemeral: false }),
@@ -6753,12 +6860,11 @@ export const api = {
   providerConfig: (name: string) => get<{ config: Record<string, unknown>; _secret_set?: string[] }>(`/api/providers/${encodeURIComponent(name)}/config`),
   saveProviderConfig: (name: string, config: Record<string, unknown>) =>
     patch<{ config: Record<string, unknown> }>(`/api/providers/${encodeURIComponent(name)}/config`, config),
-  enableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/enable`),
   // Measure again whether a provider can run here (answers 202 at once: the check runs in the
   // gateway's availability child, and the card reads `checking` until the answer lands).
+  // (A provider has no on/off of its own: its switch is its app's `enableApp` / `disableApp`.)
   recheckProviderAvailability: (name: string) =>
     post<{ name: string; availability: ProviderAvailability }>(`/api/providers/${encodeURIComponent(name)}/availability`),
-  disableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/disable`),
   // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards. A plain read
   // never spawns a runtime: it answers from the live connection or the last measurement, and a
   // never-measured runtime reads `checking`. refresh=true measures now (post-sign-in / manual
@@ -6906,8 +7012,10 @@ export const api = {
    *  directions — it writes neither their config nor our home. */
   onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
   /** Import the picked items. The server RE-SCANS and keeps only the fingerprints its own
-   *  scan found: ids travel, never items, so a caller can never name a directory to copy in. */
-  runOnboardingImport: (body: { fingerprints: string[] }) =>
+   *  scan found: ids travel, never items, so a caller can never name a directory to copy in.
+   *  `accepted` carries, for each picked skill whose scan has warnings, the `consent` its scan
+   *  showed: the warnings the user accepted, which its install checks against what it installs. */
+  runOnboardingImport: (body: { fingerprints: string[]; accepted?: Record<string, string> }) =>
     post<OnboardingImportReport>('/api/onboarding/import', body),
   /** The model step's VERIFICATION — build what chat would build, and report the verdict.
    *  Always 200: a refusal is a body, not a throw, because the three envelope lines are
@@ -7690,12 +7798,19 @@ export const api = {
   // Removes the server from mcp.json AND the agent config, and deletes the values it owns in the
   // credential store. Never another tool's config.
   removeMcpServer: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}`),
+  // Start signing in to a server at a URL with OAuth: the gateway finds its authorization server,
+  // registers itself there (or uses the app the owner registered: `client`), and answers the page to
+  // open. The browser comes back to the gateway's own callback, which stores the tokens.
+  startMcpSignIn: (name: string, client?: { clientId: string; clientSecret?: string }) =>
+    post<McpSignInStart>(`/api/mcp/servers/${encodeURIComponent(name)}/sign-in`, client ?? {}),
+  // Sign out: the sign-in leaves mcp.json and the agent config, and its tokens the credential store.
+  signOutMcp: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}/sign-in`),
   // Servers configured in an external backend (Claude Code) not yet in PClaw.
   importableMcp: () => get<{ servers: ImportableMcpServer[] }>('/api/mcp/importable').then((r) => r.servers),
-  // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from Claude Code's
-  // own file, values included (stored in the credential store), and leaves that file as it is. The
-  // route answers 200 for a batch, so a change that did not land carries an `error` — thrown here, so
-  // `reportingWrite` reports both failure shapes.
+  // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from the other
+  // tool's own file, values included (stored in the credential store), and leaves that file as it is.
+  // The route answers 200 for a batch, so a change that did not land carries an `error` — thrown here,
+  // so `reportingWrite` reports both failure shapes.
   /** Import one listed server: the row's `id` names it in its scope, and the gateway reads its
    *  definition again from the other tool's own files. Claude Code's file is left as it is — the
    *  import used to send `ccGlobal: true`, which copied a local- or project-scope server into
@@ -7733,6 +7848,13 @@ export const api = {
   // Lifecycle* components consume). All route through the unified /api/triggers.
   hooks: () => get<{ triggers: Trigger[] }>('/api/triggers?type=lifecycle').then((d) => d.triggers.map(_triggerToHook)),
   actionProviders: () => get<{ providers: ActionProvider[] }>('/api/action-providers').then((d) => d.providers),
+  /** What a restart left for you to decide: each automation's missed runs, and each run the restart
+   *  interrupted (`triggers/review.py`). Nothing on it runs on its own. */
+  triggerReview: () => get<{ cards: TriggerReviewCard[] }>('/api/triggers/review').then((d) => d.cards),
+  /** Decide one card: `run_now` runs the automation once, now, and records the run as late;
+   *  `dismiss` records that you chose not to. */
+  decideTriggerReview: (body: { trigger_id: string; kind: TriggerReviewCard['kind']; action: 'run_now' | 'dismiss' }) =>
+    post<{ ok: boolean; outcome?: string; reason?: string; result?: string; refused?: string }>('/api/triggers/review', body),
   createHook: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
       trigger_type: 'lifecycle', name: body.name, event: body.event, matcher: body.matcher,
@@ -8247,6 +8369,11 @@ export const api = {
   // security write (`patchConfig`).
   setUserDeniedCommands: (patterns: string[]) => api.patchConfig('security.denied_commands', patterns),
   securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
+  outsideHome: () => get<OutsideHomeState>('/api/security/outside-home'),
+  // The whole list of allowed places. Adding one is a loosening the gateway asks about unless
+  // `confirmed` says the panel already asked; removing one never asks.
+  setOutsideHome: (ids: string[], confirmed = false) =>
+    api.patchConfig('security.outside_home', ids, confirmed),
   // The credential store. Both writes send `confirm: true`: the flag is the
   // protocol-level record that the user was shown the snapshot step, and the backend
   // refuses without it independently, so this client cannot skip the consent.
@@ -8451,14 +8578,21 @@ export const api = {
     ),
   workflowDef: (name: string) =>
     get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
-  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
+  /** Validate a definition and, unless `save: false` (the engine's dry run), save it — a new version.
+   *
+   *  The body is the WHOLE editable definition, not a subset: every field a definition has
+   *  (`runtime_hints`, `defaults`, `on_overlap`, `workspace`…) has to come back, or the save
+   *  writes a definition without it. `based_on` names what the edit started from — another
+   *  definition for a copy, and `based_on_version` one recorded version for a restore — because
+   *  the read this edit started from hid some values (`_has_<key>` flags) and the server restores
+   *  them from THAT. A refused save is a 422 whose `detail` carries the same `issues`. */
+  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; based_on?: string; based_on_version?: number; save?: boolean; [field: string]: unknown }) =>
     // A step whose agent approves its own tool calls (or holds the write grant) is asked for
     // when a save loosens it; a dry run (`save: false`) writes nothing and is never asked.
-    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows',
+    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; lint?: { findings?: Array<{ code: string; message: string; path?: string; severity?: string }> }; levels?: string[][] }>('/api/workflows',
       c ? { ...body, confirm: true } : body)),
   // Publish/unpublish one template as an A2A skill. Its own route, not a
-  // field on `saveWorkflowDef`: this page holds the secret-stripped def, and re-saving that to
-  // carry one bool would persist the stripped bindings.
+  // field on `saveWorkflowDef`: one bool must not re-validate and re-save the whole definition.
   publishWorkflowToA2A: (name: string, published: boolean) =>
     post<{ ok: boolean; name: string; a2a_published: boolean }>(`/api/workflows/${encodeURIComponent(name)}/a2a-publish`, { published }),
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
@@ -8474,11 +8608,11 @@ export const api = {
     get<{ a: number; b: number; ops: WorkflowVersionOp[] }>(
       `/api/workflows/${encodeURIComponent(name)}/versions/diff?a=${a}&b=${b}`,
     ),
-  /** Rollback / re-pin the active version. Moves only the pointer; history is never rewritten. */
-  repinWorkflowVersion: (name: string, version: number) =>
-    post<{ ok: boolean; name: string; pinned: number }>(
-      `/api/workflows/${encodeURIComponent(name)}/versions/repin`,
-      { version },
+  /** One recorded version's full definition — stripped like every definition read. The editor
+   *  opens it to restore that version: saving it makes a NEW version, which is what runs execute. */
+  workflowVersion: (name: string, version: number) =>
+    get<{ version: number; source: string; created_at: string; note: string; definition: WorkflowDef }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions/${version}`,
     ),
   /** Recent runs of this template with their ledger totals — the Run Ledger tab. */
   workflowLedger: (name: string) =>
@@ -8770,12 +8904,17 @@ export const api = {
   // (or updating `name` to it) grants and runs, the scan of those exact bytes, and the
   // `consent` digest the commit must echo. Commits nothing. A bundle it could read always
   // answers 200, a refusal included; an unreadable source rejects with the envelope's message.
-  previewApp: (source: string, name?: string) =>
-    post<AppInstallResult>('/api/apps/preview', name ? { source, name } : { source }),
+  // `listedBy` names the registry whose listing the source came from (a Store card's own
+  // field): the fetch is then held to the listing rules, and it can only ever make it stricter.
+  previewApp: (source: string, name?: string, listedBy?: string) =>
+    post<AppInstallResult>('/api/apps/preview', {
+      source, ...(name ? { name } : {}), ...(listedBy ? { listedBy } : {}),
+    }),
   // install/update return the InstallResult body on ANY status (a 409 carries the fresh
   // review when the bytes changed since `consent` was issued, so we must NOT throw on
   // non-2xx). Network failures still surface as a thrown error with ok:false.
-  installApp: (source: string, consent: string) => _installReq('/api/apps', { source, consent }),
+  installApp: (source: string, consent: string, listedBy?: string) =>
+    _installReq('/api/apps', { source, consent, ...(listedBy ? { listedBy } : {}) }),
   updateApp: (name: string, source: string, consent: string) =>
     _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, consent }),
   enableApp: (name: string) => post<{ ok: boolean; providerErrors?: string[] }>(`/api/apps/${encodeURIComponent(name)}/enable`),

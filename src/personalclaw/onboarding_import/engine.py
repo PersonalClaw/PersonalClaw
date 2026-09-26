@@ -10,11 +10,14 @@ scan the caller made itself and treats it as the allowlist: a chosen fingerprint
 does not contain imports nothing and is reported as missing. That is what lets the
 fingerprints travel over HTTP while the items never do — an item carries a filesystem path
 and a body, and honouring a client-supplied one would copy any directory into the home.
+Beside the pick, a skill whose scan has warnings can carry the ``consent`` its scan
+showed: the one thing the person accepted, which its install checks against the bytes it
+installs.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -80,8 +83,14 @@ def run_import(
     results: Iterable[ScanResult],
     *,
     fingerprints: Iterable[str] | None = None,
+    accepted: Mapping[str, str] | None = None,
 ) -> ImportReport:
     """Import the chosen items from an existing scan and report the whole choice.
+
+    ``accepted`` maps a skill's fingerprint to the ``consent`` of the scan warnings the person
+    accepted. A skill whose scan has warnings installs only over those, and only when they are
+    still what its install scans; picked without them, its row is ``rejected`` with the
+    scanner's reason. An acceptance for anything else changes nothing.
 
     Beside each chosen item's outcome, the report carries every scanned item that was
     NOT chosen, with the plan it had BEFORE the writes — importing one tool's MCP server
@@ -95,7 +104,15 @@ def run_import(
     """
     scanned = list(results)
     wanted = None if fingerprints is None else list(dict.fromkeys(fingerprints))
-    items = select_items(scanned, fingerprints=wanted)
+    consents = dict(accepted or {})
+    items = [
+        (
+            replace(item, accepted_warnings=consents[item.fingerprint])
+            if item.scan is not None and item.scan.needs_acceptance and item.fingerprint in consents
+            else item
+        )
+        for item in select_items(scanned, fingerprints=wanted)
+    ]
     chosen = {item.fingerprint for item in items}
     found = {item.fingerprint for result in scanned for item in result.items}
     unselected = [

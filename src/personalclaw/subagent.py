@@ -260,7 +260,8 @@ def validate_cwd(cwd: str, allowed_roots: list[str]) -> tuple[str, str]:
     """Validate a caller-supplied ``cwd`` for ``subagent_run``.
 
     Resolves symlinks and verifies the path is an existing directory under at
-    least one entry in ``allowed_roots``. Empty ``allowed_roots`` disables the
+    least one entry in ``allowed_roots``, or under the workspace (the folder the
+    parent session itself works in). Empty ``allowed_roots`` disables the
     feature — any non-empty ``cwd`` is rejected.
 
     Args:
@@ -286,6 +287,11 @@ def validate_cwd(cwd: str, allowed_roots: list[str]) -> tuple[str, str]:
     if not os.path.isdir(resolved):
         return ("", "cwd does not exist or is not a directory")
     resolved_roots = [os.path.realpath(os.path.expanduser(r)) for r in allowed_roots]
+    # The workspace defaults to the home's own folder, which no configured root names: a subagent
+    # may still work where the session that spawns it works.
+    from personalclaw.config.loader import workspace_root
+
+    resolved_roots.append(os.path.realpath(workspace_root()))
     for root in resolved_roots:
         if resolved == root or resolved.startswith(root + os.sep):
             return (resolved, "")

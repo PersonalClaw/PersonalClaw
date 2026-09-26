@@ -74,7 +74,7 @@ since a remote server's headers hold its bearer token), your backups (export, im
 restore), who may message your agent from a chat channel, taking back an autonomy grant or
 undoing what an automation did, and bringing your setup over from other agent tools
 (`/api/onboarding/import`, which copies their MCP servers, skills, agents, prompts,
-instructions, memories and conversations in).
+instructions, memories, conversations and denied commands in).
 Holding any of those would make every other
 line in a manifest moot, so there is nothing to scope — and before the registry existed,
 an app declaring `/api/ws` (the event socket) prefix-matched `/api/ws/terminal/{id}` and
@@ -138,9 +138,33 @@ nothing else in your log: not what your automations, loops, inbox, channels or o
 raised, and not your notification settings or rules. Its session list says nothing about
 whether your tool calls run without asking.
 
-Every write route in these families, and every read in your conversation families and your
-notification log, has to be declared one way or the other: one that is not is refused to every app until someone
-declares it, and `tests/test_security_posture_rail.py` fails the build on it.
+Each app's provider is that app's. A provider's settings say where it connects and which of
+its credentials it connects with, so an app that could change another app's could point it
+at a server of its choosing, and that app would send its own key there. Under
+`/api/providers` an app reaches its own provider and no other: another app's settings, its
+instances (adding, changing, removing or testing one) and its availability check are
+refused, and so are their reads, since the settings say where the provider connects even
+with the keys masked. Its list of providers holds only its own. The MCP Tool Servers card
+(`/api/providers/mcp-tools`) is not an ordinary provider: its instances are every MCP server
+the gateway launches, so no app reaches it, reads included, as with `/api/mcp`. An app's own
+settings resolve only keys stored under that app, so an app pointing its own provider
+somewhere sends only its own key there.
+
+Your models are yours. A model provider says where your model calls go and which of your
+keys goes with them, and a binding says which model each use runs on. Your chats and agents
+send your chat model what you say, and its answers decide the tool calls your agent makes.
+So under `/api/model-providers` and `/api/models` an app may not add, change, test or remove
+a model provider, bind a use to a model, change the routing table or a use's settings, set
+or clear your Hugging Face token, download, install, delete or unload a model, or re-embed
+what you stored. It may not read them either: your providers, your bindings, your routing
+table and your usage are yours. The onboarding wizard's one-click bind of a local model
+(`/api/onboarding/local-model/bind`) is refused for the same reason: it adds a model provider
+and moves your chats onto it.
+
+Every write route in these families, and every read in your conversation families, your
+notification log, your providers and your models, has to be declared one way or the other: one
+that is not is refused to every app until someone declares it, and
+`tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
 because `/api/config` also carries ordinary settings an app may legitimately write: an
@@ -428,8 +452,8 @@ A secret still appears in plaintext in these places:
   (`POST /api/mcp/apply` with `ccGlobal`) writes it into Claude Code's `.claude.json` (in your
   home directory, or in `$CLAUDE_CONFIG_DIR` when that is set) with its values, because Claude
   Code reads only its own file. That copy is outside PersonalClaw's home, snapshots and exports,
-  under Claude Code's own file permissions. The copy PersonalClaw makes by itself when sessions
-  restart (`~/.mcp.json`) carries only the plain values.
+  under Claude Code's own file permissions. PersonalClaw writes no other copy: a session restart
+  or an MCP sync leaves `~/.mcp.json` alone.
 
 **What this means for you:** after upgrading, treat snapshots and exports made before it as
 holding your tokens. Delete them, or change any token that has left your hands in one.
@@ -501,6 +525,26 @@ whatever it declares.
 as yourself. The supply-chain scanner (quarantine → scan → consent → install, with
 `dangerous` terminal) is the control that vets it, and the permissions describe what
 the app's token may do once it runs, not a box around it.
+
+## 8. Signing in to a remote MCP server needs a browser on this machine, or HTTPS
+
+A remote MCP server that signs in with OAuth sends your browser to its authorization server, which
+sends it back to PersonalClaw. The MCP spec allows only a loopback or an HTTPS address for that, so
+the sign-in works from a browser on the machine PersonalClaw runs on (it comes back to
+`http://127.0.0.1:<port>`), or from anywhere when the dashboard is served over HTTPS. A dashboard
+opened from another machine over plain `http://` is refused with a sentence that says so
+(`mcp_sign_in_needs_local_address`).
+
+- **Signing out does not revoke the grant.** Sign out deletes the tokens PersonalClaw holds for the
+  server. Your account at the authorization server may still list PersonalClaw as allowed until you
+  remove it there.
+- **An authorization server that does not advertise PKCE with S256 is refused.** The MCP spec
+  requires it, and PersonalClaw signs in no other way.
+- **No client ID metadata document.** PersonalClaw has no HTTPS address of its own to publish one
+  at, so an authorization server that offers neither dynamic registration nor another way needs the
+  client ID of an app you registered there yourself.
+- **A sign-in in progress lives in the gateway's memory.** A restart while you are on the
+  authorization server's page drops it, and you start again from the Tools page.
 
 ## Why these are listed, not fixed
 

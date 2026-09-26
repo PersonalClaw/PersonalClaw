@@ -19,8 +19,8 @@ What it maps — the layout Claude Code 2.x writes, and nothing it does not:
 ``agents/**/*.md``                              ``agents``
 ``commands/**/*.md``                            ``prompts``
 ``projects/<cwd>/<session>.jsonl``              ``conversations``
-``settings.json``                               ``settings`` (review-gated, never live config)
-``history.jsonl``                               not imported — the scan counts it and says why
+``settings.json`` → ``permissions.deny``        ``denied_commands`` (each ``Bash(…)`` rule)
+``settings.json`` → the rest, ``history.jsonl``  not imported — the scan counts each and says why
 ==============================================  =============================================
 
 **Where the projects are.** Claude Code records every directory it has been used in as a key of
@@ -28,13 +28,12 @@ What it maps — the layout Claude Code 2.x writes, and nothing it does not:
 path with every character that is not a letter or digit turned into ``-``. A ``~/.claude`` copied
 from another machine still names that machine's paths (``/Users/old-name/src/app``), so a
 recorded path that does not exist here is looked for under THIS home before it is given up
-(:func:`_on_this_machine`) — a project's own ``.mcp.json`` and ``CLAUDE.md`` live in the project,
-not in ``~/.claude``.
+(:func:`~.common.on_this_machine`) — a project's own ``.mcp.json`` and ``CLAUDE.md`` live in the
+project, not in ``~/.claude``.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -42,18 +41,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from personalclaw.onboarding_import.floors import (
-    read_json_safely,
-    read_text_safely,
-    refuses,
-    safe_text,
-    strip_secrets,
-)
-from personalclaw.onboarding_import.model import (
-    ImportCategory,
-    ImportItem,
-    NotImported,
-    ScanResult,
+from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
+from personalclaw.onboarding_import.model import ImportCategory, ImportItem, ScanResult
+from personalclaw.onboarding_import.sources.common import (
+    RULES_THAT_ALLOW,
+    RULES_THAT_ASK,
+    TITLE_CHARS,
+    McpServer,
+    conversation_note,
+    denied_command_item,
+    display_path,
+    markdown_files,
+    mcp_item,
+    not_imported_rows,
+    on_this_machine,
+    one_line,
+    prompt_history,
+    scan_skills,
+    settings_not_imported,
+    slug_name,
+    text_item,
 )
 
 NAME = "claude_code"
@@ -80,9 +87,6 @@ _PROJECT_MCP_FILE = ".mcp.json"
 _MCP_TABLE = "mcpServers"
 _SETTINGS_FILE = "settings.json"
 _HISTORY_FILE = "history.jsonl"
-
-#: A title is a line in a list, not the first paragraph of a conversation.
-_TITLE_CHARS = 80
 
 
 # ── roots ─────────────────────────────────────────────────────────────────────
@@ -146,40 +150,6 @@ def _read_json_document(path: Path) -> dict[str, Any]:
 
 # ── projects ──────────────────────────────────────────────────────────────────
 
-#: ``/Users/<name>`` or ``/home/<name>``: the part of a recorded path that names the machine's
-#: home directory rather than anything inside it.
-_HOME_PREFIX_RE = re.compile(r"^(?:/Users|/home)/[^/]+")
-
-
-def _on_this_machine(recorded: str) -> Path | None:
-    """Where the project Claude Code recorded as ``recorded`` is on THIS machine, or ``None``.
-
-    The recorded path itself when it exists. Otherwise, when it is under a home directory
-    (``/Users/<name>/…``), the same path under this machine's home — a ``~/.claude`` copied from
-    an old laptop names the old laptop's home, and ``~/src/app`` is still ``~/src/app``.
-    """
-    if not recorded:
-        return None
-    path = Path(recorded)
-    if path.is_dir():
-        return path
-    match = _HOME_PREFIX_RE.match(recorded)
-    if match is None:
-        return None
-    moved = Path.home() / recorded[match.end() :].lstrip("/")
-    return moved if moved.is_dir() else None
-
-
-def _display(path: Path) -> str:
-    """A path as a person reads it: ``~/src/app`` under the home, the full path elsewhere."""
-    home = Path.home()
-    if path == home:
-        return "~"
-    try:
-        return "~/" + path.relative_to(home).as_posix()
-    except ValueError:
-        return str(path)
-
 
 def encoded_project_dir(recorded: str) -> str:
     """The name Claude Code gives a project's directory under ``projects/``: every character that
@@ -193,14 +163,14 @@ class Project:
 
     #: The path as Claude Code recorded it (possibly another machine's).
     recorded: str
-    #: The directory on this machine (:func:`_on_this_machine`), or ``None``.
+    #: The directory on this machine (:func:`~.common.on_this_machine`), or ``None``.
     local: Path | None
     #: The project's entry in ``.claude.json`` (its local-scope servers, its approvals).
     entry: dict[str, Any]
 
     @property
     def label(self) -> str:
-        return _display(self.local) if self.local is not None else self.recorded
+        return display_path(self.local) if self.local is not None else self.recorded
 
     @property
     def distrusted(self) -> bool:
@@ -216,7 +186,7 @@ def projects(config: dict[str, Any]) -> list[Project]:
     if not isinstance(table, dict):
         return []
     return [
-        Project(recorded=str(path), local=_on_this_machine(str(path)), entry=entry)
+        Project(recorded=str(path), local=on_this_machine(str(path)), entry=entry)
         for path, entry in sorted(table.items(), key=lambda pair: str(pair[0]))
         if isinstance(entry, dict)
     ]
@@ -236,37 +206,6 @@ _UNTRUSTED_FOLDER = "Claude Code's trust prompt for this folder was never accept
 
 #: ``${VAR}`` and ``${VAR:-default}`` — the expansion Claude Code applies to a ``.mcp.json``.
 _EXPANSION_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-
-
-@dataclass(frozen=True)
-class McpServer:
-    """One MCP server Claude Code has configured, with the scope it has it in.
-
-    ``spec`` holds the definition WITH its values: this is what an import copies (into the
-    credential store, through ``write_mcp_document``) and what a listing masks. It never reaches
-    a browser, a note or a log.
-    """
-
-    name: str
-    scope: str
-    #: The project it belongs to, as recorded (``""`` for a user-scope server).
-    project: str
-    spec: dict[str, Any]
-    #: Where it was found, in words.
-    origin: str
-    #: Whether Claude Code lets it run: always for the user and local scopes, which only a
-    #: person adds; for a project's ``.mcp.json``, only once that project's server was approved.
-    approved: bool = True
-    #: Why it is not approved, when it is not.
-    unapproved_reason: str = ""
-    #: ``${VAR}`` names the definition uses that Claude Code's settings do not set.
-    unresolved: tuple[str, ...] = ()
-
-    @property
-    def id(self) -> str:
-        """A stable id for this server in this scope — what a pick names instead of a path."""
-        raw = "\0".join((NAME, self.scope, self.project, self.name)).encode("utf-8")
-        return hashlib.sha256(raw).hexdigest()[:16]
 
 
 def settings_env(root: Path | None = None) -> dict[str, str]:
@@ -341,8 +280,9 @@ def _project_approvals(project: Project, user_settings: dict[str, Any]) -> tuple
 def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) -> list[McpServer]:
     """Every MCP server Claude Code has configured, in all three of its scopes.
 
-    THE reader of Claude Code's MCP configuration: the onboarding scan (through the floors) and
-    the Tools page's Import both call it, so the two cannot disagree about what Claude Code has.
+    THE reader of Claude Code's MCP configuration: the onboarding scan and the Tools page's Import
+    both call it and both write what it returns through the one MCP writer, so the two cannot
+    disagree about what Claude Code has or where its values go.
     ``config_path`` is the global config (:func:`global_config_path` of ``root`` when omitted) and
     ``root`` the config directory whose ``settings.json`` goes with it (:func:`config_dir_of` the
     file when omitted), so a caller naming one file never reads another installation's settings.
@@ -359,7 +299,9 @@ def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) ->
     user_settings = _read_json_document(base / _SETTINGS_FILE)
     env = settings_env(base)
     out: list[McpServer] = [
-        McpServer(name=name, scope=SCOPE_USER, project="", spec=spec, origin="User scope")
+        McpServer(
+            source=NAME, name=name, scope=SCOPE_USER, project="", spec=spec, origin="User scope"
+        )
         for name, spec in _servers_of(config.get(_MCP_TABLE))
     ]
     known = projects(config)
@@ -367,6 +309,7 @@ def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) ->
         for name, spec in _servers_of(project.entry.get(_MCP_TABLE)):
             out.append(
                 McpServer(
+                    source=NAME,
                     name=name,
                     scope=SCOPE_LOCAL,
                     project=project.recorded,
@@ -395,29 +338,28 @@ def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) ->
                 reason = ""
             out.append(
                 McpServer(
+                    source=NAME,
                     name=name,
                     scope=SCOPE_PROJECT,
                     project=project.recorded,
                     spec=expanded,
-                    origin=f"Project · {_display(mcp_file)}",
+                    origin=f"Project · {display_path(mcp_file)}",
                     approved=not reason,
-                    unapproved_reason=reason,
-                    unresolved=tuple(sorted(missing)),
+                    note=_project_server_note(reason, sorted(missing)),
                 )
             )
     return out
 
 
-def mcp_note(server: McpServer) -> str:
-    """What a person importing ``server`` should know first, in words — or ``""``."""
-    parts: list[str] = []
-    if server.unapproved_reason:
-        parts.append(server.unapproved_reason)
-    if server.unresolved:
-        names = ", ".join(f"${{{n}}}" for n in server.unresolved)
+def _project_server_note(reason: str, unresolved: list[str]) -> str:
+    """What a person importing a project's server should know first: why Claude Code does not
+    run it, and the ``${VAR}`` names nothing sets."""
+    parts = [reason] if reason else []
+    if unresolved:
+        names = ", ".join(f"${{{n}}}" for n in unresolved)
         parts.append(
             f"It uses {names}, which Claude Code's settings do not set: give "
-            f"{'it a value' if len(server.unresolved) == 1 else 'each a value'} "
+            f"{'it a value' if len(unresolved) == 1 else 'each a value'} "
             "on the Tools page after importing."
         )
     return " ".join(parts)
@@ -441,12 +383,14 @@ def scan(root: Path | str | None = None) -> ScanResult:
     _scan_instructions(base, known, seen_files, result)
     _scan_memories(base, known, result)
     _scan_mcp(base, explicit, result)
-    _scan_skills(base, result)
+    scan_skills(NAME, [(base / _SKILLS_DIR, "")], result)
     _scan_agents(base, result)
     _scan_commands(base, result)
     _scan_conversations(base, known, result)
     _scan_settings(base, result)
-    _scan_not_imported(base, result)
+    history = prompt_history(base / _HISTORY_FILE)
+    if history is not None:
+        result.not_imported.append(history)
     _count_withheld_files(base, result)
     result.note_withheld()
     return result
@@ -467,60 +411,18 @@ def _count_withheld_files(base: Path, result: ScanResult) -> None:
             result.secrets_skipped += 1
 
 
-def _text_item(
-    path: Path,
-    result: ScanResult,
-    *,
-    category: ImportCategory,
-    key: str,
-    title: str,
-    origin: str = "",
-    note: str = "",
-    preselect: bool = True,
-    seen_files: set[Path] | None = None,
-) -> None:
-    """One file read through floors 1 and 3 into an item — or nothing, when it is empty."""
-    if seen_files is not None:
-        # One file, one item: `~/.claude/CLAUDE.md` is also the `.claude/CLAUDE.md` of the
-        # project Claude Code recorded as the home directory itself.
-        resolved = path.resolve()
-        if resolved in seen_files:
-            return
-        seen_files.add(resolved)
-    text, redactions, skipped = read_text_safely(path)
-    result.secrets_skipped += skipped
-    if not text.strip():
-        return
-    result.redactions += redactions
-    result.items.append(
-        ImportItem(
-            source=NAME,
-            category=category,
-            key=key,
-            title=title,
-            text=text,
-            origin=origin,
-            note=note,
-            preselect=preselect,
-            redactions=redactions,
-            secrets_skipped=skipped,
-        )
-    )
-
-
-def _markdown_files(directory: Path) -> list[Path]:
-    if not directory.is_dir():
-        return []
-    return sorted(p for p in directory.rglob("*.md") if p.is_file())
-
-
 def _scan_instructions(
     base: Path, known: list[Project], seen_files: set[Path], result: ScanResult
 ) -> None:
-    """Your ``CLAUDE.md`` and ``rules/``, then each project's own instruction files."""
+    """Your ``CLAUDE.md`` and ``rules/``, then each project's own instruction files.
+
+    ``seen_files`` makes one file one item: ``~/.claude/CLAUDE.md`` is also the
+    ``.claude/CLAUDE.md`` of the project Claude Code recorded as the home directory itself.
+    """
     top = base / _INSTRUCTION_FILE
     if top.is_file():
-        _text_item(
+        text_item(
+            NAME,
             top,
             result,
             category=ImportCategory.INSTRUCTIONS,
@@ -529,9 +431,10 @@ def _scan_instructions(
             seen_files=seen_files,
         )
     rules = base / _RULES_DIR
-    for path in _markdown_files(rules):
+    for path in markdown_files(rules):
         rel = f"{_RULES_DIR}/{path.relative_to(rules).as_posix()}"
-        _text_item(
+        text_item(
+            NAME,
             path,
             result,
             category=ImportCategory.INSTRUCTIONS,
@@ -546,7 +449,8 @@ def _scan_instructions(
             path = project.local / rel
             if not path.is_file():
                 continue
-            _text_item(
+            text_item(
+                NAME,
                 path,
                 result,
                 category=ImportCategory.INSTRUCTIONS,
@@ -639,57 +543,17 @@ def _scan_memories(base: Path, known: list[Project], result: ScanResult) -> None
 
 
 def _scan_mcp(base: Path, explicit: Path | None, result: ScanResult) -> None:
-    """Every server in every scope (:func:`mcp_servers`), each through floor 2 on its own, so
-    each says how many of its own credentials stay behind — the one a user will re-enter."""
+    """Every server in every scope (:func:`mcp_servers`), definition whole: the MCP writer keeps
+    each ``env`` and ``headers`` value in the credential store, as Tools › Import does."""
     for server in mcp_servers(base, config_path=global_config_path(explicit)):
-        clean, withheld = strip_secrets(server.spec)
-        result.secrets_skipped += withheld
         user = server.scope == SCOPE_USER
         result.items.append(
-            ImportItem(
-                source=NAME,
-                category=ImportCategory.MCP_SERVERS,
+            mcp_item(
+                NAME,
+                server,
                 key=server.name if user else f"{server.scope}:{server.project}:{server.name}",
-                title=server.name,
-                name=server.name,
-                payload=clean,
-                origin=server.origin,
-                note=mcp_note(server),
-                preselect=server.approved,
-                secrets_skipped=withheld,
             )
         )
-
-
-def _scan_skills(base: Path, result: ScanResult) -> None:
-    skills_root = base / _SKILLS_DIR
-    if not skills_root.is_dir():
-        return
-    for skill_dir in sorted(p for p in skills_root.iterdir() if p.is_dir()):
-        if not (skill_dir / "SKILL.md").is_file():
-            continue
-        # Count (and later exclude) any credential file sitting inside the skill.
-        # The writer's fetch applies the same predicate, so a counted file is also
-        # an uninstalled file — the count and the behaviour cannot drift.
-        withheld = sum(1 for f in skill_dir.rglob("*") if f.is_file() and refuses(f))
-        result.secrets_skipped += withheld
-        result.items.append(
-            ImportItem(
-                source=NAME,
-                category=ImportCategory.SKILLS,
-                key=skill_dir.name,
-                title=skill_dir.name,
-                path=str(skill_dir),
-                secrets_skipped=withheld,
-            )
-        )
-
-
-def _slug_name(raw: str, *, lower: bool) -> str:
-    """``raw`` as a destination name: runs of other characters become ``-``."""
-    text = raw.strip().lower() if lower else raw.strip()
-    pattern = r"[^a-z0-9-]+" if lower else r"[^A-Za-z0-9_-]+"
-    return re.sub(pattern, "-", text).strip("-")[:63]
 
 
 def _scan_agents(base: Path, result: ScanResult) -> None:
@@ -698,7 +562,7 @@ def _scan_agents(base: Path, result: ScanResult) -> None:
     from personalclaw.skills.loader import SkillsLoader, parse_frontmatter
 
     agents_root = base / _AGENTS_DIR
-    for path in _markdown_files(agents_root):
+    for path in markdown_files(agents_root):
         text, redactions, skipped = read_text_safely(path)
         result.secrets_skipped += skipped
         if not text.strip():
@@ -725,7 +589,7 @@ def _scan_agents(base: Path, result: ScanResult) -> None:
                 category=ImportCategory.AGENTS,
                 key=f"{_AGENTS_DIR}/{path.relative_to(agents_root).as_posix()}",
                 title=declared,
-                name=_slug_name(declared, lower=True),
+                name=slug_name(declared, lower=True),
                 text=body,
                 payload={"description": meta.get("description", "").strip()},
                 note=note,
@@ -768,14 +632,14 @@ def _scan_commands(base: Path, result: ScanResult) -> None:
     from personalclaw.skills.loader import SkillsLoader, parse_frontmatter
 
     commands_root = base / _COMMANDS_DIR
-    for path in _markdown_files(commands_root):
+    for path in markdown_files(commands_root):
         text, redactions, skipped = read_text_safely(path)
         result.secrets_skipped += skipped
         if not text.strip():
             continue
         meta = parse_frontmatter(text)
         rel = path.relative_to(commands_root)
-        name = _slug_name("-".join((*rel.parent.parts, rel.stem)), lower=False)
+        name = slug_name("-".join((*rel.parent.parts, rel.stem)), lower=False)
         content, variables = command_prompt(
             SkillsLoader.strip_frontmatter(text), argument_hint=meta.get("argument-hint", "")
         )
@@ -837,10 +701,7 @@ def _tool_line(block: dict[str, Any]) -> str:
     for field_name in _TOOL_SUMMARY_FIELDS:
         value = params.get(field_name)
         if isinstance(value, str) and value.strip():
-            summary = " ".join(value.split())
-            if len(summary) > _TOOL_SUMMARY_CHARS:
-                summary = summary[: _TOOL_SUMMARY_CHARS - 1] + "…"
-            return f"{name}: {summary}"
+            return f"{name}: {one_line(value, _TOOL_SUMMARY_CHARS)}"
     return name
 
 
@@ -852,7 +713,7 @@ def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
     was for. Tool OUTPUT is not carried — it is where a transcript is largest and where a pasted
     or printed credential sits — and neither are a subagent's own turns, Claude Code's notices,
     or the summary it writes after compacting (the conversation it summarises is imported
-    whole). Every text passes floor 3. ``None`` for a file with no prompt in it.
+    whole). Every text passes floor 2. ``None`` for a file with no prompt in it.
     """
     if refuses(path):
         return None
@@ -914,9 +775,7 @@ def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
     prompts = [m for m in messages if m["role"] == "user"]
     if not prompts:
         return None
-    title = " ".join((summary or prompts[0]["content"]).split())
-    if len(title) > _TITLE_CHARS:
-        title = title[: _TITLE_CHARS - 1] + "…"
+    title = one_line(summary or prompts[0]["content"], TITLE_CHARS)
     stamps = [m["ts"] for m in messages if m["ts"]]
     conversation = {
         "messages": messages,
@@ -944,7 +803,6 @@ def _scan_conversations(base: Path, known: list[Project], result: ScanResult) ->
                 continue
             conversation, redactions = read
             result.redactions += redactions
-            count = sum(1 for m in conversation["messages"] if m["role"] != "tool")
             result.items.append(
                 ImportItem(
                     source=NAME,
@@ -954,52 +812,88 @@ def _scan_conversations(base: Path, known: list[Project], result: ScanResult) ->
                     name=path.stem,
                     payload=conversation,
                     origin=origin,
-                    note=(
-                        f"{count} message{'' if count == 1 else 's'}. Tool calls come over by "
-                        "name; their output does not."
-                    ),
+                    note=conversation_note(conversation["messages"]),
                     redactions=redactions,
                 )
             )
 
 
+#: A Bash permission rule, ``Bash(<command>)`` — or ``Bash`` alone, which is every command.
+_BASH_RULE_RE = re.compile(r"^Bash(?:\((?P<command>.*)\))?$", re.DOTALL)
+#: How a rule's command says "and anything after it": ``Bash(npm run test:*)``, ``Bash(ls *)``.
+_ANY_AFTER = (":*", " *")
+#: The permission lists a rule can be in, and ``settings.json``'s keys that are not options.
+_RULE_LISTS = ("deny", "ask", "allow")
+_NOT_OPTIONS = frozenset({"$schema", "permissions"})
+
+
+def _refused_command_words(command: str) -> tuple[str, ...] | None:
+    """The words a ``Bash(<command>)`` deny rule refuses every command starting with, or
+    ``None`` when a wildcard anywhere but the end leaves no such words (``Bash(git * main)``,
+    ``Bash``)."""
+    for suffix in _ANY_AFTER:
+        if command.endswith(suffix):
+            command = command[: -len(suffix)]
+            break
+    words = tuple(command.split())
+    if not words or any("*" in word for word in words):
+        return None
+    return words
+
+
 def _scan_settings(base: Path, result: ScanResult) -> None:
+    """``settings.json``. A command Claude Code refuses (``permissions.deny``, ``Bash(…)``)
+    becomes one PersonalClaw refuses: a shell-denylist item. Its other rules and its own options
+    are counted and named, and no value in them becomes a setting here."""
     path = base / _SETTINGS_FILE
     if not path.is_file():
         return
-    data, skipped = read_json_safely(path)
-    result.secrets_skipped += skipped
-    if not isinstance(data, dict) or not data:
+    if refuses(path):
+        result.secrets_skipped += 1
         return
-    result.items.append(
-        ImportItem(
-            source=NAME,
-            category=ImportCategory.SETTINGS,
-            key=_SETTINGS_FILE,
-            title=f"{DISPLAY_NAME} settings",
-            payload=data,
-            secrets_skipped=skipped,
-        )
-    )
-
-
-def _scan_not_imported(base: Path, result: ScanResult) -> None:
-    """What Claude Code keeps that has no place here — counted, so the step can say so."""
-    history = base / _HISTORY_FILE
-    if history.is_file() and not refuses(history):
-        try:
-            with history.open(encoding="utf-8", errors="replace") as handle:
-                count = sum(1 for line in handle if line.strip())
-        except OSError:
-            count = 0
-        if count:
-            result.not_imported.append(
-                NotImported(
-                    what="Prompt history",
-                    count=count,
-                    why=(
-                        "PersonalClaw keeps no separate list of past prompts. The prompts in "
-                        "your conversations come over with them."
-                    ),
-                )
+    settings = _read_json_document(path)
+    permissions = settings.get("permissions")
+    permissions = permissions if isinstance(permissions, dict) else {}
+    counted = {"ask": 0, "allow": 0, "wildcard": 0, "other": 0}
+    for decision in _RULE_LISTS:
+        rules = permissions.get(decision)
+        for rule in rules if isinstance(rules, list) else []:
+            match = _BASH_RULE_RE.match(rule.strip()) if isinstance(rule, str) else None
+            if match is None:
+                counted["other"] += 1
+                continue
+            if decision != "deny":
+                counted[decision] += 1
+                continue
+            words = _refused_command_words(match["command"] or "")
+            if words is None:
+                counted["wildcard"] += 1
+                continue
+            denied_command_item(
+                NAME,
+                result,
+                key=f"{_SETTINGS_FILE}:permissions.deny:{rule.strip()}",
+                pattern=tuple((word,) for word in words),
             )
+    not_imported_rows(
+        result,
+        [
+            (counted["ask"], *RULES_THAT_ASK),
+            (counted["allow"], *RULES_THAT_ALLOW),
+            (
+                counted["wildcard"],
+                "Refused commands with wildcards",
+                "A refused command comes over as the words it starts with. These rules use a "
+                "wildcard instead, so they stay in Claude Code.",
+            ),
+            (
+                counted["other"],
+                "Other permission rules",
+                "They are about files, websites and tools. This import brings over only the "
+                "commands Claude Code refuses.",
+            ),
+        ],
+    )
+    names = [str(key) for key in settings if key not in _NOT_OPTIONS]
+    names += [f"permissions.{key}" for key in permissions if key not in _RULE_LISTS]
+    settings_not_imported(result, DISPLAY_NAME, names)

@@ -272,6 +272,12 @@ WF_ERROR_CODES: dict[str, str] = {
         "saved the value is on disk. Use `{{secret:KEY}}`."
     ),
     "WF_DEF_INVALID": "The submitted spec did not pass validation, so it was not saved.",
+    "WF_HIDDEN_VALUE_UNMATCHED": (
+        "A `_has_<key>` presence flag — how a read stands in for a value it hides — has nothing "
+        "to restore it from: the definition the save was edited from holds no value at that "
+        "step and place. Reported as a validation issue at the step, so the save is refused "
+        "rather than writing the flag to disk as a field."
+    ),
     "WF_DEF_NO_WRITABLE_PROVIDER": (
         "No writable workflow-definition provider is registered, so there is nowhere to save."
     ),

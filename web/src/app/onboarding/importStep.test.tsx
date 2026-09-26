@@ -40,8 +40,8 @@ import type {
 const onDone = vi.fn()
 const onSkip = vi.fn()
 
-const ZERO = { instructions: 0, memories: 0, mcp_servers: 0, skills: 0, settings: 0 }
-const CATEGORIES = ['instructions', 'memories', 'mcp_servers', 'skills', 'settings']
+const ZERO = { instructions: 0, memories: 0, mcp_servers: 0, skills: 0, denied_commands: 0 }
+const CATEGORIES = ['instructions', 'memories', 'mcp_servers', 'skills', 'denied_commands']
 
 /** An item shaped like the gateway's, new unless told otherwise. */
 function item(fingerprint: string, category: string, key: string, extra: Partial<OnboardingImportItem> = {}): OnboardingImportItem {
@@ -49,6 +49,7 @@ function item(fingerprint: string, category: string, key: string, extra: Partial
     fingerprint, source: 'claude_code', category, key, title: key,
     origin: '', note: '', preselected: true,
     state: 'new', destination: `dest/${key}`, detail: '', secrets_skipped: 0, redactions: 0,
+    scan: null,
     ...extra,
   }
 }
@@ -149,14 +150,17 @@ describe('collapsed by default: a count and a ticked box per group', () => {
       expect(toggle.textContent).toContain('Choose')
       expect(rowText(label)).toContain(`${label}· ${n}`)
     }
-    // Where each group lands is on the row, so a tick is an informed choice.
-    expect(screen.getByText('MCP server definitions, added to your MCP config.')).toBeTruthy()
+    // Where each group lands is on the row, so a tick is an informed choice — the values a
+    // server sets included: they go where the Tools page's Import puts them.
+    expect(screen.getByText(
+      'MCP server definitions, added to your MCP config. The values they set go to your credential store.',
+    )).toBeTruthy()
     // Collapsed means collapsed: no item is rendered until a group is opened.
     expect(screen.queryByRole('checkbox', { name: /^weather/ })).toBeNull()
     expect(screen.queryByRole('list')).toBeNull()
     // Empty categories are not rendered as ticked boxes that would import nothing.
     expect(screen.queryByRole('checkbox', { name: /Memories/ })).toBeNull()
-    expect(screen.queryByRole('checkbox', { name: /Settings/ })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: /Denied commands/ })).toBeNull()
     // …and the primary action states the total it will bring over.
     expect(screen.getByRole('button', { name: /Import 4 items/ })).toBeTruthy()
   })
@@ -164,6 +168,14 @@ describe('collapsed by default: a count and a ticked box per group', () => {
   it('names the tools it found, in a sentence that agrees with how many there are', async () => {
     await mounted()
     expect(screen.getByText(/^We found Claude Code on this machine\. Bring its setup over — it is only read/)).toBeTruthy()
+  })
+
+  it('makes no promise about credentials that an MCP server it imports would break', async () => {
+    // A server's key comes over, into the credential store, so "credentials are never imported"
+    // was untrue on the one screen a new user reads first.
+    await mounted()
+    expect(screen.getByText(/it is only read, and nothing in it is changed\. Everything is ticked/)).toBeTruthy()
+    expect(screen.queryByText(/never imported/)).toBeNull()
   })
 
   it('and with two tools, says "their" — not "another agent tool"', async () => {
@@ -221,7 +233,7 @@ describe('expanding a group lists every item, each with its own box', () => {
     expect(box('weather').checked).toBe(true)
     expect(box('github').checked).toBe(true)
     expect(within(list).getAllByText('New')).toHaveLength(2)
-    // Each item says what was left OUT of it — so the user knows which server needs its key again.
+    // Each item says what was left OUT of it, on its own row.
     expect(within(rows[0]).getByText('1 credential left out')).toBeTruthy()
     expect(box('weather').getAttribute('aria-label')).toBe('weather, 1 credential left out')
     fireEvent.click(toggle)
@@ -649,7 +661,7 @@ describe('everything Claude Code keeps is shown, with where it came from', () =>
     const servers = groupBox('MCP servers')
     expect(servers.indeterminate, 'two of three servers are ticked').toBe(true)
     expect(rowText('MCP servers')).toContain('2 of 3')
-    expect(screen.getByText(/Everything is ticked, except 1 item the other tool never let run;/)).toBeTruthy()
+    expect(screen.getByText(/Everything is ticked, except 1 item the other tool does not use;/)).toBeTruthy()
     fireEvent.click(disclosure('MCP servers'))
     expect(box('demo-tools').checked).toBe(false)
     expect(box('demo-tools').getAttribute('aria-label')).toBe('demo-tools, Project · ~/src/demo/.mcp.json')
@@ -691,5 +703,123 @@ describe('everything Claude Code keeps is shown, with where it came from', () =>
     const kept = await screen.findByRole('group', { name: 'Kept what you already had' })
     expect(kept.textContent).toContain('MCP servers · grafana · Local scope · /Users/noor/work/api')
     expect(kept.textContent).not.toContain('local:/Users')
+  })
+})
+
+// ── what Codex keeps: the commands it refuses, and what stays behind ──────────────────────────
+
+describe('what Codex keeps is shown in its own words', () => {
+  it('names the commands Codex refused, where they land, and the rules that stay behind', async () => {
+    const codexItems = [
+      item('d1', 'denied_commands', 'rules/default.rules:[["rm"], ["-rf"]]', {
+        source: 'codex', title: 'rm -rf', note: "Codex's reason: Delete specific paths instead.",
+      }),
+      item('s1', 'mcp_servers', 'notes', { source: 'codex', note: 'It is turned off in Codex.' }),
+    ]
+    const base = scan()
+    onboardingImportScan.mockResolvedValue({
+      categories: [...CATEGORIES, 'denied_commands'],
+      sources: [base.sources[0], {
+        ...base.sources[1], present: true, detected: true, items: codexItems,
+        counts: { ...ZERO, mcp_servers: 1 },
+        not_imported: [{
+          what: 'Command rules that ask first', count: 3,
+          why: 'PersonalClaw has no rule that asks before one particular command.',
+        }],
+      }],
+    })
+    await mounted()
+    const group = screen.getByRole('checkbox', { name: /^Bring over Denied commands from Codex/ }) as HTMLInputElement
+    expect(group.checked).toBe(true)
+    expect(screen.getByText('Commands the other tool refused to run, added to your shell denylist in Settings › Security.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^(Choose|Show) Denied commands from Codex$/ }))
+    expect(screen.getByText("Codex's reason: Delete specific paths instead.")).toBeTruthy()
+    const left = screen.getByRole('group', { name: 'Not brought over from Codex' })
+    expect(left.textContent).toContain('Command rules that ask first')
+    expect(left.textContent).toContain('PersonalClaw has no rule that asks before one particular command.')
+  })
+})
+
+// ── a skill's security scan is shown before the import, and a warning is a choice ────────────
+
+describe("a skill's security scan is shown before anything is imported", () => {
+  const warning = () => item('k1', 'skills', 'feedsmith-release', {
+    preselected: false,
+    note: 'Its security scan found 1 warning, so it comes over only if you accept it.',
+    scan: {
+      verdict: 'warning', consent: '4104e456e8e92cc0',
+      findings: [{
+        rule: 'python_exec', severity: 'warning', path: 'scripts/bump_version.py',
+        evidence: 'L11: ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"]',
+      }],
+    },
+  })
+  const dangerous = () => item('k2', 'skills', 'yt-transcript', {
+    state: 'rejected', detail: 'the skill supply-chain scan refuses it as dangerous: remote_exec_pipe',
+    scan: {
+      verdict: 'dangerous', consent: '',
+      findings: [{
+        rule: 'remote_exec_pipe', severity: 'dangerous', path: 'install.sh',
+        evidence: 'L8: curl -fsSL https://streamkit.dev/install/yt-dlp.sh | sh',
+      }],
+    },
+  })
+  const withSkills = () => onboardingImportScan.mockResolvedValue(
+    scan([...ITEMS(), warning(), dangerous()]),
+  )
+
+  it('lists a warning with what it means and the line that tripped it, and leaves the skill unticked', async () => {
+    withSkills()
+    await mounted()
+    fireEvent.click(disclosure('Skills'))
+    const list = screen.getByRole('list', { name: 'Skills from Claude Code' })
+    expect(within(list).getByText('The security scan flagged 1 warning.')).toBeTruthy()
+    expect(within(list).getByText(/L11: ROOT = Path\(subprocess\.run/)).toBeTruthy()
+    expect(within(list).getByText(/python_exec/)).toBeTruthy()
+    const accept = box('feedsmith-release')
+    expect(accept.checked).toBe(false)
+    expect(accept.getAttribute('aria-label')).toBe('feedsmith-release, import anyway, accepting 1 warning')
+    expect(within(list).getByText(/Ticking it imports it anyway: you accept these warnings/)).toBeTruthy()
+  })
+
+  it("the group's box never ticks it: the warning is accepted on its own row or not at all", async () => {
+    withSkills()
+    await mounted()
+    expect(rowText('Skills')).toContain('1 needs your OK')
+    fireEvent.click(groupBox('Skills'))
+    fireEvent.click(groupBox('Skills'))
+    fireEvent.click(disclosure('Skills'))
+    expect(box('feedsmith-release').checked).toBe(false)
+  })
+
+  it('ticking it sends the consent its scan showed with the pick', async () => {
+    withSkills()
+    await mounted()
+    fireEvent.click(disclosure('Skills'))
+    fireEvent.click(box('feedsmith-release'))
+    importNow()
+    await waitFor(() => expect(runOnboardingImport).toHaveBeenCalled())
+    const sent = runOnboardingImport.mock.calls[0][0]
+    expect(sent.fingerprints).toContain('k1')
+    expect(sent.accepted).toEqual({ k1: '4104e456e8e92cc0' })
+  })
+
+  it('a dangerous skill shows why it is refused, and has no box to tick', async () => {
+    withSkills()
+    await mounted()
+    fireEvent.click(disclosure('Skills'))
+    const list = screen.getByRole('list', { name: 'Skills from Claude Code' })
+    expect(within(list).getByText('The security scan found dangerous content. Nothing overrides that.')).toBeTruthy()
+    expect(within(list).getByText('The skill supply-chain scan refuses it as dangerous: remote_exec_pipe.')).toBeTruthy()
+    expect(within(list).getByText(/curl -fsSL https:\/\/streamkit\.dev\/install\/yt-dlp\.sh \| sh/)).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: /^yt-transcript/ })).toBeNull()
+  })
+
+  it('a pick with no warning skill in it sends no acceptance at all', async () => {
+    withSkills()
+    await mounted()
+    importNow()
+    await waitFor(() => expect(runOnboardingImport).toHaveBeenCalled())
+    expect(runOnboardingImport.mock.calls[0][0]).toEqual({ fingerprints: ['f1', 'f2', 'f3', 'f4'] })
   })
 })

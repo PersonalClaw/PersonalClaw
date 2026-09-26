@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **857 registrations** over **694 distinct paths** — 850 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **865 registrations** over **699 distinct paths** — 858 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -27,23 +27,24 @@ The 127 families the surface divides into, largest first.
 | `/api/chat` | 78 | 66 |
 | `/api/knowledge` | 72 | 59 |
 | `/api/memory` | 49 | 41 |
-| `/api/workflows` | 44 | 39 |
+| `/api/workflows` | 45 | 40 |
 | `/api/models` | 34 | 28 |
 | `/api/artifacts` | 25 | 16 |
 | `/api/apps` | 23 | 15 |
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
 | `/api/skills` | 19 | 15 |
+| `/api/mcp` | 18 | 14 |
+| `/api/triggers` | 18 | 15 |
 | `/api/voice` | 17 | 11 |
-| `/api/triggers` | 16 | 14 |
-| `/api/mcp` | 15 | 12 |
 | `/api/projects` | 14 | 10 |
-| `/api/providers` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
 | `/api/packs` | 13 | 13 |
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
+| `/api/providers` | 12 | 8 |
+| `/api/channels` | 11 | 10 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
@@ -53,10 +54,9 @@ The 127 families the surface divides into, largest first.
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
+| `/api/security` | 9 | 9 |
 | `/api/agent-marketplace` | 8 | 5 |
-| `/api/channels` | 8 | 8 |
 | `/api/onboarding` | 8 | 7 |
-| `/api/security` | 8 | 8 |
 | `/api/auth` | 7 | 7 |
 | `/api/browse` | 7 | 5 |
 | `/api/config` | 6 | 3 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -198,7 +198,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/apps/local-sources` | add a local app-source dir ``{path}`` (a |
 | `GET` | `/api/apps/message` | drain THIS app's inbox (read-once). |
 | `POST` | `/api/apps/message` | send a typed message ``{to, type, payload}`` to |
-| `POST` | `/api/apps/preview` | review ``{source, name?}`` before anything is installed. |
+| `POST` | `/api/apps/preview` | review ``{source, name?, listedBy?}`` before anything is installed. |
 | `DELETE` | `/api/apps/sources` | remove a user git source URL. |
 | `GET` | `/api/apps/sources` | the configured git source URLs (defaults + user). |
 | `POST` | `/api/apps/sources` | add a user git source URL ``{url}``. |
@@ -206,8 +206,8 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/apps/{name}` | full manifest + status + saved config. |
 | `POST` | `/api/apps/{name}/agent-run` | start a background agent task. |
 | `GET` | `/api/apps/{name}/agent-run/{run_id}` | poll a background agent task. |
-| `GET` | `/api/apps/{name}/config` | _(no summary)_ |
-| `PUT` | `/api/apps/{name}/config` | _(no summary)_ |
+| `GET` | `/api/apps/{name}/config` | an app's settings, with its credentials masked. |
+| `PUT` | `/api/apps/{name}/config` | save an app's settings, and apply them to its providers. |
 | `POST` | `/api/apps/{name}/disable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/enable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/token` | mint an app-scoped identity token. |
@@ -274,6 +274,9 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/channels/{name}` | one transport's info + health. |
 | `POST` | `/api/channels/{name}/connect` | bring the transport online. |
 | `POST` | `/api/channels/{name}/disconnect` | take the transport offline. |
+| `GET` | `/api/channels/{name}/owner` | the channel's owner and its pairing state. |
+| `DELETE` | `/api/channels/{name}/owner/pairing` | cancel the outstanding owner code. |
+| `POST` | `/api/channels/{name}/owner/pairing` | mint the owner's code and return it once. |
 | `POST` | `/api/channels/{name}/test` | active probe (e.g. Slack auth.test). |
 | `POST` | `/api/chat` | send message to a session, stream response via SSE. |
 | `GET` | `/api/chat/folders` | list all project folders. |
@@ -310,7 +313,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/fork` | fork session into a new tab. |
 | `POST` | `/api/chat/sessions/{session}/fork-rewound` | restore a rewind tail as a fork. |
 | `POST` | `/api/chat/sessions/{session}/generate-title` | manually trigger title generation. |
-| `POST` | `/api/chat/sessions/{session}/handoff` | hand off session to channel DM thread. |
+| `POST` | `/api/chat/sessions/{session}/handoff` | continue a chat in a channel thread. |
 | `POST` | `/api/chat/sessions/{session}/interrupt` | stop the turn, KEEP the queue. |
 | `PATCH` | `/api/chat/sessions/{session}/lifecycle` | archive/restore one session. |
 | `GET` | `/api/chat/sessions/{session}/map` | the durable session-map marks. |
@@ -608,6 +611,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/mcp/active` | return MCP servers for the current agent. |
 | `POST` | `/api/mcp/apply` | batched per-scope apply for MCP servers. |
 | `GET` | `/api/mcp/importable` | MCP servers configured in an external backend |
+| `GET` | `/api/mcp/oauth/callback` | where an authorization server sends the browser back to. |
 | `GET` | `/api/mcp/pool-stats` | the in-process MCP connection-pool observability tile |
 | `GET` | `/api/mcp/probe` | return cached probe results (non-blocking). |
 | `POST` | `/api/mcp/probe` | probe all MCP servers and return live status. |
@@ -615,6 +619,8 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `GET` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `PUT` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
+| `DELETE` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
+| `POST` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
 | `POST` | `/api/mcp/sync` | apply MCP config changes and restart sessions. |
 | `POST` | `/api/mcp/toggle` | enable or disable an MCP server globally. |
 | `POST` | `/api/mcp/toggle-all` | enable or disable all MCP servers. |
@@ -788,8 +794,6 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/providers/{name}/availability` | measure again whether it can run here. |
 | `GET` | `/api/providers/{name}/config` | _(no summary)_ |
 | `PATCH` | `/api/providers/{name}/config` | _(no summary)_ |
-| `POST` | `/api/providers/{name}/disable` | _(no summary)_ |
-| `POST` | `/api/providers/{name}/enable` | _(no summary)_ |
 | `GET` | `/api/providers/{name}/instances` | _(no summary)_ |
 | `POST` | `/api/providers/{name}/instances` | _(no summary)_ |
 | `DELETE` | `/api/providers/{name}/instances/{id}` | _(no summary)_ |
@@ -830,6 +834,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/security/credentials/rollback` | restore the pre-migration ``.env``. |
 | `GET` | `/api/security/denied-commands` | the bash denylist for the Security panel. |
 | `GET` | `/api/security/egress` | the operator's outbound-egress overrides for the |
+| `GET` | `/api/security/outside-home` | the places outside the home it may be allowed to read. |
 | `GET` | `/api/security/stats` | live security feature counts. |
 | `POST` | `/api/sel/rotate` | archive existing SEL log and start a fresh chain. |
 | `POST` | `/api/send-message` | deliver a message to the messaging channel and/or dashboard. |
@@ -856,7 +861,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/skills/ephemeral/{session}` | the session-live drafts awaiting a |
 | `POST` | `/api/skills/ephemeral/{session}/promote` | promote ONE draft to a tier. |
 | `DELETE` | `/api/skills/ephemeral/{session}/{slug}` | forget one draft, or |
-| `POST` | `/api/skills/install` | install a skill from a marketplace. |
+| `POST` | `/api/skills/install` | install a skill from a marketplace into the home. |
 | `GET` | `/api/skills/marketplace/detail` | _(no summary)_ |
 | `GET` | `/api/skills/marketplaces` | list registered skill marketplaces. |
 | `POST` | `/api/skills/overlay/revert` | drop a skill's accepted-refinement overlay. |
@@ -865,7 +870,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/skills/proposals/{id}` | full proposal incl. procedure + fenced source. |
 | `POST` | `/api/skills/proposals/{id}/accept` | install into the live auto/ tier |
 | `GET` | `/api/skills/search` | search across all registered skill providers. |
-| `DELETE` | `/api/skills/{name}` | remove a locally installed skill. |
+| `DELETE` | `/api/skills/{name}` | remove a skill installed in the home. |
 | `GET` | `/api/skills/{name}` | get or update a skill. (Listing is served by |
 | `PUT` | `/api/skills/{name}` | get or update a skill. (Listing is served by |
 | `GET` | `/api/skills/{name}/files` | provider-backed file browser. |
@@ -921,6 +926,8 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers` | create a schedule, lifecycle or data-event trigger. |
 | `GET` | `/api/triggers/doctor` | structural problems across every trigger (§7 criterion 12). |
 | `GET` | `/api/triggers/history` | the run feed across every kind (AUTO crit 4). |
+| `GET` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
+| `POST` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
 | `GET` | `/api/triggers/variables` | the ``$variables`` each trigger kind exposes. |
 | `POST` | `/api/triggers/view/render` | the `view` kind's production render caller (WF2AUT-6). |
 | `GET` | `/api/triggers/week` | the week-grid projection, from `?start=` (AUTO-A1 — S70). |
@@ -1008,6 +1015,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/{name}/versions` | the monotonic version history + pin + maturity. |
 | `GET` | `/api/workflows/{name}/versions/diff` | the typed-op diff between two versions. |
 | `POST` | `/api/workflows/{name}/versions/repin` | {version} — rollback / re-pin the active version. |
+| `GET` | `/api/workflows/{name}/versions/{version}` | one recorded version's full definition. |
 
 ## Websocket and internal routes
 

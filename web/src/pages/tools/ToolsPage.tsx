@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
-import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, Pencil } from 'lucide-react'
+import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -17,11 +17,12 @@ import { TextLink } from '../../ui/TextLink'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { reportingWrite } from '../../app/reportingWrite'
+import { copyText } from '../../app/clipboard'
 import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { readableErrText } from '../../lib/errText'
-import { api, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
+import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
 import { STORED_VALUE_MASK, buildMcpEdit, buildMcpEnv, buildMcpHeaderEdit, buildMcpHeaders, envFormFields, formatArgs, headerFormText, parseArgs } from './mcpServerEnv'
@@ -66,8 +67,19 @@ export function serverHealth(s: McpServer): { state: string; tone: string; detai
   if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
   if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
   if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
+  if (s.status === 'signin') return { state: 'sign-in needed', tone: 'var(--color-warn)', detail: s.error }
   return { state: s.status || 'unknown', tone: 'var(--color-warn)', detail: s.error }
 }
+
+/** How long the page keeps looking for a sign-in to finish in the other tab before it stops. */
+const SIGN_IN_WAIT_MS = 5 * 60_000
+/** How often it looks. The callback re-probes the server itself, so a look finds it ready. */
+const SIGN_IN_POLL_MS = 2_000
+
+/** A sign-in the owner started from this page and is finishing in another tab. */
+interface PendingSignIn { name: string; url: string; since: number }
+/** An authorization server that does not let PersonalClaw register itself: the app to register. */
+interface ClientPrompt extends McpSignInClientNeeded { server: string; message: string }
 
 interface ToolsIndexData {
   tools: ToolItem[]
@@ -200,6 +212,63 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     try { await api.reconnectMcp(s.name) } catch { /* status surfaces on reload */ }
     finally { setReconnecting(null); load() }
   }
+
+  // Sign in to a server at a URL with OAuth. The authorization server's page opens in a tab of its
+  // own, opened HERE, inside the click: a tab opened after an `await` is a popup the browser blocks.
+  // It is cut off from this page (`opener = null`) before it is pointed anywhere, so the page it
+  // shows can never reach back into the dashboard. The gateway's callback finishes the sign-in, and
+  // this page looks for it (`pendingSignIn`) until the server reads signed in.
+  const [pendingSignIn, setPendingSignIn] = useState<PendingSignIn | null>(null)
+  const [clientPrompt, setClientPrompt] = useState<ClientPrompt | null>(null)
+  async function signIn(s: McpServer, client?: { clientId: string; clientSecret?: string }): Promise<boolean> {
+    const tab = window.open('', '_blank')
+    if (tab) tab.opener = null
+    try {
+      const started = await api.startMcpSignIn(s.name, client)
+      if (tab) tab.location.href = started.authorizationUrl
+      setClientPrompt(null)
+      setPendingSignIn({ name: s.name, url: started.authorizationUrl, since: Date.now() })
+      return true
+    } catch (e) {
+      tab?.close()
+      if (hasApiCode(e, 'mcp_sign_in_needs_client_id') && e instanceof ApiError) {
+        const need = e.detail as McpSignInClientNeeded | undefined
+        if (need?.redirectUri) {
+          setClientPrompt({ server: s.name, message: e.message, redirectUri: need.redirectUri, issuer: need.issuer })
+          return false
+        }
+      }
+      notify(`Couldn't start signing in to "${s.name}": ${readableErrText(e) || 'the gateway did not answer'}`, 'error')
+      return false
+    }
+  }
+
+  async function signOut(s: McpServer) {
+    if (!(await confirm({
+      title: `Sign out of "${s.name}"?`,
+      body: 'PersonalClaw deletes the tokens it holds for this server, and its tools stop working until you sign in again. '
+        + 'Your account there may still list PersonalClaw as allowed; remove it there to take the access back.',
+      confirmLabel: 'Sign out',
+    }))) return
+    const ok = await reportingWrite(`sign out of "${s.name}"`, () => api.signOutMcp(s.name))
+    if (ok) { setPendingSignIn(null); setTimeout(load, 400) }
+  }
+
+  // While a sign-in is finishing in the other tab, look again every few seconds and when this tab
+  // regains focus, until the server reads signed in (then say so) or the wait runs out.
+  useEffect(() => {
+    if (!pendingSignIn) return
+    const done = servers.find((sv) => sv.name === pendingSignIn.name)?.auth?.state === 'signed_in'
+    if (done) {
+      notify(`Signed in to "${pendingSignIn.name}".`, 'success')
+      setPendingSignIn(null)
+      return
+    }
+    if (Date.now() - pendingSignIn.since > SIGN_IN_WAIT_MS) { setPendingSignIn(null); return }
+    const timer = window.setInterval(load, SIGN_IN_POLL_MS)
+    window.addEventListener('focus', load)
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', load) }
+  }, [pendingSignIn, servers])
 
   async function removeServer(s: McpServer) {
     // The body names the whole blast radius: the delete takes the server out of mcp.json AND the
@@ -369,7 +438,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
-              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} />)}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} />)}
               {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
             </div>
           )}
@@ -377,6 +446,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
         {addOpen && <AddToolServerModal onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); setTimeout(load, 300) }} />}
         {editing && <EditToolServerModal name={editing} onClose={() => setEditing('')} onSaved={() => { setEditing(''); setTimeout(load, 300) }} />}
+        {clientPrompt && <SignInClientModal prompt={clientPrompt} onClose={() => setClientPrompt(null)}
+          onSubmit={(client) => { const sv = servers.find((x) => x.name === clientPrompt.server); return sv ? signIn(sv, client) : Promise.resolve(false) }} />}
       </>
     </WorkbenchLayout>
   )
@@ -463,8 +534,9 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
   return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
 }
 
-function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void }) {
+function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, onSignIn, onSignOut, pendingSignIn }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null }) {
   const health = g.server ? serverHealth(g.server) : null
+  const signInState = g.server?.auth?.state
   // A native provider (not the locked platform one) gets a whole-provider toggle.
   const nativeToggleable = g.kind === 'native' && !g.providerLocked
   const badge = g.kind === 'native' ? providerBadge(g) : null
@@ -476,6 +548,12 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
         {g.kind === 'native'
           ? badge && <span data-type="caption" title={badge.title} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">{badge.label}</span>
           : health && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
+        {signInState === 'signed_in' && (
+          <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center gap-1 text-on-surface-low"
+            title="Signed in with OAuth. PersonalClaw renews the sign-in by itself, and says so here if it ends.">
+            <KeyRound size={11} /> signed in
+          </span>
+        )}
         <span data-type="caption" className="text-on-surface-low">· {g.tools.length}</span>
         {/* Which activation GROUP these tools belong to (Context Economy §5) — the
             page already groups by provider, which IS the group grain, so this just
@@ -517,6 +595,10 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
               on={!!elicitationGranted} iconSize={13} onClick={() => onToggleElicitation(g.server!)}>
               <MessageCircleQuestion size={13} />
             </SquareIconButton>
+            {signInState === 'signed_in' && (
+              <SquareIconButton icon={LogOut} iconSize={13} label={`Sign out of ${g.server.name}`}
+                title="Sign out: PersonalClaw deletes the tokens it holds for this server" onClick={() => onSignOut(g.server!)} />
+            )}
             {/* Reconnect just THIS server (re-probe) — recover a timed-out/errored
                 provider without re-probing all. Spins while in flight. */}
             <SquareIconButton label={`Reconnect ${g.server.name}`} title="Reconnect this server"
@@ -559,6 +641,28 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
       {/* The header's state is a caption with its reason in a `title`, which a touch screen never
           shows. "Why can't an agent use this, and what do I do" is the one state whose answer is
           an action, so it is said in the page, with the way to take it. */}
+      {/* A server that will not connect until its owner signs in says so in the page, with the one
+          action that answers it — the same reason the "no agent can call it" line below is not a
+          caption `title`. While a sign-in is finishing in the other tab, the line says that instead,
+          with the page to open again in case the browser blocked the tab. */}
+      {g.server?.enabled && (signInState === 'required' || signInState === 'signed_out') && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex flex-wrap items-center gap-s">
+          <KeyRound size={14} className="shrink-0" />
+          {pendingSignIn ? (<>
+            <span className="min-w-0 flex-1">
+              Finish signing in to <span className="text-on-surface">{g.server.name}</span> in the tab that opened. This page updates when you are done.
+            </span>
+            <TextLink href={pendingSignIn.url} external ink="emphasis" className="underline">Open the sign-in page</TextLink>
+          </>) : (<>
+            <span className="min-w-0 flex-1">
+              {signInState === 'required'
+                ? <><span className="text-on-surface">{g.server.name}</span> asks you to sign in before its tools can be used.</>
+                : <>You are signed out of <span className="text-on-surface">{g.server.name}</span>. Its tools cannot be used until you sign in again.</>}
+            </span>
+            <Button size="sm" onClick={() => onSignIn(g.server!)}>{signInState === 'required' ? 'Sign in' : 'Sign in again'}</Button>
+          </>)}
+        </div>
+      )}
       {g.server?.enabled && g.server.status === 'unserved' && (
         <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
           <Plug size={14} className="shrink-0" />
@@ -583,7 +687,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
       {g.kind === 'mcp' && g.tools.length === 0 ? (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
           <Plug size={14} />
-          {!g.server?.enabled ? 'Server disabled.' : health?.state === 'error' ? `Not responding — ${g.server?.error || 'no tools available'}.` : 'No tools exposed yet.'}
+          {!g.server?.enabled ? 'Server disabled.' : health?.state === 'error' ? `Not responding — ${g.server?.error || 'no tools available'}.` : signInState && signInState !== 'signed_in' ? 'Its tools show here once you sign in.' : 'No tools exposed yet.'}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-s sm:grid-cols-2">
@@ -744,11 +848,11 @@ function importedValues(s: ImportableMcpServer): string {
   return said.charAt(0).toUpperCase() + said.slice(1)
 }
 
-/** Collapsed "Discovered in <backend>" list — MCP servers configured in an
- *  external backend (Claude Code) but not yet in PersonalClaw, from every scope it keeps them in:
- *  yours everywhere, yours in one project, and a project's own `.mcp.json`. Importing one
- *  copies its spec into ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and
- *  imported by its `id`, because two scopes can hold a server of the same name. */
+/** Collapsed "Discovered in other tools" list — MCP servers configured in another tool (Claude
+ *  Code, Codex) but not yet in PersonalClaw, from every scope it keeps them in: yours everywhere,
+ *  yours in one project, and a project's own `.mcp.json`. Importing one copies its spec into
+ *  ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and imported by its
+ *  `id`, because two scopes (or two tools) can hold a server of the same name. */
 function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServer[]; onImported: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -786,9 +890,10 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{s.backend}</span>
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low" title={TRANSPORT_HINT}>{transportLabel(s.transport)}</span>
                   </div>
-                  {/* Which of the backend's scopes it is in: yours everywhere, yours in one project,
-                      or a project's own file. Two rows of one name differ only here. */}
-                  <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={s.origin}>{s.origin}</p>
+                  {/* Which of the tool's scopes it is in: yours everywhere, yours in one project,
+                      or a project's own file. Empty for a tool with one place for them (Codex's
+                      config.toml), where the backend pill already says it all. */}
+                  {s.origin && <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={s.origin}>{s.origin}</p>}
                   {/* The server line is a URL or a command line — the most tail-heavy string on the
                       surface, and the half that says WHICH server this is. It did not clip with this
                       seed's data, but it truncates by the same rule and a `title` costs nothing; the
@@ -1082,3 +1187,48 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
 // `claimsFieldLabel` was false and no `ariaLabel` was passed either — measured on the live DOM,
 // all seven inputs in this modal had `aria-label: null`, `aria-labelledby: null`, `name: null`.
 // A placeholder is not an accessible name.
+
+/** The host of `url`, or `''` when it is not a URL. */
+function hostOf(url: string): string {
+  try { return new URL(url).host } catch { return '' }
+}
+
+/** An authorization server that does not let PersonalClaw register itself: the owner registers an
+ *  app there, with the redirect URL shown here, and types its client ID (and secret, if it gave one).
+ *  The secret goes to the gateway with the sign-in and is kept in the credential store once it is done. */
+function SignInClientModal({ prompt, onClose, onSubmit }: { prompt: ClientPrompt; onClose: () => void; onSubmit: (client: { clientId: string; clientSecret?: string }) => Promise<boolean> }) {
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await onSubmit({ clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}) })
+    } finally { setBusy(false) }
+  }
+  return (
+    <Modal title={`Sign in to ${prompt.server}`} icon={<KeyRound size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        <p data-type="body-s" className="text-on-surface-low">{prompt.message}</p>
+        <Field label="Redirect URL" hint="Give this address to the app you register, as its redirect (or callback) URL.">
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-md bg-surface-high px-2 py-1.5 font-mono text-[0.8125rem] text-on-surface" title={prompt.redirectUri}>{prompt.redirectUri}</code>
+            <SquareIconButton icon={Copy} iconSize={13} label="Copy the redirect URL" title="Copy the redirect URL"
+              onClick={() => { void copyText(prompt.redirectUri, 'the redirect URL') }} />
+          </div>
+        </Field>
+        <Field label="Client ID" hint={`The ID ${hostOf(prompt.issuer) || 'the authorization server'} gave the app you registered.`}>
+          <TextInput value={clientId} onChange={setClientId} size="md" surface="high" mono />
+        </Field>
+        <Field label="Client secret" hint="Only if it gave the app one. It is kept in your credential store.">
+          <TextInput value={clientSecret} onChange={setClientSecret} size="md" surface="high" mono type="password" />
+        </Field>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={submit} loading={busy} loadingLabel="Starting…" disabled={busy || !clientId.trim()}
+            disabledReason={busy ? undefined : 'Enter the client ID'}>Sign in</Button>
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}

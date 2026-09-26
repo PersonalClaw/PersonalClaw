@@ -1,0 +1,91 @@
+{
+  "name": "run-workflow-action",
+  "version": "1.0.0",
+  "displayName": "Run Workflow",
+  "description": "Start one of your workflows when a trigger fires, with the inputs you set here. The workflow runs in the background and records its own outcome; the workflow's own overlap policy decides what happens when it is already running.",
+  "icon": "Workflow",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "agent",
+    "implementation": "personalclaw.action_providers.run_workflow_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "workflow"
+      ],
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "x-meta": {
+            "label": "Workflow",
+            "widget": "workflow",
+            "help": "The workflow this trigger starts."
+          }
+        },
+        "inputs": {
+          "type": "object",
+          "x-meta": {
+            "label": "Inputs",
+            "widget": "workflow-inputs",
+            "help": "The workflow's inputs. Required ones are checked when you save."
+          }
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "blocking"
+          ],
+          "default": "background",
+          "x-meta": {
+            "label": "Mode",
+            "help": "How the run's gates wait for you. Background, the default and the right choice for a trigger, stops waiting soon and surfaces the question to you; blocking waits as if you were watching the run.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "project_id": {
+          "type": "string",
+          "x-meta": {
+            "label": "Project",
+            "help": "Optional project the run belongs to.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "idempotency_key": {
+          "type": "string",
+          "x-meta": {
+            "label": "Idempotency Key",
+            "help": "Optional. A retried fire with the same key gets the existing run back instead of starting a second one.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "dry_run": {
+          "type": "boolean",
+          "x-meta": {
+            "label": "Dry Run",
+            "help": "Say what a fire would do (start, queue or skip) without starting anything.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

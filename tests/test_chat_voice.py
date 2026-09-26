@@ -32,6 +32,12 @@ class TestVoiceSynthesize:
 
     @pytest.mark.asyncio
     async def test_synthesize_no_voice_selected(self, tmp_path, monkeypatch):
+        """With no text-to-speech model bound, the refusal names THAT fix.
+
+        It used to say "No TTS voice selected — choose one in Settings → Models" with no code,
+        so the chat page pattern-matched it, and matched the switched-off refusal with the same
+        pattern, telling a user whose switch was off to "choose a voice".
+        """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         # The resolver takes surface/profile_id keywords now.
         monkeypatch.setattr(
@@ -44,6 +50,12 @@ class TestVoiceSynthesize:
                 json={"text": "Hello", "session": "s1"},
             )
             assert resp.status == 503
+            error = (await resp.json())["error"]
+            assert error["code"] == "tts_unbound"
+            assert error["message"] == (
+                "No text-to-speech model is set up. Choose one for Text-to-speech in "
+                "Settings → Models."
+            )
 
     @pytest.mark.asyncio
     async def test_synthesize_success(self, tmp_path, monkeypatch):
@@ -117,8 +129,10 @@ class TestTheEnabledToggleIsHonored:
             body = await resp.json()
             assert body["error"]["code"] == "tts_disabled"
             # The message names the switch — an unavailability the user cannot act on is
-            # barely better than synthesizing anyway.
-            assert "Speak replies aloud" in body["error"]["message"]
+            # barely better than synthesizing anyway. It is the MASTER switch: "Speak replies
+            # aloud" only reads replies out on their own, so naming it fixed nothing.
+            assert "“Enable text-to-speech”" in body["error"]["message"]
+            assert "Speak replies aloud" not in body["error"]["message"]
         provider.assert_not_called()
 
     @pytest.mark.asyncio

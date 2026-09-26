@@ -447,10 +447,10 @@ async def app_permission_middleware(
     It hands the decision the matched route's canonical template as well as the path,
     because the per-route declarations (``permissions.ROUTE_AUTHZ``) are keyed on it:
     ``POST /api/triggers`` and ``POST /api/triggers/{id}/run`` share a prefix and not a
-    verdict. A row that carries ``owns`` is then held to the conversations the calling app
-    started (:func:`_conversation_denial`). An allowed app request runs inside
-    ``scoped_to_app``, so a seam with no request in hand (the file explorer's root list) still
-    knows who is asking."""
+    verdict. A row that carries ``owns`` is then held to what is the calling app's own — the
+    conversations it started, and the app itself (:func:`_ownership_denial`). An allowed app
+    request runs inside ``scoped_to_app``, so a seam with no request in hand (the file
+    explorer's root list) still knows who is asking."""
     from personalclaw.apps.permissions import (
         APP_SCOPED_PREFIXES,
         app_request_denial,
@@ -485,7 +485,7 @@ async def app_permission_middleware(
         route = resource.canonical if resource is not None else ""
         reason = app_request_denial(app_name, request.path, method=request.method, route=route)
         if not reason:
-            reason = await _conversation_denial(request, app_name, route)
+            reason = await _ownership_denial(request, app_name, route)
         if reason:
             return _deny(reason)
     if app_name:
@@ -494,15 +494,17 @@ async def app_permission_middleware(
     return await handler(request)  # type: ignore[operator]
 
 
-async def _conversation_denial(request: web.Request, app_name: str, route: str) -> str:
-    """Why an app's request names a conversation the app did not start, or ``""``.
+async def _ownership_denial(request: web.Request, app_name: str, route: str) -> str:
+    """Why an app's request names something that is not the app's own, or ``""``.
 
     The ``owns`` half of a ``ROUTE_AUTHZ`` row (``permissions.OwnedTarget``): every target the row
     lists must name a conversation whose creating app is the caller
-    (``DashboardState.session_creating_app``). Decided here, before the handler, for the reason the
-    route table exists at all — the ownership check used to be copied into a dozen handlers, keyed
-    on an origin tag an app could share by its name, and missing from thirty more — and so that a
-    refused request loads nothing: the creator is read without rehydrating the conversation.
+    (``DashboardState.session_creating_app``), or, for a target that names an app, the caller itself
+    (a provider is registered under its app's name). Decided here, before the handler, for the
+    reason the route table exists at all — the ownership check used to be copied into a dozen
+    handlers, keyed on an origin tag an app could share by its name, and missing from thirty more —
+    and so that a refused request loads nothing: the creator is read without rehydrating the
+    conversation, and another app's settings are never opened.
 
     A body target reads the JSON body, which aiohttp keeps, so the handler reads the same bytes
     after. A body that is not a JSON object names nothing, so an optional target passes and the
@@ -523,6 +525,11 @@ async def _conversation_denial(request: web.Request, app_name: str, route: str) 
     state = request.app.get("state")
     for target in authz.owns:
         named = body.get(target.field) if target.in_body else request.match_info.get(target.field)
+        if target.app:
+            if named != app_name:
+                shown = named if isinstance(named, str) else f"a {type(named).__name__}"
+                return f"{shown!r} is not this app — an app reaches only its own, never another's"
+            continue
         if named is None or named == "":
             if target.optional:
                 continue
@@ -1251,6 +1258,11 @@ async def start_dashboard(
     app.router.add_get("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_put("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_delete("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
+    # Signing in to a server at a URL with OAuth: start (POST), sign out (DELETE), and the page
+    # the authorization server sends the browser back to.
+    app.router.add_post("/api/mcp/servers/{name}/sign-in", handlers.api_mcp_server_sign_in)
+    app.router.add_delete("/api/mcp/servers/{name}/sign-in", handlers.api_mcp_server_sign_in)
+    app.router.add_get("/api/mcp/oauth/callback", handlers.api_mcp_oauth_callback)
     # Skills marketplace integration
 
     # Chat
@@ -1518,6 +1530,11 @@ async def start_dashboard(
     app.router.add_get("/api/sandbox/providers", handlers.api_sandbox_providers)
 
     # Channels (comms transports) — management surface over registered transports
+    from personalclaw.dashboard.handlers.channel_owner import (
+        api_channel_owner,
+        api_channel_owner_pairing_cancel,
+        api_channel_owner_pairing_start,
+    )
     from personalclaw.dashboard.handlers.channel_trust import (
         api_channel_trust,
         api_channel_trust_revoke,
@@ -1543,6 +1560,10 @@ async def start_dashboard(
     app.router.add_post("/api/channels/{name}/connect", api_channel_connect)
     app.router.add_post("/api/channels/{name}/disconnect", api_channel_disconnect)
     app.router.add_post("/api/channels/{name}/test", api_channel_test)
+    # A channel's owner: who core reaches you as there, and pairing it from its Configure page.
+    app.router.add_get("/api/channels/{name}/owner", api_channel_owner)
+    app.router.add_post("/api/channels/{name}/owner/pairing", api_channel_owner_pairing_start)
+    app.router.add_delete("/api/channels/{name}/owner/pairing", api_channel_owner_pairing_cancel)
 
     # Agent Rooms — shared transcripts several bound agents deliberate in. Gated by
     # `rooms.enabled` inside each handler rather than by skipping registration, so
@@ -1750,6 +1771,7 @@ async def start_dashboard(
     app.router.add_get("/api/security/stats", handlers.api_security_stats)
     app.router.add_get("/api/security/denied-commands", handlers.api_security_denied_commands)
     app.router.add_get("/api/security/egress", handlers.api_security_egress)
+    app.router.add_get("/api/security/outside-home", handlers.api_security_outside_home)
     # The SEL read surface: paginated + filtered + chain-verify, owner-only. Superseded
     # `/api/sel/{events,verify}` — one audit log, one way to read it.
     from personalclaw.dashboard.handlers.security_audit import register_security_audit_routes
@@ -1893,6 +1915,21 @@ async def start_dashboard(
             logger.exception("Failed to migrate legacy mcp.json")
 
     app.on_startup.append(_mcp_migrate_startup)
+
+    async def _settle_outside_home_startup(app_: web.Application) -> None:
+        """Once per home: copy home the skills earlier releases installed in ~/.agents/skills,
+        and let go of a saved workspace pointer that is only the old default. Writes nothing
+        outside the home (``outside_home.settle_previous_locations``)."""
+        from personalclaw.outside_home import settle_previous_locations
+
+        try:
+            report = await asyncio.to_thread(settle_previous_locations)
+            if report.get("skills_copied") or report.get("workspace_pointer_dropped"):
+                logger.info("Settled what earlier releases kept outside the home: %s", report)
+        except Exception:
+            logger.exception("Failed to settle what earlier releases kept outside the home")
+
+    app.on_startup.append(_settle_outside_home_startup)
 
     async def _record_running_version_startup(app_: web.Application) -> None:
         """RUM-9: remember which version ran last, so a rollback has a target.

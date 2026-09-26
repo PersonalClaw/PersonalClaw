@@ -467,6 +467,7 @@ def home(tmp_path, monkeypatch, wire) -> Iterator[Path]:
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     monkeypatch.delenv("PERSONALCLAW_SKIP_APP_WORKERS", raising=False)
+    monkeypatch.delenv("PERSONALCLAW_SKIP_APP_BACKENDS", raising=False)
     monkeypatch.setattr(mcp_client, "_registry", None)
     registry_module.reset_provider_registry()
     yield tmp_path

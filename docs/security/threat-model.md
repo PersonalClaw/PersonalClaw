@@ -94,9 +94,13 @@ says what that means.
 - **Permission middleware** holds in every auth mode — including `none`, where
   `dashboard/server.py`'s `_dev_user_middleware` re-adopts the app claim via
   `validate_token_with_app` so an app token only ever *narrows* reach. The internal
-  routes' cookie/`?token=` fallback records the claim too
-  (`dashboard/token_auth.py::_extract_and_validate_token`): it used to validate an app
-  token and drop its identity, so `/api/tools/invoke` reached the handler as the owner.
+  routes' session fallback records the claim too — every auth path picks its credential
+  through `dashboard/token_auth.py::_select_request_credentials` — where it used to
+  validate an app token and drop its identity, so `/api/tools/invoke` reached the
+  handler as the owner.
+- **Reverse-proxy query stripping** (`api_app_proxy`): the proxy drops the credential query
+  parameters (`?token=`, `?app_token=`) before forwarding, for the reason it drops the
+  cookie and `Authorization` — a backend must never hold a token it could replay.
 - **The owner's security posture is not an app's to change.** A config field whose
   `_EDITABLE_CONFIG` entry declares a `SecurityControl` (`config/edit_spec.py`) refuses an
   app-scoped write `403`, in either direction, with a Security Event Log row naming the
@@ -164,12 +168,34 @@ says what that means.
   (`dashboard/handlers/files.py::_dashboard_roots`), since `config.json` and `mcp.json`
   live there. It refuses an app like every other app refusal, `403` with a Security Event
   Log row naming the app and the path (`files.py::_app_path_refusal`).
+- **A provider is its app's.** A provider's settings say where it connects and which of its
+  credentials it connects with, so an app that could write another app's could point that
+  app at a server of its choosing and have it send its own key there. Every
+  `/api/providers/{name}` route is held to the calling app itself before its handler runs
+  (`ROUTE_AUTHZ` rows carrying `owns` that names the app; `/api/apps/{name}/config` is held
+  the same way): another app's settings, instances, instance test and availability check
+  are refused, reads included, and the provider list answers an app with its own providers
+  only. The MCP Tool Servers card (`/api/providers/mcp-tools`) is every server the gateway
+  launches, so it is owner-only like `/api/mcp`, reads included. An app's own settings
+  resolve only its own keys (`config/secret_refs.py`). A change to a switched-off app's
+  settings or instances is saved and loads nothing until the app is switched on, and neither
+  starts an app this core cannot host (`providers/routes.py::apply_saved_settings`).
+- **Your models are yours.** A model provider says where your model calls go and which of
+  your keys goes with them, and a binding says which model each use runs on; the model your
+  chats run on decides the tool calls your agent makes. An app that could write either could
+  send your chats to a server of its choosing, or answer them itself. Every route under
+  `/api/model-providers` and `/api/models` is owner-only for an app, reads included
+  (`ROUTE_AUTHZ` `OwnerOnly` rows; both are `SECURITY_ROUTE_FAMILIES` and
+  `READ_DECLARED_FAMILIES`), and so is the onboarding wizard's one-click bind
+  (`OWNER_ONLY_API_PATHS["/api/onboarding/local-model/bind"]`), which adds a model provider
+  and moves your chats onto it.
 - **A new route fails closed.** Every write route under a family that decides what runs
   as you, whether it asks first, or who may reach you (`SECURITY_ROUTE_FAMILIES`), and every
-  read under your conversation families and your notification log (`READ_DECLARED_FAMILIES`), is either owner-only or
-  declared `AppMay` with its reason. An undeclared one is refused to every app token at
-  runtime (`undeclared_security_route`), and `tests/test_security_posture_rail.py` fails the
-  build on it.
+  read under your conversation families, your notification log, your providers and your
+  models (`READ_DECLARED_FAMILIES`), is either owner-only or declared `AppMay` with its
+  reason. An undeclared one is refused to every app token at runtime
+  (`undeclared_security_route`), and `tests/test_security_posture_rail.py` fails the build on
+  it.
 - **An automation that approves itself asks you first.** The owner's own write that makes
   a trigger's or a workflow step's agent approve its own tool calls (`approval_mode:
   auto`) or gives it write access (`capability: mutating`) needs `"confirm": true`
@@ -239,8 +265,15 @@ Installable content (apps, skills) from arbitrary sources:
   `warning` (consent required) / **`dangerous` (terminal, non-overridable)**;
   `TrustTier` modulates strictness.
 - **Where the bytes come from**: a registry index is untrusted, so a listing's `repo`
-  must be an `https://` URL (`apps/catalog.py::_listing_repo_refusal`), so an index cannot
-  point a Store card at a folder on this machine.
+  must be an `https://` URL (`apps/catalog.py::listing_repo_refusal`), so an index cannot
+  point a Store card at a folder on this machine. Nor at this computer, a private network
+  or the cloud metadata service: the Store shows such a listing refused, with the reason,
+  when its address is written as a literal; an install resolves the host and refuses a
+  forbidden answer before fetching (`apps/source.py::resolve`); and the fetch runs through
+  `net/git.py::run_git_guarded`, which judges every host git connects to, so a name that
+  rebinds after the check, or a redirect, cannot reach one either. The owner's own choices
+  stay reachable: the host of a registry source they added, their egress allow-list, and
+  anything typed into Install from URL, which is not a listing.
 - **An app's `data/` is read as the app's** (`apps/manager.py::read_app_owned_text`):
   the gateway's reads of files an app can write never follow a link, so an app cannot
   plant `data/config.json -> <another file>` and be handed that file.
@@ -272,6 +305,23 @@ Data leaving the running system:
   `GET /api/mcp` sends no server's definition at all. A remote server's headers are resolved from
   the store when the native client connects, against the server's own owner (below), and sent on
   each request, never written anywhere.
+- **A remote MCP server's OAuth sign-in** (`mcp_oauth.py`). Its tokens and any client secret live in
+  the credential store under the server's own owner; its spec's `signIn` holds references and what
+  the grant is for, and never reaches another tool's copy. The connection reads the token from the
+  store at each request and renews it there, and never sends it to a URL outside the resource it was
+  issued for (RFC 8707 `resource`): an edit that changes the server's address drops the sign-in, and
+  a hand edit that does so makes the connection refuse to send it. A renewal the authorization server
+  refuses deletes the tokens, with a security-log row and a notification. The sign-in is the
+  authorization code flow with PKCE (S256 only) and a single-use 256-bit `state`, and an answer's
+  `iss` must name the authorization server the sign-in started with (RFC 9207). Its callback,
+  `GET /api/mcp/oauth/callback`, is reachable without a dashboard session (`token_auth._BYPASS_EXACT`),
+  because the browser comes back to `127.0.0.1` and a dashboard opened at `localhost` has no cookie
+  there. That opens nothing: a request is matched only to a sign-in the owner started from the Tools
+  page, by its `state`, within ten minutes, and its code is exchanged only with that sign-in's PKCE
+  verifier, which never leaves the gateway's memory. Every request a sign-in makes goes through the
+  egress guard (`net.policy.MCP_SIGN_IN`, no redirects): only the server's own host may be private,
+  and the authorization server must be on HTTPS unless the server itself is plain HTTP on this
+  machine.
 - **A reference resolves only against its own owner** (`SecretOwner.holds`): an app's settings,
   its instances and its `{app}:{server}` MCP servers resolve only that app's keys; core's
   settings resolve every key no app holds, the Secrets-panel vault included. A settings file is
@@ -279,7 +329,7 @@ Data leaving the running system:
   (`ForeignSecretReference`, and a `denied` security-log row naming the app and the key) and
   where it is saved (400). There is no grant: an app that needs a key has it stored under itself.
 - **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
-  `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
+  `atomic_write`, and `atomic_json_write` for `mcp.json` and the agent config — is 0600
   in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
   provider instance records, `mcp.json`, the agent config, `.env` and `auth/` are all written
   that way; `.local_secret`, `telemetry_salt` and `.app_secret` have writers of their own that
@@ -293,6 +343,19 @@ Data leaving the running system:
   searches every member for every value the store holds). What a reference cannot cover (copies
   made before the upgrade, a value with a NUL character, Claude Code's own config) is in
   [limitations.md §6](limitations.md).
+- **One home, and read-only places outside it only by choice** (`outside_home.py`): PersonalClaw
+  installs, writes and deletes inside its home. Skills install into `<home>/skills`, the workspace
+  defaults to `<home>/workspace`, and neither a session restart nor an MCP sync writes
+  `~/.mcp.json`. A place outside the home that is worth reading (the skills folder AI tools share,
+  the machine-wide Hugging Face folder with its `huggingface-cli login` token, a subscription
+  provider's sign-in) is declared in that module, is off until the owner turns it on in Settings →
+  Security → Outside PersonalClaw's home (`security.outside_home`, a loosening the PATCH asks to
+  confirm), and is only read. Deleting a skill that lives outside the home is refused (409). The
+  Files page has no root for the home itself, whose `config.json`, `mcp.json` and automations it
+  used to let you edit, only for the work folders inside it.
+  `tests/test_personalclaw_stays_inside_its_home.py` fails on code that names a location in the
+  user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
+  (the service installer, the Claude Code importer, the terminal, the folder picker).
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 
@@ -307,8 +370,8 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 |---|---|---|---|
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory; an app token cannot write your agents, skills, prompts or routing notes, or post into your chats, rooms or inbox answers | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing); `apps/permissions.py` (`ROUTE_AUTHZ`, `OWNER_ONLY_API_PATHS["/api/onboarding/import"]`, `OWNER_ONLY_API_PATHS["/api/send-message"]`) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
-| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_conversation_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
-| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree (tooling left out of both, nothing skipped in what remains, an unreadable file disclosed); staging never follows a link out of the bundle; a registry listing names an `https://` repo | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`, `never_installed`); `apps/catalog.py::_listing_repo_refusal` | enforced |
+| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them, each provider held to its own app, your model providers and model bindings the owner's | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_ownership_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
+| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree (tooling left out of both, nothing skipped in what remains, an unreadable file disclosed); staging never follows a link out of the bundle; a registry listing names a public `https://` repo, checked again at every connection its fetch makes | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`, `never_installed`); `apps/catalog.py::listing_repo_refusal`; `net/git.py::run_git_guarded` | enforced |
 | **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist; an app token cannot define an MCP server or an automation, and the owner confirms an automation step that approves its own tool calls | `security.py`; `sandbox.py`; `apps/permissions.py` (`OWNER_ONLY_API_PATHS["/api/mcp"]`, `ROUTE_AUTHZ`); `automation_posture.py` | enforced *(an installed app's own code runs as you: documented limitation, [limitations.md](limitations.md) §7)* |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes; an app writes memory, lessons included, only with its `memory` grant | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py`; `apps/permissions.py::MEMORY_API_PATHS` | enforced |
 | **ASI07** Insecure inter-agent / inbound comms | Fail-closed inbound surface + fencing at ingestion | *(owned)* | in progress (plans 41, 24) |

@@ -289,6 +289,10 @@ class Task:
     priority: TaskPriority = TaskPriority.MEDIUM
     labels: list[str] = field(default_factory=list)
     due: str = ""
+    #: Whether this task's due date is announced (`tasks/due_notices.py`). On by default: a
+    #: due date is a promise, and a reminder is how it is kept. `False` is the per-task opt-out —
+    #: a date that is a soft target rather than a deadline.
+    due_reminder: bool = True
     order: float = 0.0  # intra-column ordering for kanban reorder
     # Rich planning fields
     exit_criteria: list[dict] = field(default_factory=list)  # [{description, status, comment}]
@@ -419,6 +423,9 @@ class Task:
             priority=from_field("priority", d.get("priority", "medium"), strict=False),
             labels=from_field("labels", d.get("labels"), strict=False),
             due=from_field("due", d.get("due"), strict=False),
+            # Absent on every task written, and on a provider's task that has no such
+            # setting: both read as ON, which is the default a new task gets.
+            due_reminder=from_field("due_reminder", d.get("due_reminder", True), strict=False),
             order=from_field("order", d.get("order"), strict=False),
             # `asdict` put the binding in `to_dict` while `from_dict` dropped it, so a
             # materialized task read back as STANDALONE — losing engine ownership after one
@@ -541,6 +548,22 @@ def _as_text(value: Any, *, strict: bool) -> str:
     if strict:
         raise ValueError(f"expected text, got {type(value).__name__}")
     return ""
+
+
+def _as_flag(value: Any, *, strict: bool) -> bool:
+    """A real boolean, or a refusal — never a truthy string.
+
+    `bool("false")` is True, so coercing with `bool()` would turn a caller's `"false"` into ON. A
+    READ that meets a non-boolean salvages to ON: the one flag this serves is a reminder opt-out,
+    and an unreadable opt-out is not evidence that the owner opted out.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return True
+    if strict:
+        raise ValueError(f"expected true or false, got {type(value).__name__}")
+    return True
 
 
 def _as_number(value: Any, *, strict: bool) -> float:
@@ -720,6 +743,7 @@ TASK_FIELD_COERCERS: dict[str, Any] = {
     "priority": _as_priority,
     "labels": _as_text_list,
     "due": _as_text,
+    "due_reminder": _as_flag,
     "order": _as_number,
     "exit_criteria": _as_dict_list(normalize_exit_criterion),
     "action_plan": _as_dict_list(normalize_action_plan_item, indexed=True),
@@ -806,6 +830,7 @@ _RESET_PRESERVED: dict[str, str] = {
     "priority": "the definition of the work",
     "labels": "the definition of the work",
     "due": "a reset must not invent a new date; the owner sets it",
+    "due_reminder": "the owner's choice about this task's reminders, not this run's progress",
     "order": "board placement the user arranged",
     "notes": "knowledge that outlives one run (the issue grants this explicitly)",
     "research_notes": "knowledge that outlives one run",

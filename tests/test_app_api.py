@@ -681,7 +681,11 @@ async def test_ui_asset_sibling_prefix_dir_is_rejected(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_backend_proxy_round_trip(tmp_path):
+async def test_backend_proxy_round_trip(tmp_path, monkeypatch):
+    # The install starts the backend, so the suite's guard against spawning app backends
+    # (PERSONALCLAW_SKIP_APP_BACKENDS, which every platform start honours) is lifted —
+    # safe here because _client() isolates config_dir to tmp_path.
+    monkeypatch.delenv("PERSONALCLAW_SKIP_APP_BACKENDS", raising=False)
     # A real Python backend: an http.server that echoes the path on /health and /ping.
     backend_py = textwrap.dedent("""
         import json, os
@@ -727,8 +731,8 @@ async def test_backend_proxy_round_trip(tmp_path):
 @pytest.mark.asyncio
 async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
     # Regression: enabled apps' backend subprocesses don't survive a gateway
-    # restart; start_enabled_app_backends() relaunches them at startup so the
-    # reverse-proxy is live without a manual re-enable.
+    # restart; startup (app_runtime.start_installed, the one load) relaunches them
+    # so the reverse-proxy is live without a manual re-enable.
     # This test exercises the startup launcher itself, so the global test guard
     # (PERSONALCLAW_SKIP_APP_BACKENDS, set in conftest) must be lifted — safe
     # here because _client() isolates config_dir to tmp_path.
@@ -747,7 +751,7 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
     """)
     import asyncio
 
-    from personalclaw.apps import app_manager
+    from personalclaw.apps import app_runtime
 
     async with _client(tmp_path) as client:
         src = _app_src(
@@ -762,7 +766,7 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
         backend_runtime._supervisor = backend_runtime.BackendSupervisor()
         assert backend_runtime.get_backend_supervisor().get("svc2") is None
         # Startup relaunch brings the enabled app's backend back.
-        started = app_manager.start_enabled_app_backends()
+        started = app_runtime.start_installed()
         assert "svc2" in started
         got = None
         for _ in range(50):

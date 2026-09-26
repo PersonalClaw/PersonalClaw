@@ -5,6 +5,7 @@ import { Field, TextArea } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { buildArgs, schemaProps, SchemaField, SchemaFields } from '../tools/schema'
 import { usePromptWidgets } from '../prompts/promptWidgets'
+import { useWorkflowWidgets } from '../workflows/workflowWidgets'
 import { actionIcon } from './triggerMeta'
 
 /** Pick an Action provider + render its schema-driven config form. The available
@@ -41,11 +42,14 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
   // lazily. Clearing the picker (the X) leaves the field empty — which for
   // run-prompt means "use loop.md" (T3).
   //
-  // The "workflow" widget is gone with the run-workflow action provider
-  // (WORKFLOWS-V2 Phase 1). No provider declares that widget any more, so the
-  // registry below would never render it; Slice 3 restores both together.
+  // "workflow" picks one of your workflows and "workflow-inputs" fills in the chosen one's declared
+  // inputs (the run-workflow action). Its manifest was restored with them: without it this form
+  // rendered nothing for the action, which then saved with no workflow and failed at every fire.
   const needsPrompt = props.some(([, s]) => s['x-meta']?.widget === 'prompt')
-  const { prompts, widgets } = usePromptWidgets(needsPrompt)
+  const { prompts, widgets: promptWidgets } = usePromptWidgets(needsPrompt)
+  const needsWorkflow = props.some(([, s]) => s['x-meta']?.widget === 'workflow')
+  const { widgets: workflowWidgets } = useWorkflowWidgets(needsWorkflow, String(config.workflow ?? ''))
+  const widgets = useMemo(() => ({ ...promptWidgets, ...workflowWidgets }), [promptWidgets, workflowWidgets])
 
   return (
     <div className="flex flex-col gap-l">

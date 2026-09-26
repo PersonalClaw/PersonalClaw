@@ -50,6 +50,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TERM_TIMEOUT = 5  # seconds to wait for graceful termination before kill
+#: Set by a harness that must not have app backends spawned (or orphans reaped) underneath it —
+#: the test suite. Honoured by every start the platform makes: a load's and the watchdog's.
+SKIP_ENV = "PERSONALCLAW_SKIP_APP_BACKENDS"
 
 
 def _sel_capability_grant(*, consumer: str, sharer: str) -> None:
@@ -518,6 +521,24 @@ def get_backend_supervisor() -> BackendSupervisor:
     return _supervisor
 
 
+def start_app_backend(manifest: AppManifest) -> RunningBackend | None:
+    """Start *manifest*'s backend now, if it declares one. The app runtime's load calls this.
+
+    A process a previous gateway left running from the same entry point — a crash, a ``kill -9``,
+    the double-signal force exit — is reaped first, or every hard exit would leave one more
+    backend per app running beside the new one. It honours :data:`SKIP_ENV`, as the watchdog
+    does, so a harness that must not have app backends spawned underneath it gets none from here
+    either. ``None`` when nothing was started.
+    """
+    if not manifest.backend.entryPoint or os.environ.get(SKIP_ENV):
+        return None
+    supervisor = get_backend_supervisor()
+    supervisor.reap_orphans(
+        manifest.name, (app_dir(manifest.name) / manifest.backend.entryPoint).resolve()
+    )
+    return supervisor.start(manifest)
+
+
 # ---------------------------------------------------------------------------
 # Watchdog — periodic health check that relaunches crashed backends
 # ---------------------------------------------------------------------------
@@ -546,9 +567,7 @@ def stop_backend_watchdog() -> None:
 def _check_and_revive() -> None:
     """One watchdog sweep: for each enabled app with a backend, ensure the
     process is alive. If it died, relaunch it."""
-    import os
-
-    if os.environ.get("PERSONALCLAW_SKIP_APP_BACKENDS"):
+    if os.environ.get(SKIP_ENV):
         return
 
     from personalclaw.apps.manager import list_apps

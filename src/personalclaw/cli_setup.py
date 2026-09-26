@@ -12,10 +12,9 @@ from personalclaw.cli_chat import _ensure_default_agent_in_config
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import (  # noqa: F401 — re-exported for test patch seam
-    _WORKSPACE_DIR_NAME,
     DASHBOARD_PORT,
-    _default_workspace_base,
     _workspace_dir_file,
+    default_workspace_root,
     env_path,
 )
 from personalclaw.constants import DATA_WARNING
@@ -63,45 +62,6 @@ def _ask(prompt: str) -> str:
         return ""
 
 
-def _fix_shell_profiles() -> None:
-    """Remove stale PersonalClaw PATH entries from shell profiles."""
-    home = Path.home()
-    profiles = [
-        home / ".zshrc",
-        home / ".bashrc",
-        home / ".bash_profile",
-        home / ".profile",
-    ]
-    stale_markers = [
-        ".personalclaw-app",
-        "PersonalClaw/src/PersonalClaw/bin",
-        "PersonalClaw/build/",
-        "workspaces/PersonalClaw",
-    ]
-    cleaned_profiles: list[str] = []
-    for profile in profiles:
-        if not profile.is_file():
-            continue
-        try:
-            lines = profile.read_text(encoding="utf-8").splitlines(keepends=True)
-            cleaned = []
-            removed = False
-            for line in lines:
-                if any(m in line for m in stale_markers) and "PATH" in line:
-                    removed = True
-                    continue
-                cleaned.append(line)
-            if removed:
-                profile.write_text("".join(cleaned), encoding="utf-8")
-                print(f"  🔧 Cleaned stale PersonalClaw PATH from {profile.name}")
-                cleaned_profiles.append(profile.name)
-        except OSError:
-            pass
-    if cleaned_profiles:
-        sources = " or ".join(f"`source ~/{p}`" for p in cleaned_profiles)
-        print(f"  ⚠️  Run {sources} or open a new terminal for PATH changes to take effect.")
-
-
 def _print_dashboard_pointer() -> None:
     """Point at the dashboard's guided first run — one line (ONBOARDING-UX T1.4).
 
@@ -144,7 +104,6 @@ def _setup(
         return
 
     from personalclaw.agent import rebuild_agent_config  # circular import: agent imports cli
-    from personalclaw.cli import _project_dir_file  # circular import: cli -> cli_setup -> cli
 
     print("PersonalClaw Setup\n")
     print(f"  {DATA_WARNING.replace(chr(10), chr(10) + '  ')}\n")
@@ -154,13 +113,6 @@ def _setup(
         _setup_noninteractive(mode=mode, provider=provider, credential=credential)
         if not agent_only:
             return
-
-    # 0. Save project dir so personalclaw works from anywhere
-    proj = os.environ.get("PERSONALCLAW_PROJECT_DIR")
-    if proj:
-        _project_dir_file().parent.mkdir(parents=True, exist_ok=True)
-        _project_dir_file().write_text(proj + "\n", encoding="utf-8")
-        print(f"  ✅ Project dir saved: {proj}")
 
     # 1. Choose workspace directory (skip for agent-only — not relevant)
     if not agent_only:
@@ -305,28 +257,31 @@ def _store_named_credential(credential: str) -> None:
 
 
 def _setup_workspace_dir() -> None:
-    """Prompt user for workspace directory, falling back to platform default."""
-    platform_default = _default_workspace_base() / _WORKSPACE_DIR_NAME
-    default = platform_default
+    """Ask where the workspace goes. Enter keeps the current one; only a typed folder is saved,
+    so an owner who never chose one keeps the default inside the home."""
+    home_default = default_workspace_root()
+    current = home_default
     label = "Default"
     if _workspace_dir_file().is_file():
         configured = _workspace_dir_file().read_text(encoding="utf-8").strip()
         if configured:
-            default = Path(configured)
+            current = Path(configured)
             label = "Configured"
     print("── Workspace Directory ──\n")
     print("  LLM sessions and task output are stored in a workspace directory.")
-    print(f"  {label}: {default}\n")
-    answer = _ask(f"  Workspace path [{default}]: ")
-    chosen = default if answer.lower() in ("", "y", "yes") else Path(answer).expanduser()
+    print(f"  {label}: {current}\n")
+    answer = _ask(f"  Workspace path [{current}]: ")
+    typed = answer.lower() not in ("", "y", "yes")
+    chosen = Path(answer).expanduser() if typed else current
     try:
         chosen.mkdir(parents=True, exist_ok=True)
-        _workspace_dir_file().parent.mkdir(parents=True, exist_ok=True)
-        _workspace_dir_file().write_text(str(chosen) + "\n", encoding="utf-8")
+        if typed:
+            _workspace_dir_file().parent.mkdir(parents=True, exist_ok=True)
+            _workspace_dir_file().write_text(str(chosen) + "\n", encoding="utf-8")
         print(f"  ✅ Workspace: {chosen}\n")
     except OSError as e:
         print(f"  ❌ Cannot create {chosen}: {e}")
-        print(f"  Falling back to platform default: {platform_default}\n")
+        print(f"  Falling back to the default: {home_default}\n")
 
 
 _CUSTOM_DOMAIN = "personalclaw.localhost"
@@ -407,11 +362,23 @@ def _setup_timezone() -> None:
     # The refusal point for a typo'd zone (#2520): `config.timezone` has no PATCH allowlist
     # entry, so this prompt is the only authoring surface for it, and a name that lands in the
     # file unvalidated is a silent hour-shift for every schedule that falls back to it.
-    from personalclaw.timezones import is_known_zone
+    from personalclaw.timezones import TimeZoneDatabaseUnavailable, is_known_zone
 
     max_retries = 3
     for attempt in range(max_retries):
-        if is_known_zone(tz_val):
+        try:
+            known = is_known_zone(tz_val)
+        except TimeZoneDatabaseUnavailable:
+            # Every name, valid or not, fails here, so a re-prompt would blame the user for a
+            # broken install. Say it once and stop.
+            print("  ❌ Timezone database unavailable, so no zone can be checked.")
+            print(
+                "     Reinstall PersonalClaw; the base package includes the Python "
+                "`tzdata` database."
+            )
+            print("     Then run `personalclaw setup` and `personalclaw doctor` again.\n")
+            return
+        if known:
             break  # valid
         suggestion = abbrev_to_iana.get(tz_val.upper())
         if suggestion:

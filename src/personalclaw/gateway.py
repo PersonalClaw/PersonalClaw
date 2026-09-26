@@ -60,7 +60,12 @@ from personalclaw.dashboard.token_auth import (
 )
 from personalclaw.env import _is_wsl, browser_available
 from personalclaw.frontend import build_frontend_async
-from personalclaw.heartbeat import HeartbeatService, is_keep_response, strip_keep_sentinel
+from personalclaw.heartbeat import (
+    HeartbeatService,
+    is_keep_response,
+    set_task_runner,
+    strip_keep_sentinel,
+)
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.hooks import HookManager, HooksConfig
 from personalclaw.llm.base import LLMEvent
@@ -398,6 +403,7 @@ class GatewayOrchestrator:
         self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
+        self._task_due_task: "asyncio.Task[None] | None" = None  # F-31 task due-date notices
         # The event bus's router (`triggers.event_fire`): fires `kind: "event"` triggers.
         self._event_router: Any = None
         # A staged auto-update waiter that HOLDS until in-flight work drains,
@@ -414,6 +420,8 @@ class GatewayOrchestrator:
         self._cron_injecting: dict[str, int] = {}  # parent_key → pending injection count
         self.channel_history: ChannelHistory | None = None
         self.dashboard_state: DashboardState | None = None
+        #: The boot's missed-run notice, held while the dashboard is not up (`_record_boot_review`).
+        self._held_boot_review: tuple[dict[str, Any], list[dict[str, Any]]] | None = None
         self._background_tasks: "set[asyncio.Task]" = set()  # prevent GC of fire-and-forget tasks
         self._dashboard_runner: web.AppRunner | None = None
         self._handler_tasks: "set[asyncio.Task]" = set()  # type: ignore[type-arg]
@@ -488,10 +496,19 @@ class GatewayOrchestrator:
         orchestrator adds nothing to the decision — it only supplies itself as the services
         handle, which is what makes the door reachable from a transport's ``start_inbound``
         argument without changing :class:`ChannelTransportProvider`.
+
+        The turn it runs is told its message came from the channel, so the channel gets the
+        answer without its own message sent back to it.
         """
         from personalclaw.channel_inbound import deliver_inbound
 
-        return await deliver_inbound(self, provider, msg, is_dm=is_dm, turn_runner=run_chat)
+        return await deliver_inbound(
+            self,
+            provider,
+            msg,
+            is_dm=is_dm,
+            turn_runner=functools.partial(run_chat, arrived_from_channel=True),
+        )
 
     # ------------------------------------------------------------------
     # Tool approval callback (shared by cron, heartbeat, subagent, task)
@@ -772,7 +789,10 @@ class GatewayOrchestrator:
         if not missing:
             return
 
-        proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
+        from personalclaw import self_update
+
+        # A checkout this package runs from, never a tree the gateway was only started in.
+        proj = self_update.source_checkout()
         if not proj:
             return
 
@@ -1075,6 +1095,30 @@ class GatewayOrchestrator:
         store = TriggerStore(base_dir=config_dir())
         await reaper.run_forever(store=store, base_dir=store.base_dir)
 
+    async def _task_due_loop(self) -> None:
+        """Announce the tasks whose due date is coming (F-31), every `due_notices.SWEEP_SECS`.
+
+        Like `_clock_loop`, this supplies only what the gateway knows — the one notification choke
+        point — and leaves every rule (when, once, quiet hours, who) to `tasks/due_notices.py`. A
+        sweep that raises is logged and the next one runs: one bad task provider must not end the
+        reminders for good.
+        """
+        from personalclaw.tasks import due_notices
+
+        while True:
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                # Started with the other timers, before the dashboard that owns `notify` — so wait
+                # for it rather than skip a whole interval: a notice that fell due while the
+                # gateway was down goes out as it comes back, not five minutes later.
+                await asyncio.sleep(due_notices.STARTUP_POLL_SECS)
+                continue
+            try:
+                await due_notices.run_once(state.notify, now=time.time())
+            except Exception:  # noqa: BLE001 - the loop outlives one failed sweep
+                logger.warning("task due-notice sweep failed", exc_info=True)
+            await asyncio.sleep(due_notices.SWEEP_SECS)
+
     def _start_event_triggers(self, *, enabled: bool = True) -> None:
         """Attach the event bus's router, so `kind: "event"` triggers fire in this process.
 
@@ -1366,13 +1410,16 @@ class GatewayOrchestrator:
             return
 
         try:
-            # 🔴 The MODE DEFAULT the legacy dispatcher applied (gateway.py:820 — 300s for a command,
-            # 30s otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
+            # 🔴 The MODE DEFAULT the legacy dispatcher applied (300s for a command, 30s
+            # otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
             # budget. This call passed nothing, so every store-backed bash fire took the
             # 30s SIGNATURE default and a migrated `zt_timeout: 600` cron was cut to 30. The
             # per-action override lives in the config and is honoured by the provider itself (both
             # `bash` and `run-script` prefer `action_config["timeout"]`), so this is only the floor.
-            timeout = 300 if provider_name == "bash" else 30
+            # Shared with the Run button (`firepath.action_timeout`), so a hand-run gets the same.
+            from personalclaw.triggers.firepath import action_timeout
+
+            timeout = action_timeout(provider_name)
             # 🔴 THE RESULT WAS DISCARDED (§3.7 / crit 3). `await provider.execute(...)` threw
             # its return value away, so nothing on this path knew if a fire SUCCEEDED. Measured:
             # six consecutive failing provider runs left `health_status: 'ok'` with an empty
@@ -1440,7 +1487,14 @@ class GatewayOrchestrator:
                     },
                 )
             await self._record_fire_outcome(trigger, result=result)
-            self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
+            # A failure's own reason, as the raise path below sends its envelope: without it an
+            # action that RETURNED its failure reached the inbox as "<name> failed", nothing more.
+            fired_ok = bool(getattr(result, "success", True))
+            self._deliver_fire_outcome(
+                trigger,
+                ok=fired_ok,
+                error="" if fired_ok else str(getattr(result, "error", "") or ""),
+            )
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             # A provider that RAISES (rather than returning a failed
             # result) is wrapped in the shared WHAT/WHY/FIX envelope here — the same wrap the
@@ -1476,13 +1530,58 @@ class GatewayOrchestrator:
             # happened. After the refresh, so a slow chain never delays the view update.
             await self._fire_chained_triggers(trigger, payload)
 
-    def _surface_missed_review(self, report: dict[str, Any]) -> None:
+    def _record_boot_review(
+        self,
+        report: dict[str, Any],
+        interrupted: list[dict[str, Any]],
+        *,
+        base_dir: Any = None,
+    ) -> None:
+        """Keep what the boot passes found for the user to decide, then say so once (§3.4).
+
+        The missed slots (`report["review"]`) and the runs a restart interrupted become cards on
+        the Triggers page (`triggers/review.py`), where each is run now or dismissed. Neither is run
+        on its own: a missed slot is sometimes right to run late and sometimes exactly wrong, and an
+        interrupted run may already have done part of its work. Never raises, like the passes it
+        follows: the schedules are re-armed and the runs closed whether or not this lands.
+        """
+        try:
+            from personalclaw.triggers import review as _review
+
+            _review.record(
+                _review.cards_from_boot(report)
+                + _review.cards_from_orphans(interrupted, now=time.time()),
+                base_dir=base_dir,
+            )
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.warning("could not keep the boot's trigger review", exc_info=True)
+        if getattr(self, "dashboard_state", None) is None:
+            # The boot passes run before the dashboard exists (`start` runs `_init_cron` before
+            # `_init_dashboard`), so a notice sent now reaches nothing: `_surface_missed_review`
+            # returns without a state, and the "Missed scheduled runs" notice was never shown
+            # after a real restart. Held until the dashboard is up (`_surface_held_boot_review`).
+            self._held_boot_review = (report, list(interrupted))
+            return
+        self._surface_missed_review(report, interrupted)
+
+    def _surface_held_boot_review(self) -> None:
+        """Send the boot's notice the passes held for the dashboard (`_record_boot_review`)."""
+        held = getattr(self, "_held_boot_review", None)
+        if held is None:
+            return
+        self._held_boot_review = None
+        self._surface_missed_review(*held)
+
+    def _surface_missed_review(
+        self, report: dict[str, Any], interrupted: list[dict[str, Any]] | tuple = ()
+    ) -> None:
         """Put the boot's missed-fire review in front of the user (§3.4 / crit 7 — S142).
 
         Criterion 7 says "missed slots appear in the review card". §3.4's rule is REVIEW, don't lie
         and don't storm: a boot that silently caught everything up is the storm, and one that says
         nothing is the lie. So the review becomes ONE notification naming the count, not one per
-        missed slot — a laptop opened after a weekend would otherwise deliver hundreds.
+        missed slot — a laptop opened after a weekend would otherwise deliver hundreds. The runs a
+        restart interrupted are named in the same notice, because they wait on the same review.
 
         Silent when nothing was missed, deliberately: "0 automations missed a run" on every restart
         trains the user to dismiss the notification that matters. Goes through `state.notify` like
@@ -1498,31 +1597,63 @@ class GatewayOrchestrator:
             rows = review.get("rows") or []
             summaries = review.get("summaries") or []
             total = len(rows) + sum(int(s.get("count", 0) or 0) for s in summaries)
-            if total <= 0:
+            cut_off = len(list(interrupted or ()))
+            if total <= 0 and cut_off <= 0:
                 return
             affected = len(
                 {str(r.get("trigger_id", "")) for r in rows}
                 | {str(s.get("trigger_id", "")) for s in summaries}
             )
             caught_up = [c for c in (report.get("catch_up") or []) if c.get("catching_up")]
-            body = (
-                f"{total} scheduled run{'s' if total != 1 else ''} were missed across "
-                f"{affected} automation{'s' if affected != 1 else ''} while PersonalClaw was not "
-                "running. Review them and choose what to run now."
-            )
-            if caught_up:
-                body += (
-                    f" {len(caught_up)} with catch-up enabled will fire once, staggered, "
-                    "on their own."
+            # What the Triggers page holds a card for: a trigger catching up on its own has none
+            # (`review.catching_up`), so the sentence that sends you there counts only the rest.
+            from personalclaw.triggers.review import catching_up
+
+            skip = catching_up(report)
+            waiting = (
+                sum(1 for r in rows if str(r.get("trigger_id", "")) not in skip)
+                + sum(
+                    int(s.get("count", 0) or 0)
+                    for s in summaries
+                    if str(s.get("trigger_id", "")) not in skip
                 )
+                + cut_off
+            )
+            said: list[str] = []
+            if total > 0:
+                said.append(
+                    f"{total} scheduled run{'s' if total != 1 else ''} "
+                    f"{'were' if total != 1 else 'was'} missed across "
+                    f"{affected} automation{'s' if affected != 1 else ''} while PersonalClaw was "
+                    "not running."
+                )
+            if caught_up:
+                said.append(
+                    f"{len(caught_up)} with catch-up enabled will fire once, staggered, on "
+                    f"{'their' if len(caught_up) != 1 else 'its'} own."
+                )
+            if cut_off > 0:
+                said.append(
+                    f"{cut_off} run{'s' if cut_off != 1 else ''} "
+                    f"{'were' if cut_off != 1 else 'was'} interrupted by the restart and "
+                    f"{'are' if cut_off != 1 else 'is'} not run again on "
+                    f"{'their' if cut_off != 1 else 'its'} own."
+                )
+            if waiting > 0:
+                if caught_up and waiting > cut_off:
+                    which = "the others"
+                else:
+                    which = "them" if waiting != 1 else "it"
+                said.append(f"Review {which} on the Triggers page and choose what to run now.")
             state.notify(
                 kind="info",
-                title="Missed scheduled runs",
-                body=body,
+                title="Missed scheduled runs" if total > 0 else "Runs interrupted by a restart",
+                body=" ".join(said),
                 meta={
                     "event": "automation.missed_review",
                     "statusUrl": "#/triggers",
                     "missed": total,
+                    "interrupted": cut_off,
                     "triggers": affected,
                     "caught_up": len(caught_up),
                     "truncated": bool(review.get("truncated")),
@@ -1778,7 +1909,7 @@ class GatewayOrchestrator:
         """
         try:
             from personalclaw.config.loader import config_dir
-            from personalclaw.schedule_history import ScheduleRun
+            from personalclaw.schedule_history import ScheduleRun, status_for_result
             from personalclaw.triggers import autopause
             from personalclaw.triggers.models import TriggerState
             from personalclaw.triggers.store import TriggerStore
@@ -1806,6 +1937,16 @@ class GatewayOrchestrator:
             # (stateless, from the exception type) worked while the BUDGET (stateful) did not.
             store_runs = ScheduleRunStore(config_dir())
             now = time.time()
+            # What the action REPORTED, recorded as the Run button records it
+            # (`_record_manual_run`): its status refinement (a fire that only launched a workflow
+            # is `launched`, one with nothing to do the inert `skipped_noop`), its output as the
+            # summary, and on a failure its own error. This row carried none of it: every fire
+            # read `success` or `failure`, and a provider's returned failure left the row with no
+            # reason at all.
+            ok_exit = exit_type == autopause.ExitType.OK.value
+            reported = str(getattr(result, "error", "") or "") if result is not None else ""
+            run_error = error or ("" if ok_exit else reported or "the action reported failure")
+            output = str(getattr(result, "stdout", "") or "") if result is not None else ""
             await store_runs.append(
                 ScheduleRun(
                     run_id=f"fire-{int(now * 1000)}",
@@ -1813,8 +1954,10 @@ class GatewayOrchestrator:
                     trigger=exit_type,
                     started_at=now,
                     finished_at=now,
-                    status="success" if exit_type == autopause.ExitType.OK.value else "failure",
-                    error=error[:_ERROR_SUMMARY_MAX],
+                    status=status_for_result(result) if ok_exit else "failure",
+                    summary=output if ok_exit else run_error,
+                    trace=output if ok_exit else run_error,
+                    error=run_error[:_ERROR_SUMMARY_MAX],
                 )
             )
             # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
@@ -2351,6 +2494,19 @@ class GatewayOrchestrator:
                 reconcile_remediation_trigger(_trigger_store)
             except Exception:
                 logger.warning("self-remediation trigger reconcile failed", exc_info=True)
+            # The HEARTBEAT.md task queue, re-homed off the heartbeat loop onto a system trigger so
+            # the Triggers page lists its cadence, its runs and its switch. Created once and never
+            # switched back on over the user's choice (see the reconciler). Its tasks run through
+            # this gateway's background turn, registered here, before the clock loop can fire it.
+            set_task_runner(self._run_heartbeat_task)
+            try:
+                from personalclaw.action_providers.heartbeat_tasks_provider import (
+                    reconcile_heartbeat_tasks_trigger,
+                )
+
+                reconcile_heartbeat_tasks_trigger(_trigger_store)
+            except Exception:
+                logger.warning("heartbeat tasks trigger reconcile failed", exc_info=True)
             # 🔴 THE BOOT SWEEP (criterion 7). `service.boot` is what recovers
             # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
             # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
@@ -2362,6 +2518,7 @@ class GatewayOrchestrator:
             #
             # AFTER the reconcilers so an app-declared or digest cron written moments ago is swept
             # too, and BEFORE the clock loop starts so no tick sees an unrecovered row.
+            boot_report: dict[str, Any] = {}
             try:
                 from personalclaw.triggers import service as _svc
 
@@ -2372,7 +2529,6 @@ class GatewayOrchestrator:
                     int(boot_report.get("total", 0) or 0),
                     len((boot_report.get("review") or {}).get("rows") or []),
                 )
-                self._surface_missed_review(boot_report)
             except Exception:
                 logger.warning("trigger boot sweep failed", exc_info=True)
             # 🔴 THE BOOT ORPHAN PASS. A run this gateway's PREDECESSOR was executing
@@ -2389,6 +2545,7 @@ class GatewayOrchestrator:
             # does not evaluate `existing_claim` against a dead owner's claim and suppress the fire
             # it should grant (`overlap: skip`); and BEFORE the reaper, so the answer never depends
             # on which background task happens to sweep first.
+            interrupted: list[dict[str, Any]] = []
             try:
                 from personalclaw.triggers import reaper as _reaper
 
@@ -2403,6 +2560,10 @@ class GatewayOrchestrator:
                     )
             except Exception:
                 logger.warning("boot orphan pass failed", exc_info=True)
+            # What both passes found, KEPT for the user to decide (`triggers/review.py`): the sweep
+            # has re-armed every schedule and the orphan pass has closed every run, so this is the
+            # only record left of what did not happen. Then ONE notice about all of it.
+            self._record_boot_review(boot_report, interrupted, base_dir=_trigger_store.base_dir)
             # The unified CLOCK LOOP — now the only thing that fires a clock trigger. The
             # legacy timer is gone entirely, along with the class that owned it.
             self._clock_task = asyncio.create_task(self._clock_loop())
@@ -2413,6 +2574,97 @@ class GatewayOrchestrator:
             # survives a restart. It needs no `sessions`: the subagent manager's own live reaper
             # owns the spawned PROCESS, and this owns the CLAIM (see `triggers/reaper.py`).
             self._reaper_task = asyncio.create_task(self._trigger_reaper_loop())
+            # Task due-date notices. Unattended background work that notifies, so it sits
+            # with the clock and the reaper and `--no-crons` disables it too.
+            self._task_due_task = asyncio.create_task(self._task_due_loop())
+
+    async def _run_heartbeat_task(self, task_text: str, deliver: str) -> str | None:
+        """One HEARTBEAT.md task as an unattended background turn, and its result delivered.
+
+        The `heartbeat-tasks` trigger runs the queue through this (`heartbeat.set_task_runner`),
+        so a task keeps the background prompt, the unattended approval policy, and delivery to its
+        `<!-- deliver:… -->` target. A task still unfinished (`HEARTBEAT_KEEP`) delivers nothing, so
+        a task retried every pass does not notify every pass.
+        """
+        assert self.sessions is not None
+        assert self.ctx_builder is not None
+        session_key = BACKGROUND_KEY
+        _acquired = False
+        try:
+            client, is_new, _resumed = await self.sessions.get_or_create(session_key)
+            _acquired = True
+            from personalclaw.context_headroom import resolve_window
+
+            # Named, not derived: this call passes no session key, and a keyless build
+            # derives the CHAT use case — so a heartbeat ran on the interactive-chat
+            # prompt while Settings → Prompts promised it the Background one.
+            full_message, _ = self.ctx_builder.build_message(
+                task_text,
+                is_new,
+                prompt_use_case="background",
+                window=await resolve_window(serving=client),
+            )
+
+            # Heartbeat is a pure UNATTENDED background loop — no user present.
+            # The approval policy is DERIVED from the session's SafetyProfile, not
+            # hardcoded: `_bg` classifies as unattended, so `profile_for_session`
+            # resolves to HEADLESS and its approval ("hook_based") maps to
+            # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
+            # construction (AUTONOMY-GUARDRAILS Success Criterion #7). This is
+            # behavior-preserving: HEADLESS.approval == the prior HOOK_BASED literal.
+            # HOOK_BASED keeps the security hooks; hook-neutral tools auto-approve
+            # (no interactive callback), never hanging on an unanswerable prompt.
+            from personalclaw.guardrails.policy import approval_policy_for_session
+
+            _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
+
+            def _hb_usage(event: object, _m: str = _hb_model) -> None:
+                from personalclaw.usage_ledger import record_from_event
+
+                record_from_event(
+                    event,
+                    source="background",
+                    session_key=session_key,
+                    provider="acp",
+                    model=_m if isinstance(_m, str) and _m != "auto" else "",
+                )
+
+            result_text = await stream_and_collect(
+                client,
+                full_message,
+                approval_policy=approval_policy_for_session(session_key),
+                hooks=self.ctx_builder.hooks,
+                on_tool_approval=None,
+                on_complete=_hb_usage,
+            )
+
+            if not result_text:
+                result_text = "_No response._"
+        except Exception:
+            logger.exception("Heartbeat task failed: %s", task_text[:80])
+            raise
+        finally:
+            if _acquired:
+                self.sessions.release(session_key)
+                await self.sessions.recycle_background()
+
+        result_safe, _ = redact_exfiltration_urls(result_text)
+        result_safe, _ = redact_credentials(result_safe)
+        display_text = strip_keep_sentinel(result_safe)
+        # Only notify when task is complete — suppress delivery for
+        # incomplete tasks (HEARTBEAT_KEEP) to avoid spamming every cycle.
+        if is_keep_response(result_safe):
+            logger.info("Heartbeat task incomplete, suppressing delivery: %s", task_text[:80])
+        else:
+            task_safe, _ = redact_exfiltration_urls(task_text[:100])
+            task_safe, _ = redact_credentials(task_safe)
+            await self._deliver_result(
+                "Heartbeat",
+                task_safe,
+                display_text,
+                deliver,
+            )
+        return result_safe
 
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service.
@@ -2421,87 +2673,6 @@ class GatewayOrchestrator:
         `HeartbeatService._legacy_maintenance`, and with the remediation engine re-homed onto
         its own trigger the engine's memory jobs open their own store.
         """
-
-        async def _heartbeat_task(task_text: str, deliver: str) -> str | None:
-            assert self.sessions is not None
-            assert self.ctx_builder is not None
-            session_key = BACKGROUND_KEY
-            _acquired = False
-            try:
-                client, is_new, _resumed = await self.sessions.get_or_create(session_key)
-                _acquired = True
-                from personalclaw.context_headroom import resolve_window
-
-                # Named, not derived: this call passes no session key, and a keyless build
-                # derives the CHAT use case — so a heartbeat ran on the interactive-chat
-                # prompt while Settings → Prompts promised it the Background one.
-                full_message, _ = self.ctx_builder.build_message(
-                    task_text,
-                    is_new,
-                    prompt_use_case="background",
-                    window=await resolve_window(serving=client),
-                )
-
-                # Heartbeat is a pure UNATTENDED background loop — no user present.
-                # The approval policy is DERIVED from the session's SafetyProfile, not
-                # hardcoded: `_bg` classifies as unattended, so `profile_for_session`
-                # resolves to HEADLESS and its approval ("hook_based") maps to
-                # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
-                # construction (AUTONOMY-GUARDRAILS Success Criterion #7). This is
-                # behavior-preserving: HEADLESS.approval == the prior HOOK_BASED literal.
-                # HOOK_BASED keeps the security hooks; hook-neutral tools auto-approve
-                # (no interactive callback), never hanging on an unanswerable prompt.
-                from personalclaw.guardrails.policy import approval_policy_for_session
-
-                _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
-
-                def _hb_usage(event: object, _m: str = _hb_model) -> None:
-                    from personalclaw.usage_ledger import record_from_event
-
-                    record_from_event(
-                        event,
-                        source="background",
-                        session_key=session_key,
-                        provider="acp",
-                        model=_m if isinstance(_m, str) and _m != "auto" else "",
-                    )
-
-                result_text = await stream_and_collect(
-                    client,
-                    full_message,
-                    approval_policy=approval_policy_for_session(session_key),
-                    hooks=self.ctx_builder.hooks,
-                    on_tool_approval=None,
-                    on_complete=_hb_usage,
-                )
-
-                if not result_text:
-                    result_text = "_No response._"
-            except Exception:
-                logger.exception("Heartbeat task failed: %s", task_text[:80])
-                raise
-            finally:
-                if _acquired:
-                    self.sessions.release(session_key)
-                    await self.sessions.recycle_background()
-
-            result_safe, _ = redact_exfiltration_urls(result_text)
-            result_safe, _ = redact_credentials(result_safe)
-            display_text = strip_keep_sentinel(result_safe)
-            # Only notify when task is complete — suppress delivery for
-            # incomplete tasks (HEARTBEAT_KEEP) to avoid spamming every cycle.
-            if is_keep_response(result_safe):
-                logger.info("Heartbeat task incomplete, suppressing delivery: %s", task_text[:80])
-            else:
-                task_safe, _ = redact_exfiltration_urls(task_text[:100])
-                task_safe, _ = redact_credentials(task_safe)
-                await self._deliver_result(
-                    "Heartbeat",
-                    task_safe,
-                    display_text,
-                    deliver,
-                )
-            return result_safe
 
         async def _deliver_due_commitments() -> None:
             """Deliver any due proactive check-ins (M5e — O-A4), then dismiss them.
@@ -2582,7 +2753,6 @@ class GatewayOrchestrator:
                 state.push_sessions_update()
 
         self.heartbeat_svc = HeartbeatService(
-            on_task=_heartbeat_task,
             consolidator=self.consolidator,
             on_due_commitments=_deliver_due_commitments,
             on_auto_archive=_auto_archive_sessions,
@@ -4178,6 +4348,7 @@ class GatewayOrchestrator:
             self._web_watch_task,
             self._clock_task,
             self._reaper_task,
+            self._task_due_task,
             self._staged_apply_task,
         ):
             if _task is None:
@@ -4308,12 +4479,15 @@ class GatewayOrchestrator:
         is answered in exactly one place. Untracked files (task specs, notes) are
         never at risk and never block an update.
         """
-        proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
-        if not proj:
-            return
         from personalclaw import __version__ as _cur_version
         from personalclaw import self_update
         from personalclaw.config import AppConfig
+
+        # The checkout the running package comes from: advancing any other tree would leave the
+        # gateway on the code it runs now, with someone else's tree moved underneath them.
+        proj = self_update.source_checkout()
+        if not proj:
+            return
 
         try:
             cfg = AppConfig.load()
@@ -4590,6 +4764,9 @@ class GatewayOrchestrator:
             await self._init_dashboard()
         else:
             await self._init_api_server()
+        # What the boot passes found while the dashboard did not exist yet: one notice, now that
+        # it can be delivered.
+        self._surface_held_boot_review()
         self._wire_embeddings()
 
         # Emit machine-readable READY line for test harnesses (--json-ready).
@@ -4851,4 +5028,16 @@ async def run_gateway(
         json_ready=json_ready,
         approval_mode=approval_mode,
     )
-    await orchestrator.run()
+    try:
+        await orchestrator.run()
+    except BaseException:
+        # `run` leaves only by ending the process (`os._exit`, after `_shutdown` stopped every app
+        # process, or the exec of a restart) or by raising. It raises when start-up fails, and
+        # when it is stopped before its signal handlers are installed (they come after the update
+        # check), since a Ctrl-C then cancels it. Startup has already started every enabled app's
+        # backend and worker by then, and each would outlive the gateway, re-parented to init,
+        # until the next boot reaped it.
+        from personalclaw.apps.app_runtime import stop_processes
+
+        stop_processes()
+        raise

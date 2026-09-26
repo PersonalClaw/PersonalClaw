@@ -135,7 +135,7 @@ def _app_path_refusal(raw: str, *, tool: str, reach: str = _EXPLORER_REACH) -> w
     ``None`` for the owner, whose refusal each endpoint answers exactly as before.
 
     The owner's answer is a ``400`` that confirms nothing about the path. An app's is an app
-    refusal like every other one (the permission middleware, ``apps._foreign_app_config_refusal``):
+    refusal like every other one (the permission middleware, ``server.app_permission_middleware``):
     the explorer hides the PersonalClaw home from an app (:func:`_dashboard_roots`), so an app
     asking for ``config.json`` is asking for the owner's settings, and the owner's ``400`` with no
     row naming the app made that read as a typo. Decided on who asked and which path only, never
@@ -1081,20 +1081,20 @@ def _dashboard_roots() -> list[tuple[str, str]]:
 
     Each entry is ``(label, realpath)``. These are the boundaries the file
     explorer browses and the allowlist :func:`_validate_dashboard_path`
-    enforces — workspace, outbox, uploads, and PERSONALCLAW_HOME. Roots that
-    fail to resolve (e.g. not configured) are skipped. The order is
-    user-facing-first (workspace) so the explorer can default to it.
+    enforces: the workspace, the outbox, uploads, and the folders loops and
+    projects work in. Roots that fail to resolve (e.g. not configured) are
+    skipped. The order is user-facing-first (workspace) so the explorer can
+    default to it.
 
-    🔴 AN APP NEVER GETS THE HOME ITSELF. ``config.json``, ``mcp.json``, the automations, the
-    agent files and every other app's install are plain files under PERSONALCLAW_HOME, so an
-    app that declared ``/api/file-write`` could turn YOLO on or define an MCP command by
-    editing one — past every refusal the config PATCH, the MCP routes and the automation routes
-    make — and one that declared ``/api/file-read`` could read the MCP servers' credentials.
-    So for a request the gateway scoped to an app (``permissions.request_app``), every root
-    that IS the home or CONTAINS it is left out — the two home roots, and a loop or project
-    workspace bound to ``~`` — while roots inside it (outbox, uploads) stay. The allowlist then
-    admits a home path only through one of those, and the realpath checks in
-    :func:`_validate_dashboard_path` refuse a symlink or ``..`` back out of them.
+    🔴 THE HOME ITSELF IS NEVER A ROOT. ``config.json``, ``mcp.json``, the automations, the
+    agent files and every app's install are plain files under PERSONALCLAW_HOME, so editing one
+    in Files could turn YOLO on or define an MCP command past every refusal the config PATCH,
+    the MCP routes and the automation routes make, and reading one could show the MCP servers'
+    credentials. Only folders inside it that hold work are roots (the workspace, outbox,
+    uploads, screenshots, a project's context, a greenfield code loop's folder). For a request
+    the gateway scoped to an app (``permissions.request_app``), a root that CONTAINS the home,
+    such as a loop or project workspace bound to ``~``, is left out as well. The realpath checks
+    in :func:`_validate_dashboard_path` refuse a symlink or ``..`` back out of a root.
     """
     roots = _all_dashboard_roots()
     from personalclaw.apps.permissions import request_app
@@ -1127,16 +1127,14 @@ def _all_dashboard_roots() -> list[tuple[str, str]]:
         _add("Workspace", workspace_root)
     except Exception:
         pass
-    _add("Home", config_dir)
     _add("Outbox", outbox_dir)
-    # Uploads + PersonalClaw home roots must follow the ACTIVE home (config_dir()),
-    # NOT a hardcoded ~/.personalclaw: a gateway on a custom PERSONALCLAW_HOME (every
-    # dev instance) would otherwise browse AND edit the developer's REAL home via the
-    # write allowlist (#294). config_dir() re-reads PERSONALCLAW_HOME live, and both
-    # stay lambda/callable-deferred so the home is resolved per request, not at import.
+    # Uploads must follow the ACTIVE home (config_dir()), NOT a hardcoded ~/.personalclaw: a
+    # gateway on a custom PERSONALCLAW_HOME (every dev instance) would otherwise browse AND edit
+    # the developer's REAL home via the write allowlist (#294). config_dir() re-reads
+    # PERSONALCLAW_HOME live, and the factory is deferred so the home is resolved per request.
     _add("Uploads", lambda: os.path.join(config_dir(), "uploads"))
-    # PersonalClaw home root — quick access to the whole config/data tree.
-    _add("PersonalClaw", config_dir)
+    # Where a native screen capture lands, so its chat chip's Open can show it.
+    _add("Screenshots", _screenshot_dir)
 
     # Loop workspaces — a Loop (typically a code kind, but any kind may) can bind an
     # arbitrary (brownfield) directory anywhere on disk; its cockpit (file tree +
@@ -1156,10 +1154,16 @@ def _all_dashboard_roots() -> list[tuple[str, str]]:
         candidates.append((label, real))
 
     try:
+        from personalclaw.loop import files as _loop_files
         from personalclaw.loop import store as _loop_store
 
         for _lp in _loop_store.list_all():
             wsd = (_lp.workspace_dir or "").strip()
+            if not wsd and _lp.kind == "code":
+                # A greenfield code loop works in its own folder in the home (`effective_dir`),
+                # and its cockpit says so with a link here.
+                own = _loop_files.loop_dir(_lp.id)
+                wsd = str(own) if own is not None else ""
             if wsd:
                 _add_workspace_root(f"Loop: {_lp.name[:24]}", wsd)
     except Exception:
@@ -1174,10 +1178,14 @@ def _all_dashboard_roots() -> list[tuple[str, str]]:
     try:
         from personalclaw.projects import _store as _project_store
 
-        for _pj in _project_store().list_projects():
+        store = _project_store()
+        for _pj in store.list_projects():
             wsd = (_pj.workspace_dir or "").strip()
             if wsd:
                 _add_workspace_root(f"Project: {_pj.name[:24]}", wsd)
+            # Its context folder, in the home: the notes its loops and chats share, which the
+            # project page opens here.
+            _add(f"Context: {_pj.name[:24]}", lambda pid=_pj.id: store.context_dir(pid))
     except Exception:
         pass
 
@@ -1194,8 +1202,8 @@ def _all_dashboard_roots() -> list[tuple[str, str]]:
 def _is_dashboard_root(path: str) -> bool:
     """True if ``path`` IS one of the dashboard's browsable root directories.
 
-    A root (workspace, home, outbox, uploads, PERSONALCLAW_HOME, a bound
-    loop/project workspace) is a boundary the explorer surfaces — never a valid
+    A root (the workspace, outbox, uploads, a loop's or project's folder) is a
+    boundary the explorer surfaces — never a valid
     delete or move TARGET. ``_validate_dashboard_path`` treats a root as inside
     the allowlist (a root is inside itself: ``canonical == root``), so without
     this guard ``POST /api/file-delete`` on a root would ``shutil.rmtree`` the
@@ -1246,7 +1254,7 @@ def _validate_dashboard_path(raw: str, allowed_roots: tuple[str, ...] | None = N
       1. Reject sensitive credential paths via ``personalclaw.hooks.validate_file_path``
          (e.g. ``~/.ssh``, ``~/.aws``).
       2. Restrict to an allowlist of root directories the dashboard is meant
-         to surface — workspaces, outbox, uploads, and PERSONALCLAW_HOME. This
+         to surface (:func:`_dashboard_roots`), never the home itself. This
          constrains the path-traversal surface so a request like
          ``GET /api/file-read?path=/etc/passwd`` is rejected.
 

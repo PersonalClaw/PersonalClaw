@@ -28,6 +28,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import web
@@ -378,6 +379,15 @@ _BYPASS_EXACT.add("/api/devices/pair/complete")
 # browser, never interpolated server-side), and every grant still happens at
 # `/api/devices/pair/complete` behind that route's own guards. See handlers/devices.py.
 _BYPASS_EXACT.add("/pair")
+# The page an authorization server sends the browser back to when the owner signs in to a remote
+# MCP server (handlers/mcp.api_mcp_oauth_callback). Exempt because the browser coming back may carry
+# no session for this address: the redirect is to 127.0.0.1 (RFC 8252), and a dashboard opened at
+# `localhost` holds its cookie for that name only. Exempting it opens nothing: a request is matched
+# only to a sign-in the owner started, by its single-use 256-bit `state`, within ten minutes, and
+# its code is exchanged only with that sign-in's PKCE verifier, which never leaves the gateway's
+# memory.
+# Any other request gets a page saying the sign-in expired, and changes nothing. See mcp_oauth.py.
+_BYPASS_EXACT.add("/api/mcp/oauth/callback")
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.
@@ -385,17 +395,29 @@ LINK_WINDOW_SECS = 24 * 3600
 # Maximum session TTL — sessions effectively never expire for local installs.
 #: Query params this module CONSUMES as credentials, so they are not the handler's arguments.
 #:
-#: ``?token=`` is the query-token auth path: read here (and in ``handlers/auth.py``) and
-#: deliberately **not stripped** from ``request.query``, so it arrives at every handler along
-#: with the caller's real parameters. A route with a strict, fail-closed query allowlist must
-#: therefore subtract this set before diffing, or it refuses the very callers the auth mode
-#: requires — which is exactly what ``GET /api/security/audit`` did (issue 2927): a
-#: catch-22 where no token meant 403 from auth and a token meant 400 ``unknown_filter`` from
-#: the handler, so a query-token client could never read the audit trail at all.
+#: ``?token=`` is the query-token auth path and ``?app_token=`` the app-narrowing token of the
+#: ``/api/ws`` handshake (which cannot set a header): both read here (``token`` also in
+#: ``handlers/auth.py``) and deliberately **not stripped** from ``request.query``, so they
+#: arrive at every handler along with the caller's real parameters. A route with a strict,
+#: fail-closed query allowlist must therefore subtract this set before diffing, or it refuses
+#: the very callers the auth mode requires — which is exactly what ``GET /api/security/audit``
+#: did (issue 2927): a catch-22 where no token meant 403 from auth and a token meant 400
+#: ``unknown_filter`` from the handler, so a query-token client could never read the audit
+#: trail at all. And anything that FORWARDS a request's query (the app reverse proxy) must
+#: drop this set, or it hands the credential to whoever it forwards to.
 #:
-#: Subtracting is the fix, not widening the route's own allowlist: ``token`` is a credential,
-#: not a filter, and it must never reach a SEL query as one.
-RESERVED_QUERY_PARAMS: frozenset[str] = frozenset({"token"})
+#: Subtracting is the fix, not widening the route's own allowlist: a credential is not a
+#: filter, and it must never reach a SEL query — or an app backend — as one.
+RESERVED_QUERY_PARAMS: frozenset[str] = frozenset({"token", "app_token"})
+
+#: The stable wire codes of a refused ``Authorization: Bearer`` (registered in
+#: ``http_errors.HTTP_ERROR_CODES``). One code for every Bearer that cannot stand on its own —
+#: malformed, expired, revoked, forged, another gateway's, an app's, another surface's — so the
+#: answer says nothing about which of those it was.
+ERR_BEARER_INVALID = "auth_bearer_invalid"
+#: Two different owner credentials on one request (the header and ``?token=``): there is no
+#: right one to pick, so neither is.
+ERR_CREDENTIAL_CONFLICT = "auth_credential_conflict"
 
 # The cookie is re-issued on every page load via the session renewal path so
 # the clock only matters for completely idle browsers.
@@ -585,7 +607,10 @@ def validate_token(token: str, *, use_session_exp: bool = False) -> tuple[bool, 
     except Exception:
         return False, "", "invalid encoding"
     expected = _sign(payload_bytes)
-    if not hmac.compare_digest(sig, expected):
+    # A signature is base64url, so a non-ASCII one is simply wrong — and it must be refused as
+    # one: `compare_digest` RAISES on a non-ASCII str, which turned a forged credential into a
+    # 500 from the auth middleware instead of a refusal.
+    if not sig.isascii() or not hmac.compare_digest(sig, expected):
         return False, "", "invalid signature"
     try:
         data = json.loads(payload_bytes)
@@ -628,10 +653,13 @@ def validate_token_with_app(
 def token_nonce(token: str) -> str:
     """The ``nonce`` claim of *token*, or ``""`` when it cannot be read.
 
-    **Precondition: the caller has already validated the token.** This decodes the payload
-    WITHOUT checking the signature, because the one caller (the token middleware) has just run
-    :func:`validate_token_with_app` over the same string — re-verifying here would be a second
-    copy of the validation rules, which is worse than stating the precondition.
+    **It NAMES a session; it never proves one.** The payload is decoded WITHOUT checking the
+    signature, so a caller passes a token it has validated (the middleware, which has just run
+    :func:`validate_token_with_app` over the same string), minted itself (device pairing, which
+    annotates the fresh session's row) or is only revoking (:func:`revoke_token`, behind the
+    owner's own authentication). Re-verifying here would be a second copy of the validation
+    rules, which is worse than stating the contract — and every reader of the claim outside
+    :func:`validate_token` goes through here, so there is no second decoder to drift from it.
 
     Returning ``""`` on any malformed input is deliberate: every consumer treats an empty nonce
     as "this session cannot be identified" and falls back to the stricter branch, so a decode
@@ -643,6 +671,126 @@ def token_nonce(token: str) -> str:
         return ""
     nonce = data.get("nonce", "") if isinstance(data, dict) else ""
     return nonce if isinstance(nonce, str) else ""
+
+
+def _bearer_credential(request: Any) -> tuple[bool, str]:
+    """``(presented, token)`` for the request's ``Authorization: Bearer`` header.
+
+    Only the Bearer scheme is this module's. Another scheme — a reverse proxy's own ``Basic``
+    login, riding the same header beside the session cookie — is someone else's credential:
+    ``(False, "")``, ignored rather than refused, or every request through such a proxy would
+    be. A Bearer with no token, or with more than one (``Bearer a b``, ``Bearer a,b``), is
+    presented but unusable: ``(True, "")``.
+    """
+    raw = request.headers.get("Authorization")
+    if not isinstance(raw, str):
+        return False, ""
+    scheme, _, credential = raw.strip().partition(" ")
+    if scheme.lower() != "bearer":
+        return False, ""
+    credential = credential.strip()
+    if not credential or any(ch.isspace() or ch == "," for ch in credential):
+        return True, ""
+    return True, credential
+
+
+@dataclass(frozen=True)
+class _Credentials:
+    """The credential that authorizes a request — chosen ONCE, by one rule, for every path.
+
+    ``token`` is the primary credential and never leaves this module; ``source`` says which
+    carrier brought it (``query`` / ``header`` / ``cookie``); ``app`` is the app the request is
+    scoped to, from the token's own claim or an app token layered over an owner session. A
+    refusal carries either ``error_code`` (a stable wire code, for the Bearer's refusals) or
+    ``reason`` (the prose reason ``_deny`` has always answered with).
+    """
+
+    token: str = ""
+    source: str = ""
+    user_id: str = ""
+    app: str = ""
+    error_code: str = ""
+    reason: str = ""
+
+    @property
+    def valid(self) -> bool:
+        return bool(self.token) and not self.error_code and not self.reason
+
+    @property
+    def failure(self) -> str:
+        """What the audit row says about a refusal: the stable code, else the reason."""
+        return self.error_code or self.reason
+
+
+def _select_request_credentials(request: Any, port: int) -> _Credentials:
+    """The one answer to "which credential authorizes this request".
+
+    The owner token has THREE carriers and one meaning. ``?token=`` is the browser entry link:
+    the middleware binds it to the first address it sees and exchanges it for the HttpOnly
+    ``pc_token_<port>`` cookie, which every later browser request carries. ``Authorization:
+    Bearer`` is for everything that is not a browser — the CLI, a script, a native client —
+    and is stateless: it sets no cookie and binds no address, and it keeps the token out of
+    the URL, where it would land in shell history, the process list and every log that
+    records a request line. The header accepts exactly the sessions the cookie accepts,
+    judged by the same rules (signature, session lifetime, a live nonce), so it is a second
+    carrier for the same credential, not a second kind of credential.
+
+    Precedence, deliberately explicit:
+
+    * ``?token=`` first — the browser exchange keeps its semantics. A DIFFERENT owner token
+      in the header beside it is two sessions on one request, and there is no right one to
+      pick: refused, ``auth_credential_conflict``.
+    * then an owner token in the header (a valid session token with no ``app`` claim);
+    * then the cookie.
+    * A Bearer with none of those to stand on is refused with the one stable
+      ``auth_bearer_invalid`` — an app token included, because in the header an app token
+      only NARROWS an owner session and never stands in for one.
+
+    Layered app identity (the untrusted-app sandbox, P1) then applies unchanged: an app's SDK
+    sends the owner cookie PLUS its own app-scoped token — in the Bearer header (fetch) or as
+    ``?app_token=`` (the ``/api/ws`` handshake, which cannot set headers) — and the token's
+    ``app`` claim is adopted only when it validates for the SAME user, so it can only narrow
+    the request. One that does not validate is not adopted, exactly as before this rule
+    existed (a DISCOVERY recorded with the change: that fall-through keeps the owner's reach).
+    """
+    query_token = request.query.get("token") or ""
+    cookie_token = request.cookies.get(f"pc_token_{port}", "")
+    presented, bearer = _bearer_credential(request)
+    # Judged once, against the SESSION lifetime: a header is a session carrier like the cookie
+    # (``exp`` is only the entry link's click window, which is the query token's).
+    checked = validate_token_with_app(bearer, use_session_exp=True) if bearer else None
+    owner_bearer = checked is not None and checked[0] and not checked[3]
+
+    if query_token:
+        # Bytes, not str: `compare_digest` raises on a non-ASCII str, and the query is anyone's.
+        if owner_bearer and not hmac.compare_digest(query_token.encode(), bearer.encode()):
+            return _Credentials(error_code=ERR_CREDENTIAL_CONFLICT)
+        token, source = query_token, "query"
+    elif owner_bearer:
+        token, source = bearer, "header"
+    elif cookie_token:
+        token, source = cookie_token, "cookie"
+    elif presented:
+        return _Credentials(error_code=ERR_BEARER_INVALID)
+    else:
+        return _Credentials(reason="Token required")
+
+    if source == "header" and checked is not None:
+        valid, user_id, reason, app = checked
+    else:
+        valid, user_id, reason, app = validate_token_with_app(
+            token, use_session_exp=source != "query"
+        )
+    if not valid:
+        return _Credentials(reason=reason)
+
+    if not app:
+        layered = (bearer if source != "header" else "") or request.query.get("app_token", "")
+        if layered and layered != token:
+            a_valid, a_user, _reason, a_app = validate_token_with_app(layered)
+            if a_valid and a_app and a_user == user_id:
+                app = a_app
+    return _Credentials(token=token, source=source, user_id=user_id, app=app)
 
 
 def presented_session_nonce(request: Any, port: int) -> str:
@@ -662,23 +810,15 @@ def presented_session_nonce(request: Any, port: int) -> str:
 
     Naming the session cannot WIDEN either path — a caller these modes admit already holds
     unrestricted owner reach — it only lets a handler tell *which kind of client* is calling.
-    And it names only a session the token proves: the token is fully validated here (same
-    ``validate_token`` the strict path uses, same ``use_session_exp`` rule keyed on whether it
-    arrived as a cookie), so an absent, forged, or expired credential yields ``""`` and every
-    consumer keeps its stricter branch. Validation also stamps the device's ``last_seen``,
-    exactly as it does on the authenticated path.
+    And it names only a session the token proves: the credential is chosen and validated by
+    the SAME :func:`_select_request_credentials` the strict path uses — so a session carried in
+    the ``Authorization`` header is named exactly like one carried in the cookie — and an
+    absent, forged, expired or conflicting credential yields ``""``, so every consumer keeps
+    its stricter branch. Validation also stamps the device's ``last_seen``, exactly as it does
+    on the authenticated path.
     """
-    token = request.query.get("token") or ""
-    from_cookie = False
-    if not token:
-        token = request.cookies.get(f"pc_token_{port}", "")
-        from_cookie = bool(token)
-    if not token:
-        return ""
-    valid, _user_id, _reason = validate_token(token, use_session_exp=from_cookie)
-    if not valid:
-        return ""
-    return token_nonce(token)
+    credentials = _select_request_credentials(request, port)
+    return token_nonce(credentials.token) if credentials.valid else ""
 
 
 def _evict_expired() -> None:
@@ -773,15 +913,9 @@ def revoke_token(token: str) -> bool:
     Note this revokes the SESSION, not just the presented string: any other copy of the same
     token dies with it, which is what a user pressing "log out" means.
     """
-    nonce = ""
-    try:
-        payload_b64 = token.split(".")[0]
-        nonce = str(json.loads(_b64url_decode(payload_b64)).get("nonce") or "")
-    except Exception:  # noqa: BLE001 — a malformed token has no session to revoke
-        logger.debug("could not extract a nonce from the token being revoked", exc_info=True)
-        return False
+    nonce = token_nonce(token)
     if not nonce:
-        return False
+        return False  # a malformed token has no session to revoke
 
     existed = _state.revoke_nonce(nonce, token)
     try:
@@ -923,49 +1057,40 @@ def token_auth_middleware(
         )
         return forwarded if is_proxy else raw
 
-    def _layered_app(request: web.Request, token: str, user_id: str) -> str:
-        """The ``app`` claim of an app-scoped token layered over the owner's credential, or ``""``.
+    def _adopt(request: web.Request, credentials: _Credentials) -> None:
+        """Expose the verified identity to handlers — never the credential itself.
 
-        An app's SDK sends the owner cookie (browser-attached) PLUS its own app-scoped token — as
-        an ``Authorization: Bearer`` header (fetch) or an ``?app_token=`` query param (the
-        ``/api/ws`` handshake, which cannot set headers). The claim is adopted only for a token
-        that validates for the SAME owner user, so it can only ever NARROW the request.
+        🔴 ``app`` is recorded on EVERY path, the internal routes included: the app permission
+        middleware and every handler-level app check (``can_use_mcp_tool`` on
+        ``/api/tools/invoke``) key on ``request["app"]``. The internal routes used to validate an
+        app token like any other and drop the claim, so ``/api/tools/invoke?token=<an app's
+        token>`` from loopback reached the handler as the OWNER.
+
+        ``session_nonce`` says WHICH session authorized the request, so a handler can ask what
+        kind of client is on the other end without re-deriving it from the raw credential. Only
+        the nonce travels — it is the registry handle, and the token stays in this middleware.
+        Consumed by the ``/api/ws`` origin check (CA-7): a paired device session is the one
+        thing that can vouch for an origin-less upgrade.
         """
-        app_token = ""
-        _auth = request.headers.get("Authorization", "")
-        if _auth.startswith("Bearer "):
-            app_token = _auth[7:].strip()
-        if not app_token:
-            app_token = request.query.get("app_token", "")
-        if app_token and app_token != token:
-            a_valid, a_user, _reason, a_app = validate_token_with_app(app_token)
-            if a_valid and a_app and a_user == user_id:
-                return a_app
-        return ""
+        request["user"] = credentials.user_id
+        request["app"] = credentials.app
+        request["session_nonce"] = token_nonce(credentials.token)
 
-    def _extract_and_validate_token(request: web.Request, _port: int) -> tuple[bool, str, str, str]:
-        """Extract token from query param or cookie and validate it.
+    def _refuse(request: web.Request, credentials: _Credentials, fallback: str) -> web.Response:
+        """A Bearer's refusal is its stable wire code; every other refusal keeps its wording.
 
-        Used by internal-path browser auth (no secret header).  The main
-        auth flow has its own extraction with IP-binding and from_cookie
-        tracking that this helper intentionally does not replicate.
-
-        Returns ``(valid, user_id, reason, app)``. 🔴 ``app`` is the app the request is scoped
-        to — the token's own claim, or an app token layered over the owner's — and the caller
-        MUST record it as ``request["app"]``. This helper used to validate an app token like any
-        other and drop the claim, so ``/api/tools/invoke?token=<an app's token>`` from loopback
-        reached the handler as the OWNER: the app permission middleware and every handler-level
-        app check (``can_use_mcp_tool`` on that very route) key on ``request["app"]`` and saw
-        none. The identity the token carries is not optional on the internal paths either.
+        JSON on every path, pages included: a header credential is sent by a client that
+        reads JSON, never by a browser navigating to a page, so the paste-token gate would be
+        an answer to a question nobody asked. The body never echoes the credential.
         """
-        cookie_name = f"pc_token_{_port}"
-        token = request.query.get("token") or request.cookies.get(cookie_name, "")
-        if not token:
-            return False, "", "no token", ""
-        valid, user_id, reason, app = validate_token_with_app(token, use_session_exp=True)
-        if valid and not app:
-            app = _layered_app(request, token, user_id)
-        return valid, user_id, reason, app
+        from personalclaw.http_errors import json_error
+
+        headers = {"X-Auth-Required": "true"}
+        if credentials.error_code == ERR_CREDENTIAL_CONFLICT:
+            return json_error(ERR_CREDENTIAL_CONFLICT, status=403, headers=headers)
+        if credentials.error_code:
+            return json_error(ERR_BEARER_INVALID, status=403, headers=headers)
+        return _deny(request, fallback)
 
     @web.middleware
     async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
@@ -1050,13 +1175,11 @@ def token_auth_middleware(
                 )
                 _log_auth(request, "internal", "denied", "wrong secret")
                 return _deny(request, "Forbidden")
-            # No secret header (browser request) → verify cookie/query-param auth
-            # inline to satisfy deny-by-default: positively confirm auth
-            # at the decision point rather than deferring to downstream.
-            # NOTE: uses _extract_and_validate_token helper (defined above)
-            # for cookie/query-param validation.
-            _valid, _uid, _reason, _app = _extract_and_validate_token(request, port)
-            if not _valid:
+            # No secret header (a browser, the CLI) → verify session auth inline to satisfy
+            # deny-by-default: positively confirm auth at the decision point rather than
+            # deferring to downstream. The same selection the strict path below makes.
+            credentials = _select_request_credentials(request, port)
+            if not credentials.valid:
                 _sel = _sel_fn()
                 _sel.log_api_access(
                     caller=request.remote or "",
@@ -1064,19 +1187,20 @@ def token_auth_middleware(
                     outcome="denied",
                     source="token_auth",
                     resources=path,
-                    error=f"cookie auth failed: {_reason}",
+                    error=f"session auth failed: {credentials.failure}",
                 )
-                _log_auth(request, "internal", "denied", f"cookie auth failed: {_reason}")
-                return _deny(request, "Forbidden")
+                _log_auth(
+                    request, "internal", "denied", f"session auth failed: {credentials.failure}"
+                )
+                return _refuse(request, credentials, "Forbidden")
+            _adopt(request, credentials)
             _log_auth(
                 request,
-                _uid or "internal",
+                credentials.user_id or "internal",
                 "granted",
-                "cookie auth (no secret header)",
+                f"{credentials.source} auth (no secret header)",
                 operation="internal_auth",
             )
-            if _app:
-                request["app"] = _app
             return await handler(request)  # type: ignore[operator]
         elif _matches_internal:
             if _matches_mixed:
@@ -1104,8 +1228,8 @@ def token_auth_middleware(
                             request, "internal", "denied", "wrong secret (non-loopback mixed)"
                         )
                         return _deny(request, "Forbidden")
-                _valid, _uid, _reason, _app = _extract_and_validate_token(request, port)
-                if not _valid:
+                credentials = _select_request_credentials(request, port)
+                if not credentials.valid:
                     _sel = _sel_fn()
                     _sel.log_api_access(
                         caller=request.remote or "",
@@ -1113,24 +1237,23 @@ def token_auth_middleware(
                         outcome="denied",
                         source="token_auth",
                         resources=path,
-                        error=f"mixed non-loopback cookie auth failed: {_reason}",
+                        error=f"mixed non-loopback session auth failed: {credentials.failure}",
                     )
                     _log_auth(
                         request,
                         "internal",
                         "denied",
-                        f"mixed non-loopback cookie auth failed: {_reason}",
+                        f"mixed non-loopback session auth failed: {credentials.failure}",
                     )
-                    return _deny(request, "Forbidden")
+                    return _refuse(request, credentials, "Forbidden")
+                _adopt(request, credentials)
                 _log_auth(
                     request,
-                    _uid or "internal",
+                    credentials.user_id or "internal",
                     "granted",
-                    "mixed non-loopback cookie auth",
+                    f"mixed non-loopback {credentials.source} auth",
                     operation="internal_auth",
                 )
-                if _app:
-                    request["app"] = _app
                 return await handler(request)  # type: ignore[operator]
             else:
                 # INVARIANT: non-loopback access to strict internal paths is
@@ -1155,39 +1278,30 @@ def token_auth_middleware(
             return await handler(request)  # type: ignore[operator]
         if path in _BYPASS_EXACT:
             return await handler(request)  # type: ignore[operator]
-        # Extract token from query param or cookie
-        cookie_name = f"pc_token_{port}"
-        token = request.query.get("token") or ""
-        from_cookie = False
-        if not token:
-            token = request.cookies.get(cookie_name, "")
-            from_cookie = bool(token)
-
-        if not token:
-            _log_auth(request, "", "denied", "Token required")
-            return _deny(request, "Token required")
-
-        valid, user_id, reason, app_name = validate_token_with_app(
-            token, use_session_exp=from_cookie
-        )
-        if not valid:
-            _log_auth(request, "", "denied", reason)
-            return _deny(request, reason)
+        credentials = _select_request_credentials(request, port)
+        if not credentials.valid:
+            _log_auth(request, "", "denied", credentials.failure)
+            return _refuse(request, credentials, credentials.reason)
+        token = credentials.token
+        user_id = credentials.user_id
+        # The browser exchange — address binding and the cookie — belongs to the entry link
+        # alone. The cookie is already the session, and the header is a stateless carrier.
+        from_query = credentials.source == "query"
 
         # Prefer X-Real-IP set by a trusted reverse proxy (nginx) over the
         # TCP remote address. See _resolved_client_ip for the trust rules.
         client_ip = _resolved_client_ip(request)
 
         # IP binding only applies on the initial query-param token exchange.
-        # Cookie-based requests skip IP checks — the cookie itself is the
-        # credential, and IP validation behind a proxy is unreliable.
-        if not from_cookie and not check_token_ip(token, client_ip):
+        # Cookie- and header-carried requests skip IP checks — the credential itself is the
+        # proof, and IP validation behind a proxy is unreliable.
+        if from_query and not check_token_ip(token, client_ip):
             _log_auth(request, user_id, "denied", "IP mismatch")
             return _deny(request, "IP mismatch")
 
         # Extract session_exp for cookie and IP binding on first query-param use
         session_exp = 0.0
-        if not from_cookie:
+        if from_query:
             try:
                 payload_bytes = _b64url_decode(token.split(".")[0])
                 data = json.loads(payload_bytes)
@@ -1197,29 +1311,14 @@ def token_auth_middleware(
             bind_token_ip(token, client_ip, session_exp)
 
         # Expose authenticated identity to handlers (deny-by-default)
-        request["user"] = user_id
-        request["app"] = app_name
-        # WHICH session authorized this request, so a handler can ask what kind of client is
-        # on the other end without re-deriving it from the raw credential. Only the nonce
-        # travels — it is the registry handle, and the token itself stays in this middleware.
-        # Consumed by the `/api/ws` origin check: a paired device session is the one
-        # thing that can vouch for an origin-less upgrade.
-        request["session_nonce"] = token_nonce(token)
-
-        # Layered app identity (untrusted-app sandbox, P1): adopt the claim of an app-scoped
-        # token presented beside the owner's credential (`_layered_app`), so the app-permission
-        # middleware + WS event filter scope this request to that app. Owner auth (above) is
-        # unchanged — the app token only NARROWS, never widens.
-        if not app_name:
-            layered = _layered_app(request, token, user_id)
-            if layered:
-                request["app"] = layered
+        _adopt(request, credentials)
 
         # Proceed to handler
         resp = await handler(request)  # type: ignore[operator]
 
         # Set cookie after handler (needs response object)
-        if not from_cookie:
+        if from_query:
+            cookie_name = f"pc_token_{port}"
             cookie_max_age = MAX_SESSION_TTL_SECS
             if session_exp:
                 remaining = int(session_exp - time.time())

@@ -62,6 +62,18 @@ class ChannelCapabilities:
     rich_text: bool = False  # markdown / blocks
     typing_indicator: bool = False
     max_text_len: int = 0  # 0 = unbounded
+    #: The owner can pair this channel from its Configure page: the page shows a code and whoever
+    #: sends it to the bot in a direct message becomes the channel's owner. Declare it only when
+    #: both halves hold — the channel's DMs cross the guarded door
+    #: (``services.deliver_channel_inbound``), where core redeems the code, and the channel reads
+    #: its owner with ``owner_id_for`` each time it needs it (a DM, an approval prompt), so a
+    #: pairing reaches the running receiver at once instead of at its next start.
+    owner_pairing: bool = False
+    #: A direct message with this channel is ONE conversation: every message in it reaches core
+    #: with the DM's channel id as its ``thread_id``, so core links a chat to the DM itself, not
+    #: to a thread inside it. A chat handed off to such a channel continues in the DM; for one
+    #: with threads in its DMs, it continues in the thread the handoff opened.
+    dm_thread_is_channel: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict

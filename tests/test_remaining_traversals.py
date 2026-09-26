@@ -160,17 +160,20 @@ class TestSkillInstallDirectoryName:
         `install_scanned` stages the fetched payload into a temp dir named from `detail.name`, which
         the marketplace supplies — and it escaped BEFORE `scan_dir` ran, so the supply-chain gate
         could not refuse a write it had not been asked about yet. Asserted at the expression rather
-        than by driving a fake marketplace, because the expression is the whole finding.
+        than by driving a fake marketplace, because the expression is the whole finding. The
+        staging lives in `_scan_staged`, which the install and the scan before it both call.
         """
         import inspect
 
         from personalclaw.skills import marketplace as M
 
-        src = inspect.getsource(M.install_scanned)
+        src = inspect.getsource(M._scan_staged)
         assert (
             "staged_root / (detail.name" not in src
         ), "the quarantine dir is being named by a raw join again — the fetched `name` reaches it"
         assert "record_path(" in src
+        for caller in (M.install_scanned, M.scan_before_install):
+            assert "_scan_staged(" in inspect.getsource(caller), caller.__name__
 
         staged_root = Path(tempfile.mkdtemp())
         with pytest.raises(UnsafeRecordId):

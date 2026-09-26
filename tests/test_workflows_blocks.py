@@ -382,42 +382,42 @@ class TestDeclaredDefaultsAreApplied:
     """
 
     def test_an_omitted_optional_input_gets_its_declared_default(self) -> None:
-        from personalclaw.workflows.service import _with_declared_defaults
+        from personalclaw.workflows.service import with_declared_defaults
 
         spec = {"inputs": {"kind": {"default": "document"}, "subject": {"required": True}}}
-        out = _with_declared_defaults(spec, {"subject": "x"})
+        out = with_declared_defaults(spec, {"subject": "x"})
         assert out == {"subject": "x", "kind": "document"}
 
     def test_an_optional_input_with_NO_default_still_gets_a_key(self) -> None:
         """Otherwise a `{{inputs.acceptance}}` binding fails on an input the template said was
         optional — and "optional" has to mean the workflow works without it."""
-        from personalclaw.workflows.service import _with_declared_defaults
+        from personalclaw.workflows.service import with_declared_defaults
 
-        out = _with_declared_defaults({"inputs": {"acceptance": {"type": "string"}}}, {})
+        out = with_declared_defaults({"inputs": {"acceptance": {"type": "string"}}}, {})
         assert out == {"acceptance": ""}
 
     def test_the_callers_value_always_wins(self) -> None:
-        from personalclaw.workflows.service import _with_declared_defaults
+        from personalclaw.workflows.service import with_declared_defaults
 
         spec = {"inputs": {"kind": {"default": "document"}}}
-        assert _with_declared_defaults(spec, {"kind": "report"}) == {"kind": "report"}
+        assert with_declared_defaults(spec, {"kind": "report"}) == {"kind": "report"}
 
     def test_an_explicit_empty_string_is_NOT_overridden(self) -> None:
         """A user who deliberately cleared a field is not asking for the default back."""
-        from personalclaw.workflows.service import _with_declared_defaults
+        from personalclaw.workflows.service import with_declared_defaults
 
         spec = {"inputs": {"focus": {"default": "everything"}}}
-        assert _with_declared_defaults(spec, {"focus": ""}) == {"focus": ""}
+        assert with_declared_defaults(spec, {"focus": ""}) == {"focus": ""}
 
     def test_an_undeclared_input_is_passed_through(self) -> None:
-        from personalclaw.workflows.service import _with_declared_defaults
+        from personalclaw.workflows.service import with_declared_defaults
 
-        assert _with_declared_defaults({"inputs": {}}, {"extra": 1}) == {"extra": 1}
+        assert with_declared_defaults({"inputs": {}}, {"extra": 1}) == {"extra": 1}
 
     def test_a_malformed_inputs_block_is_tolerated(self) -> None:
-        from personalclaw.workflows.service import _with_declared_defaults
+        from personalclaw.workflows.service import with_declared_defaults
 
-        assert _with_declared_defaults({"inputs": "not a dict"}, {"a": 1}) == {"a": 1}
+        assert with_declared_defaults({"inputs": "not a dict"}, {"a": 1}) == {"a": 1}
 
     @pytest.mark.anyio
     async def test_a_bundled_template_RUNS_with_only_its_required_input(

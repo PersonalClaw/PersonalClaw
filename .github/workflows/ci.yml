@@ -615,6 +615,12 @@ jobs:
         run: npm run test:mobile
       - name: build (tsc + vite)
         run: npm run build
+      # The build copies web/public verbatim and hashes the KaTeX and editor icon fonts out of
+      # node_modules. Every font and binary it emitted must match ASSET_LICENSES.json, so a
+      # dependency bump that changes a bundled font reds here until its record is updated.
+      # Stdlib only, so the runner's python3 is enough.
+      - name: bundled asset licences (built web)
+        run: python3 scripts/check_asset_licenses.py --built-web
       # Render smoke: mount the BUILT bundle in headless Chromium and assert it
       # actually renders. typecheck/vitest/build all stayed green through the
       # v0.1.0 dual-React blank-dashboard regression — nothing above this line
@@ -988,6 +994,11 @@ jobs:
       # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
       - name: provider-boundary residue sweep (plan 32)
         run: uv run pytest tests/test_provider_boundary_residue.py -n0 --junitxml=reports/junit-rails.xml
+      # Every tracked font, image, binary and fixture has a recorded source, licence and notice
+      # in ASSET_LICENSES.json. tests/test_asset_licenses.py asserts the same thing inside the
+      # suite; this step prints the checker's own list of what is missing.
+      - name: bundled asset licences
+        run: uv run python scripts/check_asset_licenses.py
       # ── The gate AGGREGATE, finally executed ────────────────────────────────────────────────
       # `make gates` (scripts/gate_report.py) is the one surface that reports all six ratchets
       # together — config-baseline, inert-surface, docs-lint, and the three structural gates. It

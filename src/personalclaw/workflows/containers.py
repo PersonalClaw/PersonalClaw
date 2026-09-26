@@ -363,12 +363,22 @@ class BoardRow:
     attention: bool = False
     resumable: bool = False
     outcome: BoardOutcome | None = None
+    #: WHAT the row is: a workflow `run`, a legacy `loop` or a standalone `task`. The board mixes
+    #: the three, and `run_id` holds each one's own id, so this is the only thing that says where
+    #: the row opens and which resume applies. `origin` cannot: it says who STARTED the work, and a
+    #: loop row is `manual` exactly like a run the user started.
+    source: str = "run"
+    #: A loop row's kind (`code` opens in Code, every other kind in the loop cockpit). Empty for
+    #: runs and tasks.
+    kind: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "title": self.title,
             "state": self.state.value,
+            "source": self.source,
+            "kind": self.kind,
             "origin": self.origin,
             "project_id": self.project_id,
             "claim": self.claim.to_dict() if self.claim else None,

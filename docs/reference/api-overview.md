@@ -19,22 +19,42 @@ Every request goes to the dashboard origin — `http://127.0.0.1:10000` by defau
 
 Authentication depends on the configured auth mode:
 
-- **`token`** (the default) — send the dashboard token. `personalclaw token` prints a
-  tokenized URL you can paste or split into a header.
+- **`token`** (the default) — send the owner token as `Authorization: Bearer <token>`.
+  `personalclaw token` prints a URL for a browser, and the value after `?token=` in it is
+  that token.
 - **local-network bypass** — when `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` is set, callers
   from a private IP skip the token. The gateway still binds `0.0.0.0`, so this is a
   convenience for your own LAN, not a security boundary.
 - **`none`** — no auth, and the gateway **forces a loopback bind** so nothing off the
   machine can reach it.
 
+From a script, keep the token out of the URL: request logs record URLs, and a pasted URL
+lands in your shell history.
+
+```bash
+TOKEN_URL="$(personalclaw token | head -1)"
+PERSONALCLAW_TOKEN="${TOKEN_URL#*token=}"
+curl -H "Authorization: Bearer $PERSONALCLAW_TOKEN" http://127.0.0.1:10000/api/status
+```
+
+The header is stateless: it authenticates the request and sets no cookie. Opening the
+`?token=` URL is the browser's way in instead — the gateway binds it to the first address
+that uses it and exchanges it for the `HttpOnly` `pc_token_<port>` session cookie. A
+Bearer that cannot authorize on its own (expired, revoked, malformed, an app's token, or
+another surface's) answers `403` with the code `auth_bearer_invalid`; a request carrying
+two different owner tokens, one in the header and one in `?token=`, answers `403`
+`auth_credential_conflict`. Neither response contains the token.
+
 Reaching the API from outside the machine is a tunnel-and-password problem, not an API
 mode: see [remote access](../guides/remote-access.md) and the
 [security model](../architecture/security.md).
 
-**Two caller identities, not one.** The owner's dashboard session can call everything.
-An **app-scoped token** (minted per installed app) is deliberately narrower: the
-portability routes, the security audit reads and the credential/secret routes all refuse
-one outright. A route that refuses an app token says so in its handler docstring — treat
+**Two caller identities, not one.** The owner's session — the browser's cookie or the
+Bearer header — can call everything. An **app-scoped token** (minted per installed app)
+is deliberately narrower: sent in the Bearer header beside an owner session, it narrows
+that session to the app's declared permissions (alone in the header it authorizes
+nothing), and the portability routes, the security audit reads and the credential/secret
+routes all refuse it outright. A route that refuses an app token says so in its handler docstring — treat
 `403` from an app token as the designed answer, not a bug.
 
 ## Request and response conventions

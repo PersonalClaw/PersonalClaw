@@ -76,21 +76,21 @@ class TestInstallKindFromTheArtefact:
         monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
         assert self_update.detect_install_kind() == "container"
 
-    def test_frozen_wins_over_a_project_dir_that_is_a_real_checkout(
-        self, frozen, monkeypatch, tmp_path
+    def test_frozen_wins_over_a_package_that_reads_as_a_real_checkout(
+        self, frozen, monkeypatch, tmp_path, package_in_checkout
     ):
         """A bundle cannot be a git checkout, so `desktop` must beat the `.git` probe even when
-        a stray `PERSONALCLAW_PROJECT_DIR` points at one."""
-        (tmp_path / ".git").mkdir()
+        the package's location reads as one."""
+        package_in_checkout(tmp_path)
         monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         assert self_update.detect_install_kind() == "desktop"
 
-    def test_the_same_project_dir_is_git_when_not_frozen(self, monkeypatch, tmp_path):
+    def test_the_same_checkout_is_git_when_not_frozen(
+        self, monkeypatch, tmp_path, package_in_checkout
+    ):
         """The control for the arm above."""
-        (tmp_path / ".git").mkdir()
+        package_in_checkout(tmp_path)
         monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         assert self_update.detect_install_kind() == "git"
 
 
@@ -167,6 +167,8 @@ class TestTheUpdateCheckDoesNotShellOutToGit:
             raise RuntimeError("test recorder: no real subprocess")
 
         monkeypatch.setattr(updates_mod.self_update, "detect_install_kind", lambda: kind)
+        # Every arm has a checkout to fetch in, so only the kind can stop a non-git one.
+        monkeypatch.setattr(updates_mod.self_update, "source_checkout", lambda: str(tmp_path))
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _record)
         monkeypatch.setenv(
             "PERSONALCLAW_PROJECT_DIR", "/Applications/PersonalClaw.app/Contents/Resources"

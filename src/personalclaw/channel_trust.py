@@ -27,8 +27,14 @@ compares in constant time and consumes the code on success. Redemption is *reach
 transport, for the same reason the content fence lives there: a per-transport obligation is
 a hope, not a property, and every shipping channel duly forgot it (#950).
 
-**Audit.** Three security events are emitted through the SEL: ``pairing_code_created``
-(never carrying the code), ``sender_paired``, ``sender_denied``.
+**The owner's code.** :func:`create_owner_pairing_code` mints the code a channel's Configure page
+shows; whoever sends it in a DM becomes that channel's OWNER (its id is stored under
+``owner_id_credential(provider)``). Same machinery, plus a cap on wrong guesses
+(:data:`OWNER_PAIRING_MAX_ATTEMPTS`), because it hands over the owner's DMs and approval prompts.
+
+**Audit.** These security events are emitted through the SEL: ``pairing_code_created`` and
+``owner_pairing_code_created`` (never carrying a code), ``sender_paired``, ``owner_paired``,
+``owner_pairing_cancelled``, ``sender_denied``.
 
 **Observability.** A fail-closed gate that is also silent is indistinguishable from a dead
 socket, so every verdict :func:`guard_inbound` reaches passes through
@@ -81,6 +87,16 @@ CANNED_PAIRING_REPLY = (
 #: conversation are trust vocabulary: every channel must say the same thing.
 CANNED_PAIRED_REPLY = "Paired — you can talk to me now."
 
+#: The reply to the message that was the OWNER's code (:func:`create_owner_pairing_code`). True of
+#: what pairing did: the sender's id is now the one core reaches the owner by on this channel
+#: (``channel_delivery.reach_owner``), and they are trusted, so their next message is a turn.
+CANNED_OWNER_PAIRED_REPLY = "Paired — you're my owner here now. I'll reach you in this chat."
+
+#: Wrong 8-digit codes a provider takes while an owner code is outstanding before that code is
+#: cancelled. An owner code hands over the owner's DMs and approval prompts, so guessing it is
+#: capped rather than left to the TTL alone; the page that showed the code says it was cancelled.
+OWNER_PAIRING_MAX_ATTEMPTS = 5
+
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -96,6 +112,7 @@ def _default_provider() -> dict[str, Any]:
         "allowed_senders": {},
         "tracked_channels": {},
         "pairing": {},
+        "owner_pairing": {},
         "policies": {"dm": DEFAULT_DM_POLICY, "group": DEFAULT_GROUP_POLICY},
         "rate": {},
     }
@@ -420,6 +437,150 @@ def redeem_pairing_code(provider: str, sender_id: str, code: str) -> bool:
     return True
 
 
+# ── the owner's pairing code (minted on the dashboard, redeemed at the gate) ─────────────────
+#
+# A sender's code (above) lets someone talk to the agent. The OWNER's code does more: whoever sends
+# it in a DM becomes the channel's owner — the id core DMs results and approval prompts to
+# (``owner_id_credential(<provider>)``). The owner id used to be written only by
+# ``personalclaw setup``; a channel set up in the UI had none, and everything core sent the owner
+# reached nobody. Same machinery as a sender's code — hash-only, single-use, TTL'd, constant-time —
+# plus a cap on wrong guesses, because this code hands over the owner's approvals.
+#
+# ``owner_pairing`` holds either the outstanding code (``code_hash``, ``expires_at``,
+# ``attempts``) or how the last one ended (``ended``: ``paired`` / ``expired`` / ``cancelled`` /
+# ``too_many_attempts``, and ``ended_at``), so the page that showed the code can say what happened.
+
+
+def create_owner_pairing_code(provider: str) -> str:
+    """Create (and return once) the code that makes its sender ``provider``'s owner.
+
+    One outstanding owner code per provider — a new one replaces it. TTL
+    :data:`PAIRING_CODE_TTL_SECS`; only the SHA-256 hash is stored, and neither the code nor its
+    hash is ever projected or logged. Emits ``owner_pairing_code_created``."""
+    code = f"{secrets.randbelow(10**PAIRING_CODE_DIGITS):0{PAIRING_CODE_DIGITS}d}"
+    now = _now()
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    rec["owner_pairing"] = {
+        "code_hash": _hash_code(code),
+        "created_at": _iso(now),
+        "expires_at": _iso(now + timedelta(seconds=PAIRING_CODE_TTL_SECS)),
+        "attempts": 0,
+    }
+    store[provider] = rec
+    _write_store(store)
+    _emit_sel("owner_pairing_code_created", "created", provider)
+    return code
+
+
+def _ended(how: str) -> dict[str, Any]:
+    return {"ended": how, "ended_at": _iso(_now())}
+
+
+def _owner_code_expired(record: dict[str, Any]) -> bool:
+    try:
+        return _now() > datetime.fromisoformat(str(record.get("expires_at", "")))
+    except ValueError:
+        return True
+
+
+def cancel_owner_pairing(provider: str) -> bool:
+    """Cancel ``provider``'s outstanding owner code. True when one was outstanding."""
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    outstanding = bool((rec.get("owner_pairing") or {}).get("code_hash"))
+    if outstanding:
+        rec["owner_pairing"] = _ended("cancelled")
+        store[provider] = rec
+        _write_store(store)
+        _emit_sel("owner_pairing_cancelled", "cancelled", provider)
+    return outstanding
+
+
+def owner_pairing_status(provider: str) -> dict[str, Any]:
+    """Whether an owner code is outstanding and, once none is, how the last one ended.
+
+    ``{"active", "expires_at", "attempts_left", "ended", "ended_at"}`` — never the code or its
+    hash. A code past its TTL reads as ``ended: "expired"`` at once, whether or not anyone has
+    tried it since."""
+    record = _provider_record(_read_store(), provider).get("owner_pairing") or {}
+    if record.get("code_hash"):
+        if _owner_code_expired(record):
+            return {
+                "active": False,
+                "expires_at": "",
+                "attempts_left": 0,
+                "ended": "expired",
+                "ended_at": str(record.get("expires_at", "")),
+            }
+        return {
+            "active": True,
+            "expires_at": str(record.get("expires_at", "")),
+            "attempts_left": max(0, OWNER_PAIRING_MAX_ATTEMPTS - int(record.get("attempts", 0))),
+            "ended": "",
+            "ended_at": "",
+        }
+    return {
+        "active": False,
+        "expires_at": "",
+        "attempts_left": 0,
+        "ended": str(record.get("ended", "")),
+        "ended_at": str(record.get("ended_at", "")),
+    }
+
+
+def _owner_code_verdict(provider: str, candidate: str) -> str:
+    """``"match"`` / ``"miss"`` for a code-shaped DM while an owner code is live, else ``""``.
+
+    Side-effect free except for retiring a code found past its TTL. The compare is constant-time
+    over the hashes, as for a sender's code."""
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    record = rec.get("owner_pairing") or {}
+    stored = str(record.get("code_hash", ""))
+    if not stored:
+        return ""
+    if _owner_code_expired(record):
+        rec["owner_pairing"] = {"ended": "expired", "ended_at": str(record.get("expires_at", ""))}
+        store[provider] = rec
+        _write_store(store)
+        return ""
+    return "match" if hmac.compare_digest(stored, _hash_code(candidate)) else "miss"
+
+
+def _pair_owner(provider: str, sender_id: str, sender_name: str) -> None:
+    """Make ``sender_id`` the owner of ``provider``: its own owner key, trusted, code spent."""
+    from personalclaw.config.credentials import owner_id_credential, save_credential
+
+    save_credential(owner_id_credential(provider), sender_id)
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    rec["owner_pairing"] = _ended("paired")
+    store[provider] = rec
+    _write_store(store)
+    allow_sender(provider, sender_id, sender_name, via="owner_pairing")
+    _emit_sel("owner_paired", "paired", provider, sender_id)
+
+
+def _count_wrong_owner_code(provider: str, sender_id: str) -> None:
+    """One wrong guess at the outstanding owner code; the last allowed one cancels it."""
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    record = rec.get("owner_pairing") or {}
+    if not record.get("code_hash"):
+        return
+    attempts = int(record.get("attempts", 0)) + 1
+    if attempts >= OWNER_PAIRING_MAX_ATTEMPTS:
+        rec["owner_pairing"] = _ended("too_many_attempts")
+        outcome = "owner_code_cancelled_after_wrong_codes"
+    else:
+        rec["owner_pairing"] = {**record, "attempts": attempts}
+        outcome = "wrong_owner_code"
+    store[provider] = rec
+    _write_store(store)
+    _emit_sel("sender_denied", outcome, provider, sender_id)
+
+
 # ── fencing (untrusted channel content) ──────────────────────────────────────
 
 
@@ -711,6 +872,15 @@ def guard_inbound(
       ``personalclaw pair`` minted codes that nothing could spend (#950). Policy
       ``owner_only`` deliberately does NOT redeem: there, the owner's Allow is the only
       door, and honouring a code would make ``owner_only`` no stronger than ``pairing``.
+    * **DM**, and the message is exactly the outstanding OWNER code
+      (:func:`create_owner_pairing_code`, minted on the channel's Configure page) → the sender
+      becomes the channel's owner: their id is stored under ``owner_id_credential(provider)``
+      and they are trusted (``via="owner_pairing"``). Checked before the policy, under every
+      policy and for a sender already trusted — the owner minted it, so it is the owner's own
+      act, and under ``open`` the code must not become a turn. The verdict is
+      ``allowed=False, reason="owner_paired"`` carrying :data:`CANNED_OWNER_PAIRED_REPLY`. A
+      code-shaped DM that matches neither code counts against the owner code, which
+      :data:`OWNER_PAIRING_MAX_ATTEMPTS` wrong ones cancel.
     * **group/room**, policy ``off`` → denied (``group_policy_off``). Policy
       ``tracked_only`` → allowed only for a tracked channel; an untracked group is denied
       (``untracked_channel``) without any in-channel reply, so a stranger's room cannot spam
@@ -731,6 +901,29 @@ def guard_inbound(
     :func:`fence_channel_content` wrapping the transport must use before the text enters a
     session — the fence is applied HERE so a transport can't forget it."""
     if is_dm:
+        candidate = (text or "").strip()
+        # The OWNER's code first, under every DM policy and for a sender already trusted: it was
+        # minted by the owner on the dashboard, so it is the owner's own act — the door
+        # ``owner_only`` leaves open — and under ``open`` it must not reach the agent as a turn.
+        owner_code = (
+            _owner_code_verdict(provider, candidate)
+            if _looks_like_a_pairing_code(candidate)
+            else ""
+        )
+        if owner_code == "match":
+            _pair_owner(provider, sender_id, sender_name)
+            return report_inbound_verdict(
+                provider,
+                TrustVerdict(
+                    allowed=False,
+                    reason="owner_paired",
+                    canned_reply=CANNED_OWNER_PAIRED_REPLY,
+                    meta={"paired": True, "owner": True},
+                ),
+                sender_id=sender_id,
+                channel_id=channel_id,
+                is_dm=True,
+            )
         policy = trust_policies(provider).get("dm", DEFAULT_DM_POLICY)
         if policy == "open" or is_allowed_sender(provider, sender_id):
             verdict = TrustVerdict(allowed=True, reason="allowed")
@@ -740,7 +933,6 @@ def guard_inbound(
             # under policy ``pairing`` — that policy's canned reply is literally an
             # instruction to send a code, whereas ``owner_only`` means the owner's Allow is
             # the ONLY way in and a code must not be a second door.
-            candidate = (text or "").strip()
             if (
                 policy == "pairing"
                 and _looks_like_a_pairing_code(candidate)
@@ -773,6 +965,11 @@ def guard_inbound(
                 canned_reply="" if policy == "owner_only" else CANNED_PAIRING_REPLY,
                 fired_notification=fired,
             )
+        # A code-shaped DM that was neither the owner's code nor a sender's code just redeemed
+        # is a wrong guess at the owner's — counted after the sender's code had its turn, so
+        # redeeming that is never charged against this one.
+        if owner_code == "miss":
+            _count_wrong_owner_code(provider, sender_id)
         return report_inbound_verdict(
             provider,
             verdict,

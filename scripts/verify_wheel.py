@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Wheel contract verifier (contract C4).
+"""The canonical distribution build, and the wheel contract verifier (contract C4).
 
 Proves a built PersonalClaw wheel is a self-contained, installable, servable
 artifact — the guarantee every install channel (pip/uv/pipx/container) rides on.
-It asserts, against a real wheel and a scratch venv with NO Node present:
+It asserts, against a real wheel installed into a scratch venv:
 
   1. the wheel carries the built SPA (``personalclaw/static/dist/index.html``);
   2. it installs into a fresh venv from the wheel alone (no source tree, no npm);
@@ -24,17 +24,26 @@ for an image whose installed package had no record at all, because the repositor
 always has one. Assertions 7 and 8 share ``scripts/installed_bundled_model_probe.py`` with the
 container-image gate, so the wheel and the image are asked the same question the same way.
 
-Exit 0 = contract met. Run locally after ``npm run build && python -m build``,
-and in ``release.yml`` (replacing the shallow namelist check).
+Before any of that, the wheel's CONTENTS are inspected against this checkout
+(:func:`inspect_wheel`): every package file, dashboard file and bundled-app file the source
+declares, nothing it does not, metadata that matches ``pyproject.toml``, and a ``RECORD``
+whose digests are true. Booting a gateway proves the wheel works; it cannot prove the wheel
+is complete, because a missing file only fails when something reaches for it.
+
+Exit 0 = contract met.
 
 Usage:
-    python scripts/verify_wheel.py [--wheel dist/personalclaw-*.whl] [--build] [--keep]
+    python scripts/verify_wheel.py [--wheel dist/personalclaw-*.whl] [--keep]
+    python scripts/verify_wheel.py --build [--keep]      # what `make build` runs
 
-    --wheel PATH  verify this wheel (default: newest dist/*.whl).
-    --build       clear the stale staging tree, then run ``python -m build --wheel``
-                  (assumes the SPA is already built into web/dist or
-                  src/personalclaw/static/dist). See :func:`_build_wheel`.
-    --keep        keep the scratch venv/home for debugging.
+    --wheel PATH  inspect and verify this wheel (default: newest dist/*.whl). What
+                  ``release.yml`` runs on the wheel ``uv build`` just produced.
+    --build       the canonical distribution build (:func:`_canonical_distribution_build`):
+                  clean every staging tree, install the root npm workspace from its
+                  lockfile, build and freshness-stamp the SPA, build and inspect the sdist
+                  and the wheel, rebuild the wheel FROM the sdist and require it to be
+                  byte-identical, then install and serve it.
+    --keep        keep the scratch venvs/homes for debugging.
 
 The script deliberately uses only the stdlib (+ the wheel it installs) so it can
 run on a bare CI runner without extra deps.
@@ -43,26 +52,40 @@ run on a bare CI runner without extra deps.
 from __future__ import annotations
 
 import argparse
+import base64
+import copy
+import csv
 import glob
+import gzip
+import hashlib
 import importlib.util
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.request
 import venv
 import zipfile
+from email.parser import Parser
 from pathlib import Path
 from typing import Iterable, NoReturn
 
 _SPA_MARKER = "personalclaw/static/dist/index.html"
 _READY_PREFIX = "PERSONALCLAW_READY:"
 _BOOT_TIMEOUT_S = 90.0
+#: 1980-01-01, the earliest timestamp a ZIP entry can carry — the reproducible-build default.
+_REPRODUCIBLE_EPOCH = "315532800"
+_PACKAGE = "personalclaw"
+_SOURCE_PACKAGE = Path("src") / _PACKAGE
 
 #: Log lines that mean "the wheel shipped an app it cannot load". Each one is emitted by
 #: ``personalclaw/providers/registry.py``; ``tests/test_verify_wheel_contract.py`` pins every
@@ -118,38 +141,399 @@ def _find_wheel(explicit: str | None) -> Path:
         return Path(matches[-1]).resolve()
     matches = sorted(glob.glob("dist/*.whl"))
     if not matches:
-        _fail("no wheel in dist/ — run `python -m build --wheel` (or pass --wheel)")
+        _fail("no wheel in dist/ — run `make build` (or pass --wheel)")
     return Path(matches[-1]).resolve()
 
 
-def _build_wheel() -> None:
-    """Build the wheel from a CLEAN staging tree.
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
-    🪤 ``python -m build`` DOES NOT CLEAR ``build/``, and setuptools re-uses whatever it finds
-    there. MEASURED 2026-09-07 (#2758) in a tree that ``git status`` reported clean: the wheel
-    carried three ``personalclaw/apps/native/`` app directories that existed neither in git nor
-    on disk — ``run-workflow-action``, ``personalclaw-schedule-tools``, ``native-workflows`` —
-    left behind in ``build/lib/`` by an earlier build. Two of them named factory functions that
-    no longer exist anywhere in the package, so the gateway logged two ERROR tracebacks while
-    this very script printed PASS.
 
-    So anything ever DELETED from ``src/personalclaw/**`` could reappear in a locally built
-    wheel — and a container image, a ``pip install ./dist/*.whl`` or a hand-cut release all
-    inherit it. Here the payload was inert; a deleted module that still *imports* would run.
-    ``DIST-3`` calls the bare ``python -m build`` "the release command", so the safety belongs
-    in the command rather than in a reader's memory of ``rm -rf build``.
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
 
-    ``dist/`` goes too: :func:`_find_wheel` picks ``sorted(glob(...))[-1]``, which is
-    LEXICOGRAPHIC and not newest-by-mtime, so a leftover wheel with a higher version string
-    would be verified in place of the one just built. Only under ``--build`` — a bare
-    ``--wheel`` invocation (what ``release.yml`` runs) touches nothing.
+
+#: Every generated tree a distribution build can consume, relative to the checkout.
+_STALE_OUTPUTS = (
+    "build",
+    "dist",
+    "src/personalclaw.egg-info",
+    "src/personalclaw/static/dist",
+    "web/dist",
+)
+
+
+def _clean_distribution_outputs(root: Path) -> None:
+    """Remove every generated tree a build could re-use, so the artifacts hold only this tree.
+
+    🪤 A setuptools build DOES NOT CLEAR ``build/``, and re-uses whatever it finds there.
+    MEASURED 2026-09-07 (#2758) in a tree that ``git status`` reported clean: the wheel carried
+    three ``personalclaw/apps/native/`` app directories that existed neither in git nor on disk
+    — ``run-workflow-action``, ``personalclaw-schedule-tools``, ``native-workflows`` — left
+    behind in ``build/lib/`` by an earlier build. Two of them named factory functions that no
+    longer exist anywhere in the package, so the gateway logged two ERROR tracebacks while this
+    very script printed PASS. So anything ever DELETED from ``src/personalclaw/**`` could
+    reappear in a locally built wheel, and a container image, a ``pip install ./dist/*.whl`` or
+    a hand-cut release would inherit it.
+
+    ``dist/`` goes because :func:`_find_wheel` picks ``sorted(glob(...))[-1]``, which is
+    LEXICOGRAPHIC, not newest-by-mtime: a leftover wheel with a higher version string would be
+    verified in place of the one just built. ``egg-info`` carries a ``SOURCES.txt`` that names
+    deleted files. ``web/dist`` and the ``static/dist`` link to it go because the SPA is rebuilt
+    from the lockfile below; a stale bundle is the other half of what #2758 was. Removing the
+    dev symlink costs nothing: the gateway re-links it on start (``ensure_dev_dist_symlink``).
+    Only under ``--build`` — a bare ``--wheel`` invocation (what ``release.yml`` runs) touches
+    nothing.
     """
-    for stale in (Path("build"), Path("dist")):
-        if stale.exists():
-            _log(f"removing the stale {stale}/ tree so the build cannot re-use it")
-            shutil.rmtree(stale, ignore_errors=True)
-    _log("building wheel (python -m build --wheel)…")
-    subprocess.run([sys.executable, "-m", "build", "--wheel"], check=True)
+    for relative in _STALE_OUTPUTS:
+        stale = root / relative
+        if stale.exists() or stale.is_symlink():
+            _log(f"removing stale build output {relative}")
+            _remove_path(stale)
+
+
+def _build_environment() -> dict[str, str]:
+    """The environment every build step runs in: the reproducible epoch, and CI mode.
+
+    ``SOURCE_DATE_EPOCH`` is what setuptools stamps into every ZIP entry, so two builds of one
+    tree are byte-identical only when it is fixed; an operator's own value is kept, but it must
+    be a date a ZIP entry can hold. ``CI=1`` keeps the root package's ``postinstall`` from
+    installing git hooks into the checkout being built.
+    """
+    env = dict(os.environ)
+    epoch = env.setdefault("SOURCE_DATE_EPOCH", _REPRODUCIBLE_EPOCH)
+    if not epoch.isdigit() or int(epoch) < int(_REPRODUCIBLE_EPOCH):
+        _fail(
+            "SOURCE_DATE_EPOCH must be an integer at or after 315532800 "
+            "(1980-01-01, the earliest time a ZIP entry can carry)"
+        )
+    env.setdefault("CI", "1")
+    return env
+
+
+def _run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+    _log(f"running: {' '.join(cmd)}")
+    subprocess.run(cmd, cwd=cwd, env=env, check=True)
+
+
+def _one_artifact(directory: Path, pattern: str) -> Path:
+    matches = sorted(directory.glob(pattern))
+    if len(matches) != 1:
+        _fail(f"expected exactly one {pattern!r} in {directory}, found {len(matches)}")
+    return matches[0]
+
+
+def artifact_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_evidence(path: Path) -> str:
+    return f"{path.name}: sha256={artifact_sha256(path)} size={path.stat().st_size}"
+
+
+def normalize_sdist(sdist: Path, *, epoch: int) -> None:
+    """Rewrite the sdist's archive metadata so identical trees give identical bytes.
+
+    Setuptools keeps each file's own mtime and the builder's uid/gid/names in the tar
+    members, and writes the current time into the gzip header. The CONTENTS of two builds
+    agree and the digests still differ, which is what makes a published sdist unverifiable.
+    Members are sorted, owned by 0:0 with no names, stamped *epoch*, and the gzip header
+    carries *epoch* and no filename.
+    """
+    temporary = sdist.with_name(f".{sdist.name}.normalizing")
+    try:
+        with tarfile.open(sdist, "r:gz") as source, temporary.open("wb") as output:
+            with gzip.GzipFile(
+                filename="", mode="wb", fileobj=output, compresslevel=9, mtime=epoch
+            ) as compressed:
+                with tarfile.open(fileobj=compressed, mode="w|", format=tarfile.PAX_FORMAT) as out:
+                    for original in sorted(source.getmembers(), key=lambda member: member.name):
+                        member = copy.copy(original)
+                        member.uid = member.gid = 0
+                        member.uname = member.gname = ""
+                        member.mtime = epoch
+                        member.pax_headers = {}
+                        body = source.extractfile(original) if original.isfile() else None
+                        out.addfile(member, body)
+        os.replace(temporary, sdist)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _load_package_manifest(root: Path):
+    """``scripts/backend_bundle_manifest.py``, the one reading of the package-data globs."""
+    manifest_path = root / "scripts" / "backend_bundle_manifest.py"
+    spec = importlib.util.spec_from_file_location("_distribution_package_manifest", manifest_path)
+    if spec is None or spec.loader is None:
+        _fail(f"cannot load the package-data contract from {manifest_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _source_payload(root: Path) -> dict[str, set[str]]:
+    """What the source tree says the artifacts must carry, derived — never listed by hand.
+
+    Every ``.py``/``.pyi`` under ``src/personalclaw``, every file a ``package-data`` glob
+    matches (through the same reader the frozen bundle's spec uses), and every file in
+    ``web/dist``. Each set comes in both spellings: the source path the sdist holds and the
+    member path the wheel holds.
+    """
+    package_root = root / _SOURCE_PACKAGE
+    python_sources = {
+        path.relative_to(root).as_posix()
+        for path in package_root.rglob("*")
+        if path.is_file() and path.suffix in {".py", ".pyi"}
+    }
+    manifest = _load_package_manifest(root)
+    package_data_sources = {source for source, _destination in manifest.package_data_datas(root)}
+    package_sources = python_sources | package_data_sources
+    package_members = {Path(source).relative_to("src").as_posix() for source in package_sources}
+
+    web_root = root / "web" / "dist"
+    web_sources = {
+        path.relative_to(root).as_posix() for path in web_root.rglob("*") if path.is_file()
+    }
+    web_members = {
+        (Path(_PACKAGE) / "static" / "dist" / Path(source).relative_to("web/dist")).as_posix()
+        for source in web_sources
+    }
+
+    native_root = root / _SOURCE_PACKAGE / "apps" / "native"
+    native_sources = {
+        path.relative_to(root).as_posix()
+        for path in native_root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    native_members = {Path(source).relative_to("src").as_posix() for source in native_sources}
+    return {
+        "package_sources": package_sources,
+        "package_members": package_members,
+        "web_sources": web_sources,
+        "web_members": web_members,
+        "native_sources": native_sources,
+        "native_members": native_members,
+    }
+
+
+def _dependency_name(specifier: str) -> str:
+    match = re.match(r"\s*([A-Za-z0-9_.-]+)", specifier)
+    if match is None:
+        _fail(f"cannot read a dependency name from {specifier!r}")
+    return re.sub(r"[-_.]+", "-", match.group(1)).lower()
+
+
+def _specifier_set(value: str) -> frozenset[str]:
+    """PEP 440 clauses as a set: a backend may emit ``<3.14,>=3.12`` for ``>=3.12,<3.14``."""
+    return frozenset(clause.strip() for clause in value.split(",") if clause.strip())
+
+
+def _assert_metadata(text: str, *, root: Path, artifact: str) -> None:
+    """The artifact's core metadata says what ``pyproject.toml`` says."""
+    metadata = Parser().parsestr(text)
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    expected = {
+        "Name": project["name"],
+        "Version": project["version"],
+        "License-Expression": project["license"],
+    }
+    mismatches = {
+        key: (value, metadata.get(key))
+        for key, value in expected.items()
+        if metadata.get(key) != value
+    }
+    if mismatches:
+        _fail(f"{artifact} metadata differs from pyproject.toml (expected, actual): {mismatches}")
+
+    expected_python = _specifier_set(project["requires-python"])
+    actual_python = _specifier_set(metadata.get("Requires-Python", ""))
+    if expected_python != actual_python:
+        _fail(
+            f"{artifact} Requires-Python differs: "
+            f"expected={sorted(expected_python)}, actual={sorted(actual_python)}"
+        )
+
+    expected_extras = {name.replace("_", "-") for name in project.get("optional-dependencies", {})}
+    actual_extras = {name.replace("_", "-") for name in metadata.get_all("Provides-Extra") or []}
+    if expected_extras != actual_extras:
+        _fail(
+            f"{artifact} extras differ: missing={sorted(expected_extras - actual_extras)}, "
+            f"extra={sorted(actual_extras - expected_extras)}"
+        )
+
+    declared = list(project.get("dependencies", []))
+    for requirements in project.get("optional-dependencies", {}).values():
+        declared.extend(requirements)
+    expected_dependencies = {_dependency_name(requirement) for requirement in declared}
+    actual_dependencies = {
+        _dependency_name(requirement) for requirement in metadata.get_all("Requires-Dist") or []
+    }
+    if expected_dependencies != actual_dependencies:
+        _fail(
+            f"{artifact} dependencies differ: "
+            f"missing={sorted(expected_dependencies - actual_dependencies)}, "
+            f"extra={sorted(actual_dependencies - expected_dependencies)}"
+        )
+
+    expected_urls = {str(key): str(value) for key, value in project.get("urls", {}).items()}
+    actual_urls = {}
+    for value in metadata.get_all("Project-URL") or []:
+        label, separator, url = value.partition(",")
+        if separator:
+            actual_urls[label.strip()] = url.strip()
+    if expected_urls != actual_urls:
+        _fail(f"{artifact} project URLs differ: expected={expected_urls}, actual={actual_urls}")
+
+
+def _assert_wheel_record(archive: zipfile.ZipFile, members: set[str], record: str) -> None:
+    """``RECORD`` names every member exactly once, with a digest and size that are true."""
+    rows = list(csv.reader(io.StringIO(archive.read(record).decode("utf-8"))))
+    entries = {row[0]: row[1:] for row in rows}
+    if set(entries) != members:
+        _fail(
+            "wheel RECORD does not enumerate the archive exactly: "
+            f"missing={sorted(members - set(entries))[:20]}, "
+            f"extra={sorted(set(entries) - members)[:20]}"
+        )
+    for name in sorted(members - {record}):
+        digest_text, size_text = entries[name]
+        if not digest_text.startswith("sha256=") or not size_text:
+            _fail(f"wheel RECORD has no sha256/size for {name}")
+        body = archive.read(name)
+        encoded = base64.urlsafe_b64encode(hashlib.sha256(body).digest()).rstrip(b"=").decode()
+        if digest_text != f"sha256={encoded}" or int(size_text) != len(body):
+            _fail(f"wheel RECORD digest or size is wrong for {name}")
+    if entries[record] != ["", ""]:
+        _fail("wheel RECORD must leave its own digest and size empty")
+
+
+def _payload_diff(label: str, expected: set[str], actual: set[str]) -> None:
+    if expected != actual:
+        _fail(
+            f"{label}: missing={sorted(expected - actual)[:30]}, "
+            f"extra={sorted(actual - expected)[:30]}"
+        )
+
+
+def inspect_wheel(wheel: Path, *, root: Path | None = None) -> None:
+    """The wheel's contents are exactly what this checkout declares, and its metadata agrees."""
+    root = root or _repo_root()
+    payload = _source_payload(root)
+    with zipfile.ZipFile(wheel) as archive:
+        members = {name for name in archive.namelist() if not name.endswith("/")}
+        metadata_members = [name for name in members if name.endswith(".dist-info/METADATA")]
+        if len(metadata_members) != 1:
+            _fail(f"{wheel.name} must contain one dist-info/METADATA, found {metadata_members}")
+        dist_info = metadata_members[0].removesuffix("METADATA")
+        required = {f"{dist_info}{name}" for name in ("WHEEL", "RECORD", "entry_points.txt")}
+        required.add(f"{dist_info}licenses/LICENSE")
+        if required - members:
+            _fail(f"{wheel.name} is missing wheel metadata: {sorted(required - members)}")
+
+        package = {name for name in members if name.startswith(f"{_PACKAGE}/")}
+        _payload_diff(
+            f"{wheel.name} package payload differs from the source",
+            payload["package_members"] | payload["web_members"],
+            package,
+        )
+        _payload_diff(
+            f"{wheel.name} dashboard differs from web/dist",
+            payload["web_members"],
+            {name for name in members if name.startswith(f"{_PACKAGE}/static/dist/")},
+        )
+        _payload_diff(
+            f"{wheel.name} bundled apps differ from the source",
+            payload["native_members"],
+            {name for name in members if name.startswith(_BUNDLED_APP_PREFIX)},
+        )
+
+        _assert_metadata(
+            archive.read(metadata_members[0]).decode("utf-8"), root=root, artifact=wheel.name
+        )
+        entry_points = archive.read(f"{dist_info}entry_points.txt").decode("utf-8")
+        if "personalclaw = personalclaw.cli:main" not in entry_points:
+            _fail(f"{wheel.name} does not expose the personalclaw console entry point")
+        wheel_metadata = Parser().parsestr(archive.read(f"{dist_info}WHEEL").decode("utf-8"))
+        if wheel_metadata.get("Root-Is-Purelib") != "true":
+            _fail(f"{wheel.name} is unexpectedly not a pure-Python wheel")
+        _assert_wheel_record(archive, members, f"{dist_info}RECORD")
+
+    _log(
+        f"OK: wheel payload complete — {len(payload['package_members'])} package file(s), "
+        f"{len(payload['web_members'])} dashboard file(s), "
+        f"{len(payload['native_members'])} bundled-app file(s)"
+    )
+    _log(_artifact_evidence(wheel))
+
+
+def _sdist_members(sdist: Path) -> dict[str, bytes]:
+    """The sdist's files, keyed by their path under its one top-level directory."""
+    with tarfile.open(sdist, "r:*") as archive:
+        files = [member for member in archive.getmembers() if member.isfile()]
+        roots = {Path(member.name).parts[0] for member in files if Path(member.name).parts}
+        if len(roots) != 1:
+            _fail(f"{sdist.name} must contain one top-level directory, found {sorted(roots)}")
+        members: dict[str, bytes] = {}
+        for member in files:
+            relative = Path(*Path(member.name).parts[1:]).as_posix()
+            stream = archive.extractfile(member)
+            if stream is None:
+                _fail(f"cannot read {member.name} from {sdist.name}")
+            members[relative] = stream.read()
+    return members
+
+
+def inspect_sdist(sdist: Path, *, root: Path | None = None) -> None:
+    """The sdist carries everything a wheel is rebuilt from, and its metadata agrees."""
+    root = root or _repo_root()
+    payload = _source_payload(root)
+    bodies = _sdist_members(sdist)
+    members = set(bodies)
+    required = {"LICENSE", "MANIFEST.in", "README.md", "pyproject.toml", "setup.py", "PKG-INFO"}
+    missing = (payload["package_sources"] | payload["web_sources"] | required) - members
+    if missing:
+        _fail(f"{sdist.name} omitted required source files: {sorted(missing)[:30]}")
+    _payload_diff(
+        f"{sdist.name} package sources differ from the source",
+        payload["package_sources"],
+        {name for name in members if name.startswith(f"{_SOURCE_PACKAGE.as_posix()}/")},
+    )
+    _payload_diff(
+        f"{sdist.name} dashboard differs from web/dist",
+        payload["web_sources"],
+        {name for name in members if name.startswith("web/dist/")},
+    )
+    _payload_diff(
+        f"{sdist.name} bundled apps differ from the source",
+        payload["native_sources"],
+        {name for name in members if name.startswith(f"{_SOURCE_PACKAGE.as_posix()}/apps/native/")},
+    )
+    _assert_metadata(bodies["PKG-INFO"].decode("utf-8"), root=root, artifact=sdist.name)
+    _log(
+        f"OK: sdist payload complete — {len(payload['package_sources'])} package source "
+        f"file(s), {len(payload['web_sources'])} dashboard file(s), "
+        f"{len(payload['native_sources'])} bundled-app file(s)"
+    )
+    _log(_artifact_evidence(sdist))
+
+
+def _extract_sdist(sdist: Path, destination: Path) -> Path:
+    with tarfile.open(sdist, "r:*") as archive:
+        roots = {Path(member.name).parts[0] for member in archive.getmembers() if member.name}
+        if len(roots) != 1:
+            _fail(f"{sdist.name} must contain one top-level directory, found {sorted(roots)}")
+        archive.extractall(destination, filter="data")
+    extracted = destination / next(iter(roots))
+    if not extracted.is_dir():
+        _fail(f"{sdist.name} did not extract to {extracted}")
+    return extracted
 
 
 def bundled_model_probe():
@@ -262,8 +646,8 @@ def _assert_spa_in_wheel(wheel: Path) -> None:
     if not any(n.endswith(_SPA_MARKER) for n in names):
         _fail(
             f"wheel {wheel.name} does not carry the SPA ({_SPA_MARKER}). "
-            "Run `npm run build` before `python -m build` so setup.py's "
-            "BuildWithWeb stages web/dist into the package."
+            "Build distributions with `make build`, which builds the dashboard from the "
+            "lockfile before setup.py's BuildWithWeb stages web/dist into the package."
         )
     _log(f"OK: wheel carries the SPA — {wheel.name}")
 
@@ -502,17 +886,8 @@ def _boot_and_probe(py: Path, home: Path, bundled_apps: int = 0) -> None:
     _assert_every_bundled_app_enabled(transcript, bundled_apps)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Verify the PersonalClaw wheel contract (C4).")
-    ap.add_argument("--wheel", help="wheel path or glob (default: newest dist/*.whl)")
-    ap.add_argument("--build", action="store_true", help="build the wheel first")
-    ap.add_argument("--keep", action="store_true", help="keep scratch venv/home")
-    args = ap.parse_args()
-
-    if args.build:
-        _build_wheel()
-
-    wheel = _find_wheel(args.wheel)
+def _verify_wheel_runtime(wheel: Path, *, keep: bool) -> None:
+    """Assertions 1-8: install the wheel alone into a scratch venv, then boot and probe it."""
     _log(f"verifying {wheel}")
     _assert_spa_in_wheel(wheel)
     _assert_no_node()
@@ -529,16 +904,104 @@ def main() -> int:
         _assert_installed_bundled_model(py, home_dir, wheel)
         _boot_and_probe(py, home_dir, bundled_app_count(wheel))
     finally:
-        if args.keep:
+        if keep:
             _log(f"kept scratch dir: {scratch}")
         else:
             shutil.rmtree(scratch, ignore_errors=True)
 
     _log(
-        "PASS: wheel contract met (SPA packaged, installs Node-free, the installed package "
-        "carries a permitted bundled-model record and no weight, gateway serves / + "
+        "PASS: wheel contract met (SPA packaged, installs from the wheel alone, the installed "
+        "package carries a permitted bundled-model record and no weight, gateway serves / + "
         "/api/healthz, every bundled app enabled, and the install offers its default model)."
     )
+
+
+def _canonical_distribution_build(*, keep: bool) -> None:
+    """``make build``: the one way to produce a distribution that can be checked.
+
+    Clean, then the SPA from the lockfile (``npm ci``, never ``npm install``), stamped and
+    proved fresh against the checked-out sources; then the sdist (normalized, see
+    :func:`normalize_sdist`) and the wheel from the tree, both inspected; then a second wheel
+    built FROM the sdist, which must be byte-identical to the first — the proof that the
+    published sdist reproduces the published wheel. Only then is the wheel installed and
+    served: identical bytes behave identically, so booting the one is booting the other.
+    """
+    root = _repo_root()
+    env = _build_environment()
+    npm = env.get("NPM", "npm")
+    uv = env.get("UV", "uv")
+
+    _clean_distribution_outputs(root)
+    _run([npm, "ci"], cwd=root, env=env)
+    _run([npm, "run", "build"], cwd=root, env=env)
+    _run([sys.executable, "scripts/spa_dist_freshness.py", "stamp"], cwd=root, env=env)
+    _run(
+        [sys.executable, "scripts/spa_dist_freshness.py", "check", "--require-stamp"],
+        cwd=root,
+        env=env,
+    )
+
+    dist = root / "dist"
+    _run([uv, "build", "--sdist", "--out-dir", str(dist)], cwd=root, env=env)
+    sdist = _one_artifact(dist, "*.tar.gz")
+    normalize_sdist(sdist, epoch=int(env["SOURCE_DATE_EPOCH"]))
+    _run([uv, "build", "--wheel", "--out-dir", str(dist)], cwd=root, env=env)
+    wheel = _one_artifact(dist, "*.whl")
+    inspect_sdist(sdist, root=root)
+    inspect_wheel(wheel, root=root)
+
+    scratch = Path(tempfile.mkdtemp(prefix="pc_verify_sdist_")).absolute()
+    try:
+        extracted = _extract_sdist(sdist, scratch / "source")
+        rebuilt_dir = scratch / "wheel"
+        _run(
+            [uv, "build", "--wheel", "--out-dir", str(rebuilt_dir), str(extracted)],
+            cwd=root,
+            env=env,
+        )
+        rebuilt = _one_artifact(rebuilt_dir, "*.whl")
+        direct_digest, rebuilt_digest = artifact_sha256(wheel), artifact_sha256(rebuilt)
+        if direct_digest != rebuilt_digest:
+            _fail(
+                "the wheel rebuilt from the sdist is not byte-identical to the wheel built from "
+                f"the tree: tree={direct_digest}, from-sdist={rebuilt_digest}"
+            )
+        _log(f"OK: the wheel rebuilt from the sdist is byte-identical — sha256={direct_digest}")
+    finally:
+        if keep:
+            _log(f"kept sdist rebuild scratch dir: {scratch}")
+        else:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    _verify_wheel_runtime(wheel, keep=keep)
+    _log("PASS: canonical distribution build")
+    _log(_artifact_evidence(sdist))
+    _log(_artifact_evidence(wheel))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Build (--build) or verify (--wheel) a PersonalClaw distribution (C4)."
+    )
+    ap.add_argument("--wheel", help="wheel path or glob (default: newest dist/*.whl)")
+    ap.add_argument(
+        "--build",
+        action="store_true",
+        help="run the canonical build: clean, locked SPA, sdist + wheel, inspection, "
+        "byte-identical rebuild from the sdist, install and serve",
+    )
+    ap.add_argument("--keep", action="store_true", help="keep scratch venvs/homes")
+    args = ap.parse_args()
+
+    if args.build:
+        if args.wheel:
+            ap.error("--wheel cannot be combined with --build")
+        _canonical_distribution_build(keep=args.keep)
+        return 0
+
+    wheel = _find_wheel(args.wheel)
+    inspect_wheel(wheel)
+    _verify_wheel_runtime(wheel, keep=args.keep)
     return 0
 
 

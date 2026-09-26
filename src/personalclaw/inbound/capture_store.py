@@ -208,8 +208,12 @@ def _skill_roots() -> list[Path]:
         roots.append(Path(skills_dir()))
     except Exception:  # pragma: no cover - skills package always present in-tree
         logger.debug("capture: user skills dir unavailable", exc_info=True)
-    # Agent-tier skills (agentskills.io cross-client standard).
-    roots.append(Path.home() / ".agents" / "skills")
+    # Agent-tier skills (the folder AI tools share), only once the owner allowed it.
+    from personalclaw import outside_home
+
+    shared = outside_home.place_path(outside_home.AGENT_SKILLS)
+    if shared is not None:
+        roots.append(shared)
     return roots
 
 

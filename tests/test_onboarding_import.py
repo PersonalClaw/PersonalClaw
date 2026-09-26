@@ -1,4 +1,4 @@
-"""Onboarding import — scanners, writers, and the three floors that define it.
+"""Onboarding import — scanners, writers, and the one secret policy that defines it.
 
 Every test drives a FIXTURE foreign root under ``tmp_path`` and a FIXTURE PersonalClaw
 home bound through ``PERSONALCLAW_HOME``: no test reads the developer's real ``~/.claude``
@@ -8,10 +8,10 @@ proof that the resolver a production call uses is the one under test here.
 The load-bearing tests, one per property the change names:
 
 * ``test_planted_secret_appears_nowhere_in_scan_output`` /
-  ``test_planted_secret_never_reaches_the_home`` — secrets are counted and skipped. The
-  second walks every byte written under the home, so a secret arriving through any
-  destination (memory doc, memory record, mcp.json, staged settings, a skill file, the
-  SEL audit log) fails it.
+  ``test_planted_secret_never_reaches_the_home`` — a secret is stored as a reference, or left
+  out and counted. The second walks every byte written under the home, so a secret arriving
+  anywhere but the credential store (memory doc, memory record, mcp.json, config.json, a skill
+  file, the SEL audit log) fails it.
 * ``test_rescan_is_idempotent`` / ``test_reimport_reports_existing_and_writes_nothing`` —
   counts, not just success: a scan that duplicated items or an import that rewrote a
   destination fails on the count/bytes, not on an exception.
@@ -24,9 +24,8 @@ The load-bearing tests, one per property the change names:
 * ``test_the_plan_says_before_the_import_what_the_import_then_does`` — the state a scan shows
   beside an item is the outcome its import reports, for every state, because the writer
   consults the planner rather than re-deciding.
-* ``test_each_item_carries_its_own_withheld_count`` /
-  ``test_split_tables_is_strip_secrets_with_the_count_kept_per_entry`` — a user can see WHICH
-  item comes over without a credential, and the per-entry split cannot change a total.
+* ``test_each_item_carries_its_own_withheld_count`` — a user can see WHICH item comes over
+  without a credential.
 """
 
 from __future__ import annotations
@@ -50,14 +49,8 @@ from personalclaw.onboarding_import import (
     run_import,
     scan_source,
 )
-from personalclaw.onboarding_import.floors import split_tables, strip_secrets
 from personalclaw.onboarding_import.sources import claude_code, codex
-from personalclaw.onboarding_import.writers import (
-    _PLANNERS,
-    _WRITERS,
-    mcp_config_path,
-    staged_settings_path,
-)
+from personalclaw.onboarding_import.writers import _PLANNERS, _WRITERS, mcp_config_path
 
 #: The planted credential. If this string reaches ANY output — an item, a note, a log, a
 #: file under the home — a test fails. Shaped like a real key so the redactors engage.
@@ -77,8 +70,8 @@ _MEMORY_KEY = "projects/-Users-me-app/memory/prefs.md"
 
 def _seed_claude_root(root: Path) -> None:
     """A fixture ``~/.claude``, laid out as Claude Code writes one — instructions, a project's
-    auto-memory, a user-scope MCP server in ``.claude.json``, a skill, settings — plus a
-    credential in every place a real one shows up."""
+    auto-memory, a user-scope MCP server in ``.claude.json``, a skill, settings with a command it
+    refuses — plus a credential in every place a real one shows up."""
     root.mkdir(parents=True, exist_ok=True)
     (root / "CLAUDE.md").write_text(
         "# House rules\n\n- Always run the linter.\n"
@@ -106,7 +99,14 @@ def _seed_claude_root(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "settings.json").write_text(
-        json.dumps({"theme": "dark", "apiKeyHelper": SECRET2, "verbose": True}),
+        json.dumps(
+            {
+                "theme": "dark",
+                "apiKeyHelper": SECRET2,
+                "verbose": True,
+                "permissions": {"deny": ["Bash(rm -rf:*)"], "allow": ["Bash(git status)"]},
+            }
+        ),
         encoding="utf-8",
     )
     # A credential FILE: refused unread, counted, never opened.
@@ -176,12 +176,13 @@ def test_scan_yields_instruction_mcp_and_skill_items(claude_root: Path) -> None:
     assert counts[ImportCategory.MEMORIES.value] == 1
     assert counts[ImportCategory.MCP_SERVERS.value] == 1
     assert counts[ImportCategory.SKILLS.value] == 1
-    assert counts[ImportCategory.SETTINGS.value] == 1
+    assert counts[ImportCategory.DENIED_COMMANDS.value] == 1
 
     mcp = result.by_category(ImportCategory.MCP_SERVERS)[0]
     assert mcp.key == "weather"
-    # The benign env survives; the secret-named key is gone entirely (not blanked).
-    assert mcp.payload["env"] == {"REGION": "eu"}
+    # Whole, for the MCP writer to store — and in no form that leaves the server.
+    assert mcp.payload["env"] == {"WEATHER_API_KEY": SECRET, "REGION": "eu"}
+    assert SECRET not in json.dumps(mcp.to_dict()) and SECRET not in repr(mcp)
     skill = result.by_category(ImportCategory.SKILLS)[0]
     assert Path(skill.path).name == "tidy-notes"
 
@@ -226,24 +227,32 @@ def test_codex_scan_yields_instructions_and_mcp_servers(tmp_path: Path) -> None:
     assert result.present is True
     assert result.counts()[ImportCategory.INSTRUCTIONS.value] == 1
     assert result.counts()[ImportCategory.MCP_SERVERS.value] == 1
-    assert result.secrets_skipped == 1
+    assert result.secrets_skipped == 0, "the server's key is stored, not left out"
+    assert [(n.what, n.count) for n in result.not_imported] == [("Codex settings", 1)]
     assert SECRET not in json.dumps(result.to_dict())
 
 
-# ── floor: secrets are counted and skipped ────────────────────────────────────
+# ── the secret policy: stored as a reference, or left out and counted ─────────
 
 
 def test_planted_secret_appears_nowhere_in_scan_output(claude_root: Path) -> None:
+    """The one place a scanned value stays is an MCP server's definition, for the MCP writer to
+    store: never on the wire, in an item's text, or in any other payload."""
     result = scan_source("claude_code", claude_root)
-    blob = json.dumps(result.to_dict()) + "".join(
-        item.text + json.dumps(item.payload) for item in result.items
+    servers = result.by_category(ImportCategory.MCP_SERVERS)
+    others = [item for item in result.items if item.category is not ImportCategory.MCP_SERVERS]
+    blob = (
+        json.dumps(result.to_dict())
+        + repr(result.items)
+        + "".join(item.text + json.dumps(item.payload) for item in others)
     )
 
     assert SECRET not in blob
-    assert SECRET2 not in blob
-    # …and the user is TOLD, with a count: the credentials file, the MCP env key, the
-    # settings key, and the .env inside the skill.
-    assert result.secrets_skipped == 4
+    assert SECRET2 not in blob + "".join(json.dumps(item.payload) for item in servers)
+    assert servers[0].payload["env"]["WEATHER_API_KEY"] == SECRET, "kept for the credential store"
+    # …and the user is TOLD, with a count, what was left out: the credentials file and the .env
+    # inside the skill. A settings value (`apiKeyHelper`) is never copied, so it is not counted.
+    assert result.secrets_skipped == 2
     assert any("skipped" in note for note in result.notes)
     # The credential embedded in CLAUDE.md prose was redacted, not silently dropped.
     assert result.redactions >= 1
@@ -305,10 +314,22 @@ def test_import_creates_memories_mcp_entries_and_imported_skills(
     imported = home / "workspace" / "memory" / "imported" / "claude_code"
     assert [p.name for p in imported.iterdir() if p.name.endswith("prefs.md")]
 
-    # MCP entries: the user-owned override file the agent config merges.
-    mcp = json.loads(mcp_config_path().read_text(encoding="utf-8"))
-    assert mcp["mcpServers"]["weather"]["command"] == "npx"
-    assert "WEATHER_API_KEY" not in mcp["mcpServers"]["weather"]["env"]
+    # MCP entries: the user-owned override file the agent config merges, every value it sets a
+    # reference to the credential store — as the Tools page's Import writes one.
+    from personalclaw.config.secret_refs import resolve_mcp_spec
+
+    weather = json.loads(mcp_config_path().read_text(encoding="utf-8"))["mcpServers"]["weather"]
+    assert weather["command"] == "npx"
+    assert weather["env"]["WEATHER_API_KEY"].startswith("{{secret:")
+    assert resolve_mcp_spec("weather", weather)["env"] == {
+        "WEATHER_API_KEY": SECRET,
+        "REGION": "eu",
+    }
+
+    # The command Claude Code refuses is one the shell denylist refuses.
+    from personalclaw.config.loader import AppConfig
+
+    assert AppConfig.load().security.denied_commands == [r"\brm\s+-rf\b"]
 
     # skills/imported/claude_code/* — through the supply-chain gate.
     installed = home / "skills" / "imported" / "claude_code" / "tidy-notes"
@@ -318,21 +339,43 @@ def test_import_creates_memories_mcp_entries_and_imported_skills(
 
 
 def test_planted_secret_never_reaches_the_home(claude_root: Path, home: Path) -> None:
+    """Every byte under the home but the credential store: the MCP server's key is there and
+    nowhere else, and the credentials no import copies are nowhere at all."""
+    from personalclaw.config.loader import env_path
+
     run_import([scan_source("claude_code", claude_root)])
-    blob = _all_bytes(home)
+    store = env_path()
+    blob = b"".join(p.read_bytes() for p in sorted(home.rglob("*")) if p.is_file() and p != store)
     assert SECRET.encode() not in blob
-    assert SECRET2.encode() not in blob
+    assert SECRET2.encode() not in blob + store.read_bytes()
+    assert SECRET.encode() in store.read_bytes(), "positive control: the store is where it went"
 
 
-def test_settings_are_staged_for_review_not_applied(claude_root: Path, home: Path) -> None:
-    run_import([scan_source("claude_code", claude_root)])
-    staged = staged_settings_path("claude_code", "settings.json")
-    assert staged.is_file()
-    payload = json.loads(staged.read_text(encoding="utf-8"))
-    assert payload["settings"]["theme"] == "dark"
-    assert "apiKeyHelper" not in payload["settings"]
-    # Live config was never touched by the import.
-    assert not (home / "config.json").exists()
+def test_settings_are_named_and_nothing_in_them_is_copied(claude_root: Path, home: Path) -> None:
+    """Claude Code's own options are not PersonalClaw's. The scan names them, and the import
+    applies only the command Claude Code refuses — no staged copy, no guessed setting."""
+    result = scan_source("claude_code", claude_root)
+    assert [n.to_dict() for n in result.not_imported] == [
+        {
+            "what": "Command rules that allow without asking",
+            "count": 1,
+            "why": "Letting a command run without asking stays your call in PersonalClaw, so an "
+            "import never makes it.",
+        },
+        {
+            "what": "Claude Code settings",
+            "count": 3,
+            "why": "theme, apiKeyHelper and verbose are Claude Code's own options. PersonalClaw "
+            "keeps its own in Settings, so they stay in Claude Code.",
+        },
+    ]
+
+    run_import([result])
+    assert not (home / "onboarding" / "staged").exists()
+    config = json.loads((home / "config.json").read_text(encoding="utf-8"))
+    assert config["security"]["denied_commands"] == [r"\brm\s+-rf\b"]
+    text = json.dumps(config)
+    assert "apiKeyHelper" not in text and '"theme"' not in text and SECRET2 not in text
 
 
 def test_reimport_reports_existing_and_writes_nothing_new(claude_root: Path, home: Path) -> None:
@@ -367,8 +410,10 @@ def test_a_pick_imports_exactly_the_chosen_items(claude_root: Path, home: Path) 
     assert {r.outcome for r in report.results} == {WriteOutcome.IMPORTED}
     assert mcp_config_path().is_file()
     # Everything NOT chosen was left alone — and is accounted for, not silently absent.
+    from personalclaw.config.loader import AppConfig
+
     assert not (home / "skills" / "imported").exists()
-    assert not staged_settings_path("claude_code", "settings.json").exists()
+    assert AppConfig.load().security.denied_commands == []
     doc = home / "workspace" / "memory" / "imported" / "claude_code" / "CLAUDE.md"
     assert not doc.exists()
     left_out = {item.fingerprint: plan.state for item, plan in report.unselected}
@@ -403,9 +448,9 @@ def test_the_plan_says_before_the_import_what_the_import_then_does(
     mcp_config_path().write_text(
         json.dumps({"mcpServers": {"weather": {"command": "mine"}}}), encoding="utf-8"
     )
-    # existing: the settings were already staged, byte-identically, by an earlier import.
+    # existing: the refused command is already in the shell denylist, from an earlier import.
     first = [scan_source("claude_code", claude_root)]
-    run_import(first, fingerprints=_picks(first, ImportCategory.SETTINGS))
+    run_import(first, fingerprints=_picks(first, ImportCategory.DENIED_COMMANDS))
     # rejected: the skill's source directory vanished between the scan and the import.
     results = [scan_source("claude_code", claude_root)]
     skill = next(i for i in results[0].items if i.category is ImportCategory.SKILLS)
@@ -554,18 +599,17 @@ def test_conflict_detail_never_carries_a_value(claude_root: Path, home: Path) ->
 
 
 def test_each_item_carries_its_own_withheld_count(claude_root: Path) -> None:
-    """The fixture plants one credential in each of four places. Each item that lost one says
-    so on its own row, and the one that belongs to no item (the root credential file) is what
-    the source total holds beyond them — so the numbers a user reads reconcile."""
+    """Each item that lost a credential says so on its own row, and the one that belongs to no
+    item (the root credential file) is what the source total holds beyond them — so the numbers
+    a user reads reconcile. The MCP server lost nothing: its key goes to the credential store."""
     result = scan_source("claude_code", claude_root)
     by_key = {item.key: item for item in result.items}
 
-    assert by_key["weather"].secrets_skipped == 1  # WEATHER_API_KEY, dropped from its env
+    assert by_key["weather"].secrets_skipped == 0  # WEATHER_API_KEY, stored as a reference
     assert by_key["tidy-notes"].secrets_skipped == 1  # the .env inside the skill
-    assert by_key["settings.json"].secrets_skipped == 1  # apiKeyHelper
     assert by_key["CLAUDE.md"].redactions >= 1  # the key in the prose, redacted
     assert by_key[_MEMORY_KEY].secrets_skipped == 0
-    assert result.secrets_skipped == 4
+    assert result.secrets_skipped == 2
     assert result.secrets_outside_items() == 1  # .credentials.json, never opened
     # A count, never the value — on the wire as in memory.
     wire = json.dumps(result.to_dict())
@@ -574,19 +618,21 @@ def test_each_item_carries_its_own_withheld_count(claude_root: Path) -> None:
 
 
 def test_the_reported_withheld_count_follows_the_choice(claude_root: Path, home: Path) -> None:
-    """Importing only the instructions must not claim the MCP server's key and the skill's
-    `.env` were withheld FROM THIS IMPORT — the user never picked them. What belongs to no
-    item (the root credential file) is left behind whatever is picked, so it stays."""
+    """Importing only the instructions must not claim the skill's `.env` was withheld FROM THIS
+    IMPORT — the user never picked it. What belongs to no item (the root credential file) is
+    left behind whatever is picked, so it stays."""
     results = [scan_source("claude_code", claude_root)]
     only_claude_md = run_import(results, fingerprints=_picks(results, ImportCategory.INSTRUCTIONS))
     assert only_claude_md.secrets_skipped == 1
     assert only_claude_md.redactions >= 1
 
     everything = run_import([scan_source("claude_code", claude_root)])
-    assert everything.secrets_skipped == 4
+    assert everything.secrets_skipped == 2
 
 
-def test_codex_attributes_each_server_and_the_settings_remainder(tmp_path: Path) -> None:
+def test_codex_servers_keep_their_values_for_the_store_and_its_settings_are_named(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / ".codex"
     root.mkdir()
     (root / "config.toml").write_text(
@@ -599,37 +645,19 @@ def test_codex_attributes_each_server_and_the_settings_remainder(tmp_path: Path)
     result = codex.scan(root)
     by_key = {item.key: item for item in result.items}
 
-    assert by_key["docs"].secrets_skipped == 2
-    assert by_key["plain"].secrets_skipped == 0
-    assert by_key["config.toml"].secrets_skipped == 1  # api_key, from the settings remainder
-    assert by_key["config.toml"].payload == {"model": "gpt-5"}
-    assert result.secrets_skipped == 3
-    assert result.secrets_outside_items() == 0
-
-
-@pytest.mark.parametrize(
-    "doc",
-    [
-        {"mcpServers": {"a": {"env": {"API_KEY": "x", "K": "v"}}, "b": {"command": "c"}}},
-        {"mcpServers": {"auth-proxy": {"command": "c"}, "ok": {"token": "t"}}, "secret": 1},
-        {"mcpServers": {"a": "not-a-dict", "b": {"args": [{"password": "p"}]}}, "top": [1]},
-        {"mcpServers": ["not", "a", "table"], "access_key": "k"},
-        {"mcp_servers": {"a": {"k": 1}}, "mcpServers": {"a": {"api_key": "z"}}},
-        ["not", "a", "document"],
-    ],
-)
-def test_split_tables_is_strip_secrets_with_the_count_kept_per_entry(doc) -> None:
-    """The per-entry walk may not change a TOTAL: whatever the document's shape — secret-named
-    servers, junk entries, a table that is not one, a name defined in two tables — the split's
-    total is the whole-document strip's count, and every value it returns is stripped."""
-    tables = ("mcp_servers", "mcpServers")
-    split = split_tables(doc, tables)
-    assert split.total == strip_secrets(doc)[1]
-    for _name, entry, withheld in split.entries:
-        assert strip_secrets(entry) == (entry, 0), "an entry left the floor unstripped"
-        assert withheld >= 0
-    assert strip_secrets(split.remainder)[1] == 0
-    assert len({name for name, _e, _w in split.entries}) == len(split.entries)
+    assert sorted(by_key) == ["docs", "plain"], "the rest of the config is not an item"
+    assert by_key["docs"].payload["env"] == {"API_KEY": SECRET, "TOKEN": SECRET2}
+    assert result.secrets_skipped == 0
+    assert [n.to_dict() for n in result.not_imported] == [
+        {
+            "what": "Codex settings",
+            "count": 2,
+            "why": "model and api_key are Codex's own options. PersonalClaw keeps its own in "
+            "Settings, so they stay in Codex.",
+        }
+    ]
+    wire = json.dumps(result.to_dict())
+    assert SECRET not in wire and SECRET2 not in wire
 
 
 # ── dispatch is exhaustive ────────────────────────────────────────────────────

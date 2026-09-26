@@ -20,7 +20,7 @@
       {
         "canonical": "src/personalclaw/atomic_write.py",
         "name": "durable-write",
-        "rationale": "DAS-9: a handler rolled its own ``mkstemp`` + ``rename`` and so vanished from the history seam — the write landed on disk and no post-write hook ever fired, which is the swallowed-write defect with a green test on both sides. ``atomic_write.py`` is the ONE implementation that keeps that seam (and fsync durability) intact. Five functions across four files still pair a temp-file creation with a rename themselves. Thin wrappers that DELEGATE to ``atomic_write`` are deliberately not counted — three exist and they are the shape we want, not a re-derivation."
+        "rationale": "DAS-9: a handler rolled its own ``mkstemp`` + ``rename`` and so vanished from the history seam — the write landed on disk and no post-write hook ever fired, which is the swallowed-write defect with a green test on both sides. ``atomic_write.py`` is the ONE implementation that keeps that seam (and fsync durability) intact. Four functions across three files still pair a temp-file creation with a rename themselves. Thin wrappers that DELEGATE to ``atomic_write`` are deliberately not counted — three exist and they are the shape we want, not a re-derivation."
       },
       {
         "canonical": "src/personalclaw/http_download.py",
@@ -29,12 +29,6 @@
       }
     ],
     "per_file": {
-      "src/personalclaw/agent.py": {
-        "count": 1,
-        "sites": [
-          "durable-write:_atomic_json_write"
-        ]
-      },
       "src/personalclaw/channel_trust.py": {
         "count": 1,
         "sites": [
@@ -204,22 +198,16 @@
     "totals": {
       "by_family": {
         "content-disposition-header": 0,
-        "durable-write": 5,
+        "durable-write": 4,
         "http-error-envelope-helper": 3,
         "verdict-type": 23
       },
-      "files": 28,
-      "sites": 31
+      "files": 27,
+      "sites": 30
     }
   },
   "structural-import-direction": {
     "per_file": {
-      "src/personalclaw/action_providers/services.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
-        ]
-      },
       "src/personalclaw/agent.py": {
         "edges": 1,
         "violations": [
@@ -466,11 +454,11 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 6,
-        "core-must-not-import-the-http-surface": 54,
+        "core-must-not-import-the-http-surface": 53,
         "ledger-is-a-leaf": 0
       },
-      "edges": 60,
-      "files": 30
+      "edges": 59,
+      "files": 29
     }
   },
   "structural-size": {

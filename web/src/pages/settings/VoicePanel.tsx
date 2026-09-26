@@ -79,8 +79,8 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
           a provider CAPABILITY declaration, not a user preference, and nothing here read it
           either. Wiring this means building the transport; that is a feature, not this fix. */}
       <UseCaseVoiceSection
-        title="Text-to-speech" hint="Speak agent replies aloud." useCase="tts"
-        enableLabel="Speak replies aloud" boundModel={(active['tts'] ?? [])[0] ?? ''}
+        title="Text-to-speech" hint="Hear replies read out, from the Speak button on a reply or on their own." useCase="tts"
+        enableLabel="Enable text-to-speech" boundModel={(active['tts'] ?? [])[0] ?? ''}
         settings={ttsSettings} setSettings={setTtsSettings} go={go}
         extras={(s, save, boundModel) => {
           const speed = typeof s.speed === 'number' ? s.speed : 1.0
@@ -100,6 +100,12 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
           const isGeminiVoice = GEMINI_TTS_PROVIDERS.includes(provider)
           return (
             <>
+              {/* `auto_speak`: the chat reads each finished reply out in the tab the message was
+                  sent from. The master switch above still gates it, so this only shows while
+                  text-to-speech is on. */}
+              <Row label="Speak replies aloud" hint="Read each reply out as soon as it finishes, in the tab you sent the message from.">
+                <Toggle on={Boolean(s.auto_speak)} onChange={(v) => save({ auto_speak: v })} label="Speak replies aloud" />
+              </Row>
               {isGeminiVoice ? (
                 <p data-type="body-s" className="text-on-surface-low">
                   Gemini speaks at its model's own pace with its own preset voices — its speech

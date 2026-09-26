@@ -36,11 +36,13 @@ Destinations
 ``prompts``          ``prompts/<name>.yaml``: a prompt you run as ``@name``
 ``conversations``    ``sessions/dashboard_<source>-<id>.jsonl``: a chat in your
                      history, readable and resumable
-``settings``         ``onboarding/staged/<source>-<key>.json`` — a REVIEW QUEUE.
-                     Foreign settings never reach live config, so for this
-                     category ``imported`` means "staged for a human", which is
-                     that category's destination.
+``denied_commands``  ``config.json`` → ``security.denied_commands``: a pattern the
+                     shell denylist refuses (Settings › Security). Only ever a
+                     command the other tool refused to run: an import tightens it
 ===================  ==========================================================
+
+Another tool's own options have no destination: they are not PersonalClaw's, so a scan names
+them under "Not brought over" and no writer exists for them.
 """
 
 from __future__ import annotations
@@ -66,12 +68,6 @@ from personalclaw.onboarding_import.model import (
     WriteResult,
     withheld_notes,
 )
-from personalclaw.skills.marketplace import (
-    SkillDetail,
-    SkillEntry,
-    SkillsMarketplace,
-    read_skill_file_entry,
-)
 
 
 def config_dir() -> Path:
@@ -86,7 +82,6 @@ def config_dir() -> Path:
 logger = logging.getLogger(__name__)
 
 _STATE_REL = Path("onboarding") / "import_state.json"
-_STAGED_REL = Path("onboarding") / "staged"
 _IMPORTED_DIRNAME = "imported"
 #: How much of an imported doc goes into the memory record's text. The full document
 #: is written to disk; the record is the searchable one-liner that points at it.
@@ -336,9 +331,9 @@ def _write_mcp_server(item: ImportItem, dest: str) -> WriteResult:
         servers = {}
     servers[item.target] = dict(item.payload)
     data["mcpServers"] = servers
-    # The MCP document writer: every env value the scan kept reaches the file as a
-    # credential-store reference (`config.secret_refs`) — a value the secret-NAME floor let
-    # through (a `DATABASE_URL` with a password in it) is still a secret.
+    # The MCP document writer, Tools › Import's too: every `env` and `headers` value reaches the
+    # file as a credential-store reference (`config.secret_refs`), whatever its name — a
+    # `DATABASE_URL` with a password in it is as secret as an `API_KEY`.
     from personalclaw.config.secret_refs import write_mcp_document
 
     write_mcp_document(path, data)
@@ -355,12 +350,20 @@ def imported_skills_dir(source: str) -> Path:
     return skills_dir() / _IMPORTED_DIRNAME / _slug(source)
 
 
-def _plan_skill(item: ImportItem) -> Plan:
-    """Everything about a skill the destination can answer without installing it.
+def _refusing_rules(item: ImportItem) -> str:
+    """The rules that make a skill's scan dangerous, for the sentence that says so."""
+    findings = item.scan.findings if item.scan is not None else ()
+    rules = sorted({f["rule"] for f in findings if f["severity"] == "dangerous"})
+    return ", ".join(rules) or "no specific rule"
 
-    The supply-chain scan is not part of the plan — it needs the quarantine copy an
-    install makes — so a skill it would refuse still plans ``new``; the report then
-    carries the scanner's own reason as ``rejected``.
+
+def _plan_skill(item: ImportItem) -> Plan:
+    """Everything about a skill the destination and its scan can answer without installing it.
+
+    The scan is the one the import's install will make, made when the tool was scanned: a
+    dangerous verdict is refused here, before anything is chosen, with the rules that refuse
+    it. A skill whose scan has warnings plans ``new``; it comes over only with them accepted,
+    and without that its row is ``rejected`` with the scanner's reason.
     """
     target = imported_skills_dir(item.source) / item.key
     dest = _rel_to_home(target)
@@ -377,83 +380,59 @@ def _plan_skill(item: ImportItem) -> Plan:
             dest,
             "a skill of this name that no import wrote is already here, and it is kept",
         )
+    if item.scan is not None and item.scan.verdict == "dangerous":
+        return Plan(
+            ItemState.REJECTED,
+            dest,
+            f"the skill supply-chain scan refuses it as dangerous: {_refusing_rules(item)}",
+        )
     return Plan(ItemState.NEW, dest)
 
 
 def _write_skill(item: ImportItem, dest: str) -> WriteResult:
     """Install a foreign skill through the shared supply-chain gate.
 
-    Namespaced under ``imported/<source>/`` so a re-import or a removal is scoped
-    and reversible, and routed through ``install_scanned`` so a foreign skill gets
-    exactly the quarantine → scan → commit treatment a Store skill gets. A
-    DANGEROUS verdict is ``rejected``, never force-installed.
+    Namespaced under ``imported/<source>/`` so a re-import or a removal is scoped and
+    reversible, and routed through ``install_scanned`` so a foreign skill gets exactly the
+    quarantine → scan → commit treatment a Store skill gets. A DANGEROUS verdict is
+    ``rejected``, never installed. A WARNING verdict installs only over the warnings the person
+    accepted (``accepted_warnings``): the gate compares their digest with the scan it makes of
+    the bytes it installs, and records the acceptance in the SEL.
     """
+    from personalclaw.onboarding_import.sources.common import ImportedSkillMarketplace
     from personalclaw.skills.marketplace import SkillInstallRefused, install_scanned
 
     target = imported_skills_dir(item.source)
     target.mkdir(parents=True, exist_ok=True)
-    marketplace = _ImportedSkillsMarketplace(Path(item.path))
+    marketplace = ImportedSkillMarketplace(Path(item.path))
     try:
-        install_scanned(marketplace, f"import:{item.source}", item.key, target, force=False)
-    except SkillInstallRefused as exc:
-        return _result(
-            item,
-            WriteOutcome.REJECTED,
-            dest,
-            f"the skill supply-chain scan refused this skill: {exc}",
+        install_scanned(
+            marketplace,
+            f"import:{item.source}",
+            item.key,
+            target,
+            accepted_warnings=item.accepted_warnings or None,
         )
+    except SkillInstallRefused as exc:
+        band = "dangerous" if exc.dangerous else "warning"
+        rules = ", ".join(sorted({f.rule for f in exc.report.findings if f.severity.value == band}))
+        if exc.dangerous:
+            detail = f"the skill supply-chain scan refuses it as dangerous: {rules}"
+        elif item.accepted_warnings:
+            detail = (
+                "its security scan finds warnings other than the ones you accepted, so it was "
+                f"not installed: {rules}. Scan again to read them"
+            )
+        else:
+            detail = (
+                f"its security scan found warnings, and it comes over only if you accept them: "
+                f"{rules}"
+            )
+        return _result(item, WriteOutcome.REJECTED, dest, detail)
     except (ValueError, OSError) as exc:
         return _result(item, WriteOutcome.REJECTED, dest, f"could not install: {exc}")
     _record(item, dest)
     return _result(item, WriteOutcome.IMPORTED, dest)
-
-
-def _imported_skills_marketplace_files(skill_dir: Path) -> list[dict[str, Any]]:
-    files: list[dict[str, Any]] = []
-    for path in sorted(skill_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        # The same floor the scanner counted with: a credential file inside a
-        # foreign skill is never staged, scanned or installed.
-        if refuses(path):
-            continue
-        try:
-            files.append(read_skill_file_entry(path, path.relative_to(skill_dir).as_posix()))
-        except OSError:
-            logger.warning("skipping unreadable file in imported skill %s", skill_dir.name)
-    return files
-
-
-class _ImportedSkillsMarketplace(SkillsMarketplace):
-    """A transient, single-directory skills source rooted at a foreign skill dir.
-
-    Not registered in the shared registry — another tool's skills dir is not a
-    marketplace. It exists only so an imported skill flows through the exact same
-    :func:`install_scanned` gate (quarantine → scan → commit → lock) as any other
-    install, at the ``community`` trust tier (foreign, unsigned content).
-    """
-
-    def __init__(self, skill_dir: Path) -> None:
-        self._skill_dir = Path(skill_dir)
-
-    @property
-    def marketplace_type(self) -> str:
-        return "onboarding_import"
-
-    @property
-    def trust_tier(self) -> str:
-        return "community"
-
-    def search(self, query: str, limit: int = 20) -> list[SkillEntry]:  # pragma: no cover
-        return []
-
-    def fetch(self, skill_id: str) -> SkillDetail:
-        return SkillDetail(
-            id=skill_id,
-            name=self._skill_dir.name,
-            files=_imported_skills_marketplace_files(self._skill_dir),
-            audit_status="pass",
-        )
 
 
 # ── agents → config.json agents (the profiles the Agents page lists) ─────────
@@ -674,56 +653,55 @@ def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
     return _result(item, WriteOutcome.IMPORTED, dest)
 
 
-# ── settings → the review queue (never live config) ──────────────────────────
+# ── denied_commands → config.json security.denied_commands (the shell denylist) ──
+
+_DENYLIST_DEST = "config.json#security.denied_commands"
 
 
-def staged_settings_path(source: str, key: str) -> Path:
-    return config_dir() / _STAGED_REL / f"{_slug(source)}-{_slug(key)}.json"
+def _denied_pattern_of(item: ImportItem) -> str | None:
+    """The item's pattern when it is one the shell denylist can check, else ``None``."""
+    pattern = item.payload.get("pattern")
+    if not isinstance(pattern, str) or not pattern.strip():
+        return None
+    try:
+        re.compile(pattern)
+    except re.error:
+        return None
+    return pattern
 
 
-def _staged_settings_text(item: ImportItem) -> str:
-    return (
-        json.dumps(
-            {"source": item.source, "key": item.key, "settings": item.payload},
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n"
-    )
+def _plan_denied_command(item: ImportItem) -> Plan:
+    from personalclaw.config.loader import AppConfig
 
-
-def _plan_settings(item: ImportItem) -> Plan:
-    path = staged_settings_path(item.source, item.key)
-    dest = _rel_to_home(path)
-    if path.is_file():
-        try:
-            current = path.read_text(encoding="utf-8")
-        except OSError:
-            current = ""
-        if current == _staged_settings_text(item):
-            return Plan(ItemState.EXISTING, dest, "already staged for review")
+    pattern = _denied_pattern_of(item)
+    if pattern is None:
         return Plan(
-            ItemState.CONFLICT,
-            dest,
-            "different settings from this source are already staged for review, "
-            "and they are kept",
+            ItemState.REJECTED,
+            _DENYLIST_DEST,
+            "its command could not be written as a pattern the shell denylist can check",
         )
-    return Plan(ItemState.NEW, dest)
+    if pattern in AppConfig.load().security.denied_commands:
+        return Plan(ItemState.EXISTING, _DENYLIST_DEST, "already in your shell denylist")
+    return Plan(ItemState.NEW, _DENYLIST_DEST)
 
 
-def _write_settings(item: ImportItem, dest: str) -> WriteResult:
-    """Stage foreign settings for human review. Never merge them into config.
+def _write_denied_command(item: ImportItem, dest: str) -> WriteResult:
+    """Add the pattern to your own shell denylist — the list Settings › Security shows and edits.
 
-    Another tool's settings keys are not ours, so an automatic merge could only
-    guess. The destination for this category IS the review queue: ``imported``
-    means "staged", and a differing staged file is a ``conflict`` rather than an
-    overwrite.
+    It only ever adds: a denylist entry refuses commands, so bringing one over tightens what the
+    agent may run and loosens nothing. Removing it later is the Settings panel's to do.
     """
-    path = staged_settings_path(item.source, item.key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, _staged_settings_text(item))
+    from personalclaw.config.loader import AppConfig
+
+    pattern = _denied_pattern_of(item) or ""
+    cfg = AppConfig.load()
+    # A read-modify-write of the whole config: the plan is re-asked of THIS read.
+    if pattern in cfg.security.denied_commands:
+        return _result(item, WriteOutcome.EXISTING, dest, "already in your shell denylist")
+    cfg.security.denied_commands.append(pattern)
+    cfg.save()
     _record(item, dest)
-    return _result(item, WriteOutcome.IMPORTED, dest, "staged for review — not applied to config")
+    return _result(item, WriteOutcome.IMPORTED, dest)
 
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
@@ -739,7 +717,7 @@ _PLANNERS: dict[ImportCategory, Callable[[ImportItem], Plan]] = {
     ImportCategory.AGENTS: _plan_agent,
     ImportCategory.PROMPTS: _plan_prompt,
     ImportCategory.CONVERSATIONS: _plan_conversation,
-    ImportCategory.SETTINGS: _plan_settings,
+    ImportCategory.DENIED_COMMANDS: _plan_denied_command,
 }
 _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
     ImportCategory.INSTRUCTIONS: _write_memory,
@@ -749,7 +727,7 @@ _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
     ImportCategory.AGENTS: _write_agent,
     ImportCategory.PROMPTS: _write_prompt,
     ImportCategory.CONVERSATIONS: _write_conversation,
-    ImportCategory.SETTINGS: _write_settings,
+    ImportCategory.DENIED_COMMANDS: _write_denied_command,
 }
 
 

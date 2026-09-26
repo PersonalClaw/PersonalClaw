@@ -83,32 +83,26 @@ def _trigger(store: TriggerStore, trigger_id: str) -> Trigger:
     return trigger
 
 
-# ── the closed run-status set the terminal row must stay inside ──
+# ── the interrupted run's own status ──
 
 
-def test_schedule_run_status_still_has_exactly_four_members():
-    """The change's explicit constraint: do NOT mint a fifth `ScheduleRun.status` value.
+def test_a_run_a_restart_cut_off_is_recorded_as_interrupted_not_as_a_timeout():
+    """🔴 Red on main: the row said `timeout`, a deadline the run never blew.
 
-    The set is consumed by `web/src/pages/schedule/scheduleMeta.ts` and pinned by
-    `reapedRunReadsAsFailure.test.ts`; a fifth member would render as "never run" grey on every
-    surface that has not learned it. The interrupted-by-restart distinction is carried in the
-    row's `error`, not in a new status.
+    That was a deliberate choice once — the frontend's status switch knew four words and a fifth
+    rendered "never run" grey — and the cost was a false sentence about the automation. The word is
+    its own now, and every reader learned it in the same change: the unified feed's table
+    (`history.SCHEDULE_STATUS_TO_OUTCOME`), `ScheduleRun`'s own documentation, and the frontend's
+    `statusMeta` (pinned by `reapedRunReadsAsFailure.test.ts`).
     """
     import inspect
 
     from personalclaw import schedule_history
+    from personalclaw.triggers.history import SCHEDULE_STATUS_TO_OUTCOME
 
-    source = inspect.getsource(schedule_history.ScheduleRun)
-    quoted = {
-        word
-        for word in ("success", "failure", "timeout", "launched", "interrupted", "orphaned")
-        if f'"{word}"' in source
-    }
-    assert quoted == {"success", "failure", "timeout", "launched"}, (
-        f"`ScheduleRun` documents the status values {sorted(quoted)}. The closed set is "
-        "success|failure|timeout|launched — carry an interrupted run in the row's `error`."
-    )
-    assert reaper.RESTART_INTERRUPTED_STATUS in {"success", "failure", "timeout", "launched"}
+    assert reaper.RESTART_INTERRUPTED_STATUS == "interrupted"
+    assert reaper.RESTART_INTERRUPTED_STATUS in SCHEDULE_STATUS_TO_OUTCOME
+    assert '"interrupted"' in inspect.getsource(schedule_history.ScheduleRun)
 
 
 # ── the boot pass, and its pid discrimination ──

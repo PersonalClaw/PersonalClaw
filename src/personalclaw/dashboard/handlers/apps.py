@@ -218,14 +218,17 @@ async def api_apps_list(request: web.Request) -> web.Response:
     """GET /api/apps — installed apps with manifest summary + runtime state.
 
     APE-7: on this existing read path (no polling loop) we also compute which installed
-    apps have a newer version available from their local source, tag each such app
-    ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
+    apps have a newer version available from their source — a local source, or the Store
+    source the app was installed from, as the Store's own discovery last read it — tag each
+    such app ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
     notification per newly-available version (deduped by ``name + latest_version`` in
-    ``surface_app_updates`` so re-viewing never re-nags)."""
+    ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
+    of the app starts when none was found: the source it was installed from."""
     from personalclaw.apps.catalog import (
         resolve_hero_url,
         source_kind_for_origin,
         surface_app_updates,
+        update_source_for,
     )
     from personalclaw.apps.manager import app_dir, list_apps, ui_revision
 
@@ -345,6 +348,9 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "latestVersion": updates_by_name.get(name, {}).get("latestVersion", ""),
                 # Where that version was found: the Update dialog starts from it.
                 "latestSource": updates_by_name.get(name, {}).get("latestSource", ""),
+                # Where an Update starts when no newer version was found: the source the app
+                # was installed from, when an update can come from there ("" otherwise).
+                "updateSource": update_source_for(app),
                 **_app_status(name),
             }
         )
@@ -586,8 +592,17 @@ def _consent_token(body: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _listed_by(body: Any) -> str:
+    """The registry a Store card says listed the source (``listedBy``), or ``""``.
+
+    It can only make a fetch stricter: a source named here is held to the listing rules
+    (``apps/source.resolve``), and a registry the owner did not configure trusts no host."""
+    value = body.get("listedBy") if isinstance(body, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
 async def api_app_preview(request: web.Request) -> web.Response:
-    """POST /api/apps/preview — review ``{source, name?}`` before anything is installed.
+    """POST /api/apps/preview — review ``{source, name?, listedBy?}`` before anything is installed.
 
     Stages the source (clones a git URL) and answers what installing it — or, with
     ``name``, updating that installed app to it — would grant and run
@@ -597,7 +612,8 @@ async def api_app_preview(request: web.Request) -> web.Response:
 
     200 for every bundle it could read, a refusal included — "the scanner found dangerous
     content" is a finished review whose answer is no, and the dialog shows it.
-    400 ``app_source_unresolved`` when the source cannot be fetched, and
+    400 ``app_listing_refused`` when a registry listing named an address PersonalClaw will
+    not fetch from for it, ``app_source_unresolved`` when the source cannot be fetched, and
     ``app_preview_failed`` when the bundle cannot be offered at all (the message says why).
     """
     from personalclaw.apps import app_manager
@@ -610,7 +626,9 @@ async def api_app_preview(request: web.Request) -> web.Response:
     name = str(body.get("name") or "").strip() or None
 
     try:
-        resolved = await asyncio.to_thread(app_source.resolve, src)
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
+    except app_source.SourceRefused as exc:
+        return json_error("app_listing_refused", message=str(exc), status=400)
     except app_source.SourceError as exc:
         return json_error("app_source_unresolved", message=str(exc), status=400)
 
@@ -651,7 +669,7 @@ async def api_app_install(request: web.Request) -> web.Response:
     consent = _consent_token(body)
 
     try:
-        resolved = await asyncio.to_thread(app_source.resolve, src)
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
     except app_source.SourceError as exc:
         _sel_log("apps.install", "error", src, request, error=str(exc))
         return web.json_response({"error": str(exc)}, status=400)
@@ -713,7 +731,7 @@ async def api_app_update(request: web.Request) -> web.Response:
     consent = _consent_token(body)
 
     try:
-        resolved = await asyncio.to_thread(app_source.resolve, src)
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
     except app_source.SourceError as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
@@ -886,38 +904,6 @@ def _effective_config_schema(manifest) -> dict[str, Any]:
     return {}
 
 
-def _foreign_app_config_refusal(request: web.Request, name: str) -> web.Response | None:
-    """``403`` when an app-scoped caller names ANOTHER app's settings; ``None`` otherwise.
-
-    ``/api/apps/{name}/config`` is how an app's own settings panel reads and saves, and the
-    ``{name}`` in the path is the caller's choice — so a declared ``/api/apps`` prefix let one
-    app overwrite another's settings, its API key fields included (a write replaces the stored
-    secret; only the read masks it). The caller's identity is the app token's claim, as it is
-    for ``agent-run``. The owner (no app identity) reaches every app's settings.
-    """
-    caller = request.get("app", "")
-    if not caller or caller == name:
-        return None
-    try:
-        from personalclaw.sel import sel as _s
-
-        _s().log_api_access(
-            caller=f"app:{caller}",
-            operation="apps.config",
-            outcome="denied",
-            source="app_permissions",
-            resources=f"app:{name}",
-            error="another app's settings",
-        )
-    except Exception:
-        logger.warning("SEL audit failed for a refused cross-app config access", exc_info=True)
-    return json_error(
-        "forbidden",
-        message=f"an app reads and writes only its own settings, not {name!r}'s",
-        status=403,
-    )
-
-
 def _configured_per_instance(manifest) -> str | None:
     """The refusal for app-level config on an app whose settings live on its instances.
 
@@ -937,14 +923,15 @@ def _configured_per_instance(manifest) -> str | None:
 
 
 async def api_app_config_get(request: web.Request) -> web.Response:
+    """GET /api/apps/{name}/config — an app's settings, with its credentials masked.
+
+    An app reaches only its own: the gateway refuses one naming another app before this runs
+    (``apps/permissions.ROUTE_AUTHZ``)."""
     from personalclaw.apps.app_config import read_stored
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.secret_fields import mask_secrets
 
     name = request.match_info["name"]
-    denied = _foreign_app_config_refusal(request, name)
-    if denied is not None:
-        return denied
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
@@ -968,14 +955,15 @@ async def api_app_config_get(request: web.Request) -> web.Response:
 
 
 async def api_app_config_put(request: web.Request) -> web.Response:
+    """PUT /api/apps/{name}/config — save an app's settings, and apply them to its providers.
+
+    An app writes only its own: the gateway refuses one naming another app before this runs
+    (``apps/permissions.ROUTE_AUTHZ``)."""
     from personalclaw.apps.app_config import AppConfigError, read_stored, write_config
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
 
     name = request.match_info["name"]
-    denied = _foreign_app_config_refusal(request, name)
-    if denied is not None:
-        return denied
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
@@ -1283,9 +1271,9 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     Matches ``/apps/{name}/api/{tail:.*}`` for any method. 404 if the app isn't
     installed, 502 if its backend isn't running, 403 if the app is disabled.
 
-    The owner's session credential (cookie / bearer) is STRIPPED before forwarding —
-    an app backend must never receive the owner's token (it could replay it against
-    the full gateway API). Instead we forward a fresh app-scoped token so the backend
+    The owner's session credential (cookie / bearer / ``?token=``) is STRIPPED before
+    forwarding — an app backend must never receive the owner's token (it could replay it
+    against the full gateway API). Instead we forward a fresh app-scoped token so the backend
     has an identity bounded to its own declared permissions."""
     import aiohttp
 
@@ -1315,9 +1303,17 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     from yarl import URL
 
     from personalclaw.apps.app_secret import read_app_secret
+    from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
     from personalclaw.sdk.security import PROXY_SIGNATURE_HEADER, sign_proxy_request
 
-    target_url = URL(rb.base_url).with_path(f"/{tail}").with_query(request.rel_url.query)
+    # The query loses its credentials for the same reason the headers below lose the cookie
+    # and Authorization: `?token=` is the owner's token and `?app_token=` an app's, and the
+    # backend must hold neither — nor may the client error this proxy logs on a failure,
+    # whose text can carry the upstream URL.
+    forwarded_query = [
+        (k, v) for k, v in request.rel_url.query.items() if k not in RESERVED_QUERY_PARAMS
+    ]
+    target_url = URL(rb.base_url).with_path(f"/{tail}").with_query(forwarded_query)
     path_qs = target_url.raw_path_qs
 
     # Fail closed: without the per-app secret we cannot prove this request came from the

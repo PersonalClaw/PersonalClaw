@@ -6,9 +6,10 @@ The agentskills.io format (https://agentskills.io) is the standard:
   - The body is Markdown loaded on demand by the LLM.
 
 Discovery paths (loaded by ``_all_skill_paths()`` in ``agent.py``):
-  - ``~/.agents/skills/``        — agentskills.io cross-client standard
   - ``PERSONALCLAW_PROJECT_DIR/skills/``  — project-level
-  - ``~/.personalclaw/skills/``      — user-created
+  - ``<home>/skills/``                    — installed and user-created, the only install target
+  - ``~/.agents/skills/``                 — agentskills.io's shared folder, read only once the
+                                            owner allows it (``personalclaw.outside_home``)
 
 ``SkillsRegistry`` holds named ``SkillsMarketplace`` implementations.
 Additional marketplaces (skills.sh, custom registries) register via
@@ -33,21 +34,18 @@ _SKILL_FILENAME = "SKILL.md"
 def skill_discovery_paths() -> list[Path]:
     """The standard skill discovery paths, in priority order, resolved per call.
 
-    A function rather than a list built at import: the second entry is in the PersonalClaw home,
-    and a home established after this module was imported must be the one searched.
+    The home's skills first, where every install lands. Then the folder AI tools share
+    (``~/.agents/skills``), only when the owner allowed PersonalClaw to read it, and only read:
+    a skill there is never installed into, changed or deleted by PersonalClaw.
     """
-    from personalclaw.config.loader import config_dir
+    from personalclaw import outside_home
+    from personalclaw.skills.loader import skills_dir
 
-    return [
-        Path.home() / ".agents" / "skills",  # agentskills.io cross-client standard
-        config_dir() / "skills",  # user-created skills
-    ]
-
-
-# Default target for `skills install` when the caller doesn't override.
-# Matches the first discovery path so the installed skill is immediately
-# visible to running sessions without further config.
-DEFAULT_SKILLS_INSTALL_PATH: Path = Path.home() / ".agents" / "skills"
+    paths = [skills_dir()]
+    shared = outside_home.place_path(outside_home.AGENT_SKILLS)
+    if shared is not None:
+        paths.append(shared)
+    return paths
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -340,18 +338,23 @@ def verify_skill_integrity(skill_dir: Path) -> IntegrityReport:
     return rep
 
 
-def _audit_install(source: str, skill_id: str, tier: "Any", report: "Any", *, outcome: str) -> None:
-    """Emit a SEL audit event for a scan/install/refuse (best-effort)."""
+def _audit_install(
+    source: str, skill_id: str, tier: "Any", report: "Any", *, outcome: str, rules: str = ""
+) -> None:
+    """Emit a SEL audit event for a scan/install/refuse (best-effort). ``rules`` names the
+    findings the event is about, when it is about some (the warnings a person accepted)."""
     try:
         from personalclaw.sel import sel
 
+        verdict = getattr(report.verdict, "value", report.verdict)
+        detail = f"tier={getattr(tier, 'value', tier)} verdict={verdict}"
         sel().log_api_access(
             caller=f"skills.install_guarded:{source}",
             operation="skill_install",
             outcome=outcome,
             source="skills",
             resources=f"{source}/{skill_id}",
-            error=f"tier={getattr(tier, 'value', tier)} verdict={getattr(report.verdict, 'value', report.verdict)}",  # noqa: E501
+            error=f"{detail} rules={rules}" if rules else detail,
         )
     except Exception:
         logger.debug("skill install SEL audit failed", exc_info=True)
@@ -416,6 +419,99 @@ class SkillsRegistry:
         )
 
 
+def _tier_of(marketplace: "SkillsMarketplace") -> "Any":
+    from personalclaw.supply_chain import TrustTier
+
+    try:
+        return TrustTier(marketplace.trust_tier)
+    except ValueError:
+        return TrustTier.COMMUNITY
+
+
+def _installable(marketplace: "SkillsMarketplace", skill_id: str) -> "SkillDetail":
+    """What the skill IS: its files minus the tooling no skill runs (a `.git`, a `__pycache__`
+    whose bytecode the interpreter would run in place of the scanned source, a virtualenv).
+    Decided once, here, so staging, the scan, the commit and the lock all see the same list —
+    the scan reads every file it is handed, so it reads exactly what installs."""
+    import dataclasses
+    from pathlib import PurePosixPath
+
+    from personalclaw.supply_chain import never_installed
+
+    detail = marketplace.fetch(skill_id)
+    return dataclasses.replace(
+        detail,
+        files=[
+            entry
+            for entry in detail.files
+            if not any(never_installed(part) for part in PurePosixPath(entry.get("path", "")).parts)
+        ],
+    )
+
+
+def _scan_staged(detail: "SkillDetail", skill_id: str, tier: "Any", staged_root: Path) -> "Any":
+    """Stage ``detail``'s files under ``staged_root`` (path-safe) and scan them there.
+
+    🔴 The QUARANTINE directory's name is marketplace-supplied too, and it had the same hole
+    `install_skill_files` had (#739): `detail.name` comes from `fetch`, so a name of
+    `"../../evil"` escaped the temp dir that exists to contain it — and it escaped HERE, which
+    is before `scan_dir` runs, so the supply-chain gate could not refuse a write it had not yet
+    been asked about. `_stage_files` validates every file path and then `mkdir`s whatever this
+    expression produced.
+    """
+    from personalclaw.supply_chain import scan_dir
+
+    staged_skill = record_path(staged_root, detail.name or skill_id, suffix="", kind="skill name")
+    _stage_files(detail.files, staged_skill)
+    return scan_dir(staged_skill, tier)
+
+
+def warnings_consent(detail: "SkillDetail", report: "Any") -> str:
+    """What a person accepts when they install a skill over a WARNING verdict: its warnings, and
+    the exact files that were scanned for them. ``""`` for any other verdict.
+
+    A digest of both, so an acceptance is bound to what was read: the same bytes scanned twice
+    give the same value, and a file that changes after the scan (a second command appended to a
+    script the scan had already flagged once) gives another, and is not installed on it.
+    """
+    import hashlib
+
+    from personalclaw.supply_chain import Verdict
+
+    if report.verdict is not Verdict.WARNING:
+        return ""
+    digest = hashlib.sha256()
+    for entry in sorted(detail.files, key=lambda e: str(e.get("path", ""))):
+        body = entry.get("data")
+        raw = body if isinstance(body, bytes) else str(entry.get("contents", "")).encode("utf-8")
+        digest.update(f"{entry.get('path', '')}\0{hashlib.sha256(raw).hexdigest()}\n".encode())
+    warned = [f for f in report.findings if f.severity is Verdict.WARNING]
+    for line in sorted(f"{f.rule}\0{f.path}\0{f.evidence}" for f in warned):
+        digest.update(f"{line}\n".encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
+def scan_before_install(marketplace: "SkillsMarketplace", skill_id: str) -> "tuple[Any, str]":
+    """The scan :func:`install_scanned` would make of this skill, without installing it, and the
+    :func:`warnings_consent` an install over its warnings would need.
+
+    The same files, staged the same way and scanned at the same tier, so a verdict shown before
+    an install is the verdict the install reaches on unchanged bytes. Writes nothing but its
+    own quarantine directory, which it removes, and audits nothing: nothing was installed or
+    refused."""
+    import shutil
+    import tempfile
+
+    tier = _tier_of(marketplace)
+    detail = _installable(marketplace, skill_id)
+    staged_root = Path(tempfile.mkdtemp(prefix="pclaw-skill-quarantine-"))
+    try:
+        report = _scan_staged(detail, skill_id, tier, staged_root)
+    finally:
+        shutil.rmtree(staged_root, ignore_errors=True)
+    return report, warnings_consent(detail, report)
+
+
 def install_scanned(
     marketplace: "SkillsMarketplace",
     source: str,
@@ -423,6 +519,7 @@ def install_scanned(
     target_dir: Path,
     *,
     force: bool = False,
+    accepted_warnings: str | None = None,
 ) -> "InstallResult":
     """The single supply-chain install gate — used by both registered-marketplace
     installs (:meth:`SkillsRegistry.install_guarded`) and app-owned skill seeding
@@ -434,62 +531,38 @@ def install_scanned(
     decide → commit the scanned bytes + ``.pclaw-lock.json`` provenance + SEL audit.
 
     - ``clean`` / ``low`` → commit.
-    - ``warning`` → refuse unless ``force`` (a calculated, explicit override).
-    - ``dangerous`` → REFUSE; ``force`` does NOT override (the load-bearing floor).
+    - ``warning`` → refuse, unless ``force`` (a calculated, explicit override) or
+      ``accepted_warnings`` is the :func:`warnings_consent` of THIS scan of THESE files — the
+      warnings a person read, on the bytes they were read on. Either way the acceptance is its
+      own SEL event, naming the rules.
+    - ``dangerous`` → REFUSE; neither overrides it (the load-bearing floor).
 
     Quarantine-first means dangerous content never lands in the live skills tree.
     Raises :class:`SkillInstallRefused` on a blocked verdict; returns an
     :class:`InstallResult` on success."""
-    import dataclasses
     import shutil
     import tempfile
-    from pathlib import PurePosixPath
 
-    from personalclaw.supply_chain import TrustTier, Verdict, never_installed, scan_dir
+    from personalclaw.supply_chain import Verdict
 
-    try:
-        tier = TrustTier(marketplace.trust_tier)
-    except ValueError:
-        tier = TrustTier.COMMUNITY
-
-    detail = marketplace.fetch(skill_id)
-    # What the skill IS: its files minus the tooling no skill runs (a `.git`, a
-    # `__pycache__` whose bytecode the interpreter would run in place of the scanned source,
-    # a virtualenv). Decided once, here, so staging, the scan, the commit and the lock all
-    # see the same list — the scan reads every file it is handed, so it reads exactly what
-    # installs.
-    detail = dataclasses.replace(
-        detail,
-        files=[
-            entry
-            for entry in detail.files
-            if not any(never_installed(part) for part in PurePosixPath(entry.get("path", "")).parts)
-        ],
-    )
+    tier = _tier_of(marketplace)
+    detail = _installable(marketplace, skill_id)
     staged_root = Path(tempfile.mkdtemp(prefix="pclaw-skill-quarantine-"))
     try:
         # Stage the fetched payload to quarantine (path-safe) BEFORE any scan/commit.
-        #
-        # 🔴 The QUARANTINE directory's name is marketplace-supplied too, and it had the same hole
-        # `install_skill_files` had (#739): `detail.name` comes from `fetch`, so a name of
-        # `"../../evil"` escaped the temp dir that exists to contain it — and it escaped HERE, which
-        # is before `scan_dir` runs, so the supply-chain gate could not refuse a write it had not
-        # yet been asked about. `_stage_files` validates every file path and then `mkdir`s whatever
-        # this expression produced.
-        staged_skill = record_path(
-            staged_root, detail.name or skill_id, suffix="", kind="skill name"
-        )
-        _stage_files(detail.files, staged_skill)
-
-        report = scan_dir(staged_skill, tier)
+        report = _scan_staged(detail, skill_id, tier, staged_root)
         _audit_install(source, skill_id, tier, report, outcome="scanned")
 
         if report.verdict is Verdict.DANGEROUS:
             _audit_install(source, skill_id, tier, report, outcome="refused")
             raise SkillInstallRefused(report, dangerous=True)
-        if report.verdict is Verdict.WARNING and not force:
-            _audit_install(source, skill_id, tier, report, outcome="needs_confirm")
-            raise SkillInstallRefused(report, dangerous=False)
+        if report.verdict is Verdict.WARNING:
+            if not force and accepted_warnings != warnings_consent(detail, report):
+                _audit_install(source, skill_id, tier, report, outcome="needs_confirm")
+                raise SkillInstallRefused(report, dangerous=False)
+            warned = {f.rule for f in report.findings if f.severity is Verdict.WARNING}
+            rules = ",".join(sorted(warned))
+            _audit_install(source, skill_id, tier, report, outcome="accepted", rules=rules)
 
         # Commit the EXACT bytes we just scanned — write ``detail.files`` (the same
         # in-memory payload that was staged + scanned) straight to the live tree.

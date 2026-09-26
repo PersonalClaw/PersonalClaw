@@ -55,7 +55,7 @@ def _auth_config() -> dict:
 
 def _set_auth_field(name: str, value: object) -> None:
     """Write one `auth.*` field into config.json, preserving everything else."""
-    from personalclaw.agent import _atomic_json_write
+    from personalclaw.atomic_write import atomic_json_write
     from personalclaw.config.loader import config_path
 
     path = config_path()
@@ -73,7 +73,7 @@ def _set_auth_field(name: str, value: object) -> None:
         section = {}
     section[name] = value
     data["auth"] = section
-    _atomic_json_write(path, data)
+    atomic_json_write(path, data)
 
 
 def _read_new_password() -> str | None:

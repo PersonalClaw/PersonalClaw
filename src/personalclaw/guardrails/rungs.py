@@ -375,6 +375,9 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
             "run-workflow",
             "second-opinion",
             "selfqa-commit-watch",
+            # The HEARTBEAT.md queue's system trigger: each task is one headless agent turn, the
+            # behavior this class names, and it has run unattended every minute since it existed.
+            "heartbeat-tasks",
         ),
     ),
     # Drives a real browser, so its effect is a click and a form

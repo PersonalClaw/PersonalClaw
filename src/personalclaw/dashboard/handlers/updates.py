@@ -142,7 +142,7 @@ async def _do_update_check() -> None:
     :func:`self_update.build_update_status` makes, and ``api_update_check`` merges the two —
     including ``checked``, which this half sets only for itself.
 
-    **Why the kind gate is here and not just the project-dir probe.** ``PERSONALCLAW_PROJECT_DIR``
+    **Why the kind gate is here and not a project-dir probe.** ``PERSONALCLAW_PROJECT_DIR``
     is not a proxy for "this is a checkout": the Electron shell sets it to ``…/Resources``
     inside the app bundle (``desktop/gatewayEnv.js``), which carries no ``.git``. So on the
     owner's 2026-09-23 desktop install this function ran ``git fetch`` in a directory that
@@ -156,7 +156,7 @@ async def _do_update_check() -> None:
 
     # Egress kill switch: with updates.check_enabled=false the updater
     # makes ZERO outbound calls — no git fetch, no release probe. Read config
-    # FIRST, before any subprocess/network work, so a valid project dir cannot
+    # FIRST, before any subprocess/network work, so a checkout cannot
     # let the check slip through.
     if not AppConfig.load().updates.check_enabled:
         logger.debug("update check disabled (updates.check_enabled=false)")
@@ -167,7 +167,8 @@ async def _do_update_check() -> None:
         logger.debug("update check: %s install has no git history to diff; release tags only", kind)
         return
 
-    proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
+    # The checkout the running package comes from, never whatever tree the process started in.
+    proj = self_update.source_checkout()
     if not proj:
         return
     try:
@@ -508,10 +509,15 @@ async def api_update_apply(request: web.Request) -> web.Response:
     if kind == "pip":
         return await _apply_pip_update(request, state)
 
-    # git: ride release tags by channel/pin; nightly tracks the branch.
-    proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
+    # git: ride release tags by channel/pin; nightly tracks the branch. The tree it
+    # advances is the checkout the running package comes from, the same one the kind was read
+    # from, never a tree the process only started in.
+    proj = self_update.source_checkout()
     if not proj:
-        return web.json_response({"error": "PERSONALCLAW_PROJECT_DIR not set"}, status=400)
+        return web.json_response(
+            {"error": "No source checkout to update: this PersonalClaw does not run from one."},
+            status=400,
+        )
 
     if _apply_in_flight:
         return web.json_response(

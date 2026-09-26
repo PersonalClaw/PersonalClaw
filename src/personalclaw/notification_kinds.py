@@ -391,6 +391,19 @@ _KINDS: tuple[NotificationKind, ...] = (
     # Resolution-only: old persisted `session` notifications keep their label and severity,
     # but no production emitter owns the row, so Settings must not offer inert policy for it.
     NotificationKind("system", "session", "Session notice", "immediate", SEV_INFO, owner=None),
+    # tasks — a task's due date is coming. INFO: a reminder, not a warning — nothing has
+    # failed and nothing is at risk yet. Not an attention kind: the task itself is the durable
+    # record, so the notice persists no row of its own. Quiet hours are honoured by DEFERRING it
+    # (`tasks/due_notices.py`) rather than by this registration: the gate would drop an INFO note
+    # inside the window, and a reminder dropped at 02:00 is one that never arrives.
+    NotificationKind(
+        "tasks",
+        "due",
+        "Task due",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.tasks.due_notices",
+    ),
     # learning / feedback
     NotificationKind(
         "learning",
@@ -709,6 +722,9 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # The row rendered with the right LABEL (the SPA keys its display map on the wire string) while
     # carrying GENERIC's severity and mode, which is the trap the registry's own 🪤 above describes.
     "autonomy_revocation": ("guardrails", "autonomy_revocation"),
+    # `task_due`, not the bare `due`: the wire string is what the digest groups by and the
+    # SPA keys its label on, and a bare `due` would read as belonging to whatever next registers it.
+    "task_due": ("tasks", "due"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -753,6 +769,8 @@ FEEDBACK_RETIRE = "feedback_retire"
 USAGE_RECAP = "usage_recap"
 RESEARCH_FINDING = "research_finding"
 APPROVAL = "approval"
+#: A task's due date is coming (`tasks/due_notices.py`).
+TASK_DUE = "task_due"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -777,6 +795,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     USAGE_RECAP,
     RESEARCH_FINDING,
     APPROVAL,
+    TASK_DUE,
     GENERIC,
 )
 

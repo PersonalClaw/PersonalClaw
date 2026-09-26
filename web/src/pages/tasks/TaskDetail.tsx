@@ -164,7 +164,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>
         {task.project && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={accentChip}><FolderKanban size={13} /> {task.project}</span>}
         {task.assignee && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7 bg-surface-high text-on-surface-var">@{task.assignee}</span>}
-        {due && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
+        {due && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}{task.due_reminder === false ? ' · no reminder' : ''}</span>}
       </div>
 
       {(task.labels?.length ?? 0) > 0 && (

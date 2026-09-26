@@ -407,6 +407,21 @@ class SecurityConfig:
             "page.",
         ),
     )
+    # The places outside the PersonalClaw home it may READ (`personalclaw/outside_home.py`):
+    # `agent-skills`, `huggingface-cache`, and `sign-in:<source>` for a subscription provider.
+    # An allowlist, per place, and empty by default: until the owner adds one, PersonalClaw
+    # reads and writes only inside its home.
+    outside_home: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Places Outside the Home PersonalClaw May Read",
+            "The places outside PersonalClaw's home you allowed it to read, each by name: the "
+            "skills folder other AI tools share, the Hugging Face folder other tools share, and "
+            "a subscription provider's sign-in. Empty by default, which keeps every read and "
+            "write inside the home. PersonalClaw never writes to or deletes from these places. "
+            "Set per place in Settings → Security → Outside PersonalClaw's home.",
+        ),
+    )
 
 
 @dataclass

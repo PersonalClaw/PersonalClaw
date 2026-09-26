@@ -30,7 +30,6 @@ from an attempt that never happened.
 
 from __future__ import annotations
 
-import json
 import logging
 import secrets
 import time
@@ -54,6 +53,7 @@ from personalclaw.dashboard.token_auth import (
     generate_token,
     parse_config_duration,
     revoke_nonce,
+    token_nonce,
 )
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
@@ -266,7 +266,7 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
     # in a drawer should not hold a live session for a year.
     ttl = parse_config_duration(cfg.session_ttl, default_secs=DEFAULT_BROWSER_SESSION_TTL_SECS)
     token = generate_token(PAIRED_DEVICE_USER, ttl_seconds=ttl)
-    nonce = _nonce_of(token)
+    nonce = token_nonce(token)
 
     device = DeviceInfo(
         id=secrets.token_hex(8),
@@ -307,22 +307,6 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
     )
     _set_session_cookie(request, resp, token, ttl)
     return resp
-
-
-def _nonce_of(token: str) -> str:
-    """The nonce inside a freshly minted token, or "" when it cannot be read.
-
-    Pairing needs the session's identity to annotate its row, and the token payload is where
-    that identity already lives — deriving it here keeps `generate_token` device-unaware.
-    """
-    from personalclaw.dashboard.token_auth import _b64url_decode
-
-    try:
-        payload = _b64url_decode(token.split(".")[0])
-        return str(json.loads(payload).get("nonce") or "")
-    except Exception:  # noqa: BLE001
-        logger.warning("could not read the nonce out of a freshly minted token", exc_info=True)
-        return ""
 
 
 # ── /pair — the joining device's redeem screen ──────────────────────────

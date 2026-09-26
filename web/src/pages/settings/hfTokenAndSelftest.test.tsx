@@ -79,6 +79,19 @@ describe('the HuggingFace token section in the Models panel', () => {
     expect(screen.getAllByText(/not set/i).length).toBe(2)
   })
 
+  it('says the huggingface-cli sign-in is not read until the owner allows its folder', async () => {
+    const note = 'PersonalClaw has not been allowed to read the Hugging Face folder other tools share. '
+      + "Turn it on in Settings → Security → Outside PersonalClaw's home."
+    hfTokenStatus.mockResolvedValue({ sources: [
+      { source: 'credential_store', present: false, valid: false, username: '', masked: '', active: false },
+      { source: 'env', present: false, valid: false, username: '', masked: '', active: false },
+      { source: 'hf_cli_file', present: false, valid: false, username: '', masked: '', active: false, note },
+    ] })
+    render(<ModelsPanel />)
+    expect(await screen.findByText(note)).toBeInTheDocument()
+    expect(screen.getAllByText(/^not set$/i).length).toBe(2)
+  })
+
   it('saves a pasted token to the credential store', async () => {
     hfTokenStatus.mockResolvedValue({ sources: [
       { source: 'credential_store', present: false, valid: false, username: '', masked: '', active: false },

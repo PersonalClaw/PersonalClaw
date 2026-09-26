@@ -262,6 +262,17 @@ def _values(
             module,
             depth + 1,
         )
+    # `schedule_history.status_for_result(result)`: the ONE status rule both run recorders share.
+    # What it can return is a closed constant beside it, read from the module rather than copied,
+    # for the reason a `Name` comparator is.
+    if (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Name)
+        and expr.func.id == "status_for_result"
+    ):
+        from personalclaw.schedule_history import RESULT_STATUSES
+
+        return set(RESULT_STATUSES)
     # `str(x)` / `x or ""` are transparent wrappers around the value that matters.
     if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "str":
         if len(expr.args) == 1:
@@ -470,7 +481,7 @@ def test_the_writer_file_census_is_pinned() -> None:
         "dashboard/handlers/triggers.py",
         # The boot sweep. Named here rather than added to `WRITERS` because it is the one
         # writer with nothing for the table floors to catch: it writes a single module-level
-        # constant, `reaper.RESTART_INTERRUPTED_STATUS = "timeout"`, which is already a key of
+        # constant, `reaper.RESTART_INTERRUPTED_STATUS = "interrupted"`, which is a key of
         # `SCHEDULE_STATUS_TO_OUTCOME` (→ `failed`), so there is no per-branch status to drift and
         # no set of values for `min_values` to hold a floor under. A `min_sites=1, min_values=1`
         # entry would assert the inference can resolve a named constant, which is a claim about

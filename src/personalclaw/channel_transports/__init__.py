@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _transports: "dict[str, ChannelTransportProvider]" = {}
+#: The app each transport came from, by transport name (``telegram`` → ``telegram-channel``), so a
+#: page about the APP (its Configure page) can find the channel it runs.
+_apps: dict[str, str] = {}
 
 #: The one in-app transport. It is how the dashboard itself talks, not a channel through which a
 #: remote owner can be reached, so no "is a channel configured" question counts it — and it has no
@@ -89,18 +92,26 @@ _binding: "_Binding | None" = None
 _receivers: "dict[str, _Receiver]" = {}
 
 
-def register_transport(provider: "ChannelTransportProvider") -> None:
+def register_transport(provider: "ChannelTransportProvider", *, app: str = "") -> None:
+    """Register a channel. ``app`` names the app it came from (``""`` for the in-app Web UI)."""
     _transports[provider.name] = provider
+    _apps[provider.name] = app
     request_reconcile()
 
 
 def unregister_transport(name: str) -> None:
     _transports.pop(name, None)
+    _apps.pop(name, None)
     request_reconcile()
 
 
 def get_transport(name: str) -> "ChannelTransportProvider | None":
     return _transports.get(name)
+
+
+def app_of(name: str) -> str:
+    """The app the channel ``name`` came from, or ``""``."""
+    return _apps.get(name, "")
 
 
 def list_transports() -> list[str]:

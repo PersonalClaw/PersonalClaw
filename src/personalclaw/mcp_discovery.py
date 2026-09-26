@@ -72,29 +72,38 @@ def _mcp_json_paths() -> tuple[Path, ...]:
 
 
 def _import_sources() -> tuple[tuple[Path, str], ...]:
-    """Claude Code global configs PersonalClaw can *import from* (but never silently loads), each
-    with the backend label the import suggestions show. Each is read by
-    :func:`~personalclaw.onboarding_import.sources.claude_code.mcp_servers`, which follows it to
-    all three of Claude Code's scopes: the file's own ``mcpServers`` (user), each project entry's
-    (local), and each project's ``.mcp.json`` (project).
+    """The other tools' MCP configuration PersonalClaw can *import from* (but never silently
+    loads), each as ``(where, backend label)``: Claude Code's global config, which
+    :func:`~personalclaw.onboarding_import.sources.claude_code.mcp_servers` follows to all three
+    of its scopes (the file's own ``mcpServers``, each project entry's, each project's
+    ``.mcp.json``), and the Codex home, whose ``config.toml``
+    :func:`~personalclaw.onboarding_import.sources.codex.mcp_servers` reads.
 
     A FUNCTION, like :func:`_mcp_json_paths`: this was ``Path.home() / ".claude.json"`` frozen at
-    import, so it ignored ``$CLAUDE_CONFIG_DIR`` while the onboarding importer honoured it. Claude
-    Code's file now comes from the resolver that importer uses, per call. Tests monkeypatch this.
+    import, so it ignored ``$CLAUDE_CONFIG_DIR`` while the onboarding importer honoured it. Both
+    places now come from the resolvers that importer uses, per call. Tests monkeypatch this, and
+    a test that names only one tool reads only that one.
     """
-    from personalclaw.onboarding_import.sources import claude_code
+    from personalclaw.onboarding_import.sources import claude_code, codex
 
-    return ((claude_code.global_config_path(), claude_code.DISPLAY_NAME),)
+    return (
+        (claude_code.global_config_path(), claude_code.DISPLAY_NAME),
+        (codex.resolve_root(), codex.DISPLAY_NAME),
+    )
 
 
 def _importable_entries() -> list[tuple[str, Any]]:
     """``(backend label, server)`` for every MCP server another tool has configured, every scope."""
-    from personalclaw.onboarding_import.sources import claude_code
+    from personalclaw.onboarding_import.sources import claude_code, codex
 
+    readers = {
+        claude_code.DISPLAY_NAME: lambda path: claude_code.mcp_servers(config_path=path),
+        codex.DISPLAY_NAME: codex.mcp_servers,
+    }
     return [
         (backend, server)
         for path, backend in _import_sources()
-        for server in claude_code.mcp_servers(config_path=path)
+        for server in readers[backend](path)
     ]
 
 
@@ -112,8 +121,7 @@ def _importable_entries() -> list[tuple[str, Any]]:
 #: HTTP+SSE transport.
 MCP_TRANSPORTS = ("stdio", "http", "sse")
 
-#: Other names for Streamable HTTP in server configs. ``streamable-http`` is also what PersonalClaw
-#: itself wrote into ``~/.mcp.json`` before, which Claude Code's schema does not accept.
+#: Other names for Streamable HTTP in server configs.
 _TRANSPORT_ALIASES = {
     "streamable-http": "http",
     "streamable_http": "http",
@@ -245,6 +253,12 @@ def _get_cached(name: str) -> tuple[str, list[dict[str, Any]], str]:
     return "outdated", cached.tools, ""
 
 
+def forget_probe(name: str) -> None:
+    """Drop server ``name``'s cached probe: what it said is no longer true (its owner just signed
+    in or out), so it reads ``unknown`` until it is probed again."""
+    _probe_cache.pop(name, None)
+
+
 def _cache_probe(server: "McpServerInfo") -> None:
     """Store probe result in cache."""
     _probe_cache[server.name] = _ProbeResult(
@@ -266,7 +280,9 @@ class McpServerInfo:
     cwd: str = ""  # working dir for the spawn (app-shipped servers set this to the app dir)
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
-    status: str = "unknown"  # unknown | ok | error | probing | outdated (UNSERVED is only shown)
+    # unknown | ok | error | signin | probing | outdated (UNSERVED is only shown). ``signin``: a
+    # remote server that refused the connection until its owner signs in, or signs in again.
+    status: str = "unknown"
     # Each tool entry is a dict with at least "name"; optionally "description"
     # and "inputSchema" populated by tools/list responses. Plain strings are
     # also accepted on input and normalized to dicts at probe.
@@ -277,6 +293,9 @@ class McpServerInfo:
     #: ``stdio``, ``http`` or ``sse`` (:func:`mcp_transport`). Left empty, it is derived from
     #: ``url`` and ``command`` exactly as for a spec that declares none.
     transport: str = ""
+    #: A remote server's OAuth sign-in as its spec stores it (``secret_refs.MCP_SIGN_IN``):
+    #: references and what the grant is for, never a token. ``{}`` when it has none.
+    sign_in: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.transport = mcp_transport(
@@ -398,6 +417,9 @@ def _load_mcp_json() -> dict[str, Any]:
 
 
 def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
+    from personalclaw.config.secret_refs import MCP_SIGN_IN
+
+    sign_in = spec.get(MCP_SIGN_IN)
     return McpServerInfo(
         name=name,
         command=spec.get("command", ""),
@@ -408,6 +430,7 @@ def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
         headers=spec.get("headers", {}),
         source=source,
         transport=mcp_transport(spec),
+        sign_in=dict(sign_in) if isinstance(sign_in, dict) else {},
     )
 
 
@@ -497,8 +520,16 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     This used to be a hand-written Streamable HTTP exchange: it posted to every URL, so an SSE
     server always read as an error, and it dropped the session id between ``initialize`` and
     ``tools/list``, so a stateful server read ``ok`` with no tools.
+
+    A server that refuses the connection until its owner signs in — a 401 with a Bearer
+    challenge, or a sign-in that has ended — reads ``signin``, which the Tools page answers with
+    its Sign in control.
     """
-    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+    from personalclaw.config.secret_refs import (
+        MCP_SIGN_IN,
+        ForeignSecretReference,
+        resolve_mcp_values,
+    )
     from personalclaw.mcp_client import McpServerConn
 
     try:
@@ -516,13 +547,14 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         server.status = "error"
         server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
     else:
-        conn = McpServerConn(
-            server.name, {"type": server.transport, "url": server.url, "headers": headers}
-        )
+        spec: dict[str, Any] = {"type": server.transport, "url": server.url, "headers": headers}
+        if server.sign_in:
+            spec[MCP_SIGN_IN] = server.sign_in
+        conn = McpServerConn(server.name, spec)
         try:
             tools = await asyncio.wait_for(conn.list_tools(), timeout=_get_probe_timeout())
             if conn.error:
-                server.status = "error"
+                server.status = "signin" if conn.sign_in_needed else "error"
                 server.error = conn.error
             else:
                 server.status = "ok"
@@ -535,7 +567,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
             server.error = "timeout"
         finally:
             await conn.shutdown()
-    if server.status == "error":
+    if server.status in ("error", "signin"):
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
     _cache_probe(server)
     return server
@@ -798,9 +830,8 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     for name, spec in mcp_servers.items():
         if not isinstance(spec, dict):
             continue
-        # `url`, `headers` and the transport too: without them a remote server read as a stdio
-        # one with no command, and `register_servers_for_cc` wrote it into `~/.mcp.json` as
-        # `{"command": "", "type": "stdio"}`, an entry Claude Code refuses.
+        # `url`, `headers` and the transport too: without them a remote server reads as a stdio
+        # one with no command.
         info = McpServerInfo(
             name=name,
             command=spec.get("command", ""),
@@ -831,29 +862,27 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
 
 
 def discover_importable_servers() -> list[dict[str, Any]]:
-    """Return MCP servers configured in an external backend (e.g. Claude Code)
-    that are NOT yet present in any PersonalClaw scope — i.e. candidates the
-    user can *import* into ``~/.personalclaw/mcp.json`` to make them callable by
-    the native loop.
+    """Return MCP servers configured in another tool (Claude Code, Codex) that are NOT yet present
+    in any PersonalClaw scope — i.e. candidates the user can *import* into
+    ``~/.personalclaw/mcp.json`` to make them callable by the native loop.
 
-    PersonalClaw does not silently load these (the native loop can't reach a
-    Claude-Code-only server). The UI offers each as an explicit "Import" action
-    backed by ``/api/mcp/apply``, which copies the spec into the PClaw scope.
+    PersonalClaw does not silently load these (the native loop can't reach a server only another
+    tool has). The UI offers each as an explicit "Import" action backed by ``/api/mcp/apply``,
+    which copies the spec into the PClaw scope.
 
     This is the list a browser renders, so each entry carries what the picker shows and no
     credential: ``{id, name, backend, scope, origin, note, transport, command, args, url, env,
     headers}``. ``id`` names the server in its scope — what the import sends back, so a pick names
-    a listed row and never a file. ``scope`` is Claude Code's (``user``, ``local``, ``project``)
+    a listed row and never a file. ``scope`` is the tool's (``user``, ``local``, ``project``)
     and ``origin`` says where, in words; ``note`` is what to know first (a project server nobody
-    approved, a ``${VAR}`` nothing sets). ``command`` is the command's file name, ``args`` the
-    arguments with every credential in them masked (:func:`masked_args`), ``url`` the address
-    with its userinfo, query values and any token-shaped path segment masked
-    (:func:`masked_url`), and ``env``/``headers`` ``[{name, hasValue}]`` — which variables the
-    server sets, never what they hold. The import reads the whole definition from the backend's
-    own files, server-side (:func:`importable_spec`), and stores its values.
+    approved, a variable nothing sets, a server the tool has turned off). ``command`` is the
+    command's file name, ``args`` the arguments with every credential in them masked
+    (:func:`masked_args`), ``url`` the address with its userinfo, query values and any
+    token-shaped path segment masked (:func:`masked_url`), and ``env``/``headers``
+    ``[{name, hasValue}]`` — which variables the server sets, never what they hold. The import
+    reads the whole definition from the tool's own files, server-side (:func:`importable_spec`),
+    and stores its values.
     """
-    from personalclaw.onboarding_import.sources.claude_code import mcp_note
-
     # Servers already known to PClaw (mcp.json + the agent config) are not
     # "importable" — they're already first-class.
     known: set[str] = set(_load_mcp_json().keys())
@@ -880,7 +909,7 @@ def discover_importable_servers() -> list[dict[str, Any]]:
                 "backend": backend,
                 "scope": server.scope,
                 "origin": server.origin,
-                "note": mcp_note(server),
+                "note": server.note,
                 "transport": transport,
                 "command": "" if remote else _command_name(str(spec["command"])),
                 "args": masked_args(args) if not remote and isinstance(args, list) else [],
@@ -1088,63 +1117,3 @@ def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:
         logger.debug("SEL audit log failed for mcp_server_config_sync", exc_info=True)
 
     return added or bool(servers)
-
-
-def register_servers_for_cc(
-    servers: list[McpServerInfo],
-    mcp_json_path: Path | None = None,
-) -> bool:
-    """Register MCP servers in CC format (.mcp.json).
-
-    Adds entries without removing existing ones. CC-side complement
-    to sync_to_agent_config() which handles agent-side registration.
-
-    🔴 Only a server's PLAIN values are written: this file is outside the PersonalClaw home,
-    nobody asked for the copy, and a new one is created at the umask mode — so a credential-store
-    value copied here would be a world-readable plaintext secret. A server whose token Claude Code
-    needs goes into Claude Code's own scope on purpose (the Tools page's Claude Code toggle).
-
-    Returns True if any servers were added or updated.
-    """
-    from personalclaw.config.secret_refs import foreign_mcp_spec
-
-    if mcp_json_path is None:
-        mcp_json_path = Path.home() / ".mcp.json"
-
-    existing: dict = {}
-    if mcp_json_path.is_file():
-        try:
-            existing = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            existing = {}
-
-    mcp = existing.setdefault("mcpServers", {})
-    changed = False
-
-    for s in servers:
-        plain = foreign_mcp_spec(s.name, {"env": s.env, "headers": s.headers}, with_secrets=False)
-        if s.is_remote:
-            # Claude Code's own `type` values (`http`, `sse`): it refuses the `streamable-http`
-            # this used to write.
-            entry: dict = {"url": s.url, "type": s.transport}
-            if plain.get("headers"):
-                entry["headers"] = plain["headers"]
-        else:
-            entry = {"command": s.command, "args": s.args or [], "type": "stdio"}
-            if plain.get("env"):
-                entry["env"] = plain["env"]
-
-        if s.name not in mcp or mcp[s.name] != entry:
-            mcp[s.name] = entry
-            changed = True
-            logger.info("Registered MCP server for CC: %s", s.name)
-
-    if changed:
-        mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
-        from personalclaw.agent import (
-            _atomic_json_write,  # circular import: agent imports mcp_discovery
-        )
-
-        _atomic_json_write(mcp_json_path, existing)
-
-    return changed

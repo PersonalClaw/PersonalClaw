@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
@@ -6,7 +6,7 @@ import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Archive, HardDrive, MapPin, AlertTriangle,
-  Boxes, Package, Store, KeyRound, RotateCw,
+  Boxes, Package, Store, KeyRound, RotateCw, ShieldAlert,
 } from 'lucide-react'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
@@ -35,9 +35,10 @@ import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
 } from '../../lib/api'
 import { catalogApps } from '../../lib/appCatalog'
+import { ChannelOwnerSection } from '../settings/ChannelOwnerSection'
 import { readableErrText } from '../../lib/errText'
 import { reportingWrite } from '../../app/reportingWrite'
-import { notify } from '../../app/appSdk'
+import { setActivation } from '../../app/appActivation'
 import { provenance, registryListing } from '../../lib/provenance'
 import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
@@ -49,7 +50,7 @@ import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The ONE install-consent path, shared with the first-run essential-apps step: every
 // install and update below opens its dialog through `useAppInstall`.
-import { useAppInstall, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
+import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
@@ -79,6 +80,8 @@ export interface StoreItem extends AppCatalogEntry {
   latestVersion?: string
   /** Where that version was found — the Update dialog starts from it. */
   latestSource?: string
+  /** Where the Update dialog starts when no newer version was found: where it was installed from. */
+  updateSource?: string
 }
 
 /** An installed app (AppSummary) projected onto the catalog-entry shape so it can
@@ -92,6 +95,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
     native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, origin: a.origin,
     updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion, latestSource: a.latestSource,
+    updateSource: a.updateSource,
     // Carried, not defaulted. Coercing an installed app's absent block to `{}`
     // here would be harmless today but would make the Library the one surface that
     // cannot tell "declared nothing" from "declared all-false".
@@ -189,29 +193,18 @@ type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 
 // name is the only one a person recognises, and a dialog title is a sentence for the person.
 type DispatchAppAction = (app: {
   name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean
-  updateAvailable?: boolean; latestVersion?: string; latestSource?: string
-}, action: AppActionKind) => void
+} & UpdateFields, action: AppActionKind) => void
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
  *  modals ONCE at the host level. Returns a `dispatch` both the cards and the
  *  detail panel call, the `busyName` (app mid-toggle), and the `modals` node. */
-/** Activate or deactivate *app*, the one call both routes to the action make. An activation can
- *  land with a provider of the app refused: a tool it offers has a name another provider holds, so
- *  that provider is off while the app is on. The answer names it, and that is said out loud here
- *  (its card in Settings → Providers keeps the same sentence). */
-async function setActivation(app: { name: string; enabled: boolean }): Promise<void> {
-  if (app.enabled) { await api.disableApp(app.name); return }
-  const { providerErrors = [] } = await api.enableApp(app.name)
-  for (const why of providerErrors) notify(why, 'error')
-}
-
 function useAppActions(nav: (p: string) => void, reload: () => void) {
   const [busyName, setBusyName] = useState<string | null>(null)
   const [configFor, setConfigFor] = useState<{ name: string; displayName: string } | null>(null)
   // Each carries the display name beside the slug: the slug is the API's identifier, and a
   // dialog title is a sentence for a person ("Update research-lab" named nobody's app).
   type Named = { name: string; displayName: string }
-  const [updateFor, setUpdateFor] = useState<(Named & { found?: FoundUpdate }) | null>(null)
+  const [updateFor, setUpdateFor] = useState<(Named & { start?: UpdateStart }) | null>(null)
   const [uninstallFor, setUninstallFor] = useState<Named | null>(null)
   const [removeFor, setRemoveFor] = useState<Named | null>(null)
 
@@ -223,7 +216,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       case 'configure':
         if (app.configuredPerInstance) { nav('settings/providers'); return }
         setConfigFor({ name: app.name, displayName: app.displayName }); return
-      case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, found: foundUpdate(app) }); return
+      case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, start: updateStart(app) }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
       case 'force-uninstall': setUninstallFor({ name: app.name, displayName: app.displayName }); return
       case 'toggle': {
@@ -244,7 +237,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
 
   const modals = (
     <>
-      {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} found={updateFor.found}
+      {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} start={updateFor.start}
         onClose={() => setUpdateFor(null)} onUpdated={() => { setUpdateFor(null); reload() }} />}
       {configFor && <ConfigModal name={configFor.name} displayName={configFor.displayName} onClose={() => setConfigFor(null)} />}
       {removeFor && <RemoveAppModal name={removeFor.name} displayName={removeFor.displayName} onClose={() => setRemoveFor(null)}
@@ -260,7 +253,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
  *  detail panel. Enable/disable, configure, update, open, force-uninstall; a
  *  platform provider shows only "Open page" (it has no install lifecycle). */
 function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: DispatchAppAction }) {
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, ...updateFields(item) }
   return (
     <Popover align="right" placement="bottom" width={200}
       // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
@@ -461,9 +454,21 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // Store catalog is lifted here (was inside StoreView) so the shared, pinned
   // controls bar can host the Store's search + Filter&sort too — same idiom as
   // the Library, instead of a second control bar that scrolls with the body.
-  const { data: catalog, error: catalogErr, stale: catalogStale, refresh: refreshCatalog } = useQuery(
+  const { data: catalog, error: catalogErr, stale: catalogStale, revalidating: catalogReading, refresh: refreshCatalog } = useQuery(
     'app-catalog', () => api.appCatalog(), { persist: true },
   )
+  // An app installed from the Store shows its update from what the Store's catalog read last
+  // The gateway checks those sources when the Store is read, never on a timer. The two
+  // reads start together, so the apps list could answer before the catalog read it depends on
+  // landed, and a newer version on GitHub stayed hidden until the next visit. Re-read the list
+  // each time a catalog read lands.
+  const catalogWasReading = useRef(false)
+  useEffect(() => {
+    if (catalogReading) { catalogWasReading.current = true; return }
+    if (!catalogWasReading.current) return
+    catalogWasReading.current = false
+    if (!catalogErr) refresh()
+  }, [catalogReading, catalogErr, refresh])
   const [search, setSearch] = useQueryParam(q, sq, 'q', '', { replace: true })
   const [openName, setOpenName] = useQueryParam(q, sq, 'open', '')
   // Three tabs (user 2026-07-05): Native (bundled apps — locked on, not
@@ -955,7 +960,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {g.items.map((e, i) => (
                   <AppCard key={e.name} item={e} index={i}
-                    onInstall={() => install.begin({ source: e.pointer || e.source, label: e.displayName || e.name })}
+                    onInstall={() => install.begin(installTargetFor(e))}
                     onOpen={() => onOpen(e.name)} onAction={onAction} />
                 ))}
               </div>
@@ -1221,7 +1226,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, ...updateFields(item) }
   // Right-click / long-press → the SAME real actions this card dispatches. A native
   // app is always-on (no install lifecycle): omit uninstall/toggle + force-uninstall,
   // and show "Configure" only when it has settings (hasConfig) — a config-less native
@@ -1242,7 +1247,9 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
       ]
     : [
       { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
-      { icon: <Download size={15} />, label: 'Install', onSelect: onInstall },
+      // A refused listing has no Install anywhere — not a disabled one, which would read as
+      // "try again later" — and says why instead (`ListingRefusal`).
+      ...(item.refused ? [] : [{ icon: <Download size={15} />, label: 'Install', onSelect: onInstall }]),
     ]
   // ONE card anatomy, art-forward, whatever the manifest declares. Previously
   // the card had four shapes (hero+icon · hero-only · icon-only · neither) and only the
@@ -1283,7 +1290,9 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
   // verdict is on the record and a listing's month-old claim would be the weaker of two facts
   // sitting next to each other. And `null` for a card that is not registry-sourced comes from
   // the data, not from a test here — only `_pointer_to_entry` fills these fields in.
-  const listing = item.installed
+  // A refused listing gets its refusal instead: "rescanned when you install" is untrue of a
+  // listing that cannot be installed.
+  const listing = item.installed || item.refused
     ? null
     : registryListing({
         maintainer: item.maintainer,
@@ -1381,6 +1390,8 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
             declared no block — an unbadged app and a failing app are different states. */}
         <QualityBadges quality={item.quality} />
 
+        {!item.installed && item.refused && <ListingRefusal refused={item.refused} compact />}
+
         {/* A registry listing's own provenance. Two lines, and the ORDER is the control:
             the non-endorsement is the first thing read, the facts second. Reversing them would
             put "clean" above "community-listed" and turn a stale third-party check into what
@@ -1425,7 +1436,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
               // click re-activates (the same Activate/Deactivate toggle every surface shares).
               <span onClick={stop}><Button variant="primary" size="sm" onClick={() => onAction(app, 'toggle')}><Power size={14} /> Activate</Button></span>
             )
-          ) : (
+          ) : item.refused ? null : (
             <span onClick={stop}><Button variant="secondary" size="sm" onClick={onInstall}><Download size={14} /> Install
             </Button></span>
           )}
@@ -1433,6 +1444,20 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
       </div>
     </motion.div>
     </ContextMenu>
+  )
+}
+
+/** Why a registry listing cannot be installed, where its Install would be: the sentence from
+ *  `apps/catalog.py`, verbatim, so the card, the detail panel and the install dialog's error all
+ *  say the same thing. `compact` is the card's clamped form; the full sentence is in `title` and
+ *  in the detail panel. */
+function ListingRefusal({ refused, compact = false }: { refused: string; compact?: boolean }) {
+  return (
+    <div role="note" data-testid="store-listing-refused" className="flex items-start gap-1.5 text-warn"
+      data-type={compact ? 'label-s' : 'body-s'}>
+      <ShieldAlert size={compact ? 13 : 15} className="mt-0.5 shrink-0" aria-hidden />
+      <span className={compact ? 'line-clamp-3' : undefined} title={compact ? refused : undefined}>{refused}</span>
+    </div>
   )
 }
 
@@ -1497,27 +1522,37 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
 }
 
 // ── Update: the new source is typed here; what it changes, and the consent, are the dialog's ──
-/** Where the gateway found an app's newer version, when it found one. */
-interface FoundUpdate { source: string; version?: string }
+/** What an installed app says about where its Update starts. Every route to "Update…" (the
+ *  detail panel, a card's menu, its right-click menu) carries these, so they cannot disagree. */
+interface UpdateFields { updateAvailable?: boolean; latestVersion?: string; latestSource?: string; updateSource?: string }
 
-/** The found update an Update dialog starts from — none when the app has no update the
- *  gateway located, and then the owner types the source. */
-function foundUpdate(app: { updateAvailable?: boolean; latestSource?: string; latestVersion?: string }): FoundUpdate | undefined {
-  return app.updateAvailable && app.latestSource ? { source: app.latestSource, version: app.latestVersion } : undefined
+function updateFields(app: UpdateFields): UpdateFields {
+  return { updateAvailable: app.updateAvailable, latestVersion: app.latestVersion, latestSource: app.latestSource, updateSource: app.updateSource }
 }
 
-function UpdateModal({ name, displayName, found, onClose, onUpdated }: {
+/** Where an Update dialog starts. `found` when the gateway found the newer version there; else
+ *  it is where the app was installed from. */
+interface UpdateStart { source: string; version?: string; found: boolean }
+
+/** Where the gateway found the newer version, else where the app was installed from. None when
+ *  neither is known, and then the owner types the source. */
+function updateStart(app: UpdateFields): UpdateStart | undefined {
+  if (app.updateAvailable && app.latestSource) return { source: app.latestSource, version: app.latestVersion, found: true }
+  return app.updateSource ? { source: app.updateSource, found: false } : undefined
+}
+
+function UpdateModal({ name, displayName, start, onClose, onUpdated }: {
   /** The app SLUG — the update API's identifier. */
   name: string
   /** What the title says: a person recognises "Research Lab", not `research-lab`. */
   displayName: string
-  /** Where the gateway found the newer version. The field starts with it and stays editable:
-   *  the owner should not have to type where the gateway just looked. */
-  found?: FoundUpdate
+  /** Where the field starts. It stays editable: the owner should not have to type where the
+   *  gateway just looked, or where the app came from. */
+  start?: UpdateStart
   onClose: () => void
   onUpdated: () => void
 }) {
-  const [source, setSource] = useState(found?.source ?? '')
+  const [source, setSource] = useState(start?.source ?? '')
   const install = useAppInstall({ onInstalled: () => onUpdated() })
   if (install.active) return install.dialog
   const s = source.trim()
@@ -1527,9 +1562,11 @@ function UpdateModal({ name, displayName, found, onClose, onUpdated }: {
         <label htmlFor="app-update-source" data-type="body-s" className="text-on-surface-low">New source — local path or git URL (data is preserved)</label>
         <TextInput id="app-update-source" value={source} onChange={setSource} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
-        {found && (
+        {start && (
           <p data-type="label-s" className="text-on-surface-low">
-            {`PersonalClaw found ${found.version ? `version ${found.version}` : 'the newer version'} there. Change it to update from somewhere else.`}
+            {start.found
+              ? `PersonalClaw found ${start.version ? `version ${start.version}` : 'the newer version'} there. Change it to update from somewhere else.`
+              : `${displayName} was installed from there. Change it to update from somewhere else.`}
           </p>
         )}
         <p data-type="label-s" className="text-on-surface-low">
@@ -1615,13 +1652,16 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
           </div>
         )}
 
-        {/* What an update or reinstall could not take out of the gateway's process, stated
-            until a restart does — the toast that first said it is gone by now. */}
+        {/* What an update, a reinstall or turning the app off could not take out of the gateway,
+            stated until a restart does — the toast that first said it is gone by now. A turned-off
+            app is not "running", so its sentence does not open by saying it is. */}
         {app.restartReason && (
           <div role="status" className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
             <div className="flex items-center gap-2 text-on-surface"><RotateCw size={14} /> Restart the gateway to finish</div>
             <div className="mt-1 text-on-surface-low" data-type="label-s">
-              {`The installed version is running, but ${app.restartReason}. Restart it from System status, top right.`}
+              {app.enabled
+                ? `The installed version is running, but ${app.restartReason}. Restart it from System status, top right.`
+                : `This app is turned off, but ${app.restartReason}. Restart the gateway from System status, top right.`}
             </div>
           </div>
         )}
@@ -1723,7 +1763,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
         </>)}
       </div>
 
-      {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} found={foundUpdate(app)}
+      {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} start={updateStart(app)}
         onClose={() => setUpdateOpen(false)} onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
       {configOpen && <ConfigModal name={app.name} displayName={app.displayName} onClose={() => setConfigOpen(false)} />}
       {confirmRemove && <RemoveAppModal name={app.name} displayName={app.displayName}
@@ -1740,7 +1780,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
 // hero/icon + metadata, what the app gets, and an Install that opens the SAME consent
 // dialog as the card, so the panel is a full parallel to AppDetailPanel for uninstalled
 // catalog entries. */
-function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled: (name: string) => void }) {
+export function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled: (name: string) => void }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
   // A registry-indexed (P20) item installs from its `pointer` (repo[#subdirectory]); a
@@ -1792,29 +1832,38 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
           scanned manifest that declares nothing gets PermissionList's own "None — no gateway
           capability" disclosure, while a registry pointer — whose manifest is read when the
           install is reviewed — says so rather than pretending it asks for nothing. */}
-      {disclosure ? (
-        <AppDisclosureView disclosure={disclosure} action="install" />
+      {/* A refused listing has nothing to install, so nothing to disclose either: it gets the
+          sentence saying why in place of the whole install half of the panel. */}
+      {item.refused ? (
+        <div className="rounded-md border border-outline-variant bg-surface-high p-m">
+          <ListingRefusal refused={item.refused} />
+        </div>
       ) : (
-        <div data-type="body-s" className="text-on-surface-low">
-          Permissions: not known yet — this is a registry listing, and its manifest is read when
-          you choose Install. You will see everything it gets before anything is installed.
-        </div>
+        <>
+          {disclosure ? (
+            <AppDisclosureView disclosure={disclosure} action="install" />
+          ) : (
+            <div data-type="body-s" className="text-on-surface-low">
+              Permissions: not known yet — this is a registry listing, and its manifest is read when
+              you choose Install. You will see everything it gets before anything is installed.
+            </div>
+          )}
+
+          <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
+            <div className="flex items-center gap-2 text-on-surface"><Download size={14} /> Not installed</div>
+            <div className="mt-1 text-on-surface-low" data-type="label-s">
+              Installing shows you what this app gets and what the security scanner found first — nothing
+              installs until you confirm, and a dangerous verdict is always refused.
+            </div>
+          </div>
+
+          <div>
+            <Button variant="primary" size="sm" onClick={() => install.begin(installTargetFor(item))}>
+              <Download size={15} /> Install
+            </Button>
+          </div>
+        </>
       )}
-
-      <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
-        <div className="flex items-center gap-2 text-on-surface"><Download size={14} /> Not installed</div>
-        <div className="mt-1 text-on-surface-low" data-type="label-s">
-          Installing shows you what this app gets and what the security scanner found first — nothing
-          installs until you confirm, and a dangerous verdict is always refused.
-        </div>
-      </div>
-
-      <div>
-        <Button variant="primary" size="sm"
-          onClick={() => install.begin({ source: item.pointer || item.source, label: item.displayName })}>
-          <Download size={15} /> Install
-        </Button>
-      </div>
       {install.dialog}
     </div>
   )
@@ -1832,10 +1881,19 @@ function ConfigModal({ name, displayName, onClose }: {
   onClose: () => void
 }) {
   const cfg = useAppConfig(name)
+  // A chat channel app's Configure page also carries its owner — who the channel reaches you as,
+  // and pairing it. The gateway names the app each channel came from. Same key as the chat's
+  // "Continue on" list, not Settings → Providers' tolerant `settings:channels`; a pairing here busts
+  // both keys. A failed read shows no owner section.
+  const { data: channels, error: channelsError } = useQuery(
+    'settings:channels-owners', () => api.channels(), { persist: true },
+  )
+  const channel = channelsError ? undefined : (channels ?? []).find((c) => c.app === name && c.owner)
 
   return (
     <Modal title={`Configure ${displayName}`} icon={<Settings2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 440 }}>
+        {channel && <ChannelOwnerSection channel={channel.name} onChanged={() => invalidateKeys('settings:channels', true)} />}
         {cfg.error ? (
           // A failed read used to leave "Loading…" on screen forever, with Save still live over an
           // empty form. Say what happened and offer the retry the hook now exposes.

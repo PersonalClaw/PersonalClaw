@@ -20,7 +20,7 @@ WIRED (the feature existed and the key was simply never connected):
   confirmation dialog on it. ``selfqa/fix_branch.py`` implements the branch, the evidence
   provider gates on it, and the template declares an input of the SAME NAME and routes a
   branch on it. Nothing joined the two: ``selfqa/watch.py`` supplied ``{"repo", "commits"}``,
-  so ``_with_declared_defaults`` filled the template's own ``false`` forever.
+  so ``with_declared_defaults`` filled the template's own ``false`` forever.
 * ``ambient.tiles_enabled`` — the composable home ships, and the two bounds beside this switch
   (``max_tiles``, ``default_refresh_ttl_secs``) were already read; only the master switch was
   inert. Now ``views_store`` composes an empty overlay and refuses a pin when it is off.

@@ -570,29 +570,14 @@ def _doctor() -> None:
     # ── Project ──
     print("\nProject")
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
-    stale_project = False
-    if not proj:
-        # Check saved project_dir file
-        saved_proj = config_dir() / "project_dir"
-        if saved_proj.is_file():
-            saved = saved_proj.read_text(encoding="utf-8").strip()
-            if saved and Path(saved).is_dir():
-                proj = saved
-            else:
-                print(f"  project dir: ❌ stale — points to deleted {saved}")
-                print(f"               Fix: rm {config_dir() / 'project_dir'}")
-                issues.append("stale project_dir")
-                stale_project = True
     if proj and Path(proj).is_dir():
         print(f"  project dir: ✅ {proj}")
         print(f"  git repo:    {_git_work_tree_row(Path(proj))}")
-    elif not stale_project:
-        # Only a source checkout has a project root (a dir holding both agents/ and
-        # skills/). Wheel, uv, pipx and Docker installs never have one, and `setup`
-        # only records the path when `_detect_project_dir` already found it — so the
-        # old "run personalclaw setup from project root" advice named a directory
-        # most users do not have and a re-run could never create. Report it as
-        # not-applicable, matching how doctor reports other inert-by-design rows.
+    else:
+        # Only a source checkout has a project dir: the one the running package is imported
+        # from (`self_update.source_checkout`), which the CLI exports at start. Wheel, uv, pipx
+        # and Docker installs never have one, and the working directory does not give them one.
+        # Report it as not-applicable, matching how doctor reports other inert-by-design rows.
         print("  project dir: ⏹  not set (source checkouts only — not needed here)")
 
     # ── Agent config ──

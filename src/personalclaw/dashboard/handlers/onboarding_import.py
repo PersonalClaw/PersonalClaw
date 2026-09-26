@@ -11,7 +11,9 @@ The onboarding step's two calls, and nothing else.
 
 ``POST``
     Re-scan, import exactly the items the user picked, and answer the report: every
-    picked item's outcome, every item left out, and every pick that no longer exists.
+    picked item's outcome, every item left out, and every pick that no longer exists. A
+    skill whose scan has warnings comes over only when the pick also names, under
+    ``accepted``, the ``consent`` the scan showed for it — the warnings the user accepted.
 
 **The POST re-scans; it never accepts items from the client.** An
 :class:`~personalclaw.onboarding_import.ImportItem` carries a filesystem ``path``
@@ -160,11 +162,43 @@ def _chosen(body: dict) -> tuple[list[str], web.Response | None]:
     return chosen, None
 
 
+def _accepted(body: dict) -> tuple[dict[str, str], web.Response | None]:
+    """Validate ``accepted``: absent, or ``{fingerprint: consent}`` in the shapes the scan mints.
+
+    The consent is a digest of the warnings the scan showed, the same 16-hex shape as a
+    fingerprint, and nothing a caller writes here reaches the engine as anything else.
+    """
+    from personalclaw.onboarding_import import FINGERPRINT_RE
+
+    value = body.get("accepted")
+    if value is None:
+        return {}, None
+    valid = isinstance(value, dict) and all(
+        isinstance(key, str)
+        and FINGERPRINT_RE.fullmatch(key)
+        and isinstance(consent, str)
+        and FINGERPRINT_RE.fullmatch(consent)
+        for key, consent in value.items()
+    )
+    if not valid or len(value) > _MAX_CHOSEN:
+        return {}, json_error(
+            "bad_request",
+            message=(
+                "'accepted' must map an item fingerprint to the consent its scan showed "
+                "(16 lowercase hex characters each)."
+            ),
+            status=400,
+        )
+    return dict(value), None
+
+
 async def api_onboarding_import_run(request: web.Request) -> web.Response:
     """POST /api/onboarding/import — import the picked items and report outcomes.
 
-    Body: ``{"fingerprints": [fingerprint, …]}`` — the items to bring over, as the scan
-    named them. Answers the :class:`~personalclaw.onboarding_import.ImportReport`:
+    Body: ``{"fingerprints": [fingerprint, …], "accepted": {fingerprint: consent, …}}`` — the
+    items to bring over, as the scan named them, and for a skill whose scan has warnings the
+    ``consent`` of the warnings accepted. Answers the
+    :class:`~personalclaw.onboarding_import.ImportReport`:
     per-item outcomes, the items left out, the picks that no longer exist, and the
     withheld-secret counts — with ``200`` even when every row is a ``conflict``: a
     conflict is a real answer the step renders, not a request failure.
@@ -181,11 +215,14 @@ async def api_onboarding_import_run(request: web.Request) -> web.Response:
     fingerprints, refusal = _chosen(body)
     if refusal is not None:
         return refusal
+    accepted, refusal = _accepted(body)
+    if refusal is not None:
+        return refusal
 
     def _run():
         # Re-scan HERE, inside the same thread hop as the write: the items are read
         # from the foreign root under the request, never taken from the caller.
-        return run_import(scan_all(), fingerprints=fingerprints)
+        return run_import(scan_all(), fingerprints=fingerprints, accepted=accepted)
 
     try:
         report = await asyncio.to_thread(_run)

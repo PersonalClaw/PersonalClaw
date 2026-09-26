@@ -76,10 +76,11 @@ def test_roots_follow_active_home_not_real_personalclaw(_isolated_home, tmp_path
         )
 
 
-def test_uploads_and_home_roots_resolve_under_active_home(_isolated_home, tmp_path):
-    """Pin the two roots the fix touches: Uploads -> <active_home>/uploads and the
-    config/data tree root -> <active_home> (surfaced as "Home"; the "PersonalClaw"
-    factory now resolves to the same path and de-dupes into it)."""
+def test_uploads_resolves_under_active_home_and_the_home_itself_is_no_root(
+    _isolated_home, tmp_path
+):
+    """Uploads -> <active_home>/uploads. The config/data tree itself (config.json, mcp.json,
+    the automations) is not a root at all (final-validation F-54): only work folders in it are."""
     from personalclaw.dashboard.handlers.files import _dashboard_roots
 
     active_home = os.path.realpath(str(tmp_path))
@@ -90,8 +91,6 @@ def test_uploads_and_home_roots_resolve_under_active_home(_isolated_home, tmp_pa
         os.path.join(active_home, "uploads")
     ), f"Uploads must live under the active home; got {rp_by_label['Uploads']!r}"
 
-    # config_dir() (the whole config/data tree) must be surfaced as a root and equal
-    # the active home.
     assert (
-        active_home in rp_by_label.values()
-    ), f"active home {active_home!r} not surfaced as a dashboard root; got {rp_by_label}"
+        active_home not in rp_by_label.values()
+    ), f"the active home {active_home!r} itself is surfaced as a dashboard root: {rp_by_label}"

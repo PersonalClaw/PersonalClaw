@@ -385,6 +385,7 @@ class NativeTaskProvider(TaskProvider):
                 priority=_given("priority", "medium"),
                 labels=_given("labels", []),
                 due=_given("due", ""),
+                due_reminder=_given("due_reminder", True),
                 order=_given("order", 0.0),
                 exit_criteria=_given("exit_criteria", []),
                 action_plan=_given("action_plan", []),

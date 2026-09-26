@@ -10,6 +10,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A task's due date now reminds you the day before, once, and you can turn that off per task.**
+
+- **A workflow can be edited in the dashboard.**
+
+- **A remote MCP server that signs in with OAuth connects: Sign in on its Tools page card, and it stays signed in.**
+
 - **An SDK change is a reviewed diff, and CI runs the first-party apps' contract on it.**
 
 - **Bringing your setup over lists what comes across, with a count and a checkbox per group, and lets you pick item by item.**
@@ -17,13 +23,28 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A fresh install can hold a conversation without an account, an API key or a provider — after one download it tells you about first.**
 - **A workflow step whose output ignored its declared `schema` now says so on its own row.**
 
+- **Each room member now reads only what it has not seen.**
+
 ### Changed
+
+- **`make build` is the one distribution build, and it proves what it built.**
 
 - **`credentials.json` is gone: the gateway moves what it held into the credential store at its first start.**
 
 - **The Session Map is a map of your messages: one marker for each message you sent, all one length, with colour showing which are on screen.**
 
 ### Fixed
+
+- **The chat and an app's Configure page see a failed channel read.**
+- **An app installed from the Store shows its update, and Update starts from where it came from.**
+
+- **The dashboard's bundled fonts ship with their licences, and every font, image, binary and fixture in the tree has a recorded source.**
+
+- **On the project pages, Resume resumes, Plan a project plans, and an exported project can be imported again from the Projects page.**
+
+- **A trigger's Run workflow action names its workflow, a restart's missed and interrupted runs wait on the Triggers page for your decision, and the HEARTBEAT.md queue is an automation you can see and switch off.**
+- **A channel set up in the dashboard knows its owner, and a chat can continue on it.**
+- **The answer to a message from a chat channel goes back to that channel.**
 
 - **A model you chose is the model that answers, or PersonalClaw says it is not: an agent's missing model is no longer swapped in silence.**
 - **A browse task that stops at a sign-in page says why on its needs-input card.**
@@ -32,8 +53,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`personalclaw footprint --reclaim` and the daily reclaim say when compacting made your stores bigger, instead of calling it space freed.**
 - **Onboarding's app step says what you can do when it has nothing to list, instead of describing PersonalClaw's source tree.**
 - **Bringing your setup over from Claude Code reads the files Claude Code writes, and says what stays behind.**
+- **Bringing your setup over from Codex reads the files Codex writes, and keeps what its settings mean.**
+
+- **A skill whose security scan has warnings can be brought over, and you decide with the warnings in front of you.**
+
+- **`personalclaw setup` accepts a named timezone on minimal Linux, and a missing timezone database is reported as a broken install, not as your typo.**
+
+- **A service starts the gateway with the environment you install it from, and never with a secret.**
+- **The install kind comes from where the running package lives, never from the directory PersonalClaw was started in.**
+- **"Speak replies aloud" reads each finished reply out, and Speak says what is actually missing.**
 
 - **An app update runs the new version at once, or says a restart is needed, and why.**
+- **Gateway startup, the Settings → Providers switch and agent sessions go through the one app load path too.**
 - **A proposal's second opinion no longer stops the gateway, and no decision stays hidden in Filtered.**
 - **An event trigger fires: a memory write, an inbox message or an app event runs its action once, and the run shows in the trigger's history.**
 
@@ -121,7 +152,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An app can no longer change your models.**
+
+- **An app can no longer reconfigure another app's provider, and editing a disabled app's instance leaves it off.**
+
+- **Bringing your setup over no longer puts a credential in memory or in a file nothing reads, and both ways in store a server's keys the same way.**
+
+- **The owner token travels in an `Authorization: Bearer` header, so it no longer has to ride a URL.**
+
+- **An app can no longer switch another app on or off through the Settings → Providers routes.**
+
+- **PersonalClaw reads and writes inside its home, and reads anywhere else only where you allow it.**
+
 - **A provider cannot take over another provider's tool.**
+
+- **A registry listing can no longer point the gateway at this computer, a private network or the cloud metadata service.**
 
 - **An app reads only the notifications it raised, and its socket no longer says whether your tool calls run without asking.**
 

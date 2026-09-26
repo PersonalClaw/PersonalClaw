@@ -336,6 +336,35 @@ class TestTheDoctorWarnsAboutTheFallback:
         # …and schedules still work, on the machine's zone.
         assert resolve_zone_name("") == ("Asia/Tokyo", SOURCE_MACHINE)
 
+    @pytest.mark.asyncio
+    async def test_an_unavailable_database_is_reported_as_a_capability_failure(
+        self, monkeypatch, tmp_path
+    ):
+        """Doctor must not call a valid configured name invalid when no database can check it."""
+        from zoneinfo import ZoneInfoNotFoundError
+
+        from personalclaw.resilience.doctor import DoctorContext, run_capability
+
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        (tmp_path / "config.json").write_text(
+            json.dumps({"timezone": "America/Los_Angeles"}), encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            tzmod,
+            "ZoneInfo",
+            lambda key: (_ for _ in ()).throw(
+                ZoneInfoNotFoundError(f"No time zone found with key {key}")
+            ),
+        )
+
+        report = await run_capability("scheduling", DoctorContext(home=tmp_path))
+        row = next(p for p in report["probes"] if p["id"] == "scheduling.timezone")
+        assert row["ok"] is False
+        assert "database is unavailable" in row["detail"]
+        assert "not an IANA zone" not in row["detail"]
+        assert row["evidence"]["database_available"] is False
+        assert row["evidence"]["config_ok"] is None
+
     def test_the_cli_doctor_prints_the_zone_and_warns_on_a_fallback(
         self, monkeypatch, tmp_path, capsys
     ):
@@ -373,6 +402,104 @@ class TestTheDoctorWarnsAboutTheFallback:
         assert "utc-fallback" in out
         assert "fire at UTC" in out, out
         assert "⚠️" in out
+
+
+# ── no database: a broken install reads as UTC, loudly, and never raises out of a fire path ─
+
+
+def _make_the_database_unavailable(monkeypatch) -> None:
+    """Every `ZoneInfo` load fails, `UTC` included: a minimal image with neither an OS
+    database nor the `tzdata` package, or one whose package is damaged."""
+    from zoneinfo import ZoneInfoNotFoundError
+
+    def unavailable(key: str):
+        raise ZoneInfoNotFoundError(f"No time zone found with key {key}")
+
+    monkeypatch.setattr(tzmod, "ZoneInfo", unavailable)
+
+
+def _tokyo_report(**extra) -> ReportDefinition:
+    return ReportDefinition(
+        id="r",
+        name="n",
+        prompt="p",
+        schedule=ScheduleDefinition(kind="cron", cron_expr=DAILY_0830),
+        tz="Asia/Tokyo",
+        **extra,
+    )
+
+
+class TestAnUnreadableDatabaseNeverRaisesOutOfAFirePath:
+    """`TimeZoneDatabaseUnavailable` is not an `UnknownTimeZone`, and every fire path's fallback
+    catches `UnknownTimeZone` only. So `resolve_zone` catches it once, for all of them, and
+    reads it as UTC with a warning: the boot sweep, the week grid and every report tick keep
+    running on a broken install, and still name the problem."""
+
+    def test_resolve_zone_reads_utc_and_says_why(self, monkeypatch, caplog):
+        _make_the_database_unavailable(monkeypatch)
+        with caplog.at_level("WARNING", logger=tzmod.__name__):
+            assert resolve_zone("America/Los_Angeles") is timezone.utc
+        assert "timezone database is unavailable" in caplog.text
+
+    def test_a_typo_is_still_refused_while_the_database_works(self):
+        """The negative control: catching the new exception must not swallow the old one."""
+        with pytest.raises(UnknownTimeZone):
+            resolve_zone("Not/AZone")
+
+    def test_a_trigger_with_a_zone_still_arms_and_at_utc(self, monkeypatch):
+        _make_the_database_unavailable(monkeypatch)
+        assert next_fire(_reminder(timezone="Asia/Tokyo"), now=NOW) == _independent_expectation(
+            DAILY_0830, "UTC"
+        )
+
+    def test_the_week_grid_the_legacy_scheduler_and_a_report_read_utc(self, monkeypatch):
+        _make_the_database_unavailable(monkeypatch)
+        assert _resolve_zone("Asia/Tokyo") is timezone.utc
+        job = ScheduleJob(
+            id="j",
+            name="n",
+            schedule=ScheduleDefinition(kind="cron", cron_expr=DAILY_0830),
+            timezone="Asia/Tokyo",
+        )
+        assert _job_tz(job) is timezone.utc
+        assert _report_tz(_tokyo_report()) is timezone.utc
+
+    def test_a_report_schedule_keeps_the_zone_it_was_given(self, monkeypatch):
+        """`_effective_tz` is WRITTEN into the trigger spec. Writing the UTC fallback there would
+        outlive the outage: with the database back, the report would still fire at UTC."""
+        _make_the_database_unavailable(monkeypatch)
+        assert _effective_tz(_tokyo_report()) == "Asia/Tokyo"
+
+    def test_authoring_a_zone_is_a_warning_not_an_error_and_never_raises(self, monkeypatch):
+        """`semantic_spec_issues` is "pure, never raises". The skip date takes it through the
+        inert-date check too, which resolves the zone a second way."""
+        _make_the_database_unavailable(monkeypatch)
+        issues = semantic_spec_issues(
+            "clock",
+            {
+                "kind": "cron",
+                "expr": DAILY_0830,
+                "timezone": "Asia/Tokyo",
+                "skip_dates": ["2026-09-08"],
+            },
+        )
+        zone_rows = [i for i in issues if i.path == "spec.timezone"]
+        assert [i.severity for i in zone_rows] == ["warning"]
+        assert "timezone database is unavailable" in zone_rows[0].message
+        assert "fires at UTC" in zone_rows[0].message
+        assert "not an IANA timezone name" not in zone_rows[0].message
+
+    @pytest.mark.asyncio
+    async def test_the_doctor_says_to_reinstall_not_to_run_setup(self, monkeypatch, tmp_path):
+        """`setup` checks the zone it saves, so it cannot help while nothing can be checked."""
+        from personalclaw.resilience.doctor import DoctorContext, run_capability
+
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        _make_the_database_unavailable(monkeypatch)
+        report = await run_capability("scheduling", DoctorContext(home=tmp_path))
+        row = next(p for p in report["probes"] if p["id"] == "scheduling.timezone")
+        assert "reinstall PersonalClaw" in row.get("remedy", "")
+        assert "personalclaw setup" not in row.get("remedy", "")
 
 
 # ── one owner: every resolver now gives the same answer, because it is one function ───

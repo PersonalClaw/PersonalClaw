@@ -1,9 +1,15 @@
-"""Heartbeat service — periodic background tasks.
+"""Heartbeat service — periodic background maintenance, and the HEARTBEAT.md task format.
 
-Runs on a configurable interval (default 60s):
-- Reads HEARTBEAT.md for pending tasks → sends to agent
-- Idle-session consolidation, background compression, session reindex, auto-archive,
-  due-commitment delivery — the user-facing behaviors §4.4 explicitly KEEPS here.
+The service runs on a configurable interval (default 60s): idle-session consolidation,
+background compression, session reindex, auto-archive and due-commitment delivery — the
+user-facing behaviors §4.4 explicitly KEEPS here.
+
+**The HEARTBEAT.md task queue is not run here.** It ran every 60 s with no UI — no schedule, no
+last run, no way to turn it off — an automation nobody could see. It is the
+``system:heartbeat-tasks`` trigger now (``action_providers/heartbeat_tasks_provider.py``),
+listed on the Triggers page with its cadence, its runs and its switch; this module keeps the
+file's format (:func:`run_tasks`, the ``HEARTBEAT_KEEP`` sentinel) because the agent writes it
+and the trigger reads it.
 
 **Store maintenance is not here at all.** Memory FTS
 reconciliation, the history and SEL prunes and skill-library aging belong to the
@@ -18,6 +24,8 @@ switching between two of them.
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Coroutine
 
@@ -71,6 +79,79 @@ def heartbeat_path() -> Path:
     return workspace_dir() / HEARTBEAT_FILE
 
 
+#: One HEARTBEAT.md task as the gateway's unattended background turn: `(task, deliver) -> response`.
+#: Registered by the gateway at boot, dashboard or not, so the `heartbeat-tasks` trigger runs the
+#: queue through the same turn it always used: the background prompt, the unattended approval
+#: policy, and delivery of each finished task's result to its `deliver:` target.
+_task_runner: Callable[[str, str], Awaitable[str | None]] | None = None
+
+
+def set_task_runner(runner: Callable[[str, str], Awaitable[str | None]] | None) -> None:
+    global _task_runner
+    _task_runner = runner
+
+
+def task_runner() -> Callable[[str, str], Awaitable[str | None]] | None:
+    """The registered runner, or None before the gateway has started."""
+    return _task_runner
+
+
+def ensure_heartbeat_file() -> Path:
+    """Create HEARTBEAT.md with its header when it is missing, so the agent finds the queue."""
+    path = heartbeat_path()
+    if not path.exists():
+        atomic_write(path, _HEADER)
+    return path
+
+
+@dataclass
+class TaskPass:
+    """What one pass over HEARTBEAT.md did: how many tasks it ran, and which it kept."""
+
+    ran: int = 0
+    kept: int = 0
+    failed: list[str] = field(default_factory=list)
+
+    @property
+    def done(self) -> int:
+        return self.ran - self.kept
+
+
+async def run_tasks(run_task: Callable[[str, str], Awaitable[str | None]]) -> TaskPass:
+    """Run every task in HEARTBEAT.md once, concurrently, and keep the unfinished ones.
+
+    A task is kept when it raised (it retries on the next pass) or when its response carries
+    ``HEARTBEAT_KEEP`` (the agent's "not done yet"); every other task is removed. The file is
+    rewritten only when there were tasks, so an empty queue costs one read.
+    """
+    path = heartbeat_path()
+    result = TaskPass()
+    if not path.exists():
+        return result
+    tasks = _extract_tasks(path.read_text(encoding="utf-8").strip())
+    if not tasks:
+        return result
+    logger.info("Heartbeat: %d task(s) found", len(tasks))
+    keep: list[tuple[str, str]] = []
+    outcomes = await asyncio.gather(*[run_task(t, d) for t, d in tasks], return_exceptions=True)
+    for (task_text, deliver), outcome in zip(tasks, outcomes):
+        if isinstance(outcome, BaseException):
+            logger.warning("Heartbeat task failed: %s", task_text[:80], exc_info=outcome)
+            keep.append((task_text, deliver))
+            result.failed.append(task_text[:80])
+        elif _should_keep(outcome):
+            logger.info("Heartbeat task incomplete, keeping: %s", task_text[:80])
+            keep.append((task_text, deliver))
+    result.ran = len(tasks)
+    result.kept = len(keep)
+    lines = _HEADER
+    for text, deliver in keep:
+        suffix = f"  <!-- deliver:{deliver} -->" if deliver else ""
+        lines += f"- {text}{suffix}\n"
+    atomic_write(path, lines)
+    return result
+
+
 class HeartbeatService:
     """Periodic wake-up that runs background maintenance tasks."""
 
@@ -86,13 +167,11 @@ class HeartbeatService:
     # `memory.rebuild-fts` / `memory.prune-history` jobs open their own store.
     def __init__(
         self,
-        on_task: Callable[[str, str], Coroutine] | None = None,
         interval: int = _DEFAULT_INTERVAL,
         consolidator: "HistoryConsolidator | None" = None,
         on_due_commitments: Callable[[], Coroutine] | None = None,
         on_auto_archive: Callable[[], Coroutine] | None = None,
     ) -> None:
-        self._on_task = on_task
         self._interval = interval
         self._consolidator = consolidator
         # M5e — proactive commitment delivery: a coroutine the gateway wires to
@@ -104,13 +183,9 @@ class HeartbeatService:
         # None when there is no dashboard. Guarded per tick.
         self._on_auto_archive = on_auto_archive
         self._tick = 0
-        self._processing = False
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
 
     async def start(self) -> None:
-        path = heartbeat_path()
-        if not path.exists():
-            atomic_write(path, _HEADER)
         self._task = asyncio.create_task(self._loop())
         logger.info("Heartbeat started (interval=%ds)", self._interval)
 
@@ -133,8 +208,8 @@ class HeartbeatService:
                 logger.warning("Heartbeat tick failed", exc_info=True)
 
     async def _beat(self) -> None:
-        if not self._processing:
-            await self._process_heartbeat_file()
+        # 🔴 NO HEARTBEAT.md TASKS HERE: they are the `system:heartbeat-tasks` trigger, so the
+        # Triggers page shows their cadence, their runs and their switch (see the module docstring).
 
         # 🔴 NO STORE MAINTENANCE HERE. The remediation engine is driven by its own
         # adaptive-clock trigger (`system:self-remediation`), so this loop neither runs it nor
@@ -224,52 +299,6 @@ class HeartbeatService:
                 len(stats),
                 saved,
             )
-
-    async def _run_one_task(self, task_text: str, deliver: str) -> str | None:
-        """Execute a single heartbeat task (used by gather).
-
-        Returns the agent response text, or ``None`` if no callback.
-        """
-        assert self._on_task is not None
-        return await self._on_task(task_text, deliver)
-
-    async def _process_heartbeat_file(self) -> None:
-        path = heartbeat_path()
-        if not path.exists():
-            return
-        content = path.read_text(encoding="utf-8").strip()
-        tasks = _extract_tasks(content)
-        if not tasks or not self._on_task:
-            return
-
-        self._processing = True
-        try:
-            logger.info("Heartbeat: %d task(s) found", len(tasks))
-            keep: list[tuple[str, str]] = []
-            results = await asyncio.gather(
-                *[self._run_one_task(t, d) for t, d in tasks],
-                return_exceptions=True,
-            )
-            for (task_text, deliver), result in zip(tasks, results):
-                if isinstance(result, BaseException):
-                    logger.warning(
-                        "Heartbeat task failed: %s",
-                        task_text[:80],
-                        exc_info=result,
-                    )
-                    keep.append((task_text, deliver))
-                elif _should_keep(result):
-                    logger.info("Heartbeat task incomplete, keeping: %s", task_text[:80])
-                    keep.append((task_text, deliver))
-
-            # Rewrite: keep incomplete/failed tasks so they retry next tick
-            lines = _HEADER
-            for text, deliver in keep:
-                suffix = f"  <!-- deliver:{deliver} -->" if deliver else ""
-                lines += f"- {text}{suffix}\n"
-            atomic_write(path, lines)
-        finally:
-            self._processing = False
 
 
 def _should_keep(result: str | None) -> bool:

@@ -36,6 +36,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **notify-action** — type `action` / ``; capabilities: execute
 - **run-prompt-action** — type `action` / ``; capabilities: execute
 - **run-script-action** — type `action` / ``; capabilities: execute
+- **run-workflow-action** — type `action` / ``; capabilities: execute
 - **send-message-action** — type `action` / ``; capabilities: execute
 - **native-agents** — type `agent` / ``; capabilities: crud, acp
 - **filesystem-inbox** — type `inbox` / ``; capabilities: approvals, inputs

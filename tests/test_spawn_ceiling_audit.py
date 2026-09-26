@@ -246,13 +246,14 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # runners/<id>.json), never from a model or a turn, and it runs no agent code: it reads a
     # host fact about a CLI the operator installed, exactly like the node/npm probes above.
     "agents/runners.py::probe_runner::subprocess.run": "host-fact: runner --version probe",
-    # The localhost preview probe. Every argv is a CONSTANT list — `lsof -nP -iTCP
-    # -sTCP:LISTEN -FpPn`, `ss -lntpH`, `ps -o comm= -p <pid>`, `lsof -a -p <pids> -d cwd -Fn`
-    # — assembled from literals plus pids the scan itself just read, never from a model, a
-    # turn, or a workflow input. No shell, `check=False`, and a 4s timeout. It reads a host
-    # fact (which ports are listening, and whose cwd) and runs no agent code, exactly like the
-    # PID and --version probes above.
-    "workflows/web_preview.py::_run::subprocess.run": "host-fact: listening-port/cwd probe",
+    # The process-fact probe the localhost preview and the app runtime's unload share. Every
+    # argv is a CONSTANT list — `lsof -nP -iTCP -sTCP:LISTEN -FpPn`, `ss -lntpH`, `ps -o comm=
+    # -p <pid>`, `ps -Awwo pid=,ppid=,command=`, `lsof -a -p <pids> -d cwd -Fn` — assembled from
+    # literals plus pids the caller just read, never from a model, a turn, a workflow input or
+    # an app. No shell, `check=False`, and a 4s timeout. It reads a host fact (which ports are
+    # listening, which processes run under which parent, and from where) and runs no agent
+    # code, exactly like the PID and --version probes above.
+    "process_facts.py::run_probe::subprocess.run": "host-fact: process table / port / cwd probe",
     # The state-history git runner. Every verb in the argv is a module constant; the only
     # caller-supplied value that reaches git is a commit sha, hex-validated
     # (`re.fullmatch(r"[0-9a-fA-F]{4,64}")`, state_history.py:581) before use, and the root is a
@@ -314,8 +315,8 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # Same class as the probes in `_doctor` above, split out into its own helper so the
     # `git repo:` row can distinguish "git says no" from "git could not answer" (#2907).
     # Fixed argv (`git -C <dir> rev-parse --is-inside-work-tree`), no shell, check=False,
-    # read-only, bounded by a timeout. The one variable is the project dir, which the
-    # OPERATOR set (`PERSONALCLAW_PROJECT_DIR` or the saved `project_dir` file) and which
+    # read-only, bounded by a timeout. The one variable is the project dir: the checkout the
+    # running package comes from, or a `PERSONALCLAW_PROJECT_DIR` the OPERATOR set, which
     # `_doctor` has already resolved through `is_dir()`; no agent input reaches this argv.
     "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": ("operator: doctor work-tree probe"),
     # Also split out of `_doctor`, and for the same shape of reason: both Runtime rows

@@ -329,6 +329,25 @@ def _in_quiet_window(start: str, end: str, now_minutes: int) -> bool:
     return now_minutes >= s or now_minutes < e
 
 
+def quiet_hours_now(*, now: "object | None" = None, settings: dict | None = None) -> bool:
+    """Whether the quiet-hours window is in force right now — the ONE answer to "not now?".
+
+    :func:`notification_posture` reads it to downgrade or drop a note, and an emitter whose note
+    must still reach the user LATER reads it to wait instead: a task's due-date reminder
+    (`tasks/due_notices.py`) that the gate dropped at 02:00 would never arrive, so it holds the
+    notice until the window ends. ``settings`` lets the gate pass the document it already read.
+    """
+    from datetime import datetime
+
+    s = settings if settings is not None else load_notifications_settings()
+    if not s.get("quiet_hours_enabled"):
+        return False
+    dt = now if isinstance(now, datetime) else datetime.now()
+    return _in_quiet_window(
+        s.get("quiet_hours_start", ""), s.get("quiet_hours_end", ""), dt.hour * 60 + dt.minute
+    )
+
+
 def notification_posture(kind: str, *, now: "object | None" = None) -> str:
     """THE delivery gate for dashboard notifications (DashboardState.notify()).
 
@@ -357,8 +376,6 @@ def notification_posture(kind: str, *, now: "object | None" = None) -> str:
 
     ``now`` is an optional ``datetime`` for tests; defaults to local time.
     """
-    from datetime import datetime
-
     s = load_notifications_settings()
     if s.get("mute_all"):
         return POSTURE_DROP
@@ -367,11 +384,8 @@ def notification_posture(kind: str, *, now: "object | None" = None) -> str:
     threshold = _MIN_SEVERITY_RANK.get(str(s.get("min_severity", "info")), 1)
     if severity < threshold:
         return POSTURE_DROP
-    if s.get("quiet_hours_enabled") and severity < 3:
-        dt = now if isinstance(now, datetime) else datetime.now()
-        minutes = dt.hour * 60 + dt.minute
-        if _in_quiet_window(s.get("quiet_hours_start", ""), s.get("quiet_hours_end", ""), minutes):
-            return POSTURE_QUIET if _must_be_answered(registered) else POSTURE_DROP
+    if severity < 3 and quiet_hours_now(now=now, settings=s):
+        return POSTURE_QUIET if _must_be_answered(registered) else POSTURE_DROP
     return POSTURE_DELIVER
 
 

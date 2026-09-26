@@ -158,6 +158,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "auth_locked_out": "Too many failed attempts from this address; try again later.",
     "auth_totp_required": "A second factor is required to finish this login.",
     "auth_enroll_code_invalid": "The enrollment code did not verify.",
+    "auth_bearer_invalid": "The bearer credential cannot authorize this request.",
+    "auth_credential_conflict": "The request presents two different owner credentials.",
     # ── device pairing (handlers/devices.py) — fixed message per code ──
     "device_pair_code_invalid": "The pairing code did not verify.",
     "device_pair_expired": "The pairing code has expired.",
@@ -182,6 +184,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "browse_grant_not_pending": "No browse grant is waiting on that id.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
+    # ── a channel's owner and its pairing (handlers/channel_owner.py) ──
+    "channel_unknown": "No chat channel by that name is connected.",
+    "channel_pairing_unsupported": "That channel cannot pair its owner from the dashboard.",
+    "channel_handoff_failed": "No channel could open a thread with you for this chat.",
     # ── agent rooms (handlers/rooms.py, rooms/store.py) ──
     "rooms_disabled": "Agent Rooms is disabled. Enable rooms.enabled to use it.",
     "room_not_found": "No room with that id.",
@@ -189,6 +195,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "room_title_required": "A room needs a title.",
     "room_id_exhausted": "Could not derive a free room id from that title.",
     "room_state_unreadable": "The rooms index could not be read.",
+    "room_cursor_unreadable": "This room's record of what each member has read could not be read.",
     "room_member_name_required": "A member needs an agent-binding name.",
     "room_member_name_invalid": "That agent-binding name is not a plain name.",
     "room_member_unknown_agent": "No agent binding by that name is configured.",
@@ -582,11 +589,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # Speech synthesis refused because the owner turned it off. Same family as `tool_disabled`:
     # a switched-off capability, not a malformed request. 503 rather than 403 to match the
-    # sibling refusal on the same route ("no TTS voice selected"), which is also a
-    # configuration-absent answer (#651).
+    # sibling refusal on the same route (`tts_unbound`), which is also a configuration-absent
+    # answer (#651). The switch named is the master one, not "Speak replies aloud".
     "tts_disabled": (
-        "Text-to-speech is switched off. Fix: turn on “Speak replies aloud” in "
+        "Text-to-speech is switched off. Fix: turn on “Enable text-to-speech” in "
         "Settings → Speech & Transcription."
+    ),
+    # Speech synthesis refused because no text-to-speech model is bound, so there is nothing to
+    # speak with. Its own code because its fix is a different page from `tts_disabled`'s.
+    "tts_unbound": (
+        "No text-to-speech model is set up. Fix: choose one for Text-to-speech in "
+        "Settings → Models."
     ),
     # ── capture telemetry import (inbound/capture_proxy.py) ──
     # ONE code, for the store failing under the import — NOT for a file that parsed badly.
@@ -711,6 +724,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # dangerous content" is a completed review whose answer is no, and the dialog shows it.
     "app_source_unresolved": "The app source could not be read — the path does not exist or "
     "the clone failed.",
+    # `app_listing_refused`: a registry LISTING named where the app downloads from, and that is
+    # a place PersonalClaw does not fetch from for someone else's data (a folder on this machine,
+    # this computer, a private network, the cloud metadata service), directly or by redirect.
+    # The message is the same sentence the Store card shows for the listing.
+    "app_listing_refused": "A registry listing named a download address PersonalClaw will not "
+    "fetch from for it; the message says which and why.",
     "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
     "says why.",
     # ── pending approvals (dashboard/approval_owner.py) ──
@@ -754,6 +773,51 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_url": "The MCP server's URL is not an http or https address with a host.",
     "invalid_headers": (
         "The MCP server's headers cannot be saved as sent; the message names the header."
+    ),
+    # ── signing in to an MCP server at a URL (mcp_oauth.py; dashboard/handlers/mcp.py —
+    #    POST /api/mcp/servers/{name}/sign-in, and the callback's own page) ──
+    # `invalid_sign_in` (400) — the request is not one: not a server's name, a body that is not an
+    # object, a client id or secret that is not a string, or a secret without an id.
+    # `mcp_sign_in_unsupported` (409) — the server is started with a command; only one at a URL
+    # signs in. `mcp_sign_in_not_offered` (409) — the server answered without asking for sign-in,
+    # asks for a kind PersonalClaw does not do, or publishes no OAuth metadata.
+    # `mcp_sign_in_needs_client_id` (400) — its authorization server does not let PersonalClaw
+    # register itself; the error's `detail` carries `redirectUri` (to register an app with) and
+    # `issuer`.
+    # `mcp_sign_in_needs_local_address` (400) — the dashboard is neither on a loopback address nor
+    # on HTTPS, so no authorization server may send the browser back to it.
+    # `mcp_sign_in_failed` (502) — discovery, registration or the token exchange failed, or the
+    # egress guard refused an address; the message says which and why.
+    # `mcp_sign_in_expired` (400) and `mcp_sign_in_refused` (400) — the callback page's: a sign-in
+    # that expired, was already finished or was never started, and one the authorization server
+    # (or its answer's issuer) refused.
+    "invalid_sign_in": "The sign-in request is not valid as sent; the message says what is wrong.",
+    "mcp_sign_in_unsupported": (
+        "This MCP server is started with a command, so it has no sign-in; only a server at a URL "
+        "signs in."
+    ),
+    "mcp_sign_in_not_offered": (
+        "This MCP server does not ask for an OAuth sign-in PersonalClaw can do; the message says "
+        "what it asked for instead."
+    ),
+    "mcp_sign_in_needs_client_id": (
+        "The server's authorization server does not let PersonalClaw register itself; register an "
+        "app there with the redirect URL given, then enter its client ID."
+    ),
+    "mcp_sign_in_needs_local_address": (
+        "Signing in sends the browser back to PersonalClaw, which must be at a loopback address "
+        "or on HTTPS for that."
+    ),
+    "mcp_sign_in_failed": (
+        "PersonalClaw could not sign in to this MCP server; the message says which step failed "
+        "and why."
+    ),
+    "mcp_sign_in_expired": (
+        "This sign-in has expired or was already finished; start it again from the Tools page."
+    ),
+    "mcp_sign_in_refused": (
+        "The authorization server did not sign you in, or its answer did not come from the server "
+        "the sign-in started with."
     ),
 }
 

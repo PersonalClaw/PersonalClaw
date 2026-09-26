@@ -811,6 +811,17 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_APPEND_DEDUP,
         help="notification history",
     ),
+    StateEntry(
+        id="task_due_notices",
+        kind=KIND_JSON_FILE,
+        path="task_due_notices.json",
+        domain=DOMAIN_PLATFORM,
+        # One document, synced as one row: a home without it adopts the other side's (and does
+        # not announce again what that side already did), and a copy on both sides keeps the
+        # local one. A lost entry costs one repeated reminder, and entries expire on their own.
+        merge=MERGE_LWW,
+        help="which task due dates have had their notice (tasks/due_notices.py)",
+    ),
     # ── config ──
     StateEntry(
         id="config",
@@ -915,13 +926,17 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,  # maps to provider-side session ids; machine-local
         help="provider session id map (machine-local)",
     ),
+    # Earlier versions of `personalclaw setup` saved the checkout the working directory was in, and
+    # the CLI took it as the install's project dir. Nothing writes or reads it now (the project dir
+    # is the checkout the running package comes from), but homes still carry one, so it stays
+    # claimed: an unclaimed path is a Doctor failure (`audit_home`), and this one is harmless.
     StateEntry(
         id="project_dir",
         kind=KIND_JSON_FILE,
         path="project_dir",
         domain=DOMAIN_CONFIG,
         merge=MERGE_REPLACE_ONLY,
-        help="the bound project directory pointer",
+        help="a project directory pointer earlier versions saved; nothing reads it now",
     ),
     StateEntry(
         id="workspace_dir",
@@ -1701,6 +1716,11 @@ IGNORED: tuple[str, ...] = (
     # honour the decision the code made.
     "trigger-spool.jsonl",
     "trigger-spool-hold.json",
+    # The restart review (`triggers/review.py`): the runs THIS home missed or had interrupted,
+    # waiting for a decision. Restored anywhere else it would offer to run, late, slots the
+    # pre-restore home already decided about — the storm the "review, don't auto-run" exists to
+    # prevent, arriving by backup. Nothing is lost: the history rows record what happened.
+    "trigger-review.json",
     # The poll cursors of the file, web and view triggers (`file_poll`, `web_poll`,
     # `pull_on_view`). Each module treats a MISSING state as a quiet re-seed — a watch's first
     # look records what it sees and fires nothing, a view binding refreshes on its next render —

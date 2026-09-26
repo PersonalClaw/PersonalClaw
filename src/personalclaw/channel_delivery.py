@@ -346,8 +346,13 @@ def _channel_name(key: str) -> str:
 
 async def reach_owner(
     send: "Callable[[ChannelDelivery, str], Awaitable[Any]]",
+    *,
+    only: str = "",
 ) -> OwnerDelivery:
     """Deliver to the owner through the FIRST connected channel that actually reaches them.
+
+    ``only`` names the one channel to try — the owner chose it (a chat's "Continue on …") — and
+    no other is tried when it cannot. Not connected reads as no channel at all.
 
     Every connected channel is tried in the stable order of their names until one delivers:
     its owner id (``config.credentials.owner_id_for`` — the channel's own key, else the shared
@@ -366,7 +371,7 @@ async def reach_owner(
 
     reasons: list[str] = []
     logged = False
-    for key in sorted(_REGISTRY):
+    for key in [only] if only else sorted(_REGISTRY):
         delivery = _REGISTRY.get(key)
         if delivery is None:  # unregistered while an earlier channel was being tried
             continue

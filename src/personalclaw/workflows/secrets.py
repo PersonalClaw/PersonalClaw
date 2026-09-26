@@ -15,6 +15,9 @@ surrounding disciplines:
 * **Re-injection on write, keyed by node id.** `reinject_secrets` restores stripped
   values from the stored spec by node id — so a mutation that MOVES or COPIES a node
   keeps its credentials, which a path-keyed map would lose the moment the tree changed.
+  `service.author_def` runs it on every definition save, because the only read a client
+  (the dashboard editor, a chat agent) can edit from is the stripped one; a flag it
+  cannot restore is refused there (`unmatched_flags`) rather than written to disk.
 * **A lint for the mistake itself.** `find_inline_secrets` flags credential-shaped
   literals at save time. Catching it here is the only cheap moment: once a spec is saved
   the value is already on disk, and every later defence is damage control.
@@ -27,6 +30,7 @@ other.
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from dataclasses import dataclass
@@ -171,61 +175,256 @@ def strip_secrets(spec: Any) -> Any:
 
 # ── re-inject (on write) ─────────────────────────────────────────────────────
 
+#: The prefix `has_flag_name` gives every presence flag.
+FLAG_PREFIX = "_has_"
 
-def _by_node_id(
-    spec: Any, into: dict[str, dict[str, Any]] | None = None
-) -> dict[str, dict[str, Any]]:
-    """node id → its config. Keyed by ID rather than path deliberately: a mutation that
-    moves or copies a node changes its path, and a path-keyed map would drop the
-    credentials of exactly the node the user just edited."""
-    acc = {} if into is None else into
-    if isinstance(spec, dict):
-        node_id = spec.get("id")
-        config = spec.get("config")
-        if isinstance(node_id, str) and node_id and isinstance(config, dict):
-            acc[node_id] = config
-        for value in spec.values():
-            _by_node_id(value, acc)
-    elif isinstance(spec, list):
-        for value in spec:
-            _by_node_id(value, acc)
-    return acc
+#: Where a node dict holds its CHILD nodes, in `models.walk`'s order. A child is matched to its
+#: stored counterpart on its own, so the walk re-anchors on entering one of these — and only on a
+#: NODE: an action's `config.with.body` is request data that happens to share a name with a child
+#: position, and re-anchoring there would look a value up on a node that does not exist.
+_CHILD_KEYS = ("children", "body", "cases", "default")
+
+#: The anchor for everything outside the node tree — declared inputs, metadata, runtime hints —
+#: which is matched by its path in the document.
+_DOC: tuple[str, ...] = ("doc",)
+
+Anchor = tuple[str, ...]
+RelPath = tuple[Any, ...]
+
+
+def _is_flag(key: Any) -> bool:
+    return isinstance(key, str) and key.startswith(FLAG_PREFIX)
+
+
+def _node_anchor(node: dict[str, Any], path: str) -> Anchor:
+    """A node is found by its id, so a step that MOVES — or is copied into another definition —
+    keeps its values; a path-keyed map would drop them for exactly the node the user just edited.
+    A node with no id has nothing else to go by, so it falls back to its tree path."""
+    node_id = node.get("id")
+    return ("id", node_id) if isinstance(node_id, str) and node_id else ("path", path)
+
+
+def _children(node: dict[str, Any], path: str) -> list[tuple[str, dict[str, Any]]]:
+    """Every child node with its tree path, in `models.walk`'s grammar — so a flag this module
+    locates names the same step the validator's issues do."""
+    out: list[tuple[str, dict[str, Any]]] = []
+    kids = node.get("children")
+    if isinstance(kids, list):
+        out += [(f"{path}.children[{i}]", k) for i, k in enumerate(kids) if isinstance(k, dict)]
+    if isinstance(node.get("body"), dict):
+        out.append((f"{path}.body", node["body"]))
+    cases = node.get("cases")
+    if isinstance(cases, dict):
+        out += [
+            (f"{path}.cases[{label}]", case)
+            for label, case in cases.items()
+            if isinstance(case, dict) and not _is_flag(label)
+        ]
+    if isinstance(node.get("default"), dict):
+        out.append((f"{path}.default", node["default"]))
+    return out
+
+
+def _index_nodes(node: dict[str, Any], path: str, into: dict[Anchor, Any]) -> None:
+    into[_node_anchor(node, path)] = node
+    for child_path, child in _children(node, path):
+        _index_nodes(child, child_path, into)
+
+
+def _lookup(anchors: dict[Anchor, Any], anchor: Anchor, rel: RelPath, flag: str) -> Any:
+    """The stored key and value `flag` stands for, or ``None``.
+
+    Matched through `has_flag_name` rather than by slicing the prefix off, because the flag is
+    built with the key's leading underscores stripped: `_token` and `token` both flag as
+    `_has_token`, and a slice would only ever find the second."""
+    base = anchors.get(anchor)
+    for step in rel:
+        if isinstance(base, dict) and step in base:
+            base = base[step]
+        elif isinstance(base, list) and isinstance(step, int) and 0 <= step < len(base):
+            base = base[step]
+        else:
+            return None
+    if not isinstance(base, dict):
+        return None
+    for key, value in base.items():
+        if not _is_flag(key) and has_flag_name(key) == flag:
+            return key, value
+    return None
 
 
 def reinject_secrets(incoming: Any, stored: Any) -> Any:
-    """Restore stripped secrets into `incoming` from `stored`, matched by node id.
+    """Restore the values a read stripped into `incoming`, from the `stored` definition.
 
-    A `_has_<key>: True` flag with no accompanying value means "unchanged — put the
-    stored one back". An explicit new value wins. A flag of `False` means "clear it",
-    which is how a user removes a credential without a separate endpoint.
+    A `_has_<key>: True` flag with no accompanying value means "unchanged — put the stored
+    one back". An explicit new value wins. A flag of `False` means "clear it", which is how
+    a user removes a credential without a separate endpoint.
+
+    The flag can sit at any depth, because `strip_secrets` strips at any depth — the shipped
+    `paper-ingest` hides `config.schema.authors`, two levels below `config` — and outside the
+    node tree too (a declared input named like a credential). A value that belongs to a node is
+    found through the node (`_node_anchor`) and its place inside that node; anything else by
+    its path in the document.
+
+    A flag that finds nothing is LEFT in place rather than dropped: dropping it would lose a
+    value the caller asked to keep, and `unmatched_flags` is how the save path finds it and
+    refuses the save.
     """
-    stored_configs = _by_node_id(stored)
-    return _reinject(incoming, stored_configs)
+    if not isinstance(incoming, dict):
+        return incoming
+    anchors: dict[Anchor, Any] = {_DOC: stored if isinstance(stored, dict) else {}}
+    if isinstance(stored, dict) and isinstance(stored.get("root"), dict):
+        _index_nodes(stored["root"], "root", anchors)
+    return _restore(incoming, anchor=_DOC, rel=(), anchors=anchors, node_path=None)
 
 
-def _reinject(node: Any, stored_configs: dict[str, dict[str, Any]]) -> Any:
-    if isinstance(node, dict):
-        out = {k: _reinject(v, stored_configs) for k, v in node.items()}
-        node_id = node.get("id")
-        config = out.get("config")
-        if isinstance(node_id, str) and node_id and isinstance(config, dict):
-            out["config"] = _merge_config(config, stored_configs.get(node_id) or {})
+def _restore(
+    value: Any,
+    *,
+    anchor: Anchor,
+    rel: RelPath,
+    anchors: dict[Anchor, Any],
+    node_path: str | None,
+) -> Any:
+    """`node_path` is set exactly when `value` IS a node (it is that node's tree path)."""
+    if isinstance(value, list):
+        return [
+            _restore(v, anchor=anchor, rel=rel + (i,), anchors=anchors, node_path=None)
+            for i, v in enumerate(value)
+        ]
+    if not isinstance(value, dict):
+        return value
+    out: dict[str, Any] = {}
+    for key, item in value.items():
+        if _is_flag(key):
+            continue
+        if anchor == _DOC and not rel and key == "root" and isinstance(item, dict):
+            out[key] = _restore_node(item, "root", anchors)
+        elif node_path is not None and key in _CHILD_KEYS:
+            out[key] = _restore_children(key, item, node_path, anchor, anchors)
+        else:
+            out[key] = _restore(
+                item, anchor=anchor, rel=rel + (key,), anchors=anchors, node_path=None
+            )
+    _restore_flags(value, out, anchor=anchor, rel=rel, anchors=anchors)
+    return out
+
+
+def _restore_node(node: dict[str, Any], path: str, anchors: dict[Anchor, Any]) -> Any:
+    return _restore(node, anchor=_node_anchor(node, path), rel=(), anchors=anchors, node_path=path)
+
+
+def _restore_children(
+    key: str, item: Any, path: str, parent: Anchor, anchors: dict[Anchor, Any]
+) -> Any:
+    if key == "children" and isinstance(item, list):
+        return [
+            _restore_node(c, f"{path}.children[{i}]", anchors) if isinstance(c, dict) else c
+            for i, c in enumerate(item)
+        ]
+    if key == "cases" and isinstance(item, dict):
+        out = {
+            label: (
+                _restore_node(case, f"{path}.cases[{label}]", anchors)
+                if isinstance(case, dict)
+                else case
+            )
+            for label, case in item.items()
+            if not _is_flag(label)
+        }
+        # A case LABEL can itself read like a credential (`auth_failed`), and then the read
+        # hid the whole case node: it belongs to the branch, at `cases`.
+        _restore_flags(item, out, anchor=parent, rel=("cases",), anchors=anchors)
         return out
-    if isinstance(node, list):
-        return [_reinject(v, stored_configs) for v in node]
-    return node
+    if key in ("body", "default") and isinstance(item, dict):
+        return _restore_node(item, f"{path}.{key}", anchors)
+    return item
 
 
-def _merge_config(incoming: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(incoming)
-    for flag_key in [k for k in incoming if k.startswith("_has_")]:
-        real_key = flag_key[len("_has_") :]
-        keep = bool(merged.pop(flag_key))
-        if real_key in incoming:
+def _restore_flags(
+    src: dict[str, Any],
+    out: dict[str, Any],
+    *,
+    anchor: Anchor,
+    rel: RelPath,
+    anchors: dict[Anchor, Any],
+) -> None:
+    for flag, keep in src.items():
+        if not _is_flag(flag):
+            continue
+        if any(not _is_flag(k) and has_flag_name(k) == flag for k in src):
             continue  # an explicit new value was sent; it wins
-        if keep and real_key in stored:
-            merged[real_key] = stored[real_key]
-    return merged
+        if not keep:
+            continue  # a false flag clears the value
+        found = _lookup(anchors, anchor, rel, flag)
+        if found is None:
+            out[flag] = keep  # left for `unmatched_flags` to report
+        else:
+            real, stored_value = found
+            out[real] = copy.deepcopy(stored_value)
+
+
+def unmatched_flags(spec: Any) -> list[tuple[str, str, str]]:
+    """Every presence flag `reinject_secrets` could not restore, as ``(where, node_id, field)``.
+
+    ``where`` is the node's tree path in `models.walk`'s grammar — the same path the validator's
+    issues carry, so a caller can pin the refusal to the step it belongs to — or, outside the node
+    tree, the top-level key (``inputs``, ``metadata``). ``field`` is the value's dotted place inside
+    it, e.g. ``config.schema.authors``.
+    """
+    found: list[tuple[str, str, str]] = []
+    if not isinstance(spec, dict):
+        return found
+    for key, value in spec.items():
+        if key == "root" and isinstance(value, dict):
+            _unmatched_in_node(value, "root", found)
+        elif _is_flag(key):
+            if value:
+                real = str(key[len(FLAG_PREFIX) :])
+                found.append((real, "", real))
+        else:
+            _unmatched_in(value, str(key), "", (key,), found)
+    return found
+
+
+def _unmatched_in_node(node: dict[str, Any], path: str, found: list[tuple[str, str, str]]) -> None:
+    node_id = str(node.get("id") or "")
+    for key, value in node.items():
+        if _is_flag(key):
+            if value:
+                found.append((path, node_id, _dotted((), key)))
+            continue
+        if key == "cases" and isinstance(value, dict):
+            for label, case in value.items():
+                if _is_flag(label) and case:
+                    found.append((path, node_id, _dotted(("cases",), label)))
+        if key not in _CHILD_KEYS:
+            _unmatched_in(value, path, node_id, (key,), found)
+    for child_path, child in _children(node, path):
+        _unmatched_in_node(child, child_path, found)
+
+
+def _unmatched_in(
+    value: Any, where: str, node_id: str, rel: RelPath, found: list[tuple[str, str, str]]
+) -> None:
+    if isinstance(value, list):
+        for i, item in enumerate(value):
+            _unmatched_in(item, where, node_id, rel + (i,), found)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if _is_flag(key):
+                if item:
+                    found.append((where, node_id, _dotted(rel, key)))
+            else:
+                _unmatched_in(item, where, node_id, rel + (key,), found)
+
+
+def _dotted(rel: RelPath, flag: str) -> str:
+    parts = ""
+    for step in rel:
+        parts += f"[{step}]" if isinstance(step, int) else (f".{step}" if parts else str(step))
+    real = flag[len(FLAG_PREFIX) :]
+    return f"{parts}.{real}" if parts else real
 
 
 # ── lint (at save) ───────────────────────────────────────────────────────────

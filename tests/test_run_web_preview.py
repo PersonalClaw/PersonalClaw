@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw import process_facts
 from personalclaw.workflows import web_preview as wp
 
 
@@ -179,7 +180,7 @@ def test_a_lan_bound_listener_is_not_offered_as_a_localhost_link(tmp_path, monke
     preview is broken rather than that the server is not bound where they thought.
     """
     monkeypatch.setattr(wp.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(wp, "_run", lambda argv: "p999\nn192.168.1.20:3000\n")
+    monkeypatch.setattr(wp, "run_probe", lambda argv: "p999\nn192.168.1.20:3000\n")
     scan = wp.discover_ports(tmp_path)
     assert scan.scanned
     assert scan.ports == []
@@ -187,8 +188,8 @@ def test_a_lan_bound_listener_is_not_offered_as_a_localhost_link(tmp_path, monke
 
     # VACUITY FLOOR: the same harness with a loopback bind must find the port, otherwise the
     # assertion above would pass because the fake output is simply unparseable.
-    monkeypatch.setattr(wp, "_run", lambda argv: "p999\nn127.0.0.1:3000\n")
-    monkeypatch.setattr(wp, "_cwds", lambda pids: {999: str(tmp_path)})
+    monkeypatch.setattr(wp, "run_probe", lambda argv: "p999\nn127.0.0.1:3000\n")
+    monkeypatch.setattr(wp, "working_dirs", lambda pids: {999: str(tmp_path)})
     monkeypatch.setattr(wp, "_command", lambda pid: "node")
     assert [p.port for p in wp.discover_ports(tmp_path).ports] == [3000]
 
@@ -206,7 +207,9 @@ def test_the_lsof_listener_parser_binds_each_socket_to_the_pid_that_precedes_it(
 
 
 def test_the_lsof_cwd_parser_maps_each_pid_to_its_directory():
-    assert wp.parse_lsof_cwds("p47709\nfcwd\nn/private/tmp/run-a/sub\np1\nfcwd\nn/\n") == {
+    assert process_facts.parse_lsof_cwds(
+        "p47709\nfcwd\nn/private/tmp/run-a/sub\np1\nfcwd\nn/\n"
+    ) == {
         47709: "/private/tmp/run-a/sub",
         1: "/",
     }
@@ -232,6 +235,6 @@ def test_an_empty_pid_list_never_reaches_lsof(monkeypatch):
     """Measured hazard, not a hypothetical: ``lsof -a -p "" -d cwd`` does not select nothing,
     it selects EVERY process on the host — a scoped probe silently becoming host-wide."""
     called: list[list[str]] = []
-    monkeypatch.setattr(wp, "_run", lambda argv: called.append(argv) or "")
-    assert wp._cwds([]) == {}
+    monkeypatch.setattr(process_facts, "run_probe", lambda argv: called.append(argv) or "")
+    assert process_facts.working_dirs([]) == {}
     assert called == []

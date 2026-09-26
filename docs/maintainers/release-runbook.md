@@ -14,7 +14,7 @@ and runs ten jobs:
 
 | Job | What it produces | Gate |
 |---|---|---|
-| `build` | sdist + wheel (SPA bundled inside), SBOM | verifies the wheel serves the SPA with **no Node** present |
+| `build` | sdist + wheel (SPA bundled inside), SBOM | inspects the wheel's contents and metadata against the checkout, then installs it alone into a scratch venv and requires the SPA served, every bundled app enabled and the default model offered |
 | `pypi` | core package on PyPI | environment `release` — **needs your approval** |
 | `pypi-client` | `personalclaw-client` on PyPI | environment `release-client` — **needs your approval** |
 | `gateway-dashboard` | nothing; it is purely a gate | boots the gateway image built from this commit and requires a **served bundle**, not a status — `images` needs it, so a dashboard-less image is never pushed |
@@ -109,7 +109,9 @@ Remote CI is confirmation, not discovery.
 ```bash
 make lint                       # black, isort, flake8, mypy
 make test                       # the full suite
-cd web && npm run typecheck && npm test && npm run build
+npm run typecheck:web && npm run test:web && npm run build   # from the root, never `cd web`
+npm run smoke:render
+make build                      # the distribution, inspected and rebuilt byte-identical from the sdist
 ```
 
 ### 4. Land the bump through a PR

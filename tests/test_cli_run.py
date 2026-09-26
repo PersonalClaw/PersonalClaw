@@ -313,18 +313,76 @@ def test_probe_short_circuits_a_refused_connection(monkeypatch):
     assert len(attempts) == 1, "a refused connection should not be retried"
 
 
-# ── Auth rides the query string, not a Bearer header ─────────────────────────────
+# ── Auth rides the Authorization header, never the URL ───────────────────────────
 
 
-def test_token_goes_in_the_query_string():
-    """``token_auth`` reads primary owner auth from ``?token=`` or the cookie ONLY.
+@pytest.mark.asyncio
+async def test_a_run_authenticates_every_request_with_the_header_and_no_url_token(monkeypatch):
+    """The whole turn — the task-mode call, the socket and the chat POST — against the REAL
+    token middleware, with the minted token only in ``Authorization: Bearer``.
 
-    Its ``Authorization: Bearer`` branch narrows an ALREADY-authenticated request to an
-    app scope; it never authenticates. A Bearer-only request to
-    ``/api/chat/sessions`` answered ``403 {"error": "Token required"}``.
+    It used to ride ``?token=`` on every request, because the middleware would not accept it
+    anywhere else; a token in a URL is in the process list, the shell history and the repr of
+    every aiohttp error that names the URL. Each request's target is recorded, so "no token in
+    the URL" is measured on what reached the server rather than on what the client meant.
     """
-    assert cli_run._authed("/api/chat", "T") == "/api/chat?token=T"
-    assert cli_run._authed("/api/chat?ws=1", "T") == "/api/chat?ws=1&token=T"
+    import asyncio
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    from personalclaw.dashboard import token_auth
+
+    for var in ("PERSONALCLAW_DEV_NO_AUTH", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"):
+        monkeypatch.delenv(var, raising=False)
+    token_auth.use_ephemeral_secret(b"cli-run-header-contract-key-0001")
+    token_auth.revoke_all_sessions()
+    session = "inbound:cli:header"
+    targets: list[str] = []
+    chat_posted = asyncio.Event()
+
+    async def _recorded(request: web.Request) -> web.Response:
+        targets.append(str(request.rel_url))
+        if request.path == "/api/chat":
+            chat_posted.set()
+        return web.json_response({"ok": True})
+
+    async def _socket(request: web.Request) -> web.WebSocketResponse:
+        targets.append(str(request.rel_url))
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await chat_posted.wait()
+        await ws.send_json({"type": "chat_chunk", "data": {"session": session, "content": "hi"}})
+        await ws.send_json({"type": "chat_done", "data": {"session": session}})
+        await ws.close()
+        return ws
+
+    app = web.Application(middlewares=[token_auth.token_auth_middleware(port=10000)])
+    app.router.add_post("/api/chat/task-mode", _recorded)
+    app.router.add_post("/api/chat", _recorded)
+    app.router.add_get("/api/ws", _socket)
+    server = TestServer(app, host="127.0.0.1")
+    await server.start_server()
+    try:
+        token = token_auth.generate_token("owner", ttl_seconds=300)
+        await asyncio.get_running_loop().run_in_executor(
+            None, cli_run._api, server.port, token, "/api/chat/task-mode", {"mode": "read"}
+        )
+        collector = cli_run._Collector(session, "json")
+        await cli_run._consume(server.port, token, collector, "hello", 10.0)
+    finally:
+        await server.close()
+        token_auth.revoke_all_sessions()
+        token_auth.use_persistent_secret()
+
+    assert collector.done and collector.result_text() == "hi"
+    assert sorted(t.split("?", 1)[0] for t in targets) == [
+        "/api/chat",
+        "/api/chat/task-mode",
+        "/api/ws",
+    ], f"every request must have authenticated and reached its handler: {targets}"
+    assert not [t for t in targets if "token=" in t], f"a URL carried the token: {targets}"
+    assert token not in "".join(targets)
 
 
 # ── Output contracts ─────────────────────────────────────────────────────────────

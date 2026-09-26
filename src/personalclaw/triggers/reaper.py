@@ -73,14 +73,14 @@ RUN_DEADLINE_SECS = 1800.0
 
 #: The `ScheduleRun.status` a restart-interrupted run carries.
 #:
-#: 🔴 DELIBERATELY NOT A NEW MEMBER. `ScheduleRun.status` is closed at four values
-#: (`success|failure|timeout|launched`) and `web/src/pages/schedule/scheduleMeta.ts` switches on
-#: exactly those; an unrecognised value falls through `statusMeta` to "never run" in neutral grey —
-#: the one label a genuinely-ended run must never render as. `timeout` because that is what the
-#: vocabulary already means here ("it did not finish"), and it is what `migrate._HEALTH_FROM_STATUS`
-#: maps to DEGRADED. WHY it did not finish rides in the row's `error`, which is the field both
-#: `ScheduleDetail`'s `Last run` block and `RunHistory` render.
-RESTART_INTERRUPTED_STATUS = "timeout"
+#: Its own word, not `timeout`. A run a restart cut off did not blow a deadline, and recording it
+#: as one told the user something false about the automation. `web/src/pages/schedule/scheduleMeta
+#: .ts` renders it ("interrupted"), and `triggers/history.SCHEDULE_STATUS_TO_OUTCOME` translates it
+#: for the unified feed — both in the same change, because an unrecognised status falls through
+#: `statusMeta` to "never run" in neutral grey. It is NOT retried on its own: the run may already
+#: have done part of its work, so the orphan pass puts it on the review (`triggers/review.py`),
+#: where the user runs it again or dismisses it.
+RESTART_INTERRUPTED_STATUS = "interrupted"
 
 
 def overdue(
@@ -253,12 +253,13 @@ def terminalize_orphans_sync(
 
     1. **Release the claim**, so `is_running` goes false — the schedule row stops rendering as in
        flight, and the next tick's `overlap: skip` gate stops suppressing the fire it should grant.
-    2. **A terminal run row**, so the run history shows an ending instead of an open row. `status`
-       stays inside `ScheduleRun`'s closed four-member set (`success|failure|timeout|launched`) —
-       WF2AUT-16 forbids a fifth member, because `scheduleMeta.ts` switches on that vocabulary and
-       an unknown value renders as "never run" grey. The interrupted-by-restart distinction rides in
-       `error`, which both `ScheduleDetail`'s `Last run` block and `RunHistory` already render.
+    2. **A terminal run row**, so the run history shows an ending instead of an open row, with
+       `status: interrupted` (`RESTART_INTERRUPTED_STATUS`) and the reason in `error`, which both
+       `ScheduleDetail`'s `Last run` block and `RunHistory` render.
     3. **The trigger's health**, via the same `_mark_degraded` the deadline sweep uses.
+
+    The run is not retried here. The gateway puts each record on the review
+    (`triggers/review.cards_from_orphans`), where the user runs it again or dismisses it.
 
     Release-then-record, for the reason `reap_one` gives: a crash between the two leaves the trigger
     FREE with no row (noisy, harmless), where the reverse could leave a recorded-as-ended run whose
@@ -283,7 +284,9 @@ def terminalize_orphans_sync(
         )
         reason = (
             f"Interrupted by a gateway restart: the process running this "
-            f"(pid {owner_pid}) is gone. It ran {int(elapsed)}s."
+            f"(pid {owner_pid}) is gone. It ran {int(elapsed)}s. It is not run again on its "
+            f"own, because it may already have done part of its work: run it again from the "
+            f"review on the Triggers page, or dismiss it there."
         )
         record: dict[str, Any] = {
             "trigger_id": trigger_id,

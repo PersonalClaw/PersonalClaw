@@ -44,6 +44,9 @@ _NATIVE_KEYS = {
     "notify": "notify_provider.py",
     "run-prompt": "run_prompt_provider.py",
     "run-script": "run_script_provider.py",
+    # Its manifest was deleted with the old workflow feature and the provider re-registered
+    # without one, so its form rendered nothing and it saved with no workflow.
+    "run-workflow": "run_workflow_provider.py",
     "send-message": "send_message_provider.py",
 }
 

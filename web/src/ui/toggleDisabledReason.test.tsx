@@ -178,7 +178,10 @@ describe('the triage, pinned per site', () => {
     // (`disabledReason={state.supported ? undefined : state.describes}`) and stays native while
     // busy. They cannot co-occur — an unsupported switch is never clickable, so `busy` never
     // rises on one. Reasoned sites 7 → 8.
-    expect(sites.length).toBe(25)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'eight carry a reason; seventeen stay native').toBe(8)
+    // 🔺 25 → 26: Settings → Security → Outside PersonalClaw's home gained one switch per place
+    // (one `<Toggle>` site, rendered per row). It is disabled only while a write for any place is in
+    // flight, so it is the IN-FLIGHT class and stays native. Reasoned sites hold at 8.
+    expect(sites.length).toBe(26)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'eight carry a reason; eighteen stay native').toBe(8)
   })
 })

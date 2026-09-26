@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 import personalclaw
-from personalclaw.apps import app_manager, catalog, manager
+from personalclaw.apps import app_manager, app_runtime, catalog, manager
 from personalclaw.apps.manifest import (
     CORE_COMPAT_INCOMPATIBLE,
     CORE_COMPAT_INVALID,
@@ -309,11 +309,20 @@ class TestEnablePath:
 class _FakeSupervisor:
     def __init__(self) -> None:
         self.started: list[str] = []
+        self.held: set[str] = set()
 
     def reap_orphans(self, name, entry):  # noqa: ANN001, ARG002
         return None
 
+    def hold(self, name):  # noqa: ANN001
+        self.held.add(name)
+
+    def unhold(self, name):  # noqa: ANN001
+        self.held.discard(name)
+
     def start(self, manifest):  # noqa: ANN001
+        if manifest.name in self.held:  # what the real supervisor does: nothing held starts
+            return None
         self.started.append(manifest.name)
         return object()
 
@@ -354,15 +363,17 @@ class TestBootLoadPath:
 
     def test_incompatible_app_backend_is_not_started(self, tmp_path, _fake_supervisor, caplog):
         _install_with_backend(tmp_path, "stale-app", "99.0.0")
-        with caplog.at_level(logging.WARNING, logger="personalclaw.apps.app_manager"):
-            started = app_manager.start_enabled_app_backends()
+        with caplog.at_level(logging.WARNING, logger="personalclaw.apps.app_runtime"):
+            started = app_runtime.start_installed()
         assert started == []
         assert _fake_supervisor.started == []
+        # Held, so the watchdog's pass 30 s later does not start it either.
+        assert _fake_supervisor.start(app_manager._manifest_of("stale-app")) is None
         assert any("99.0.0" in r.getMessage() for r in caplog.records)
 
     def test_compatible_app_backend_still_starts(self, tmp_path, _fake_supervisor):
         _install_with_backend(tmp_path, "fresh-app", "1.0.0")
-        assert app_manager.start_enabled_app_backends() == ["fresh-app"]
+        assert app_runtime.start_installed() == ["fresh-app"]
         assert _fake_supervisor.started == ["fresh-app"]
 
 

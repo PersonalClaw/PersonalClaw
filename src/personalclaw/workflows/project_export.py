@@ -539,14 +539,19 @@ def plan_import(
     return plan
 
 
-def import_summary(plan: ImportPlan) -> str:
+def import_summary(plan: ImportPlan, *, preview: bool = False) -> str:
     """One line a user can act on.
 
     Names the counts AND the expected secrets, because "imported 12 files" without "3
     credentials must
     be re-entered" produces a project that looks complete and fails on its first run.
+
+    ``preview`` is the plan shown BEFORE anything is written — the dashboard's import dialog
+    shows this sentence as it is, so for a preview it says what WOULD be imported. It said
+    "imported" for an archive nothing had touched yet (F-62).
     """
-    parts = [f"{len(plan.accepted)} entit{'y' if len(plan.accepted) == 1 else 'ies'} imported"]
+    verb = "would be imported" if preview else "imported"
+    parts = [f"{len(plan.accepted)} entit{'y' if len(plan.accepted) == 1 else 'ies'} {verb}"]
     if plan.refused:
         parts.append(f"{len(plan.refused)} refused")
     if plan.secrets_expected:

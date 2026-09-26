@@ -1,6 +1,6 @@
 """Seed native (Tier-1) apps — ``native`` manifests become real installed apps on
 first run (seed_builtin_apps), seeded ONCE, registered through the installed-app
-path (never double), and LOCKED ON (disable/uninstall/force-uninstall refused).
+path (the only one), and LOCKED ON (disable/uninstall/force-uninstall refused).
 """
 
 from __future__ import annotations
@@ -199,15 +199,27 @@ def test_native_bundle_resync_preserves_user_config_data(tmp_path):
     assert manager._read_installed("brave-search").enabled is True
 
 
-def test_native_app_skipped_by_bundled_discovery(tmp_path):
-    """Native manifests register via the installed-app (seed) path only, so bundled
-    discovery must skip them (no double registration). Post-taxonomy the native dir
-    holds only native apps, so discovery is normally empty."""
+def test_startup_registers_a_native_app_once_and_a_stray_bundled_manifest_never(tmp_path):
+    """A native manifest starts through the installed-app path only — seeded, then walked like
+    every installed app — so it registers exactly once. A non-native manifest left in the
+    package's native tree is not an installed app, and startup starts nothing of it: there is no
+    second, bundled path (there was one, and it registered such a manifest beside the rest)."""
+    from personalclaw.apps import app_runtime
+    from personalclaw.providers.registry import get_provider_registry, reset_provider_registry
+
     _native_manifest(tmp_path, "brave-search", native=True)
     _native_manifest(tmp_path, "stray-nonnative", native=False)
-    discovered = {m.name for m in loader.discover_bundled_extensions()}
-    assert "brave-search" not in discovered  # seeded → installed-app path
-    assert "stray-nonnative" in discovered  # a non-native manifest still discovered
+    reset_provider_registry()
+    try:
+        app_manager.seed_builtin_apps()
+        app_runtime.start_installed(gateway=False)
+        listed = [e.name for e in get_provider_registry().list_extensions()]
+        assert listed == ["brave-search"], listed
+    finally:
+        registry = get_provider_registry()
+        for name in list(registry._extensions):
+            registry.disable(name)
+        reset_provider_registry()
 
 
 def test_de_bundled_app_is_demoted_from_builtin_to_local(tmp_path):

@@ -32,9 +32,8 @@ python -m pytest . -q
 
 **3 — point a shell at your gateway.** `personalclaw token` prints a dashboard URL with a
 token in the query string; these three lines split that URL into the pieces the next step
-needs. The gateway takes the owner token as a `?token=` **query parameter** — an
-`Authorization: Bearer` header is only accepted for app-scoped narrowing tokens, so it
-will answer `{"error": "Token required"}` here.
+needs. That URL is for a browser. A script sends the token as an `Authorization: Bearer`
+header instead, so it never lands in your shell history or in a request log.
 
 ```bash
 TOKEN_URL="$(personalclaw token | head -1)"
@@ -49,14 +48,17 @@ bytes you reviewed. Keep the review out of this directory — a new file here is
 app, and it gets a fresh review instead.
 
 ```bash
-review="$(curl -sS -X POST "$PERSONALCLAW_URL/api/apps/preview?token=$PERSONALCLAW_TOKEN" \
+review="$(curl -sS -X POST "$PERSONALCLAW_URL/api/apps/preview" \
+  -H "Authorization: Bearer $PERSONALCLAW_TOKEN" \
   -H 'Content-Type: application/json' -d "{\"source\": \"$PWD\"}")"
 echo "$review" | python3 -m json.tool      # read it: permissions, jobs, packages, the scan
 consent="$(echo "$review" | python3 -c 'import json, sys; print(json.load(sys.stdin)["consent"])')"
-curl -sS -X POST "$PERSONALCLAW_URL/api/apps?token=$PERSONALCLAW_TOKEN" \
+curl -sS -X POST "$PERSONALCLAW_URL/api/apps" \
+  -H "Authorization: Bearer $PERSONALCLAW_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "{\"source\": \"$PWD\", \"consent\": \"$consent\"}"
-curl -sS -X POST "$PERSONALCLAW_URL/api/apps/app-template/enable?token=$PERSONALCLAW_TOKEN"
+curl -sS -X POST "$PERSONALCLAW_URL/api/apps/app-template/enable" \
+  -H "Authorization: Bearer $PERSONALCLAW_TOKEN"
 ```
 
 Prefer clicking? **Store → Add source → local path**, point it at this directory, then
@@ -65,7 +67,8 @@ install and enable. Same review, same scan gate, same consent — there is only 
 **5 — see it.** The app is in the Store, enabled, and its provider is registered:
 
 ```bash
-curl -sS "$PERSONALCLAW_URL/api/apps/app-template?token=$PERSONALCLAW_TOKEN"
+curl -sS "$PERSONALCLAW_URL/api/apps/app-template" \
+  -H "Authorization: Bearer $PERSONALCLAW_TOKEN"
 ```
 
 In the response, the `installed` block reports `"enabled": true` and `manifest.provider.type`

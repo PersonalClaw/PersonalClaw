@@ -49,6 +49,9 @@ const hookStatuses = (): string[] => {
   return [...tuple.matchAll(/"([a-z_]+)"/g)].map((m) => m[1])
 }
 
+/** The `ScheduleRun.status` vocabulary: every run status the runs feed knows how to translate. */
+const scheduleStatuses = (): string[] => pyDictKeys(HISTORY, 'SCHEDULE_STATUS_TO_OUTCOME')
+
 describe('the backend vocabularies this UI renders are non-empty', () => {
   // Guards every assertion below: a renamed class would otherwise make the sweeps vacuous.
   it('reads all four out of the Python source', () => {
@@ -57,6 +60,7 @@ describe('the backend vocabularies this UI renders are non-empty', () => {
     expect(pyEnumMembers(MODELS, 'Outcome').length).toBeGreaterThanOrEqual(12)
     expect(hookStatuses().length).toBeGreaterThanOrEqual(9)
     expect(Object.keys(pyDictKeys(HISTORY, 'HOOK_STATUS_TO_OUTCOME')).length).toBeGreaterThanOrEqual(11)
+    expect(scheduleStatuses().length).toBeGreaterThanOrEqual(7)
   })
 })
 
@@ -137,6 +141,35 @@ describe('every hook last_status renders as something, toned like the outcome it
   })
 })
 
+describe('every ScheduleRun status renders as something, toned like the outcome it maps to', () => {
+  // A schedule's own History draws `run.status`, the raw word, while the dashboard's runs feed draws
+  // the `outcome` that `SCHEDULE_STATUS_TO_OUTCOME` translates it to. One fire, two words: both must
+  // render, and at one alarm level. Two fell through to the never-run circle before this sweep:
+  // `needs_input`, the day-budget pause, beside a fire that had in fact been held; and the
+  // restart's cut-off run, which the reaper recorded as `timeout`, a deadline it never blew,
+  // precisely because a new word here would have rendered as "never run".
+  it('none falls through to the neutral never-run dot', () => {
+    const fell = scheduleStatuses().filter((s) => isDefault(statusMeta(s)))
+    expect(fell, 'a run status with no rendering reads as "never ran"').toEqual([])
+  })
+
+  it('agrees with SCHEDULE_STATUS_TO_OUTCOME rather than holding a second opinion', () => {
+    const mapped = pyDictToEnumValues(HISTORY, 'SCHEDULE_STATUS_TO_OUTCOME', MODELS, 'Outcome')
+    expect(Object.keys(mapped).length).toBeGreaterThanOrEqual(7)
+    for (const [status, outcome] of Object.entries(mapped)) {
+      expect(statusMeta(status).tone, `${status} → ${outcome}: tone must match the outcome`).toBe(
+        statusMeta(outcome).tone,
+      )
+      expect(statusMeta(status).icon, `${status}: must not draw the no-data glyph`).not.toBe(NEVER.icon)
+    }
+  })
+
+  it('a run a restart cut off says so, and does not claim it timed out', () => {
+    expect(scheduleStatuses()).toContain('interrupted')
+    expect(statusMeta('interrupted').label).toBe('interrupted by a restart')
+  })
+})
+
 describe('the prefix match is bounded to whole tokens', () => {
   // The precedent: a naive substring match once captured a word's own negation. `statusMeta` matches
   // the suppression family by the `skipped_` PREFIX rather than enumerating it, so the prefix has to
@@ -169,7 +202,7 @@ describe('the prefix match is bounded to whole tokens', () => {
     // Applying the wrong one is how this test first went red — and is a smaller version of the same
     // mistake the whole issue is about.
     const byMapper: Array<[string, string[], (t: string) => { label: string }]> = [
-      ['run outcomes + hook statuses', [...pyEnumMembers(MODELS, 'Outcome'), ...hookStatuses()], (t) => statusMeta(t)],
+      ['run outcomes + hook and run statuses', [...pyEnumMembers(MODELS, 'Outcome'), ...hookStatuses(), ...scheduleStatuses()], (t) => statusMeta(t)],
       ['health rollups', pyEnumMembers(MODELS, 'TriggerHealth'), (t) => triggerHealthMeta(t, 'active')],
       ['lifecycle states', pyEnumMembers(MODELS, 'TriggerState'), (t) => triggerHealthMeta('ok', t)],
     ]
@@ -199,7 +232,7 @@ describe('the prefix match is bounded to whole tokens', () => {
     // `blocked_injection` (danger) the identical label "blocked". One word, two alarm levels, no way
     // to tell a routine hook refusal from a screened attack — this issue's defect in miniature.
     const byLabel = new Map<string, Set<string>>()
-    for (const t of [...pyEnumMembers(MODELS, 'Outcome'), ...hookStatuses()]) {
+    for (const t of [...pyEnumMembers(MODELS, 'Outcome'), ...hookStatuses(), ...scheduleStatuses()]) {
       const m = statusMeta(t)
       if (!byLabel.has(m.label)) byLabel.set(m.label, new Set())
       byLabel.get(m.label)!.add(m.tone)
@@ -277,6 +310,21 @@ describe('explainsCause gates the reason on the reason still being true', () => 
 
   it('withholds it from a row that has not run yet', () => {
     expect(explainsCause(triggerStatusMeta({ health: 'ok', hasRun: false }))).toBe(false)
+  })
+
+  it('withholds it beside a run that says nothing went wrong: late, launched, queued, held, inert', () => {
+    // 🔴 Found driving the restart review's Run now: "ran late · just now" sat above the PREVIOUS
+    // run's red error box, and the list row printed the same stale reason beside it. The gate read
+    // only the tone, and none of these is ok-green.
+    for (const s of ['ran_late', 'launched', 'queued', 'deferred', 'needs_input', 'skipped_noop', 'skipped_missed']) {
+      expect(explainsCause(triggerStatusMeta({ runStatus: s, health: 'ok', hasRun: true })), s).toBe(false)
+    }
+  })
+
+  it('still shows it beside a run that went wrong', () => {
+    for (const s of ['failure', 'timeout', 'interrupted', 'blocked_injection', 'refused']) {
+      expect(explainsCause(triggerStatusMeta({ runStatus: s, health: 'ok', hasRun: true })), s).toBe(true)
+    }
   })
 
   it('shows it for every non-ok health member and every stopped state', () => {

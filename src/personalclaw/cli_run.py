@@ -344,26 +344,25 @@ def grant_notice(session_key: str, task_mode: str) -> str:
 # ── HTTP helpers (loopback, token-authenticated) ─────────────────────────────────
 
 
-def _authed(path: str, token: str) -> str:
-    """Append ``token=`` to ``path``'s query string.
+def owner_headers(token: str) -> dict[str, str]:
+    """The owner token as the ``Authorization: Bearer`` header every CLI request carries.
 
-    The token MUST ride the query string. ``token_auth`` reads primary owner auth from
-    ``?token=`` or the ``pc_token_<port>`` cookie ONLY — its ``Authorization: Bearer``
-    branch is the app-token NARROWING path (it adopts an ``app`` claim for an
-    already-authenticated owner) and never authenticates on its own. Measured: sending
-    the readiness token as a Bearer header returned ``403 {"error": "Token required"}``.
+    Never the URL: a ``?token=`` rides into the process list, shell history, a proxy's access
+    log and the repr of every client error that names the URL. ``?token=`` is the browser's
+    entry link, which the gateway exchanges for a session cookie; a CLI has no cookie jar to
+    keep one in, and the header is the stateless carrier for exactly that credential.
     """
-    return f"{path}{'&' if '?' in path else '?'}token={token}"
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _api(port: int, token: str, path: str, body: dict | None = None) -> dict:
     """One loopback API call. Returns the decoded JSON object."""
     data = json.dumps(body or {}).encode() if body is not None else None
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{_authed(path, token)}",
+        f"http://127.0.0.1:{port}{path}",
         data=data,
         method="POST" if data is not None else "GET",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **owner_headers(token)},
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
@@ -444,10 +443,10 @@ async def _consume(
     import aiohttp
 
     base = f"http://127.0.0.1:{port}"
-    async with aiohttp.ClientSession() as http:
-        async with http.ws_connect(base + _authed("/api/ws", token)) as ws:
+    async with aiohttp.ClientSession(headers=owner_headers(token)) as http:
+        async with http.ws_connect(base + "/api/ws") as ws:
             resp = await http.post(
-                base + _authed("/api/chat?ws=1", token),
+                base + "/api/chat?ws=1",
                 json={"message": prompt, "session": collector.session_key},
             )
             async with resp:

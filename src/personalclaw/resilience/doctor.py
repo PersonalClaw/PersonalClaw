@@ -1869,9 +1869,12 @@ async def _probe_sandbox_cgroup_scopes(ctx: DoctorContext) -> ProbeResult:
 async def _probe_timezone(_ctx: DoctorContext) -> ProbeResult:
     """scheduling — which zone a timed trigger's wall clock is read in (#2520).
 
-    A WARN (`ok=False` at tier 3, so it degrades this card and nothing else) for exactly two
-    states, both of which silently relocate every reminder:
+    A WARN (`ok=False` at tier 3, so it degrades this card and nothing else) for exactly three
+    states, each of which silently relocates every reminder:
 
+      * the IANA timezone database cannot be read, so no named zone loads and schedules fire
+        at **UTC**. A broken install, never a verdict on the user's zone, so `config_ok` is
+        `None` rather than `False`;
       * the machine's zone cannot be determined, so schedules fall back to **UTC**. The detail
         names the CONSEQUENCE in hours — "timed triggers will fire at UTC, which is 7 hour(s)
         off this host's local time" — rather than reporting the condition, because "timezone
@@ -1893,9 +1896,13 @@ async def _probe_timezone(_ctx: DoctorContext) -> ProbeResult:
             ok=False,
             detail=facts["warning"],
             evidence=evidence,
+            # `setup` checks the zone it saves, so it cannot help while nothing can be checked.
             remedy=(
                 "No automatic fix — set the zone your schedules should use with "
                 "`personalclaw setup`."
+                if facts["database_available"]
+                else "No automatic fix — reinstall PersonalClaw so its `tzdata` dependency is "
+                "present, then run `personalclaw doctor` again."
             ),
         )
     return ProbeResult(

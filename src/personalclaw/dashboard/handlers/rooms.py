@@ -25,8 +25,9 @@ The human is the only caller that reaches these routes. Two routes run anything 
 posting a message hands the room to ``rooms.arbiter`` (see :func:`api_room_message_post`),
 which decides the speaker order, bounds the round, and drives each member's turn through
 ``rooms.turn``; and continuing an interrupted room (:func:`api_room_continue`) restarts the
-round a stopped gateway left owing. The cursors that keep that feed from re-sending what a
-member has already read are `AR-4`.
+round a stopped gateway left owing. Each member is fed only what it has not read of the
+transcript (``rooms.cursors``), and no route reads or writes those cursors: an unreadable one
+refuses that member's turn inside the round, and the room says so in the member's slot.
 """
 
 from __future__ import annotations
@@ -87,6 +88,12 @@ _REFUSALS: dict[str, Callable[[str], web.Response]] = {
     # 503 — the roster is unknown, so the request is refused rather than half-answered.
     "room_state_unreadable": lambda msg: json_error(
         "room_state_unreadable", message=msg, status=503
+    ),
+    # 503 — how far each member has read is unknown, so a turn is refused rather than guessed.
+    # Raised on the turn path only, where the arbiter writes it into the room as that member's
+    # failed turn; the row is what keeps this table exhaustive over every RoomError.
+    "room_cursor_unreadable": lambda msg: json_error(
+        "room_cursor_unreadable", message=msg, status=503
     ),
     # 404 — the addressed room or member does not exist.
     "room_not_found": lambda msg: json_error("room_not_found", message=msg, status=404),

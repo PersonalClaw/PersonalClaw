@@ -443,3 +443,56 @@ async def test_proxy_backend_not_running_speaks_owned_copy(monkeypatch):
     resp = await _proxy_call()
     assert resp.status == 502
     assert json.loads(resp.text)["error"] == _NOT_RUNNING_COPY
+
+
+@pytest.mark.asyncio
+async def test_proxy_never_forwards_a_credential_riding_the_query(monkeypatch):
+    """The proxy strips the owner's cookie and ``Authorization`` because an app backend must
+    never hold a token it could replay against the gateway — and it forwarded the QUERY as it
+    came, so ``/apps/<name>/api/…?token=<owner token>`` handed the backend the very credential
+    the header strip withholds (and put it in the proxy's own failure log line, which names
+    the upstream URL). ``?app_token=`` is a credential too: another app's, on this route.
+
+    Asserted on what the proxy SENDS, and on the signature covering exactly that target, so
+    the strip cannot be satisfied by forwarding one URL and signing another.
+    """
+    import aiohttp
+    from aiohttp.test_utils import make_mocked_request
+    from yarl import URL
+
+    from personalclaw.dashboard.handlers.apps import api_app_proxy
+    from personalclaw.sdk.security import PROXY_SIGNATURE_HEADER, _verify
+
+    _patch_proxy_world(monkeypatch)
+    sent: dict = {}
+
+    class _CapturingSession:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def request(self, method, url, **kwargs):
+            sent.update(method=method, url=URL(url), headers=kwargs.get("headers") or {})
+            raise RuntimeError("captured before any bytes left")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _CapturingSession)
+    req = make_mocked_request(
+        "GET",
+        "/apps/demo/api/things?token=OWNER-SECRET&q=1&app_token=OTHER-APP",
+        match_info={"name": "demo", "tail": "things"},
+    )
+    await api_app_proxy(req)
+
+    assert sent, "the proxy never reached the upstream call"
+    forwarded = sent["url"]
+    assert dict(forwarded.query) == {"q": "1"}, f"a credential rode through: {forwarded}"
+    assert "OWNER-SECRET" not in str(forwarded) and "OTHER-APP" not in str(forwarded)
+    ok, why = _verify(
+        _SECRET, "GET", forwarded.raw_path_qs, b"", sent["headers"][PROXY_SIGNATURE_HEADER], 60
+    )
+    assert ok, f"the signature does not cover the target that was sent: {why}"

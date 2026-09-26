@@ -15,7 +15,7 @@ import type { WorkBoard, WorkGroup, WorkRow } from '../../lib/api'
 
 function row(over: Partial<WorkRow> = {}): WorkRow {
   return {
-    run_id: 'r1', title: 'A run', state: 'working', origin: 'manual', project_id: 'p1',
+    run_id: 'r1', title: 'A run', state: 'working', source: 'run', kind: '', origin: 'manual', project_id: 'p1',
     claim: null, collapsed: false, attention: false, resumable: false, outcome: '', ...over,
   }
 }
@@ -62,7 +62,9 @@ describe('WorkBoardColumn', () => {
     expect(screen.getByText('Still here')).toBeTruthy()
   })
 
-  it('offers Resume on a suspended (resumable) row and calls back with the run id', () => {
+  it('offers Resume on a suspended (resumable) row and calls back with the ROW', () => {
+    // The row, not its id: a run and a legacy loop both carry their id in `run_id`, and only the
+    // row's `source`/`kind` say which resume applies and where it opens.
     const onResume = vi.fn()
     const wb = board({
       board: [group('suspended', [row({ run_id: 'sus1', title: 'Paused work', state: 'suspended', resumable: true })])],
@@ -70,7 +72,7 @@ describe('WorkBoardColumn', () => {
     render(<WorkBoardColumn work={wb} loading={false} onResume={onResume} />)
     const btn = screen.getByTitle('Resume this suspended work')
     fireEvent.click(btn)
-    expect(onResume).toHaveBeenCalledWith('sus1')
+    expect(onResume).toHaveBeenCalledWith(expect.objectContaining({ run_id: 'sus1', source: 'run' }))
   })
 
   it('renders a claim badge naming the holder', () => {

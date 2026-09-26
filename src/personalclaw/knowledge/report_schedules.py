@@ -96,14 +96,26 @@ def _effective_tz(defn: ReportDefinition) -> str:
     `arm._trigger_tz` call, so the two sides cannot disagree about what "resolved" means. An
     unusable `defn.tz` still writes no key rather than raising: a schedule must stay writable
     while its zone is being corrected, and `arm.semantic_spec_issues` names the bad zone.
-    """
-    from personalclaw.timezones import UnknownTimeZone, resolve_zone_name
 
+    A `defn.tz` that cannot be checked because the timezone database is unreadable is kept as
+    written. What this returns is STORED in the trigger spec, so the UTC the fire path uses
+    meanwhile (`timezones.resolve_zone`) must not be: it would outlive the outage.
+    """
+    from personalclaw.timezones import (
+        TimeZoneDatabaseUnavailable,
+        UnknownTimeZone,
+        resolve_zone_name,
+    )
+
+    declared = str(getattr(defn, "tz", "") or "").strip()
     try:
-        return resolve_zone_name(str(getattr(defn, "tz", "") or "").strip())[0]
+        return resolve_zone_name(declared)[0]
     except UnknownTimeZone as exc:
         logger.warning("report %s: %s", getattr(defn, "id", ""), exc)
         return ""
+    except TimeZoneDatabaseUnavailable as exc:
+        logger.warning("report %s: %s", getattr(defn, "id", ""), exc)
+        return declared
 
 
 def clock_spec(defn: ReportDefinition) -> dict[str, Any]:
