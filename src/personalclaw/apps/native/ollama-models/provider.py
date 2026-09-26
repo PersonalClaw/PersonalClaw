@@ -69,6 +69,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     get_default_registry,
     infer_capabilities,
     make_think_splitter,
+    output_cap,
     per_call_temperature,
     prompt_text_chars,
 )
@@ -1051,13 +1052,22 @@ def _factory(
     # only `model`, `messages` and `stream`, so N paid calls sampled ONE answer N times. The
     # per-call value wins over an entry-level one: the caller asking for THIS temperature is
     # more specific than the instance default (the SDK's branded factory makes the same call).
+    _existing = options.get(_WIRE_OPTIONS)
+    wire: dict[str, object] = dict(_existing) if isinstance(_existing, dict) else {}
     _temperature = per_call_temperature(kwargs)
     if _temperature is not None:
-        _wire = options.get(_WIRE_OPTIONS)
-        options[_WIRE_OPTIONS] = {
-            **(_wire if isinstance(_wire, dict) else {}),
-            "temperature": _temperature,
-        }
+        wire["temperature"] = _temperature
+    # The output budget core derived for this call (the ``max_tokens`` build kwarg, #3595) goes
+    # where ollama reads a cap: ``options.num_predict``. This factory dropped it, so a one-shot
+    # call generated until the model stopped, whatever core had sized the reply to. An entry that
+    # sets ``num_predict`` itself keeps it (``-1``, unbounded, included); a top-level
+    # ``max_tokens`` option, which ollama does not read, is taken as the entry's cap instead.
+    if "num_predict" not in wire:
+        _cap = output_cap(options.pop("max_tokens", None), kwargs.get("max_tokens"))
+        if _cap is not None:
+            wire["num_predict"] = _cap
+    if wire:
+        options[_WIRE_OPTIONS] = wire
     # Routing and label fields are not request parameters: everything left in `options` is
     # `setdefault`-ed onto the request body, so `default_model` (which the "Add instance" form
     # writes) reached the wire as a top-level key on every call.

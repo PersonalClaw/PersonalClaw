@@ -1969,3 +1969,19 @@ def test_a_per_call_temperature_reaches_the_sampler(rail):
     entry = ProviderEntry(name=APP_NAME, type=rail.PROVIDER_TYPE, model="m", options={})
     assert rail._factory(entry=entry, temperature=0.9).sampling_temperature == 0.9
     assert rail._factory(entry=entry).sampling_temperature == rail.DEFAULT_TEMPERATURE
+
+
+def test_the_output_budget_shortens_a_reply_and_never_lengthens_it(rail):
+    """The ``max_tokens`` build kwarg is the budget core derived for this call. The factory dropped
+    it, so a call that needed a short answer still waited for the full reply length. It only ever
+    LOWERS the cap: "Maximum reply length" is the user's bound on how long a CPU reply may take."""
+    entry = ProviderEntry(name=APP_NAME, type=rail.PROVIDER_TYPE, model="m", options={})
+    assert rail._factory(entry=entry, max_tokens=64)._max_output_tokens == 64
+    assert rail._factory(entry=entry, max_tokens=4096)._max_output_tokens == (
+        rail.DEFAULT_MAX_OUTPUT_TOKENS
+    )
+    assert rail._factory(entry=entry)._max_output_tokens == rail.DEFAULT_MAX_OUTPUT_TOKENS
+    capped = ProviderEntry(
+        name=APP_NAME, type=rail.PROVIDER_TYPE, model="m", options={"max_output_tokens": 40}
+    )
+    assert rail._factory(entry=capped, max_tokens=64)._max_output_tokens == 40

@@ -2050,6 +2050,7 @@
     "params": [],
     "returns": "None"
    },
+   "unsent_options": {"kind": "property", "returns": "dict[str, str]", "settable": false},
    "wait_for_compaction": {
     "kind": "async method",
     "params": [
@@ -6186,6 +6187,7 @@
     "params": [],
     "returns": "None"
    },
+   "unsent_options": {"kind": "property", "returns": "dict[str, str]", "settable": false},
    "wait_for_compaction": {
     "kind": "async method",
     "params": [
@@ -6557,6 +6559,7 @@
     "params": [],
     "returns": "None"
    },
+   "unsent_options": {"kind": "property", "returns": "dict[str, str]", "settable": false},
    "wait_for_compaction": {
     "kind": "async method",
     "params": [

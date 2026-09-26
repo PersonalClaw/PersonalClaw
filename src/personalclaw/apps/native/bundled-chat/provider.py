@@ -100,6 +100,7 @@ from personalclaw.sdk.model import (
     ProviderResolutionError,
     StructuredOutput,
     get_default_registry,
+    output_cap,
     per_call_temperature,
 )
 from personalclaw.sdk.prompt import USER_REQUEST_MARKER
@@ -1653,12 +1654,21 @@ def _factory(
     A per-call ``temperature`` build kwarg (best-of-N's ladder) wins over both — the caller
     asking for THIS temperature is more specific than the default. Every build kwarg used to
     be discarded here, so best-of-N on the bundled floor sampled N greedy copies of one answer.
+
+    The output budget core derived for this call (the ``max_tokens`` build kwarg) caps the reply
+    too, but only DOWNWARD: "Maximum reply length" is the user's bound on how long a CPU-bound
+    reply may take, so a budget above it — a window-table fallback's 4096 — must not lengthen
+    replies past it, while a call that needs less does not wait for the rest.
     """
     del session_key  # stateless, credential-free
     options = {**ProviderSettings.load(APP_NAME), **dict(entry.options or {})}
     temperature = per_call_temperature(kwargs)
     if temperature is not None:
         options["temperature"] = temperature
+    budget = output_cap(None, kwargs.get("max_tokens"))
+    if budget is not None:
+        configured = _positive_int(options.get("max_output_tokens"), DEFAULT_MAX_OUTPUT_TOKENS)
+        options["max_output_tokens"] = min(configured, budget)
     return BundledChatProvider(options)
 
 

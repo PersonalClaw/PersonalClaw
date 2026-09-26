@@ -343,6 +343,55 @@ def infer_capabilities(model_id: str, families: list[str] | None = None) -> list
     return caps
 
 
+# ── Sampling request parameters (provider-agnostic model knowledge) ─────────────
+#
+# Which sampling parameters a model REFUSES is a fact about the model, like its capability tags
+# above, so it is classified here from the model id rather than inside a protocol client. It is
+# the same class of data as those markers and ``model_tokens.json``: reference data about a
+# vendor's API, consulted by id when a request is built. There is no record to read it from
+# instead: the vendor's Models API describes thinking, effort and input types per model, and
+# nothing about sampling. It only ever REMOVES a parameter the vendor documents a model refusing,
+# and says why; a model this table does not name is sent everything it was asked for.
+
+#: The sampling request parameters :func:`refused_sampling` classifies.
+SAMPLING_PARAMETERS = ("temperature", "top_p", "top_k")
+
+#: Model families that refuse a custom ``temperature``, ``top_p`` and ``top_k``: the vendor
+#: answers 400 on Claude Opus 4.7 and later, the Claude Fable and Mythos 5 lines, and — for any
+#: non-default value — Claude Sonnet 5.
+_FIXED_SAMPLING_MARKERS = (
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+)
+#: Families that take a ``temperature`` or a ``top_p``, not both: every other Claude 4 model.
+_TEMPERATURE_OR_TOP_P_MARKERS = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
+
+
+def refused_sampling(model_id: str, requested: tuple[str, ...] | list[str]) -> dict[str, str]:
+    """The sampling parameters in ``requested`` that ``model_id`` refuses, each with the reason.
+
+    ``requested`` is the sampling parameters a request is about to carry, in priority order: when
+    a model takes only one of ``temperature`` and ``top_p``, the one listed first is kept. The
+    reason is a sentence a user may be shown. ``{}`` means nothing is known to be refused.
+    """
+    wanted = [p for p in requested if p in SAMPLING_PARAMETERS]
+    mid = (model_id or "").strip().lower().replace(".", "-")
+    if not wanted or not mid:
+        return {}
+    shown = (model_id or "").strip()
+    if any(m in mid for m in _FIXED_SAMPLING_MARKERS):
+        return {p: f"{shown} does not accept a custom {p}" for p in wanted}
+    if any(m in mid for m in _TEMPERATURE_OR_TOP_P_MARKERS):
+        pair = [p for p in wanted if p in ("temperature", "top_p")]
+        if len(pair) == 2:
+            return {pair[1]: f"{shown} takes a temperature or a top_p, not both"}
+    return {}
+
+
 # ── Shared OpenAI-compatible protocol helper ──────────────────────────────────
 #
 # The GET /v1/models client is the same for every OpenAI-compatible endpoint —

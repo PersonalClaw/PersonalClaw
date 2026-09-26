@@ -394,6 +394,21 @@ async def test_every_candidate_request_carries_its_own_temperature_on_the_wire(
         assert all(c["sampled_at"] == c["temperature"] for c in slate["candidates"]), slate
 
 
+async def test_every_candidate_request_carries_the_output_budget_core_derived(
+    monkeypatch, tmp_path
+):
+    """The budget `one_shot_completion` derives (`_wired` pins it at 256) is `options.num_predict`
+    on the wire — the one cap ollama reads. The factory dropped the `max_tokens` build kwarg, so
+    every candidate generated until the model stopped."""
+    async with _wired(monkeypatch, tmp_path) as (fake, supervisor):
+        fake.up = True
+        run_id = await _start(supervisor, n=2)
+        assert await _terminal(supervisor, run_id) is RunStatus.COMPLETE
+
+        caps = [(body.get("options") or {}).get("num_predict") for body in fake.sample_requests()]
+        assert caps == [256, 256], caps
+
+
 # ── usage ────────────────────────────────────────────────────────────────────
 
 

@@ -332,12 +332,16 @@ def _register_cell_type(binding: CellProviderBinding) -> str:
         options = dict(entry.options or {})
         options.pop("base_url", None)
         options.pop("endpoint", None)
+        # `kwargs` carries what the call asked for — the bound model, a per-call temperature,
+        # the output budget. This factory used to drop all of it, so a best-of-N inside a cell
+        # sampled one answer N times, and no call got the budget core sized for it.
         return build_protocol_provider(
             spec,
             model=entry.model or binding.model,
             credential=credential,
             base_url=binding.base_url,
             extra_options=options,
+            build_kwargs=kwargs,
         )
 
     capability = ProviderCapability(

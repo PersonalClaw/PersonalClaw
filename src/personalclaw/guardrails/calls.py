@@ -49,6 +49,9 @@ class ModelCall:
     model: str
     #: The temperature the adapter put on the request, or ``None`` when it sent none.
     temperature: float | None = None
+    #: Options the adapter was given and left off the request, each with the reason
+    #: (:attr:`ModelProvider.unsent_options`) — why ``temperature`` is ``None`` when one was asked.
+    unsent: dict[str, str] = field(default_factory=dict)
     state: str = OPEN
     input_tokens: int = 0
     output_tokens: int = 0
@@ -143,7 +146,13 @@ def capture_model_calls() -> Iterator[CallLog]:
         _BOUND.reset(token)
 
 
-def open_call(provider: str, model: str, *, temperature: float | None) -> ModelCall | None:
+def open_call(
+    provider: str,
+    model: str,
+    *,
+    temperature: float | None,
+    unsent: dict[str, str] | None = None,
+) -> ModelCall | None:
     """Record the start of one model call on every bound log. ``None`` when nothing is bound.
 
     The ONE object is appended to each log, so settling it (the guard mutates the returned call)
@@ -152,7 +161,9 @@ def open_call(provider: str, model: str, *, temperature: float | None) -> ModelC
     logs = _BOUND.get()
     if not logs:
         return None
-    call = ModelCall(provider=provider, model=model, temperature=temperature)
+    call = ModelCall(
+        provider=provider, model=model, temperature=temperature, unsent=dict(unsent or {})
+    )
     for log in logs:
         log.calls.append(call)
     return call
