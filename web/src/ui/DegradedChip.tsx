@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, CloudOff, Sparkles } from 'lucide-react'
-import { api, type DegradedSurface } from '../lib/api'
+import { api, type ChatProviderConnection, type DegradedSurface } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { useIsMobile } from '../app/useIsMobile'
 import { TextLink } from './TextLink'
@@ -37,6 +37,10 @@ function useCaseLabel(uc: string): string {
  *  expand a popover listing each degraded surface, its floor, and its backlog. */
 export function DegradedChip() {
   const [surfaces, setSurfaces] = useState<DegradedSurface[] | null>(null)
+  /** The chat instance's last MEASURED connection (the report reads it from the gateway's cache,
+   *  never probing). A surface's `available` only says a model RESOLVES — no network call — so a
+   *  bound provider that is down left every surface "available" and this chip silent. */
+  const [chatProvider, setChatProvider] = useState<ChatProviderConnection | null>(null)
   /** True while the degraded read is failing. Paired with `surfaces === null` it means "we have
    *  never been told", which must not render as "nothing is degraded". */
   const [unread, setUnread] = useState(false)
@@ -78,7 +82,7 @@ export function DegradedChip() {
   const isMobile = useIsMobile()
 
   useVisiblePoll(() => {
-    api.degraded().then((r) => { setSurfaces(r.surfaces); setUnread(false) })
+    api.degraded().then((r) => { setSurfaces(r.surfaces); setUnread(false); setChatProvider(r.chat_provider ?? null) })
       // 🔴 `catch(() => {})` left `surfaces` null, and null renders NOTHING — the same absence as
       // "every surface has a model". Measured with only `/api/resilience/degraded` at 500 and the rest
       // of the gateway healthy: SEVEN degraded surfaces, no chip, and the sibling connectivity
@@ -104,7 +108,9 @@ export function DegradedChip() {
   // Never answered AND the read is failing → say so; `SystemWidget` sets `disconnected` from exactly
   // this signal, so the shell already has the vocabulary for "we asked and could not tell".
   const unknown = surfaces === null && unread
-  if (down.length === 0 && !unknown) return null
+  // A model resolves, but the instance it resolves to failed its last connection test.
+  const providerDown = !unknown && chatProvider?.state === 'failed' ? chatProvider : null
+  if (down.length === 0 && !unknown && !providerDown) return null
 
   const worst = down[0]
   // Setup-land: nothing in config.json has ever been bound, so nothing "degraded" —
@@ -116,6 +122,8 @@ export function DegradedChip() {
   const summary = unknown
     ? 'Status unknown'
     : setupLand ? 'Set up a model'
+    // Chat not answering outranks a surface on its floor: it is the failure a user hits next.
+    : providerDown ? 'Chat provider not answering'
     : down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
   const detail = unknown
     ? 'Status unknown — the degraded-surfaces check could not be read, so this may be hiding a surface running without a model'
@@ -132,7 +140,9 @@ export function DegradedChip() {
     // user reads. (`title` can still reach AT as a *description*, which is a weaker claim.)
     : setupLand
       ? 'No model provider is configured yet — click to see what unlocks once you bind one'
-      : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
+      : providerDown
+        ? `Your chat model's provider (${providerDown.provider}) isn't answering${down.length ? ` and ${down.length} surface${down.length === 1 ? ' is' : 's are'} running without a model` : ''} — click for detail`
+        : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
   const FaceIcon = setupLand ? Sparkles : CloudOff
   return (
     <div className="relative">
@@ -171,8 +181,28 @@ export function DegradedChip() {
             className="absolute right-0 z-50 mt-1.5 w-80 rounded-xl bg-surface-container p-3 shadow-lg"
             style={{ border: '1px solid var(--color-outline-variant)' }}>
             <div data-type="body-s" className="mb-2 flex items-center gap-1.5 text-on-surface" style={{ color: 'var(--color-warn)' }}>
-              <CloudOff size={14} /> {unknown ? 'Could not read the check' : 'Running without a model'}
+              <CloudOff size={14} /> {unknown ? 'Could not read the check' : down.length === 0 ? 'Chat provider not answering' : 'Running without a model'}
             </div>
+            {/* The provider half: chat is bound, and the instance it is bound to failed its last
+                connection test. Stated with the test's own sentence (what failed, why, what to do)
+                and a way to the one place it is fixed — the instance's card, whose Test, Edit and
+                Remove all live in Settings → Providers. */}
+            {providerDown && (
+              <div className="mb-2 border-b border-outline-variant/30 pb-2">
+                <div data-type="body-s" className="text-on-surface">
+                  Your chat model's provider, {providerDown.provider}, isn't answering.
+                </div>
+                {providerDown.detail && (
+                  <div data-type="caption" className="mt-0.5 text-on-surface-var">{providerDown.detail}</div>
+                )}
+                <div className="mt-1">
+                  <TextLink href="#/settings/providers" icon={ArrowRight} iconPosition="trailing" size="xs"
+                    onClick={() => { setOpen(false); triggerRef.current?.focus() }}>
+                    {providerDown.rejected_credential ? 'Update its key in Settings → Providers' : 'Check it in Settings → Providers'}
+                  </TextLink>
+                </div>
+              </div>
+            )}
             {/* An unknown state has no rows to list, so the popover says what it does not know rather
                 than opening empty. It deliberately does NOT claim a fault: the surfaces may all be
                 fine, and asserting a problem we have not measured is the same error in reverse. */}

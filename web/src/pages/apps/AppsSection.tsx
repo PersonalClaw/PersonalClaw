@@ -65,6 +65,9 @@ export interface StoreItem extends AppCatalogEntry {
   native?: boolean
   /** Has a settings surface — drives whether a native app shows "Configure". */
   hasConfig?: boolean
+  /** A multi-instance provider: no app-level settings — its instances are managed in
+   *  Settings → Providers, which is where its "Manage instances" action goes. */
+  configuredPerInstance?: boolean
   /** Provenance for the source divider: builtin/registry origin → "Built-in";
    *  a git URL or a local path → that source. */
   origin?: string
@@ -83,7 +86,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     icon: a.icon, heroUrl: a.heroUrl, author: '', source: a.source ?? '', sourceKind: 'bundled',
     isProvider: a.isProvider, providerType: a.providerType, tags: a.tags ?? [],
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
-    native: !!a.native, hasConfig: a.hasConfig, origin: a.origin,
+    native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, origin: a.origin,
     updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion,
     // APE-4: carried, not defaulted. Coercing an installed app's absent block to `{}`
     // here would be harmless today but would make the Library the one surface that
@@ -180,7 +183,7 @@ function SourceDivider({ label, count }: { label: string; count: number }) {
 type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 'force-uninstall'
 // Carries the DISPLAY NAME as well as the slug: the slug is the API's identifier, the display
 // name is the only one a person recognises, and a dialog title is a sentence for the person.
-type DispatchAppAction = (app: { name: string; displayName: string; enabled: boolean; hasUI: boolean }, action: AppActionKind) => void
+type DispatchAppAction = (app: { name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean }, action: AppActionKind) => void
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
  *  modals ONCE at the host level. Returns a `dispatch` both the cards and the
@@ -198,7 +201,11 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
   const dispatch: DispatchAppAction = (app, action) => {
     switch (action) {
       case 'open': nav(`app/${encodeURIComponent(app.name)}`); return
-      case 'configure': setConfigFor({ name: app.name, displayName: app.displayName }); return
+      // An app configured per instance has no app-level settings to open: its instances are
+      // managed in Settings → Providers, and its Configure goes there instead.
+      case 'configure':
+        if (app.configuredPerInstance) { nav('settings/providers'); return }
+        setConfigFor({ name: app.name, displayName: app.displayName }); return
       case 'update': setUpdateFor({ name: app.name, displayName: app.displayName }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
       case 'force-uninstall': setUninstallFor({ name: app.name, displayName: app.displayName }); return
@@ -237,7 +244,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
  *  detail panel. Enable/disable, configure, update, open, force-uninstall; a
  *  platform provider shows only "Open page" (it has no install lifecycle). */
 function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: DispatchAppAction }) {
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance }
   return (
     <Popover align="right" placement="bottom" width={200}
       // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
@@ -263,15 +270,17 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
             // only when it has a settings surface (hasConfig); a config-less provider
             // (filesystem/tools) is managed from the Tools page instead.
             <>
-              {item.hasConfig
-                ? <MenuRow icon={<Settings2 size={15} />} label="Configure" onClick={() => { onAction(app, 'configure'); close() }} />
-                : <div className="px-m py-2 text-on-surface-low text-[0.75rem]">Always on — manage its tools from the Tools page.</div>}
+              {item.configuredPerInstance
+                ? <MenuRow icon={<Settings2 size={15} />} label="Manage instances" onClick={() => { onAction(app, 'configure'); close() }} />
+                : item.hasConfig
+                  ? <MenuRow icon={<Settings2 size={15} />} label="Configure" onClick={() => { onAction(app, 'configure'); close() }} />
+                  : <div className="px-m py-2 text-on-surface-low text-[0.75rem]">Always on — manage its tools from the Tools page.</div>}
               <MenuRow icon={<RefreshCw size={15} />} label="Update…" onClick={() => { onAction(app, 'update'); close() }} />
               <div className="px-m py-1.5 text-on-surface-low text-[0.75rem]">Native app — always on, can't be deactivated.</div>
             </>
           ) : (
             <>
-              {item.enabled && <MenuRow icon={<Settings2 size={15} />} label="Configure" onClick={() => { onAction(app, 'configure'); close() }} />}
+              {item.enabled && <MenuRow icon={<Settings2 size={15} />} label={item.configuredPerInstance ? 'Manage instances' : 'Configure'} onClick={() => { onAction(app, 'configure'); close() }} />}
               <MenuRow icon={<RefreshCw size={15} />} label="Update…" onClick={() => { onAction(app, 'update'); close() }} />
               <MenuRow icon={<Power size={15} />} label={item.enabled ? 'Deactivate' : 'Activate'} onClick={() => { onAction(app, 'toggle'); close() }} />
               <div className="my-1 border-t border-outline-variant/30" />
@@ -744,7 +753,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
             onClose={() => setOpenName('')}>
             {open ? (
               <AppDetailPanel app={open} onClose={() => setOpenName('')} onChanged={reload}
-                onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)} />
+                onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)}
+                onManageInstances={() => nav('settings/providers')} />
             ) : (
               <StoreDetailPanel item={openStore!} onInstalled={noteInstalled} />
             )}
@@ -1187,7 +1197,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance }
   // Right-click / long-press → the SAME real actions this card dispatches. A native
   // app is always-on (no install lifecycle): omit uninstall/toggle + force-uninstall,
   // and show "Configure" only when it has settings (hasConfig) — a config-less native
@@ -1196,7 +1206,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
     ? [
         { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
         ...(item.hasUI && item.enabled ? [{ icon: <LayoutGrid size={15} />, label: 'Open page', onSelect: () => onAction(app, 'open') }] : []),
-        ...((item.enabled && (!item.native || item.hasConfig)) ? [{ icon: <Settings2 size={15} />, label: 'Configure', onSelect: () => onAction(app, 'configure') }] : []),
+        ...((item.enabled && (!item.native || item.hasConfig || item.configuredPerInstance)) ? [{ icon: <Settings2 size={15} />, label: item.configuredPerInstance ? 'Manage instances' : 'Configure', onSelect: () => onAction(app, 'configure') }] : []),
         { icon: <RefreshCw size={15} />, label: 'Update…', onSelect: () => onAction(app, 'update') },
         // A native app is locked on — omit uninstall/disable + force-uninstall.
         ...(item.native ? [] : [
@@ -1497,7 +1507,11 @@ function UpdateModal({ name, displayName, onClose, onUpdated }: {
 
 
 // ── Detail panel ──
-function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; onClose: () => void; onChanged: () => void; onOpen: () => void }) {
+function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: {
+  app: AppSummary; onClose: () => void; onChanged: () => void; onOpen: () => void
+  /** Where an app configured per instance is configured: Settings → Providers. */
+  onManageInstances: () => void
+}) {
   const [busy, setBusy] = useState(false)
   const [confirmUninstall, setConfirmUninstall] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
@@ -1595,16 +1609,20 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
             <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
               <div className="flex items-center gap-2 text-on-surface"><Power size={14} /> Native app — always on</div>
               <div className="mt-1 text-on-surface-low" data-type="label-s">
-                {app.hasConfig
-                  ? "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. You can change its settings below."
-                  : "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. Manage its individual tools from the Tools page."}
+                {app.configuredPerInstance
+                  ? "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. Its settings live on each of its instances, which you add, edit, test and remove in Settings → Providers."
+                  : app.hasConfig
+                    ? "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. You can change its settings below."
+                    : "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. Manage its individual tools from the Tools page."}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
               {app.hasUI && app.enabled && (
                 <Button variant="primary" size="sm" onClick={onOpen}><LayoutGrid size={15} /> Open</Button>
               )}
-              {app.hasConfig && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
+              {app.configuredPerInstance
+                ? <Button variant="ghost" size="sm" onClick={onManageInstances}><Settings2 size={15} /> Manage instances</Button>
+                : app.hasConfig && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
               <Button variant="ghost" size="sm" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
             </div>
           </>
@@ -1620,7 +1638,9 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
             <Button variant={app.enabled ? 'secondary' : 'primary'} size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={toggle}>
               <Power size={15} /> {app.enabled ? 'Deactivate' : 'Activate'}
             </Button>
-            {app.enabled && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
+            {app.enabled && (app.configuredPerInstance
+              ? <Button variant="ghost" size="sm" onClick={onManageInstances}><Settings2 size={15} /> Manage instances</Button>
+              : <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>)}
             <Button variant="ghost" size="sm" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
             {/* The middle removal rung, and a REAL control at last: the force-uninstall
                 dialog has always told users to "use Uninstall instead", and until issue

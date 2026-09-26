@@ -158,6 +158,9 @@ describe('the rail: no icon-only button ships without a name', () => {
     // converted one — either way it should be a deliberate diff, not a silent drift.
     const titledOnly = scanned.flatMap(({ rel, buttons }) =>
       buttons.filter((b) => !b.named && b.titled).map((b) => `${rel}:${b.line}`))
-    expect(titledOnly.length, `title-only icon buttons:\n  ${titledOnly.join('\n  ')}`).toBe(9)
+    // 5, down from 9: the four title-only buttons (refresh, details, delete, retry) of the
+    // Ollama-only model manager went with that file — it was unreachable, and Ollama's card is now
+    // `LocalModelManager`, whose buttons are named.
+    expect(titledOnly.length, `title-only icon buttons:\n  ${titledOnly.join('\n  ')}`).toBe(5)
   })
 })

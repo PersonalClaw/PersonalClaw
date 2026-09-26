@@ -25,7 +25,8 @@ from personalclaw.llm.registry import ProviderEntry
 
 
 class _Registry:
-    """Only what the list route reads: the entries, and a type with no static descriptor."""
+    """Only what the list route reads: the entries, a type with no static descriptor, and the
+    catalog a listed instance's connection is measured with (none here: never measured)."""
 
     def __init__(self, entries):
         self._entries = entries
@@ -35,6 +36,9 @@ class _Registry:
 
     def capability_of(self, _type):
         raise LookupError("no capability descriptor")
+
+    def build_catalog(self, _entry):
+        return None
 
 
 async def _listed(monkeypatch, tmp_path, entries) -> list[str]:

@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, RefreshCw, Beaker, Plug, PlugZap, Loader2 } from 'lucide-react'
+import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, RefreshCw, Beaker, Plug, PlugZap, Loader2, HelpCircle } from 'lucide-react'
 import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
+import { reportingWrite } from '../../app/reportingWrite'
 import { Toggle } from './settingsUI'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ProviderConfigForm } from './ProviderConfigForm'
@@ -20,13 +21,29 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
 }) {
   const [busy, setBusy] = useState(false)
   const [rechecking, setRechecking] = useState(false)
+  const [measuring, setMeasuring] = useState(false)
   const hasConfig = !!ext.enabled && ext.provider?.hasConfigSchema === true
-  const unavailable = ext.available === false
+  // Measured by the gateway in a child process, never on this request: a card the gateway has
+  // not measured yet reads `checking` (the list no longer waits on an app's hook — one of them
+  // held it for 171 s). `unknown` is "the check could not answer", which is not the app's "no".
+  const availability = ext.availability?.state ?? 'available'
+  const unavailable = availability === 'unavailable'
+  const unknown = availability === 'unknown'
+  const checking = availability === 'checking' || measuring
+  const reason = ext.availability?.reason ?? ''
   // A managed provider is an app (install/uninstall = on/off). A non-managed one
   // is an always-on native built-in — mandatory, shown without a toggle.
   /** What the card's own title shows — the subject every control here acts on. */
   const who = ext.displayName || ext.name
   const managed = ext.managed === true
+  // "Check again" — the facts a hook reads change exactly when the user installs a package or
+  // signs a CLI in, so the card offers the re-measure beside the answer it would change.
+  const checkAgain = async () => {
+    setMeasuring(true)
+    try {
+      if (await reportingWrite(`re-check ${who}`, () => api.recheckProviderAvailability(ext.name))) onChanged()
+    } finally { setMeasuring(false) }
+  }
 
   const toggle = async () => {
     setBusy(true)
@@ -47,6 +64,8 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
               <span key={c} data-type="caption" className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface-low">{c}</span>
             ))}
             {unavailable && <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low"><AlertTriangle size={10} /> unavailable</span>}
+            {unknown && !checking && <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low"><HelpCircle size={10} /> couldn't check</span>}
+            {checking && <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low" title="Checking whether it can run on this machine"><Loader2 size={10} className="animate-spin" /> checking</span>}
           </div>
           {ext.description && <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{ext.description}</p>}
         </div>
@@ -92,9 +111,14 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
         )}
       </div>
 
-      {/* unavailable reason / runtime detail */}
-      {unavailable && ext.unavailableReason && (
-        <div data-type="caption" className="mt-2 flex items-start gap-1.5 text-on-surface-low"><AlertTriangle size={12} className="mt-0.5 shrink-0" /> {ext.unavailableReason}</div>
+      {/* unavailable / unmeasurable reason, with the re-measure beside it; runtime detail */}
+      {(unavailable || unknown) && !checking && (
+        <div data-type="caption" className="mt-2 flex items-start gap-1.5 text-on-surface-low">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1">{reason || (unknown ? 'Its availability could not be checked.' : "Its app reports that it can't run on this machine.")}</span>
+          <button type="button" onClick={checkAgain} aria-label={`Check again: ${who}`}
+            className="shrink-0 underline hover:text-on-surface">Check again</button>
+        </div>
       )}
       {runtime && runtime.detail && runtime.state !== 'ready' && !unavailable && (
         <div data-type="caption" className="mt-2 flex items-start gap-1.5 text-on-surface-low"><TerminalSquare size={12} className="mt-0.5 shrink-0" /> {runtime.detail}</div>
@@ -169,6 +193,9 @@ function RuntimeChip({ state }: { state: string }) {
     needs_login: { icon: <KeyRound size={12} />, label: 'Needs sign-in', color: 'var(--color-warning)' },
     not_found: { icon: <AlertTriangle size={12} />, label: 'Not found', color: 'var(--color-on-surface-low)' },
     timeout: { icon: <Clock size={12} />, label: 'Slow to start', color: 'var(--color-warning)' },
+    // Never measured yet: one background probe is running. A plain read no longer spawns the
+    // runtime, so "not answered yet" is a state of its own rather than an error.
+    checking: { icon: <Loader2 size={12} className="animate-spin" />, label: 'Checking…', color: 'var(--color-on-surface-low)' },
     error: { icon: <AlertTriangle size={12} />, label: 'Error', color: 'var(--color-danger)' },
   }
   const m = map[state] ?? map.error

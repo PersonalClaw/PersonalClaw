@@ -107,15 +107,25 @@ def _key_for(provider: LocalModelProvider) -> str:
     return getattr(provider, "name", "")
 
 
+async def list_catalog(provider: LocalModelProvider) -> list[LocalModel]:
+    """The provider's models as uniform :class:`LocalModel`s. RAISES when it could not list.
+
+    For the surface that has to tell "lists no models" from "could not be asked" — the
+    Providers page, whose empty state used to say "No downloadable models listed." for an
+    Ollama nothing was listening at.
+    """
+    raw = await provider.list_models()
+    caps = capabilities_for(_key_for(provider))
+    return [to_local_model(m, capabilities=caps) for m in raw]
+
+
 async def catalog_for(provider: LocalModelProvider) -> list[LocalModel]:
-    """The provider's models as uniform :class:`LocalModel`s (fail-soft → [])."""
+    """:func:`list_catalog`, fail-soft (``[]`` on any failure) for callers that only count."""
     try:
-        raw = await provider.list_models()
+        return await list_catalog(provider)
     except Exception:
         logger.debug("list_models failed for %s", getattr(provider, "name", "?"), exc_info=True)
         return []
-    caps = capabilities_for(_key_for(provider))
-    return [to_local_model(m, capabilities=caps) for m in raw]
 
 
 class _ManagerBackedLocalProvider(LocalModelProvider):

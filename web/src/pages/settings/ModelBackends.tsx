@@ -1,18 +1,22 @@
 import { useState } from 'react'
 import { MoreRow } from '../../ui/MoreRow'
 import {
-  Plus, Cpu, Wifi, Pencil, Trash2, X,
-  CheckCircle2, AlertTriangle, ChevronRight, RotateCcw,
+  Plus, Cpu, Wifi, Pencil, Trash2, X, Loader2,
+  CheckCircle2, AlertTriangle, ChevronRight, RotateCcw, KeyRound,
 } from 'lucide-react'
-import { api, type ModelProvider, type AvailableModel, type ProviderTestResult, type ProviderOptionValue } from '../../lib/api'
+import {
+  api, type ModelProvider, type ModelConnection, type ProviderModels, type ProviderTestResult,
+  type ProviderOptionValue, type ProviderSchema,
+} from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { TextInput } from '../../ui/forms'
-import { OllamaModelManager } from './OllamaModelManager'
+import { LocalModelManager } from './LocalModelManager'
 import { fvs } from '../../design/fontWeight'
 import { reportingWrite } from '../../app/reportingWrite'
 import { notify } from '../../app/appSdk'
@@ -26,8 +30,12 @@ import { SchemaField, schemaDefaults } from './ProviderConfigForm'
 // instance card whose type's app was later uninstalled.
 const typeLabel = (type: string) => type
 
-/** First-load placeholder for the remote-provider list (a couple of instance-card
- *  shapes), so the Model section paints instantly on a cold open. */
+/** How often an unsettled list is re-read while a connection is still being measured. The
+ *  gateway answers from memory, so this polls a cache, never the providers themselves. */
+const CHECKING_POLL_MS = 2500
+
+/** First-load placeholder for the instance list (a couple of instance-card shapes), so the
+ *  Model section paints instantly on a cold open. */
 function RemoteProvidersSkeleton() {
   return (
     <div className="mb-3 flex flex-col gap-2" role="status" aria-busy="true" >
@@ -43,75 +51,79 @@ function RemoteProvidersSkeleton() {
   )
 }
 
-/** Remote model providers — multi-instance connections (Ollama / OpenAI-Compatible
- *  / Anthropic-Compatible). Each instance contributes models to the pool you bind
- *  in Models. Add (with known-service endpoint prefill), test, inspect models,
- *  edit, delete. Backed by /api/model-providers + /api/models/available.
+/** What `/api/models/available` says about one instance, merged across its rows. */
+interface InstanceModels {
+  models: NonNullable<ProviderModels['models']>
+  error: string
+  local: boolean
+  searchable: boolean
+}
+
+/** Every configured model-provider instance (`config.json` `providers[]` — the one store chat
+ *  resolves), whatever its type: each one can be tested, edited and removed here, and its card
+ *  shows the connection its last test MEASURED. Backed by /api/model-providers +
+ *  /api/models/available.
  *
- *  `onChanged` is the PANEL's refresh, and it is required rather than optional: an instance
- *  of any type has to appear somewhere, and an Ollama one appears ONLY in the panel's Native
- *  (bundled) section — which reads `settings:providers` + `settings:models-available`, two
- *  keys this component does not own. Refreshing just the local list left the single surface
- *  that could show a new Ollama instance on its pre-write cache until a full page reload
- *  (#3488). */
+ *  An Ollama instance used to be filtered out of this list — the only one with Test, Edit and
+ *  Remove — and shown elsewhere with none of them, so a broken endpoint could not be fixed or
+ *  removed from the page that displayed it. It renders here like any other instance, and its
+ *  local-model card (installed models, library search, downloads) lives inside its card.
+ *
+ *  `onChanged` is the PANEL's refresh: the panel's own reads (`settings:providers`,
+ *  `settings:models-available`) must see a write made here too. */
 export function RemoteModelProviders({ onChanged }: { onChanged: () => void }) {
   const [adding, setAdding] = useState(false)
   // Cached + session-persisted: revisiting Providers (or reloading) paints the
-  // remote-provider list instantly from cache and revalidates in the background,
+  // instance list instantly from cache and revalidates in the background,
   // instead of re-flashing "Loading…" on every open.
   const { data, error, refresh } = useQuery('settings:remote-model-providers', async () => {
     const [provs, rows] = await Promise.all([
       // NOT `.catch(() => [])` — this list IS the panel, so a failed read has to reach the hook or
-      // "No remote model providers yet." becomes the app's answer to a 500 (and `{ persist: true }`
-      // caches it). The models call KEEPS its catch: it only decorates each card with a model count,
+      // "No model provider instances yet." becomes the app's answer to a 500 (and `{ persist: true }`
+      // caches it). The models call KEEPS its catch: it only decorates each card with its models,
       // so losing it degrades a card rather than inventing an empty list.
       api.modelProviders(),
-      api.modelsAvailable().catch(() => [] as { name: string; models?: AvailableModel[] }[]),
+      api.modelsAvailable().catch(() => [] as ProviderModels[]),
     ])
-    // Merge (don't overwrite) models from rows sharing the same provider name:
-    // /api/models/available returns separate rows per capability-group (chat,
-    // image_gen, video_gen) all named "bedrock" — overwriting the map on each
-    // row would show only the LAST group's models in the card.
-    const map: Record<string, AvailableModel[]> = {}
-    for (const r of rows) map[r.name] = [...(map[r.name] ?? []), ...(r.models ?? [])]
-    return { providers: provs, available: map }
+    // Merge (don't overwrite) rows sharing the same provider name: /api/models/available
+    // returns separate rows per capability-group (chat, image_gen, video_gen) all named
+    // "bedrock" — overwriting on each row would show only the LAST group's models.
+    const byName: Record<string, InstanceModels> = {}
+    for (const r of rows) {
+      const prev = byName[r.name] ?? { models: [], error: '', local: false, searchable: false }
+      byName[r.name] = {
+        models: [...prev.models, ...(r.models ?? [])],
+        error: prev.error || r.error || '',
+        local: prev.local || !!r.local,
+        searchable: prev.searchable || !!r.searchable,
+      }
+    }
+    return { providers: provs, byName }
   }, { persist: true })
   const reload = () => { invalidateKeys('settings:remote-model-providers'); refresh(); onChanged() }
-  const available = data?.available ?? {}
+  // A never-measured instance reads `checking` while its first test runs in the background;
+  // re-read until every card has its answer (and stop the moment none is left checking).
+  const checking = (data?.providers ?? []).some((p) => p.connection?.state === 'checking')
+  useVisiblePoll(() => { if (checking) refresh() }, checking ? CHECKING_POLL_MS : null)
 
   // A region inside the Providers panel, not a page body — so the failure is the canonical
   // `InlineError` band with a retry, not the full-bleed `LoadError` the page-scale lists use.
   if (!data?.providers && error) return (
     <InlineError icon className="mb-3">
-      <span className="flex-1">Couldn't load your remote model providers{(error as Error)?.message ? `: ${(error as Error).message}` : '.'}</span>
+      <span className="flex-1">Couldn't load your model provider instances{(error as Error)?.message ? `: ${(error as Error).message}` : '.'}</span>
       <Button variant="secondary" size="sm" onClick={reload}><RotateCcw size={14} /> Retry</Button>
     </InlineError>
   )
   if (!data?.providers) return <RemoteProvidersSkeleton />
-  // Ollama is a LOCAL downloadable provider (searchable) — it renders in the Native
-  // (bundled) section with the unified download card, NOT here. Filter it out so it
-  // isn't listed twice. (Its endpoint config remains editable via that card's provider.)
-  const providers = data.providers.filter((p) => p.type !== 'ollama')
-  // The empty state is computed from the FILTERED list, so it used to deny an instance that
-  // exists: the only thing `Add instance` can create on a fresh install is an Ollama one (its
-  // type select has a single option), and that is precisely the type filtered out here. The
-  // sentence now names the instances and where they render, so a successful add is visible in
-  // the section the user acted in rather than only after a reload (#3488).
-  const elsewhere = data.providers.filter((p) => p.type === 'ollama').map((p) => p.name)
+  const providers = data.providers
   return (
     <div>
       {providers.length === 0 ? (
-        elsewhere.length > 0 ? (
-          <p data-type="body-s" className="mb-m text-on-surface-low">
-            {elsewhere.join(', ')} {elsewhere.length === 1 ? 'is' : 'are'} listed under Native (bundled) above — Ollama serves models from this machine. No other remote model providers yet.
-          </p>
-        ) : (
-          <p data-type="body-s" className="mb-m text-on-surface-low">No remote model providers yet. Add an instance to contribute models to the pool.</p>
-        )
+        <p data-type="body-s" className="mb-m text-on-surface-low">No model provider instances yet. Add an instance to contribute models to the pool.</p>
       ) : (
         <div className="mb-3 flex flex-col gap-2">
           {providers.map((p) => (
-            <InstanceCard key={p.name} provider={p} models={available[p.name] ?? []} onChanged={reload} />
+            <InstanceCard key={p.name} provider={p} listing={data.byName[p.name]} onChanged={reload} />
           ))}
         </div>
       )}
@@ -123,30 +135,48 @@ export function RemoteModelProviders({ onChanged }: { onChanged: () => void }) {
   )
 }
 
-function CredBadge({ status }: { status: string }) {
-  const ok = status === 'ok'
-  const missing = status === 'missing'
-  const color = ok ? 'var(--color-success)' : missing ? 'var(--color-danger)' : 'var(--color-on-surface-low)'
-  // `status` is the backend's credential_status (credential PRESENCE, never a
-  // connectivity probe) — "ok" must not claim "Connected"; the Test button is
-  // the connectivity check. Say what we know: the instance is configured.
+/** The badge says what was MEASURED. It used to be the credential's presence — "Configured" on
+ *  an instance with no key at all, beside its own test saying "No API key or endpoint
+ *  configured" — because presence was the only thing the list knew. */
+export function ConnectionBadge({ connection }: { connection: ModelConnection | undefined }) {
+  const state = connection?.state ?? 'checking'
+  const face = state === 'connected'
+    ? { icon: <CheckCircle2 size={12} />, label: 'Connected', color: 'var(--color-success)' }
+    : state === 'failed'
+      ? connection?.rejected_credential
+        ? { icon: <KeyRound size={12} />, label: 'Key rejected', color: 'var(--color-danger)' }
+        : { icon: <AlertTriangle size={12} />, label: 'Not answering', color: 'var(--color-danger)' }
+      : state === 'untestable'
+        ? { icon: <AlertTriangle size={12} />, label: 'No connection test', color: 'var(--color-on-surface-low)' }
+        : { icon: <Loader2 size={12} className="animate-spin" />, label: 'Checking…', color: 'var(--color-on-surface-low)' }
   return (
-    <span data-type="caption" className="inline-flex shrink-0 items-center gap-1" style={{ color }}>
-      {ok ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />} {ok ? 'Configured' : missing ? 'Missing key' : 'Unconfigured'}
+    <span data-type="caption" className="inline-flex shrink-0 items-center gap-1" style={{ color: face.color }}
+      title={connection?.detail || undefined}>
+      {face.icon} {face.label}
     </span>
   )
 }
 
-function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider; models: AvailableModel[]; onChanged: () => void }) {
+function InstanceCard({ provider, listing, onChanged }: {
+  provider: ModelProvider; listing: InstanceModels | undefined; onChanged: () => void
+}) {
   const [editing, setEditing] = useState(false)
   const [showModels, setShowModels] = useState(false)
   const [test, setTest] = useState<ProviderTestResult | null>(null)
   const [testing, setTesting] = useState(false)
   const [busy, setBusy] = useState(false)
+  const models = listing?.models ?? []
+  const local = !!listing?.local
+  const connection = provider.connection
 
   const runTest = async () => {
     setTesting(true); setTest(null)
-    try { setTest(await api.testModelProvider(provider.name)) }
+    try {
+      setTest(await api.testModelProvider(provider.name))
+      // The test's answer is RECORDED as the instance's connection, so the badge, the Models
+      // picker and the next page load now agree with what the user just saw.
+      onChanged()
+    }
     catch (e) { setTest({ ok: false, message: e instanceof Error ? e.message : 'Test failed' }) }
     setTesting(false)
   }
@@ -163,14 +193,16 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
     //      the key saved for it, and adding it back means entering the key again. Conditional on
     //      `stored_secrets` (names only, from the list route), so it is only claimed when a key really
     //      is stored — and a reference the instance held to a Secrets-panel credential is neither
-    //      counted there nor deleted, so the sentence never overstates what goes.
+    //      counted there nor deleted, so the sentence never overstates what goes. That referenced
+    //      credential is the half that STAYS, said when `key_in_store` reports one.
     const selections = ' Any use case set to one of its models loses that selection.'
     const saved = provider.stored_secrets?.length ?? 0
     const key = saved === 0 ? '' : saved === 1
       ? ' The key saved for it is deleted too.'
       : ` The ${saved} credentials saved for it are deleted too.`
+    const referenced = provider.key_in_store ? ' The credential it uses from Settings → Secrets stays saved.' : ''
     if (!(await confirmDelete('provider', provider.name, {
-      body: `Models it provides will no longer be available.${selections}${key}`,
+      body: `Models it provides will no longer be available.${selections}${key}${referenced}`,
     }))) return
     setBusy(true)
     // `catch { setBusy(false) }` restored the row's opacity and said NOTHING, so a failed removal
@@ -184,6 +216,9 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
     onChanged()
   }
 
+  // The measured failure stays on the card, not only in a Test result the user has to ask for:
+  // an unreachable endpoint or a rejected key is the first thing this card has to say.
+  const failure = !test && connection?.state === 'failed' ? connection.detail : ''
   return (
     <div className="rounded-lg bg-surface-container px-4 py-3" style={{ opacity: busy ? 0.5 : 1 }}>
       <div className="flex items-center gap-3">
@@ -191,7 +226,7 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span data-type="title-m" className="truncate text-on-surface" style={fvs(500)}>{provider.name}</span>
-            <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{typeLabel(provider.type)}</span>
+            <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{typeLabel(provider.declared_type || provider.type)}</span>
           </div>
           {provider.capabilities.length > 0 && (
             <div data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-x-2 text-on-surface-low">
@@ -199,50 +234,59 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
             </div>
           )}
         </div>
-        <CredBadge status={provider.credential_status} />
+        <ConnectionBadge connection={connection} />
         <div className="flex shrink-0 items-center gap-0.5">
           {/* `loading`, not `disabled` + a hand-rolled glyph swap: the primitive owns the spinner
               and the cross-fade, and a probe in flight is "working", not "unavailable". */}
-          <SquareIconButton label="Test connection" onClick={runTest} loading={testing}><Wifi size={14} /></SquareIconButton>
+          <SquareIconButton label={`Test connection: ${provider.name}`} title="Test connection" onClick={runTest} loading={testing}><Wifi size={14} /></SquareIconButton>
           {/* Both of these reveal content further down the card (`{showModels && …}` and
               `{editing && <EditInstanceForm/>}`), so they announce expansion rather than pressedness.
               Test connection and Delete claim no state at all. */}
-          <SquareIconButton label={provider.type === 'ollama' ? 'Manage models' : 'View models'} onClick={() => setShowModels((v) => !v)} ariaExpanded={showModels}>
+          <SquareIconButton label={`${local ? 'Manage models' : 'View models'}: ${provider.name}`} title={local ? 'Manage models' : 'View models'} onClick={() => setShowModels((v) => !v)} ariaExpanded={showModels}>
             <ChevronRight size={14} style={{ transform: showModels ? 'rotate(90deg)' : 'none' }} />
           </SquareIconButton>
-          <SquareIconButton label="Edit" onClick={() => setEditing((v) => !v)} ariaExpanded={editing}>{editing ? <X size={14} /> : <Pencil size={14} />}</SquareIconButton>
-          <SquareIconButton label="Delete" onClick={remove}><Trash2 size={14} /></SquareIconButton>
+          <SquareIconButton label={`Edit: ${provider.name}`} title="Edit" onClick={() => setEditing((v) => !v)} ariaExpanded={editing}>{editing ? <X size={14} /> : <Pencil size={14} />}</SquareIconButton>
+          <SquareIconButton label={`Remove: ${provider.name}`} title="Remove" onClick={remove}><Trash2 size={14} /></SquareIconButton>
         </div>
       </div>
 
+      {failure && (
+        <div data-type="caption" className="mt-2 flex items-start gap-1.5" style={{ color: 'var(--color-danger)' }}>
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span className="min-w-0">{failure}</span>
+        </div>
+      )}
       {test && (
-        <div data-type="caption" className="mt-2 flex items-center gap-1.5" style={{ color: test.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
-          {test.ok ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />} {test.message}
+        <div role="status" data-type="caption" className="mt-2 flex items-start gap-1.5" style={{ color: test.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
+          {test.ok ? <CheckCircle2 size={13} className="mt-0.5 shrink-0" /> : <AlertTriangle size={13} className="mt-0.5 shrink-0" />} <span className="min-w-0">{test.message}</span>
         </div>
       )}
 
       {showModels && (
-        provider.type === 'ollama' ? (
-          // First-class management for Ollama: install/pull/delete/inspect (#48).
-          <OllamaModelManager provider={provider.name} />
-        ) : (
-          <div className="mt-3 border-t border-outline-variant/30 pt-3">
-            {models.length === 0 ? (
-              <p data-type="caption" className="text-on-surface-low italic">No models discovered — test the connection or check the endpoint.</p>
-            ) : (
-              <>
-                <div data-type="caption" className="mb-1.5 text-on-surface-low uppercase tracking-wide">Available models ({models.length})</div>
-                <div className="flex flex-wrap gap-1">
-                  {models.slice(0, 24).map((m) => <span key={m.id} data-type="caption" className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface font-mono">{m.name}</span>)}
-                  <MoreRow total={models.length} shown={24} className="px-1" />
-                </div>
-              </>
-            )}
-          </div>
-        )
+        <div className="mt-3 border-t border-outline-variant/30 pt-3">
+          {local ? (
+            // A local-download instance (Ollama): the one uniform download card — installed
+            // models, library search, downloads — for THIS instance's endpoint.
+            <LocalModelManager provider={provider.name} models={models} searchable={listing?.searchable}
+              error={listing?.error} onChanged={onChanged} />
+          ) : models.length === 0 ? (
+            listing?.error
+              ? <p role="alert" data-type="caption" className="flex items-start gap-1.5" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} className="mt-0.5 shrink-0" /> <span className="min-w-0">{listing.error}</span></p>
+              : <p data-type="caption" className="text-on-surface-low italic">This instance lists no models.</p>
+          ) : (
+            <>
+              <div data-type="caption" className="mb-1.5 text-on-surface-low uppercase tracking-wide">Available models ({models.length})</div>
+              <div className="flex flex-wrap gap-1">
+                {models.slice(0, 24).map((m) => <span key={m.id} data-type="caption" className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface font-mono">{m.name}</span>)}
+                <MoreRow total={models.length} shown={24} className="px-1" />
+              </div>
+            </>
+          )}
+        </div>
       )}
 
-      {editing && <EditInstanceForm provider={provider} onDone={(saved) => { setEditing(false); if (saved) onChanged() }} />}
+      {/* A saved edit makes the last Test's answer stale — it described the settings that were
+          just replaced (measured: "Could not reach …:1" kept showing beside "Connected"). */}
+      {editing && <EditInstanceForm provider={provider} onDone={(saved) => { setEditing(false); if (saved) { setTest(null); onChanged() } }} />}
     </div>
   )
 }
@@ -357,60 +401,138 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
   )
 }
 
+/** The fields an instance of a type whose app is no longer installed can still edit: the
+ *  endpoint and key every protocol client reads (`options.endpoint`, `options.api_key`). */
+const FALLBACK_SCHEMA: ProviderSchema = {
+  type: 'object',
+  properties: {
+    endpoint: { type: 'string', 'x-meta': { label: 'Endpoint', placeholder: 'http://localhost:11434' } },
+    api_key: { type: 'string', 'x-meta': { label: 'API key', sensitive: true } },
+  },
+}
+
+/** The instance's settings as the form starts them: every stored secret BLANK (the list hands
+ *  them out masked, and editing a row of bullets is nonsense — a blank submit means "keep"). */
+function editableSettings(provider: ModelProvider): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...(provider.options ?? {}) }
+  for (const k of provider.secret_set ?? []) next[k] = ''
+  return next
+}
+
+/** Edit an instance with its TYPE's own settings form — the same `settingsSchema` the Add form
+ *  renders — so every setting an instance was created with, its API key included, can be
+ *  changed here. It used to offer only an endpoint, a context window and a model: a key could
+ *  be neither added to a keyless instance nor replaced after the vendor rejected it.
+ *
+ *  Writes through `PUT /api/model-providers/{name}`, whose options MERGE: a field left as it was
+ *  stays out of the body, an emptied field is sent as `null` (clear), and a stored secret left
+ *  blank is kept. Values are saved in their declared types, as the Add form saves them, and a
+ *  key typed here goes to the credential store — `config.json` keeps only a reference to it. */
 function EditInstanceForm({ provider, onDone }: { provider: ModelProvider; onDone: (saved: boolean) => void }) {
-  const isAws = provider.type === 'bedrock'
-  const [endpoint, setEndpoint] = useState('')
-  const [region, setRegion] = useState('')
-  const [profile, setProfile] = useState('')
+  const { data: types, status: typesStatus } = useQuery('settings:model-provider-types', () => api.modelProviderTypes(), { persist: true })
+  const declared = provider.declared_type || provider.type
+  const type = types?.find((t) => t.type === declared) ?? types?.find((t) => t.type === provider.type)
+  const schema: ProviderSchema = type?.settingsSchema ?? FALLBACK_SCHEMA
+  const props = Object.entries(schema.properties ?? {})
+  const secretSet = provider.secret_set ?? []
+  const [initial] = useState(() => editableSettings(provider))
+  const [values, setValues] = useState<Record<string, unknown>>(initial)
+  const [clearing, setClearing] = useState<string[]>([])
   const [model, setModel] = useState(provider.model ?? '')
   // The served context window, editable only for a non-AWS (endpoint-based) binding —
   // it describes what a LOCAL runtime actually serves, which is the one thing the model
   // table cannot know. A managed cloud endpoint has no such knob, so the AWS arm omits
   // it rather than offering a field that could only ever misreport the window.
+  // …and only when the type's own schema does not already carry the setting (ollama-models'
+  // declares `context_window`), so the form never shows it twice.
+  const endpointBased = declared !== 'bedrock' && provider.type !== 'bedrock'
+    && !props.some(([k]) => k === 'context_window')
   const [contextWindow, setContextWindow] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // A schema with its own default-model setting owns that fact; the entry's top-level `model`
+  // is offered only when the type declares none, so one instance never shows two of them.
+  const ownsModel = props.some(([k]) => k === 'default_model')
 
   const save = async () => {
     setSaving(true); setError('')
-    const body: { model?: string; options?: Record<string, string> } = {}
-    const options: Record<string, string> = {}
-    if (isAws) {
-      if (region.trim()) options.region = region.trim()
-      if (profile.trim()) options.profile = profile.trim()
-    } else {
-      if (endpoint.trim()) options.endpoint = endpoint.trim()
-      // PATCH MERGES options, so an untouched field must stay out of the body entirely —
-      // sending '' here would persist an empty string and, because the coercion reads
-      // that as UNDECLARED, silently wipe a window the operator had set.
-      if (contextWindow.trim()) options.context_window = contextWindow.trim()
+    const options: Record<string, ProviderOptionValue> = {}
+    for (const [k] of props) {
+      const secret = secretSet.includes(k) || !!schema.properties?.[k]?.['x-meta']?.sensitive
+      const now = values[k]
+      if (clearing.includes(k)) { options[k] = null; continue }
+      if (secret) {
+        // Blank = keep what is stored; only a value the user typed replaces it.
+        if (typeof now === 'string' && now.trim()) options[k] = now.trim()
+        continue
+      }
+      if (now === initial[k]) continue
+      // In the field's own type: a switch saves a boolean and a number field a number, never
+      // their text. Only an emptied field is a clear.
+      const v = typeof now === 'string' ? now.trim() : now
+      options[k] = isBlank(v) ? null : (v as ProviderOptionValue)
     }
+    if (endpointBased && contextWindow.trim()) options.context_window = contextWindow.trim()
+    const body: { model?: string; options?: Record<string, ProviderOptionValue> } = {}
     if (Object.keys(options).length) body.options = options
-    if (model.trim() !== (provider.model ?? '')) body.model = model.trim()
+    if (!ownsModel && model.trim() !== (provider.model ?? '')) body.model = model.trim()
     if (!body.options && body.model === undefined) { onDone(false); return }
     try { await api.updateModelProvider(provider.name, body); onDone(true) }
     catch (e) { setError(e instanceof Error ? e.message : 'Save failed'); setSaving(false) }
   }
 
   return (
-    <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/30 pt-3">
-      {isAws ? (
-        <>
-          <TextInput ariaLabel="AWS region" value={region} onChange={setRegion} placeholder="AWS region (leave empty to keep current)" size="md" surface="high" />
-          <TextInput ariaLabel="AWS profile" value={profile} onChange={setProfile} placeholder="AWS profile (leave empty to keep current)" size="md" surface="high" />
-        </>
-      ) : (
-        <>
-          <TextInput ariaLabel="Endpoint" value={endpoint} onChange={setEndpoint} placeholder="Endpoint (leave empty to keep current)" size="md" surface="high" />
-          <TextInput ariaLabel="Served context window" type="number" min={1} value={contextWindow} onChange={setContextWindow}
-            placeholder="Served context window in tokens (leave empty to auto-detect)" size="md" surface="high" />
-        </>
+    <div className="mt-3 flex flex-col gap-3 border-t border-outline-variant/30 pt-3">
+      {/* Said, not silently substituted: without the type list the form falls back to the fields
+          every protocol client reads, and the user should know that is what they are looking at. */}
+      {!type && typesStatus === 'error' && (
+        <p role="alert" data-type="caption" className="text-on-surface-low">
+          Couldn't load this provider type's settings — showing the endpoint and API key only.
+        </p>
       )}
-      <TextInput ariaLabel="Default model" value={model} onChange={setModel} placeholder="Default model (optional)" size="md" surface="high" />
+      {!type && typesStatus !== 'error' && types && (
+        <p data-type="caption" className="text-on-surface-low">
+          The app for this provider type isn't installed — showing the endpoint and API key only.
+        </p>
+      )}
+      <SchemaFields
+        fields={props}
+        required={schema.required ?? []}
+        values={values}
+        configured={secretSet.filter((k) => !clearing.includes(k))}
+        advancedFieldClassName="flex flex-col gap-3"
+        renderField={(k, prop) => {
+          const stored = secretSet.includes(k)
+          return (
+            <div>
+              <SchemaField fieldKey={k} prop={prop} value={values[k]} secretAlreadySet={stored && !clearing.includes(k)}
+                onChange={(v) => { setValues((prev) => ({ ...prev, [k]: v })); setClearing((c) => c.filter((x) => x !== k)) }} />
+              {/* A stored key can be REMOVED, not only replaced: "keep" is what a blank means, so
+                  taking a key away needs its own control. */}
+              {stored && (
+                <Button variant="ghost" size="xs" className="-ml-m mt-0.5"
+                  onClick={() => setClearing((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]))}>
+                  {clearing.includes(k) ? 'Keep the saved value' : 'Remove the saved value'}
+                </Button>
+              )}
+            </div>
+          )
+        }}
+      />
+      {provider.key_in_store && (
+        <p data-type="caption" className="text-on-surface-low">This instance authenticates with a credential from Settings → Secrets.</p>
+      )}
+      {endpointBased && (
+        <TextInput ariaLabel="Served context window" type="number" min={1} value={contextWindow} onChange={setContextWindow}
+          placeholder="Served context window in tokens (leave empty to auto-detect)" size="md" surface="high" />
+      )}
+      {!ownsModel && (
+        <TextInput ariaLabel="Default model" value={model} onChange={setModel} placeholder="Default model (optional)" size="md" surface="high" />
+      )}
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={save} loading={saving}>Save</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
-        {error && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
+        {error && <span role="alert" data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>
     </div>
   )

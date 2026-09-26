@@ -118,48 +118,113 @@ def test_pool_warmed_runtime_answered_without_probe(monkeypatch):
         reset_default_registry()
 
 
-def test_readiness_cache_avoids_reprobe(monkeypatch):
-    """A not-pooled runtime is probed once, then served from the readiness cache
-    on subsequent calls (so codex's slow-failing probe isn't re-paid each time)."""
+def _register_runtime(name: str, command: list[str]) -> None:
+    get_default_registry().register_entry(
+        ProviderEntry(
+            name=name,
+            type="acp_agent",
+            model="",
+            options={"command": command, "dialect": "codex"},
+            credential=None,
+            declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+        )
+    )
+
+
+async def _acall(query: str = "") -> dict:
+    req = make_mocked_request("GET", "/api/agent-providers" + (f"?{query}" if query else ""))
+    resp = await api_agent_providers_list(req)
+    return json.loads(resp.body.decode())
+
+
+def _row(data: dict, runtime: str) -> dict:
+    return next(r for r in data["agent_providers"] if r["provider_id"] == runtime)
+
+
+@pytest.fixture
+def counted_probe(monkeypatch):
+    """Nothing pooled, an empty readiness cache, and a probe that counts (and can stall)."""
     from personalclaw.acp import connection_pool as cp
     from personalclaw.agents.provider import ReadinessStatus
     from personalclaw.agents.registry import get_agent_provider_class
     from personalclaw.dashboard.handlers import providers as prov_mod
 
     _fresh_registry()
+    prov_mod._readiness_cache.clear()
+    getattr(prov_mod, "_readiness_probes", {}).clear()
+    cp.set_acp_pool(None)
+    calls: dict[str, int] = {}
+    stall = {"secs": 0.0}
+
+    async def fake_probe(cls, options):
+        key = options["command"][0]
+        calls[key] = calls.get(key, 0) + 1
+        await asyncio.sleep(stall["secs"])
+        return ReadinessStatus(ready=False, state="not_found", detail=f"{key}: no engine")
+
+    monkeypatch.setattr(get_agent_provider_class("acp"), "probe_readiness", classmethod(fake_probe))
     try:
-        prov_mod._readiness_cache.clear()
-        cp.set_acp_pool(None)  # nothing pooled → must probe
-        registry = get_default_registry()
-        registry.register_entry(
-            ProviderEntry(
-                name="acp:codex",
-                type="acp_agent",
-                model="",
-                options={"command": ["npx", "codex-acp"], "dialect": "codex"},
-                credential=None,
-                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
-            )
-        )
-        calls = {"n": 0}
-
-        async def fake_probe(cls, options):
-            calls["n"] += 1
-            return ReadinessStatus(ready=False, state="not_found", detail="no engine")
-
-        monkeypatch.setattr(
-            get_agent_provider_class("acp"), "probe_readiness", classmethod(fake_probe)
-        )
-
-        _call()
-        _call()
-        assert calls["n"] == 1  # second call served from cache
-        # ?refresh=1 bypasses the cache → a fresh probe runs (post-sign-in re-check).
-        _call("refresh=1")
-        assert calls["n"] == 2
+        yield prov_mod, calls, stall
     finally:
         prov_mod._readiness_cache.clear()
+        getattr(prov_mod, "_readiness_probes", {}).clear()
         reset_default_registry()
+
+
+@pytest.mark.asyncio
+async def test_a_stale_readiness_answer_is_served_without_spawning_the_runtime(counted_probe):
+    """A plain read never probes. It used to re-probe INLINE once an answer passed 5 minutes —
+    which spawned the CLI and opened a session on every spaced-out Providers visit."""
+    import time as _time
+
+    prov_mod, calls, _stall = counted_probe
+    _register_runtime("acp:codex", ["codex-acp"])
+    stale = {"ready": False, "state": "needs_login", "detail": "sign in", "login_command": None}
+    prov_mod._readiness_cache["acp:codex"] = (_time.monotonic() - 3600, stale)
+
+    row = _row(await _acall(), "acp:codex")
+
+    assert calls == {}, "a plain read spawned the runtime to re-probe it"
+    assert row["state"] == "needs_login"
+
+
+@pytest.mark.asyncio
+async def test_a_never_measured_runtime_reads_checking_at_once_and_is_probed_once(counted_probe):
+    import time as _time
+
+    prov_mod, calls, stall = counted_probe
+    _register_runtime("acp:codex", ["codex-acp"])
+    stall["secs"] = 3.0
+
+    started = _time.monotonic()
+    first, second = await asyncio.gather(_acall(), _acall())
+    elapsed = _time.monotonic() - started
+    assert elapsed < 1.0, f"the read waited {elapsed:.1f}s on the runtime's probe"
+    assert _row(first, "acp:codex")["state"] == "checking"
+    assert _row(second, "acp:codex")["state"] == "checking"
+
+    await prov_mod._readiness_probes["acp:codex"]
+    assert calls == {"codex-acp": 1}, "two concurrent reads started two probes"
+    assert _row(await _acall(), "acp:codex")["state"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_refresh_probes_now_and_runtime_scopes_it_to_one(counted_probe):
+    import time as _time
+
+    prov_mod, calls, _stall = counted_probe
+    _register_runtime("acp:codex", ["codex-acp"])
+    _register_runtime("acp:other", ["other-acp"])
+    # Measured already, so the scoped re-check below is the only thing that could probe it.
+    ready = {"ready": True, "state": "ready", "detail": "ok", "login_command": None}
+    prov_mod._readiness_cache["acp:other"] = (_time.monotonic(), ready)
+
+    data = await _acall("refresh=1&runtime=acp:codex")
+
+    assert calls == {"codex-acp": 1}, f"a scoped re-check probed {sorted(calls)}"
+    assert _row(data, "acp:codex")["state"] == "not_found"
+    await _acall("refresh=1")
+    assert calls == {"codex-acp": 2, "other-acp": 1}
 
 
 def test_native_row_always_present_and_ready():

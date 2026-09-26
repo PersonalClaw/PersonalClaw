@@ -21,11 +21,12 @@ Eleven bundled model apps declare exactly that shape (``openai-models``, ``anthr
 
 **Which client reaches the list route, measured rather than assumed.** A cold
 Settings → Providers load calls it once per enabled multi-instance provider — measured, for
-``mcp-tools`` and ``openai-tools``. It does NOT call it for a **model** provider, which renders
-through ``ModelBackends.tsx`` off ``/api/model-providers``. So those eleven apps leaked to any
-token-holding API client rather than to the browser. The rail below is deliberately indifferent
-to that: it asks whether a config reaches a response body, not who reads the body, because a
-route is the boundary a client is on the far side of.
+``mcp-tools`` and ``openai-tools``. It did NOT call it for a **model** provider, which renders
+through ``ModelBackends.tsx`` off ``/api/model-providers`` — and a model app's instances no
+longer live in this store at all (these routes refuse one with ``model_instances_elsewhere``),
+so the fixture below is a TOOL app shaped like ``openai-tools``. The rail is deliberately
+indifferent to who reads the body: it asks whether a config reaches a response body, because
+a route is the boundary a client is on the far side of.
 
 **Why this file's rail is DERIVED.** A list of route names is what let three of those five sit
 unnoticed, so nothing here enumerates a route. :func:`scan` walks the tree, learns which store
@@ -74,7 +75,7 @@ _SCHEMA = {
 
 
 class _FakeProviderConfig:
-    type = "model"
+    type = "tool"
     entity = ""
     capabilities: list[str] = []
     multiInstance = True
@@ -82,7 +83,7 @@ class _FakeProviderConfig:
 
 
 class _FakeExt:
-    name = "fake-models"
+    name = "fake-tools"
     enabled = False  # keep the registry re-cycle / tool-refresh paths out of the way
     error = ""
     provider_config = _FakeProviderConfig()
@@ -90,7 +91,7 @@ class _FakeExt:
 
 class _FakeRegistry:
     def get(self, name):
-        return _FakeExt() if name == "fake-models" else None
+        return _FakeExt() if name == "fake-tools" else None
 
     def disable(self, name):  # pragma: no cover - not reached with enabled=False
         return None
@@ -103,15 +104,12 @@ class _FakeRegistry:
 async def _client(tmp_path: Path):
     from personalclaw.providers import instance_routes
 
-    # 🪤 `_FakeProviderConfig.type = "model"` now reaches `_rebuild_agent_config_safe()`:
-    # `instance_routes._refresh_multi_instance_provider_safe` widened its guard from
-    # `type == "tool"` to `type in ("tool", "model")` (#3372), so every `_create()` call
-    # in this file — previously a dead branch for a model-type fake ext — now runs
-    # `rebuild_agent_config()`, which writes through `agent.agents_dir()` / `agent._USER_DIR`,
+    # 🪤 A multi-instance TOOL fake reaches `_rebuild_agent_config_safe()`: every
+    # `_create()` call in this file runs `instance_routes._refresh_multi_instance_provider_safe`
+    # → `rebuild_agent_config()`, which writes through `agent.agents_dir()` / `agent._USER_DIR`,
     # module-level constants frozen at import (`agent.py:93`/`:135`). Patching `config_dir`
     # alone leaves them pointing at the real home, so the write escapes tmp_path and the
-    # real-home guard refuses it and fails the test (`agents/personalclaw.json`) —
-    # same seam `test_tool_provider_instances.py::_model_provider_client` redirects.
+    # real-home guard refuses it and fails the test (`agents/personalclaw.json`).
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.providers.registry.get_provider_registry", lambda: _FakeRegistry()),
@@ -124,7 +122,7 @@ async def _client(tmp_path: Path):
             yield client
 
 
-_BASE = "/api/providers/fake-models/instances"
+_BASE = "/api/providers/fake-tools/instances"
 
 
 def _stored(tmp_path: Path, instance_id: str) -> dict:
@@ -132,7 +130,7 @@ def _stored(tmp_path: Path, instance_id: str) -> dict:
     each secret, resolved here from the same home's credential store (``config.secret_refs``)."""
     from personalclaw.config.secret_refs import resolve
 
-    path = tmp_path / "extensions" / "fake-models" / "instances" / f"{instance_id}.json"
+    path = tmp_path / "extensions" / "fake-tools" / "instances" / f"{instance_id}.json"
     raw = path.read_text(encoding="utf-8")
     assert _SECRET not in raw, "an instance's key reached its record on disk"
     with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
@@ -207,13 +205,13 @@ async def test_an_unregistered_provider_is_refused_even_when_the_instance_exists
     GREEN. Plant the instance on disk under a name the registry does not know and the
     registry guard becomes the only thing that can refuse.
     """
-    path = tmp_path / "extensions" / "ghost-models" / "instances" / "abc123.json"
+    path = tmp_path / "extensions" / "ghost-tools" / "instances" / "abc123.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "id": "abc123",
-                "extension_name": "ghost-models",
+                "extension_name": "ghost-tools",
                 "display_name": "Ghost",
                 "config": {"api_key": _SECRET},
                 "enabled": True,
@@ -223,7 +221,7 @@ async def test_an_unregistered_provider_is_refused_even_when_the_instance_exists
     )
 
     async with _client(tmp_path) as client:
-        r = await client.get("/api/providers/ghost-models/instances/abc123")
+        r = await client.get("/api/providers/ghost-tools/instances/abc123")
         raw = await r.text()
         assert r.status == 404, raw
         assert _SECRET not in raw, "answered with a stored key for a provider it has no schema for"

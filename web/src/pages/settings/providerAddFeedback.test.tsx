@@ -3,25 +3,18 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 
 // ── A successful add that the surface denies (#3488) ─────────────────────────────────────────────
 //
-// Adding an Ollama model-provider instance through Settings → Providers WORKS, and nothing on
-// screen says so: no toast, no new card, and the section the user acted in keeps reading
-// "No remote model providers yet." Only a full reload reveals it.
+// Adding an Ollama model-provider instance through Settings → Providers WORKED, and nothing on
+// screen said so: no toast, no new card, and the section the user acted in kept reading
+// "No remote model providers yet." Only a full reload revealed it.
 //
-// Two independent causes, and the fix needs both because either alone still lies:
+// The root of it was a filter: this list — the ONLY one with Test, Edit and Remove — dropped every
+// `type === 'ollama'` instance and left it to the panel's Native (bundled) block, which offered
+// none of the three. So an Ollama endpoint that was wrong could be neither fixed nor removed from
+// the page that displayed it. The filter is gone: an Ollama instance is an instance like any other
+// and renders here, with its download card inside its own card.
 //
-//   1. `RemoteModelProviders.reload()` invalidated ONLY `settings:remote-model-providers` — the
-//      one list whose `p.type !== 'ollama'` filter guarantees an Ollama instance is absent. The
-//      section that DOES render it is the panel's Native (bundled) block, off
-//      `settings:providers` + `settings:models-available`. Neither was invalidated.
-//   2. The empty-state sentence is computed from the FILTERED list, so it goes on denying an
-//      Ollama instance that exists even once the refresh is fixed.
-//
-// Why this is worse than an ordinary stale list: on a fresh install `Add instance`'s `Provider
-// type` select has exactly ONE option (Ollama), and Ollama is the one type this section
-// deliberately refuses to render. So the only thing the control can do is the one thing it cannot
-// show — on the first-run path. And the write is not idempotent: a user shown no evidence clicks
-// again and `api_provider_create` answers 409 "Provider 'host-ollama' already exists", on the same
-// screen that says there are none.
+// What is still pinned from #3488: a successful add says so, refreshes the PANEL's reads (not just
+// this list's), and a failed one (the 409 a second click gets) claims nothing.
 
 const notified: [string, string | undefined][] = []
 function mockNotify() {
@@ -37,7 +30,7 @@ const OLLAMA_INSTANCE = {
   type: 'ollama',
   model: '',
   capabilities: ['chat', 'embedding'],
-  credential_status: 'ok',
+  connection: { state: 'checking' as const, detail: '', rejected_credential: false, checked_at: null },
 }
 
 const OLLAMA_TYPE = {
@@ -75,25 +68,25 @@ async function mountRemote(opts: {
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
 describe('the section the user acted in must not deny what it holds', () => {
-  it('does not say "No remote model providers yet" while an Ollama instance exists', async () => {
+  it('renders an Ollama instance as a card it can test, edit and remove', async () => {
     await mountRemote({ providers: [OLLAMA_INSTANCE] })
 
     // The control: the add button proves the section rendered, so a green below cannot be
     // "the component never mounted".
     await waitFor(() => expect(screen.getByRole('button', { name: /add instance/i })).toBeTruthy())
 
-    expect(screen.queryByText(/No remote model providers yet/i)).toBeNull()
-    // It has to say WHERE the instance went, or the user still has no evidence of the write.
-    expect(screen.getByText(/Native \(bundled\)/i)).toBeTruthy()
-    expect(screen.getByText(/host-ollama/)).toBeTruthy()
+    expect(screen.queryByText(/No model provider instances yet/i)).toBeNull()
+    for (const action of ['Test connection', 'Edit', 'Remove']) {
+      expect(screen.getByRole('button', { name: `${action}: host-ollama` })).toBeTruthy()
+    }
   })
 
-  it('still says "No remote model providers yet" when there genuinely are none', async () => {
+  it('still says "No model provider instances yet" when there genuinely are none', async () => {
     // The vacuity floor for the assertion above: a sentence that never appears guards nothing.
     await mountRemote({ providers: [] })
 
-    await waitFor(() => expect(screen.getByText(/No remote model providers yet/i)).toBeTruthy())
-    expect(screen.queryByText(/Native \(bundled\)/i)).toBeNull()
+    await waitFor(() => expect(screen.getByText(/No model provider instances yet/i)).toBeTruthy())
+    expect(screen.queryByRole('button', { name: /^Remove:/ })).toBeNull()
   })
 })
 

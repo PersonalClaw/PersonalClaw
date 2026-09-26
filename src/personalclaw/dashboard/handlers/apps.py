@@ -247,8 +247,17 @@ async def api_apps_list(request: web.Request) -> web.Response:
         # provider.settingsSchema (e.g. native-vector-memory/tasks/skills/
         # notifications) — so the Apps UI hid their Configure action (bug #29).
         config_schema = (manifest.get("setup", {}) or {}).get("configSchema") or {}
-        provider_schema = (manifest.get("provider", {}) or {}).get("settingsSchema") or {}
-        has_config = bool(config_schema.get("properties") or provider_schema.get("properties"))
+        provider_block = manifest.get("provider", {}) or {}
+        provider_schema = provider_block.get("settingsSchema") or {}
+        # A multi-instance provider's settingsSchema describes an INSTANCE, not the app: its
+        # settings surface is its instance list in Settings → Providers, and there is no
+        # app-level config to Configure (see `_configured_per_instance`).
+        per_instance = bool(provider_block.get("multiInstance")) and not config_schema.get(
+            "properties"
+        )
+        has_config = not per_instance and bool(
+            config_schema.get("properties") or provider_schema.get("properties")
+        )
         # Contributed UI pages (route/label/icon) so the shell can register each as
         # a nav target under the Apps section — not just a single per-app page.
         ui_pages = [
@@ -310,6 +319,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     else []
                 ),
                 "hasConfig": has_config,
+                "configuredPerInstance": per_instance,
                 "permissions": manifest.get("permissions", {}),
                 "tags": [str(t) for t in manifest.get("tags", []) if t],
                 # APE-4: the DECLARED quality block, for the Library card's badge row.
@@ -363,6 +373,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     "isProvider": True,
                     "providerType": "tool",
                     "hasConfig": False,
+                    "configuredPerInstance": False,
                     "permissions": {},
                     "tags": [],
                     "installedAt": "",
@@ -398,7 +409,9 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     "uiPages": [],
                     "isProvider": True,
                     "providerType": ext.provider_config.type,
-                    "hasConfig": bool((ext.provider_config.settingsSchema or {}).get("properties")),
+                    "hasConfig": not ext.provider_config.multiInstance
+                    and bool((ext.provider_config.settingsSchema or {}).get("properties")),
+                    "configuredPerInstance": bool(ext.provider_config.multiInstance),
                     "permissions": {},
                     "tags": [],
                     "installedAt": "",
@@ -523,7 +536,12 @@ async def api_app_get(request: web.Request) -> web.Response:
     # while the neighbouring route two functions below withheld them. Measured on a live
     # gateway: ``GET /api/apps/openai-models`` returned the stored api_key verbatim. One
     # policy, one owner; a route that carries a config is not exempt for being a detail view.
-    masked, secret_set = mask_secrets(read_config(name), schema)
+    # An app configured per instance has NO app-level config: a file left from before that
+    # was true is neither served nor masked by a schema that no longer describes it.
+    masked: dict[str, Any] = {}
+    secret_set: list[str] = []
+    if manifest is None or not _configured_per_instance(manifest):
+        masked, secret_set = mask_secrets(read_config(name), schema)
     return web.json_response(
         {
             "name": name,
@@ -816,11 +834,17 @@ def _effective_config_schema(manifest) -> dict[str, Any]:
     """The schema that drives an app's config UI: an explicit ``setup.configSchema``
     if declared, else a provider app's ``provider.settingsSchema`` (where a
     pluggable provider declares its user-configurable settings). Lets a
-    provider-only app expose its settings without duplicating the schema."""
+    provider-only app expose its settings without duplicating the schema.
+
+    A MULTI-INSTANCE provider's ``settingsSchema`` describes one of its INSTANCES, not
+    the app, so it never becomes app-level config — see :func:`_configured_per_instance`.
+    """
     schema = manifest.setup.configSchema
     if schema:
         return schema
     if manifest.provider and manifest.provider.settingsSchema:
+        if manifest.provider.multiInstance:
+            return {}
         return manifest.provider.settingsSchema
     return {}
 
@@ -857,6 +881,24 @@ def _foreign_app_config_refusal(request: web.Request, name: str) -> web.Response
     )
 
 
+def _configured_per_instance(manifest) -> str | None:
+    """The refusal for app-level config on an app whose settings live on its instances.
+
+    Measured before this existed: Apps → Ollama → Configure saved
+    ``apps/ollama-models/data/config.json`` (200 OK) while chat read the instance in
+    ``config.json`` ``providers[]``, which stayed at localhost and kept failing after a
+    restart. Nothing reads app-level config for a multi-instance provider, so there is no
+    such thing to save — only instances, managed in Settings → Providers.
+    """
+    if manifest.setup.configSchema or not manifest.provider or not manifest.provider.multiInstance:
+        return None
+    who = manifest.displayName or manifest.name
+    return (
+        f"{who} keeps its settings on each instance, not on the app. Add, edit, test or "
+        "remove its instances in Settings → Providers."
+    )
+
+
 async def api_app_config_get(request: web.Request) -> web.Response:
     from personalclaw.apps.app_config import read_config
     from personalclaw.apps.app_manager import _manifest_of
@@ -869,6 +911,9 @@ async def api_app_config_get(request: web.Request) -> web.Response:
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    refusal = _configured_per_instance(manifest)
+    if refusal:
+        return web.json_response({"error": refusal}, status=409)
     schema = _effective_config_schema(manifest)
     # Write-only sensitive fields: mask the stored secret, never send it in the clear
     # (#43). ``_secret_set`` tells the UI which sensitive fields are already set.
@@ -895,6 +940,9 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
+    refusal = _configured_per_instance(manifest)
+    if refusal:
+        return web.json_response({"error": refusal}, status=409)
     try:
         values = await request.json()
     except Exception:

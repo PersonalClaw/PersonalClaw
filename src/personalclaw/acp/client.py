@@ -543,6 +543,43 @@ class AcpClient:
                 if attempt == 1:
                     raise
 
+    async def probe_handshake(self) -> None:
+        """Spawn, ``initialize``, open ONE bare session, and stop there: the readiness probe.
+
+        A readiness answer needs three facts — the CLI starts, it speaks ACP, and it will
+        open a session for this user (``session/new`` is where an adapter that wants a login
+        refuses with ``auth_required``). Nothing else :meth:`ensure_ready` does belongs in a
+        probe that sends no prompt, and it used to do all of it: ``mcpServers`` (each entry
+        spawned a ``personalclaw mcp-core`` child), agent activation, model / mode / effort
+        verbs, and a 10 s MCP-init drain. One attempt, no retry — the probe has its own
+        budget, and a caller that wants a second opinion asks again.
+        """
+        self._work_dir.mkdir(parents=True, exist_ok=True)
+        self._retained_stderr_tail = ""
+        try:
+            await self._open_connection()
+            conn = self._connection
+            assert conn is not None
+            await conn.initialize(
+                {
+                    "protocolVersion": self._dialect.protocol_version(),
+                    "clientInfo": self._dialect.client_info(
+                        client_name=CLIENT_NAME, client_version=CLIENT_VERSION
+                    ),
+                },
+                timeout=_INIT_TIMEOUT,
+            )
+            self._agent_capabilities = dict(conn.agent_capabilities or {})
+            await conn.new_session(
+                {"cwd": str(self._work_dir), "mcpServers": []},
+                timeout=_INIT_TIMEOUT,
+                session_files_dir=self._session_files_dir,
+            )
+        except (AcpTimeoutError, AcpError):
+            # Same reason as ensure_ready: teardown clears the live deque, so keep the tail.
+            self._retained_stderr_tail = self._transport.stderr_tail()
+            raise
+
     async def _open_connection(self) -> None:
         """Spawn the process (via the shared transport) + start the FrameRouter over its
         stdout, holding the resulting :class:`AcpConnection`. One reader, one process."""

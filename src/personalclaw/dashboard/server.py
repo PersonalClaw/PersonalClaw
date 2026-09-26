@@ -2119,6 +2119,34 @@ async def start_dashboard(
 
     app.on_cleanup.append(_acp_pool_shutdown)
 
+    async def _warm_provider_availability(app_: web.Application) -> None:
+        """Measure every provider's availability once at boot, in the background.
+
+        The measurement runs in the availability child process (providers/availability.py),
+        so this costs the loop nothing; it exists so Settings → Providers opens on answers
+        rather than on a page of "checking" cards."""
+        try:
+            from personalclaw.providers.availability import get_availability_board
+            from personalclaw.providers.registry import get_provider_registry
+
+            names = sorted({ext.name for ext in get_provider_registry().list_extensions()})
+            get_availability_board().warm(names)
+        except Exception:
+            logger.debug("provider availability warm failed", exc_info=True)
+
+    app.on_startup.append(_warm_provider_availability)
+
+    async def _provider_availability_shutdown(app_: web.Application) -> None:
+        """Kill a still-running availability child on gateway stop."""
+        try:
+            from personalclaw.providers.availability import get_availability_board
+
+            await get_availability_board().shutdown()
+        except Exception:
+            logger.debug("provider availability shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_provider_availability_shutdown)
+
     async def _mcp_client_shutdown(app_: web.Application) -> None:
         """Stop the idle sweeper + drain all live MCP connections on gateway stop
         (rel-mcp-server-pooling #46)."""

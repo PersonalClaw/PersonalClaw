@@ -789,6 +789,24 @@ def _reset_channel_delivery_registry() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _reset_provider_measurement_boards() -> object:
+    """Forget every provider availability and connection answer a test measured.
+
+    Both boards (`providers/availability.py`, `providers/connection.py`) are process-wide memo
+    tables keyed by provider NAME, which every test reuses (`ollama`, `openrouter`, …). An
+    answer measured against one test's fixture home would otherwise be served to the next test
+    on the worker as a cached fact about its own. A check still in flight belongs to the
+    finished test's event loop, which cancels it (and the availability child it started).
+    """
+    yield
+    from personalclaw.providers.availability import reset_availability_board
+    from personalclaw.providers.connection import reset_connection_board
+
+    reset_availability_board()
+    reset_connection_board()
+
+
+@pytest.fixture(autouse=True)
 def _restore_workflow_def_registry() -> object:
     """Undo any workflow DEF provider a test registers into the process-global registry.
 

@@ -12,12 +12,15 @@ local-model registry — no per-kind catalog/delete/recommendation routes live h
 """
 
 import asyncio
+import functools
 import json
 import logging
 from typing import Any
 
 from aiohttp import web
 
+from personalclaw.llm.catalog import FAILURE_DETAIL_CHARS
+from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.use_cases import (
     USE_CASES,
     VALID_USE_CASES,
@@ -225,6 +228,25 @@ async def _hf_token_ready() -> bool | None:
         return None
 
 
+async def _listed(catalog: Any) -> list[Any]:
+    """``catalog.list_models()``, raising the failure a fail-soft listing swallowed.
+
+    A catalog that lists through core's fail-soft discovery answers ``[]`` for a refused key
+    or an unreachable server, which a row would render as "lists no models". Run as its own
+    task (``asyncio.gather``), so each listing captures only its own failures.
+    """
+    from personalclaw.llm.catalog import capture_discovery_failures
+
+    with capture_discovery_failures() as swallowed:
+        models = await catalog.list_models()
+    refused = next((exc for exc in swallowed if exc.rejected_credential), None)
+    if refused is not None:
+        raise refused  # every model it lists would fail its first turn with the same refusal
+    if swallowed and not models:
+        raise swallowed[-1]
+    return list(models)
+
+
 async def api_models_available(request: web.Request) -> web.Response:
     """GET /api/models/available — discover models from all configured providers.
 
@@ -236,9 +258,32 @@ async def api_models_available(request: web.Request) -> web.Response:
     ``quoted_size_mb`` / ``fit_step_down``) and the response carries the one memory budget
     they were judged against. Config-provider and image/video-gen rows carry NO fit fields:
     they have no local weights, and an absent field is how the UI knows to draw no chip.
+
+    Every configured instance's row carries its MEASURED ``connection``
+    (``providers/connection.py``). An instance whose last check failed is not asked for its
+    models again until a check passes — its row carries the check's sentence as ``error`` —
+    which is what stopped a rejected key being re-sent to its vendor on every load. A row
+    that could not be listed says so in ``error``; ``models: []`` alone means "lists none".
     """
+    from personalclaw.llm.registry import canonical_provider_type
+    from personalclaw.providers.connection import (
+        FAILED,
+        Connection,
+        get_connection_board,
+        settings_fingerprint,
+    )
+
     providers_cfg = _get_providers_from_config()
     result: list[dict[str, Any]] = []
+    board = get_connection_board()
+    connections: dict[str, Connection] = {}
+    for p in providers_cfg:
+        pname = str(p.get("name", ""))
+        connections[pname] = board.read(
+            pname,
+            settings_fingerprint(canonical_provider_type(p.get("type", "")), p.get("options")),
+            functools.partial(_catalog_for_config_provider, p),
+        )
 
     # Providers that ALSO surface through the local-model registry below (they own
     # local download/management — ollama) are rendered ONCE there, with a download card
@@ -254,18 +299,37 @@ async def api_models_available(request: web.Request) -> web.Response:
         pname = p.get("name", "")
         if _local_get(pname) is not None:
             continue  # rendered by the local-model loop below (unified download card)
+        connection = connections[pname].to_wire()
         catalog = _catalog_for_config_provider(p)
         if catalog is None:
-            result.append({"name": pname, "type": ptype, "models": []})
+            result.append({"name": pname, "type": ptype, "models": [], "connection": connection})
             continue
-        tasks.append((pname, ptype, catalog.list_models()))
+        if connections[pname].state == FAILED:
+            result.append(
+                {
+                    "name": pname,
+                    "type": ptype,
+                    "models": [],
+                    "error": connections[pname].detail,
+                    "connection": connection,
+                }
+            )
+            continue
+        tasks.append((pname, ptype, _listed(catalog)))
 
     if tasks:
         results = await asyncio.gather(*(t[2] for t in tasks), return_exceptions=True)
         for (pname, ptype, _), models_or_exc in zip(tasks, results):
+            connection = connections[pname].to_wire()
             if isinstance(models_or_exc, BaseException):
                 result.append(
-                    {"name": pname, "type": ptype, "models": [], "error": str(models_or_exc)[:200]}
+                    {
+                        "name": pname,
+                        "type": ptype,
+                        "models": [],
+                        "error": relayed_failure_copy(models_or_exc)[:FAILURE_DETAIL_CHARS],
+                        "connection": connection,
+                    }
                 )
             else:
                 models = []
@@ -274,7 +338,9 @@ async def api_models_available(request: web.Request) -> web.Response:
                     d["provider"] = pname
                     d["provider_type"] = ptype
                     models.append(d)
-                result.append({"name": pname, "type": ptype, "models": models})
+                result.append(
+                    {"name": pname, "type": ptype, "models": models, "connection": connection}
+                )
 
     # Local downloadable providers — ONE uniform source: every provider that registered
     # into the local-model registry (faster-whisper, piper, sentence-transformers, the
@@ -282,7 +348,7 @@ async def api_models_available(request: web.Request) -> web.Response:
     # (downloaded AND downloadable) with per-model capabilities, so the same surface
     # drives binding, download, and runtime. No per-kind branching, no hardcoded names.
     from personalclaw.local_models import fit as _fit
-    from personalclaw.local_models.registry import catalog_for as _local_catalog
+    from personalclaw.local_models.registry import list_catalog as _local_catalog
     from personalclaw.local_models.registry import registered as _local_registered
 
     # ONE host probe for the whole response — not one per model. The budget every row is
@@ -301,7 +367,21 @@ async def api_models_available(request: web.Request) -> web.Response:
     # Key each card by the REGISTRY key (the app name) — matches the Providers UI's ext
     # name AND the ``provider:model`` binding refs — not the provider's internal .name.
     for pkey, prov in _local_registered():
-        rows = [lm.to_dict() for lm in await _local_catalog(prov)]
+        # A config-backed instance (an Ollama entry) whose last check failed is not asked
+        # again — the check's sentence is the row's error. Any other listing failure is the
+        # row's error too: "No downloadable models listed" is not what an unreachable
+        # server's card should say.
+        instance = connections.get(pkey)
+        listing_error = ""
+        if instance is not None and instance.state == FAILED:
+            rows: list[dict[str, Any]] = []
+            listing_error = instance.detail
+        else:
+            try:
+                rows = [lm.to_dict() for lm in await _local_catalog(prov)]
+            except Exception as exc:  # noqa: BLE001 — one provider's failure is its row's error
+                logger.debug("local catalog failed for %s", pkey, exc_info=True)
+                rows, listing_error = [], relayed_failure_copy(exc)[:FAILURE_DETAIL_CHARS]
         # A family QUOTES its median variant, never its smallest: quoting the smallest
         # promises a fit the user will not get from the variant they actually pick. A
         # colonless name is a family of one, so its quote is its own size and nothing
@@ -339,16 +419,19 @@ async def api_models_available(request: web.Request) -> web.Response:
                     token_ready = await _hf_token_ready()
                 d["token_ready"] = token_ready
             models.append(d)
-        result.append(
-            {
-                "name": pkey,
-                "displayName": getattr(prov, "display_name", pkey),
-                "type": pkey,
-                "local": True,  # a locally-downloadable provider → gets a download-management card
-                "searchable": bool(getattr(prov, "searchable", False)),
-                "models": models,
-            }
-        )
+        row: dict[str, Any] = {
+            "name": pkey,
+            "displayName": getattr(prov, "display_name", pkey),
+            "type": pkey,
+            "local": True,  # a locally-downloadable provider → gets a download-management card
+            "searchable": bool(getattr(prov, "searchable", False)),
+            "models": models,
+        }
+        if listing_error:
+            row["error"] = listing_error
+        if instance is not None:
+            row["connection"] = instance.to_wire()
+        result.append(row)
 
     # Image-generation models from the image_gen registry (OpenAI-Images adapter +
     # bespoke bundles like FAL). Grouped per provider so each shows under its own
@@ -578,9 +661,26 @@ async def api_models_chat(request: web.Request) -> web.Response:
             }
         )
 
+    from personalclaw.llm.registry import canonical_provider_type
+    from personalclaw.providers.connection import (
+        FAILED,
+        get_connection_board,
+        settings_fingerprint,
+    )
+
+    board = get_connection_board()
     tasks = []  # (pname, has_pinned_model, pinned_model, coro)
     for p in providers_cfg:
         pname = p.get("name", "")
+        # An instance whose last check failed (unreachable, or its key rejected) offers
+        # nothing: a model it would list is a model whose first turn fails.
+        connection = board.read(
+            pname,
+            settings_fingerprint(canonical_provider_type(p.get("type", "")), p.get("options")),
+            functools.partial(_catalog_for_config_provider, p),
+        )
+        if connection.state == FAILED:
+            continue
         catalog = _catalog_for_config_provider(p)
         if catalog is None:
             # No discovery available — surface a pinned model if the entry has one.
