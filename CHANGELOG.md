@@ -252,6 +252,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An installed app can no longer rewrite your agents or install skills, and install consent says
+  its code runs as you.** With an ordinary `api` declaration an app could:
+  1. rewrite an agent you made through `/api/agents` (its system prompt, tools, skills and model),
+     so your next chat with it followed the app's instructions with your tools, and create, sync or
+     delete agents; #3602 had screened only the approval mode;
+  2. install, write, accept or remove a skill, and activate an agent definition as one of your
+     agents;
+  3. rewrite or rebind the system prompt your chats, unattended runs and judges start from, edit a
+     snippet those prompts include or the routing notes your orchestrator reads, launch a prompt
+     template (which starts a goal loop), import MCP servers and skills from your other agent tools,
+     and write a lesson, which every agent is handed, without the `memory` grant.
+
+  An app token now gets `403` for each of these, with a Security Event Log row naming the app and
+  the path. It can still read them, check a skill's integrity and decline a proposed skill; it
+  ships skills in its manifest and runs agent work through its own `agent` grant. The file
+  explorer refuses an app the same way: `403` with a row naming the app and the path, instead of
+  the `400` you get. Install consent now names every kind of code an app brings — provider
+  modules, the enable, disable and uninstall hooks, the steps it adds to `personalclaw setup` and
+  `personalclaw doctor`, source parsers — beside the server, install hook and MCP servers it
+  already showed, lists the skills it installs, and leads with a sentence saying which of that
+  code runs as you and that the permissions do not bound it. An update that adds any of it asks
+  again. Behaviour change: an app that wrote skills or prompts through the API ships them in its
+  manifest (`skills`, `prompts`) instead, and one that managed agents runs its agent work through
+  its `agent` grant. No bundled or first-party app did any of it.
 - **Installing an app never copies files from outside its bundle.** Staging an app, whether for
   an install, an update or the review the install dialog shows, copied the bundle with
   `shutil.copytree`, which follows symbolic links. A bundle shipping `data/key ->

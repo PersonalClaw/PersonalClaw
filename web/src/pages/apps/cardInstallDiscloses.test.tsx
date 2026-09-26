@@ -40,6 +40,8 @@ const GRANTS: AppDisclosure = {
     agent: 'researcher', message: 'summarise the day', scheduled: true,
   }],
   pythonDependencies: [], hasUI: false, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
+    backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
+    cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
 }
 
 /** The server's review of whatever source it was asked about. */

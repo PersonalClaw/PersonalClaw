@@ -226,13 +226,25 @@ class CatalogEntry:
     # read until install — `consentKnown` is what says which of those two silences it is.
     hasUI: bool = False  # noqa: N815
     uiComponents: str = ""  # noqa: N815
-    # What the install RUNS beyond its grants: a server process of its own, the shell
-    # command its install (or update) hook executes in the app's folder, and each MCP server
-    # it adds to the assistant (`{name, launches}`). `disclosure.describe` documents each.
+    # What the install RUNS beyond its grants: a server process of its own and the sandbox tier
+    # it runs in, each provider module the gateway loads, the shell command of each lifecycle
+    # hook, the CLI setup/doctor steps, each connector-pack parser, each MCP server it adds to
+    # the assistant (`{name, launches}`), the skills it installs for your agents, and the
+    # sentence saying which of that runs as you. `disclosure.describe` documents each.
     hasBackend: bool = False  # noqa: N815
+    backendSandbox: str = ""  # noqa: N815
+    providers: list[dict[str, str]] = field(default_factory=list)
     onInstall: str = ""  # noqa: N815
     onUpdate: str = ""  # noqa: N815
+    onEnable: str = ""  # noqa: N815
+    onDisable: str = ""  # noqa: N815
+    onUninstall: str = ""  # noqa: N815
+    cliSetup: str = ""  # noqa: N815
+    cliDoctor: str = ""  # noqa: N815
+    sources: list[dict[str, str]] = field(default_factory=list)
     mcpServers: list[dict[str, str]] = field(default_factory=list)  # noqa: N815
+    skills: list[str] = field(default_factory=list)
+    runsAsYou: str = ""  # noqa: N815
     # APE-4: the app's DECLARED quality block, rendered as the card's badge row. Only
     # the axes the manifest actually declared appear here — an empty dict means the app
     # claimed nothing, which the card renders as no badges, NOT as a row of misses.

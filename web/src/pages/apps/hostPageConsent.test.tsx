@@ -103,6 +103,8 @@ describe('the install dialog passes the fact through to the row', () => {
       disclosure: {
         permissions: { api: ['/api/tasks'] }, crons: [], pythonDependencies: [],
         hasUI: true, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
+    backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
+    cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
       },
     } satisfies AppInstallResult)
     render(<InstallDialogHarness target={{ source: '/apps/ui-app', label: 'ui-app' }} />)

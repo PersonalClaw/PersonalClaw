@@ -16,7 +16,6 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.edit_spec import (
     ConfigValueError,
     SecurityControl,
-    app_write_refusal,
     coerce_edit_value,
     loosens_toward,
     unconsented_loosening,
@@ -574,9 +573,6 @@ async def api_agent_detail(request: web.Request) -> web.Response:
         #
         # Before the file loop, so a malformed body is refused whether or not the agent
         # exists, and so nothing is read or written before the refusal.
-        denied = _app_security_refusal(request, name, patch_body)
-        if denied is not None:
-            return denied
         try:
             patch_staged = _staged_agent_fields(patch_body, _AGENT_DETAIL_PATCH_KEYS)
         except ConfigValueError as exc:
@@ -890,33 +886,6 @@ def _agent_write_refusal(exc: ConfigValueError) -> web.Response:
     return json_error("invalid_request", message=str(exc), status=exc.status)
 
 
-def _app_security_refusal(request: web.Request, name: str, body: dict) -> web.Response | None:
-    """Refuse an app-scoped write that names a security field of agent *name*, or ``None``.
-
-    The same rule the config PATCH applies (`edit_spec.app_write_refusal`): an app never writes
-    the owner's approval policy, whichever way. Checked on the BODY's keys, before staging, so
-    the decision depends on who asks and which field only.
-    """
-    app_name = request.get("app", "")
-    for key in body:
-        spec = _AGENT_FIELD_SPECS.get(key)
-        if spec is None:
-            continue
-        field = f"agents.{name}.{key}"
-        refused = app_write_refusal(field, spec, app_name)
-        if refused:
-            _sel().log_api_access(
-                caller=f"app:{app_name}",
-                operation="agent.write",
-                outcome="denied",
-                source="app_permissions",
-                resources=field,
-                error="security setting is owner-only",
-            )
-            return json_error("security_setting_owner_only", message=refused, status=403)
-    return None
-
-
 def _unconsented_agent_loosening(
     name: str, staged: dict[str, Any], current: dict[str, Any], body: dict
 ) -> web.Response | None:
@@ -1168,11 +1137,10 @@ async def api_personalclaw_agents_sync(request: web.Request) -> web.Response:
     🔴 A FILE'S ``approval_mode`` IS THE SAME CONTROL THE CREATE PATH GUARDS. The fold used to
     copy it straight into ``config.json``, so an agent file that said ``"approval_mode":
     "auto"`` — written by an app bundle, a marketplace activate or a restored snapshot — became
-    an auto-approving agent with no one asked, and an app that could write such a file could
-    then press this button itself. So the create path's two rules apply to what the sync would
-    fold in: an app-scoped caller is refused outright if any file it would fold sets an approval
-    mode (``_app_security_refusal``), and the owner's sync that would add a looser one needs
-    ``{"confirm": true}``, with the consent naming each agent and mode.
+    an auto-approving agent with no one asked. So the owner's sync that would add a looser one
+    needs ``{"confirm": true}``, with the consent naming each agent and mode. An app never reaches
+    this route: every agent write is the owner's (``apps/permissions.ROUTE_AUTHZ``), because what
+    a file folds in is an agent's instructions and tools as well as its approval mode.
     """
     body = await json_object_body(request)
     async with _get_config_lock():
@@ -1227,11 +1195,6 @@ async def _do_agents_sync(request: web.Request, body: dict) -> web.Response:
             logger.info("agents sync: skipping %r — %s", name, exc)
             skipped.append(_reportable_agent_name(name))
             continue
-        # Decided on WHICH fields the fold would write, exactly as a create body is, so an app
-        # learns nothing about the value and cannot fold in a tighter mode either.
-        denied = _app_security_refusal(request, name, staged)
-        if denied is not None:
-            return denied
         folding.append((name, staged))
     approval = _AGENT_FIELD_SPECS["approval_mode"]["security"]
     loosening = [
@@ -1312,9 +1275,6 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     # Validate BEFORE taking the lock: this depends only on the request body and the spec
     # table, so holding the lock across it would serialise every rejected request behind
     # whoever is writing, for no benefit. Same placement as `PUT /api/config/personalclaw`.
-    denied = _app_security_refusal(request, name, body)
-    if denied is not None:
-        return denied
     try:
         staged = _staged_agent_fields(body)
     except ConfigValueError as exc:
@@ -1383,9 +1343,6 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
     # `skills`/`tools`/`triggers` used to answer 200 having changed nothing, and being told a
     # write succeeded when it did not is the failure `config/edit_spec.py` exists to stop.
     # Clearing a list stays expressible, by sending `[]`.
-    denied = _app_security_refusal(request, name, body)
-    if denied is not None:
-        return denied
     try:
         staged = _staged_agent_fields(body)
     except ConfigValueError as exc:

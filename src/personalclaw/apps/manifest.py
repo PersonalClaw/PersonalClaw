@@ -504,8 +504,9 @@ class Permissions:
     # denied" (reassuring, and a real statement by the author) from "never mentioned"
     # (unknown). Collapsing the two made an explicit ``"network": false`` read as silence.
     network_declared: bool = False
-    # Whether the app may reach the memory API (``/api/memory/*``), gated by
-    # ``permissions.can_use_memory``. ONE boolean, not a tier: this was
+    # Whether the app may reach the memory store (``/api/memory/*`` and ``/api/lessons``,
+    # ``permissions.MEMORY_API_PATHS``), gated by ``permissions.can_use_memory``. ONE boolean,
+    # not a tier: this was
     # ``""``/``"app-scoped"``/``"shared"`` until #3501, and ``app-scoped`` granted nothing
     # on any path — the checker answered True for it only when asked about the app-scoped
     # scope, and its sole enforcement call site asked about ``"shared"``. Deleted rather

@@ -32,10 +32,10 @@ sandbox). Enforcement status of each method:
 * ``can_use_mcp_tool`` — the direct tool-invoke endpoint (handlers/tools.py).
 * ``can_use_config_field`` — ``/api/config/personalclaw`` (handlers/core.py): an app reads,
   and writes, only the settings its manifest names in ``permissions.config``.
-* ``can_use_memory`` — app-permission middleware gates any ``/api/memory`` path. ONE
-  boolean grant, no tier: the ``"app-scoped"``/``"shared"`` vocabulary was deleted in
-  #3501 because ``app-scoped`` granted nothing anywhere and never said so. See that
-  method.
+* ``can_use_memory`` — app-permission middleware gates every :data:`MEMORY_API_PATHS` path
+  (``/api/memory`` and ``/api/lessons``). ONE boolean grant, no tier: the
+  ``"app-scoped"``/``"shared"`` vocabulary was deleted in #3501 because ``app-scoped``
+  granted nothing anywhere and never said so. See that method.
 * ``can_use_cron``  — app-declared manifest crons are registered only when held
   (apps/app_crons.reconcile_app_crons).
 * ``can_use_storage`` — the backend launcher hands the app its DATA_DIR only when
@@ -385,6 +385,15 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     # The list of people who may message the agent from a chat channel (sender ids are PII),
     # and revoking one — which cuts the owner off from their own agent on that channel.
     "/api/channels/trust": "who may message your agent from a chat channel, and revoking them",
+    # ── What your agents are told ──
+    # The import copies MCP servers (commands the gateway launches) and skills in from the
+    # owner's other agent tools, and folds their CLAUDE.md-style instructions into memory — the
+    # `/api/mcp/apply` door and a skill install in one request. The scan reads those tools'
+    # setup, which is the owner's too. Reads included, like `/api/mcp`.
+    "/api/onboarding/import": (
+        "bringing your setup over from other agent tools — their instructions, skills and "
+        "MCP servers"
+    ),
 }
 
 
@@ -407,12 +416,18 @@ class AppMay:
 #: The verbs that write. A read under a security family is governed by the ordinary allowlist.
 WRITE_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-#: The route families whose WRITES decide what runs as the owner, whether it asks first, or who
-#: may reach the owner — and the category each belongs to. Every write route under one of these
-#: roots must be covered by :data:`OWNER_ONLY_API_PATHS` or declared in :data:`ROUTE_AUTHZ`
-#: (``tests/test_security_posture_rail.py``), and one that is neither is refused to an app at
-#: runtime (:func:`undeclared_security_write`) — so a route added tomorrow fails closed until
-#: someone decides which it is.
+#: The route families whose WRITES decide what runs as the owner, whether it asks first, who
+#: may reach the owner, or what the owner's agents are told — and the category each belongs to.
+#: Every write route under one of these roots must be covered by :data:`OWNER_ONLY_API_PATHS` or
+#: declared in :data:`ROUTE_AUTHZ` (``tests/test_security_posture_rail.py``), and one that is
+#: neither is refused to an app at runtime (:func:`undeclared_security_write`) — so a route added
+#: tomorrow fails closed until someone decides which it is.
+#:
+#: **What an agent is told is in the class** (#3614 left it open). An agent's system prompt, its
+#: skills, the system prompt a chat or an unattended run starts from and the routing note the
+#: orchestrator reads are all instructions, and the agent carries them out with the owner's tools
+#: under the owner's approval settings. An app that can write them has written the owner's next
+#: request, so the six instruction families below are declared route by route like the rest.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -421,7 +436,12 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/workflows": "workflows — what their steps run, and whether their agents ask you",
     "/api/loops": "autonomous loops, whose workers approve their own tool calls",
     "/api/spawn": "background agents started on request",
-    "/api/agents": "agents and their approval mode",
+    "/api/agents": "agents — the instructions, tools and approval mode your chats run with",
+    "/api/agent-marketplace": "agent definitions, and making one of them one of your agents",
+    "/api/agent-metadata": "the routing notes your orchestrator reads",
+    "/api/skills": "skills — instructions your agents follow",
+    "/api/prompts": "the system prompts your chats, unattended runs and judges start from",
+    "/api/prompt-snippets": "text included in your prompts",
     "/api/agent": "the ACP agent's runtime config",
     "/api/config": "your settings",
     "/api/autonomy": "earned autonomy",
@@ -448,7 +468,6 @@ _FIRES_AUTOMATION = (
 )
 _STARTS_LOOP = "starting or steering an autonomous loop — its worker approves its own tool calls"
 _STOPS_WORK = "stops work — stopping is never an escalation, and resuming is yours"
-_GRANTS_NOTHING = "removes an agent; it grants nothing"
 #: Defining an automation, not screening one: a step can run a shell command, start one of your
 #: workflows, or prompt an agent that approves its own tool calls, and a step screen would have
 #: to keep up with every provider. An app's scheduled work is the `crons` its manifest declares,
@@ -457,9 +476,43 @@ _DEFINES_AUTOMATION = (
     "defining an automation — its steps can run commands and agents that approve their own "
     "tool calls; an app schedules work with the crons its manifest declares"
 )
-_SCREENED_AGENT = (
-    "screened: an app never writes an agent's approval mode (`agents._app_security_refusal`)"
+#: An agent's system prompt is the instruction set the owner's chat with it carries out, with the
+#: owner's tools. #3602 screened the one field that decides whether it asks first
+#: (`approval_mode`), which left the one that decides what it DOES open: an app could rewrite an
+#: agent the owner made and wait for the owner to talk to it. There is no field to leave an app —
+#: the description is routing text, the model and tools are what runs — so the whole write is the
+#: owner's. An app's agent work is its own `agent` permission (`POST /api/apps/{name}/agent-run`),
+#: which install consent names.
+_WRITES_AGENT = (
+    "writing one of your agents — the instructions it follows and the tools it holds when you "
+    "chat with it; an app runs agent work through its own `agent` permission"
 )
+_REMOVES_AGENTS = "removing your agents"
+_WRITES_AGENT_DEFINITION = (
+    "writing an agent definition — the instructions, skills and MCP servers an agent gets when "
+    "you make it one of yours"
+)
+_WRITES_ROUTING_NOTE = (
+    "the routing note your orchestrator reads when it picks which agent handles your request"
+)
+#: A skill is a SKILL.md every agent may load and follow. An app ships its own in its manifest
+#: (`skills`), seeded through the supply-chain scan and listed at install consent.
+_WRITES_SKILL = (
+    "writing a skill — instructions your agents follow; an app ships its skills in its manifest, "
+    "which install consent lists"
+)
+#: The prompt library holds the default system prompt of every chat and every unattended run, and
+#: the judges' — rebinding or editing one rewrites what all of them are told. A runnable template
+#: carries a launch spec, so writing one is also writing a loop's start.
+_WRITES_PROMPT = (
+    "writing a prompt — the system prompts your chats, unattended runs and judges start from "
+    "are prompts, and a runnable one launches a loop"
+)
+_WRITES_SNIPPET = (
+    "writing a prompt snippet — text included in every prompt that names it, your system "
+    "prompts among them"
+)
+_RENDERS = "renders it with the values it is sent; it writes nothing"
 _SCREENED_CONFIG = (
     "screened: an app reads and writes only the settings its manifest declares in "
     "`permissions.config`, and never a security setting"
@@ -589,17 +642,78 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "DELETE /api/spawn": AppMay(_STOPS_WORK),
     "POST /api/spawn/cancel-fanout": AppMay(_STOPS_WORK),
     "DELETE /api/spawn/{agent_id}": AppMay(_STOPS_WORK),
-    # ── agents ──
-    "POST /api/agents": AppMay(_SCREENED_AGENT),
-    "PUT /api/agents/{name}": AppMay(_SCREENED_AGENT),
-    "PATCH /api/agents/detail/{name}": AppMay(_SCREENED_AGENT),
-    "POST /api/agents/sync": AppMay(
-        "screened: an app's sync refuses to fold in an agent file that sets an approval mode"
+    # ── agents (what your chats run with) ──
+    "POST /api/agents": OwnerOnly(_WRITES_AGENT),
+    "PUT /api/agents/{name}": OwnerOnly(_WRITES_AGENT),
+    # The per-file runtime config, `personalclaw.json` included.
+    "PATCH /api/agents/detail/{name}": OwnerOnly(_WRITES_AGENT),
+    # Folds every agent file on disk into your agents — prompts, tools and approval modes alike.
+    "POST /api/agents/sync": OwnerOnly(
+        "folding the agent files on disk into your agents — their instructions, tools and "
+        "approval mode"
     ),
-    "DELETE /api/agents/{name}": AppMay(_GRANTS_NOTHING),
-    "DELETE /api/agents/detail/{name}": AppMay(_GRANTS_NOTHING),
+    "DELETE /api/agents/{name}": OwnerOnly(_REMOVES_AGENTS),
+    "DELETE /api/agents/detail/{name}": OwnerOnly(_REMOVES_AGENTS),
     "POST /api/agents/routing/dismiss": AppMay("dismisses a routing suggestion"),
     "POST /api/agents/routing/unmute": AppMay("brings routing suggestions back"),
+    # ── agent definitions ──
+    "POST /api/agent-marketplace/agents": OwnerOnly(_WRITES_AGENT_DEFINITION),
+    "PUT /api/agent-marketplace/agents/{name}": OwnerOnly(_WRITES_AGENT_DEFINITION),
+    "DELETE /api/agent-marketplace/agents/{name}": OwnerOnly("removing your agent definitions"),
+    # Writes the definition's prompt to disk and puts it in `config.json`'s agents map, in place
+    # of any agent of that name.
+    "POST /api/agent-marketplace/agents/{name}/activate": OwnerOnly(
+        "making a definition one of your agents, in place of any agent of that name — its "
+        "instructions become what that agent follows"
+    ),
+    # A one-turn chat on your model and credentials; an app's agent work is its `agent` grant.
+    "POST /api/agent-marketplace/agents/{name}/test": OwnerOnly(_STARTS_AGENT_WORK),
+    # ── routing notes (the orchestrator skill is rendered from them) ──
+    "PUT /api/agent-metadata/{name}": OwnerOnly(_WRITES_ROUTING_NOTE),
+    "DELETE /api/agent-metadata/{name}": OwnerOnly(_WRITES_ROUTING_NOTE),
+    # ── skills ──
+    "POST /api/skills": OwnerOnly(_WRITES_SKILL),
+    "PUT /api/skills/{name}": OwnerOnly(_WRITES_SKILL),
+    # The body names the marketplace, the skill and the folder it lands in.
+    "POST /api/skills/install": OwnerOnly(
+        "installing a skill from a marketplace, into whatever folder the request names — "
+        "instructions your agents follow"
+    ),
+    "DELETE /api/skills/{name}": OwnerOnly("removing your skills"),
+    "POST /api/skills/overlay/revert": OwnerOnly(
+        "undoing a refinement you accepted into one of your skills"
+    ),
+    "POST /api/skills/ephemeral/{session}/promote": OwnerOnly(_WRITES_SKILL),
+    "POST /api/skills/proposals/{id}/accept": OwnerOnly(
+        "accepting a proposed skill — it installs instructions your agents follow"
+    ),
+    "POST /api/skills/{name}/verify": AppMay(
+        "compares an installed skill with the hashes it installed with; it changes nothing"
+    ),
+    "DELETE /api/skills/proposals/{id}": AppMay(
+        "declines a pending skill proposal; declining installs nothing"
+    ),
+    "DELETE /api/skills/ephemeral/{session}/{slug}": AppMay(
+        "forgets a draft skill from one session; nothing is installed"
+    ),
+    # ── prompts and snippets ──
+    "POST /api/prompts": OwnerOnly(_WRITES_PROMPT),
+    "PUT /api/prompts/{name}": OwnerOnly(_WRITES_PROMPT),
+    "DELETE /api/prompts/{name}": OwnerOnly("removing your prompts"),
+    "PUT /api/prompts/bindings": OwnerOnly(
+        "which system prompt your chats, unattended runs and judges start from"
+    ),
+    # Renders a runnable template and creates AND starts a loop from its launch spec — the same
+    # start `POST /api/loops` is owner-only for.
+    "POST /api/prompts/{name}/launch": OwnerOnly(_STARTS_LOOP),
+    "POST /api/prompts/{name}/render": AppMay(_RENDERS),
+    "POST /api/prompts/preview": AppMay(
+        "renders a draft through the prompt engine; it saves nothing"
+    ),
+    "POST /api/prompt-snippets": OwnerOnly(_WRITES_SNIPPET),
+    "PUT /api/prompt-snippets/{name}": OwnerOnly(_WRITES_SNIPPET),
+    "DELETE /api/prompt-snippets/{name}": OwnerOnly("removing your prompt snippets"),
+    "POST /api/prompt-snippets/{name}/render": AppMay(_RENDERS),
     # ── config ──
     "PATCH /api/config/personalclaw": AppMay(_SCREENED_CONFIG),
     "PUT /api/config/personalclaw": AppMay(_SCREENED_CONFIG),
@@ -735,6 +849,13 @@ def checker_for(app_name: str) -> PermissionChecker | None:
 #: ``/apps/`` is an app's own UI/proxy surface; anything else is not app-scoped.
 APP_SCOPED_PREFIXES: tuple[str, ...] = ("/api/", "/apps/")
 
+#: The paths that reach the memory store, each needing the ``memory`` capability on top of the
+#: path grant. ``/api/lessons`` is the store's second door: a lesson is a ``lesson.*`` record in
+#: ``memory.db``, and context assembly hands every agent its lessons as rules. It used to need
+#: only the path, so an app with no ``memory`` grant wrote the one kind of memory every agent is
+#: told to follow.
+MEMORY_API_PATHS: tuple[str, ...] = ("/api/memory", "/api/lessons")
+
 
 def app_lifecycle_denial(app_name: str) -> str:
     """Why this app may not act AT ALL, or ``""`` when it is installed and enabled.
@@ -818,7 +939,7 @@ def app_request_denial(app_name: str, path: str, *, method: str = "", route: str
     if not checker.can_use_api(path):
         return "api path not in declared permissions"
     # A memory API path additionally requires the ``memory`` capability (sandbox P3) —
-    # declaring the /api/memory path in permissions.api is necessary but not sufficient.
-    if path.startswith("/api/memory") and not checker.can_use_memory():
+    # declaring the path in permissions.api is necessary but not sufficient.
+    if path.startswith(MEMORY_API_PATHS) and not checker.can_use_memory():
         return "memory access not declared (permissions.memory)"
     return ""
