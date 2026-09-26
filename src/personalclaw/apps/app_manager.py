@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.apps import disclosure as app_disclosure
+from personalclaw.apps import staging as app_staging
 from personalclaw.apps.manager import (
     APP_MANIFEST_FILENAME,
     INSTALLED_META_FILENAME,
@@ -508,12 +509,37 @@ def _core_version_gate(manifest: AppManifest, *, action: str) -> None:
         logger.warning("app %s: %s", manifest.name, compat.reason)
 
 
+def _survey(src: Path, *, action: str) -> app_staging.Survey:
+    """Check the whole bundle at ``src`` against the staging link policy
+    (:mod:`apps.staging`), before ANYTHING reads it — the manifest peek included, so not
+    even that follows a link out of the bundle. Raises :class:`AppLifecycleError` with the
+    refusal sentence, which names the offending path."""
+    try:
+        return app_staging.survey(src)
+    except app_staging.UnsafeBundleError as exc:
+        raise AppLifecycleError(f"{action} refused: {exc}") from exc
+
+
+def _stage(bundle: app_staging.Survey, staged: Path, *, action: str) -> None:
+    """Copy a surveyed bundle into quarantine at ``staged`` — the entries the survey passed
+    and nothing else, a link to one of the bundle's own files as that link, never through
+    one. The ONE way install, update and preview copy a bundle, so the tree every later gate
+    reads (signature, scan, consent digest) is the tree the policy checked."""
+    if staged.exists():
+        shutil.rmtree(staged, ignore_errors=True)
+    try:
+        bundle.copy_to(staged)
+    except app_staging.UnsafeBundleError as exc:
+        raise AppLifecycleError(f"{action} refused: {exc}") from exc
+
+
 def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManifest:
     """Parse + gate the manifest at ``staged``. THE chokepoint every write path crosses.
 
     ``install`` calls this for the source peek AND the staged copy; ``update`` does the
     same — so the core-version gate lives here rather than as a per-entry-point copy that
-    can drift. ``enable`` and the boot backend launcher ask
+    can drift. The peek runs only after :func:`_survey` has passed the source, so it reads a
+    tree whose every link stays inside it. ``enable`` and the boot backend launcher ask
     :meth:`AppManifest.core_compatibility` directly (their manifest is already installed,
     so there is nothing to stage)."""
     mpath = staged / APP_MANIFEST_FILENAME
@@ -863,6 +889,7 @@ def preview(source: str | Path, *, origin: str = "local", name: str | None = Non
         return InstallResult(ok=False, error=f"source is not a directory: {source}")
     action = "update" if name else "install"
     try:
+        bundle = _survey(src, action=action)
         peek = _load_staged_manifest(src, action=action)
     except AppLifecycleError as exc:
         return InstallResult(ok=False, error=str(exc))
@@ -884,7 +911,7 @@ def preview(source: str | Path, *, origin: str = "local", name: str | None = Non
     slot = Path(tempfile.mkdtemp(prefix=f"{target}.preview-", dir=_quarantine_dir()))
     staged = slot / target
     try:
-        shutil.copytree(src, staged)
+        _stage(bundle, staged, action=action)
         gate = _review(staged, origin=origin, action=action)
         if isinstance(gate, _Refused):
             return gate.result
@@ -941,8 +968,14 @@ def install(
         _audit("install", "error", str(source), caller=caller, error="source not a directory")
         return InstallResult(ok=False, error=f"source is not a directory: {source}")
 
-    # 1. Stage in quarantine FIRST — dangerous content never touches the live tree.
+    # 1. The link policy over the whole source before anything reads it, then stage in
+    # quarantine — dangerous content never touches the live tree.
     staged_root = _quarantine_dir()
+    try:
+        bundle = _survey(src, action="install")
+    except AppLifecycleError as exc:
+        _audit("install", "refused", str(source), caller=caller, error=str(exc))
+        return InstallResult(ok=False, error=str(exc))
     try:
         manifest_peek = _load_staged_manifest(src)
     except AppLifecycleError as exc:
@@ -950,12 +983,10 @@ def install(
         return InstallResult(ok=False, error=str(exc))
     name = manifest_peek.name
     staged = staged_root / name
-    if staged.exists():
-        shutil.rmtree(staged, ignore_errors=True)
-    shutil.copytree(src, staged)
 
     granted = confirm or bool(consent)
     try:
+        _stage(bundle, staged, action="install")
         # 2-4. Manifest (source of truth is the staged copy), signature, scan — terminal
         # refusals first, before anything the owner could be asked to accept.
         gate = _review(staged, origin=origin, action="install")
@@ -1259,12 +1290,18 @@ def _only_vanished_sources(exc: shutil.Error) -> bool:
 def _copy_live_tree(src: Path, dst: Path) -> None:
     """``shutil.copytree``, retried while the source tree is still settling.
 
+    Links are copied AS links (``symlinks=True``), never read through. ``src`` is an app's
+    ``data/`` — the one folder a confined app may write — and this copy runs with the
+    gateway's authority, so following a link the app planted there (``data/key ->
+    ~/.ssh/id_ed25519``) would hand it the bytes of whatever the link names on its next
+    update or keep-data uninstall. The user's data is carried forward exactly as it is.
+
     Re-raises the last error once the attempts run out, so every caller's fail-closed
     branch stays exactly as loud as it was.
     """
     for attempt in range(_LIVE_COPY_ATTEMPTS):
         try:
-            shutil.copytree(src, dst)
+            shutil.copytree(src, dst, symlinks=True)
             return
         except shutil.Error as exc:
             if attempt == _LIVE_COPY_ATTEMPTS - 1 or not _only_vanished_sources(exc):
@@ -1343,7 +1380,9 @@ def _restore_preserved_data(name: str, dest: Path) -> tuple[str, Path | None]:
     try:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-        shutil.copytree(parked, target)
+        # Links as links, for the reason `_copy_live_tree` gives: the parked copy is the
+        # app's own data/, links it planted included, and restoring it must not read them.
+        shutil.copytree(parked, target, symlinks=True)
     except OSError:
         logger.warning("app %s: could not restore preserved data/", name, exc_info=True)
         return "preserved_data=restore_failed", None
@@ -1384,6 +1423,11 @@ def update(
     if not src.is_dir():
         return InstallResult(ok=False, error=f"source is not a directory: {source}")
     try:
+        bundle = _survey(src, action="update")
+    except AppLifecycleError as exc:
+        _audit("update", "refused", name or str(source), caller=caller, error=str(exc))
+        return InstallResult(ok=False, name=name or "", error=str(exc))
+    try:
         peek = _load_staged_manifest(src, action="update")
     except AppLifecycleError as exc:
         return InstallResult(ok=False, error=str(exc))
@@ -1395,13 +1439,11 @@ def update(
 
     staged_root = _quarantine_dir()
     staged = staged_root / f"{name}{_ROLLBACK_SUFFIX}.new"
-    if staged.exists():
-        shutil.rmtree(staged, ignore_errors=True)
-    shutil.copytree(src, staged)
 
     live = app_dir(name)
     rollback = _rollback_dir(name)
     try:
+        _stage(bundle, staged, action="update")
         manifest = _load_staged_manifest(staged, action="update")
         if manifest.name != name:
             return InstallResult(
