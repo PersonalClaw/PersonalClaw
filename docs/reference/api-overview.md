@@ -129,6 +129,14 @@ has cost someone a debugging session.
   rejects an `author` in the body; the configured username wins.
 - **Locked dashboard presets refuse mutation.** `PUT`/`DELETE` on a locked
   `/api/dashboard/views/{id}` answers `403` by design.
+- **An MCP server's tool has one switch: its server's `disabledTools` in `mcp.json`.**
+  `POST /api/mcp/toggle-tool {server, tool, enabled}` takes the name the server gives the
+  tool (`hello`), which is the `serverTool` of its row in `GET /api/tools`. The
+  `mcp/<server>/<tool>` form is refused with `400`, because in that list it matches
+  nothing. `POST /api/tools/toggle` switches a native provider's tool in `tool_prefs.json`
+  and refuses an MCP server's tool with `409`. A tool switched off either way is left out
+  of a native agent's tools, answers `403 tool_disabled` from `POST /api/tools/invoke` and
+  reads `disabled: true` in `GET /api/tools`. An ACP agent reads the same `disabledTools`.
 
 ## The same surface, three ways
 

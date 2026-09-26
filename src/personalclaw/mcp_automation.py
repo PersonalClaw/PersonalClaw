@@ -307,8 +307,8 @@ def _resolve_resume_target(args: dict[str, Any]) -> tuple[dict[str, Any] | None,
 
         run_id = str(os.environ.get("__wf_run_id", "") or "").strip()
         if not run_id:
-            return None, (
-                "Error: resume_run_id='self' only works from inside a workflow run — this "
+            return None, tool_failure(
+                "resume_run_id='self' only works from inside a workflow run — this "
                 "session has no run lineage. Pass the explicit run id instead."
             )
         return {"run_id": run_id}, ""
@@ -394,9 +394,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     # The tool's own text is the agent-facing message; the structured data rides in a trailing
     # JSON line for a surface that wants it, matching how the other category modules answer.
+    text = result.text
     if result.data:
-        return f"{result.text}\n\n<automation-data>{json.dumps(result.data)}</automation-data>"
-    return result.text
+        text = f"{text}\n\n<automation-data>{json.dumps(result.data)}</automation-data>"
+    # A refusal says so by its type (#3487), which the bridge, the SEL and the chat's tool card
+    # read. As a bare string it reached all three as a success.
+    return text if result.ok else tool_failure(text.removeprefix("Error: "))
 
 
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:

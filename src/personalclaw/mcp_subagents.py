@@ -90,7 +90,7 @@ def _batch_def_name() -> str:
 
 def _findings_report(result: batch_compile.CompileResult) -> str:
     """A refusal a model can act on: the findings, then what to do about them."""
-    lines = ["Error: the batch did not compile — each leaf needs an explicit contract."]
+    lines = ["the batch did not compile — each leaf needs an explicit contract."]
     for finding in result.findings:
         lines.append(f"  [{finding.severity}] {finding.code}: {finding.message}")
     lines.append(
@@ -99,7 +99,7 @@ def _findings_report(result: batch_compile.CompileResult) -> str:
         f"{batch_compile.MIN_DECLARATION_CHARS} characters), plus 'capability' and 'writes' "
         "when the leaf mutates."
     )
-    return "\n".join(lines)
+    return tool_failure("\n".join(lines))
 
 
 def _run_compiled_batch(

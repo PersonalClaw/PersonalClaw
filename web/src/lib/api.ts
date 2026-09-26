@@ -2385,7 +2385,12 @@ export interface SkillMarketplaceDetail { id: string; name: string; audit_status
  *  through the supply-chain gate and so has no tier to claim). Rendered through
  *  `lib/trustTier` — the ONE map both the Tools badge and the install dialog read, after
  *  #2627 found them describing the same bundle differently. */
-export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string; tier?: string }
+export interface ToolItem {
+  name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string; tier?: string
+  /** An external MCP server's tool, as the SERVER names it (`hello`, where `name` is
+   *  `mcp/<server>/hello`): what its switch sends to `toggleMcpTool`. Only on those rows. */
+  serverTool?: string
+}
 export interface ToolLoadFailure { provider: string; error: string }
 // The generated self-description document served at GET /api/manifest — the same
 // shape an agent driving this instance reads (personalclaw/manifest.py).
