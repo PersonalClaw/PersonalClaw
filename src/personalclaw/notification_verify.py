@@ -27,18 +27,22 @@ provider in the ``ModelCallGuard`` (circuit breaker + hard timeout + attempt aud
 bridge seam, so budget/breaker exhaustion surfaces here as an exception and degrades open
 rather than blocking delivery.
 
-The public entry point the inbox hook uses is :func:`run_verification_sync`, a sync bridge
-over the async :func:`verify_attention_item` — ``emit_attention_item`` is synchronous and has
-many synchronous callers, so the model call is run to completion on a worker loop rather than
-forcing every emitter to become a coroutine.
+**Nothing waits on it.** The inbox hook calls :func:`verify_in_background`, which returns at
+once: the check runs on a worker thread with its own event loop, and the verdict is handed back
+to the caller's loop when it has one. ``emit_attention_item`` publishes the row first and lets
+the verdict annotate it (``inbox.apply_verdict``). It used to wait for the model inside the
+emit, from whatever thread raised the item, so a proposal raised on the gateway's loop stopped
+the whole gateway until the model answered.
 """
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
 import logging
 import re
-from typing import Any
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -118,32 +122,55 @@ async def verify_attention_item(title: str, body: str = "") -> str:
     return _parse_verdict(raw)
 
 
-def _run_sync(coro: Any) -> Any:
-    """Run *coro* to completion from a synchronous caller.
+#: Where the checks run: their own threads, each check on its own event loop, so a slow model or
+#: a provider that blocks holds one of these and nothing else. Two, so one slow claim does not
+#: queue the next behind it. Not daemon threads: a CLI that raised an item waits at exit for its
+#: check to land rather than leaving the row saying it is still being checked.
+_WORKER = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="notification-verify"
+)
 
-    ``emit_attention_item`` is sync and reached from both plain sync code and async request
-    handlers. When no loop is running on this thread ``asyncio.run`` is correct; when one is
-    (an async caller), run the coroutine on its own loop in a worker thread rather than
-    exploding with "asyncio.run() cannot be called from a running event loop". Blocking the
-    caller is acceptable: verification is a pre-delivery gate whose contract is synchronous.
+
+def verify_in_background(title: str, body: str, on_verdict: Callable[[str], None]) -> None:
+    """Ask the second opinion about ``title``/``body`` and hand the verdict to *on_verdict*.
+
+    Returns at once and never raises. *on_verdict* runs on the caller's event loop when there
+    is one, which is the thread that owns the row it annotates; a caller with no loop (a worker
+    thread, a CLI) has it run on the worker. A check that fails for any reason hands over
+    ``skipped``, so the item is still delivered (fail-open).
     """
-    import asyncio
-
     try:
-        asyncio.get_running_loop()
+        loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        loop = None
 
-    import concurrent.futures
+    def settle(done: concurrent.futures.Future) -> None:
+        try:
+            verdict = done.result()
+        except Exception:
+            logger.debug("verify: the check failed — skipping (fail-open)", exc_info=True)
+            verdict = SKIPPED
+        if loop is None:
+            _hand_over(on_verdict, verdict)
+            return
+        try:
+            loop.call_soon_threadsafe(_hand_over, on_verdict, verdict)
+        except RuntimeError:
+            # The loop closed while the model answered (a shutdown). The row keeps `checking`,
+            # which the next start delivers (`inbox.settle_verification_rows`).
+            logger.debug("verify: the caller's loop closed before the verdict", exc_info=True)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
-
-
-def run_verification_sync(title: str, body: str = "") -> str:
-    """Sync entry point for the inbox hook. Never raises — worst case returns ``skipped``."""
+    check = verify_attention_item(title, body)
     try:
-        return _run_sync(verify_attention_item(title, body))
+        _WORKER.submit(asyncio.run, check).add_done_callback(settle)
+    except RuntimeError:
+        # The interpreter is shutting down and the worker takes nothing new.
+        check.close()
+        _hand_over(on_verdict, SKIPPED)
+
+
+def _hand_over(on_verdict: Callable[[str], None], verdict: str) -> None:
+    try:
+        on_verdict(verdict)
     except Exception:
-        logger.debug("verify: sync bridge failed — skipping (fail-open)", exc_info=True)
-        return SKIPPED
+        logger.warning("verify: applying the verdict failed", exc_info=True)

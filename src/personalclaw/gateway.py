@@ -4034,6 +4034,9 @@ class GatewayOrchestrator:
             # dashboard state exists) so the Inbox handlers reach draft/classify/digest.
             self.dashboard_state._inbox_svc = self.inbox_svc
             self.dashboard_state._inbox_restart = self._restart_inbox
+            # No second opinion survives a restart either: deliver the checks it cut off, and
+            # take the decisions an earlier verify filtered back out of Filtered.
+            self.dashboard_state.settle_verification_rows()
             # No approval survives a restart, so an Inbox row still asking for one from the
             # previous run is asking for nothing — close those before anyone opens them.
             self.dashboard_state.close_orphaned_approval_rows()

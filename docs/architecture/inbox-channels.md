@@ -183,6 +183,21 @@ and says why, and a `verify` stored against one reads as off. Until this, `syste
 was verifiable: with `verify: true`, every approval's registration waited on a model call made
 on the gateway's loop, and a REFUTED filed the row as `filtered` and withheld its notification.
 
+**A proposal's second opinion holds nothing up.** INU-6 still checks a proposal whose rule sets
+`verify`, after its row is listed. `emit_attention_item` publishes the row with
+`refs.verify: checking`, holds its one notification in `refs.verify_withheld`, and returns;
+`notification_verify.verify_in_background` asks the model on a worker thread with its own event
+loop and hands the verdict back to the caller's loop, where `inbox.apply_verdict` lands it. A
+REFUTED claim files a row nobody has touched under Filtered, its notification still withheld
+for Restore. A row the user opened or answered while the model thought stays where they put it:
+the verdict is written on it, the row says so, and it is notified only if it is still open and
+the claim was not refuted. When the gateway attaches its Inbox, `settle_verification_rows`
+delivers a check a restart cut off (as `skipped`) and takes every decision row an earlier
+verify filed as `filtered` back out of Filtered: restored, with its notification, if the
+decision stands (an approval still in the registry, a folder not yet trusted, a one-tap hold),
+handled if not. Before this the emit waited for the model from whatever thread raised the item,
+so on the gateway's loop a one-second model stopped the gateway for a second.
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**

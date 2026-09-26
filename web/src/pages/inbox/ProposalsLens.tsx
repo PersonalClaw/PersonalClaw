@@ -13,6 +13,7 @@ import {
   groupLabel,
   proposalOf,
 } from './proposalLens'
+import { verifyNote } from './inboxMeta'
 
 /** Per-item apply outcome, kept so a BATCH shows N individual results — one failure must
  *  not read as "the batch failed", and a success next to it must stay visible. */
@@ -187,6 +188,9 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                       </span>
                     )}
                   </div>
+                  {verifyNote(it) && (
+                    <div data-type="caption" className="mt-0.5 text-on-surface-low">{verifyNote(it)}</div>
+                  )}
                   {p?.preview && (
                     <pre
                       data-type="body-s"

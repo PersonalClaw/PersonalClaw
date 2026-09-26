@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -139,6 +140,11 @@ def test_the_refuting_model_still_filters_a_proposal(store, refuting_model):
     item_id = emit_attention_item(
         state, source="skills", kind="proposal", title="Add a skill", store=store
     )
+    # The verdict is fetched on a worker and lands a moment later.
+    for _ in range(1000):
+        if store.items[item_id].refs.get("verify") != "checking":
+            break
+        time.sleep(0.005)
     assert store.items[item_id].status == "filtered"
     assert len(refuting_model) == 1
     state.notify.assert_not_called()

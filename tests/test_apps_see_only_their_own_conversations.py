@@ -15,6 +15,7 @@ on a tree without them each test fails on its own rather than the module failing
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1234,11 +1235,11 @@ class TestAnAppReadsOnlyTheNotificationsItRaised:
 
         state = _make_state(tmp_path)
         monkeypatch.setattr(inbox_mod, "_verification_opted_in", lambda source, kind: True)
-        monkeypatch.setattr(
-            notification_verify,
-            "run_verification_sync",
-            lambda *a, **k: notification_verify.REFUTED,
-        )
+
+        async def _refute(title, body=""):
+            return notification_verify.REFUTED
+
+        monkeypatch.setattr(notification_verify, "verify_attention_item", _refute)
         with _home(tmp_path), patch.object(handlers_inbox, "sel", MagicMock()):
             _, store = handlers_inbox._get_inbox(state)
             item_id = inbox_mod.emit_attention_item(
@@ -1249,6 +1250,11 @@ class TestAnAppReadsOnlyTheNotificationsItRaised:
                 store=store,
                 raised_by_app=APP,
             )
+            # The verdict is fetched on a worker and handed back to this loop.
+            for _ in range(1000):
+                if store.items[item_id].status == "filtered":
+                    break
+                await asyncio.sleep(0.005)
             assert state._notification_log == [], "the second opinion did not withhold it"
             request = MagicMock()
             request.app = {"state": state}
