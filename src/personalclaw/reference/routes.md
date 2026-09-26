@@ -418,6 +418,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/lessons` — add a lesson to memory.db ``lesson.*``.
 - `GET /api/lexicon/corrections` — list learned corrections (most-corrected first).
 - `POST /api/lexicon/corrections` — {heard, meant, always?} — record a learned fix
+- `DELETE /api/lexicon/corrections/{id}` — forget one learned correction.
 - `PATCH /api/lexicon/corrections/{id}` — {auto_apply} — toggle 'always fix this'.
 - `POST /api/lexicon/rebuild` — resync graph-sourced terms from knowledge entities
 - `POST /api/lexicon/reset` — drop all terms + corrections (rebuild repopulates graph).
@@ -594,6 +595,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
 - `POST /api/packs/{name}/triggers/deploy` — Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7).
+- `POST /api/packs/{name}/uninstall` — Uninstall a pack, never a copy you edited. DRY-RUN unless ``confirm`` is true.
 - `POST /api/packs/{name}/update` — The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
 - `GET /api/proactive/digest` — §5.1's card, assembled from the last digest run.
 - `POST /api/proactive/digest/reply` — one tap or one typed reply. Body ``{run_id, text}``.

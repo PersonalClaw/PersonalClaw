@@ -312,6 +312,12 @@ class LexiconStore:
         )
         return cur.rowcount > 0
 
+    def delete_correction(self, corr_id: str) -> bool:
+        """Forget one learned correction, and with it the rewrite it applies. The term it may have
+        added to the vocabulary is a term like any other and stays until removed there."""
+        cur = self.db.execute("DELETE FROM corrections WHERE id = ?", (corr_id,))
+        return cur.rowcount > 0
+
     def reset(self) -> None:
         """Drop all learned/graph state (the user-facing 'reset' — rebuild repopulates)."""
         self.db.executescript(

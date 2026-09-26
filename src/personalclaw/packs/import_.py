@@ -479,21 +479,43 @@ def _agents_base(home: Path) -> Path:
     return home / "agents"
 
 
+def component_path(kind: str, cid: str, home: Path, stage: str) -> Path | None:
+    """Where a component ``kind:cid`` lands in ``home`` — the ONE statement of the pack layout.
+
+    A skill is its directory; every other kind is one file. A trigger lands in the pack's own
+    staging area (``stage`` is the pack's name), never the live store. ``None`` for a kind packs
+    do not install. The commit writes here, the fresh-id probe looks here, and uninstall
+    (:mod:`packs.uninstall`) deletes only a path that equals this, so the three cannot disagree
+    about where a pack's files are.
+    """
+    from personalclaw.skills.loader import SKILLS_DIR_NAME
+
+    if kind == "skill":
+        return home / SKILLS_DIR_NAME / cid
+    if kind == "template":
+        return home / "workflows" / "defs" / cid / "workflow.json"
+    if kind == "prompt":
+        return home / "prompts" / f"{cid}.yaml"
+    if kind == "agent":
+        return _agents_base(home) / cid / "agent.json"
+    if kind == "trigger":
+        return _staged_dir(home, stage) / "triggers" / f"{cid}.json"
+    return None
+
+
 def _local_exists(home: Path, kind: str, cid: str) -> bool:
     """Whether a component ``kind:cid`` is already installed in THIS home.
 
     Drives both fresh-id collision detection and the lint's local-reference resolution: a
-    dependent may reference a component the pack doesn't carry but the home already has.
+    dependent may reference a component the pack doesn't carry but the home already has. A
+    staged trigger is not an installed component, so it never collides.
     """
-    if kind == "skill":
-        return (home / "skills" / cid / "SKILL.md").is_file()
-    if kind == "template":
-        return (home / "workflows" / "defs" / cid / "workflow.json").is_file()
-    if kind == "prompt":
-        return (home / "prompts" / f"{cid}.yaml").is_file()
-    if kind == "agent":
-        return (_agents_base(home) / cid / "agent.json").is_file()
-    return False
+    if kind == "trigger":
+        return False
+    path = component_path(kind, cid, home, stage="")
+    if path is None:
+        return False
+    return (path / "SKILL.md").is_file() if kind == "skill" else path.is_file()
 
 
 def _fresh_id(home: Path, kind: str, orig_id: str, taken: set[tuple[str, str]]) -> str:
@@ -511,6 +533,16 @@ def _fresh_id(home: Path, kind: str, orig_id: str, taken: set[tuple[str, str]]) 
     while _busy(f"{orig_id}-imported-{n}"):
         n += 1
     return f"{orig_id}-imported-{n}"
+
+
+def could_have_landed_as(orig_id: str, cid: str) -> bool:
+    """Whether :func:`_fresh_id` can give a component authored as ``orig_id`` the local id ``cid``
+    — its own id, or one of its ``-imported-<N>`` slots. Uninstall reads a ledger's paths through
+    this, so a path naming some OTHER component of the same kind is never taken for this one."""
+    if cid == orig_id:
+        return True
+    prefix = f"{orig_id}-imported-"
+    return cid.startswith(prefix) and cid[len(prefix) :].isdigit()
 
 
 # ── parse + plan ──────────────────────────────────────────────────────────────
@@ -966,13 +998,12 @@ def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: st
     Returns the written path so the caller can stamp the component's ledger lock (§1
     ``pack_owned`` update flow) from the bytes that actually landed — deriving the lock from
     anything other than the committed file would let the two disagree."""
-    if comp.kind == "template":
-        path = home / "workflows" / "defs" / comp.target_id / "workflow.json"
-        text = json.dumps(comp.obj, indent=2, ensure_ascii=False)
-    elif comp.kind == "prompt":
+    path = component_path(comp.kind, comp.target_id, home, stage)
+    if path is None or comp.kind == "skill":  # pragma: no cover - guarded by caller
+        raise PackImportRefused("lint", f"cannot commit component kind {comp.kind!r}")
+    if comp.kind == "prompt":
         import yaml  # type: ignore
 
-        path = home / "prompts" / f"{comp.target_id}.yaml"
         text = yaml.safe_dump(comp.obj, sort_keys=False, allow_unicode=True)
     elif comp.kind == "agent":
         errors = comp.obj.validate()
@@ -980,15 +1011,11 @@ def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: st
             raise PackImportRefused(
                 "lint", f"agent {comp.target_id!r} invalid after import: {'; '.join(errors)}"
             )
-        path = _agents_base(home) / comp.target_id / "agent.json"
         text = json.dumps(comp.obj.to_dict(), indent=2, ensure_ascii=False)
-    elif comp.kind == "trigger":
-        # Staged + disabled: never into the live trigger store — a pack cannot arm
-        # automation on install (§3.1). The user enables it later from Automations.
-        path = _staged_dir(home, stage) / "triggers" / f"{comp.target_id}.json"
+    else:
+        # A template, or a trigger — staged + disabled: never into the live trigger store, since a
+        # pack cannot arm automation on install (§3.1). The user enables it later from Automations.
         text = json.dumps(comp.obj, indent=2, ensure_ascii=False)
-    else:  # pragma: no cover - guarded by caller
-        raise PackImportRefused("lint", f"cannot commit component kind {comp.kind!r}")
 
     _mkdir_journaled(journal, path.parent)
     journal.record_file(path)

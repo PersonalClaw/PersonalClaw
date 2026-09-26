@@ -37,6 +37,9 @@ AP-7 adds the discovery + maintenance half:
 * ``POST /api/packs/{name}/update`` — the §1 ``pack_owned`` update flow. DRY-RUN by default:
   it returns which components would be overwritten and which are skipped, with the drift note
   for each user-edited copy. ``confirm: true`` applies it.
+* ``POST /api/packs/{name}/uninstall`` — the same rule run to removal (:mod:`packs.uninstall`).
+  DRY-RUN by default; ``confirm: true`` removes every component you have not edited, and it is
+  refused while an agent or automation deployed from the pack is still live.
 
 Kept deliberately thin: every route is a few lines over a core function. Errors use the shared
 envelope (``{"error": {"code", "message"}}``) so a caller branches on a stable code.
@@ -325,6 +328,24 @@ async def api_pack_update(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "update": plan.to_dict()})
 
 
+async def api_pack_uninstall(request: web.Request) -> web.Response:
+    """Uninstall a pack, never a copy you edited. DRY-RUN unless ``confirm`` is true.
+
+    The dry run is the default for the update's reason: what matters is what STAYS — the
+    components you edited, the MCP servers you set up for it, and anything deployed from it that
+    has to go first (:mod:`packs.uninstall`).
+    """
+    from personalclaw.packs.uninstall import PackUninstallError, apply_uninstall, plan_uninstall
+
+    name = request.match_info.get("name", "")
+    body = await json_object_body(request)
+    try:
+        plan = apply_uninstall(name) if confirm_granted(body) else plan_uninstall(name)
+    except PackUninstallError as exc:
+        return json_error(exc.code, message=str(exc), status=exc.status)
+    return web.json_response({"ok": True, "uninstall": plan.to_dict()})
+
+
 def _connector_choices(body: dict) -> dict | None:
     """The ``connector_choices`` map (§3.3), or None when the caller supplied none."""
     raw = body.get("connector_choices")
@@ -350,3 +371,4 @@ def register_pack_routes(app: web.Application) -> None:
     app.router.add_post("/api/packs/{name}/triggers/deploy", api_pack_triggers_deploy)
     app.router.add_post("/api/packs/{name}/bindings", api_pack_bindings)
     app.router.add_post("/api/packs/{name}/update", api_pack_update)
+    app.router.add_post("/api/packs/{name}/uninstall", api_pack_uninstall)

@@ -6003,6 +6003,21 @@ export interface PackUpdateRec {
   skipped: string[]
 }
 
+// A pack uninstall (`packs/uninstall.py`). Every component ref lands in exactly one of `removed`,
+// `kept` (with the reason — you edited it, or its recorded location is not where it installs) and
+// `missing`. `in_use` is what was deployed from the pack and must go first; `servers` are the MCP
+// servers its connectors configured, which stay.
+export interface PackUninstallRec {
+  pack: string
+  version: string
+  applied: boolean
+  removed: string[]
+  kept: Array<{ ref: string; reason: string }>
+  missing: string[]
+  in_use: Array<{ kind: 'agent' | 'automation'; id: string; name: string }>
+  servers: string[]
+}
+
 // /rewind-to-turn (EXECUTION-ISOLATION §6). `action` is a closed set — "not_captured" is
 // the honest case: the file was deliberately never backed up (credential-shaped, or over
 // the per-file cap), so the rewind will NOT restore it and the UI must say so rather than
@@ -6267,6 +6282,8 @@ export const api = {
   // list — which of your edited copies the update would leave alone — so the UI shows that
   // before `confirm` applies anything.
   packUpdate: (name: string, confirm = false) => post<{ ok: boolean; update: PackUpdateRec }>(`/api/packs/${encodeURIComponent(name)}/update`, { confirm }),
+  // Dry run by default, like the update: the interesting output is what stays and what must go first.
+  packUninstall: (name: string, confirm = false) => post<{ ok: boolean; uninstall: PackUninstallRec }>(`/api/packs/${encodeURIComponent(name)}/uninstall`, { confirm }),
 
   // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
   // The credential itself is never READ back — `authSession` reports only whether one is
@@ -7734,6 +7751,7 @@ export const api = {
     post<{ ok: boolean }>('/api/lexicon/corrections', { heard, meant, always }),
   lexiconSetCorrectionAuto: (id: string, auto_apply: boolean) =>
     patch<{ ok: boolean }>(`/api/lexicon/corrections/${encodeURIComponent(id)}`, { auto_apply }),
+  lexiconDeleteCorrection: (id: string) => del(`/api/lexicon/corrections/${encodeURIComponent(id)}`),
   lexiconReset: () => post<{ ok: boolean }>('/api/lexicon/reset'),
 
   knowledgeItem: (id: string) => get<KnowledgeItem>(`/api/knowledge/items/${encodeURIComponent(id)}`),

@@ -233,8 +233,10 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
           {custom && <Eyebrow as="span" className="ml-auto rounded-pill bg-surface-high px-1.5 shrink-0">saved</Eyebrow>}
         </div>
       </button>
+      {/* Named after its theme: every saved tile had a trash button called "Delete saved theme", so a
+          screen reader heard the same name once per theme with nothing saying which one it removes. */}
       {onDelete && (
-        <button type="button" onClick={onDelete} title="Delete saved theme"
+        <button type="button" onClick={onDelete} aria-label={`Delete saved theme ${scheme.label}`} title={`Delete saved theme ${scheme.label}`}
           className="absolute top-1 right-1 size-6 grid place-items-center rounded-pill bg-surface-high text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity hover:text-danger"><Trash2 size={12} /></button>
       )}
     </div>

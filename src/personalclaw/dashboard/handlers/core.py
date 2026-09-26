@@ -763,6 +763,22 @@ def _version_pin_sanitizer(value: str) -> str:
         raise ConfigValueError(str(exc), f"updates.pin={value}") from None
 
 
+def _quiet_window_sanitizer(value: str) -> str:
+    """Refuse a default quiet window the scheduler could not read; store it as typed.
+
+    The rule is `triggers.calendar.parse_default_window`'s — the call the scheduler makes when it
+    applies the default — looked up at call time, so a window that saves is a window that applies.
+    Checking only "a string of at most 64 characters" let `10pm-7am` save and then hold nothing.
+    """
+    from personalclaw.triggers import calendar
+
+    try:
+        calendar.parse_default_window(value)
+    except ValueError as exc:
+        raise ConfigValueError(str(exc), f"workflows.default_quiet_windows={value}") from None
+    return value.strip()
+
+
 def _push_to_talk_chord_sanitizer(value: str) -> str:
     """Normalize a push-to-talk accelerator at the WRITE boundary (DC-3 T3.1).
 
@@ -1531,11 +1547,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # larger number here would store a week-long lease that the runtime silently shortens.
     "workflows.lease_ttl_secs": {"type": "int", "min": 30, "max": 3600},
     # AUTO-A1/A2 (S70) gate defaults. Strings rather than enums: a quiet window is an `HH:MM-HH:MM`
-    # range and a duty gate is a provider name an app can supply, so neither has a closed value set
-    # the API could check. `triggers.calendar.parse_default_window` validates the format and treats
-    # an unparseable value as NO default — the fail-safe reading, since a malformed window that
-    # accidentally matched all day would look exactly like a broken scheduler.
-    "workflows.default_quiet_windows": {"type": "str", "max_len": 64},
+    # range and a duty gate is a provider name an app can supply, so neither has a closed value set.
+    # The window is still checked, by the parser the scheduler reads it with
+    # (`_quiet_window_sanitizer`), so a value the scheduler cannot read is refused here rather than
+    # saved and then silently applied as no default.
+    "workflows.default_quiet_windows": {
+        "type": "str",
+        "max_len": 64,
+        "sanitize": _quiet_window_sanitizer,
+    },
     "workflows.duty_gate_default": {"type": "str", "max_len": 64},
     # WORK-CONTAINERS §4.1 (WF2WOR-4). Both live-editable, and each for a concrete reason: the
     # default mode is what a user changes after watching a run touch their real tree, and the

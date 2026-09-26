@@ -498,6 +498,16 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: and what it did with your tools, so the conversation families declare their READS as well
 #: (:data:`READ_DECLARED_FAMILIES`), and your notifications — what reaches you, and how loudly —
 #: are a family whose writes are declared like the rest.
+#:
+#: **So is what you dictate.** The mic and knowledge audio run every transcript through the lexicon
+#: before your agent reads it (``LexiconService.correct``, called by the speech route in
+#: ``dashboard/handlers/core.py`` and the knowledge ``lexicon_correction`` node). A correction
+#: that applies automatically replaces its word with its own text every time you say it, and a
+#: term steers the decoder and replaces a word it was unsure of with the term's text — so writing
+#: either is writing into what you say. Every lexicon write is the owner's except the resync,
+#: which re-derives the graph's terms from your knowledge graph and carries no text of its own.
+#: Its reads stay with the manifest allowlist, not :data:`READ_DECLARED_FAMILIES`: they return
+#: the words you taught, not anything you said.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -530,6 +540,7 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/inbox": "your inbox — what reaches you, and your answers to it",
     "/api/reveal": "revealing and opening files on your desktop",
     "/api/notifications": "your notifications — what reaches you, and how loudly",
+    "/api/lexicon": "your vocabulary, and the corrections that rewrite what you dictate",
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
@@ -648,6 +659,16 @@ _ARCHIVED_TRANSCRIPTS = "the transcript batches older versions archived out of y
 _HIDES_NOTIFICATIONS = (
     "clearing your notifications or marking them read — what reached you, taken out of view"
 )
+_WRITES_TERM = (
+    "adding a vocabulary term — it steers the transcriber, and replaces a word it was unsure of "
+    "with the term's text in everything you dictate"
+)
+#: `LexiconStore.upsert_correction` turns automatic application on at the second report of the same
+#: fix, so recording one is arming it.
+_TEACHES_CORRECTION = (
+    "teaching a correction — one that applies automatically replaces its word with its text "
+    "every time you dictate, and teaching the same one twice turns that on"
+)
 
 #: Per-route authorization for the WRITE routes in :data:`SECURITY_ROUTE_FAMILIES`, and the READ
 #: routes in :data:`READ_DECLARED_FAMILIES`, that no :data:`OWNER_ONLY_API_PATHS` subtree covers
@@ -703,6 +724,26 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "POST /api/packs/{name}/finish-setup": AppMay(
         "returns a pack's setup interview to open in chat; it runs nothing"
+    ),
+    "POST /api/packs/{name}/uninstall": OwnerOnly(
+        "uninstalling your packs — their skills, agents and automations go with them"
+    ),
+    # ── lexicon (what you dictate) ──
+    "POST /api/lexicon/terms": OwnerOnly(_WRITES_TERM),
+    "PATCH /api/lexicon/terms/{id}": OwnerOnly("switching your vocabulary terms on and off"),
+    "DELETE /api/lexicon/terms/{id}": OwnerOnly("deleting your vocabulary terms"),
+    "POST /api/lexicon/corrections": OwnerOnly(_TEACHES_CORRECTION),
+    "PATCH /api/lexicon/corrections/{id}": OwnerOnly(
+        "whether a correction rewrites what you dictate automatically"
+    ),
+    "DELETE /api/lexicon/corrections/{id}": OwnerOnly("forgetting the corrections you taught"),
+    "POST /api/lexicon/reset": OwnerOnly(
+        "wiping your vocabulary and every correction you taught — no rebuild brings the "
+        "corrections back"
+    ),
+    "POST /api/lexicon/rebuild": AppMay(
+        "resyncs the terms derived from your knowledge graph; the request carries no text of its "
+        "own, and the terms you added or switched off are untouched"
     ),
     # ── triggers ──
     "POST /api/triggers": OwnerOnly(_DEFINES_AUTOMATION),
