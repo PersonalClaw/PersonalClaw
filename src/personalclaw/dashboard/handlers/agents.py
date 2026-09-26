@@ -410,7 +410,11 @@ async def api_agent_config(request: web.Request) -> web.Response:
             else:
                 pc_cfg.pop("removedTools", None)
             atomic_write(pc_cfg_path, json.dumps(pc_cfg, indent=2) + "\n")
-            atomic_write(installed_path, json.dumps(config, indent=2) + "\n")
+            # The MCP document writer: an `mcpServers` env value edited here reaches the file as
+            # a credential-store reference, like every other writer of this file.
+            from personalclaw.config.secret_refs import write_mcp_document
+
+            write_mcp_document(installed_path, config)
             # Restart ACP agent sessions so new config takes effect
             await _h._reset_all_sessions(request)
             return web.json_response({"ok": True, "applied": True})

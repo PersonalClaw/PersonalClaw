@@ -22,6 +22,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type ToolItem, type McpServer, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
+import { buildMcpEnv } from './mcpServerEnv'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
 import { PageTitle } from '../../ui/PageTitle'
@@ -740,6 +741,7 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
   const [command, setCommand] = useState('')
   const [args, setArgs] = useState('')
   const [env, setEnv] = useState('')
+  const [plainEnv, setPlainEnv] = useState('')
   // OpenAI tool-server fields
   const [oaName, setOaName] = useState('')
   const [endpoint, setEndpoint] = useState('')
@@ -758,17 +760,12 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
   const submitMcp = async () => {
     if (!validName) { setErr('Name must be letters, digits, dashes, underscores (1–64).'); return }
     if (!command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
-    const envObj: Record<string, string> = {}
-    for (const line of env.split('\n')) {
-      const i = line.indexOf('=')
-      if (i > 0) envObj[line.slice(0, i).trim()] = line.slice(i + 1).trim()
-    }
     setSaving(true); setErr('')
     try {
       await api.addMcpServer(name.trim(), {
         command: command.trim(),
         args: args.trim() ? args.trim().split(/\s+/) : undefined,
-        env: Object.keys(envObj).length ? envObj : undefined,
+        ...buildMcpEnv(env, plainEnv),
       })
       onAdded()
     } catch (e) { setErr(apiErr(e)); setSaving(false) }
@@ -809,13 +806,16 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
           <Field label="Arguments" hint="Space-separated args passed to the command (optional).">
             <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
           </Field>
-          <Field label="Environment" hint="One KEY=value per line (optional).">
+          <Field label="Environment" hint="One KEY=value per line (optional). Each value is kept in your credential store, never in mcp.json or an export.">
             {/* The one raw control left in this modal after the Field migration. A raw element
                 cannot read FieldLabelCtx, so it stayed unnamed while its seven TextInput siblings
                 were fixed. `TextArea` claims the Field label the same way they do — and this also
                 retires the `mcpInputCls.replace('h-9', …)` string surgery, which reached into a
                 class string to undo a height the primitive never sets. */}
             <TextArea value={env} onChange={setEnv} rows={2} placeholder="API_KEY=sk-…" mono size="md" />
+          </Field>
+          <Field label="Plain values" hint="Settings that are not secret, one KEY=value per line (optional). Kept readable in mcp.json, so they travel with an export. A name ending in TOKEN, SECRET, PASSWORD or API_KEY goes to the credential store anyway.">
+            <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
           </Field>
         </>) : (<>
           <Field label="Name" hint="A label for this tool server (optional — defaults to the endpoint).">

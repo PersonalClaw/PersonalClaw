@@ -289,7 +289,11 @@ def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
     servers = data.get("mcpServers")
     existing = servers.get(item.key) if isinstance(servers, dict) else None
     if isinstance(existing, dict):
-        if existing == item.payload:
+        # Compared in LOGICAL form: the file holds the server's values as credential-store
+        # references, so the stored spec never equals the scanned one byte for byte.
+        from personalclaw.config.secret_refs import resolve_mcp_spec
+
+        if resolve_mcp_spec(existing) == resolve_mcp_spec(item.payload):
             return Plan(ItemState.EXISTING, dest, "already configured identically")
         return Plan(
             ItemState.CONFLICT,
@@ -316,8 +320,12 @@ def _write_mcp_server(item: ImportItem, dest: str) -> WriteResult:
         servers = {}
     servers[item.key] = dict(item.payload)
     data["mcpServers"] = servers
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+    # The MCP document writer: every env value the scan kept reaches the file as a
+    # credential-store reference (`config.secret_refs`) — a value the secret-NAME floor let
+    # through (a `DATABASE_URL` with a password in it) is still a secret.
+    from personalclaw.config.secret_refs import write_mcp_document
+
+    write_mcp_document(path, data)
     _record(item, dest)
     return _result(item, WriteOutcome.IMPORTED, dest)
 

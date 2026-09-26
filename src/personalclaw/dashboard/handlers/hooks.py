@@ -190,14 +190,20 @@ def _load_hook_context(hook_id: str) -> str:
 
 
 def _verify_hook_token(request: web.Request) -> bool:
-    """Verify Bearer token against hooks.webhook_token in config."""
+    """Verify Bearer token against hooks.webhook_token in config.
+
+    ``config.json`` holds a ``{{secret:…}}`` reference; the token itself is in the credential
+    store, resolved here, where it is used. A reference the store cannot answer resolves to
+    ``""``, which is "no token configured" — every request is refused.
+    """
     import hmac  # noqa: F811
 
     from personalclaw.config.loader import AppConfig
+    from personalclaw.config.secret_refs import resolve
 
     cfg = AppConfig.load()
-    token = cfg.hooks.get("webhook_token", "")
-    if not token:
+    token = resolve(cfg.hooks).get("webhook_token", "")
+    if not isinstance(token, str) or not token:
         return False
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):

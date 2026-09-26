@@ -17,7 +17,8 @@ Each ``mcpServers`` entry maps to one :class:`ExtensionInstance`:
 * ``enabled`` = NOT the spec's ``disabled`` flag
 
 Writes preserve any ``env``/``headers`` already on the spec so editing from the
-card never drops credentials configured elsewhere.
+card never drops credentials configured elsewhere — and every write goes through
+``secret_refs.write_mcp_document``, so those values stay in the credential store.
 """
 
 from __future__ import annotations
@@ -57,11 +58,11 @@ def _load() -> dict[str, Any]:
 
 
 def _save(data: dict[str, Any]) -> None:
-    from personalclaw.agent import _atomic_json_write  # circular import
+    # The MCP document writer: each server's `env`/`headers` values reach the file as
+    # credential-store references (`config.secret_refs`).
+    from personalclaw.config.secret_refs import write_mcp_document
 
-    path = _mcp_json_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_json_write(path, data)
+    write_mcp_document(_mcp_json_path(), data)
 
 
 def _spec_to_instance(name: str, spec: dict[str, Any]) -> ExtensionInstance:
@@ -86,11 +87,14 @@ def _config_to_spec(config: dict[str, Any], existing: dict[str, Any] | None) -> 
     """Merge a card config dict into an mcp.json server spec.
 
     Preserves ``env``/``headers`` from any existing spec so credential material
-    configured outside the card survives an edit.
+    configured outside the card survives an edit — and ``plainEnv``, which says which of those
+    values are settings rather than secrets, so an edit does not move a setting into the store.
     """
+    from personalclaw.config.secret_refs import MCP_PLAIN_ENV
+
     spec: dict[str, Any] = {}
     if isinstance(existing, dict):
-        for k in ("env", "headers"):
+        for k in ("env", "headers", MCP_PLAIN_ENV):
             if existing.get(k):
                 spec[k] = existing[k]
         if existing.get("disabled") is True:

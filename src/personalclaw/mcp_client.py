@@ -607,14 +607,21 @@ _registry: McpClientRegistry | None = None
 
 
 def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
-    """Load the PClaw-scope server specs from ``~/.personalclaw/mcp.json``.
+    """Load the PClaw-scope server specs from ``~/.personalclaw/mcp.json``, resolved.
 
     This is the single store the native client spawns from — the one the MCP
     Tools provider card writes and ``/api/mcp/apply`` imports into.
+
+    The file holds each ``env``/``headers`` secret as a ``{{secret:…}}`` reference; the specs
+    returned here carry the values, read from the credential store on every load. Resolving on
+    load rather than inside the spawn keeps rotation working: the registry keys a connection by
+    its spec's content hash, so a token changed behind an unchanged reference must change the
+    spec it is compared by, or the live connection would keep the old one.
     """
     import json
 
     from personalclaw.config.loader import config_dir
+    from personalclaw.config.secret_refs import resolve_mcp_spec
 
     # `config_dir()`, not `Path.home()`: this is the store the NATIVE agent loop spawns
     # from, so a `Path.home()` hardcode made a dev session with PERSONALCLAW_HOME set read
@@ -630,7 +637,7 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
         return {}
     servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
     return (
-        {k: v for k, v in servers.items() if isinstance(v, dict)}
+        {k: resolve_mcp_spec(v) for k, v in servers.items() if isinstance(v, dict)}
         if isinstance(servers, dict)
         else {}
     )

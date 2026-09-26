@@ -54,11 +54,11 @@ def _load() -> dict[str, Any]:
 
 
 def _save(data: dict[str, Any]) -> None:
-    from personalclaw.atomic_write import atomic_write
+    # The MCP document writer: a server's `env`/`headers` values reach the file as
+    # credential-store references (`config.secret_refs`), and removing a server deletes them.
+    from personalclaw.config.secret_refs import write_mcp_document
 
-    path = _mcp_json_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n", mode=0o600)
+    write_mcp_document(_mcp_json_path(), data)
 
 
 def _ns(app_name: str, server: str) -> str:
@@ -134,7 +134,8 @@ def _deregister_from_agent_config(prefix: str) -> None:
     ``mcpServers`` specs + the ``@name`` refs in ``tools``/``allowedTools`` — so an
     app-contributed (source="agent") MCP server is fully removed on uninstall."""
     try:
-        from personalclaw.agent import AGENT_FILENAME, _atomic_json_write
+        from personalclaw.agent import AGENT_FILENAME
+        from personalclaw.config.secret_refs import write_mcp_document
 
         path = config_dir() / "agents" / AGENT_FILENAME
         if not path.is_file():
@@ -156,7 +157,7 @@ def _deregister_from_agent_config(prefix: str) -> None:
                     cfg[list_key] = kept
                     changed = True
         if changed:
-            _atomic_json_write(path, cfg)
+            write_mcp_document(path, cfg)
             logger.info("deregistered MCP servers %s* from agent config", prefix)
     except Exception:
         logger.debug("agent-config MCP deregister skipped for %s*", prefix, exc_info=True)
