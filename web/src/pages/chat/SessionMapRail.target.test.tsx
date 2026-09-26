@@ -3,7 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SessionMapRail } from './SessionMapRail'
-import { sessionMapMarks } from './sessionMap'
+import { sessionMapEntries } from './sessionMap'
 import type { ChatTurn, Segment } from './chatTypes'
 
 // ── SSM-8 — hit target, focus ring, and something for reduced motion to collapse ─────────────
@@ -22,17 +22,16 @@ import type { ChatTurn, Segment } from './chatTypes'
 //     🔴 THE RAIL HAS SINCE LEFT THAT UTILITY, AND THIS FILE CHANGED WITH IT. `.hit-24-x` centres a
 //     FIXED 24px on the element's own width, so it only enlarges something NARROWER than 24px — and
 //     it pins `top/bottom` to the element, so it only ever widened the HORIZONTAL axis. On a vertical
-//     list of marks that was never the failing axis: the tick was 4px TALL. The Codex redesign gives
-//     each mark its whole 32×10 row, which moves the axis that was actually failing (4 → 10px) and
-//     makes the band inert. So the clause is asserted here as the OUTCOME — the mark's own declared
-//     box, and that it covers the full row pitch — with the real measured box asserted in
+//     list of marks that was never the failing axis: the tick was 4px TALL. Each marker now owns its
+//     whole row, so the clause is asserted here as the OUTCOME — the marker's own declared box, and
+//     that it covers the full row pitch — with the real measured box asserted in
 //     `web/e2e/sessionMap.spec.ts`, where layout exists. A `hit-24-x` left on a 32px row would have
 //     been markup that `hitTargetThinHandle` went on crediting for nothing.
-//     🪤 AND IT IS STILL NOT SC 2.5.8, which is said plainly rather than implied: 32×10 flush rows
-//     do not meet 24×24 and do not qualify for the spacing exception. Neither did 4px ticks with gaps.
-//     The 44px touch floor is owed and met on the coarse-pointer form (SSM-10's drawer rows, asserted
-//     in the browser gate); this is the fine-pointer surface, and what changed is that it is now
-//     3.3× the area with no dead space between targets.
+//     🔑 AND THE ROW IS NOW 32×24, WHICH IS SC 2.5.8. The Codex form's 32×10 flush rows did not meet
+//     24×24; the owner listed "precise pointer movement required" among the reference's frictions,
+//     and with one marker per USER message rather than one per event there are few enough rows to
+//     afford the height. The 44px touch floor is still owed and met on the coarse-pointer form
+//     (SSM-10's drawer rows, asserted in the browser gate).
 //   · `focusRingPerElement.test.ts` is an explicit inventory of 17 controls that kill their outline.
 //     A mark is not in it and must never be: the fix is that the mark does NOT set `outline-none`, so
 //     it inherits the global `:focus-visible` ring. Asserted here as the SOURCE property (absence),
@@ -67,6 +66,9 @@ const turns: ChatTurn[] = [
     { kind: 'text', text: 'done' },
     { kind: 'tool', id: 't', tool: 'Terminal', detail: 'npm run build', done: true } as Segment,
   ] },
+  { role: 'user', ts: TS, visibleIndex: 2, segments: [{ kind: 'text', text: 'now test it' }] },
+  { role: 'assistant', ts: TS, visibleIndex: 3, segments: [{ kind: 'text', text: 'all green' }] },
+  { role: 'user', ts: TS, visibleIndex: 4, segments: [{ kind: 'text', text: 'ship it' }] },
 ]
 
 /** The horizontal scale a mark's line is rendered at.
@@ -84,11 +86,11 @@ function scaleOf(el: Element | null): number {
 }
 
 function mount() {
-  const marks = sessionMapMarks(turns)
+  const entries = sessionMapEntries(turns)
   const { container } = render(
-    <SessionMapRail marks={marks} turnNodes={new Map()} scrollRef={{ current: null }} onJumpTo={() => {}} />,
+    <SessionMapRail entries={entries} turnNodes={new Map()} scrollRef={{ current: null }} onJumpTo={() => {}} />,
   )
-  return { container, marks, ticks: [...container.querySelectorAll('[data-session-mark]')] as HTMLButtonElement[] }
+  return { container, entries, ticks: [...container.querySelectorAll('[data-session-mark]')] as HTMLButtonElement[] }
 }
 
 describe('SessionMapRail — the mark IS its row (SSM-8)', () => {
@@ -99,7 +101,7 @@ describe('SessionMapRail — the mark IS its row (SSM-8)', () => {
       const cls = el.className.split(/\s+/)
       // The pressable box is the ROW, not the drawn line — a mark sized to its own ink is what left
       // 4px targets with dead space between them. Height and width both, declared here.
-      expect(cls, 'the mark must declare the row pitch as its own height').toContain('h-2.5')
+      expect(cls, 'the marker must declare the row pitch as its own height — 24px, SC 2.5.8').toContain('h-6')
       expect(cls, 'and span the rail’s full width').toContain('w-full')
       // 🔴 AND IT MUST NOT BE `absolute`. `ui/Popover` wraps the trigger in its own unsized
       // `<div className="relative">`, which becomes the containing block for anything absolute
@@ -127,6 +129,17 @@ describe('SessionMapRail — the mark IS its row (SSM-8)', () => {
       container.querySelector('[data-session-map-list]')!.className,
       'nor may the list space its rows apart',
     ).not.toMatch(/\bgap(-y)?-|\bspace-y-/)
+  })
+
+  it('🔴 the list is padded by the FADE distance, so the edge mask never dims a resting marker', () => {
+    // The mask fades the list's own top and bottom by `--spacing-xl`, whether or not it overflows.
+    // Unpadded, the first and last markers' lines sat inside that band at 60% alpha — the rest tone
+    // composited to ~1.9:1 on the canvas. The padding must be the SAME token as the fade, or a
+    // density change moves one and not the other; the painted result is measured in the browser gate.
+    const fade = /EDGE_FADE =[\s\S]*?black var\((--spacing-[a-z0-9]+)\)/.exec(railCode())?.[1]
+    expect(fade, 'could not read the fade distance out of EDGE_FADE').toBe('--spacing-xl')
+    const list = mount().container.querySelector('[data-session-map-list]') as HTMLElement
+    expect(list.className.split(/\s+/), 'the list is not padded by the fade distance').toContain('py-xl')
   })
 
   it('🔴 the mark carries NO hit-target utility — the row already is one', () => {
@@ -164,35 +177,44 @@ describe('SessionMapRail — the focus ring (SSM-8)', () => {
 })
 
 describe('SessionMapRail — the rail HAS an animation for reduced motion to collapse (SSM-8)', () => {
-  it('each mark renders a drawn line, and hovering GROWS it — plus its neighbours', async () => {
+  it('🔑 hovering GROWS the one marker under the pointer and brightens it — and ONLY that one', async () => {
     const { ticks } = mount()
-    const lines = ticks.map((el) => el.querySelector('[data-session-map-mark-line]'))
+    const lines = ticks.map((el) => el.querySelector('[data-session-map-mark-line]') as HTMLElement)
     expect(lines.filter(Boolean), 'no line = nothing for the reduced-motion rail to be about')
       .toHaveLength(ticks.length)
-    const line = lines[0] as HTMLElement
     // The line is the ink; it is decorative because the BUTTON carries the accessible name.
-    expect(line.getAttribute('aria-hidden')).toBe('true')
+    expect(lines[0].getAttribute('aria-hidden')).toBe('true')
     await act(async () => { await Promise.resolve() })
-    const restScale = scaleOf(line)
-    expect(restScale, `at rest: ${line.getAttribute('style')}`).not.toBeNaN()
-    expect(restScale, 'a mark at rest must be shorter than full length').toBeLessThan(1)
+    const restScale = scaleOf(lines[0])
+    expect(restScale, `at rest: ${lines[0].getAttribute('style')}`).not.toBeNaN()
+    expect(restScale, 'a marker at rest must be shorter than full length').toBeLessThan(1)
+    const restTone = ticks[0].style.color
 
     // …and it actually GROWS, which is the motion-allowed half `SessionMapRail.reducedMotion.test.tsx`
     // needs to exist for its negative to mean anything. `mouseOver`, not `mouseEnter`: React
     // delegates onMouseEnter off the bubbling event.
     fireEvent.mouseOver(ticks[0])
-    await waitFor(() => expect(scaleOf(line), `after hover: ${line.getAttribute('style')}`).toBe(1))
-    // 🔑 THE LENS, which is the reference's signature move and the reason a 2px mark is findable at
-    // all: the hovered mark's NEIGHBOUR follows it up, by distance. Asserted on the neighbour rather
-    // than only on the hovered mark, because a rail that merely highlighted one mark would pass a
-    // hover test and still feel nothing like the thing it is modelled on.
-    const neighbour = lines[1] as HTMLElement
-    await waitFor(() => expect(scaleOf(neighbour), 'the ±1 neighbour must lengthen too')
-      .toBeGreaterThan(restScale))
-    expect(scaleOf(neighbour), 'but not as far as the mark under the pointer').toBeLessThan(1)
-    // And it lets go: leaving the rail returns every mark to its resting length.
+    await waitFor(() => expect(scaleOf(lines[0]), `after hover: ${lines[0].getAttribute('style')}`).toBe(1))
+    // It brightens: marker 0 is off screen (the newest message is the current one), so its lit tone
+    // is the strongest ink rather than the rest neutral.
+    expect(restTone).toBe('var(--color-map-rest)')
+    expect(ticks[0].style.color, 'the pointed-at marker must brighten').toBe('var(--color-on-surface)')
+    // 🔑 ONLY IT. The Codex form dragged its ±3 neighbours after it; the owner's rule is that only the
+    // marker under the pointer or the cursor expands, so the neighbour must NOT move, in length or tone.
+    expect(scaleOf(lines[1]), 'the neighbour expanded with the hovered marker').toBe(restScale)
+    expect(ticks[1].style.color, 'the neighbour changed tone').toBe(restTone)
+    // And it lets go: leaving it returns it to the uniform resting length and tone.
     fireEvent.mouseOut(ticks[0])
-    await waitFor(() => expect(scaleOf(line)).toBe(restScale))
+    await waitFor(() => expect(scaleOf(lines[0])).toBe(restScale))
+    expect(ticks[0].style.color).toBe(restTone)
+  })
+
+  it('an on-screen marker brightens to the accent’s higher-contrast shade, not to the neutral ink', async () => {
+    const { ticks } = mount()
+    const current = ticks.find((el) => el.getAttribute('data-current') === 'true')!
+    expect(current.style.color).toBe('var(--color-primary)')
+    fireEvent.mouseOver(current)
+    await waitFor(() => expect(current.style.color).toBe('var(--color-primary-emphasis)'))
   })
 
   it('the length’s transition comes from the gated `physics` family, not a hand-rolled spring', () => {

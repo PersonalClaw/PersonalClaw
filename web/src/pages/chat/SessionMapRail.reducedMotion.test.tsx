@@ -41,13 +41,14 @@ Object.defineProperty(window, 'matchMedia', {
 })
 
 const { SessionMapRail } = await import('./SessionMapRail')
-const { sessionMapMarks } = await import('./sessionMap')
+const { sessionMapEntries } = await import('./sessionMap')
 const { physics, instant } = await import('../../design/motion')
 
 const TS = '2026-09-16T10:00:00.000Z'
 const turns: ChatTurn[] = [
   { role: 'user', ts: TS, visibleIndex: 0, segments: [{ kind: 'text', text: 'run the build' }] },
   { role: 'assistant', ts: TS, visibleIndex: 1, segments: [{ kind: 'text', text: 'done' }] },
+  { role: 'user', ts: TS, visibleIndex: 2, segments: [{ kind: 'text', text: 'now ship it' }] },
 ]
 
 /** See `SessionMapRail.target.test.tsx` for why `transform: none` has to read as scale 1. */
@@ -67,10 +68,10 @@ describe('under prefers-reduced-motion the rail’s mark length does not animate
   })
 
   it('the length still LANDS under the collapse, and the mark still works', async () => {
-    const marks = sessionMapMarks(turns)
+    const entries = sessionMapEntries(turns)
     const jumped: number[] = []
     const { container } = render(
-      <SessionMapRail marks={marks} turnNodes={new Map()} scrollRef={{ current: null }} onJumpTo={(i) => jumped.push(i)} />,
+      <SessionMapRail entries={entries} turnNodes={new Map()} scrollRef={{ current: null }} onJumpTo={(i) => jumped.push(i)} />,
     )
     const mark = container.querySelector('[data-session-mark]') as HTMLElement
     const line = mark.querySelector('[data-session-map-mark-line]') as HTMLElement
@@ -91,10 +92,11 @@ describe('under prefers-reduced-motion the rail’s mark length does not animate
     // check cannot give: the collapse must not have BROKEN the length, and it must not have been
     // bought by rendering an inert control.
     await waitFor(() => expect(scaleOf(line), `the length never landed: ${line.getAttribute('style')}`).toBe(1))
-    expect(scaleOf(line), 'a hovered mark must reach full length even with motion off')
+    // The owner's rule for motion-off users: the marker still EXPANDS — it just does not travel there.
+    expect(scaleOf(line), 'a hovered marker must reach full length even with motion off')
       .toBeGreaterThan(rest)
 
     fireEvent.click(mark)
-    expect(jumped, 'the mark stopped working under reduced motion').toEqual([marks[0].visibleIndex])
+    expect(jumped, 'the marker stopped working under reduced motion').toEqual([entries[0].visibleIndex])
   })
 })

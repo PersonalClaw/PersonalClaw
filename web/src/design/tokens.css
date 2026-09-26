@@ -28,6 +28,12 @@
   --color-on-surface-var: #c4c7c5;
   --color-outline: #8e918f;
   --color-outline-variant: #444746;
+  /* The Session Map's resting marker — a message NOT on screen (the on-screen ones are
+     --color-primary). Colour is the only thing that separates the two, so this neutral is tuned
+     to sit as far in lightness from the accent as 3:1 on the canvas allows (3.21:1 here);
+     design/schemeContrast.test.ts measures it against the canvas and against every scheme's
+     primary. */
+  --color-map-rest: #616463;
 
   /* ── color: CORAL brand (PersonalClaw accent, dark) ── */
   --color-primary: #ff6b5b;
@@ -248,6 +254,7 @@
   --color-on-surface-var: #5f6368;
   --color-outline: #8e918f;
   --color-outline-variant: #e1e3e1;
+  --color-map-rest: #85888a;
   /* #3503: retuned from #c8452e / #a33922. The old pair was chosen against the BARE ground
      ("≥4.5:1 as white-text button fill AND as text on white"), and a status chip composites its ink
      over its own 16% wash of itself — which drags the ground toward the ink and spent the margin.

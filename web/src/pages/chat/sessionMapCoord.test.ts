@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { hydrateTurns, markCoordOf, type HistMsg } from './chatTypes'
-import { sessionMapMarks } from './sessionMap'
+import { sessionMapEntries } from './sessionMap'
 
 // ── SSM-11 — THE JUMP COORDINATE (the defect that made the keystone's jump land wrong) ──────
 //
-// The rail owns no scroll machinery: it hands `onJumpTo` a mark's `visibleIndex` and reads
-// `ChatPage`'s `turnNodes` DOM registry AT THAT SAME COORDINATE (SSM-5's observer). So the
-// registry key and the mark coordinate are one rule — `markCoordOf` — and this file is the rail
+// The rail owns no scroll machinery: it hands `onJumpTo` an entry's `visibleIndex` and reads
+// `ChatPage`'s `turnNodes` DOM registry AT THE COORDINATES THE ENTRY OWNS (SSM-5's observer). So the
+// registry key and the entry coordinates are one rule — `markCoordOf` — and this file is the rail
 // that keeps them one.
 //
 // 🔴 WHY THIS IS A REGRESSION TEST AND NOT A TAUTOLOGY. Before SSM-11 the page registered turn
@@ -46,21 +46,28 @@ describe('the Session Map jump coordinate', () => {
     expect(wrong.length).toBeGreaterThan(0)
   })
 
-  it('🔑 every mark jumps to a coordinate the node registry would be keyed under', () => {
+  it('🔑 every entry jumps to — and watches — coordinates the node registry is keyed under', () => {
     const turns = hydrateTurns(COLLAPSING)
     // The page registers exactly these keys (`turnNodes.current.set(markCoordOf(turn, i), el)`).
     const registryKeys = new Set(turns.map((t, i) => markCoordOf(t, i)))
-    const marks = sessionMapMarks(turns)
-    expect(marks.length).toBeGreaterThan(0)
-    for (const mark of marks) {
-      expect(registryKeys.has(mark.visibleIndex), `mark ${mark.markIndex} (${mark.kind}) would jump to ${mark.visibleIndex}, which no turn node is registered under`).toBe(true)
+    const entries = sessionMapEntries(turns)
+    expect(entries).toHaveLength(2)
+    for (const entry of entries) {
+      expect(registryKeys.has(entry.visibleIndex), `entry ${entry.markIndex} would jump to ${entry.visibleIndex}, which no turn node is registered under`).toBe(true)
+      // The coordinates it OWNS are what the observer watches to light it while its answer is on
+      // screen — a coordinate with no node is an answer that can never light its question.
+      for (const c of entry.coords) {
+        expect(registryKeys.has(c), `entry ${entry.markIndex} watches ${c}, which no turn node is registered under`).toBe(true)
+      }
     }
+    // And between them they own every turn, so no rendered reply is outside the map's reach.
+    expect(new Set(entries.flatMap((e) => e.coords))).toEqual(registryKeys)
   })
 
   // The Activity → Index anchors used to be asserted here too, as a SECOND list that had to carry
   // the identical coordinates (SSM-12's clause). SSM-13 deleted that list — the map is the session's
   // only index now — so there is no second coordinate to keep in step and the claim retired with it.
-  // The `🔑` case above still covers every `user` mark, which is what those anchors mirrored.
+  // The `🔑` case above covers every entry — one per user message, which is what those anchors mirrored.
   // `indexTabRetired.test.tsx` is the rail that fails if a second index surface comes back.
 
   it('falls back to the array position for a live turn that carries no coordinate yet', () => {
