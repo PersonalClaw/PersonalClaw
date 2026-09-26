@@ -6,12 +6,14 @@ subagents, task runner, dashboard / API server, update checks, and signal
 handling. This is the core process boot — it runs with or without any external
 channel configured.
 
-Channel connectivity is optional and pluggable via the channel-transport seam:
-each registered transport's ``start_inbound`` runs at boot (Slack Socket-Mode
-lives entirely in the ``slack-channel`` app bundle), and the transport registers
-its outbound :class:`~personalclaw.channel_delivery.ChannelDelivery` on the
-orchestrator. Core imports NO vendor channel code. With no channel configured the
-gateway runs dashboard-only.
+Channel connectivity is optional and pluggable via the channel-transport seam: the
+gateway binds itself as the services handle at boot, and from then on
+``channel_transports.reconcile_inbound`` runs each configured channel's receiver
+(``start_inbound`` — Slack Socket-Mode lives entirely in the ``slack-channel`` app
+bundle) and stops it again, whenever a channel is enabled, changed or removed. The
+transport registers its outbound :class:`~personalclaw.channel_delivery.ChannelDelivery`
+on the orchestrator. Core imports NO vendor channel code. With no channel configured
+the gateway runs dashboard-only.
 """
 
 import asyncio
@@ -4137,13 +4139,10 @@ class GatewayOrchestrator:
             if self.dashboard_state:
                 await self.dashboard_state.close_all_ws()
             cleanup_tasks.append(self._dashboard_runner.cleanup())
-        # Stop channel inbound receivers (Slack Socket-Mode lives in the app now).
-        from personalclaw.channel_transports import get_transport, list_transports
+        # Stop every channel receiver, and start none after this.
+        from personalclaw.channel_transports import unbind_inbound
 
-        for _tn in list_transports():
-            _tp = get_transport(_tn)
-            if _tp is not None:
-                cleanup_tasks.append(_tp.stop_inbound())
+        cleanup_tasks.append(unbind_inbound())
 
         if cleanup_tasks:
             await asyncio.gather(*cleanup_tasks, return_exceptions=True)
@@ -4431,28 +4430,17 @@ class GatewayOrchestrator:
             logger.warning("Auto-update failed", exc_info=True)
 
     async def _start_channel_inbound(self) -> None:
-        """Drive every registered channel transport's inbound receiver.
+        """Hand the channel receivers this gateway, and start every configured channel's.
 
         The gateway satisfies :class:`~personalclaw.gateway_services.GatewayServices`,
-        so it passes itself as the services handle. A transport that owns a push
-        receiver (Slack Socket-Mode, in the slack-channel app) connects here; the
-        Web UI transport is a no-op. Failures are isolated per-transport — a
-        channel that can't start never takes down the gateway."""
-        from personalclaw.channel_transports import (
-            configured_channels,
-            get_transport,
-            list_transports,
-            start_inbound,
-        )
+        so it binds itself as the services handle. From here on the receivers follow the
+        registry — a channel enabled, installed, updated or re-saved later starts, one
+        disabled or removed stops — through ``channel_transports.reconcile_inbound``, which
+        this runs for the first time. Failures are isolated per channel: one that cannot
+        start reports why in its own health and never takes down the gateway."""
+        from personalclaw.channel_transports import bind_inbound, configured_channels
 
-        for tname in list_transports():
-            transport = get_transport(tname)
-            if transport is None:
-                continue
-            try:
-                await start_inbound(transport, self)
-            except Exception:
-                logger.warning("Channel transport %r start_inbound failed", tname, exc_info=True)
+        await bind_inbound(self)
         # Each channel app says whether it has what it needs (its own health), so this line is
         # true for a channel configured on the Apps page too — core used to infer it from two
         # Slack credential names, and printed "no channel credentials" beside a working Slack.
@@ -4558,10 +4546,10 @@ class GatewayOrchestrator:
         # process takes over.
         await self._init_autonudge()
 
-        # Start inbound receivers for every registered channel transport (Slack
-        # Socket-Mode lives in the slack-channel app now). Each transport connects
-        # + degrades gracefully internally; a channel failure never crashes the
-        # gateway. The Web UI transport is a no-op here (dashboard drives its own
+        # Start the receiver of every configured channel (Slack Socket-Mode lives in the
+        # slack-channel app now), and keep them following the registry from here on. Each
+        # transport connects + degrades gracefully internally; a channel failure never
+        # crashes the gateway. The Web UI has no receiver (the dashboard drives its own
         # inbound). This is the core→channel seam — core imports no vendor code.
         await self._start_channel_inbound()
 
@@ -4707,9 +4695,8 @@ class GatewayOrchestrator:
         print("PersonalClaw gateway starting…")
         print(f"\n{DATA_WARNING}\n")
 
-        # Channel inbound (Slack Socket-Mode) already connected inside
-        # _start_channel_inbound() above — the transport owns its own
-        # retry/degrade-gracefully loop.
+        # Channel inbound (Slack Socket-Mode) was started by _start_channel_inbound()
+        # above — the transport owns its own retry/degrade-gracefully loop.
 
         # Block until shutdown
         await shutdown_event.wait()

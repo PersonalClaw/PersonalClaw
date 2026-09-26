@@ -24,8 +24,9 @@ export function schemaDefaults(schema: ProviderSchema | null | undefined): Recor
 
 /** Renders a provider's settingsSchema (JSON-Schema + x-meta) as an editable
  *  form and saves via PATCH /api/providers/{name}/config. Lives under a
- *  provider's toggle — only mounted when the provider is enabled + has a schema. */
-export function ProviderConfigForm({ name }: { name: string }) {
+ *  provider's toggle — only mounted when the provider is enabled + has a schema.
+ *  `onSaved` runs after a save the gateway accepted: the save rebuilt the provider. */
+export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: () => void }) {
   const [schema, setSchema] = useState<ProviderSchema | null>(null)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [secretSet, setSecretSet] = useState<string[]>([])
@@ -61,7 +62,7 @@ export function ProviderConfigForm({ name }: { name: string }) {
   const set = (k: string, v: unknown) => { setValues((p) => ({ ...p, [k]: v })); setDirty(true); setSaved(false); setErr('') }
   const save = async () => {
     setSaving(true); setErr('')
-    try { await api.saveProviderConfig(name, values); setDirty(false); setSaved(true); setTimeout(() => setSaved(false), 2000) }
+    try { await api.saveProviderConfig(name, values); setDirty(false); setSaved(true); setTimeout(() => setSaved(false), 2000); onSaved?.() }
     catch (e) {
       let msg = e instanceof Error ? e.message : 'Save failed'
       try { const p = JSON.parse(msg); msg = p.error + (p.details ? `: ${p.details.join('; ')}` : '') } catch { /* raw */ }

@@ -8,12 +8,15 @@ model or search app's saved key reached nothing. ``PATCH /api/providers/{name}/c
 file — already rebuilt the provider; both routes now share
 ``providers.routes.apply_saved_settings``.
 
-A rebuilt CHANNEL also takes over the running inbound receiver. Rebuilding one used to leave the
-old instance's receiver connected on the old token while outbound moved to the new instance.
+A rebuilt CHANNEL's receiver moves with it: the registry change reconciles the receivers
+(``channel_transports.reconcile_inbound``), so the old instance's receiver stops and the rebuilt
+one's starts. Rebuilding one used to leave the old instance's receiver connected on the old token
+while outbound moved to the new instance.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import textwrap
@@ -68,6 +71,11 @@ _PROVIDER = textwrap.dedent("""
         async def send(self, message):
             return True
 
+        async def health(self):
+            if not self.config.get("token"):
+                return {"state": "offline", "detail": "no token"}
+            return {"state": "ready", "detail": "token saved"}
+
         async def start_inbound(self, services):
             self.inbound.append(("start", services))
 
@@ -88,9 +96,14 @@ _PROVIDER = textwrap.dedent("""
     """)
 
 
-def _install(tmp_path: Path, name: str, provider_type: str, factory: str) -> AppManifest:
+def _install(
+    tmp_path: Path, name: str, provider_type: str, factory: str, *, token: str = ""
+) -> AppManifest:
     d = tmp_path / "apps" / name
     d.mkdir(parents=True)
+    if token:  # saved before the gateway boots, so the channel is configured at boot
+        (d / "data").mkdir()
+        (d / "data" / "config.json").write_text(json.dumps({"token": token}), encoding="utf-8")
     (d / "provider.py").write_text(_PROVIDER, encoding="utf-8")
     manifest = {
         "name": name,
@@ -126,8 +139,20 @@ async def _gateway(tmp_path: Path):
         provider_routes.register_routes(app)
         async with TestClient(TestServer(app)) as client:
             yield client, registry
+        await channel_transports.unbind_inbound()
     for name in list(registry._extensions):
         registry.disable(name)
+
+
+async def _eventually(condition, timeout: float = 3.0) -> bool:
+    """Whether ``condition()`` holds within ``timeout``: a receiver starts as its own task."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not condition():
+        if loop.time() > deadline:
+            return False
+        await asyncio.sleep(0.01)
+    return True
 
 
 def _built(name: str) -> list:
@@ -136,12 +161,13 @@ def _built(name: str) -> list:
 
 @pytest.mark.asyncio
 async def test_saving_a_channel_setting_rebuilds_its_transport_and_moves_its_inbound(tmp_path):
-    manifest = _install(tmp_path, "probe-channel", "channel", "create_channel")
+    manifest = _install(tmp_path, "probe-channel", "channel", "create_channel", token="xoxb-old")
     async with _gateway(tmp_path) as (client, registry):
         registry.register(manifest, enabled=True)
         old = channel_transports.get_transport("probe")
         services = object()
-        await channel_transports.start_inbound(old, services)  # what the gateway does at boot
+        await channel_transports.bind_inbound(services)  # what the gateway does at boot
+        assert await _eventually(lambda: old.inbound == [("start", services)])
 
         resp = await client.put("/api/apps/probe-channel/config", json={"token": "xoxb-saved"})
         assert resp.status == 200, await resp.text()
@@ -150,7 +176,9 @@ async def test_saving_a_channel_setting_rebuilds_its_transport_and_moves_its_inb
         assert new is not old, "the saved setting reached no live transport"
         assert new.config["token"] == "xoxb-saved"
         assert old.inbound[-1] == ("stop", None), "the old receiver was left running"
-        assert new.inbound == [("start", services)], "the new transport has no receiver"
+        assert await _eventually(
+            lambda: new.inbound == [("start", services)]
+        ), "the new transport has no receiver"
 
 
 @pytest.mark.asyncio
@@ -167,18 +195,6 @@ async def test_saving_any_apps_setting_rebuilds_its_provider(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_transport_whose_inbound_never_started_is_not_started_by_a_save(tmp_path):
-    """A channel enabled after boot has no receiver; saving its settings does not invent one."""
-    manifest = _install(tmp_path, "probe-late", "channel", "create_channel")
-    async with _gateway(tmp_path) as (client, registry):
-        registry.register(manifest, enabled=True)
-        resp = await client.put("/api/apps/probe-late/config", json={"token": "t"})
-        assert resp.status == 200
-        new = channel_transports.get_transport("probe")
-        assert new.config["token"] == "t" and new.inbound == []
-
-
-@pytest.mark.asyncio
 async def test_a_disabled_app_is_saved_but_not_rebuilt(tmp_path):
     manifest = _install(tmp_path, "probe-off", "task", "create_tasks")
     async with _gateway(tmp_path) as (client, registry):
@@ -191,29 +207,32 @@ async def test_a_disabled_app_is_saved_but_not_rebuilt(tmp_path):
 @pytest.mark.asyncio
 async def test_the_providers_route_moves_a_channels_inbound_too(tmp_path):
     """PATCH /api/providers/{name}/config rebuilt the transport and orphaned its receiver."""
-    manifest = _install(tmp_path, "probe-patch", "channel", "create_channel")
+    manifest = _install(tmp_path, "probe-patch", "channel", "create_channel", token="o")
     async with _gateway(tmp_path) as (client, registry):
         registry.register(manifest, enabled=True)
         old = channel_transports.get_transport("probe")
-        await channel_transports.start_inbound(old, "svc")
+        await channel_transports.bind_inbound("svc")
+        assert await _eventually(lambda: old.inbound == [("start", "svc")])
         resp = await client.patch("/api/providers/probe-patch/config", json={"token": "n"})
         assert resp.status == 200, await resp.text()
         new = channel_transports.get_transport("probe")
-        assert old.inbound[-1] == ("stop", None) and new.inbound == [("start", "svc")]
+        assert old.inbound[-1] == ("stop", None)
+        assert await _eventually(lambda: new.inbound == [("start", "svc")])
 
 
 @pytest.mark.asyncio
 async def test_settings_that_build_no_transport_stop_the_old_receiver(tmp_path):
     """The rebuild fails: the app is unregistered and shows the error, and its old receiver is
     stopped rather than left running on the old token where nothing could reach it again."""
-    manifest = _install(tmp_path, "probe-bad", "channel", "create_channel")
+    manifest = _install(tmp_path, "probe-bad", "channel", "create_channel", token="o")
     async with _gateway(tmp_path) as (client, registry):
         registry.register(manifest, enabled=True)
         old = channel_transports.get_transport("probe")
-        await channel_transports.start_inbound(old, "svc")
+        await channel_transports.bind_inbound("svc")
+        assert await _eventually(lambda: old.inbound == [("start", "svc")])
         resp = await client.put("/api/apps/probe-bad/config", json={"token": "unbuildable"})
         assert resp.status == 200, await resp.text()
         assert "builds no transport" in registry.get("probe-bad").error
         assert channel_transports.get_transport("probe") is None
         assert old.inbound[-1] == ("stop", None), "the old receiver was orphaned"
-        assert channel_transports._inbound == {}
+        assert channel_transports._receivers == {}

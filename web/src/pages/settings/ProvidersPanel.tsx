@@ -118,8 +118,13 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   const runtimes = runtimeOverride ?? runtimesData ?? []
 
   // A mutation (enable/disable/config) invalidates the cached catalog so the next
-  // read revalidates against the changed state instead of a stale snapshot.
-  const reload = () => { invalidateKeys('settings:providers'); invalidateKeys('settings:models-available'); refreshProviders(); refreshRuntimes(); refreshAvailable() }
+  // read revalidates against the changed state instead of a stale snapshot. The channel
+  // runtime too: enabling, disabling or saving a channel starts or stops its receiver, and
+  // the row kept showing the status from before the click until the page was reloaded.
+  const reload = () => {
+    invalidateKeys('settings:providers'); invalidateKeys('settings:models-available'); invalidateKeys('settings:channels')
+    refreshProviders(); refreshRuntimes(); refreshAvailable(); refreshChannels()
+  }
 
   // Re-probe agent-runtime readiness NOW. A plain read never spawns a runtime (it answers from
   // the live connection or the last measurement), so this is the one way to re-measure — and it
@@ -137,6 +142,9 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   useVisiblePoll(() => {
     if (runtimesChecking) { setRuntimeOverride(null); refreshRuntimes() }
   }, runtimesChecking ? CHECKING_POLL_MS : null)
+  // Same for a channel whose receiver the gateway is starting: re-read until it says how that went.
+  const channelsStarting = (channelsData ?? []).some((c) => c.health?.state === 'starting')
+  useVisiblePoll(() => { if (channelsStarting) refreshChannels() }, channelsStarting ? CHECKING_POLL_MS : null)
 
   // After kicking off a sign-in, the CLI auth (often a browser OAuth flow) takes a
   // few seconds — a single fixed delay misses it. Poll a fresh probe a handful of

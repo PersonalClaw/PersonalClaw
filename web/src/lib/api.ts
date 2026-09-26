@@ -580,6 +580,8 @@ export interface RemediationSnapshot {
   recent_runs: RemediationRun[]
 }
 
+/** `state` is the channel's own answer — `ready`, `offline` (nothing to connect with) or `error` —
+ *  or `starting`, the gateway's while it starts the channel's receiver (then one of the three). */
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
