@@ -2218,9 +2218,7 @@ async def start_dashboard(
         try:
             from personalclaw.mcp_client import get_mcp_client_registry
 
-            reg = get_mcp_client_registry()
-            if reg is not None:
-                await reg.shutdown_all()
+            await get_mcp_client_registry().shutdown_all()
         except Exception:
             logger.debug("MCP client shutdown failed", exc_info=True)
 
@@ -2564,9 +2562,7 @@ async def start_dashboard(
     try:
         from personalclaw.mcp_client import get_mcp_client_registry
 
-        _mcp_reg = get_mcp_client_registry()
-        if _mcp_reg is not None:
-            _mcp_reg.start_sweeper()
+        get_mcp_client_registry().start_sweeper()
     except Exception:
         logger.debug("MCP idle sweeper start skipped", exc_info=True)
 

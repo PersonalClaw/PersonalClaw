@@ -5,7 +5,7 @@ import type { McpPoolStats } from '../../lib/api'
 
 // ── The pool facts the tile dropped ────────────────────────────────────────────
 //
-// `pool_stats()` returns 9 metrics + `available`. The tile rendered 6. Of the three it dropped:
+// `pool_stats()` returns 9 metrics. The tile rendered 6. Of the three it dropped:
 //
 //   configured_servers   REAL and load-bearing — it is the DENOMINATOR the others are read
 //                        against. "0 live" means something different out of 1 configured than out
@@ -27,7 +27,6 @@ import type { McpPoolStats } from '../../lib/api'
 // session-expire callback calls on a real path.
 
 const base: McpPoolStats = {
-  available: true,
   live_connections: 2,
   shared_conns: 1,
   session_conns: 1,
@@ -65,12 +64,7 @@ describe('configured_servers is shown and gates the tile', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('renders nothing when the pool is unavailable, whatever the counters say', () => {
-    const { container } = render(<McpPoolTile stats={{ ...base, available: false }} />)
-    expect(container.textContent).toBe('')
-  })
-
-  it('renders nothing for a null stats object', () => {
+  it('renders nothing when the pool could not be read', () => {
     expect(render(<McpPoolTile stats={null} />).container.textContent).toBe('')
   })
 })

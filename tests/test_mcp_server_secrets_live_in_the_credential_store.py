@@ -27,13 +27,11 @@ from aiohttp.test_utils import make_mocked_request
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import make_ref, migrate_plaintext_secrets, ref_key
-from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs, mcp_sdk_available
+from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs
 
 TOKEN = "ghp_fixtureMcpServerToken0123456789abcdef"
 OLD_TOKEN = "ghp_fixtureStaleAgentConfigCopy99887766"
 HEADER_TOKEN = "Bearer fixture-remote-header-token-5a4b3c2d"
-
-needs_sdk = pytest.mark.skipif(not mcp_sdk_available(), reason="requires the 'mcp' SDK extra")
 
 # A stdio MCP server that reports its own environment: `read_env` returns a variable, and the one
 # tool's DESCRIPTION carries a digest of GITHUB_TOKEN, so a probe (initialize + tools/list only)
@@ -194,7 +192,6 @@ def test_removing_a_server_deletes_its_stored_secrets(home):
 # ── the spawned server receives the real value ──────────────────────────────
 
 
-@needs_sdk
 def test_the_spawned_server_receives_the_value_behind_the_reference(home, echo_server):
     ref = _stored_ref("echo", "env", "GITHUB_TOKEN", TOKEN)
     (home / "mcp.json").write_text(
@@ -216,7 +213,6 @@ def test_the_spawned_server_receives_the_value_behind_the_reference(home, echo_s
     assert asyncio.run(_call_read_env("echo", "GITHUB_TOKEN")) == TOKEN
 
 
-@needs_sdk
 def test_a_server_added_through_the_api_starts_with_its_token(home, echo_server):
     body = {
         "command": sys.executable,
@@ -245,7 +241,6 @@ def test_a_server_added_through_the_api_starts_with_its_token(home, echo_server)
     assert OLD_TOKEN not in (home / "mcp.json").read_text()
 
 
-@needs_sdk
 def test_the_discovery_probe_spawns_with_the_resolved_value(home, echo_server):
     from personalclaw.mcp_discovery import McpServerInfo, probe_server
 
@@ -341,7 +336,6 @@ def test_the_boot_move_converts_plaintext_and_keeps_the_live_value(home):
     assert migrate_plaintext_secrets() == []
 
 
-@needs_sdk
 def test_a_server_moved_at_boot_still_starts_with_its_token(home, echo_server):
     (home / "mcp.json").write_text(
         json.dumps(

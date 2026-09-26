@@ -54,10 +54,10 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    # Type-check-time only. The `mcp` SDK is an OPTIONAL extra, so importing its protocol
-    # at runtime would make this module — and `mcp_client`, which imports it — fail to load
-    # on an install without the extra. `from __future__ import annotations` keeps the
-    # annotation a string, so nothing here is evaluated at import time.
+    # Type-check-time only. Importing the SDK at runtime loads pydantic with it (~0.22 s),
+    # and `mcp_client`, which imports this module, defers the SDK to the first connection
+    # for exactly that reason. `from __future__ import annotations` keeps the annotation a
+    # string, so nothing here is evaluated at import time.
     from mcp.client.session import ElicitationFnT
 
 logger = logging.getLogger(__name__)

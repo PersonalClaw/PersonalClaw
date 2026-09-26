@@ -13,6 +13,7 @@ import { Segmented } from '../../ui/Segmented'
 import { Field, TextArea, TextInput } from '../../ui/forms'
 import { Markdown } from '../../ui/Markdown'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { TextLink } from '../../ui/TextLink'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { reportingWrite } from '../../app/reportingWrite'
@@ -52,10 +53,19 @@ interface Group {
   tier?: string
 }
 
-function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
+/** The app that carries every external MCP server's tools to an agent — named in COPY and in a Store
+ *  deep link only. Whether an agent can call a server is the gateway's answer (`status: 'unserved'`
+ *  when nothing serves those tools), never a check of this name; an unknown `open=` degrades to the
+ *  plain Store grid, so a renamed bundle cannot strand anyone. */
+const MCP_TOOLS_APP = { name: 'mcp-tools', label: 'MCP Tool Servers' }
+const MCP_TOOLS_APP_HREF = `#/apps?view=store&open=${MCP_TOOLS_APP.name}`
+
+/** Exported for test: which words a server's state comes out as is only observable by rendering. */
+export function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
   if (!s.enabled) return { state: 'disabled', tone: 'var(--color-on-surface-low)' }
   if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
   if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
+  if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
   return { state: s.status || 'unknown', tone: 'var(--color-warn)', detail: s.error }
 }
 
@@ -64,7 +74,8 @@ interface ToolsIndexData {
   loadFailures: ToolLoadFailure[]
   servers: McpServer[]
   importable: ImportableMcpServer[]
-  poolStats: McpPoolStats
+  /** `null` when the pool could not be read: the tile is then not drawn at all. */
+  poolStats: McpPoolStats | null
   groups: ToolGroupsData | null
   // MBR-1: the names of servers granted `elicitation/create` — the per-server right to
   // interrupt a tool call and ask the user a question. Empty on a fresh install; `null` when
@@ -84,7 +95,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       api.toolsIndex(),
       api.mcpServers().catch(() => [] as McpServer[]),
       api.importableMcp().catch(() => [] as ImportableMcpServer[]),
-      api.mcpPoolStats().catch(() => ({ available: false } as McpPoolStats)),
+      api.mcpPoolStats().catch(() => null),
       api.toolGroups().catch(() => null),
       // Tolerated like the four above — an unreadable config must not hide the tool list — but
       // with `null`, never `[]`. `[]` was defended here as the fail-closed answer, and for the
@@ -373,8 +384,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
 /** P23d: the MCP connection-pool observability tile — surfaces the live pool snapshot
  *  (shared vs per-session connections) + lifetime spawn/reuse counters so the user can
- *  see pooling working. Hidden when the mcp SDK extra is absent or nothing has connected
- *  yet (no pool activity → no tile clutter). */
+ *  see pooling working. Hidden when the pool could not be read or knows no server yet
+ *  (no pool activity → no tile clutter). */
 /** Exported for test: the gate (which pool states render at all) and the conditional Evicted cell
  *  are only observable by rendering the tile against a stubbed stats object — jsdom reports every
  *  box as 0, so nothing about them is measurable from layout. */
@@ -383,7 +394,7 @@ export function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
   // pool with servers CONFIGURED but none spawned yet rendered nothing — exactly the state where
   // "the pool knows about N servers and has opened none" is the useful fact. A configured pool with
   // no activity is a real answer; an empty pool is the only thing worth hiding.
-  if (!stats || !stats.available) return null
+  if (!stats) return null
   if (!(stats.live_connections || stats.spawns || stats.configured_servers)) return null
   const cells: Array<{ label: string; value: number | undefined; hint: string }> = [
     // Configured leads: it is the denominator the other numbers are read against — 0 live out of 1
@@ -545,6 +556,17 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
           <span data-type="caption" className="ml-auto text-on-surface-low" title="Required by platform features — can't be disabled">required</span>
         )}
       </div>
+      {/* The header's state is a caption with its reason in a `title`, which a touch screen never
+          shows. "Why can't an agent use this, and what do I do" is the one state whose answer is
+          an action, so it is said in the page, with the way to take it. */}
+      {g.server?.enabled && g.server.status === 'unserved' && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
+          <Plug size={14} className="shrink-0" />
+          <span>
+            No agent can call these tools yet. They reach an agent through the <span className="text-on-surface">{MCP_TOOLS_APP.label}</span> app — <TextLink href={MCP_TOOLS_APP_HREF} ink="emphasis" className="underline">install it from the Store</TextLink>, or turn it on if it is installed.
+          </span>
+        </div>
+      )}
       {/* 🔴 TWO COLUMNS WITH NO BREAKPOINT MADE THE TOOL NAME INVISIBLE ON A PHONE. The grid in the
           else-branch below holds, per cell, a wrench, the name, an approval shield, a risk badge and
           sometimes a "Disabled" pill — so at 390px a ~172px half-width cell leaves the name nothing.

@@ -207,6 +207,10 @@ APP = 1
 #: Where every external MCP server's tools are named, ``mcp/<server>/<tool>`` (rule 2).
 MCP_NAMESPACE = "mcp/"
 
+#: The name of the provider the MCP Tool Servers app registers to serve those tools. Readers that
+#: list tools per provider leave it out, because the Tools page lists its tools per server.
+EXTERNAL_MCP_PROVIDER = "mcp"
+
 
 class ToolRegistrationRefused(Exception):
     """A registration refused because it would serve a name another provider holds.
@@ -454,7 +458,7 @@ def _claim(provider: ToolProvider, tools: list[ToolDefinition]) -> bool:
                     tool,
                     "is under mcp/, where the tools of the MCP servers you connect are named",
                 )
-                _refuse(provider, tool=tool, holder="mcp", sentence=refusal)
+                _refuse(provider, tool=tool, holder=EXTERNAL_MCP_PROVIDER, sentence=refusal)
                 return False
             holder = _holder(tool)
             if holder is None or holder is provider:
@@ -637,6 +641,23 @@ def app_of(provider_name: str) -> str:
 
 def get_provider(name: str) -> ToolProvider | None:
     return _providers.get(name)
+
+
+def serves_external_mcp_tools() -> bool:
+    """Whether an agent's surface carries external MCP servers' tools: a provider the MCP Tool
+    Servers app registered, the only one rule 2 lets serve a name under ``mcp/``, is registered
+    and the user has not switched it off, which drops its tools from every agent turn
+    (``NativeAgentRuntime``)."""
+    from personalclaw.providers.mcp_instances import MCP_TOOLS_EXTENSION
+    from personalclaw.tool_providers import tool_prefs
+
+    with _lock:
+        live = [
+            reg.provider.name
+            for reg in _registrations.values()
+            if reg.app == MCP_TOOLS_EXTENSION and _live(reg.provider) is reg
+        ]
+    return any(not tool_prefs.is_provider_disabled(name) for name in live)
 
 
 def list_providers() -> list[ToolProvider]:

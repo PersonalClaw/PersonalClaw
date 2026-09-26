@@ -6,17 +6,16 @@ over it. It is what lets PersonalClaw's *native* agent loop invoke tools from an
 external MCP server configured in ``~/.personalclaw/mcp.json`` — independent of
 the ACP CLI backends, which spawn their own MCP servers.
 
-Built on the official ``mcp`` Python SDK (an optional ``personalclaw[mcp]``
-extra). The SDK's clients are async-context-manager based, so each server runs
-as a small **actor**: one background task holds the transport + session context
-open and serves ``list_tools`` / ``call_tool`` requests off a queue, with
-health/respawn and clean shutdown (drained by the gateway's reaper on exit).
+Built on the official ``mcp`` Python SDK, a core dependency. The SDK's clients are
+async-context-manager based, so each server runs as a small **actor**: one background task
+holds the transport + session context open and serves ``list_tools`` / ``call_tool`` requests
+off a queue, with health/respawn and clean shutdown (drained by the gateway's reaper on exit).
 
 Transports: stdio (``command``/``args``/``env``), and a server at a ``url`` over Streamable HTTP
 or SSE, sent its ``headers`` on every request — which one is the spec's ``type``, read by
-:func:`personalclaw.mcp_discovery.mcp_transport`. The SDK is imported lazily so the package still
-imports without the extra; a missing SDK degrades to an empty registry (no servers), never an
-ImportError at module load.
+:func:`personalclaw.mcp_discovery.mcp_transport`. The SDK is imported at the first connection,
+not at module load: it brings pydantic with it (~0.22 s), which a process that never connects to
+a server — most CLI commands — has no reason to pay.
 """
 
 from __future__ import annotations
@@ -50,16 +49,6 @@ _BREAKER_COOLDOWN_SECS = 60.0
 # How long closing one server's connection may take before it is abandoned (and logged), so a
 # server that will not stop cannot hold up the app unload that is replacing it.
 _CLOSE_TIMEOUT_SECS = 10.0
-
-
-def mcp_sdk_available() -> bool:
-    """True when the optional ``mcp`` SDK is importable."""
-    try:
-        import mcp  # noqa: F401
-
-        return True
-    except Exception:
-        return False
 
 
 @dataclass
@@ -325,20 +314,16 @@ class McpServerConn:
         if transport != "stdio":
             raise ValueError(f"PersonalClaw cannot connect over the {transport!r} transport")
 
-        # stdio: spawn the declared command with the augmented PATH so a daemon
-        # PATH still resolves node/npx/uvx the same way probe_server does.
-        import os
-
+        # stdio: spawn the declared command in the environment the probe spawns it in, so a
+        # server that probes "ok" is one this connection can start.
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
-        from personalclaw.env import augmented_path
+        from personalclaw.mcp_discovery import stdio_spawn_env
 
         command = self.spec.get("command", "")
         if not command:
             raise ValueError("server spec has neither 'url' nor 'command'")
-        env = dict(os.environ)
-        env["PATH"] = augmented_path(env.get("PATH", ""))
-        env.update(self.spec.get("env") or {})
+        env = stdio_spawn_env(self.spec.get("env") or {})
         # ``cwd`` lets an app-shipped server (registered by the app-platform MCP
         # bridge with cwd=app_dir) resolve relative command/args; ignored when
         # absent (the historical behavior — spawn in the gateway's cwd).
@@ -740,15 +725,8 @@ def close_servers(match: Callable[[str], bool]) -> None:
         _registry._close(match)  # noqa: SLF001 — the module's own registry
 
 
-def get_mcp_client_registry() -> McpClientRegistry | None:
-    """Return the process-wide registry, or ``None`` if the SDK is absent.
-
-    Lazily loads specs from ``~/.personalclaw/mcp.json`` on first call. Returns
-    ``None`` (not an empty registry) when the ``mcp`` extra isn't installed, so
-    callers can distinguish "no SDK" from "SDK present, no servers".
-    """
-    if not mcp_sdk_available():
-        return None
+def get_mcp_client_registry() -> McpClientRegistry:
+    """Return the process-wide registry, its servers re-read from ``mcp.json`` on every call."""
     global _registry
     if _registry is None:
         _registry = McpClientRegistry()
