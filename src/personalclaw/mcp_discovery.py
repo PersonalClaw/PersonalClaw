@@ -72,10 +72,11 @@ def _mcp_json_paths() -> tuple[Path, ...]:
 
 
 def _import_sources() -> tuple[tuple[Path, str], ...]:
-    """External backend MCP configs PersonalClaw can *import from* (but never silently loads),
-    each with the backend label the import suggestions show. Extensible: add further backend
-    config paths here once their formats are confirmed — the discovery + import path is
-    backend-agnostic.
+    """Claude Code global configs PersonalClaw can *import from* (but never silently loads), each
+    with the backend label the import suggestions show. Each is read by
+    :func:`~personalclaw.onboarding_import.sources.claude_code.mcp_servers`, which follows it to
+    all three of Claude Code's scopes: the file's own ``mcpServers`` (user), each project entry's
+    (local), and each project's ``.mcp.json`` (project).
 
     A FUNCTION, like :func:`_mcp_json_paths`: this was ``Path.home() / ".claude.json"`` frozen at
     import, so it ignored ``$CLAUDE_CONFIG_DIR`` while the onboarding importer honoured it. Claude
@@ -84,6 +85,17 @@ def _import_sources() -> tuple[tuple[Path, str], ...]:
     from personalclaw.onboarding_import.sources import claude_code
 
     return ((claude_code.global_config_path(), claude_code.DISPLAY_NAME),)
+
+
+def _importable_entries() -> list[tuple[str, Any]]:
+    """``(backend label, server)`` for every MCP server another tool has configured, every scope."""
+    from personalclaw.onboarding_import.sources import claude_code
+
+    return [
+        (backend, server)
+        for path, backend in _import_sources()
+        for server in claude_code.mcp_servers(config_path=path)
+    ]
 
 
 # ── transports ──────────────────────────────────────────────────────────────
@@ -829,13 +841,19 @@ def discover_importable_servers() -> list[dict[str, Any]]:
     backed by ``/api/mcp/apply``, which copies the spec into the PClaw scope.
 
     This is the list a browser renders, so each entry carries what the picker shows and no
-    credential: ``{name, backend, transport, command, args, url, env, headers}``. ``command`` is
-    the command's file name, ``args`` the arguments with every credential in them masked
-    (:func:`masked_args`), ``url`` the address with its userinfo, query values and any token-shaped
-    path segment masked (:func:`masked_url`), and ``env``/``headers`` ``[{name, hasValue}]`` —
-    which variables the server sets, never what they hold. The import reads the whole definition
-    from the backend's own file, server-side, and stores its values.
+    credential: ``{id, name, backend, scope, origin, note, transport, command, args, url, env,
+    headers}``. ``id`` names the server in its scope — what the import sends back, so a pick names
+    a listed row and never a file. ``scope`` is Claude Code's (``user``, ``local``, ``project``)
+    and ``origin`` says where, in words; ``note`` is what to know first (a project server nobody
+    approved, a ``${VAR}`` nothing sets). ``command`` is the command's file name, ``args`` the
+    arguments with every credential in them masked (:func:`masked_args`), ``url`` the address
+    with its userinfo, query values and any token-shaped path segment masked
+    (:func:`masked_url`), and ``env``/``headers`` ``[{name, hasValue}]`` — which variables the
+    server sets, never what they hold. The import reads the whole definition from the backend's
+    own files, server-side (:func:`importable_spec`), and stores its values.
     """
+    from personalclaw.onboarding_import.sources.claude_code import mcp_note
+
     # Servers already known to PClaw (mcp.json + the agent config) are not
     # "importable" — they're already first-class.
     known: set[str] = set(_load_mcp_json().keys())
@@ -843,43 +861,48 @@ def discover_importable_servers() -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for path, backend in _import_sources():
-        if not path.is_file():
+    for backend, server in _importable_entries():
+        spec = server.spec
+        if server.name in known or server.id in seen:
             continue
-        try:
-            data = json.loads(safe_read_file(str(path)))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to read import source %s: %s", path, exc)
+        # Only surface servers PersonalClaw can run: a stdio command, or a URL over a
+        # transport it has a client for. Skip anything else silently.
+        transport = mcp_transport(spec)
+        remote = transport != "stdio"
+        if transport not in MCP_TRANSPORTS or not spec.get("url" if remote else "command"):
             continue
-        if not isinstance(data, dict):
-            continue
-        servers = data.get("mcpServers", {})
-        if not isinstance(servers, dict):
-            continue
-        for name, spec in servers.items():
-            if not isinstance(spec, dict) or name in known or name in seen:
-                continue
-            # Only surface servers PersonalClaw can run: a stdio command, or a URL over a
-            # transport it has a client for. Skip anything else silently.
-            transport = mcp_transport(spec)
-            remote = transport != "stdio"
-            if transport not in MCP_TRANSPORTS or not spec.get("url" if remote else "command"):
-                continue
-            seen.add(name)
-            args = spec.get("args")
-            out.append(
-                {
-                    "name": name,
-                    "backend": backend,
-                    "transport": transport,
-                    "command": "" if remote else _command_name(str(spec["command"])),
-                    "args": masked_args(args) if not remote and isinstance(args, list) else [],
-                    "url": masked_url(str(spec["url"])) if remote else "",
-                    "env": _names_with_presence(spec.get("env")),
-                    "headers": _names_with_presence(spec.get("headers")),
-                }
-            )
+        seen.add(server.id)
+        args = spec.get("args")
+        out.append(
+            {
+                "id": server.id,
+                "name": server.name,
+                "backend": backend,
+                "scope": server.scope,
+                "origin": server.origin,
+                "note": mcp_note(server),
+                "transport": transport,
+                "command": "" if remote else _command_name(str(spec["command"])),
+                "args": masked_args(args) if not remote and isinstance(args, list) else [],
+                "url": masked_url(str(spec["url"])) if remote else "",
+                "env": _names_with_presence(spec.get("env")),
+                "headers": _names_with_presence(spec.get("headers")),
+            }
+        )
     return out
+
+
+def importable_spec(server_id: str) -> tuple[str, dict[str, Any]] | None:
+    """``(name, definition)`` of the importable server ``server_id`` names, or ``None``.
+
+    Read again from the other tool's own files, the way the list was: the import copies exactly
+    the server the row showed, in the scope it showed it in, and a caller can only ever name a
+    row — never a path, a file or a definition of its own.
+    """
+    for _backend, server in _importable_entries():
+        if server.id == server_id:
+            return server.name, dict(server.spec)
+    return None
 
 
 def _names_with_presence(values: Any) -> list[dict[str, Any]]:

@@ -73,7 +73,8 @@ and your own access: the MCP servers the gateway launches (`/api/mcp`, reads inc
 since a remote server's headers hold its bearer token), your backups (export, import and
 restore), who may message your agent from a chat channel, taking back an autonomy grant or
 undoing what an automation did, and bringing your setup over from other agent tools
-(`/api/onboarding/import`, which copies their MCP servers, skills and instructions in).
+(`/api/onboarding/import`, which copies their MCP servers, skills, agents, prompts,
+instructions, memories and conversations in).
 Holding any of those would make every other
 line in a manifest moot, so there is nothing to scope — and before the registry existed,
 an app declaring `/api/ws` (the event socket) prefix-matched `/api/ws/terminal/{id}` and

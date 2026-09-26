@@ -2484,8 +2484,13 @@ export interface McpPoolStats {
  *  What the row shows and no credential: `command` is the program's name, and every credential in
  *  `args` and `url` (a flag's value, a header, a URL's userinfo, query values and token-shaped path
  *  segments) arrives as the mask. The import reads the whole definition server-side. */
+/** An MCP server another tool has configured and PersonalClaw has not. `id` names it in its scope —
+ *  what an import sends back, never a path. `scope` is Claude Code's (`user`, `local`, `project`),
+ *  `origin` says where in words, and `note` is what to know first (a project server nobody
+ *  approved, a `${VAR}` nothing sets); `''` when there is nothing to say. */
 export interface ImportableMcpServer {
-  name: string; backend: string; transport: McpTransport; command: string; args: string[]; url: string
+  id: string; name: string; backend: string; scope: 'user' | 'local' | 'project'; origin: string; note: string
+  transport: McpTransport; command: string; args: string[]; url: string
   env?: McpValuePresence[]; headers?: McpValuePresence[]
 }
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
@@ -5101,12 +5106,19 @@ export type OnboardingImportItemState = 'new' | 'existing' | 'conflict' | 'rejec
  *  reproduced by every re-scan, and the ONLY thing a pick sends back. `secrets_skipped` and
  *  `redactions` are COUNTS of what was left out of THIS item; the values never leave the
  *  scanner. `detail` says why a non-`new` item will not be written, in words true both
- *  before and after an import. */
+ *  before and after an import. `origin` is where in the tool it was found ("Local scope ·
+ *  /Users/you/api", "Project · ~/src/app"), `note` what the import leaves out of it or changes,
+ *  and `preselected` false for an item the other tool itself never let run — a project's MCP
+ *  server nobody approved — so the step starts with it unticked. */
 export interface OnboardingImportItem {
   fingerprint: string; source: string; category: string; key: string; title: string
+  origin: string; note: string; preselected: boolean
   state: OnboardingImportItemState; destination: string; detail: string
   secrets_skipped: number; redactions: number
 }
+/** A kind of thing a source holds that is not brought over, with how many and why — so a
+ *  tool whose prompt history stays behind reads as having one, not as never having had it. */
+export interface OnboardingImportNotImported { what: string; count: number; why: string }
 /** What one source's scanner found. `detected` is computed server-side (present on
  *  this machine AND holding something), so "did we find it" is decided once. */
 export interface OnboardingImportSource {
@@ -5115,6 +5127,7 @@ export interface OnboardingImportSource {
   items: OnboardingImportItem[]
   secrets_skipped: number; redactions: number
   notes: string[]
+  not_imported: OnboardingImportNotImported[]
 }
 /** `GET /api/onboarding/import` — every registered source (found or not) plus the
  *  closed category vocabulary, in the writers' declaration order. */
@@ -7683,9 +7696,13 @@ export const api = {
   // own file, values included (stored in the credential store), and leaves that file as it is. The
   // route answers 200 for a batch, so a change that did not land carries an `error` — thrown here, so
   // `reportingWrite` reports both failure shapes.
-  importMcpServer: async (name: string) => {
+  /** Import one listed server: the row's `id` names it in its scope, and the gateway reads its
+   *  definition again from the other tool's own files. Claude Code's file is left as it is — the
+   *  import used to send `ccGlobal: true`, which copied a local- or project-scope server into
+   *  Claude Code's USER scope as a side effect. */
+  importMcpServer: async (server: Pick<ImportableMcpServer, 'id' | 'name'>) => {
     const r = await post<{ results?: Array<{ name?: string; error?: string }> }>(
-      '/api/mcp/apply', { changes: [{ name, personalclaw: true, ccGlobal: true }] })
+      '/api/mcp/apply', { changes: [{ name: server.name, personalclaw: true, from: server.id }] })
     const failed = r.results?.find((c) => c.error)
     if (failed?.error) throw new Error(failed.error)
     return r

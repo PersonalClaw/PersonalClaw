@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest:*)",
+      "Bash(uv run feedsmith:*)",
+      "Bash(docker compose up -d db)",
+      "mcp__feedsmith-dev-db__list_objects",
+      "mcp__feedsmith-dev-db__get_object_details",
+      "mcp__feedsmith-dev-db__explain_query"
+    ]
+  },
+  "enabledMcpjsonServers": ["feedsmith-dev-db", "playwright"]
+}

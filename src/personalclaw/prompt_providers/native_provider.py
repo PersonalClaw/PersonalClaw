@@ -78,8 +78,18 @@ def _config_dir() -> Path:
     return config_dir()
 
 
+_PROMPTS_DIRNAME = "prompts"
+
+
+def prompt_file(name: str) -> Path:
+    """Where prompt ``name`` is stored — without creating anything, so a caller that only asks
+    whether a prompt exists (the onboarding import's planner) writes nothing. Raises
+    :class:`ValueError` for a name no prompt can have."""
+    return _config_dir() / _PROMPTS_DIRNAME / f"{_safe_name(name)}.yaml"
+
+
 def _prompts_dir() -> Path:
-    d = _config_dir() / "prompts"
+    d = _config_dir() / _PROMPTS_DIRNAME
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -99,7 +109,8 @@ def _safe_name(name: str) -> str:
 
 
 def _prompt_path(name: str) -> Path:
-    return _prompts_dir() / f"{_safe_name(name)}.yaml"
+    _prompts_dir()
+    return prompt_file(name)
 
 
 def _snippet_path(name: str) -> Path:

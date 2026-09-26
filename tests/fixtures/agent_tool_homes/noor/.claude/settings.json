@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest:*)",
+      "Bash(uv run ruff check:*)",
+      "Bash(uv run ruff format:*)",
+      "Bash(uv run alembic history:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git switch:*)",
+      "Bash(rg:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh issue view:*)",
+      "Bash(docker compose ps)",
+      "Read(~/Notes/Garden/**)",
+      "mcp__github__get_issue",
+      "mcp__github__get_pull_request",
+      "mcp__github__list_pull_requests",
+      "mcp__sentry__search_issues",
+      "mcp__sentry__get_issue_details",
+      "WebFetch(domain:docs.python.org)",
+      "WebFetch(domain:www.postgresql.org)",
+      "WebFetch(domain:www.python-httpx.org)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(uv run alembic upgrade:*)",
+      "Bash(psql:*)",
+      "mcp__github__update_issue",
+      "mcp__github__add_issue_comment"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(rm -rf:*)",
+      "Read(~/.aws/**)",
+      "Read(~/.ssh/**)",
+      "Read(./.env)",
+      "Read(~/Notes/Garden/Health/**)",
+      "Read(~/Documents/Finance/**)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "env": {
+    "UV_PYTHON": "3.12",
+    "FEEDSMITH_DEV_DATABASE_URL": "postgresql://feedsmith:s3a-Gull-Harbour-42@localhost:5433/feedsmith_dev",
+    "SENTRY_AUTH_TOKEN": "sntryu_4f0c9a2e7b1d4c8e9a6f3b2d1c0e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0",
+    "DISABLE_TELEMETRY": "1"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/format-python.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/notify-telegram.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  },
+  "includeCoAuthoredBy": false,
+  "cleanupPeriodDays": 120,
+  "theme": "dark"
+}

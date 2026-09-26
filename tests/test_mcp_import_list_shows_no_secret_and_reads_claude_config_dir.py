@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -161,9 +162,15 @@ def test_the_import_list_names_each_server_and_carries_no_credential(world) -> N
     for secret in SECRETS:
         assert secret not in out["importable"], f"the import list sent {secret!r} to the browser"
     rows = {r["name"]: r for r in json.loads(out["importable"])["servers"]}
-    assert rows["cc-args"] == {
+    row = dict(rows["cc-args"])
+    # The row's id is what an import sends back instead of a name or a path.
+    assert re.fullmatch(r"[0-9a-f]{16}", row.pop("id"))
+    assert row == {
         "name": "cc-args",
         "backend": "Claude Code",
+        "scope": "user",
+        "origin": "User scope",
+        "note": "",
         "transport": "stdio",
         # The program, not where it lives, and the arguments that say which server this is.
         "command": "npx",
