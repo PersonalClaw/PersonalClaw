@@ -1,8 +1,8 @@
 {
   "id": "degenerate-manifest/oversize-dangerous-script",
   "class": "degenerate-manifest",
-  "summary": "A dangerous script padded past the scanner's per-file read cap. The quarantine walk skips the blob by size, so the commit-side per-file gate (which has no cap) is the control that must refuse it.",
-  "expect": "oversize_skipped_by_walk_refused_at_commit",
+  "summary": "A dangerous script padded past the 512 KB the scanner once stopped reading at. The quarantine walk skipped the blob by size, and an app install has no commit-side scan behind it, so the padding installed it unread. The walk now reads every file whole and must refuse it; the skill commit-side per-file gate must still refuse it too.",
+  "expect": "oversize_read_by_walk_and_refused",
   "files": [
     {
       "path": "SKILL.md",

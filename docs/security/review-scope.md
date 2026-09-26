@@ -143,6 +143,11 @@ of a bundle into quarantine, and its link policy), `supply_chain.py`, `skills/`,
 - Make the scanner miss: obfuscation, dynamic import, a payload in a data file
   the scanner does not read, a file type it skips, an encoding it mis-decodes, a
   size threshold above which it gives up.
+- Find bytes that install without being scanned. The scanner reads the whole staged
+  tree and the stager leaves out only `supply_chain.NEVER_INSTALLED_NAMES`; look for
+  something that still loads or runs out of a left-out name (a case variant, a link
+  into one, a hook that recreates one), and for a second install path whose tree and
+  scanned tree differ.
 - Make `dangerous` non-terminal: an error path that turns a terminal verdict into
   a warning, an exception in the scanner that fails **open**, a `TrustTier` that
   relaxes strictness further than intended.

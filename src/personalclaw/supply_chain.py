@@ -294,7 +294,12 @@ _INJECTION_PROSE: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 _SCRIPT_EXTS = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".rb", ".pl", ".ps1"}
 # Text surfaces scanned for injection / invisible-Unicode (skill + app manifests).
 _MANIFEST_NAMES = {"skill.md", "app.json", "readme.md", "manifest.json"}
-_MAX_FILE_BYTES = 512 * 1024  # don't read huge blobs into the scanner
+_TEXT_SUFFIXES = {".md", ".json", ".yaml", ".yml"}
+#: The largest file the scanner reads. Every file a rule reads is read WHOLE up to this, and
+#: one past it is an ``unscanned_file`` finding — never a silent pass. The rules run at about
+#: 12 MB/s (a 13 MB bundled worker takes one second), so this sits above the largest built
+#: JavaScript a real bundle ships and bounds only what no scan could finish.
+_MAX_FILE_BYTES = 16_000_000
 _EVIDENCE_CAP = 120
 # How the evidence window is SHAPED (the cap above is the only length bound). The
 # window is anchored at the start of the matched line — so a call brings its callee
@@ -310,11 +315,42 @@ _EVIDENCE_SCAN_CHARS = 600  # raw chars the bracket walk may consume
 _EVIDENCE_LEAD_CAP = 40
 # Every cut is marked with this, so a truncated snippet is never read as the whole thing.
 _ELLIPSIS = "…"
-# Directories that are tooling/dependency noise, not the app's own content. A git
-# clone carries .git/ (whose hooks/*.sample trip the script rules — a false
-# positive); node_modules/venv are vendored deps the author didn't write. Skipping
-# them keeps the gate focused on first-party content (and faster).
-_SKIP_DIR_NAMES = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__", ".tox"}
+
+
+# ── What a bundle is ────────────────────────────────────────────────────────
+
+#: Names that are never part of an installed bundle, at any depth — tooling a checkout
+#: carries that nothing an app or skill runs needs. Staging leaves every entry so named out
+#: of the tree it builds (``apps.staging.survey``, ``skills.marketplace.install_scanned``),
+#: so such an entry is not scanned, not in the consent digest and not installed. The scanner
+#: itself skips nothing: it reads every file of the tree it is handed, which is what makes
+#: "installed" and "scanned" the same set by construction. The scanner once skipped these
+#: names (and ``node_modules``) while staging copied them, so code hid in them unread.
+#:
+#: * ``.git``, ``.hg``, ``.svn`` — version-control metadata. Nothing an app runs reads it,
+#:   and the tools that do run what it names (``core.fsmonitor``, a hook) for whoever runs
+#:   them inside the app's folder.
+#: * ``__pycache__`` — bytecode the interpreter loads IN PLACE OF the source beside it (an
+#:   unchecked-hash ``.pyc`` without looking at the source at all), so it would run code the
+#:   scan never read. The interpreter rebuilds it.
+#: * ``.venv``, ``venv``, ``.tox`` — virtualenvs. The platform installs an app's Python
+#:   packages itself (``pythonDependencies`` into ``<home>/app-python``); a virtualenv belongs
+#:   to the machine that built it, and nothing in the platform runs one.
+#:
+#: ``node_modules`` is NOT here: a JavaScript app's dependencies are code it runs (a Node
+#: backend resolves ``require`` through it, and the UI route serves ``ui/`` whole), so it
+#: installs, and is scanned like any other folder.
+#:
+#: Matched case-insensitively: macOS's default disk opens ``__PYCACHE__/x.pyc`` for
+#: ``__pycache__/x.pyc`` and ``.GIT`` for ``.git``, so a case variant is the same folder to
+#: the tools that load it.
+NEVER_INSTALLED_NAMES = frozenset({".git", ".hg", ".svn", "__pycache__", ".venv", "venv", ".tox"})
+
+
+def never_installed(name: str) -> bool:
+    """Whether a path component names tooling that is never part of a bundle
+    (:data:`NEVER_INSTALLED_NAMES`)."""
+    return name.casefold() in NEVER_INSTALLED_NAMES
 
 
 # ── What a rule MEANS, in words a non-expert can act on ─────────────────────
@@ -2063,6 +2099,11 @@ class SkillScanner:
     ``scan(staged_dir, tier)`` walks the tree, classifies each surface, and
     returns a :class:`ScanReport`. The same instance is stateless + reusable; a
     module-level :data:`default_scanner` is provided for convenience.
+
+    It reads the WHOLE tree it is handed: no folder is skipped by name, and a file a rule
+    reads but the scanner cannot (past :data:`_MAX_FILE_BYTES`, or unreadable) is an
+    ``unscanned_file`` finding rather than a pass. Deciding what belongs in the tree is
+    staging's job (:func:`never_installed`), so what installs is what this read.
     """
 
     def scan(self, staged_dir: Path, tier: TrustTier = TrustTier.COMMUNITY) -> ScanReport:
@@ -2078,46 +2119,54 @@ class SkillScanner:
         opaque: list[str] = []  # Python/loader files the walk could not read (L4)
 
         if staged_dir.is_dir():
+            # EVERY file of the tree, whatever folder it sits in: what the tree holds is
+            # staging's decision (`never_installed`), and a name skipped here but installed
+            # is code that installs unread.
             for path in sorted(staged_dir.rglob("*")):
                 if not path.is_file():
                     continue
-                rel_parts = path.relative_to(staged_dir).parts
-                # Skip VCS/dependency noise dirs (.git hooks etc. aren't app content).
-                if any(part in _SKIP_DIR_NAMES for part in rel_parts[:-1]):
-                    continue
                 rel = str(path.relative_to(staged_dir))
-                text: str | None = None
-                try:
-                    if path.stat().st_size <= _MAX_FILE_BYTES:
-                        text = path.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    text = None
+                suffix, lname = path.suffix.lower(), path.name.lower()
+                is_py = suffix == ".py"
+                is_loader = not is_py and _is_loader_name(path.name)
+                is_script = suffix in _SCRIPT_EXTS or _is_under_scripts(rel)
+                text_surface = (
+                    "frontmatter"
+                    if lname in _MANIFEST_NAMES
+                    else "manifest" if suffix in _TEXT_SUFFIXES else ""
+                )
+                if not (is_py or is_loader or is_script or text_surface):
+                    continue  # no rule reads this kind of file, and the analysis needs none
+                text, unread = _read_for_scan(path)
                 if text is None:
-                    # An unread file (oversize, unreadable) is a HOLE in the reachability
-                    # graph, not an absence of edges — but only when it is a file that
-                    # could hold or run code. A skipped .png proves nothing either way.
-                    if path.suffix.lower() == ".py" or _is_loader_name(path.name):
+                    # A file a rule reads, left unread, is told to the owner — never a pass.
+                    # When it could hold or run code it is also a HOLE in the reachability
+                    # graph, not an absence of edges.
+                    code = is_script or is_py or is_loader
+                    findings.append(
+                        Finding(
+                            "script" if code else text_surface,
+                            Verdict.WARNING,
+                            "unscanned_file",
+                            rel,
+                            unread,
+                        )
+                    )
+                    if is_py or is_loader:
                         opaque.append(rel)
                     continue
-                lname = path.name.lower()
-                if path.suffix.lower() == ".py":
+                if is_py:
                     py_texts[rel] = text
-                elif _is_loader_name(path.name):
+                elif is_loader:
                     loader_texts[rel] = text
                 if rel == "app.json":
                     manifest_text = text
-                if path.suffix.lower() in _SCRIPT_EXTS or _is_under_scripts(rel):
+                if is_script:
                     surfaces.add("script")
                     findings.extend(self._scan_script(text, rel))
-                if lname in _MANIFEST_NAMES or path.suffix.lower() in {
-                    ".md",
-                    ".json",
-                    ".yaml",
-                    ".yml",
-                }:
-                    surface = "frontmatter" if lname in _MANIFEST_NAMES else "manifest"
-                    surfaces.add(surface)
-                    findings.extend(self._scan_text(text, rel, surface))
+                if text_surface:
+                    surfaces.add(text_surface)
+                    findings.extend(self._scan_text(text, rel, text_surface))
 
         # ONE analysis of the bundle, shared by both passes, and only when there is a
         # finding to ask about.
@@ -2291,6 +2340,28 @@ class SkillScanner:
 def _is_under_scripts(rel: str) -> bool:
     parts = Path(rel).parts
     return "scripts" in parts or "hooks" in parts or "bin" in parts
+
+
+def _read_for_scan(path: Path) -> tuple[str | None, str]:
+    """The whole text of a file a rule reads, or ``None`` and why it could not be read —
+    the evidence of the ``unscanned_file`` finding that takes its place."""
+    try:
+        size = path.stat().st_size
+        if size > _MAX_FILE_BYTES:
+            return None, (
+                f"{_size_words(size)}, larger than the {_size_words(_MAX_FILE_BYTES)} "
+                "the scanner reads"
+            )
+        return path.read_text(encoding="utf-8", errors="replace"), ""
+    except OSError as exc:
+        return None, f"could not be read ({exc.strerror or type(exc).__name__})"
+
+
+def _size_words(size: int) -> str:
+    """``16.9 MB``, ``16 MB``, ``12 KB`` — the size a person reads, not a byte count."""
+    if size < 1_000_000:
+        return f"{max(1, size // 1000)} KB"
+    return f"{size / 1_000_000:.1f}".removesuffix(".0") + " MB"
 
 
 # Convenient shared instance.

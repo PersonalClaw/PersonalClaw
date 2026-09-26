@@ -40,12 +40,32 @@ backend**.
   pipe, socket or device, a link into or out of `data/`, and `data` or
   `installed.json` as a link. A `repo#subdirectory` pointer must stay inside its
   clone. The gateway's own copies of an app's `data/` (update, keep-data uninstall,
-  restore) copy links as links.
-- **The scan** is the shared `SkillScanner` (`supply_chain.py`). A *dangerous*
+  restore) copy links as links, and the gateway's own reads of files there (the
+  app's `data/config.json`, for the config API, provider settings and the boot-time
+  secret move) never follow a link (`apps/manager.read_app_owned_text`).
+- **Tooling is never installed** — staging leaves out every entry named in
+  `supply_chain.NEVER_INSTALLED_NAMES`, at any depth and in any letter case: `.git`,
+  `.hg`, `.svn` (version-control metadata, whose tools run what it names),
+  `__pycache__` (bytecode the interpreter would run instead of the scanned source)
+  and `.venv`, `venv`, `.tox` (virtualenvs; the platform installs
+  `pythonDependencies` itself). What is left out is not scanned, not in the consent
+  digest and not installed; a link into it is refused. Everything else is the app,
+  `node_modules` included: a JavaScript app's dependencies are code it runs, so they
+  install and are scanned like any other file. Skills follow the same rule
+  (`skills.marketplace.install_scanned`).
+- **The scan** is the shared `SkillScanner` (`supply_chain.py`), and it reads the
+  whole staged tree: no folder is skipped, every file a rule reads is read whole (up
+  to 16 MB), and a file it cannot read is an `unscanned_file` finding in the review,
+  never a silent pass. A *dangerous*
   verdict (or an invalid signature) is a terminal refusal, **non-overridable**.
   Each finding carries whether the code it sits in can run (`reachability`) and
   whether anything the app runs loads its file at all (`runtime` — the install
   dialog groups an app's own test files apart from the code it runs).
+- **A registry listing names a remote repository** — a `repo` in a source's
+  `app-registry.json` must be a plain `https://` URL (no credentials, no port), the
+  form the published registry requires. A listing naming a local path, `file://`,
+  `ssh`, `git@…` or `http://` is not listed. Installing a folder on this machine is
+  the owner's own act (Install from URL, or adding the folder as a source).
 - **Every install waits for consent** — a clean scan is not consent.
   `POST /api/apps/preview {source}` stages the source and returns what installing
   it grants and runs (`apps/disclosure.describe`: permissions, scheduled jobs and

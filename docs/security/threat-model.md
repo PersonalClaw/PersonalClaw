@@ -203,9 +203,23 @@ Installable content (apps, skills) from arbitrary sources:
   from one survey of the whole bundle, so a symlink or a hard link cannot pull a file
   from outside the bundle into the installed app. A link to one of the bundle's own
   files stays a link, and anything else is refused, naming the path.
+- **What installs is what was scanned** (`supply_chain.py::never_installed`): staging
+  leaves tooling out of the bundle at any depth (`.git`/`.hg`/`.svn`, `__pycache__`, and
+  the virtualenvs `.venv`/`venv`/`.tox`), so it is neither scanned, nor in the consent
+  digest, nor installed; skills follow the same rule. The scanner skips nothing in what
+  remains (`node_modules` included) and discloses a file it cannot read as an
+  `unscanned_file` finding. It used to skip those folders and every file over 512 KB
+  while staging installed them, so code hid there unread, including bytecode the
+  interpreter runs in place of the source the scan read.
 - **Scanner verdicts** (`supply_chain.py`: `SkillScanner`, `Verdict`): `clean` /
   `warning` (consent required) / **`dangerous` (terminal, non-overridable)**;
   `TrustTier` modulates strictness.
+- **Where the bytes come from**: a registry index is untrusted, so a listing's `repo`
+  must be an `https://` URL (`apps/catalog.py::_listing_repo_refusal`), so an index cannot
+  point a Store card at a folder on this machine.
+- **An app's `data/` is read as the app's** (`apps/manager.py::read_app_owned_text`):
+  the gateway's reads of files an app can write never follow a link, so an app cannot
+  plant `data/config.json -> <another file>` and be handed that file.
 
 ### 5. System ↔ persisted / exported state
 
@@ -254,7 +268,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory; an app token cannot write your agents, skills, prompts or routing notes | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing); `apps/permissions.py` (`ROUTE_AUTHZ`, `OWNER_ONLY_API_PATHS["/api/onboarding/import"]`) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
 | **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_write`) | enforced |
-| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree; staging never follows a link out of the bundle | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`) | enforced |
+| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree (tooling left out of both, nothing skipped in what remains, an unreadable file disclosed); staging never follows a link out of the bundle; a registry listing names an `https://` repo | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`, `never_installed`); `apps/catalog.py::_listing_repo_refusal` | enforced |
 | **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist; an app token cannot define an MCP server or an automation, and the owner confirms an automation step that approves its own tool calls | `security.py`; `sandbox.py`; `apps/permissions.py` (`OWNER_ONLY_API_PATHS["/api/mcp"]`, `ROUTE_AUTHZ`); `automation_posture.py` | enforced *(an installed app's own code runs as you: documented limitation, [limitations.md](limitations.md) §7)* |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes; an app writes memory, lessons included, only with its `memory` grant | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py`; `apps/permissions.py::MEMORY_API_PATHS` | enforced |
 | **ASI07** Insecure inter-agent / inbound comms | Fail-closed inbound surface + fencing at ingestion | *(owned by MCP-READONLY-INBOUND + EXTERNAL-ACCESS)* | in progress (plans 41, 24) |

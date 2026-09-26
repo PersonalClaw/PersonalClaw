@@ -65,13 +65,18 @@ pass.
 | `integrity-race` | A source that serves clean bytes to the scan and malicious bytes to a re-fetch; a concurrent writer that rewrites the quarantine directory the moment the scan is done with it; an in-process writer that mutates the payload between scan and commit; bytes edited on disk after a clean install | `marketplace.py::install_scanned` commits the scanned in-memory payload and never re-fetches; `install_skill_files`'s per-file scan catches the in-process mutation; `marketplace.py::verify_skill_integrity` catches the post-install edit against the `_write_lock` baseline |
 | `verdict-evasion` | Whitespace and flag-order variants of `rm -rf /`; `base64 -d \| sh`; the read-credentials-then-egress pipeline spread over three lines; **trust-tier laundering** (the same malware declaring `builtin`); `force=True` against the non-overridable floor | `supply_chain.py::_scan_script` patterns, the proximity heuristic in the same function, and `supply_chain.py::SkillScanner._aggregate` — which must never downgrade `DANGEROUS` for any tier |
 | `invisible-char` | A bidi override in manifest prose and in a script; a zero-width space inside `rm` that takes the pattern rules out of play | `supply_chain.py::SkillScanner._scan_invisible` — bidi is `DANGEROUS`, zero-width is `WARNING`, and a community install must not proceed on the warning unconfirmed |
-| `degenerate-manifest` | A dangerous script padded past the scanner's per-file read cap; frontmatter missing, unclosed, or carrying a name outside the allowed charset; a payload with no `SKILL.md` at all | The oversized blob is skipped by `SkillScanner.scan` (by `supply_chain.py::_MAX_FILE_BYTES`, deliberately — the walk does not read unbounded files) and refused by the uncapped commit-side gate in `install_skill_files`; `marketplace.py::_validate_skill_md` rejects the degenerate manifests |
+| `degenerate-manifest` | A dangerous script padded past the 512 KB the scanner once stopped reading at; frontmatter missing, unclosed, or carrying a name outside the allowed charset; a payload with no `SKILL.md` at all | `SkillScanner.scan` reads every file a rule reads whole, up to `supply_chain.py::_MAX_FILE_BYTES` (16 MB), and refuses the padded blob itself (past that cap a file is an `unscanned_file` finding, never a pass), and the uncapped commit-side gate in `install_skill_files` refuses it too; `marketplace.py::_validate_skill_md` rejects the degenerate manifests |
 | `baseline-tamper` | The packaged command denylist itself: a self-consistent rewrite of `baseline_denylist.json` (patterns *and* `sha256` both changed), a digest that disagrees with its patterns, an honest digest over zero patterns, an in-process `.clear()` of the live list, and the no-trusted-source-left state where the live list, the import-time snapshot and the file are all unverifiable at once | `security.py::_read_packaged_baseline` raises on a bad digest or an empty list; `baseline_denied_command_patterns()` heals the live list from the verified snapshot and, when nothing verifies, enforces the *union* rather than shrinking; `verify_baseline_denylist()` compares the file against the fingerprint captured at import and refuses to adopt a divergent one — every branch writing `baseline_denylist_reasserted` or `baseline_denylist_tamper_attempt` to the SEL |
 
-The oversize row is the one worth reading twice. Two controls disagree about the same
-bytes: the quarantine walk skips the blob, the commit-side scan refuses it. The
-corpus pins **both halves**, so removing the second one — the only control that
-actually stops it — reds immediately instead of leaving a size-gated bypass.
+The oversize row is the one worth reading twice. The quarantine walk used to skip the
+blob by size while the commit-side scan refused it, and that second control exists
+only on the skill path: an app install has none, so the same padding installed an app's
+payload unread. A scan that silently skips what gets installed is the defect, whatever
+the reason for the skip. It skipped by size, and by folder name too (`.git`,
+`node_modules`, `__pycache__` and virtualenvs). So the walk now reads everything it is
+handed, staging decides what that is (`supply_chain.NEVER_INSTALLED_NAMES` never
+installs), and the corpus pins the walk refusing the blob on its own as well as the
+commit-side gate behind it.
 
 `baseline-tamper` is the odd one out and deliberately so: the other five attack an
 incoming *artifact*, this one attacks the *denylist that judges it*. Added

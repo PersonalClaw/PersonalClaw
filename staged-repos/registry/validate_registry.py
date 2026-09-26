@@ -15,8 +15,10 @@ The four checks the front-door policy promises (``CONTRIBUTING.md``):
    registry publishes on the user's behalf.
 3. **license present** — a license file in the repo, a ``license`` in the
    manifest, and the row agreeing with the manifest.
-4. **scanner dry-run** — ``SkillScanner`` over the clone at the ``community``
-   trust tier. The verdict is recorded on every row, always. ``dangerous``
+4. **scanner dry-run** — ``SkillScanner`` at the ``community`` trust tier over the
+   tree an install stages from the clone (tooling such as ``.git`` left out, exactly
+   as the install leaves it out; a tree the stager refuses blocks as
+   ``bundle_refused``). The verdict is recorded on every row, always. ``dangerous``
    BLOCKS the listing; ``warning`` and ``low`` are DISPLAYED and never block.
    "Dry-run" is literal: the scanner is static content inspection and this script
    never executes a single line of the fetched repo.
@@ -52,6 +54,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 from urllib.parse import urlsplit
 
+from personalclaw.apps import staging
 from personalclaw.apps.manifest import PROVIDER_TYPES, AppManifest
 from personalclaw.supply_chain import ScanReport, SkillScanner, TrustTier, Verdict
 
@@ -512,8 +515,17 @@ def check_declared_surface(row: dict[str, Any], manifest: AppManifest) -> list[R
 
 def scan_repo(clone: Path) -> ScanReport:
     """Static content scan at the ``community`` tier — the tier that does NOT
-    downgrade warnings. A community listing is listed, not endorsed."""
-    return SkillScanner().scan(clone, tier=TrustTier.COMMUNITY)
+    downgrade warnings. A community listing is listed, not endorsed.
+
+    It scans what an install scans: the tree PersonalClaw's stager builds from the clone
+    (``apps.staging``), which leaves out the tooling no app installs — ``.git`` and the rest
+    of ``supply_chain.NEVER_INSTALLED_NAMES``. So the verdict a listing carries is the
+    verdict the install gate reaches. Raises ``UnsafeBundleError`` for a tree the stager
+    refuses."""
+    with tempfile.TemporaryDirectory(prefix="registry-stage-") as tmp:
+        staged = Path(tmp) / "app"
+        staging.survey(clone).copy_to(staged)
+        return SkillScanner().scan(staged, tier=TrustTier.COMMUNITY)
 
 
 def verdict_reasons(report: ScanReport) -> tuple[list[Reason], list[Reason]]:
@@ -695,7 +707,13 @@ def validate_row(row: dict[str, Any], *, allow_file_repos: bool) -> RowResult:
                 )
             result.blocking.extend(check_license(clone, row, manifest))
             result.blocking.extend(check_declared_surface(row, manifest))
-            report = scan_repo(clone)
+            try:
+                report = scan_repo(clone)
+            except staging.UnsafeBundleError as exc:
+                result.blocking.append(
+                    Reason("bundle_refused", f"an install would refuse it: {exc}")
+                )
+                return result
             result.verdict = report.verdict.value
             result.findings = [f.to_dict() for f in report.findings]
             blocking, display = verdict_reasons(report)

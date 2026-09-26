@@ -748,7 +748,9 @@ def _write_registry(root: Path, apps: list[dict]) -> None:
 
 def test_parse_registry_tolerant_of_shapes_and_garbage():
     # bare array OR {"apps":[...]}; drops nameless/malformed; dedups by name.
-    bare = catalog._parse_registry(json.dumps([{"name": "a"}, {"name": "b", "repo": "u"}]))
+    bare = catalog._parse_registry(
+        json.dumps([{"name": "a"}, {"name": "b", "repo": "https://example.invalid/b.git"}])
+    )
     assert [p.name for p in bare] == ["a", "b"]
     obj = catalog._parse_registry(
         json.dumps({"apps": [{"name": "x"}, {"no": "name"}, "junk", {"name": "x"}]})
@@ -782,6 +784,64 @@ def test_local_source_registry_surfaces_remote_apps_without_dirscan(tmp_path):
     assert e["displayName"] == "Cool App" and e["sourceKind"] == "local"
     # the install POINTER carries repo + #subdirectory (routes through the scanner at install)
     assert e["pointer"] == "https://github.com/acme/cool.git#apps/cool"
+
+
+# A registry index is untrusted text from whichever source published it, and a listing's
+# `repo` is where an install then fetches the bytes. So it must name a remote repository, in
+# the form the published registry itself requires (`staged-repos/registry/validate_registry.py`
+# `check_repo_url`): a plain https:// URL, no credentials, no port. A folder on this machine is
+# installed only as the owner's own act — Install from URL, or adding it as a source — never
+# because an index named it.
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        "/Users/someone/apps/evil",
+        "~/apps/evil",
+        "../evil",
+        "evil",
+        "/tmp/evil.git",
+        "file:///tmp/evil.git",
+        "http://example.com/acme/a.git",
+        "git@github.com:acme/a.git",
+        "ssh://git@github.com/acme/a.git",
+        "git://example.com/acme/a.git",
+        "https://user:token@github.com/acme/a.git",
+        "https://github.com:8443/acme/a.git",
+        "https:///acme/a.git",
+    ],
+)
+def test_a_registry_listing_must_name_an_https_repository(repo):
+    assert catalog._parse_registry(json.dumps([{"name": "x", "repo": repo}])) == []
+
+
+@pytest.mark.parametrize("repo", ["", "https://github.com/acme/cool.git", "https://h.invalid/x"])
+def test_a_listing_naming_an_https_repository_or_its_own_source_is_kept(repo):
+    parsed = catalog._parse_registry(json.dumps([{"name": "x", "repo": repo}]))
+    assert [p.name for p in parsed] == ["x"]
+
+
+def test_a_listing_that_names_a_local_folder_never_becomes_a_store_card(tmp_path):
+    here = tmp_path / "somewhere" / "sneaky"
+    here.mkdir(parents=True)
+    manifest = {"name": "sneaky", "version": "1.0.0", "displayName": "S", "description": "x"}
+    (here / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
+    src = tmp_path / "reg-src"
+    src.mkdir()
+    _write_registry(
+        src,
+        [
+            {"name": "sneaky", "repo": str(here)},
+            {"name": "cool-app", "repo": "https://github.com/acme/cool.git"},
+        ],
+    )
+    catalog.add_local_source(str(src))
+
+    remote = {a["name"]: a for a in catalog.available_catalog()["remoteApps"]}
+
+    assert "cool-app" in remote, "the index was never read"
+    assert "sneaky" not in remote, f"a card installs from {remote['sneaky']['pointer']!r}"
 
 
 # ── ET-5: a listing's provenance reaches the card ────────────────────────────
@@ -1312,10 +1372,13 @@ def test_a_registry_listed_app_still_hits_the_scanner_gate(tmp_path, monkeypatch
     (app_src / "scripts").mkdir()
     (app_src / "scripts" / "evil.sh").write_text("rm -rf / --no-preserve-root\n", encoding="utf-8")
 
+    # A listing must name an https repository (a local path is refused at parse), so the
+    # listed URL is served by a fake clone of the fixture — the route stays the handler's.
+    listed = "https://example.invalid/dangerous-app.git"
     repo = tmp_path / "registry-fixture-repo"
     repo.mkdir()
     (repo / "app-registry.json").write_text(
-        json.dumps({"apps": [{"name": "dangerous-app", "repo": str(app_src)}]}), encoding="utf-8"
+        json.dumps({"apps": [{"name": "dangerous-app", "repo": listed}]}), encoding="utf-8"
     )
     git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
@@ -1324,11 +1387,18 @@ def test_a_registry_listed_app_still_hits_the_scanner_gate(tmp_path, monkeypatch
 
     monkeypatch.setattr(catalog, "_REGISTRY_GIT_SOURCE", str(repo))
     assert catalog.seed_default_git_sources() == [str(repo)]
+    monkeypatch.setattr(
+        app_source,
+        "_clone_git",
+        lambda url: app_source.ResolvedSource(path=app_src, origin="external", cleanup=False),
+    )
 
     card = next(
         e for e in catalog.available_catalog()["remoteApps"] if e["name"] == "dangerous-app"
     )
-    res = app_manager.install(card["pointer"], confirm=True)
+    assert card["pointer"] == listed
+    resolved = app_source.resolve(card["pointer"])
+    res = app_manager.install(resolved.path, origin=resolved.origin, confirm=True)
     assert not res.ok
     assert res.scan.verdict is Verdict.DANGEROUS
     assert not manager.app_dir("dangerous-app").exists()  # nothing landed live
