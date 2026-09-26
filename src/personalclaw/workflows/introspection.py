@@ -80,7 +80,10 @@ class RunStats:
     `first_byte_ms` is separated from total duration because they answer different
     questions: latency
     to first output is what a watching user feels, and total duration is what a scheduler budgets.
-    A single "duration" would conflate a slow start with slow work.
+    A single "duration" would conflate a slow start with slow work. It is ``None`` when no step
+    produced output: `0.0` there read "To first output 0 ms" on a run that never produced any,
+    which is the claim that output came instantly. Its resolution is the journal's timestamps,
+    whole seconds, so a figure under 1000 means "within the first second", not "0 ms".
 
     `cost_usd` stays an accumulating float — the economics strip aggregates across a template's
     runs and needs a number to sort by, which is a real trade and a decided one (#2566). `priced`
@@ -119,7 +122,7 @@ class RunStats:
     #: why the cost sentence names it rather than calling the run free.
     calls_cut_off: int = 0
     duration_secs: float = 0.0
-    first_byte_ms: float = 0.0
+    first_byte_ms: float | None = None
     models: list[str] = field(default_factory=list)
     #: Nodes that completed with no executed evidence behind them — verification DEBT. The number
     #: LEARNING-FLYWHEEL's evaluator consumes from this surface.
@@ -155,7 +158,9 @@ class RunStats:
             "steps_cached": self.steps_cached,
             "calls_cut_off": self.calls_cut_off,
             "duration_secs": round(self.duration_secs, 3),
-            "first_byte_ms": round(self.first_byte_ms, 1),
+            "first_byte_ms": (
+                round(self.first_byte_ms, 1) if self.first_byte_ms is not None else None
+            ),
             "models": list(self.models),
             "unverified_steps": self.unverified_steps,
             "verification_debt": self.verification_debt,

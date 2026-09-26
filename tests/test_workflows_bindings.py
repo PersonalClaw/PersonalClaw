@@ -452,16 +452,24 @@ class TestBindingFailureReachesTheRightAudience:
             ).failure_class
             is FailureClass.INTERNAL
         )
-        # The narrow scope IS the design. These three are separate faults with separate
-        # arguments, and sweeping them in would change four behaviours to justify one.
+        # What the definition reads on its own is the definition's fault, whatever the root.
         assert (
             self._class_of("{{nodes.typo.output}}", BindingContext()).failure_class
-            is FailureClass.USER
-        ), "a node-id typo is statically knowable and keeps its class"
+            is FailureClass.INTERNAL
+        ), "a node-id typo is in the definition, not in anything the caller supplied"
+        piped = self._class_of(
+            "{{inputs.topic | truncate('x')}}", BindingContext(inputs={"topic": "t"})
+        )
         assert (
-            self._class_of("{{inputs.missing}}", BindingContext(inputs={})).failure_class
-            is FailureClass.USER
-        ), "an input IS what the caller supplies — the one root USER is right for"
+            piped.failure_class is FailureClass.INTERNAL
+        ), "a pipe the definition misuses is its own fault, even on an input the caller gave"
+        # USER only for what the caller supplies: a run input, or a secret they have not added.
+        missing_input = self._class_of("{{inputs.missing}}", BindingContext(inputs={}))
+        assert missing_input.failure_class is FailureClass.USER
+        assert "started without the input 'missing'" in missing_input.remediation
+        unset = self._class_of("{{secret:API_TOKEN}}", BindingContext(secret_resolver=lambda k: ""))
+        assert unset.failure_class is FailureClass.USER
+        assert "'API_TOKEN'" in unset.remediation
 
     def test_the_reclassified_failure_still_reaches_the_user(self) -> None:
         """The control on the change. `classify_block` routes on the class, so the reclassification

@@ -409,13 +409,23 @@ class Failure:
     recoverable: bool = False
     terminal_reason: str = ""
     suggestion: str = ""
+    #: When a retry can run, as wall-clock epoch seconds. Set only for a retryable failure whose
+    #: model provider's circuit breaker is OPEN: a retry before this instant is refused in
+    #: microseconds without reaching the provider, so offering it then is offering a failure.
+    #: ``None`` for everything else (retry now, or never), and then absent from ``to_dict``.
+    retry_at: float | None = None
+    #: The model providers a retryable failure's calls went to: the circuit breakers a retry
+    #: passes through. Kept so a later read can ask them again, because a breaker can open AFTER
+    #: the step failed (any other call to the same provider counts). Absent from ``to_dict`` when
+    #: empty.
+    providers: list[str] = field(default_factory=list)
 
     @property
     def retryable(self) -> bool:
         return self.failure_class in RETRYABLE_CLASSES
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "class": self.failure_class.value,
             "cause_plain": self.cause_plain,
             "remediation": self.remediation,
@@ -424,6 +434,11 @@ class Failure:
             "terminal_reason": self.terminal_reason,
             "suggestion": self.suggestion,
         }
+        if self.retry_at is not None:
+            out["retry_at"] = round(self.retry_at, 3)
+        if self.providers:
+            out["providers"] = list(self.providers)
+        return out
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Failure:
@@ -432,6 +447,8 @@ class Failure:
             fc = FailureClass(raw)
         except ValueError:
             fc = FailureClass.INTERNAL  # tolerant: an unknown class is not fatal
+        retry_at = d.get("retry_at")
+        providers = d.get("providers")
         return cls(
             failure_class=fc,
             cause_plain=str(d.get("cause_plain", "") or ""),
@@ -439,6 +456,12 @@ class Failure:
             recoverable=bool(d.get("recoverable", False)),
             terminal_reason=str(d.get("terminal_reason", "") or ""),
             suggestion=str(d.get("suggestion", "") or ""),
+            retry_at=float(retry_at) if isinstance(retry_at, (int, float)) else None,
+            providers=(
+                [p for p in providers if isinstance(p, str) and p]
+                if isinstance(providers, list)
+                else []
+            ),
         )
 
 

@@ -4,13 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from personalclaw.workflows.bindings import (
-    BindingContext,
-    BindingError,
-    reads_prior_cycle_output,
-    resolve,
-)
-from personalclaw.workflows.models import Failure, FailureClass, Node, NodeKind
+from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
+from personalclaw.workflows.failure_taxonomy import binding_failure
+from personalclaw.workflows.models import Failure, Node, NodeKind
 
 #: node `model_tier` → model use case. A tier is an INTENT; the use-case bridge owns the
 #: mapping to a real provider, so a template stays portable across provider setups.
@@ -52,28 +48,17 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
     the run should say so precisely, and a traceback in a run log tells a non-developer
     nothing actionable.
 
-    **A failure reading a PRIOR CYCLE's output is INTERNAL, not USER**, and the distinction is
-    the difference between telling a user what to fix and blaming them for something they did
-    not do. Measured on a real escalated run (`general-project`, 26 minutes, four failed
-    iterations): `binding failed: unresolved reference at 'summary' (in {{last.output.summary |
-    default(…)}})` was filed `class: user`. The user chose a model and typed a task; they did
-    not author the template, and the missing key came from a model that ignored its step's
-    declared `schema`. `USER` is for something the CALLER supplied — an input, a credential —
-    and `inputs.*` / `secret:` keep it for exactly that reason.
+    **Filed by who can fix it** (`failure_taxonomy.binding_failure`): USER only for what the
+    caller supplied, an `inputs.*` value or a `{{secret:KEY}}`, and INTERNAL for everything the
+    definition reads on its own. Measured on a real escalated run (`general-project`, 26
+    minutes, four failed iterations): `binding failed: unresolved reference at 'summary'` was
+    filed `class: user`, and `EscalationPanel.tsx` renders the class verbatim, so the card said
+    "user error" to someone who chose a model and typed a task. A `{{nodes.…}}` typo, a pipe
+    misuse and a loop root read out of place are the same kind of fault: the definition's.
+    **Routing is unaffected**: `needs_input.classify_block` sends `user` and `internal` both to
+    `NEEDS_INPUT`, and `RETRYABLE_CLASSES` holds neither.
 
-    Deliberately narrow. The other binding failures this path files as USER (a `{{nodes.…}}`
-    typo, a `subworkflow` with no `ref`, a pipe misuse) are separate faults with separate
-    arguments, and sweeping them all inside a loop-binding fix would change four behaviours to
-    justify one. **Routing is unaffected either way**, which is what makes the narrow move safe:
-    `needs_input.classify_block` reads `permission|budget` → CAPABILITY and
-    `transient|network|timeout` → TRANSIENT, so `user` and `internal` BOTH fall through to
-    `NEEDS_INPUT`; `RETRYABLE_CLASSES` holds neither, and `_should_retry` refuses both before it
-    ever consults `no_retry_modes`. What changes is what the reader is told —
-    `EscalationPanel.tsx` renders the class verbatim, so this run's card literally said
-    "user error" — and `resilience.MUTATION_HINTS`, whose USER text ("an input was missing or
-    malformed … do not invent values") instructs a model that had not run yet.
-
-    The error's OWN `remediation` wins when it carries one. The fallback below is generic by
+    The error's OWN `remediation` wins when it carries one. The fallback is generic by
     necessity and was actively misleading on the commonest failure: it asked for a
     `| default(...)` pipe that six bundled templates already had, on a class of failure no
     pipe can rescue. Only the raise site knows which mode it is, so that is where the specific
@@ -86,13 +71,7 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
         resolved.update(held)
         return resolved, None
     except BindingError as exc:
-        return {}, Failure(
-            failure_class=(
-                FailureClass.INTERNAL if reads_prior_cycle_output(exc.expr) else FailureClass.USER
-            ),
-            cause_plain=f"binding failed: {exc}",
-            remediation=(exc.remediation or "check the referenced node id and field exist"),
-        )
+        return {}, binding_failure(exc)
 
 
 def journalled_prompt(wire: Any, composed: str) -> dict[str, Any]:

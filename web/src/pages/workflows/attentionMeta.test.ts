@@ -13,7 +13,8 @@
  * unknown reason must not be smoothed into one of the eight known ones.
  */
 import { describe, it, expect } from 'vitest'
-import { attentionLine, escalationHeadline, readAttention } from './attentionMeta'
+import { attentionLine, escalationHeadline, readAttention, readEscalations, retryWindow } from './attentionMeta'
+import type { WorkflowRunDetailData } from '../../lib/api'
 
 /** The real payload, copied from a measured run (`reason: retries_exhausted`). */
 const ESCALATION = {
@@ -152,5 +153,55 @@ describe('an unmapped reason is shown, not smoothed', () => {
     expect(escalationHeadline('iterations_failed')).not.toContain('ceiling')
     expect(escalationHeadline('iterations_failed')).toContain('failing')
     expect(escalationHeadline('max_iterations')).toContain('ceiling')
+  })
+})
+
+describe('every escalation of a run is read, not the last', () => {
+  it('reads the ledger-backed list in order and keeps which instance each belongs to', () => {
+    const reads = readEscalations([
+      { ...ESCALATION, instance_path: 'root.body#1' },
+      { kind: 'approval', prompt: 'not an escalation' },
+      { ...ESCALATION, instance_path: 'root.body#2' },
+    ])
+    expect(reads.map((r) => r.instancePath)).toEqual(['root.body#1', 'root.body#2'])
+  })
+
+  it('reads nothing out of a missing list', () => {
+    expect(readEscalations(undefined)).toEqual([])
+    expect(readEscalations({ kind: 'escalation' })).toEqual([])
+  })
+})
+
+describe('whether a Retry is offered, and from when', () => {
+  function run(
+    failures: Array<{ retryable: boolean; retry_at?: number }>,
+    status: WorkflowRunDetailData['status'] = 'failed',
+  ): WorkflowRunDetailData {
+    return {
+      run_id: 'r', workflow: 'w', status, spec_version: 1,
+      escalations: failures.map((_, i) => ({ ...ESCALATION, instance_path: `root.children[${i}]` })),
+      nodes: failures.map((f, i) => ({
+        instance_path: `root.children[${i}]`, node_id: 'consume', state: 'failed', failure: f,
+      })),
+    }
+  }
+
+  it('offers it now when every step that gave up can be cleared by one', () => {
+    expect(retryWindow(run([{ retryable: true }, { retryable: true }]))).toEqual({ retryAt: 0 })
+  })
+
+  it('offers none when any one of them cannot', () => {
+    expect(retryWindow(run([{ retryable: true }, { retryable: false }]))).toBeNull()
+  })
+
+  it('waits for the LATEST breaker window, since a retry before it is refused', () => {
+    expect(retryWindow(run([{ retryable: true, retry_at: 100 }, { retryable: true, retry_at: 250 }])))
+      .toEqual({ retryAt: 250 })
+  })
+
+  it('offers none for a run that is not failed, or that nothing stopped', () => {
+    expect(retryWindow(run([{ retryable: true }], 'complete'))).toBeNull()
+    expect(retryWindow(run([]))).toBeNull()
+    expect(retryWindow(null)).toBeNull()
   })
 })

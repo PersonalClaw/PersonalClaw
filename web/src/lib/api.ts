@@ -1766,7 +1766,9 @@ export interface WorkflowNodeState {
   degraded_reason?: string
   // `retryable` is the engine's own verdict (`models.RETRYABLE_CLASSES`): whether a fresh attempt
   // could succeed with nothing changed — what decides whether a failed run offers Retry.
-  failure?: { class?: string; cause_plain?: string; remediation?: string; terminal_reason?: string; retryable?: boolean } | null
+  // `retry_at` (epoch seconds) is when that attempt can run: present only while the provider's
+  // circuit breaker is open, when an earlier Retry would be refused without a call.
+  failure?: { class?: string; cause_plain?: string; remediation?: string; terminal_reason?: string; retryable?: boolean; retry_at?: number } | null
   // Per-item foreach context (WF2-R5): what a "[3/12] auth.py" row needs. Present only on an
   // iterated node — a fan-out of twelve otherwise renders as twelve rows distinguishable only
   // by an index suffix, which is useless for telling which item is stuck.
@@ -1793,6 +1795,9 @@ export interface WorkflowRunSummary {
 export interface WorkflowRunDetailData {
   run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number
   error?: string; attention?: Record<string, unknown> | null
+  /** EVERY escalation the run raised, oldest first (read from its ledger). `attention` is the one
+   *  current-decision slot, which each escalation overwrote. */
+  escalations?: Array<Record<string, unknown>>
   tokens?: number; elapsed_secs?: number
   // The containing project (empty when unscoped) — the run view scopes its per-project
   // judge-guidance control on this, since that guidance writes through the project and is
@@ -1958,8 +1963,9 @@ export interface WorkflowRunStats {
   // The run's OWN duration (the number the run header renders), not a span over its ledger.
   duration_secs: number
   // Latency to FIRST output, kept separate from total duration: one is what a watching user feels,
-  // the other is what a scheduler budgets, and a single "duration" would conflate them.
-  first_byte_ms: number
+  // the other is what a scheduler budgets, and a single "duration" would conflate them. `null`
+  // when no step produced output, which is not "0 ms". Whole-second resolution (journal stamps).
+  first_byte_ms: number | null
   models: string[]
   unverified_steps: number
   verification_debt: number

@@ -65,7 +65,7 @@ while not terminal:
 | `coalescer.py` | per-observer event batching in front of the SSE write |
 | `projection.py` | the schema-validated run snapshot |
 | `resilience.py` | retries, circuit breaker, budgets |
-| `failure_taxonomy.py` | `classify_exception()` — the ONE exception → typed `Failure` map, and therefore the one place that decides whether budget gets spent on a retry (only `TRANSIENT`/`NETWORK` are retryable). Lifted out of `engine.py` because three modules consult it — the engine, the controller's terminal-failure path and the gateway's channel injection — and two of them reached it through a function-local import of a private name |
+| `failure_taxonomy.py` | the ONE place that decides whether a failed step's retry can help (only `TRANSIENT`/`NETWORK` are retryable), which is also whether the run page offers Retry. Classified at the cause, typed errors first: `classify_exception()` reads an HTTP status, a transport error's type, the guard's `CircuitOpenError`/`ModelCallTimeout`/`BudgetExceededError` and the provider bridge's WHAT/WHY/FIX before any substring rule; `classify_action_result()` takes a failed action's own `failure_class`, `retry_after` and `agent_error.fix`, and never assumes a silent failure is retryable; `binding_failure()` files a binding by who can fix it; `with_breaker_window()` records the providers a retryable failure called and, while one's breaker is open, when a retry can run (`Failure.retry_at`). A permanent failure's remediation says what to change and where. Lifted out of `engine.py` because three modules consult it — the engine, the controller's terminal-failure path and the gateway's channel injection — and two of them reached it through a function-local import of a private name |
 | `error_codes.py` | `WF_ERROR_CODES` — the registry for the `WF_UPPER_SNAKE` service-result vocabulary (#3499), and the place to look a code up. One derived one-line meaning per code, grouped by the module that raises it so the derivation can be re-checked. Every meaning is read off the raise site — the guard that fires plus the message it emits — never off the name: a plausible-sounding guess reads as authoritative, and an author would act on a contract the engine never implemented. A row is the *stable contract* a caller may branch on, while the per-instance message stays the concrete detail (which node, which key, which run) — which is why, unlike `http_errors.HTTP_ERROR_CODES`, this registry is not also a default message. Carries no severity, because `validator.py`'s `_add` takes one per call and the emitters decide it. Its rail runs BOTH directions — every raised code has a row, and every row is still raised, the half that stops a registry rotting into codes that no longer exist — and EXCLUDES this module from the scan, since its own keys are string literals in core and counting them would make the second direction true by construction |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
 | `audit.py` | the `workflow_audit` maintenance op (diagnose / heal) |
@@ -243,6 +243,16 @@ name, and `rich-ingest` shipped `| default([])` on seven reads: its judge gate f
 prompt, a fan-out reading it could never resolve its items and deadlocked the run, and
 no run of the template could persist what its lenses extracted.
 
+A binding that fails is filed by who can fix it (`failure_taxonomy.binding_failure`,
+keyed on `BindingError.caller_supplied`, which only the raise site can set). `user` is
+for what the caller supplied: a run input the run was started without, or a
+`{{secret:KEY}}` that is not set. Everything else a binding reads belongs to the
+definition (a `{{nodes.…}}` id, a field of another step's output, a loop root, a pipe)
+and is `internal`, since whoever pressed Run did not write it. Neither is retryable. A
+secret the credential store does not hold is refused, never substituted: the store
+answers "" for a missing key, and a request carrying it fails at its receiver with
+nothing naming the key.
+
 Two asymmetries that are easy to get backwards:
 
 - **a null output is a value; an unresolvable reference is an error** (WF2-R9). A
@@ -303,8 +313,22 @@ A finished run is one attempt and cannot be re-entered, so a retry is a
 (their state, outputs and step records), and every other step starts `PENDING`
 at the same epoch, so starting the child re-runs exactly what did not finish.
 Effect records carry over whole, because the committed-effect boundary reads
-them and a fork cannot un-fire anything. The run page's Retry, offered when the
-failed step's own failure class is retryable, is that fork followed by a start.
+them and a fork cannot un-fire anything, and they are also what keeps a retried
+effect recognisable: `effects.effect_key` reuses the key of the newest same-epoch
+record, so the child re-sends a failed effect under its parent attempt's key, and an
+action receives it as `payload.idempotency_key` to dedupe on.
+
+The run page's Retry is that fork followed by a start, offered only when EVERY step
+that gave up has a retryable failure: a Retry re-runs all of them, so one refused
+key fails the new run the same way. A run's status carries all of its escalations
+(`escalations`, read from its `step_escalated` ledger rows, oldest first, leaving
+out a step that has since succeeded); `run.attention` is one slot and each
+escalation overwrote the last. While the circuit breaker of a provider the failed
+step called is open, a retry is refused without a call, so the failure carries
+`retry_at` and the Retry waits with a countdown. `status` asks the breakers again on
+every read (`Failure.providers` names them), and the page reads the run again before
+it forks, because a breaker can open after the step failed: every call to that
+provider counts toward it.
 
 ## Timeouts: two knobs that mean different things
 

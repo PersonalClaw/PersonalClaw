@@ -25,6 +25,7 @@ from personalclaw.action_providers.base import (
     ActionResult,
 )
 from personalclaw.action_providers.template import render_template
+from personalclaw.errors import AgentError
 
 
 class CreateTaskActionProvider(ActionProvider):
@@ -81,7 +82,20 @@ class CreateTaskActionProvider(ActionProvider):
     ) -> ActionResult:
         title = render_template(action_config.get("title_template", ""), ctx).strip()
         if not title:
-            return ActionResult(success=False, error="create-task hook is missing 'title_template'")
+            # Permanent: a retry sends the same config, so it says which field to set instead.
+            error = "create-task hook is missing 'title_template'"
+            return ActionResult(
+                success=False,
+                error=error,
+                failure_class="user",
+                agent_error=AgentError(
+                    code="ERR_ACTION_CONFIG_INVALID",
+                    what=error,
+                    why="a task needs a title, and this action renders it from `title_template`",
+                    fix="set `title_template` in the action's config (a workflow step's "
+                    "`config.with`), e.g. `Review $CONTEXT`",
+                ),
+            )
         provider_name = (action_config.get("provider") or "native").strip() or "native"
         fields: dict[str, Any] = {"title": title}
         body = render_template(action_config.get("body_template", ""), ctx)

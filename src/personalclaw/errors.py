@@ -184,6 +184,16 @@ ERROR_CODES: dict[str, str] = {
         "response arrived (DNS, TLS, connection, timeout), or the host answered a non-2xx "
         "status. Distinct from an egress refusal, which never left the machine."
     ),
+    "ERR_MODEL_CALL_FAILED": (
+        "Every model call an action made failed, so it produced nothing. The action's failure "
+        "class says whether a retry can clear the cause, and `fix` says what to change and "
+        "where — or, for an open circuit breaker, when a retry can run."
+    ),
+    "ERR_ACTION_CONFIG_INVALID": (
+        "An action's configuration is missing a field its provider requires, or holds a value it "
+        "cannot use. `fix` names the field and where it is set; a retry would send the same "
+        "configuration."
+    ),
 }
 
 

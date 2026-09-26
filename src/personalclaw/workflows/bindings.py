@@ -56,11 +56,19 @@ class BindingError(Exception):
     that pipe it names an act the author has already performed, which is worse than silence.
     Measured: six bundled templates shipped the guarded idiom and the engine answered every
     one of them by asking for the guard they had written.
+
+    `caller_supplied` is set where the missing value is one the CALLER provides, a run input or
+    a secret, so the failure is theirs to fix. Only the raise site can tell: `{{inputs.x}}` with
+    no `x` is the caller's, and the same expression failing in its pipe is the definition's.
+    `failure_taxonomy.binding_failure` files the first USER and everything else INTERNAL.
     """
 
-    def __init__(self, message: str, expr: str = "", remediation: str = "") -> None:
+    def __init__(
+        self, message: str, expr: str = "", remediation: str = "", *, caller_supplied: bool = False
+    ) -> None:
         self.expr = expr
         self.remediation = remediation
+        self.caller_supplied = caller_supplied
         super().__init__(f"{message} (in {{{{{expr}}}}})" if expr else message)
 
 
@@ -665,17 +673,6 @@ def _is_prior_cycle_output_path(head: str) -> bool:
     return len(segs) >= 3 and segs[0] in _PRIOR_CYCLE_ROOTS and segs[1] == "output"
 
 
-def reads_prior_cycle_output(expr: str) -> bool:
-    """Does this whole expression body (pipes included) read a prior cycle's output field?
-
-    Public because a FAILURE CLASS depends on the answer: `engine_support.resolve_config` files
-    a binding failure here as INTERNAL rather than USER. The shape test lives with the rule it
-    shares (`_prior_cycle_field_miss`) so the two cannot drift into disagreeing about which
-    reads are prior-cycle reads.
-    """
-    return _is_prior_cycle_output_path((expr or "").split("|")[0].strip())
-
-
 def _unresolved_remediation(seg: str, *, is_root: bool, head: str = "") -> str:
     """The actionable half of an `unresolved reference` failure.
 
@@ -716,6 +713,12 @@ def _unresolved_remediation(seg: str, *, is_root: bool, head: str = "") -> str:
             f"there is no {seg!r} root here — check the spelling against `inputs`, `nodes` "
             f"and {', '.join(sorted(_ROOT_HOLDS))}."
         )
+    if [s.strip() for s in head.split(".")[:2]] == ["inputs", seg]:
+        # The input itself: what the caller left out, so the fix is theirs, and it is at Start.
+        return (
+            f"this run was started without the input {seg!r}. Start the workflow again with a "
+            "value for it, or give the input a default in the workflow."
+        )
     return (
         f"check that the value really carries {seg!r}. A `| default(...)` pipe does not "
         "rescue a missing path, only one that resolves to null."
@@ -733,12 +736,18 @@ def _walk_path(root: Any, path: str, expr: str) -> Any:
             idx = int(seg)
             nxt = cur[idx] if 0 <= idx < len(cur) else _MISSING
         else:
-            raise BindingError(f"cannot read {seg!r} from a {type(cur).__name__}", expr)
+            raise BindingError(
+                f"cannot read {seg!r} from a {type(cur).__name__}",
+                expr,
+                f"the value before {seg!r} is a {type(cur).__name__}, which has no fields; check "
+                "the path against what that value really holds",
+            )
         if nxt is _MISSING:
             raise BindingError(
                 f"unresolved reference at {seg!r}",
                 expr,
                 _unresolved_remediation(seg, is_root=index == 0, head=path),
+                caller_supplied=index > 0 and path.split(".")[0].strip() == "inputs",
             )
         cur = nxt
     return cur
@@ -760,12 +769,26 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
     if head.startswith("secret:"):
         key = head[len("secret:") :].strip()
         if not key:
-            raise BindingError("secret reference needs a key", expr)
+            raise BindingError(
+                "secret reference needs a key", expr, "write the secret's name after `secret:`"
+            )
         if ctx.secret_resolver is None:
-            raise BindingError("no secret resolver available", expr)
+            raise BindingError(
+                "no secret resolver available",
+                expr,
+                "the engine had no credential store to read for this run; check the gateway log",
+            )
         value: Any = ctx.secret_resolver(key)
-        if value is None:
-            raise BindingError(f"secret {key!r} is not set", expr)
+        # "" is how the credential store answers for a key it does not hold
+        # (`controller._secret_resolver`). Substituted, a request carrying it fails at the
+        # receiver with nothing naming the key, so the trigger path refuses it too.
+        if value is None or value == "":
+            raise BindingError(
+                f"secret {key!r} is not set",
+                expr,
+                f"set a value for the secret {key!r}, then fork this run to try again",
+                caller_supplied=True,
+            )
     else:
         try:
             value = _walk_path(ctx.as_root(), head, expr)
@@ -804,9 +827,18 @@ def _run_pipes(value: Any, raw_pipes: list[str], expr: str, ctx: BindingContext)
             else:
                 value = PIPES[name](value, *args)
         except BindingError as be:
-            raise BindingError(str(be), expr) from be
+            # The pipe refused the value or its argument: the definition's to change, where the
+            # pipe is written, and never a node id or field to go looking for.
+            raise BindingError(
+                str(be),
+                expr,
+                be.remediation
+                or f"change the `{name}` pipe or what it is given; it takes {_arity(name)}",
+            ) from be
         except TypeError as exc:
-            raise BindingError(f"bad arguments for pipe {name!r}", expr) from exc
+            raise BindingError(
+                f"bad arguments for pipe {name!r}", expr, f"`{name}` takes {_arity(name)}"
+            ) from exc
     return value
 
 
