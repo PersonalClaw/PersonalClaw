@@ -427,3 +427,20 @@ def load_all_extensions() -> None:
         start_sidecar_watchdog()
     except Exception:
         logger.debug("app backend startup launch failed", exc_info=True)
+
+
+def stop_extension_watchdogs() -> None:
+    """Stop the three sweepers :func:`load_all_extensions` started — the gateway's cleanup half.
+
+    Each is stopped separately so one failure cannot leave the other two running. Called BEFORE
+    the backends are terminated: a backend watchdog still sweeping would revive them.
+    """
+    from personalclaw.apps.backend_runtime import stop_backend_watchdog
+    from personalclaw.apps.worker_runtime import stop_worker_watchdog
+    from personalclaw.local_models.sidecar import stop_sidecar_watchdog
+
+    for stop in (stop_backend_watchdog, stop_worker_watchdog, stop_sidecar_watchdog):
+        try:
+            stop()
+        except Exception:
+            logger.debug("stopping %s failed", stop.__name__, exc_info=True)

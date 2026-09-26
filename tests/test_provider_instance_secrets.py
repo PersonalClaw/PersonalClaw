@@ -110,7 +110,7 @@ async def _client(tmp_path: Path):
     # `rebuild_agent_config()`, which writes through `agent.agents_dir()` / `agent._USER_DIR`,
     # module-level constants frozen at import (`agent.py:93`/`:135`). Patching `config_dir`
     # alone leaves them pointing at the real home, so the write escapes tmp_path and the
-    # conftest real-home rail fails the session (`agents/personalclaw.json` modified) —
+    # real-home guard refuses it and fails the test (`agents/personalclaw.json`) —
     # same seam `test_tool_provider_instances.py::_model_provider_client` redirects.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),

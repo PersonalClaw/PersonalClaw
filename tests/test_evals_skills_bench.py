@@ -53,9 +53,10 @@ def bench_home(tmp_path, monkeypatch):
     `$PERSONALCLAW_HOME` is what actually redirects an import-bound store: `workflows.store` and
     `evals.store` bind `config_dir` as a module-level SYMBOL, and `config_dir()` re-reads the env
     var on every call. Deliberately NOT also patching `personalclaw.config.loader.config_dir` here:
-    conftest's real-home rail already re-points every binding of that function object, and adding a
-    second patch on top of it was MEASURED to leak the run store between tests in one process — six
-    tests in this file reuse the fixed run id `run-a` and started failing on
+    conftest's `_isolate_real_home_writers` already re-points every binding of that function
+    object, and adding a second patch on top of it was MEASURED to leak the run store between
+    tests in one process — six tests in this file reuse the fixed run id `run-a` and started
+    failing on
     `UNIQUE constraint failed: runs.id`. The redirect is asserted rather than assumed.
     """
     home = tmp_path / "home"

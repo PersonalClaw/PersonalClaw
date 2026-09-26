@@ -140,9 +140,14 @@ def _home_snapshot(root: Path = _REAL_HOME) -> dict[str, int]:
 
     A genuine leak from this module still trips it: the golden-named file appears (a new
     key) or its size changes.
+
+    ``~/.personalclaw`` is deliberately NOT watched here: the suite-wide real-home guard
+    (``tests/real_home_guard.py``) refuses every access under it, attributes it to the test
+    that made it, and would refuse this listing of it too. What stays here is what the guard
+    does not cover — the other tools' homes this module's writers render into.
     """
     snap: dict[str, int] = {}
-    for rel in (".claude", ".claude/agents", ".cursor/rules", ".personalclaw"):
+    for rel in (".claude", ".claude/agents", ".cursor/rules"):
         d = root / rel
         if not d.is_dir():
             continue
