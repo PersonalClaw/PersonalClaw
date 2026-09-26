@@ -1876,10 +1876,23 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return () => el.removeEventListener('scroll', onScroll)
   }, [started])
 
-  // keep paste blocks in sync if the user manually deletes a [📋 Paste #N] marker.
-  useEffect(() => {
-    setPasteBlocks((prev) => (prev.length ? pruneBlocks(input, prev) : prev))
-  }, [input])
+  // The paste cards above the composer are the blocks whose `[Paste #N]` marker is still in the
+  // draft — DERIVED from the draft on render, never synced back into state.
+  //
+  // 🔴 This used to be an effect that re-set `pasteBlocks` on every `input` change, and it was the
+  // chat half of the composer's update loop (React #185). Its updater returned `prev` for an empty
+  // list, but a same-value set still SCHEDULES a render — the keystroke has just updated this
+  // component, so React cannot drop the update eagerly — and after a keystroke that render lands
+  // inside the keystroke's own synchronous commit. Typing fast, every commit ended with one pending
+  // and React counted them as nested updates until it threw (see `ui/composer/MarkdownInput`).
+  //
+  // Deriving also keeps a block whose marker comes BACK: "revert to original" restores the draft an
+  // optimize rewrote, and pruning state on the rewrite had already thrown the pasted content away,
+  // so the restored marker pointed at nothing and was sent as literal text. `send` and
+  // `onLargePaste` read the full list on purpose — `send` expands and keeps only the markers present
+  // in what it sends, and numbering over every block means a new paste can never reuse the number
+  // of one whose marker is only hidden.
+  const livePasteBlocks = useMemo(() => (pasteBlocks.length ? pruneBlocks(input, pasteBlocks) : pasteBlocks), [input, pasteBlocks])
 
   // "Show full result" (tool-io-rendering TC4): a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
@@ -3133,7 +3146,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         onOpen={setOpenFile} />
       <KnowledgeChips items={mentionedKnowledge}
         onRemove={(id) => setMentionedKnowledge((prev) => prev.filter((k) => k.id !== id))} />
-      <PasteCards blocks={pasteBlocks} onRemove={removePaste} />
+      <PasteCards blocks={livePasteBlocks} onRemove={removePaste} />
       {/* revert-optimize: the optimize rewrite replaces the draft in place, so
           offer a one-click undo back to what the user originally typed. */}
       {preOptimize !== null && (
@@ -3921,11 +3934,21 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
   const [loading, setLoading] = useState(false)
   const MAX = 4000
   const attachedIds = new Set(attached.map((a) => a.id))
+  // A query's synchronous consequences happen in the handler that changes it, batched into the
+  // keystroke's own render; the effect below only runs the debounced search. `setLoading(true)`
+  // used to sit in that effect, where it scheduled a render from inside every keystroke's commit —
+  // typed fast, ~50 keys threw React's #185 (the mechanism: `ui/composer/MarkdownInput`). Clearing
+  // here also clears `loading`, which the effect never did: emptying the box while a search was
+  // pending left the spinner turning where "Type to search" belongs.
+  const search = (v: string) => {
+    setQ(v)
+    if (v.trim()) setLoading(true)
+    else { setRes(null); setLoading(false) }
+  }
   useEffect(() => {
     const query = q.trim()
-    if (!query) { setRes(null); return }
+    if (!query) return
     let alive = true
-    setLoading(true)
     const t = window.setTimeout(() => {
       api.knowledgeSearchForContext(query, MAX).then((r) => { if (alive) setRes(r) }).catch(() => { if (alive) setRes(null) }).finally(() => { if (alive) setLoading(false) })
     }, 250)
@@ -3937,7 +3960,7 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
   return (
     <Modal title="Add knowledge to prompt" icon={<BookText size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-m" style={{ minWidth: 420 }}>
-        <SearchField value={q} onChange={setQ} autoFocus placeholder="Search your knowledge library…"
+        <SearchField value={q} onChange={search} autoFocus placeholder="Search your knowledge library…"
           ariaLabel="Search your knowledge library"
           trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
         {/* Remote, and debounced 250ms: `active` waits for `loading` to clear so the count is the

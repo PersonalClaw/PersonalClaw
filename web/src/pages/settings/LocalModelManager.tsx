@@ -133,12 +133,21 @@ export function LocalModelManager({
   }
 
   // Debounced remote-catalog search (searchable providers only, e.g. ollama).
+  // A query's synchronous consequences happen in the handler that changes it, batched into the
+  // keystroke's own render; the effect below only runs the debounced search. `setSearching(true)`
+  // used to sit in that effect, where it scheduled a render from inside every keystroke's commit
+  // (measured: 103 of 110 fast keys) — the shape that throws React's #185 once a page renders slower
+  // than the keys arrive (the mechanism: `ui/composer/MarkdownInput`).
+  const search = (v: string) => {
+    setQuery(v)
+    if (v.trim()) setSearching(true)
+    else { setSearchResults(null); setSearching(false) }
+  }
   useEffect(() => {
     if (!searchable) return
     const q = query.trim()
-    if (!q) { setSearchResults(null); setSearching(false); return }
+    if (!q) return
     const seq = ++searchSeq.current
-    setSearching(true)
     const t = setTimeout(async () => {
       try {
         const res = await api.searchLocalModels(provider, q)
@@ -284,7 +293,7 @@ export function LocalModelManager({
 
       {searchable && (
         <div className="mb-1.5">
-          <SearchField value={query} onChange={setQuery} size="sm"
+          <SearchField value={query} onChange={search} size="sm"
             placeholder="Search the library to install a model…"
             ariaLabel="Search the model library" />
           {/* The results come from a fetch, so `active` waits for it: announcing while `searching`
