@@ -25,6 +25,7 @@ being inert:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sqlite3
 
@@ -480,7 +481,10 @@ def test_reclaim_shrinks_a_store_whose_rows_were_deleted(home):
     after = db.stat().st_size
     assert after < before, f"reclaim moved no bytes ({before} → {after})"
     assert result.freed_bytes > 0
-    assert result.per_store["memory_db"] == before - after
+    assert result.growth_bytes == 0
+    assert result.net_change_bytes == after - before
+    assert result.per_store_freed["memory_db"] == before - after
+    assert result.per_store_growth == {}
 
 
 def test_reclaim_leaves_an_already_compact_store_alone(home):
@@ -498,7 +502,7 @@ def test_reclaim_leaves_an_already_compact_store_alone(home):
     conn.close()
 
     result = footprint.reclaim(home)
-    assert result.per_store.get("memory_db", 0) == 0
+    assert result.per_store_net_change.get("memory_db", 0) == 0
 
 
 def test_reclaim_only_touches_manifest_declared_databases(home):
@@ -530,7 +534,70 @@ def test_a_locked_store_is_skipped_not_raised(home, monkeypatch):
     result = footprint.reclaim(home)
 
     assert "memory_db" in result.skipped
-    assert result.per_store.get("knowledge_db", 0) > 0, "one locked store stopped the whole pass"
+    assert (
+        result.per_store_freed.get("knowledge_db", 0) > 0
+    ), "one locked store stopped the whole pass"
+
+
+def test_reclaim_growth_is_not_reported_as_negative_freed_space():
+    """A compaction can grow a fresh SQLite footprint while creating or rewriting sidecars.
+
+    Growth is a valid measurement. Calling it negative space freed is not.
+    """
+    result = footprint.ReclaimResult(
+        before_bytes=100,
+        after_bytes=160,
+        stores=2,
+        per_store_net_change={"memory_db": 80, "knowledge_db": -20},
+    )
+
+    assert result.net_change_bytes == 60
+    assert result.freed_bytes == 0
+    assert result.growth_bytes == 60
+    assert result.per_store_freed == {"knowledge_db": 20}
+    assert result.per_store_growth == {"memory_db": 80}
+    assert result.to_dict() == {
+        "before_bytes": 100,
+        "after_bytes": 160,
+        "net_change_bytes": 60,
+        "freed_bytes": 0,
+        "growth_bytes": 60,
+        "stores": 2,
+        "per_store_net_change_bytes": {"memory_db": 80, "knowledge_db": -20},
+        "per_store_freed": {"knowledge_db": 20},
+        "per_store_growth": {"memory_db": 80},
+        "skipped": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_scheduled_reclaim_logs_growth_truthfully(home, monkeypatch, caplog):
+    import personalclaw.durability.service as ds
+
+    async def _nothing_to_prune():
+        return 0
+
+    result = footprint.ReclaimResult(
+        before_bytes=100,
+        after_bytes=160,
+        stores=1,
+        per_store_net_change={"memory_db": 60},
+    )
+    monkeypatch.setattr(ds, "_prune_expired_runs", _nothing_to_prune)
+    monkeypatch.setattr(footprint, "reclaim_due", lambda _home: True)
+    monkeypatch.setattr(footprint, "reclaim", lambda _home: result)
+    monkeypatch.setattr(footprint, "stamp_reclaim", lambda _home: None)
+    monkeypatch.setattr(footprint, "record", lambda _home: None)
+
+    with caplog.at_level(logging.INFO, logger=ds.__name__):
+        await ds._tick_footprint_maintenance()
+
+    messages = [record.getMessage() for record in caplog.records if record.name == ds.__name__]
+    assert messages == [
+        "footprint reclaim completed across 1 store(s); no disk space freed "
+        "(measured footprint grew 60 B during compaction)"
+    ]
+    assert "freed -" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -628,3 +695,20 @@ def test_the_command_reclaim_flag_frees_measured_bytes(home, capsys):
 
     assert db.stat().st_size < before
     assert "Reclaimed" in out
+
+
+def test_the_command_reports_reclaim_growth_as_growth(home, monkeypatch, capsys):
+    result = footprint.ReclaimResult(
+        before_bytes=100,
+        after_bytes=160,
+        stores=1,
+        per_store_net_change={"memory_db": 60},
+    )
+    monkeypatch.setattr(footprint, "reclaim", lambda _home: result)
+
+    assert footprint.footprint_cmd(_Args(reclaim=True)) == 0
+    out = capsys.readouterr().out
+
+    assert "No net space reclaimed" in out
+    assert "measured footprint grew 60 B" in out
+    assert "Reclaimed -" not in out

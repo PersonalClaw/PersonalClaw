@@ -317,7 +317,7 @@ Security audit and deny list.
 
 | Command | What it does |
 |---|---|
-| `personalclaw footprint [--json] [--reclaim]` | Per-store **bytes on disk** for every store in the state manifest, plus a **growth rate** and the store that is growing fastest. `--reclaim` compacts every database now (FTS5 merge → `PRAGMA optimize` → `VACUUM`) and reports the bytes actually freed. |
+| `personalclaw footprint [--json] [--reclaim]` | Per-store **bytes on disk** for every store in the state manifest, plus a **growth rate** and the store that is growing fastest. `--reclaim` compacts every database now (FTS5 merge → `PRAGMA optimize` → `VACUUM`) and reports the measured change: the bytes freed, or how much the stores grew when compacting left them larger (a database the running gateway holds open can keep the rewritten pages in its `-wal` file). With `--json`, `reclaim.net_change_bytes` is signed and `freed_bytes`/`growth_bytes` are never negative. |
 
 Each run records one sample, so **a rate appears from the second run onward** — a
 single reading cannot tell "not growing" from "measured once", and the report says
