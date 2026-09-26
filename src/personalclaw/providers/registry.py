@@ -266,16 +266,24 @@ class WorkflowTypeHandler(_TypeHandler):
 class ToolTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.mcp_instances import MCP_TOOLS_EXTENSION
         from personalclaw.providers.settings import ProviderSettings
 
         factory = load_factory(ext)
-        # A multiInstance tool app (e.g. openai-tools) builds ONE provider per
-        # configured instance — the app-level singleton config is empty, so the
-        # single-config path would yield a hollow provider that surfaces no tools.
-        # Mirror ModelTypeHandler: iterate the enabled instances, build+tag each,
-        # and return the LIST (register/deregister below normalize a list). Without
-        # this, instances added via "Add instance" never become live tool providers.
-        if ext.provider_config.multiInstance:
+        # The MCP Tool Servers app is multiInstance for its SETTINGS card, whose instances are the
+        # servers in `mcp.json` (`providers/mcp_instances`), not this generic instance store. Its
+        # ONE provider serves every configured server over the shared client registry, re-reading
+        # `mcp.json` on each listing, so it is built once and a server added later needs no
+        # rebuild. Built per instance from the generic store, which that card never writes, it
+        # was never built at all: no agent could call an external MCP server's tool, and neither
+        # could "Try it".
+        if ext.provider_config.multiInstance and ext.name != MCP_TOOLS_EXTENSION:
+            # A multiInstance tool app (e.g. openai-tools) builds ONE provider per
+            # configured instance — the app-level singleton config is empty, so the
+            # single-config path would yield a hollow provider that surfaces no tools.
+            # Mirror ModelTypeHandler: iterate the enabled instances, build+tag each,
+            # and return the LIST (register/deregister below normalize a list). Without
+            # this, instances added via "Add instance" never become live tool providers.
             from personalclaw.providers.instances import list_instances, resolved_config
 
             enabled = [i for i in list_instances(ext.name) if i.enabled]

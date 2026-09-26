@@ -13,7 +13,7 @@ from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 if TYPE_CHECKING:
-    from personalclaw.tool_providers.base import ToolProvider
+    from personalclaw.tool_providers.base import ToolDefinition, ToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +357,29 @@ def _platform_provider_for_invoke() -> "tuple[ToolProvider | None, str]":
         return None, f"The filesystem and shell tools could not be prepared: {exc}"
 
 
+async def _resolve_tool(
+    surface: "list[ToolProvider]", tool_name: str, prefer: str
+) -> "tuple[ToolProvider, ToolDefinition] | None":
+    """The provider on *surface* that serves *tool_name*, with that tool's definition, or None.
+
+    A provider serves a tool when its ``list_tools()`` advertises the name, which is how an agent
+    turn finds one too. Among several, the one named *prefer* is tried first (the provider the
+    Tools page showed the tool under), then the rest in surface order, platform first. A named
+    provider that serves no such tool is passed over, never handed the call. One that fails to
+    list serves nothing this call, and the next is asked.
+    """
+    for provider in sorted(surface, key=lambda p: p.name != prefer):
+        try:
+            tools = await provider.list_tools()
+        except Exception:  # noqa: BLE001 — a broken provider must not turn into a 500 here
+            logger.debug("tool provider %r failed to list its tools", provider.name, exc_info=True)
+            continue
+        tool = next((t for t in tools if t.name == tool_name), None)
+        if tool is not None:
+            return provider, tool
+    return None
+
+
 async def api_tool_invoke(request: web.Request) -> web.Response:
     """POST /api/tools/invoke — execute one tool through the Tool entity.
 
@@ -366,15 +389,23 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     ``{"tool": str, "arguments": dict, "provider"?: str, "confirm_risk"?: str}``.
     Returns ``{ok, output, error}``.
 
-    "The same surface the agent has" starts with the nine filesystem/shell tools, which is
-    why the resolver PREPENDS the cwd-coupled platform provider rather than reading the
-    registry alone — see ``_platform_provider_for_invoke`` for why it is not registered and
-    what #3310 measured when this route was the one consumer that skipped it.
+    "The same surface the agent has" is literal: the tool is resolved by name
+    (``_resolve_tool``) over ``tool_providers.registry.tool_surface``, the list
+    ``provider_bridge`` builds an agent's tools from. ``provider`` only says which provider
+    serving that name to try first. So an external MCP server's tool runs through the provider
+    that puts it on an agent's surface, and is out of reach when an agent could not reach it
+    either. The surface starts with the nine filesystem/shell tools — see
+    ``_platform_provider_for_invoke`` for why that provider is not registered and what #3310
+    measured when this route skipped it.
 
     "The same surface the agent has" includes the user's tool preferences: a tool disabled
     on the Tools page is refused here with ``403 tool_disabled``, exactly as the runtime
     drops it at schema assembly. Core-locked tools and the locked platform provider are
     exempt (``tool_prefs.is_disabled`` handles that), so the primitives stay reachable.
+
+    It includes the agent's hard deny-list: a tool name ``security.is_denied`` refuses is
+    refused here with ``403 tool_denied_by_policy``, as the runtime refuses it before asking
+    for any approval.
 
     It also includes the risk tier (#506). A call whose EFFECTIVE risk resolves as
     ``destructive`` is refused with ``403 risk_confirmation_required`` unless the body
@@ -383,7 +414,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     itself for why the scope stops exactly there.
     """
     from personalclaw.agents.native.builtin_tools import PLATFORM_TOOL_NAMES
-    from personalclaw.tool_providers.registry import get_provider, list_providers
+    from personalclaw.tool_providers.registry import tool_surface
 
     try:
         body = await request.json()
@@ -430,61 +461,25 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     provider_raw = body.get("provider")
     if provider_raw is not None and not isinstance(provider_raw, str):
         return web.json_response({"ok": False, "error": "provider must be a string"}, status=400)
-    provider_name = provider_raw or ""
 
     # The cwd-coupled platform provider, built for this call — see
     # `_platform_provider_for_invoke` for why it is not in the registry and why this route
-    # has to prepend it (#3310). Built once here: both resolver arms need it, and it is a
-    # cheap constructor (no I/O beyond resolving the workspace root).
+    # has to prepend it (#3310). A cheap constructor (no I/O beyond resolving the workspace root).
     platform, platform_refusal = _platform_provider_for_invoke()
 
-    # Resolve the provider: explicit name, else the first provider advertising the tool.
-    provider = None
-    if provider_name:
-        # REGISTRY FIRST, platform as the fallback for its own name. The two namespaces are
-        # disjoint in production — `tool_prefs.LOCKED_PROVIDERS` reserves
-        # `personalclaw-filesystem` for the platform bundle and nothing registers it — so
-        # this order changes no existing by-name resolution; it only adds the one name the
-        # registry can never answer for.
-        provider = get_provider(provider_name)
-        if provider is None and platform is not None and platform.name == provider_name:
-            provider = platform
-        if provider is None:
-            # A request that named the platform provider while the workspace is unresolved
-            # gets the refusal that explains itself, not "unknown provider" — the provider
-            # exists; the folder it would run in does not.
-            if platform_refusal and provider_name == "personalclaw-filesystem":
-                return json_error("workspace_unresolved", message=platform_refusal, status=503)
-            return web.json_response(
-                {"ok": False, "error": f"unknown tool provider: {provider_name}"}, status=404
-            )
-    else:
-        # PLATFORM FIRST, matching `provider_bridge`'s own `[platform, *list_providers()]`:
-        # the nine platform tools are the primitives, and a later-registered provider
-        # reusing one of their names must not capture a call the agent would have served
-        # from the bundle.
-        for p in ([platform] if platform is not None else []) + list_providers():
-            try:
-                if any(t.name == tool_name for t in await p.list_tools()):
-                    provider = p
-                    break
-            except Exception:
-                continue
-    if provider is None:
-        # Same distinction as above for the no-provider arm: if the tool we could not find
-        # is one the platform bundle owns, the workspace is why — say so.
+    # The tool, resolved the way an agent turn resolves it: by NAME, over the agent's own
+    # surface. The named `provider` only says which of the providers serving that name to try
+    # first; it is never a key of its own. It was, and "Try it" failed for every external MCP
+    # tool: the Tools page labels one with its SERVER, which no registry holds, so this answered
+    # `404 unknown tool provider: <server>` while an agent called the same tool through the `mcp`
+    # provider that serves it. It could also hand a call to a provider that serves no such tool.
+    resolved = await _resolve_tool(tool_surface(platform), tool_name, provider_raw or "")
+    if resolved is None:
+        # A tool the platform bundle owns is missing because the workspace is: say so.
         if platform_refusal and tool_name in PLATFORM_TOOL_NAMES:
             return json_error("workspace_unresolved", message=platform_refusal, status=503)
         return web.json_response({"ok": False, "error": f"tool not found: {tool_name}"}, status=404)
-
-    # Resolve the tool's own definition once: both the user-disabled gate below and the
-    # declared risk after it need it, and a second `list_tools()` per request is a
-    # per-provider round trip (an MCP server, for the bridged providers).
-    _tool_def = None
-    try:
-        _tool_def = next((t for t in await provider.list_tools() if t.name == tool_name), None)
-    except Exception:  # noqa: BLE001 — a broken provider must not turn into a 500 here
-        _tool_def = None
+    provider, _tool_def = resolved
 
     # The user-disabled gate. This route executes a tool, so the Tools page toggle has to
     # reach it: the toggle presents itself as "this tool is off", and it was honored only
@@ -525,13 +520,39 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             status=403,
         )
 
+    # The agent's hard deny-list, by tool NAME, the check `NativeAgentRuntime._guard_and_invoke`
+    # makes before any approval is asked for. It was never made here, and external MCP servers
+    # are where its names live: a cron script (or "Try it", once it could reach them) ran an
+    # `mcp/<server>/delete_stack` that no agent can run, whatever it is approved for.
+    from personalclaw import security
+
+    denied = security.is_denied(tool_name)
+    if denied:
+        try:
+            _sel().log_tool_invocation(
+                session_key=request.headers.get("X-Session-Key", "") or "internal",
+                agent="",
+                source="tool_invoke",
+                tool_name=tool_name,
+                tool_kind=provider.name,
+                outcome="denied",
+                error=denied,
+            )
+        except Exception:  # noqa: BLE001 — an unaudited refusal is still a refusal
+            pass
+        return json_error(
+            "tool_denied_by_policy",
+            message=f"{denied}. No agent may run {tool_name!r}, and neither may this request.",
+            status=403,
+        )
+
     # Effective risk of this direct invocation, for the SEL — so this path (cron
     # scripts + the inspector "Try it") is as auditable as the chat gate ("what
     # destructive tool ran"). Resolve the declared risk from the provider's tool
     # def, then downgrade per-invocation (a read-only bash call is safe).
     from personalclaw.task_modes import resolve_effective_risk
 
-    _declared = getattr(_tool_def, "risk_level", "") if _tool_def is not None else ""
+    _declared = getattr(_tool_def, "risk_level", "")
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
 
     caller = request.headers.get("X-Session-Key", "") or "internal"

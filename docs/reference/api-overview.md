@@ -82,7 +82,11 @@ has cost someone a debugging session.
   the tier in `confirm_risk`. Read-only invocations downgrade to `safe`, so a plain
   `bash "ls"` needs nothing. The nine filesystem/shell tools are confined to the
   configured workspace root; an unresolved root refuses with `503 workspace_unresolved`
-  rather than running them in the gateway's own directory.
+  rather than running them in the gateway's own directory. The tool is resolved by its
+  name over the same providers an agent turn has, so `provider` only says which provider
+  serving that name to try first, and an external MCP server's tool
+  (`mcp/<server>/<tool>`) runs through the provider that serves it to agents. A name the
+  agent's hard deny-list refuses is refused here too, with `403 tool_denied_by_policy`.
 - **`POST /api/durability/import` validates when you omit `mode`.** Omitting it changes
   nothing at all; `?mode=merge` applies copy-if-missing; `?mode=replace&confirm=true`
   overwrites. `POST /api/durability/archive/{id}/restore` is the same shape — no `mode`

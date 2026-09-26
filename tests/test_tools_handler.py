@@ -404,6 +404,14 @@ def _install_provider(monkeypatch, provider):
     monkeypatch.setattr("personalclaw.tool_providers.registry.list_providers", lambda: [provider])
 
 
+def _install_platform(monkeypatch, provider):
+    """Put *provider* in the PLATFORM slot of the route's surface — the one that owns `bash` in
+    production — with nothing registered. A stand-in for the platform's own tools has to go there:
+    the route resolves a name over the surface in order, platform first, as an agent does."""
+    monkeypatch.setattr(tools_mod, "_platform_provider_for_invoke", lambda: (provider, ""))
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_providers", lambda: [])
+
+
 def _disable(monkeypatch, *keys: str):
     """Point the preference store at an explicit disabled set (no real home touched)."""
     monkeypatch.setattr("personalclaw.tool_providers.tool_prefs.load_disabled", lambda: set(keys))
@@ -473,7 +481,7 @@ async def test_a_core_locked_tool_is_never_refused(monkeypatch):
     out of `bash` by a bad row would be a worse outage than the bug being fixed.
     """
     prov = _RecordingProvider("bash", provider_tag="personalclaw-filesystem")
-    _install_provider(monkeypatch, prov)
+    _install_platform(monkeypatch, prov)
     _disable(monkeypatch, "personalclaw-filesystem:bash")
 
     # A read-only command, so the tool reaches the provider on the DISABLE question alone.
@@ -482,12 +490,8 @@ async def test_a_core_locked_tool_is_never_refused(monkeypatch):
     # called safe) — a second refusal that would have made this test look like a
     # disable-gate regression. That fail-closed behaviour is pinned on its own below.
     #
-    # `provider` is named EXPLICITLY so this stand-in is still the one reached. Since #3310
-    # the no-provider arm prepends the real cwd-coupled platform provider, which owns `bash`
-    # and would serve it — correct for production, and it would turn this into a test of the
-    # real shell rather than of the disable gate. The by-name arm consults the registry
-    # first, which `_install_provider` patches, so naming the provider keeps the subject
-    # here the gate.
+    # The stand-in sits in the PLATFORM slot (`_install_platform`), where `bash` lives, so it is
+    # the one reached and the subject here stays the gate rather than the real shell.
     resp = await tools_mod.api_tool_invoke(
         _InvokeRequest(
             {
@@ -660,13 +664,12 @@ async def test_a_read_only_shell_call_needs_no_confirmation(monkeypatch):
     script that reads through bash.
     """
     prov = _RecordingProvider("bash", provider_tag="personalclaw-filesystem")
-    _install_provider(monkeypatch, prov)
+    _install_platform(monkeypatch, prov)
     _disable(monkeypatch)
 
-    # `provider` named explicitly for the same reason as in the disable-gate test above:
-    # since #3310 the no-provider arm prepends the real platform provider, which owns
-    # `bash`. The subject here is the per-invocation DOWNGRADE, not which provider serves
-    # the tool, so the stand-in has to stay the one that records the call.
+    # The stand-in sits in the platform slot for the same reason as in the disable-gate test
+    # above: the subject here is the per-invocation DOWNGRADE, not which provider serves the
+    # tool, so the stand-in has to stay the one that records the call.
     resp = await tools_mod.api_tool_invoke(
         _InvokeRequest(
             {
