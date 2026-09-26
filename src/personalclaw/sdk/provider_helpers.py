@@ -38,6 +38,7 @@ from typing import Any, Callable
 # ``personalclaw.llm.branded_specs`` — below this boundary, because they are core state and
 # core policy that four core modules read. They are re-exported here so an app's import path
 # is unchanged; only the direction of the dependency moved. See that module's docstring.
+from personalclaw import app_code  # noqa: E402
 from personalclaw.llm import branded_specs  # noqa: E402
 from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
 from personalclaw.llm.base import ModelProvider  # noqa: F401
@@ -396,8 +397,14 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
     branded_specs._REGISTERED_SPECS[spec.type] = (
         spec  # so core can read this app's declarations (pricing)
     )
+    app_code.keep(lambda: _forget_spec(spec))
 
     return _factory, create_provider, create_catalog
+
+
+def _forget_spec(spec: BrandedProviderSpec) -> None:
+    if branded_specs._REGISTERED_SPECS.get(spec.type) is spec:
+        del branded_specs._REGISTERED_SPECS[spec.type]
 
 
 def _anon_credential(spec: BrandedProviderSpec) -> Credential:

@@ -212,7 +212,7 @@ def test_the_install_targets_the_home_and_pins_the_running_environment(fake_pip,
 def test_satisfied_requirements_run_no_pip_and_need_no_restart(fake_pip):
     """numpy is a core dependency, so an app declaring it installs nothing — offline included."""
     fake = fake_pip()
-    assert app_manager._install_python_deps(_manifest(["numpy>=1.0"])) is False
+    assert app_manager._install_python_deps(_manifest(["numpy>=1.0"])) == []
     assert fake.calls == []
     assert not _ap().root().exists(), "no install needed, so nothing is created"
 
@@ -227,7 +227,7 @@ def test_every_other_installed_apps_requirements_resolve_in_the_same_run(fake_pi
 
 def test_a_first_install_is_importable_in_place_without_a_restart(fake_pip):
     fake_pip(installs=[("pclaw-fixture-dep", "1.0", [])])
-    assert app_manager._install_python_deps(_manifest(["pclaw-fixture-dep==1.0"])) is False
+    assert app_manager._install_python_deps(_manifest(["pclaw-fixture-dep==1.0"])) == []
     module = importlib.import_module("pclaw_fixture_dep")
     assert Path(module.__file__).is_relative_to(_ap().root())
     sys.modules.pop("pclaw_fixture_dep", None)
@@ -591,7 +591,7 @@ class TestRealPip:
         before = {d.metadata["Name"] for d in importlib.metadata.distributions()}
         _write_app("dep-app", ["pclaw-fixture-dep==1.0"], installed=False)
 
-        assert app_manager._install_python_deps(_manifest(["pclaw-fixture-dep==1.0"])) is False
+        assert app_manager._install_python_deps(_manifest(["pclaw-fixture-dep==1.0"])) == []
 
         assert (_site() / "pclaw_fixture_dep" / "__init__.py").is_file()
         base = importlib.metadata.distributions(path=_ap()._base_paths())

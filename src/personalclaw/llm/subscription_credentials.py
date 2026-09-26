@@ -85,6 +85,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import app_code
+
 #: Accepted units for a declared expiry stamp. Milliseconds is the common shape for a
 #: JSON OAuth record, so it is the default; seconds is the POSIX shape.
 _EXPIRY_UNITS: tuple[str, ...] = ("ms", "s")
@@ -164,7 +166,14 @@ def register_subscription_source(source: SubscriptionSource) -> None:
     errors = source.validate()
     if errors:
         raise ValueError(f"invalid SubscriptionSource {source.id!r}: {'; '.join(errors)}")
-    _SOURCES[source.id.strip()] = source
+    key = source.id.strip()
+    _SOURCES[key] = source
+
+    def _forget() -> None:
+        if _SOURCES.get(key) is source:
+            del _SOURCES[key]
+
+    app_code.keep(_forget)
 
 
 def _walk(payload: Any, keys: tuple[str, ...]) -> Any:

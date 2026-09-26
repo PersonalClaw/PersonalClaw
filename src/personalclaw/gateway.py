@@ -4079,21 +4079,21 @@ class GatewayOrchestrator:
         # and a record left behind is a record a later child could resolve. (The pid check in
         # ``live_port()`` already covers a crash; this covers the graceful case exactly.)
         gateway_base.unpublish()
-        # Reap app-backend subprocesses FIRST, synchronously — before the
+        # Reap app backends and workers FIRST, synchronously — before the
         # ACP/session teardown below. ACP cleanup can take many seconds when a
         # delegate CLI is wedged (force-kill retries), and it used to run in the
         # same gather as the dashboard runner's on_cleanup hooks; an impatient
         # operator SIGKILLing the gateway during that window would orphan the
-        # app backends. Stopping them up front makes the common path leak-free
+        # app processes. Stopping them up front makes the common path leak-free
         # regardless of how slow (or interrupted) the rest of shutdown is. The
-        # on_cleanup hook remains as a backstop (idempotent — _procs is emptied
-        # by stop_all, so the second pass is a no-op).
+        # on_cleanup hook remains as a backstop (idempotent — each supervisor's
+        # table is emptied by its stop_all, so the second pass is a no-op).
         try:
-            from personalclaw.apps.backend_runtime import get_backend_supervisor
+            from personalclaw.apps.app_runtime import stop_processes
 
-            get_backend_supervisor().stop_all()
+            stop_processes()
         except Exception:
-            logger.debug("early app-backend reap failed", exc_info=True)
+            logger.debug("early app process reap failed", exc_info=True)
 
         # Save all active chat sessions to history before shutdown
         if self.dashboard_state:
@@ -4426,6 +4426,11 @@ class GatewayOrchestrator:
             # Headless (no dashboard state): close sessions and re-exec directly.
             if self.sessions:
                 await self.sessions.close_all()
+            # As `_graceful_reexec` does: the new image keeps this PID, so an app process left
+            # running would stay its child, unsupervised and never reaped.
+            from personalclaw.apps.app_runtime import stop_processes
+
+            await asyncio.to_thread(stop_processes)
             # Use -m personalclaw instead of sys.argv[0] because build artifacts
             # clean may have deleted the original __main__.py path.
             os.execv(sys.executable, [sys.executable, "-m", "personalclaw"] + sys.argv[1:])
@@ -4610,14 +4615,14 @@ class GatewayOrchestrator:
             if _shutting_down:
                 print("\nForce exit!")
                 cleanup_orphaned_sessions()
-                # Reap app-backend subprocesses even on the force-exit path —
+                # Reap app backends and workers even on the force-exit path —
                 # os._exit() skips the graceful _shutdown()/on_cleanup hooks, so
-                # without this a double-signal would orphan every app backend
+                # without this a double-signal would orphan every app process
                 # (reparented to init), the exact leak that piled up dozens.
                 try:
-                    from personalclaw.apps.backend_runtime import get_backend_supervisor
+                    from personalclaw.apps.app_runtime import stop_processes
 
-                    get_backend_supervisor().stop_all()
+                    stop_processes()
                 except Exception:
                     pass
                 os._exit(0)

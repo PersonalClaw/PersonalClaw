@@ -748,6 +748,11 @@ async def _graceful_reexec(state: DashboardState, *, auth_mode: str = "") -> Non
         await state.sessions.close_all()
     except Exception:
         logger.debug("Session cleanup before restart failed", exc_info=True)
+    # The new image keeps this PID, so an app backend or worker left running would stay its
+    # child, unsupervised and never reaped — see ``app_runtime.stop_processes``.
+    from personalclaw.apps.app_runtime import stop_processes
+
+    await asyncio.to_thread(stop_processes)
     sys.stdout.flush()
     sys.stderr.flush()
     await asyncio.sleep(0.5)  # let pending SSE/WS frames drain to clients

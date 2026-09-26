@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import app_code
 from personalclaw.periodic_sweep import PeriodicSweep
 
 logger = logging.getLogger(__name__)
@@ -582,8 +583,18 @@ _runners: dict[str, SidecarRunner] = {}
 
 
 def register_runner(runner: SidecarRunner) -> None:
-    """Track *runner* so the pressure surface and the watchdog can see it."""
+    """Track *runner* so the pressure surface and the watchdog can see it.
+
+    A runner an app's code registered is stopped and dropped when the app is unloaded — its
+    child runs the version of the app that started it.
+    """
     _runners[runner.app] = runner
+
+    def _forget() -> None:
+        if _runners.get(runner.app) is runner:
+            unregister_runner(runner.app)
+
+    app_code.keep(_forget)
 
 
 def unregister_runner(app: str) -> None:

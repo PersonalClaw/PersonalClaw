@@ -176,13 +176,20 @@ def _reconcile_app_crons(request: web.Request) -> None:
 
 
 def _app_status(name: str) -> dict[str, Any]:
-    """Runtime status for an app: enabled + backend running/port."""
+    """Runtime status for an app: backend running/port, and why it needs a restart (if it does).
+
+    ``restartReason`` is what an update or reinstall could not take out of the process — the
+    clause the Apps page states after "Restart the gateway to finish:", ``""`` when only the
+    installed version runs.
+    """
+    from personalclaw.apps import app_runtime
     from personalclaw.apps.backend_runtime import get_backend_supervisor
 
     rb = get_backend_supervisor().get(name)
     return {
         "backendRunning": rb is not None,
         "backendPort": rb.port if rb else None,
+        "restartReason": app_runtime.restart_reason(name),
     }
 
 
@@ -220,7 +227,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
         source_kind_for_origin,
         surface_app_updates,
     )
-    from personalclaw.apps.manager import app_dir, list_apps
+    from personalclaw.apps.manager import app_dir, list_apps, ui_revision
 
     # Compute available updates + emit the (deduped) notifications, on this read path.
     # Best-effort: an update-check failure must never break the apps list.
@@ -302,6 +309,8 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # capability that grants it. The shell loads it for an ENABLED app so its
                 # components exist for a chat-born widget, not only on the app's own page.
                 "uiComponents": str((manifest.get("ui", {}) or {}).get("components", "")),
+                # What every UI bundle URL of this app carries, so an update is imported afresh.
+                "uiRevision": ui_revision(name, manifest.get("ui", {}) or {}),
                 "uiCapabilities": [str(c) for c in (manifest.get("uiCapabilities") or []) if c],
                 "isProvider": is_provider,
                 "providerType": (
@@ -334,6 +343,8 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # renders an "update available" badge and the Store nav counts these.
                 "updateAvailable": name in updates_by_name,
                 "latestVersion": updates_by_name.get(name, {}).get("latestVersion", ""),
+                # Where that version was found: the Update dialog starts from it.
+                "latestSource": updates_by_name.get(name, {}).get("latestSource", ""),
                 **_app_status(name),
             }
         )
@@ -518,7 +529,7 @@ async def api_app_get(request: web.Request) -> web.Response:
     """GET /api/apps/{name} — full manifest + status + saved config."""
     from personalclaw.apps.app_config import read_stored
     from personalclaw.apps.app_manager import _manifest_of
-    from personalclaw.apps.manager import _read_installed
+    from personalclaw.apps.manager import _read_installed, ui_revision
     from personalclaw.apps.secret_fields import mask_secrets
 
     name = request.match_info["name"]
@@ -543,14 +554,17 @@ async def api_app_get(request: web.Request) -> web.Response:
     secret_set: list[str] = []
     if manifest is None or not _configured_per_instance(manifest):
         masked, secret_set = mask_secrets(read_stored(name), schema)
+    manifest_wire = manifest.to_dict() if manifest else None
     return web.json_response(
         {
             "name": name,
             "installed": meta.to_dict(),
-            "manifest": manifest.to_dict() if manifest else None,
+            "manifest": manifest_wire,
             "config": masked,
             "configSchema": schema,
             "_secret_set": secret_set,
+            # The same revision the list carries: the app page versions its bundle URL with it.
+            "uiRevision": ui_revision(name, (manifest_wire or {}).get("ui") or {}),
             **_app_status(name),
         }
     )
@@ -1375,7 +1389,12 @@ _UI_CONTENT_TYPES = {
 async def api_app_ui_asset(request: web.Request) -> web.StreamResponse:
     """Serve an installed app's contributed UI bundle file (the ESM the frontend
     code-splits in to mount the app's page). Confined to the app's ``ui/`` dir
-    with a path-traversal guard; only enabled apps serve UI."""
+    with a path-traversal guard; only enabled apps serve UI.
+
+    ``no-cache``, so a browser asks again before it reuses a copy (a 304 when nothing
+    changed): an update or a reinstall swaps these files in at the same paths. The SPA also
+    versions every bundle URL with the app's ``uiRevision``, so a page that already imported
+    the old URL does not get the old module back either."""
     from personalclaw.apps.manager import _read_installed, app_dir
 
     name = request.match_info["name"]
@@ -1392,4 +1411,4 @@ async def api_app_ui_asset(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": "not found"}, status=404)
 
     ctype = _UI_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
-    return web.FileResponse(target, headers={"Content-Type": ctype})
+    return web.FileResponse(target, headers={"Content-Type": ctype, "Cache-Control": "no-cache"})

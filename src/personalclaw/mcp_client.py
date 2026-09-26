@@ -47,6 +47,9 @@ _SWEEP_INTERVAL_SECS = 120.0
 # (spawn → fail → spawn) in a hot loop and burn CPU.
 _BREAKER_THRESHOLD = 3
 _BREAKER_COOLDOWN_SECS = 60.0
+# How long closing one server's connection may take before it is abandoned (and logged), so a
+# server that will not stop cannot hold up the app unload that is replacing it.
+_CLOSE_TIMEOUT_SECS = 10.0
 
 
 def mcp_sdk_available() -> bool:
@@ -644,6 +647,36 @@ class McpClientRegistry:
         await asyncio.gather(*(c.shutdown() for c in self._conns.values()), return_exceptions=True)
         self._conns.clear()
 
+    def _close(self, match: Callable[[str], bool], *, timeout: float = _CLOSE_TIMEOUT_SECS) -> None:
+        """Close every connection to the servers *match* names — shared and per-session.
+
+        Callable from any thread. :meth:`load_from_specs` keeps a connection whose spec did not
+        change, and an app updated in place keeps the same command and arguments, so the
+        process its server spawned would go on answering with the code it started with. An
+        app's unload closes its servers here; the next read starts them from the files on
+        disk. Each connection is shut down on the loop its task runs on: awaited from any other
+        thread, scheduled when called on that loop itself (which cannot block on it).
+        """
+        for name in [n for n in self._specs if match(n)]:
+            del self._specs[name]
+        for key in [k for k in self._conns if match(k[0])]:
+            conn = self._conns.pop(key)
+            task = conn._task
+            if task is None or task.done():
+                continue
+            loop = task.get_loop()
+            try:
+                on_loop = asyncio.get_running_loop() is loop
+            except RuntimeError:
+                on_loop = False
+            if on_loop:
+                loop.create_task(conn.shutdown())
+                continue
+            try:
+                asyncio.run_coroutine_threadsafe(conn.shutdown(), loop).result(timeout)
+            except Exception:  # noqa: BLE001 — a server that will not close must not block the rest
+                logger.warning("MCP server %r did not close cleanly", key[0], exc_info=True)
+
 
 _registry: McpClientRegistry | None = None
 
@@ -691,6 +724,13 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
         except ForeignSecretReference as exc:
             logger.warning("MCP server %r not started: %s", name, exc)
     return specs
+
+
+def close_servers(match: Callable[[str], bool]) -> None:
+    """Close every live connection to the servers *match* names (see
+    :meth:`McpClientRegistry._close`). Nothing to close before the first read built one."""
+    if _registry is not None:
+        _registry._close(match)  # noqa: SLF001 — the module's own registry
 
 
 def get_mcp_client_registry() -> McpClientRegistry | None:

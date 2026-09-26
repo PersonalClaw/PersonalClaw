@@ -799,6 +799,25 @@ def _reset_channel_delivery_registry() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _reset_app_restart_reasons() -> object:
+    """Forget every app's restart reason a test left behind.
+
+    ``app_runtime`` keeps why an app needs a gateway restart (a package it replaced while loaded,
+    a thread its previous version left running) in memory on purpose: in the product, a restart
+    is the one thing that clears it. Across tests the app NAMES repeat (``demo-app``) while each
+    test has its own home, so a reason one test earned would make the next test's clean update
+    report ``restart_required``. ``app_code``'s record of what an app's code registered is left
+    alone: a later unload of the same name taking back what an earlier test left is the isolation
+    the registries it covers otherwise lack.
+    """
+    from personalclaw.apps import app_runtime
+
+    app_runtime._restart.clear()
+    yield
+    app_runtime._restart.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_provider_measurement_boards() -> object:
     """Forget every provider availability and connection answer a test measured.
 

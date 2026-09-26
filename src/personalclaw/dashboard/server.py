@@ -2219,29 +2219,26 @@ async def start_dashboard(
 
     app.on_cleanup.append(_mcp_client_shutdown)
 
-    async def _app_backends_shutdown(app_: web.Application) -> None:
-        """Terminate every app-backend subprocess on gateway stop. Without this the
+    async def _app_processes_shutdown(app_: web.Application) -> None:
+        """Terminate every app backend and worker on gateway stop. Without this the
         backends (snippet-lab/standup-notes/… server.py) were spawned on enable but
         never reaped on shutdown — so each gateway restart ORPHANED another set
-        (reparented to init), leaking dozens of processes over a dev session.
+        (reparented to init), leaking dozens of processes over a dev session. The
+        workers were never stopped here at all: each kept running, re-parented to init,
+        until the next boot reaped it.
 
-        The watchdogs boot started go FIRST: left running, the backend one revived every
-        backend terminated here 30s later, and all three outlived the gateway that started
-        them — each boot in one process adding three sweepers that never ended."""
+        The watchdogs boot started go FIRST (``app_runtime.stop_processes`` does both, in
+        that order): left running, the backend one revived every backend terminated here
+        30s later, and all three outlived the gateway that started them — each boot in one
+        process adding three sweepers that never ended."""
         try:
-            from personalclaw.providers.loader import stop_extension_watchdogs
+            from personalclaw.apps.app_runtime import stop_processes
 
-            stop_extension_watchdogs()
+            stop_processes()
         except Exception:
-            logger.debug("watchdog shutdown failed", exc_info=True)
-        try:
-            from personalclaw.apps.backend_runtime import get_backend_supervisor
+            logger.debug("app process shutdown failed", exc_info=True)
 
-            get_backend_supervisor().stop_all()
-        except Exception:
-            logger.debug("app-backend shutdown failed", exc_info=True)
-
-    app.on_cleanup.append(_app_backends_shutdown)
+    app.on_cleanup.append(_app_processes_shutdown)
 
     async def _discovery_shutdown(app_: web.Application) -> None:
         """Send the mDNS goodbye and release the socket on gateway stop (COMPANION-APPS C3).

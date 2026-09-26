@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw import app_code
 from personalclaw.llm.base import ModelProvider
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.catalog import ModelCatalog
@@ -158,7 +159,9 @@ class ProviderRegistry:
 
         Raises :class:`ProviderResolutionError` if the type is already
         registered; silent overwrite would mask accidental double
-        registration during package import.
+        registration during package import. A type an app's code registered is taken back
+        when the app is unloaded (:mod:`personalclaw.app_code`), so its next version
+        registers it afresh.
         """
         type_ = cap.type
         if type_ in self._factories:
@@ -167,11 +170,19 @@ class ProviderRegistry:
         self._capabilities[type_] = cap
         if readiness is not None:
             self._readiness[type_] = readiness
+        app_code.keep(lambda: self._forget_type(type_, factory))
         logger.debug(
             "registered provider type %r with capabilities %s",
             type_,
             sorted(c.value for c in cap.capabilities),
         )
+
+    def _forget_type(self, type_: str, factory: ProviderFactory) -> None:
+        """Drop ``type_`` if ``factory`` is still what builds it."""
+        if self._factories.get(type_) is factory:
+            del self._factories[type_]
+            self._capabilities.pop(type_, None)
+            self._readiness.pop(type_, None)
 
     def register_catalog(self, type_: str, factory: "CatalogFactory") -> None:
         """Register a provider type's optional CATALOG factory (discovery/management).
@@ -183,7 +194,12 @@ class ProviderRegistry:
         tests (or re-enabling an app) re-registers cleanly.
         """
         self._catalog_factories[type_] = factory
+        app_code.keep(lambda: self._forget_catalog(type_, factory))
         logger.debug("registered catalog factory for provider type %r", type_)
+
+    def _forget_catalog(self, type_: str, factory: "CatalogFactory") -> None:
+        if self._catalog_factories.get(type_) is factory:
+            del self._catalog_factories[type_]
 
     def catalog_of(self, type_: str) -> "CatalogFactory | None":
         """Return the catalog factory registered for ``type_``, or ``None``.

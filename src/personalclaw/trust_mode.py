@@ -24,6 +24,8 @@ import logging
 import time
 from collections.abc import Callable
 
+from personalclaw import app_code
+
 logger = logging.getLogger(__name__)
 
 # Default TTLs (seconds) for surface-driven activation.
@@ -47,10 +49,17 @@ class _TrustMode:
 
         The callback receives the reason: ``"manual"`` or ``"expired"``. Used by
         surfaces to clear their derived trust state (approval policies, trusted
-        threads). Idempotent registration is the caller's responsibility.
+        threads). Idempotent registration is the caller's responsibility. A callback an app
+        registered (a channel's trusted threads) is dropped when the app is unloaded.
         """
         if cb not in self._on_disable:
             self._on_disable.append(cb)
+
+            def _forget() -> None:
+                if cb in self._on_disable:
+                    self._on_disable.remove(cb)
+
+            app_code.keep(_forget)
 
     def _fire_disable(self, reason: str) -> None:
         for cb in list(self._on_disable):

@@ -4,7 +4,7 @@ import { api, ApiError } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
 import { EmptyState, LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { AppFrame } from './AppFrame'
-import type { AppContext, AppPermissions } from '../../app/appSdk'
+import { appBundleUrl, type AppContext, type AppPermissions } from '../../app/appSdk'
 
 interface UIPageDecl { route?: string; label?: string; entryPoint?: string; mountFunction?: string }
 
@@ -53,7 +53,9 @@ export function AppHostPage({ sub, navigate }: Pick<RouteProps, 'sub' | 'navigat
   // only when non-empty, so absent legitimately means "declared none".
   const uiCapabilities = (manifest.uiCapabilities ?? []) as string[]
   const ctx: AppContext = { name, permissions, uiCapabilities }
-  const src = `/apps/${encodeURIComponent(name)}/ui/${page.entryPoint}`
+  // Versioned by the digest of the bundles the app serves: after an update the URL changes, so
+  // the page imports the new module instead of the one this tab already loaded.
+  const src = appBundleUrl(name, page.entryPoint, data.uiRevision)
   const title = page.label || (manifest.displayName as string) || name
   const icon = (page as { icon?: string }).icon || (manifest.icon as string) || ''
   // AppFrame owns the chrome (shell-clearing header + standard detail panel); the

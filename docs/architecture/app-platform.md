@@ -17,8 +17,8 @@ system, crons, and the MCP bridge. Paths are relative to
 
 The gateway loads **installed copies** at `~/.personalclaw/apps/<name>/`.
 Editing the repo `apps/` tree does nothing to a running gateway until you push
-via `POST /api/apps/{name}/update` (plus a restart for already-imported
-modules). App sources for the Store are managed at
+it via `POST /api/apps/{name}/update`, which runs the new code at once (see
+[Unload and load](#unload-and-load-appsapp_runtimepy)). App sources for the Store are managed at
 `/api/apps/sources` (`dashboard/handlers/apps.py`).
 
 ## Install lifecycle (`apps/app_manager.py`)
@@ -82,6 +82,53 @@ backend**.
   one that changes none of it needs none.
 - **Removal** distinguishes deactivate (providers deregistered, files kept)
   from force-uninstall.
+
+## Unload and load (`apps/app_runtime.py`)
+
+Every lifecycle step that starts or stops an app goes through one pair, so an update, an
+uninstall and a reinstall all leave exactly the version on disk running:
+
+- **`load(manifest)`** — install, enable, and the end of an update: register the providers
+  (which imports the app's code from its files now), seed its prompts and skills, write its MCP
+  servers, register its proposal kinds, start its backend and its background worker.
+- **`unload(name, manifest)`** — disable, the three uninstall rungs, and the start of an update:
+  stop and hold the backend and the worker (neither watchdog starts a held app, so no process
+  comes back from the old files before the swap), drop the MCP servers and close the processes
+  they spawned, disable the providers (a channel's receiver stops with them, and the unload waits
+  for it), take back what the app's code registered, remove its prompts, skills and proposal
+  kinds, and forget its availability answers.
+
+**Taking the code back** (`personalclaw/app_code.py`). The loader claims an app's directory
+before it runs any of its code. Each registry app code can write to through the SDK — model types
+and catalogs, media catalogs and scanners, subscription sources, `acp:` runtime entries, sidecar
+runners, trust-mode callbacks — records how to take an entry back, and an entry is the app's when
+the app's code made the call; a core module that registers its own type while the app's import
+pulls it in stays core's. `release(name)` runs those take-backs, removes every module loaded from
+the app's directory from `sys.modules` (and its cached bytecode, since the next version's file
+reuses the path), and reports what Python cannot take back:
+
+| Left in the process | Why it stays | What the owner sees |
+|---|---|---|
+| a compiled extension module the app loaded | Python cannot unload one | a restart reason naming it |
+| a thread still running the app's code | nothing can stop an arbitrary thread | a restart reason naming it |
+| a task suspended in the app's code | it would resume the old code | a restart reason naming it |
+| a package in `app-python` the gateway had loaded, replaced by the update | an interpreter keeps the version it imported first | a restart reason naming the packages |
+
+A restart reason is the update's `restart_reason` (with `restart_required`), the toast that
+reports the update, and the app panel's "Restart the gateway to finish" notice
+(`GET /api/apps` → `restartReason`) — kept in memory only, since a restart is what clears it. The
+Library re-reads the list when its socket reopens, so the notice goes when the restart is done. A
+chat turn already in flight finishes on the provider instance it started with; the next one
+builds from the new code.
+
+**The restart itself** re-executes the gateway in place (`os.execve`, same PID), so before it
+does, `stop_processes()` stops every app backend and worker (watchdogs first). A process left
+running would stay a child of the new image, which neither supervises it nor reaps it at boot
+(only a process whose parent died counts as an orphan there).
+
+**UI bundles** are served with `Cache-Control: no-cache`, and every bundle URL carries the app's
+`uiRevision` (a digest of the bundles its manifest declares), so a tab that already imported the
+old module imports the new one.
 
 ## Permissions (`apps/permissions.py`)
 
@@ -342,7 +389,9 @@ imported as a dotted package path. The namespacing is load-bearing — two apps 
 ship the same bare `provider.py`, and a plain `import provider` would let the first one
 win while the second silently mis-loaded. It is cached, so the availability probe and the
 factory never re-execute app code (a re-exec would mint a second class for one provider,
-breaking `isinstance` across two reads). A changed module needs a gateway restart.
+breaking `isinstance` across two reads). The cache is for one version: a step that changes the
+app's files unloads it first ([Unload and load](#unload-and-load-appsapp_runtimepy)), so the
+next load runs what is on disk.
 
 **Enforcement.** `native_contract.contract_violations` is the lint;
 `tests/test_native_capability_contract.py` runs it over every bundled module and carries
@@ -402,7 +451,9 @@ advisory and converged to true. See
 An app may ship its **own MCP server(s)** under `manifest.mcpServers`
 (distinct from MCP servers it merely depends on). `apps/mcp_bridge.py` writes
 them into the live MCP store (`~/.personalclaw/mcp.json`) on enable/install
-and removes them on disable/uninstall. Entries are namespaced
+and removes them on disable/uninstall, closing their live connections too: an update keeps the
+same command and arguments, so a connection left open would keep the old server process
+answering. Entries are namespaced
 `{app}:{server}` so apps can't collide on a server key and deregistration
 removes exactly this app's servers. App-shipped stdio servers run with
 `cwd=<app dir>` (`mcp_client.py` / `mcp_discovery.py`).

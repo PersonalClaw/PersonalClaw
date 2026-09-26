@@ -170,6 +170,23 @@ class BackendSupervisor:
     def __init__(self) -> None:
         self._procs: dict[str, RunningBackend] = {}
         self._lock = threading.Lock()
+        self._held: set[str] = set()
+
+    # -- holds ------------------------------------------------------------
+    def hold(self, name: str) -> None:
+        """Keep *name*'s backend down until :meth:`unhold`: :meth:`start` starts nothing held.
+
+        The app runtime holds an app from its unload to its next load. Without it the watchdog
+        could start a backend in between — from the old files, still in place until the update
+        swaps them (and ``start`` would then hand that process back to the load as the running
+        one), or from the new files before the update's own hook has run.
+        """
+        with self._lock:
+            self._held.add(name)
+
+    def unhold(self, name: str) -> None:
+        with self._lock:
+            self._held.discard(name)
 
     # -- lookup -----------------------------------------------------------
     def get(self, name: str) -> RunningBackend | None:
@@ -195,6 +212,9 @@ class BackendSupervisor:
             return None
         name = manifest.name
         with self._lock:
+            if name in self._held:
+                logger.debug("app %s backend: held while the app is unloaded", name)
+                return None
             existing = self._procs.get(name)
             if existing and existing.is_alive():
                 return existing
@@ -377,8 +397,12 @@ class BackendSupervisor:
         return True
 
     def stop_all(self) -> None:
+        """Stop every backend. One whose stop raises must not leave the others running."""
         for name in list(self._procs.keys()):
-            self.stop(name)
+            try:
+                self.stop(name)
+            except Exception:  # noqa: BLE001 — the next backend still has to stop
+                logger.warning("app %s backend: stop failed", name, exc_info=True)
 
     # -- boot-time orphan reaping -----------------------------------------
     # App backends are subprocesses on auto-ports, so a FRESH gateway (empty

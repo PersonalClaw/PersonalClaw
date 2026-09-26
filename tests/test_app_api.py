@@ -801,3 +801,5 @@ async def test_apps_list_flags_available_update(tmp_path, monkeypatch):
         notes = next(a for a in apps if a["name"] == "notes")
         assert notes["updateAvailable"] is True
         assert notes["latestVersion"] == "1.1.0"
+        # Where it was found — the Update dialog starts from it rather than an empty field.
+        assert notes["latestSource"] == str(Path(newer))

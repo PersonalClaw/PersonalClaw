@@ -6,7 +6,7 @@ import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Archive, HardDrive, MapPin, AlertTriangle,
-  Boxes, Package, Store, KeyRound,
+  Boxes, Package, Store, KeyRound, RotateCw,
 } from 'lucide-react'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
@@ -30,6 +30,7 @@ import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
+import { useChatSocket } from '../../lib/useChatSocket'
 import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
 } from '../../lib/api'
@@ -75,6 +76,8 @@ export interface StoreItem extends AppCatalogEntry {
   updateAvailable?: boolean
   /** APE-7: that newer version (for the badge tooltip). */
   latestVersion?: string
+  /** Where that version was found — the Update dialog starts from it. */
+  latestSource?: string
 }
 
 /** An installed app (AppSummary) projected onto the catalog-entry shape so it can
@@ -87,7 +90,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     isProvider: a.isProvider, providerType: a.providerType, tags: a.tags ?? [],
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
     native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, origin: a.origin,
-    updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion,
+    updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion, latestSource: a.latestSource,
     // APE-4: carried, not defaulted. Coercing an installed app's absent block to `{}`
     // here would be harmless today but would make the Library the one surface that
     // cannot tell "declared nothing" from "declared all-false".
@@ -183,7 +186,10 @@ function SourceDivider({ label, count }: { label: string; count: number }) {
 type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 'force-uninstall'
 // Carries the DISPLAY NAME as well as the slug: the slug is the API's identifier, the display
 // name is the only one a person recognises, and a dialog title is a sentence for the person.
-type DispatchAppAction = (app: { name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean }, action: AppActionKind) => void
+type DispatchAppAction = (app: {
+  name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean
+  updateAvailable?: boolean; latestVersion?: string; latestSource?: string
+}, action: AppActionKind) => void
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
  *  modals ONCE at the host level. Returns a `dispatch` both the cards and the
@@ -194,7 +200,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
   // Each carries the display name beside the slug: the slug is the API's identifier, and a
   // dialog title is a sentence for a person ("Update research-lab" named nobody's app).
   type Named = { name: string; displayName: string }
-  const [updateFor, setUpdateFor] = useState<Named | null>(null)
+  const [updateFor, setUpdateFor] = useState<(Named & { found?: FoundUpdate }) | null>(null)
   const [uninstallFor, setUninstallFor] = useState<Named | null>(null)
   const [removeFor, setRemoveFor] = useState<Named | null>(null)
 
@@ -206,7 +212,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       case 'configure':
         if (app.configuredPerInstance) { nav('settings/providers'); return }
         setConfigFor({ name: app.name, displayName: app.displayName }); return
-      case 'update': setUpdateFor({ name: app.name, displayName: app.displayName }); return
+      case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, found: foundUpdate(app) }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
       case 'force-uninstall': setUninstallFor({ name: app.name, displayName: app.displayName }); return
       case 'toggle': {
@@ -228,8 +234,8 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
 
   const modals = (
     <>
-      {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} onClose={() => setUpdateFor(null)}
-        onUpdated={() => { setUpdateFor(null); reload() }} />}
+      {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} found={updateFor.found}
+        onClose={() => setUpdateFor(null)} onUpdated={() => { setUpdateFor(null); reload() }} />}
       {configFor && <ConfigModal name={configFor.name} displayName={configFor.displayName} onClose={() => setConfigFor(null)} />}
       {removeFor && <RemoveAppModal name={removeFor.name} displayName={removeFor.displayName} onClose={() => setRemoveFor(null)}
         onDone={() => { setRemoveFor(null); reload() }} />}
@@ -416,6 +422,9 @@ function matchesText(haystack: string, q: string): boolean {
   return !q || haystack.toLowerCase().includes(q)
 }
 
+/** The Library reads no socket frame; it only needs to hear that the socket reopened. */
+const ignoreFrame = () => {}
+
 export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
   const q = query
   const sq = setQuery
@@ -434,6 +443,11 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   const { data: apps, error: appsErr, stale: appsStale, refresh } = useQuery<AppSummary[]>(
     'apps', () => api.apps(), { persist: true },
   )
+  // A reopened socket is how this tab learns the gateway came back, from a restart among other
+  // things. Part of what the Library says about an app belongs to the PROCESS (its backend, and
+  // the restart an update asked for), so re-read the list then. Otherwise "Restart the gateway
+  // to finish" stayed on screen after the restart it asked for, and read as a restart that failed.
+  useChatSocket(ignoreFrame, refresh)
   // Store catalog is lifted here (was inside StoreView) so the shared, pinned
   // controls bar can host the Store's search + Filter&sort too — same idiom as
   // the Library, instead of a second control bar that scrolls with the body.
@@ -1473,24 +1487,41 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
 }
 
 // ── Update: the new source is typed here; what it changes, and the consent, are the dialog's ──
-function UpdateModal({ name, displayName, onClose, onUpdated }: {
+/** Where the gateway found an app's newer version, when it found one. */
+interface FoundUpdate { source: string; version?: string }
+
+/** The found update an Update dialog starts from — none when the app has no update the
+ *  gateway located, and then the owner types the source. */
+function foundUpdate(app: { updateAvailable?: boolean; latestSource?: string; latestVersion?: string }): FoundUpdate | undefined {
+  return app.updateAvailable && app.latestSource ? { source: app.latestSource, version: app.latestVersion } : undefined
+}
+
+function UpdateModal({ name, displayName, found, onClose, onUpdated }: {
   /** The app SLUG — the update API's identifier. */
   name: string
   /** What the title says: a person recognises "Research Lab", not `research-lab`. */
   displayName: string
+  /** Where the gateway found the newer version. The field starts with it and stays editable:
+   *  the owner should not have to type where the gateway just looked. */
+  found?: FoundUpdate
   onClose: () => void
   onUpdated: () => void
 }) {
-  const [source, setSource] = useState('')
+  const [source, setSource] = useState(found?.source ?? '')
   const install = useAppInstall({ onInstalled: () => onUpdated() })
   if (install.active) return install.dialog
   const s = source.trim()
   return (
     <Modal title={`Update ${displayName}`} icon={<RefreshCw size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
-        <label data-type="body-s" className="text-on-surface-low">New source — local path or git URL (data is preserved)</label>
-        <TextInput value={source} onChange={setSource} autoFocus name="app-install-source"
+        <label htmlFor="app-update-source" data-type="body-s" className="text-on-surface-low">New source — local path or git URL (data is preserved)</label>
+        <TextInput id="app-update-source" value={source} onChange={setSource} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
+        {found && (
+          <p data-type="label-s" className="text-on-surface-low">
+            {`PersonalClaw found ${found.version ? `version ${found.version}` : 'the newer version'} there. Change it to update from somewhere else.`}
+          </p>
+        )}
         <p data-type="label-s" className="text-on-surface-low">
           You will see what the new version changes, and what the security scanner found, before anything is updated.
         </p>
@@ -1572,6 +1603,17 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
               </div>
             </div>
             <Button variant="primary" size="sm" className="shrink-0" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
+          </div>
+        )}
+
+        {/* What an update or reinstall could not take out of the gateway's process, stated
+            until a restart does — the toast that first said it is gone by now. */}
+        {app.restartReason && (
+          <div role="status" className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
+            <div className="flex items-center gap-2 text-on-surface"><RotateCw size={14} /> Restart the gateway to finish</div>
+            <div className="mt-1 text-on-surface-low" data-type="label-s">
+              {`The installed version is running, but ${app.restartReason}. Restart it from System status, top right.`}
+            </div>
           </div>
         )}
 
@@ -1672,8 +1714,8 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
         </>)}
       </div>
 
-      {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} onClose={() => setUpdateOpen(false)}
-        onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
+      {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} found={foundUpdate(app)}
+        onClose={() => setUpdateOpen(false)} onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
       {configOpen && <ConfigModal name={app.name} displayName={app.displayName} onClose={() => setConfigOpen(false)} />}
       {confirmRemove && <RemoveAppModal name={app.name} displayName={app.displayName}
         onClose={() => setConfirmRemove(false)}

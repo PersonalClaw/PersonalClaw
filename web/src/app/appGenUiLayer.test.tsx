@@ -101,6 +101,10 @@ describe('eligibility', () => {
     expect(componentsModuleUrl('acme', 'genui.mjs')).toBe('/apps/acme/ui/genui.mjs')
     expect(componentsModuleUrl('acme', '/genui.mjs')).toBe('/apps/acme/ui/genui.mjs')
   })
+
+  it('versions the URL with the revision of the bundle installed now', () => {
+    expect(componentsModuleUrl('acme', 'genui.mjs', 'abc123')).toBe('/apps/acme/ui/genui.mjs?v=abc123')
+  })
 })
 
 describe('loading an app component layer', () => {
@@ -165,6 +169,22 @@ describe('the sync pass', () => {
     await loadAppComponents(app())
     await syncAppGenUiComponents([app({ uiCapabilities: [] })])
     expect(getComponent('AcmeGauge')).toBeUndefined()
+  })
+
+  it("replaces an UPDATED app's components with its new module's", async () => {
+    // The session keeps a loaded module for good; after an update the app list carries a new
+    // revision, and the pass has to load the new bundle — not keep the old one's registrations.
+    Object.assign(moduleStub, registersGauge('AcmeGauge'))
+    await syncAppGenUiComponents([app({ uiRevision: 'rev-1' })])
+    expect(getComponent('AcmeGauge')).toBeTruthy()
+
+    Object.assign(moduleStub, registersGauge('AcmeDial'))
+    await syncAppGenUiComponents([app({ uiRevision: 'rev-2' })])
+    expect(getComponent('AcmeDial')?.source).toBe('acme')
+    expect(getComponent('AcmeGauge'), 'the old version\'s component is still offered').toBeUndefined()
+
+    // And an unchanged revision is not a reason to re-import.
+    expect(await loadAppComponents(app({ uiRevision: 'rev-2' }))).toBe(0)
   })
 
   it('leaves the core set alone', async () => {

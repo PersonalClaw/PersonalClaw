@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.apps import app_runtime
 from personalclaw.apps import disclosure as app_disclosure
 from personalclaw.apps import staging as app_staging
 from personalclaw.apps.manager import (
@@ -106,9 +107,10 @@ class InstallResult:
     # Nothing was committed: the owner must review `disclosure` + `scan` and consent to
     # exactly the bundle whose digest is `consent`.
     needs_consent: bool = False
-    restart_required: bool = (
-        False  # an app package the gateway had already loaded was replaced; restart to reload it
-    )
+    # Why the gateway has to restart before only the installed version runs — the clauses
+    # `app_runtime.restart_reason` joins (a package it had already loaded was replaced, a thread
+    # the previous version started is still running…). "" when the new code already runs alone.
+    restart_reason: str = ""
     # P21 platform gate: set when the app can't be server-installed here (installMode=client,
     # or this OS isn't in the app's `os` list). The install did NOT commit; the UI shows the
     # copy-paste client-install one-liner instead. `client_install` = {shell, postInstall}.
@@ -128,6 +130,10 @@ class InstallResult:
     disclosure: dict[str, Any] | None = None
     previous: dict[str, Any] | None = None
     consent: str = ""
+
+    @property
+    def restart_required(self) -> bool:
+        return bool(self.restart_reason)
 
     @property
     def fix_prompt(self) -> str:
@@ -162,6 +168,7 @@ class InstallResult:
             "error": self.error,
             "needs_consent": self.needs_consent,
             "restart_required": self.restart_required,
+            "restart_reason": self.restart_reason,
             "needs_client_install": self.needs_client_install,
             "client_install": self.client_install,
             "scan": self.scan.to_dict() if self.scan else None,
@@ -449,7 +456,7 @@ def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
     return out
 
 
-def _install_python_deps(manifest: AppManifest) -> bool:
+def _install_python_deps(manifest: AppManifest) -> list[str]:
     """Make an app's declared ``pythonDependencies`` importable. Core ships lean; the app that
     needs a heavy lib brings it — into ``<home>/app-python``, never into the environment the
     gateway runs from (``apps/app_python.py`` owns where, how, and why).
@@ -459,14 +466,15 @@ def _install_python_deps(manifest: AppManifest) -> bool:
     bring any library core does not own; it may not re-pin one core does.
 
     A no-op — no pip, no network — when the gateway or an installed app already provides every
-    requirement. Returns True iff the gateway must RESTART for the change to take effect (a
-    package it had already loaded was replaced); a first install is importable in place.
-    Failures raise :class:`AppLifecycleError` whose message is the sentence the user reads and
-    whose ``log_excerpt`` is set only when pip's log is the useful next step.
+    requirement. Returns the packages it replaced that the gateway had already loaded
+    (``name old → new``), which only a RESTART loads; empty when there are none, as for a first
+    install, which is importable in place. Failures raise :class:`AppLifecycleError` whose
+    message is the sentence the user reads and whose ``log_excerpt`` is set only when pip's log
+    is the useful next step.
     """
     reqs = list(manifest.dependencies.pythonDependencies)
     if not reqs:
-        return False
+        return []
 
     # Before anything is installed: refuse a pin on a CORE dependency that core's installed
     # version does not satisfy — it could never take effect (EI-12 D3).
@@ -478,6 +486,14 @@ def _install_python_deps(manifest: AppManifest) -> bool:
         return app_python.ensure(manifest.name, reqs, label=manifest.displayName or manifest.name)
     except app_python.PackageInstallError as exc:
         raise AppLifecycleError(str(exc), log_excerpt=exc.log_excerpt) from exc
+
+
+def _replaced_packages(replaced: list[str]) -> str:
+    """The restart reason for packages an install or update replaced while they were loaded."""
+    return (
+        f"it replaced Python packages the gateway had already loaded ({', '.join(replaced)}), "
+        "and Python keeps running the version it loaded first"
+    )
 
 
 def _collect_app_packages() -> None:
@@ -562,125 +578,6 @@ def _provider_registry():
     return get_provider_registry()
 
 
-def _start_backend(manifest: AppManifest) -> None:
-    """Launch the app's backend subprocess (if declared) for the reverse-proxy."""
-    if not manifest.backend.entryPoint:
-        return
-    try:
-        from personalclaw.apps.backend_runtime import get_backend_supervisor
-
-        get_backend_supervisor().start(manifest)
-    except Exception:
-        logger.debug("app %s: backend start failed", manifest.name, exc_info=True)
-
-
-def _stop_backend(name: str) -> None:
-    try:
-        from personalclaw.apps.backend_runtime import get_backend_supervisor
-
-        get_backend_supervisor().stop(name)
-    except Exception:
-        logger.debug("app %s: backend stop failed", name, exc_info=True)
-
-
-def _stop_worker(name: str) -> None:
-    """Stop *name*'s background worker, then reap anything a prior gateway orphaned.
-
-    APE-3's V1 clause is "uninstall leaves no orphan worker", and the sweep alone cannot
-    deliver it: the sweep stops workers whose app went away, but a process re-parented to
-    init by an ungraceful gateway exit is in no supervisor's table, so nothing would ever
-    look for it once the app directory is gone. This is called on the same disable/uninstall
-    path as ``_stop_backend`` — while the entry path is still resolvable.
-
-    Best-effort by construction: an app being turned off must not fail because its worker
-    was already dead."""
-    try:
-        from personalclaw.apps.background import WORKER_ENTRY_POINT
-        from personalclaw.apps.worker_runtime import get_worker_supervisor
-
-        sup = get_worker_supervisor()
-        sup.stop(name)  # `worker=None` stops every worker this app has
-        # Then the orphans: `reap_orphans` needs the entry path, and it is only resolvable
-        # while the app directory still exists — which is exactly why this runs here rather
-        # than being left to the next sweep, by which time the directory may be gone.
-        sup.reap_orphans(name, (app_dir(name) / WORKER_ENTRY_POINT).resolve())
-    except Exception:
-        logger.debug("app %s: worker stop failed", name, exc_info=True)
-
-
-def _register_mcp(manifest: AppManifest) -> None:
-    """Wire the app's declared mcpServers into the live MCP config."""
-    if not manifest.mcpServers:
-        return
-    try:
-        from personalclaw.apps import mcp_bridge
-
-        mcp_bridge.register_app_mcp_servers(manifest)
-    except Exception:
-        logger.debug("app %s: MCP register failed", manifest.name, exc_info=True)
-
-
-def _deregister_mcp(name: str) -> None:
-    try:
-        from personalclaw.apps import mcp_bridge
-
-        mcp_bridge.deregister_app_mcp_servers(name)
-    except Exception:
-        logger.debug("app %s: MCP deregister failed", name, exc_info=True)
-
-
-def _register_proposal_kinds(manifest: AppManifest, name: str) -> None:
-    """Register the app's declared ``permissions.proposals`` kinds (INU-7).
-
-    At enable time, so a declared kind is REGISTERED before the app can post one — the
-    ``POST /api/inbox/proposals`` 403 reads the manifest, and delivery policy reads the
-    registry, and neither works if the pair was never minted.
-    """
-    if not manifest.permissions.proposals:
-        return
-    try:
-        from personalclaw.proposals_contract import register_app_proposal_kinds
-
-        register_app_proposal_kinds(name, manifest)
-    except Exception:
-        logger.debug("app %s: proposal kind register failed", name, exc_info=True)
-
-
-def _deregister_proposal_kinds(manifest: AppManifest, name: str) -> None:
-    """Drop the app's proposal kinds so a disabled app leaves no phantom kind."""
-    if not manifest.permissions.proposals:
-        return
-    try:
-        from personalclaw.proposals_contract import deregister_app_proposal_kinds
-
-        deregister_app_proposal_kinds(name, manifest)
-    except Exception:
-        logger.debug("app %s: proposal kind deregister failed", name, exc_info=True)
-
-
-def _seed_app_prompts(manifest: AppManifest, name: str) -> None:
-    """Seed the app's declared prompts/snippets into the native store (an app OWNS
-    its prompts). Best-effort: a seeding failure never breaks the lifecycle."""
-    if not manifest.prompts:
-        return
-    try:
-        from personalclaw.apps.prompt_seed import seed_app_prompts
-
-        seed_app_prompts(manifest, app_dir(name))
-    except Exception:
-        logger.debug("app %s: prompt seed failed", name, exc_info=True)
-
-
-def _remove_app_prompts(manifest: AppManifest, name: str) -> None:
-    """Remove the app's own seeded prompts + unregister its prompt use-cases."""
-    try:
-        from personalclaw.apps.prompt_seed import remove_app_prompts
-
-        remove_app_prompts(manifest, app_dir(name))
-    except Exception:
-        logger.debug("app %s: prompt remove failed", name, exc_info=True)
-
-
 def _origin_of(name: str) -> str:
     """The recorded install origin for an app (default ``local`` if absent)."""
     meta = _read_installed(name)
@@ -709,30 +606,6 @@ def trust_tier_of(name: str) -> str:
     if recorded:
         return recorded
     return _tier_for_origin(getattr(meta, "origin", "") or "local").value
-
-
-def _seed_app_skills(manifest: AppManifest, name: str, *, origin: str | None = None) -> None:
-    """Seed the app's declared SKILL.md skills THROUGH the supply-chain chokepoint
-    (an app OWNS its skills; the gate is never bypassed). Best-effort: a seeding
-    failure never breaks the lifecycle."""
-    if not manifest.skills:
-        return
-    try:
-        from personalclaw.apps.skill_seed import seed_app_skills
-
-        seed_app_skills(manifest, app_dir(name), origin=origin or _origin_of(name))
-    except Exception:
-        logger.debug("app %s: skill seed failed", name, exc_info=True)
-
-
-def _remove_app_skills(manifest: AppManifest, name: str) -> None:
-    """Remove the app's own seeded skills (provenance-keyed, never a user's skill)."""
-    try:
-        from personalclaw.apps.skill_seed import remove_app_skills
-
-        remove_app_skills(manifest, app_dir(name))
-    except Exception:
-        logger.debug("app %s: skill remove failed", name, exc_info=True)
 
 
 @dataclass
@@ -1058,7 +931,7 @@ def install(
         # app brings its heavy libs). Before the onInstall hook so a hook can import
         # them. The rollback collects whatever a half-finished pip run left behind.
         try:
-            restart_required = _install_python_deps(manifest)
+            replaced = _install_python_deps(manifest)
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
             _collect_app_packages()
@@ -1099,17 +972,12 @@ def install(
             tier=report.tier.value,
         )
         _write_installed(name, meta)
-        if manifest.all_providers():
-            try:
-                _provider_registry().register(manifest, enabled=True)
-            except Exception:
-                logger.exception("app %s: provider registration failed", name)
-        # Seed the app's own prompts/snippets into the native store (idempotent,
-        # non-clobbering) so an app OWNS the prompts it ships.
-        _seed_app_prompts(manifest, name)
-        # Seed the app's own skills through the supply-chain chokepoint (scan at the
-        # app's trust tier) — an app skill never bypasses the gate (§4.1).
-        _seed_app_skills(manifest, name, origin=meta.origin)
+        # Start what the app runs — its providers, prompts, skills (through the supply-chain
+        # chokepoint at the origin just recorded), MCP servers, proposal kinds, backend and
+        # worker — from these files: the same load an enable and an update use.
+        app_runtime.load(manifest)
+        if replaced:
+            app_runtime.note_restart(name, [_replaced_packages(replaced)])
         # Record this app against each shared dependency it declares (A3 ledger),
         # so a later uninstall can tell removable from shared.
         try:
@@ -1118,8 +986,6 @@ def install(
             dependency_ledger.record_install(manifest)
         except Exception:
             logger.debug("app %s: dependency-ledger record failed", name, exc_info=True)
-        _register_mcp(manifest)
-        _start_backend(manifest)
         # Past every rollback now — the parked copy has served its purpose and holding
         # it any longer would let a LATER force-uninstall miss it.
         if parked is not None:
@@ -1143,7 +1009,7 @@ def install(
             ok=True,
             name=name,
             scan=report,
-            restart_required=restart_required,
+            restart_reason=app_runtime.restart_reason(name),
             display_name=manifest.displayName or name,
             version=manifest.version,
         )
@@ -1409,10 +1275,14 @@ def update(
 
     State machine, rollback on ANY failure:
 
-      stage+scan new  →  preserve old data/  →  move live → .{name}.rollback
+      stage+scan new  →  preserve old data/  →  unload old  →  move live → .{name}.rollback
                       →  swap new in  →  run onUpdate
-        success:  drop .rollback, re-register, write installed.json
-        failure:  restore .rollback → live, re-register OLD, drop the failed new
+        success:  drop .rollback, write installed.json, load new
+        failure:  restore .rollback → live, load OLD, drop the failed new
+
+    Unload and load are ``apps/app_runtime``'s — the same pair every lifecycle step uses — so
+    the new version's code runs as soon as this returns, and whatever of the old version could
+    not be taken out of the process is the result's ``restart_reason``.
 
     The new code is scanned BEFORE the swap (an update is a fresh fetch of mutable
     content), so a now-dangerous update never lands — and the old app is untouched
@@ -1492,7 +1362,7 @@ def update(
         # failure left the new code live, installed.json un-bumped and the result `ok=False`.
         # Here a failure refuses the update and the installed version is exactly as it was.
         try:
-            restart_required = _install_python_deps(manifest)
+            replaced = _install_python_deps(manifest)
         except AppLifecycleError as exc:
             _collect_app_packages()
             _audit("update", "error", name, caller=caller, error=str(exc))
@@ -1516,20 +1386,15 @@ def update(
         if old_meta_file.is_file():
             shutil.copy2(old_meta_file, staged / INSTALLED_META_FILENAME)
 
-        # Deregister old providers before the swap so the registry never points at
-        # a half-swapped dir.
+        # Unload the old version before the swap: its backend releases its port, its worker
+        # and MCP servers stop, its providers go, and its code leaves the process — so nothing
+        # ever runs from a half-swapped dir, and what the load below imports is the new files.
+        # Its prompts and skills go too; the new version's re-seed (a prompt renamed or removed
+        # between versions must not linger, and skills re-pass the scan — §4.1).
         old_manifest = _manifest_of(name)
-        _stop_backend(name)  # old backend must release the port before the swap
-        _deregister_mcp(name)  # drop old app's MCP servers before the swap
-        if old_manifest is not None and old_manifest.all_providers():
-            _provider_registry().disable(name)
-        # Drop the OLD app's prompt files before the swap (the new tree re-seeds
-        # them) so a prompt renamed/removed between versions doesn't linger.
-        if old_manifest is not None:
-            _remove_app_prompts(old_manifest, name)
-            # Same for the old app's skills — removed pre-swap so the new version's
-            # skills re-seed cleanly through the scan (§4.1 "/update re-passes").
-            _remove_app_skills(old_manifest, name)
+        previous_meta = _read_installed(name)
+        was_enabled = previous_meta is None or previous_meta.enabled
+        app_runtime.unload(name, old_manifest)
 
         # ── the swap: live → .rollback, new → live ──
         if rollback.exists():
@@ -1545,17 +1410,16 @@ def update(
                 env_name="onUpdate",
             )
         except Exception as exc:  # noqa: BLE001 — ANY swap/hook failure → restore
-            # Restore: drop the failed new, move .rollback back to live.
+            # Restore: drop the failed new, move .rollback back to live, and load the old
+            # version again — as it was: a disabled app stays off.
             shutil.rmtree(live, ignore_errors=True)
             if rollback.exists():
                 shutil.move(str(rollback), str(live))
-            if old_manifest is not None and old_manifest.all_providers():
-                _provider_registry().register(old_manifest, enabled=True)
             if old_manifest is not None:
-                _register_mcp(old_manifest)  # restore old app's MCP servers
-                _start_backend(old_manifest)  # bring the old backend back up
-                _seed_app_prompts(old_manifest, name)  # restore old app's prompts
-                _seed_app_skills(old_manifest, name)  # restore old app's skills
+                if was_enabled:
+                    app_runtime.load(old_manifest)
+                else:
+                    app_runtime.record(old_manifest)
             _collect_app_packages()  # what only the refused new version needed
             _audit("update", "error", name, caller=caller, error=str(exc))
             return InstallResult(
@@ -1581,15 +1445,14 @@ def update(
             # value would let a version that dropped its signature keep reading `official`.
             meta.tier = report.tier.value
             _write_installed(name, meta)
-        if manifest.all_providers():
-            _provider_registry().register(manifest, enabled=bool(meta and meta.enabled))
-        # Re-seed the NEW app's prompts (only when it stays enabled; a disabled app
-        # carries no live prompts). Non-clobbering, so a user edit survives.
+        # The new version starts now — imported from the files just swapped in. A disabled app
+        # stays off: its providers are listed, and nothing of it runs until it is enabled.
         if meta is None or meta.enabled:
-            _seed_app_prompts(manifest, name)
-            _seed_app_skills(manifest, name)  # re-seed the new app's skills (re-scans)
-            _register_mcp(manifest)  # wire the new app's MCP servers
-            _start_backend(manifest)  # launch the new backend (skip if disabled)
+            app_runtime.load(manifest)
+        else:
+            app_runtime.record(manifest)
+        if replaced:
+            app_runtime.note_restart(name, [_replaced_packages(replaced)])
         # Same gap as install: an update that re-passed the gate only because the user
         # confirmed a warning has to say so on its success event.
         _audit("update", "ok", name, caller=caller, detail=_scan_detail(report, consent=granted))
@@ -1597,7 +1460,7 @@ def update(
             ok=True,
             name=name,
             scan=report,
-            restart_required=restart_required,
+            restart_reason=app_runtime.restart_reason(name),
             display_name=manifest.displayName or name,
             version=manifest.version,
         )
@@ -2094,14 +1957,8 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
     meta.enabled = True
     meta.updatedAt = _now_iso()
     _write_installed(name, meta)
-    if manifest is not None and manifest.all_providers():
-        _provider_registry().enable(name)
     if manifest is not None:
-        _seed_app_prompts(manifest, name)  # the app OWNS its prompts; seed on enable
-        _seed_app_skills(manifest, name, origin=meta.origin)  # + its skills (via the gate)
-        _register_mcp(manifest)
-        _register_proposal_kinds(manifest, name)  # INU-7: declared → registered kind pair
-        _start_backend(manifest)
+        app_runtime.load(manifest)
     _audit("enable", "ok", name, caller=caller)
     return True
 
@@ -2126,15 +1983,10 @@ def disable(name: str, *, caller: str = "app_manager") -> bool:
         _audit("disable", "refused_native", name, caller=caller)
         return False
     manifest = _manifest_of(name)
-    _stop_backend(name)
-    _stop_worker(name)
-    _deregister_mcp(name)
-    if manifest is not None and manifest.all_providers():
-        _provider_registry().disable(name)
+    # Everything the app runs stops, and its code leaves the process: a disabled app's model type
+    # no longer builds, and enabling it again imports its files afresh.
+    app_runtime.unload(name, manifest)
     if manifest is not None:
-        _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
-        _remove_app_skills(manifest, name)  # drop the app's own seeded skills
-        _deregister_proposal_kinds(manifest, name)  # INU-7: no phantom kind survives
         try:
             _run_hook(
                 manifest.setup.onDisable,
@@ -2488,13 +2340,11 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
         _audit("force_uninstall", "refused_native", name, caller=caller)
         return False
     manifest = _manifest_of(name)
-    _stop_backend(name)
-    _stop_worker(name)
-    _deregister_mcp(name)
+    # Everything the app runs stops and its code leaves the process — and its providers are
+    # forgotten, not just disabled, so none lingers as a disabled ghost in the providers list.
+    # A reinstall then imports its own files, never these.
+    app_runtime.unload(name, manifest, forget=True)
     if manifest is not None:
-        _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
-        _remove_app_skills(manifest, name)  # drop the app's own seeded skills
-        _deregister_proposal_kinds(manifest, name)  # INU-7: no phantom kind survives
         try:
             _run_hook(
                 manifest.setup.onUninstall,
@@ -2504,10 +2354,6 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
             )
         except AppLifecycleError as exc:
             logger.warning("app %s onUninstall hook failed (removing anyway): %s", name, exc)
-    if manifest is not None and manifest.all_providers():
-        # Forget it entirely (not just disable) so it doesn't linger as a disabled
-        # ghost in the providers list until the next restart.
-        _provider_registry().deregister(name)
     # Consult + update the dependency ledger BEFORE removing files (so 'removable'
     # reflects this app's departure). Shared/userInstalled deps are kept.
     if manifest is not None:

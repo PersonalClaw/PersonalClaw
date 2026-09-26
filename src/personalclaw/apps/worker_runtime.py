@@ -75,6 +75,7 @@ from personalclaw.apps.background import (
     BACKGROUND_TASKS_PERMISSION,
     WORKER_DEFAULT_NAME,
     WORKER_ENTRY_POINT,
+    WORKER_GRANT_ENV,
 )
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
@@ -176,10 +177,6 @@ def declared_workers(manifest: "AppManifest") -> list[WorkerSpec]:
     if perms is None or not getattr(perms, BACKGROUND_TASKS_PERMISSION, False):
         return []
     return [WorkerSpec(name=WORKER_DEFAULT_NAME, entry_point=WORKER_ENTRY_POINT)]
-
-
-# The host writes the permission name it verified. Fail-closed: no grant, no context.
-WORKER_GRANT_ENV = "PERSONALCLAW_APP_WORKER_GRANT"
 
 
 def _declared_workers(manifest: AppManifest) -> list["WorkerSpec"]:
@@ -330,6 +327,22 @@ class WorkerSupervisor:
         # Reentrant: the sweep takes the table lock and then calls stop/pause/resume,
         # each of which takes it again. A plain Lock would deadlock the watchdog thread.
         self._lock = threading.RLock()
+        self._held: set[str] = set()
+
+    # -- holds ------------------------------------------------------------
+    def hold(self, app: str) -> None:
+        """Start no worker of *app* until :meth:`unhold` — the sweep included.
+
+        The app runtime holds an app from its unload to its next load, so the sweep cannot
+        start a worker in between: from the old files still in place, or from the new ones
+        before the update's own hook has run.
+        """
+        with self._lock:
+            self._held.add(app)
+
+    def unhold(self, app: str) -> None:
+        with self._lock:
+            self._held.discard(app)
 
     # -- lookup -----------------------------------------------------------
     def get(self, app: str, worker: str) -> SupervisedWorker | None:
@@ -414,8 +427,14 @@ class WorkerSupervisor:
 
         One gate, so a revoked ``backgroundTasks`` stops a revival as surely as it stops a
         first start, and the pause policy binds a resume as surely as a boot — no second
-        copy of either check to drift out of step.
+        copy of either check to drift out of step. A held app (:meth:`hold`) starts nothing.
         """
+        with self._lock:
+            if rec.app in self._held:
+                logger.debug(
+                    "app %s worker %s: held while the app is unloaded", rec.app, rec.worker
+                )
+                return False
         if not _background_tasks_granted(rec.app):
             logger.info(
                 "app %s worker %s refused: permissions.backgroundTasks is not declared",
@@ -507,6 +526,10 @@ class WorkerSupervisor:
         extra: dict[str, str] = {
             "PERSONALCLAW_APP_NAME": rec.app,
             WORKER_ID_ENV: rec.worker,
+            # The handshake `WorkerContext.from_env` refuses to start without: the permission
+            # `_spawn` verified before calling this. It used to be missing, so every worker
+            # written against the SDK exited on its first line and the sweep gave it up.
+            WORKER_GRANT_ENV: BACKGROUND_TASKS_PERMISSION,
         }
         if storage_ok:
             extra["PERSONALCLAW_APP_DATA_DIR"] = str(app_data_dir(rec.app))
@@ -546,9 +569,14 @@ class WorkerSupervisor:
             return stopped
 
     def stop_all(self) -> None:
+        """Stop every worker, app by app. One whose stop raises must not leave the others
+        running."""
         with self._lock:
-            for app in {r.app for r in self._workers.values()}:
-                self.stop(app)
+            for app in sorted({r.app for r in self._workers.values()}):
+                try:
+                    self.stop(app)
+                except Exception:  # noqa: BLE001 — the next app's workers still have to stop
+                    logger.warning("app %s worker: stop failed", app, exc_info=True)
 
     def _terminate(self, rec: SupervisedWorker) -> bool:
         """SIGTERM, then SIGKILL after ``_TERM_TIMEOUT`` — the backend's precedent, reused.
@@ -733,6 +761,19 @@ def get_worker_supervisor() -> WorkerSupervisor:
     if _supervisor is None:
         _supervisor = WorkerSupervisor()
     return _supervisor
+
+
+def start_app_workers(manifest: AppManifest) -> list[SupervisedWorker]:
+    """Start *manifest*'s declared workers now, through the same gate the sweep uses.
+
+    The app runtime's load calls this, so a version just installed, enabled or updated runs at
+    once instead of at the next sweep, up to ``_WATCHDOG_INTERVAL`` seconds later. It honours
+    the sweep's own escape hatch: a harness that must not have app workers spawned underneath
+    it sets ``PERSONALCLAW_SKIP_APP_WORKERS`` and gets none from here either.
+    """
+    if os.environ.get(_SKIP_ENV):
+        return []
+    return get_worker_supervisor().start(manifest)
 
 
 _WATCHDOG = PeriodicSweep(

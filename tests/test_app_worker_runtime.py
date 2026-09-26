@@ -884,17 +884,21 @@ def test_disable_through_app_manager_reaches_the_worker_teardown(
     )
 
 
-def test_force_uninstall_carries_its_own_copy_of_the_worker_teardown() -> None:
-    """`force_uninstall` does NOT delegate to `disable`, so it needs the call in its own body.
+def test_every_teardown_goes_through_the_one_unload_and_it_stops_the_worker() -> None:
+    """`disable`, `force_uninstall` and `update` each take the app down through
+    `app_runtime.unload`, and the worker teardown lives there, beside the backend's.
 
-    Asserted by AST on the two functions rather than by grepping the module, because a mention
-    in `_stop_worker`'s own docstring — which names both paths — is not a call from either.
+    They used to carry their own copies of the teardown, and `update` had none: an update left
+    the previous version's worker running its old code. MEASURED before the first form of this
+    rail existed: deleting the worker teardown from both copies left the whole app-lifecycle +
+    worker + audit set green. Asserted by AST rather than by grepping the modules, because a
+    mention in a docstring is not a call.
     """
     import ast
     import inspect
     import textwrap
 
-    from personalclaw.apps import app_manager
+    from personalclaw.apps import app_manager, app_runtime
 
     def _calls(fn: object) -> set[str]:
         tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))  # type: ignore[arg-type]
@@ -904,15 +908,19 @@ def test_force_uninstall_carries_its_own_copy_of_the_worker_teardown() -> None:
             if isinstance(n, ast.Call)
         }
 
-    for fn in (app_manager.disable, app_manager.force_uninstall):
-        called = _calls(fn)
-        assert "_stop_worker" in called, (
-            f"app_manager.{fn.__name__} no longer tears down the app's background worker; "
-            "the app goes away and its unattended process does not"
+    for fn in (app_manager.disable, app_manager.force_uninstall, app_manager.update):
+        assert "unload" in _calls(fn), (
+            f"app_manager.{fn.__name__} no longer takes the app down through app_runtime.unload; "
+            "its background worker (and the rest of what it runs) would outlive it"
         )
-        # Vacuity floor: the walk sees this function's calls, and the sibling backend teardown
-        # is the precedent this one is meant to sit beside.
-        assert "_stop_backend" in called, called
+    called = _calls(app_runtime.unload)
+    assert "_stop_workers" in called, (
+        "app_runtime.unload no longer tears down the app's background worker; the app goes "
+        "away and its unattended process does not"
+    )
+    # Vacuity floor: the walk sees unload's calls, and the backend teardown is the precedent the
+    # worker's is meant to sit beside.
+    assert "_stop_backend" in called, called
 
 
 def test_boot_starts_the_worker_watchdog_beside_the_backend_one() -> None:

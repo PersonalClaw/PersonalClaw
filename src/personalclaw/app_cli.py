@@ -169,7 +169,7 @@ def run_app_setup_steps(only_app: str = "") -> list[str]:
             delete_credential=_scoped_delete_credential(app_name),
         )
         try:
-            with app_dir_on_path(base):
+            with app_dir_on_path(app_name, base):
                 fn(ctx)
             sel().log_api_access(
                 caller="cli:setup",
@@ -223,7 +223,7 @@ def run_app_doctor_probes() -> list[str]:
         print(f"\n{app_name}")
         try:
             fn = _import_app_callable(app_name, ref)
-            with app_dir_on_path(app_dir(app_name)):
+            with app_dir_on_path(app_name, app_dir(app_name)):
                 lines = _run_probe_with_timeout(lambda: fn(), _DOCTOR_TIMEOUT_SECS)
         except Exception as exc:  # noqa: BLE001
             print(f"  {_STATUS_GLYPH['fail']} probe error: {_reason(exc)}")

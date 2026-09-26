@@ -803,6 +803,10 @@ export interface AppSummary {
   // not only inside that app's own page (AMBIENT-SURFACES §5.1).
   uiComponents?: string
   uiCapabilities?: string[]
+  /** A digest of the UI bundles the installed app serves. Every bundle URL carries it
+   *  (`?v=`), so a page that already imported an app's module imports the NEW one after an
+   *  update instead of getting the old module back. `""` for an app with no UI. */
+  uiRevision?: string
   isProvider: boolean; providerType: string; hasConfig: boolean
   /** The provider's DECLARED capabilities — the same field a catalog entry carries, because
    *  `providerType` alone cannot tell a chat model from a speech one (faster-whisper is `model` +
@@ -815,6 +819,9 @@ export interface AppSummary {
   tags: string[]
   installedAt?: string; updatedAt?: string
   backendRunning: boolean; backendPort: number | null
+  /** Why the gateway must restart before only the installed version of this app runs (what an
+   *  update or reinstall could not take out of the process); `""` when nothing is left over. */
+  restartReason?: string
   // App category is the SINGLE `native` flag: true = a native app (always-on,
   // locked, can't be uninstalled — filesystem/tool providers + seeded natives);
   // false = a first-party or third-party app the user installs/uninstalls. Whether
@@ -824,6 +831,8 @@ export interface AppSummary {
   // on the /api/apps read path (no polling); `latestVersion` is that newer version.
   updateAvailable?: boolean
   latestVersion?: string
+  /** Where the gateway found that newer version — the Update dialog starts from it. */
+  latestSource?: string
   // APE-4: the app's declared quality bar. `{}`/absent = declared nothing → no badges.
   quality?: AppQualityWire
 }
@@ -834,6 +843,9 @@ export interface AppDetail {
   config: Record<string, unknown>
   configSchema: Record<string, unknown>
   backendRunning: boolean; backendPort: number | null
+  /** The same digest `AppSummary.uiRevision` carries: the app page versions its bundle URL. */
+  uiRevision?: string
+  restartReason?: string
 }
 // P29: a manifest cron's install-consent summary — name + cadence + WHAT it runs
 // (an agent + its prompt; a manifest cron has no action/command). Cadence is either
@@ -1039,9 +1051,12 @@ export interface AppInstallResult {
   // install it, so it hands back a copy-paste one-liner to run in a terminal.
   needs_client_install?: boolean
   client_install?: { shell?: string; postInstall?: string } | null
-  // The install pulled a new python dependency (or registered pieces that only
-  // load at boot) — the gateway must restart before the app fully takes effect.
+  // The new version is already running, except for what could not be taken out of the
+  // gateway's process: `restart_reason` says what that is (a Python package the gateway had
+  // loaded was replaced, a thread the previous version started is still running…), and
+  // `restart_required` is whether there is any. Only a restart finishes it.
   restart_required?: boolean
+  restart_reason?: string
   // APE-8 "Fix with AI": on a failed install with captured subprocess output,
   // `fix_prompt` is a ready-to-send chat seed that embeds `log_excerpt` wrapped in
   // the backend's untrusted-content fence. The FE hands it straight to launchChat;

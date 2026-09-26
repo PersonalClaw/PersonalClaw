@@ -129,7 +129,7 @@ def test_the_real_compatible_core_pin_is_allowed(monkeypatch: pytest.MonkeyPatch
         "run",
         lambda cmd, **kw: (_ for _ in ()).throw(AssertionError(f"unexpected pip: {cmd}")),
     )
-    assert app_manager._install_python_deps(_manifest([f"{_CORE_NAME}>=1.24"])) is False
+    assert app_manager._install_python_deps(_manifest([f"{_CORE_NAME}>=1.24"])) == []
     assert _dist_version(_CORE_NAME) == installed
 
 

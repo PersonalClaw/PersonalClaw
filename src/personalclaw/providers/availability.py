@@ -188,6 +188,19 @@ class AvailabilityBoard:
         """Measure these apps in the background (the gateway's boot call)."""
         self._schedule(names)
 
+    def forget(self, name: str) -> None:
+        """Drop every answer about one app, so its next read measures it again.
+
+        For an app whose code was just unloaded: the answers were its previous version's hook
+        talking, and the next version may say otherwise. Callable from any thread — it only
+        drops, and the next read (on the loop) schedules the measurement.
+        """
+        for key in self._keys_by_name.pop(name, set()):
+            self._answers.pop(key, None)
+            self._measured_at.pop(key, None)
+        self._probed_at.pop(name, None)
+        self._whole_app.pop(name, None)
+
     async def shutdown(self) -> None:
         """Stop measuring: cancel the drain and kill a running child."""
         task, self._task = self._task, None

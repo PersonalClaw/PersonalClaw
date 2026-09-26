@@ -148,9 +148,10 @@ restart. After a vault write, a channel that then reports `error` (a receiver st
 started with says so) is rebuilt from its settings, which replaces its receiver. `start_inbound()`
 is called at most once per instance, and a failed start is retried only when the channel changes
 (its settings are saved, it is turned off and on). `stop_inbound()` has to actually stop what
-`start_inbound()` started: the replacement starts the moment it returns. An update's new Python
-code still needs a restart to load (the app loader caches modules, see
-[app-platform](../architecture/app-platform.md)); the receiver is replaced either way.
+`start_inbound()` started: the replacement starts the moment it returns. An update runs the new
+version's code at once: the old version's receiver is stopped before its modules leave the
+process, and the replacement is built from the new files (see
+[app-platform](../architecture/app-platform.md#unload-and-load-appsapp_runtimepy)).
 
 Notes that bite:
 

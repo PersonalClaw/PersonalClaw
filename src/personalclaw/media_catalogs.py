@@ -24,6 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw import app_code
+
 
 @dataclass(frozen=True)
 class MediaModel:
@@ -54,8 +56,16 @@ def register_media_catalog(capability: str, provider_type: str, catalog: MediaCa
     """Contribute a vendor catalog for ``capability`` under ``provider_type``.
 
     Called by a provider app on load (e.g. openai-models registers OpenAI's stt/tts/
-    image catalogs under type ``openai``). Idempotent — last registration wins."""
-    _catalogs.setdefault(capability, {})[provider_type] = catalog
+    image catalogs under type ``openai``). Idempotent — last registration wins. Taken back
+    when the app that registered it is unloaded."""
+    by_type = _catalogs.setdefault(capability, {})
+    by_type[provider_type] = catalog
+
+    def _forget() -> None:
+        if by_type.get(provider_type) is catalog:
+            del by_type[provider_type]
+
+    app_code.keep(_forget)
 
 
 def get_media_catalog(capability: str, provider_type: str) -> MediaCatalog | None:
@@ -63,9 +73,3 @@ def get_media_catalog(capability: str, provider_type: str) -> MediaCatalog | Non
     when no app has contributed one (a bring-your-own endpoint → no curated models,
     caller requires a pinned model)."""
     return _catalogs.get(capability, {}).get(provider_type)
-
-
-def unregister_media_catalogs(provider_type: str) -> None:
-    """Drop every capability's catalog for ``provider_type`` (app disable/uninstall)."""
-    for by_type in _catalogs.values():
-        by_type.pop(provider_type, None)

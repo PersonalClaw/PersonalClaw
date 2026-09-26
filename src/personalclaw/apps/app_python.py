@@ -450,7 +450,7 @@ def unmet(requirements: list[str]) -> list[str]:
     return _closure(requirements, _Env.read())[1]
 
 
-def ensure(app: str, requirements: list[str], *, label: str) -> bool:
+def ensure(app: str, requirements: list[str], *, label: str) -> list[str]:
     """Make *app*'s *requirements* importable, installing whatever is missing.
 
     Nothing to do — and no pip, no network — when the gateway or an already-installed app
@@ -458,17 +458,17 @@ def ensure(app: str, requirements: list[str], *, label: str) -> bool:
     OTHER installed app's (*app*'s previous version, on an update, is replaced by these), so the
     result satisfies all of them. Raises :class:`PackageInstallError`.
 
-    Returns whether the gateway must RESTART for the change to take effect: true only when a
-    package that was already here changed version while this process has loaded modules from the
-    directory. A first install adds modules nothing has imported yet, and :func:`activate` makes
-    them importable in place.
+    Returns the packages that only a RESTART loads, each as ``name old → new``: the ones that
+    were already here and changed version while this process has loaded modules from the
+    directory (Python keeps the version it imported first). Empty otherwise — a first install
+    adds modules nothing has imported yet, and :func:`activate` makes them importable in place.
     """
     if not requirements or not unmet(requirements):
-        return False  # the common case, answered without the lock or the directory existing
+        return []  # the common case, answered without the lock or the directory existing
     with _locked():
         env = _Env.read()
         if not _closure(requirements, env)[1]:
-            return False  # another install provided them while this one waited for the lock
+            return []  # another install provided them while this one waited for the lock
         others = [d for d in installed_apps() if d.name != app]
         before = env.app_versions()
         _pip_install(Declared(name=app, label=label, requirements=list(requirements)), others, env)
@@ -482,8 +482,12 @@ def ensure(app: str, requirements: list[str], *, label: str) -> bool:
                 "PersonalClaw bug."
             )
         now = after.app_versions()
-        changed = any(now.get(key) != version for key, version in before.items())
-        return changed and _loaded_from(root())
+        replaced = sorted(
+            f"{key} {version} → {now[key]}" if key in now else f"{key} {version} (removed)"
+            for key, version in before.items()
+            if now.get(key) != version
+        )
+        return replaced if replaced and _loaded_from(root()) else []
 
 
 def broken_apps() -> list[tuple[Declared, list[str]]]:
