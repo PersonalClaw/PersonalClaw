@@ -219,6 +219,13 @@ What that one call gets you, and what you must not re-implement:
   the same key. `CRED_OWNER_ID` is the one key every channel used to share — setting up a
   second channel overwrote the first one's owner — and `owner_id_for` falls back to it only
   while your channel has none of its own.
+- **Refuse an owner id you cannot reach.** An owner notification (a heartbeat or cron result,
+  a hook result, a file, `send-message`) tries every connected channel in name order until one
+  delivers it (`channel_delivery.reach_owner`). Your channel is passed over when it has no
+  owner id, when `open_dm` returns `""` or raises, or when the send raises — so return `""`
+  from `open_dm` for an id that is not one of yours (email-channel does, for anything that is
+  not an address) rather than handing it to your API. When no connected channel gets it
+  through, it goes to the Inbox with a sentence naming why each one could not.
 
 Linking the channel to the dashboard: build a session link with the token-auth helpers
 (`generate_token`, `LINK_WINDOW_SECS`) over `dashboard_origin()`, and give the owner a way

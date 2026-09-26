@@ -8,7 +8,8 @@ connected a cron result could go through Discord addressed to a Telegram user id
 
 Now a channel stores its owner under ``owner_id_credential(<provider>)`` and core reads it with
 ``owner_id_for(<provider>)``, which falls back to the shared key while a channel app still writes
-that one. ``channel_delivery.owner_route`` picks the channel and its owner together.
+that one. ``channel_delivery.reach_owner`` addresses each channel it tries with that channel's
+own owner id (``test_owner_notification_falls_through.py`` covers its fall-through).
 """
 
 from __future__ import annotations
@@ -78,15 +79,18 @@ def test_the_environment_wins_as_it_does_for_every_named_credential(monkeypatch)
     assert AppConfig().load_credentials()[owner_id_credential("slack")] == "U0ENV"
 
 
-def test_the_route_addresses_the_owner_on_the_channel_it_picked(monkeypatch):
+@pytest.mark.asyncio
+async def test_the_owner_is_addressed_with_the_id_of_the_channel_that_reaches_them():
     """Discord connected with no owner, Telegram connected with one: the owner is reached on
     Telegram, with Telegram's id — not on Discord (first, sorted) with somebody else's."""
     discord, telegram = _delivery("D-DM"), _delivery("T-DM")
     channel_delivery.register(discord, provider="discord")
     channel_delivery.register(telegram, provider="telegram")
     save_credential(owner_id_credential("telegram"), "4242")
-    route = channel_delivery.owner_route()
-    assert route == (telegram, "4242")
+    reached = await channel_delivery.reach_owner(lambda d, dm: d.deliver_text(dm, "hi"))
+    assert (reached.provider, reached.delivery, reached.channel) == ("telegram", telegram, "T-DM")
+    telegram.open_dm.assert_awaited_once_with("4242")
+    discord.open_dm.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -114,9 +118,11 @@ async def test_a_gateway_notification_goes_to_the_owner_on_that_owners_channel(m
 
 @pytest.mark.asyncio
 async def test_no_channel_that_knows_its_owner_means_no_dm():
-    channel_delivery.register(_delivery("D-DM"), provider="discord")
-    assert channel_delivery.owner_route() is None
-    assert await channel_delivery.open_owner_dm() is None
+    discord = _delivery("D-DM")
+    channel_delivery.register(discord, provider="discord")
+    reached = await channel_delivery.reach_owner(lambda d, dm: d.deliver_text(dm, "hi"))
+    assert not reached.delivered and reached.reasons == ("discord has no owner id",)
+    discord.open_dm.assert_not_awaited()
 
 
 def test_the_sdk_publishes_the_core_resolver_itself():

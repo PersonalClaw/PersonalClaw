@@ -20,7 +20,7 @@ def _make_app(state) -> web.Application:
 
 def _mock_state(channel_delivery=None, owner_id=""):
     """A dashboard state whose owner is reached the way the real one reaches it: through the
-    channel registry, with the owner id that channel keeps for ITSELF (``owner_route``). So the
+    channel registry, with the owner id that channel keeps for ITSELF (``reach_owner``). So the
     delivery is registered as ``slack`` and the owner id stored under Slack's own key."""
     state = MagicMock()
     state.channel_delivery = channel_delivery
