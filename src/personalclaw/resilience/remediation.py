@@ -261,11 +261,11 @@ def measure_deficits() -> list[Deficit]:
     except Exception:
         logger.debug("deficit: history retention measure failed", exc_info=True)
 
-    # Security event log: entries a prune would drop (aged out OR over the size cap).
-    # Deliberately NOT weighted to trigger at 1: the size cap is a high-rate moving
-    # target (every dashboard poll appends), so a count-1 trigger would leave the score
-    # permanently below target with the job stuck in cooldown. ~200 removable entries —
-    # minutes of traffic on an active install, 0.4% of the 50k cap — crosses the gate.
+    # Security event log: entries past its retention — aged out of the live file, or in a
+    # rotated file retention has expired. Weight 11 → a count of 1 crosses the default gate, the
+    # same as the history retention above: retention is a promise, and this is no longer the
+    # high-rate moving target an entry cap made it (the live file's SIZE is bounded by rotation,
+    # which moves rows into the archive instead of counting them as prunable).
     try:
         from personalclaw.sel import sel
 
@@ -273,7 +273,7 @@ def measure_deficits() -> list[Deficit]:
             Deficit(
                 key="sel_prunable_entries",
                 count=int(sel().count_prunable()),
-                weight=0.05,
+                weight=11.0,
                 max_penalty=15.0,
                 job_id="sel.prune",
             )
@@ -752,7 +752,7 @@ def _register_builtin_jobs() -> None:
     register_job(
         RemediationJob(
             id="sel.prune",
-            title="Prune the security event log (retention + size cap)",
+            title="Apply the security event log's retention",
             run=_job_prune_sel,
             lane="deterministic",
             cooldown_hours=12.0,

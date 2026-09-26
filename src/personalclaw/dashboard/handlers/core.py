@@ -399,8 +399,9 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
 async def api_sel_rotate(request: web.Request) -> web.Response:
     """POST /api/sel/rotate — archive existing SEL log and start a fresh chain.
 
-    Recovers from a broken HMAC chain. The previous log file is renamed with
-    a UTC timestamp suffix unless ``{"archive": false}`` is sent.
+    Recovers from a broken HMAC chain. The previous log file moves into ``sel_archive/``
+    under a UTC timestamp (where retention and snapshots cover it) unless
+    ``{"archive": false}`` is sent.
     """
     body = await json_object_body(request)
     archive = body.get("archive") is not False

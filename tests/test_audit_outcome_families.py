@@ -245,6 +245,8 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     "a LIFECYCLE step rather than a verdict: the record says what happened next, not whether "
     "anything was allowed, refused or broke — so every pill would be wrong about it": (
         "accepted",
+        "archived",
+        "cancelled",
         "continue",
         "created",
         "delivered",
@@ -258,6 +260,7 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
         "pending_outcome",
         "queued",
         "ran",
+        "removed",
         "reused",
         "scanned",
         "spawned",
@@ -266,6 +269,11 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
         "surfaced",
         "tie",
     ),
+    # `cancelled` is an approval, or the tool call waiting on it, whose OWNER was stopped
+    # before anyone answered: nobody allowed it, nobody refused it and nothing broke, so a
+    # Denied pill returning it would report a refusal that never happened. `archived` and
+    # `removed` are the audit trail's own rotation and retention steps (`sel.rotated`,
+    # `sel.archive_expired`).
     "the work did not need doing, so nothing ran: a no-op is not a success, not a refusal of "
     "a caller, and not a fault": (
         "expired",

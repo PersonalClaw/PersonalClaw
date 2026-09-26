@@ -732,7 +732,7 @@ def test_the_whole_cycle_is_broken(home):
     """One assertion per link, on one sequence, because #409's point is that the links are mutually
     causal: each successful accept used to block its slug, hide its result, and orphan its row.
     """
-    from personalclaw.inbox import InboxStore
+    from personalclaw.inbox import InboxStore, set_item_status
 
     # A first proposal installs the skill.
     first = _propose("loop-worker", n=1)
@@ -793,7 +793,7 @@ def test_the_whole_cycle_is_broken(home):
     store = InboxStore()  # headless: the file IS the truth, and it just gained a row
     store.load()
     row = next(i for i in store.items.values() if i.refs.get("skill_proposal") == later.id)
-    store.update(row.id, status="dismissed")
+    set_item_status(None, store, [row], "dismissed")
     from personalclaw.dashboard.handlers_inbox import _dismiss
 
     class _S:

@@ -1,11 +1,15 @@
-import { useCallback, useMemo, useState } from 'react'
-import { AlertTriangle, Check, CheckCircle2, X } from 'lucide-react'
-import { api, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from '../../lib/api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Ban, Check, CheckCircle2, X } from 'lucide-react'
+import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { Button } from '../../ui/Button'
+import { PageTitle } from '../../ui/PageTitle'
 import { TextLink } from '../../ui/TextLink'
-import { LANES, toLanes, type Lane } from '../../lib/attentionLanes'
+import { TopBar } from '../../ui/TopBar'
+import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { LANES, toLanes, type Lane, type LaneCard } from '../../lib/attentionLanes'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 // ── Mission Control — the locked four-lane attention view (AMBIENT-SURFACES AS-8) ──────────
@@ -167,7 +171,7 @@ export interface CardQuestion {
   choices: string[]
 }
 
-export function questionOf(item: InboxItem | null | undefined): CardQuestion | null {
+export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | undefined): CardQuestion | null {
   const refs = item?.refs
   if (!refs || typeof refs !== 'object') return null
   const payload = refs.needs_input
@@ -186,12 +190,14 @@ export function questionOf(item: InboxItem | null | undefined): CardQuestion | n
 }
 
 // ── Per-card outcome ────────────────────────────────────────────────────────────────────────
-// Card state is keyed by card id and lives HERE rather than inside the card, because the card
-// is remounted by every revalidation: local state in the leaf would forget that the last
-// approve failed the moment the poll came back with the item still pending.
+// Card state is keyed by the card's `key` (unique across the three sources, where an `id` is not)
+// and lives HERE rather than inside the card, because the card is remounted by every revalidation:
+// local state in the leaf would forget that the last approve failed the moment the next read came
+// back with the item still pending.
 type Outcome =
   | { state: 'busy' }
   | { state: 'done'; text: string }
+  | { state: 'ended'; text: string }
   | { state: 'failed'; text: string }
 
 /** The gateway's own sentence, plus what the user can do about it. The server text comes first
@@ -202,9 +208,41 @@ function failureText(verb: string, err: unknown): string {
   return `Could not ${verb}: ${detail}. Nothing was recorded — it still needs you, so try again.`
 }
 
+/** When an approve/reject is refused because there is nothing left to decide, the sentence for it
+ *  — or null for a real failure. "It still needs you, so try again" is false for both of these:
+ *  the work that asked has ended (409, the gateway names which), or the approval was already
+ *  answered or ended somewhere else (404). Retrying either would change nothing. */
+function endedText(err: unknown): string | null {
+  if (hasApiCode(err, 'approval_owner_ended') && err instanceof Error) return err.message
+  if (err instanceof ApiError && err.status === 404) {
+    return 'It is no longer waiting: it was answered or ended somewhere else.'
+  }
+  return null
+}
+
+/** The frames that change what this view shows. Push, not a poll: the registry broadcasts
+ *  `approval`/`approval_resolved`, the Inbox `inbox*`, and a session's run state `sessions`/
+ *  `chat_status` — so a card appears, resolves or moves lane while the page is open, without a
+ *  timer re-reading three endpoints on an idle tab. */
+function refreshesAttention(type: string): boolean {
+  return type === 'approval' || type === 'approval_resolved' || type.startsWith('inbox')
+    || type === 'sessions' || type === 'chat_status'
+}
+
 export function MissionControl() {
   const { data, error, loading, refresh } = useQuery<Attention>(ATTENTION_KEY, readAttention)
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
+
+  // `sessions`/`chat_status` fire on every turn-lifecycle step while something streams, so a burst
+  // collapses into one re-read shortly after it settles; the same debounce Home applies to them.
+  const debounce = useRef<number | undefined>(undefined)
+  const onMessage = useCallback((m: WsMessage) => {
+    if (!refreshesAttention(m.type)) return
+    if (debounce.current) clearTimeout(debounce.current)
+    debounce.current = window.setTimeout(refresh, 300)
+  }, [refresh])
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
+  useChatSocket(onMessage, refresh)
 
   const items = data?.items ?? []
   const approvals = data?.approvals ?? []
@@ -213,93 +251,97 @@ export function MissionControl() {
   // The sibling owns the split. This view never classifies an item itself — see the header note.
   const lanes = useMemo(() => toLanes(items, approvals, activity, loops), [items, approvals, activity, loops])
 
-  const mark = useCallback((id: string, o: Outcome) => {
-    setOutcomes((prev) => ({ ...prev, [id]: o }))
+  const mark = useCallback((key: string, o: Outcome) => {
+    setOutcomes((prev) => ({ ...prev, [key]: o }))
   }, [])
 
+  // The approval is answered through `POST /api/approvals/{id}/{action}` — the ONE decision path
+  // (`DashboardState.resolve_approval` → `decide_session_approval` for a chat's), so an Approve
+  // here writes the same transcript record and audit row as the chat's own card.
   const resolve = useCallback(
-    (cardId: string, approvalId: string, action: 'approve' | 'reject') => {
-      mark(cardId, { state: 'busy' })
+    (cardKey: string, approvalId: string, action: 'approve' | 'reject') => {
+      mark(cardKey, { state: 'busy' })
       api
         .resolveApproval(approvalId, action)
         .then(() => {
-          mark(cardId, { state: 'done', text: action === 'approve' ? 'Approved.' : 'Rejected.' })
+          mark(cardKey, { state: 'done', text: action === 'approve' ? 'Approved.' : 'Rejected.' })
           refresh()
         })
-        .catch((err) => mark(cardId, { state: 'failed', text: failureText(`${action} this`, err) }))
+        .catch((err) => {
+          const ended = endedText(err)
+          if (ended) {
+            mark(cardKey, { state: 'ended', text: ended })
+            refresh()
+            return
+          }
+          mark(cardKey, { state: 'failed', text: failureText(`${action} this`, err) })
+        })
     },
     [mark, refresh],
   )
 
   const answer = useCallback(
-    (cardId: string, q: CardQuestion, choice: string) => {
-      mark(cardId, { state: 'busy' })
+    (cardKey: string, q: CardQuestion, choice: string) => {
+      mark(cardKey, { state: 'busy' })
       api
         .resumeWorkflowRun(q.runId, { answer: choice, resume_token: q.resumeToken || undefined })
         .then(() => {
-          mark(cardId, { state: 'done', text: `Answered “${choice}” — the run is moving again.` })
+          mark(cardKey, { state: 'done', text: `Answered “${choice}” — the run is moving again.` })
           refresh()
         })
-        .catch((err) => mark(cardId, { state: 'failed', text: failureText('send that answer', err) }))
+        .catch((err) => mark(cardKey, { state: 'failed', text: failureText('send that answer', err) }))
     },
     [mark, refresh],
   )
 
   return (
-    <section aria-labelledby="mission-control-title" className="flex min-w-0 flex-col gap-l">
-      <div className="flex min-w-0 flex-col gap-xs">
-        <h2 id="mission-control-title" data-type="title-m" className="text-on-surface">
-          Mission Control
-        </h2>
+    // The page chrome every destination uses: `TopBar keepCornerPadding` is what keeps the title
+    // clear of the floating shell corner (the collapse-sidebar button sat on top of it, so the
+    // heading read "Mi▢sion Control"), and the body is the centered content column.
+    <WorkbenchLayout topBar={<TopBar keepCornerPadding left={<PageTitle>Mission Control</PageTitle>} />}>
+      <section
+        aria-label="Mission Control"
+        className="mx-auto flex min-w-0 flex-col gap-l px-l py-l"
+        style={{ maxWidth: 'var(--content-width)' }}
+      >
         <p data-type="body-s" className="text-on-surface-low">
           Everything wanting your attention, in the order it wants it. Approve, reject, and answer
           from here — you do not have to open the run.
         </p>
-      </div>
 
-      {/* A read failure is stated, never rendered as four empty lanes. `role="alert"` because it
-          arrives after first paint and a user who has already looked away must be told. */}
-      {error ? (
-        <div
-          role="alert"
-          className="flex min-w-0 items-start gap-s rounded-lg border border-error/40 bg-error/10 p-s text-on-surface"
-        >
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
-          <div className="flex min-w-0 flex-col gap-xs">
-            <p data-type="body-s">
-              {failureText('load what needs your attention', error)}
-            </p>
-            <Button size="xs" variant="ghost-accent" onClick={refresh}>
-              Try again
-            </Button>
+        {/* A read failure is stated, never rendered as four empty lanes. `role="alert"` because it
+            arrives after first paint and a user who has already looked away must be told. */}
+        {error ? (
+          <div
+            role="alert"
+            className="flex min-w-0 items-start gap-s rounded-lg border border-error/40 bg-error/10 p-s text-on-surface"
+          >
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+            <div className="flex min-w-0 flex-col gap-xs">
+              <p data-type="body-s">
+                {failureText('load what needs your attention', error)}
+              </p>
+              <Button size="xs" variant="ghost-accent" onClick={refresh}>
+                Try again
+              </Button>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {LANES.map((lane) => (
-        <AttentionLaneSection
-          key={lane}
-          lane={lane}
-          cards={lanes[lane] ?? []}
-          loading={loading}
-          outcomes={outcomes}
-          onResolve={resolve}
-          onAnswer={answer}
-        />
-      ))}
-    </section>
+        {LANES.map((lane) => (
+          <AttentionLaneSection
+            key={lane}
+            lane={lane}
+            cards={lanes[lane] ?? []}
+            loading={loading}
+            outcomes={outcomes}
+            onResolve={resolve}
+            onAnswer={answer}
+          />
+        ))}
+      </section>
+    </WorkbenchLayout>
   )
-}
-
-// The `LaneCard` fields this view reads. Kept as a structural parameter rather than an import of
-// the sibling's type so the two files share exactly one contract (`toLanes`) and this one names
-// what it consumes: an id, something to call the card, and the origin object each verb needs.
-type ConsumedCard = {
-  id: string
-  title?: string
-  detail?: string
-  approval?: PendingApproval | null
-  item?: InboxItem | null
 }
 
 function AttentionLaneSection({
@@ -311,22 +353,20 @@ function AttentionLaneSection({
   onAnswer,
 }: {
   lane: Lane
-  cards: ConsumedCard[]
+  cards: LaneCard[]
   loading: boolean
   outcomes: Record<string, Outcome>
-  onResolve: (cardId: string, approvalId: string, action: 'approve' | 'reject') => void
-  onAnswer: (cardId: string, q: CardQuestion, choice: string) => void
+  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
+  onAnswer: (cardKey: string, q: CardQuestion, choice: string) => void
 }) {
   const headingId = `mission-control-lane-${lane}`
   return (
     <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-s">
       <div className="flex items-center gap-s">
-        {/* h2, matching this directory's section idiom (`PinnedTiles`' "Pinned" and DashboardPage's
-            `Section`), which makes the live tree `H1 › H2 › H2 …` — flat but skip-free, so
-            heading-order holds. h3 is the tag strict nesting under the view title would call for,
-            and `pages/discover/discoverHeadingLevel.test.ts` holds a CLOSED inventory of the files
-            allowed to use one (all panel-level); joining it requires re-doing the classification
-            comment there, which is outside this change. Promote both rungs together or neither. */}
+        {/* h2 under the page's h1, matching this directory's section idiom (`PinnedTiles`'
+            "Pinned" and DashboardPage's `Section`), so the live tree is `H1 › H2 …` — skip-free.
+            `pages/discover/discoverHeadingLevel.test.ts` holds a CLOSED inventory of the files
+            allowed an h3 (all panel-level); these are sections, not panels. */}
         <h2 id={headingId} data-type="label-l" className="text-on-surface-var">
           {LANE_LABEL[lane]}
         </h2>
@@ -344,10 +384,10 @@ function AttentionLaneSection({
       ) : (
         <ul className="flex min-w-0 flex-col gap-s">
           {cards.map((c) => (
-            <li key={c.id} className="min-w-0">
+            <li key={c.key} className="min-w-0">
               <AttentionCard
                 card={c}
-                outcome={outcomes[c.id]}
+                outcome={outcomes[c.key]}
                 onResolve={onResolve}
                 onAnswer={onAnswer}
               />
@@ -365,13 +405,16 @@ function AttentionCard({
   onResolve,
   onAnswer,
 }: {
-  card: ConsumedCard
+  card: LaneCard
   outcome: Outcome | undefined
-  onResolve: (cardId: string, approvalId: string, action: 'approve' | 'reject') => void
-  onAnswer: (cardId: string, q: CardQuestion, choice: string) => void
+  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
+  onAnswer: (cardKey: string, q: CardQuestion, choice: string) => void
 }) {
-  const approval = card.approval ?? null
-  const question = questionOf(card.item)
+  // Each verb's input comes off the card's own source object, reachable only once the union is
+  // narrowed — so a card missing it is a compile error rather than a card with no buttons.
+  const approval = card.origin === 'approval' ? card.approval : null
+  const item = card.origin === 'inbox' ? card.item : null
+  const question = questionOf(item)
   // ONE subject string feeds every control's accessible name on this card, capped by the shared
   // `rowSubject` rule. "Approve" alone is ambiguous the moment two cards are on screen — and this
   // view guarantees four lanes of them — so each name carries what it acts on.
@@ -379,10 +422,11 @@ function AttentionCard({
     card.title,
     approval?.tool,
     approval?.session,
-    card.item?.channel_name,
-    card.detail,
+    item?.channel_name,
+    card.subtitle,
   ])
-  const resolved = outcome?.state === 'done'
+  // Answered, or nothing left to answer: either way the verbs go.
+  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
 
   return (
@@ -390,12 +434,12 @@ function AttentionCard({
       <p data-type="label-m" className="min-w-0 truncate text-on-surface-var">
         {card.title || subject || card.id}
       </p>
-      {card.detail ? (
+      {card.subtitle ? (
         <p data-type="body-s" className="min-w-0 text-on-surface-low">
-          {card.detail}
+          {card.subtitle}
         </p>
       ) : null}
-      {question?.prompt ? (
+      {question?.prompt && question.prompt !== card.title ? (
         <p data-type="body-s" className="min-w-0 text-on-surface">
           {question.prompt}
         </p>
@@ -414,6 +458,16 @@ function AttentionCard({
           {outcome.text}
         </p>
       ) : null}
+      {outcome?.state === 'ended' ? (
+        <p
+          role="status"
+          data-type="body-s"
+          className="flex min-w-0 items-start gap-xs text-on-surface-var"
+        >
+          <Ban size={14} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
+          {outcome.text}
+        </p>
+      ) : null}
       {outcome?.state === 'failed' ? (
         <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
           <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
@@ -421,10 +475,10 @@ function AttentionCard({
         </p>
       ) : null}
 
-      {/* Resolved ⇒ the verbs are GONE, not disabled. A disabled approve on a resolved card is
+      {/* Settled ⇒ the verbs are GONE, not disabled. A disabled approve on a resolved card is
           still an invitation to try, and the second attempt on an already-resolved id is a real
           action. A FAILED card keeps its verbs: retrying is the whole point of being told. */}
-      {resolved ? null : (
+      {settled ? null : (
         <div className="flex min-w-0 flex-wrap items-center gap-xs">
           {approval ? (
             <>
@@ -434,7 +488,7 @@ function AttentionCard({
                 loading={busy}
                 disabled={busy}
                 ariaLabel={`Approve ${subject}`}
-                onClick={() => onResolve(card.id, approval.id, 'approve')}
+                onClick={() => onResolve(card.key, approval.id, 'approve')}
               >
                 <Check size={13} aria-hidden="true" /> Approve
               </Button>
@@ -443,7 +497,7 @@ function AttentionCard({
                 variant="secondary"
                 disabled={busy} disabledReason={BUSY_REASON}
                 ariaLabel={`Reject ${subject}`}
-                onClick={() => onResolve(card.id, approval.id, 'reject')}
+                onClick={() => onResolve(card.key, approval.id, 'reject')}
               >
                 <X size={13} aria-hidden="true" /> Reject
               </Button>
@@ -452,7 +506,7 @@ function AttentionCard({
 
           {question ? (
             <QuestionActions
-              card={card}
+              cardKey={card.key}
               question={question}
               subject={subject}
               busy={busy}
@@ -473,17 +527,17 @@ function AttentionCard({
  *  cannot honestly submit: `resumeWorkflowRun`'s `answer` would carry prose the run's gate never
  *  offered. So the card says where to answer it instead of pretending it can. */
 function QuestionActions({
-  card,
+  cardKey,
   question,
   subject,
   busy,
   onAnswer,
 }: {
-  card: ConsumedCard
+  cardKey: string
   question: CardQuestion
   subject: string
   busy: boolean
-  onAnswer: (cardId: string, q: CardQuestion, choice: string) => void
+  onAnswer: (cardKey: string, q: CardQuestion, choice: string) => void
 }) {
   if (question.choices.length === 0) {
     // The one card type that REQUIRES leaving this surface used to name the destination and
@@ -508,7 +562,7 @@ function QuestionActions({
           variant="tonal"
           disabled={busy} disabledReason={BUSY_REASON}
           ariaLabel={`Answer ${subject} — ${choice}`}
-          onClick={() => onAnswer(card.id, question, choice)}
+          onClick={() => onAnswer(cardKey, question, choice)}
         >
           {choice}
         </Button>

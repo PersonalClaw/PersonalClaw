@@ -44,7 +44,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
-from personalclaw.inbox import ItemStatus, live_state, live_store, redact_item
+from personalclaw.inbox import ItemStatus, live_state, live_store, redact_item, set_item_status
 
 logger = logging.getLogger(__name__)
 
@@ -168,13 +168,14 @@ class InboxOpActionProvider(ActionProvider):
                     success=True,
                     stdout=json.dumps({"op": op, "item_id": item_id, "changed": False}),
                 )
-            store.update(item_id, status=target)
+            # The one transition: it persists, announces the row and, when the op closes it,
+            # reads its notification in the bell.
+            set_item_status(state, store, [item], target)
             if op == "dismiss":
                 inbox_state = live_state(state)
                 if inbox_state is not None:
                     inbox_state.dismissed.add(item_id)
                     inbox_state.save()
-            _broadcast(state, store.items.get(item_id) or item)
             handle = _encode({"op": op, "item_id": item_id, "prior": prior})
             return ActionResult(
                 success=True,
@@ -268,13 +269,12 @@ class InboxOpActionProvider(ActionProvider):
                         f"{op} would overwrite a newer change"
                     ),
                 )
-            store.update(item_id, status=prior or ItemStatus.PENDING.value)
+            set_item_status(state, store, [item], prior or ItemStatus.PENDING.value)
             if op == "dismiss":
                 inbox_state = live_state(state)
                 if inbox_state is not None:
                     inbox_state.dismissed.discard(item_id)
                     inbox_state.save()
-            _broadcast(state, store.items.get(item_id) or item)
             return ActionResult(success=True, stdout=json.dumps({"undone": op, "item_id": item_id}))
 
         if op == "reply_draft":

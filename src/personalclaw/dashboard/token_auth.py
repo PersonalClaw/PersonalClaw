@@ -987,7 +987,13 @@ def token_auth_middleware(
                 # presents one the token proves. See presented_session_nonce.
                 if not request.get("session_nonce"):
                     request["session_nonce"] = presented_session_nonce(request, port)
-                _log_auth(request, request["user"], "ok", "local-network bypass")
+                _log_auth(
+                    request,
+                    request["user"],
+                    "ok",
+                    "local-network bypass",
+                    identity=str(request["session_nonce"] or ""),
+                )
                 return await handler(request)  # type: ignore[operator]
 
         path = request.path
@@ -1026,15 +1032,11 @@ def token_auth_middleware(
                     _log_auth(request, "internal", "denied", "no internal secret configured")
                     return _deny(request, "Forbidden")
                 if hmac.compare_digest(internal_secret, _provided_secret):
-                    _sel = _sel_fn()
-                    _sel.log_api_access(
-                        caller=request.remote or "",
-                        operation="internal_auth",
-                        outcome="granted",
-                        source="token_auth",
-                        resources=path,
+                    # ONE row family per grant (it was two rows per request), tallied like
+                    # every success: an MCP subprocess polling a route is one actor.
+                    _log_auth(
+                        request, "internal", "granted", "internal secret", operation="internal_auth"
                     )
-                    _log_auth(request, "internal", "granted", "")
                     return await handler(request)  # type: ignore[operator]
                 # Wrong secret → deny (don't fall through)
                 _sel = _sel_fn()
@@ -1066,16 +1068,13 @@ def token_auth_middleware(
                 )
                 _log_auth(request, "internal", "denied", f"cookie auth failed: {_reason}")
                 return _deny(request, "Forbidden")
-            _sel = _sel_fn()
-            _sel.log_api_access(
-                caller=request.remote or "",
+            _log_auth(
+                request,
+                _uid or "internal",
+                "granted",
+                "cookie auth (no secret header)",
                 operation="internal_auth",
-                outcome="granted",
-                source="token_auth",
-                resources=path,
-                metadata={"reason": "cookie auth (no secret header)"},
             )
-            _log_auth(request, "internal", "granted", f"cookie auth for {_uid}")
             if _app:
                 request["app"] = _app
             return await handler(request)  # type: ignore[operator]
@@ -1123,17 +1122,12 @@ def token_auth_middleware(
                         f"mixed non-loopback cookie auth failed: {_reason}",
                     )
                     return _deny(request, "Forbidden")
-                _sel = _sel_fn()
-                _sel.log_api_access(
-                    caller=request.remote or "",
-                    operation="internal_auth",
-                    outcome="granted",
-                    source="token_auth",
-                    resources=path,
-                    metadata={"reason": "mixed non-loopback cookie auth"},
-                )
                 _log_auth(
-                    request, "internal", "granted", f"mixed non-loopback cookie auth for {_uid}"
+                    request,
+                    _uid or "internal",
+                    "granted",
+                    "mixed non-loopback cookie auth",
+                    operation="internal_auth",
                 )
                 if _app:
                     request["app"] = _app
@@ -1243,7 +1237,7 @@ def token_auth_middleware(
             # Clear the non-port-specific cookie so only pc_token_{port} is used.
             resp.set_cookie("pc_token", "", max_age=0, path="/")
 
-        _log_auth(request, user_id, "ok", "")
+        _log_auth(request, user_id, "ok", "", identity=request["session_nonce"])
         return resp  # type: ignore[return-value]
 
     middleware._is_token_auth = True  # type: ignore[attr-defined]  # sentinel for server.py security gate  # noqa: E501
@@ -1430,17 +1424,146 @@ def _deny(request: web.Request, reason: str) -> web.Response:
     )
 
 
-def _log_auth(request: web.Request, user_id: str, outcome: str, reason: str) -> None:
-    """Log an auth decision to the SEL.
+#: Successful authentications of ONE identity fold into one SEL row per this many seconds.
+_SUCCESS_WINDOW_SECS = 15 * 60
+#: How often closed windows are swept into their summary rows (and forgotten).
+_SUCCESS_SWEEP_SECS = 60.0
+#: A summary names at most this many distinct paths; the count covers every request.
+_SUCCESS_MAX_PATHS = 10
+
+
+class _SuccessTally:
+    """Successful authentications, recorded as one SEL row per identity per window.
+
+    ARCC's audit-logging guidance for this surface (BSC4 "Log Every Security Event", and the
+    SEL requirement it points to: capture the who, what and when of each TRANSACTION so actions
+    trace to an actor and an incident can be reconstructed) is about security EVENTS. A
+    cookie-authenticated request is the same session presenting the same credential again, not
+    a new event — and a row for each one was 94% of the log: one idle Home tab made 428 requests
+    in 3 minutes and the log grew ~5 MB an hour (measured, day 8).
+
+    So a failure is written as it happens (`_log_auth`), and so is the FIRST success of an
+    identity in a window — the who/when evidence is immediate. The rest of that window's
+    successes are COUNTED, and when the window closes one summary row records how many there
+    were and which paths they reached. Every success is accounted for; the log holds a row per
+    session per quarter hour instead of one per poll. An identity is a session nonce when the
+    request carries one (two sessions of one user stay two actors), else the caller.
+    """
+
+    def __init__(self, window_secs: float = _SUCCESS_WINDOW_SECS) -> None:
+        self._window = window_secs
+        self._open: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self._last_sweep = 0.0
+
+    def record(self, *, caller: str, operation: str, reason: str, identity: str, path: str) -> bool:
+        """Account for one success. True when THIS request is the one to write as a row."""
+        key = (caller, operation, identity or reason)
+        now = time.time()
+        with self._lock:
+            closed = self._take_closed(now)
+            entry = self._open.get(key)
+            first = entry is None or now - entry["since"] >= self._window
+            if entry is not None and not first:
+                entry["count"] += 1
+                if len(entry["paths"]) < _SUCCESS_MAX_PATHS:
+                    entry["paths"].add(path)
+            else:
+                if entry is not None:
+                    closed.append((key, entry))
+                self._open[key] = {"since": now, "count": 0, "paths": set(), "reason": reason}
+        for closed_key, closed_entry in closed:
+            self._summarize(closed_key, closed_entry, now)
+        return first
+
+    def flush(self) -> None:
+        """Summarize every open window now (shutdown, and tests)."""
+        with self._lock:
+            pending = list(self._open.items())
+            self._open.clear()
+        now = time.time()
+        for key, entry in pending:
+            self._summarize(key, entry, now)
+
+    def _take_closed(self, now: float) -> list[tuple[tuple[str, str, str], dict[str, Any]]]:
+        """Pop the windows that have closed, at most once per sweep interval. Caller holds lock."""
+        if now - self._last_sweep < _SUCCESS_SWEEP_SECS:
+            return []
+        self._last_sweep = now
+        closed = [(k, e) for k, e in self._open.items() if now - e["since"] >= self._window]
+        for key, _entry in closed:
+            del self._open[key]
+        return closed
+
+    @staticmethod
+    def _summarize(key: tuple[str, str, str], entry: dict[str, Any], now: float) -> None:
+        count = int(entry["count"])
+        if count <= 0:
+            return  # the window's one success is already its own row
+        caller, operation, _identity = key
+        elapsed = max(0, int(now - entry["since"]))
+        metadata: dict[str, Any] = {
+            "summary": True,
+            "requests": count,
+            "window_secs": elapsed,
+            "paths": sorted(entry["paths"]),
+        }
+        if entry["reason"]:
+            metadata["reason"] = entry["reason"]
+        try:
+            # `ok` for every summary: it counts successes of whichever operation it names, and
+            # the window's first row already carries that operation's own success word.
+            _sel_fn().log_api_access(
+                caller=caller,
+                operation=operation,
+                outcome="ok",
+                source="token_auth",
+                resources=f"{count} more successful request(s) in {elapsed}s",
+                metadata=metadata,
+            )
+        except Exception:
+            logger.warning("Failed to log an auth summary to the SEL", exc_info=True)
+
+
+_SUCCESSES = _SuccessTally()
+
+
+def flush_success_tally() -> None:
+    """Write every open success window's summary now — the gateway calls this on shutdown."""
+    _SUCCESSES.flush()
+
+
+def _log_auth(
+    request: web.Request,
+    user_id: str,
+    outcome: str,
+    reason: str,
+    *,
+    operation: str = "dashboard.token_auth",
+    identity: str = "",
+) -> None:
+    """Log an auth decision to the SEL — a failure as it happens, a success through the tally.
 
     ``reason`` is context for the decision, not necessarily a failure — see
     :func:`_sel_reason_kwargs`, which decides whether it lands in ``error`` or
-    ``metadata`` based on ``outcome``.
+    ``metadata`` based on ``outcome``. A success is written only when it is the first of its
+    identity's window (:class:`_SuccessTally`); the others are counted into that window's summary.
+    ``identity`` is the session nonce when the caller has one, so two sessions of one user are
+    tallied — and so written — as the two actors they are.
     """
+    caller = user_id or request.remote or "unknown"
+    if outcome in AUDIT_OUTCOME_SUCCESS and not _SUCCESSES.record(
+        caller=caller,
+        operation=operation,
+        reason=reason,
+        identity=identity,
+        path=request.path,
+    ):
+        return
     try:
         _sel_fn().log_api_access(
-            caller=user_id or request.remote or "unknown",
-            operation="dashboard.token_auth",
+            caller=caller,
+            operation=operation,
             outcome=outcome,
             resources=request.path,
             **_sel_reason_kwargs(outcome, reason),

@@ -28,12 +28,16 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   const [now, setNow] = useState(() => Date.now())
   const ref = useRef<HTMLDivElement>(null)
 
-  // The READ keeps its silent catch on purpose: it polls every 15s (and on every notification WS
+  // The READ keeps its silent catch on purpose: it polls (and re-reads on every notification WS
   // frame), so reporting a failed poll would toast every tick. It also does NOT fabricate — the
   // previous items stay, which is the honest fallback for a badge. The MUTATIONS below are
   // user-initiated, one toast each, and were the silent ones.
+  //
+  // The frames are what keep the badge current — every notify, ack, unack and removal sends one —
+  // so the poll is a once-a-minute safety net (and the tick that refreshes relative times), not
+  // the 15s re-read it was on every page.
   const load = () => api.notifications().then((d) => setItems(d.notifications)).catch(() => {})
-  useVisiblePoll(() => { setNow(Date.now()); load() }, 15000)
+  useVisiblePoll(() => { setNow(Date.now()); load() }, 60_000)
   useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) load() })
 
   useEffect(() => {

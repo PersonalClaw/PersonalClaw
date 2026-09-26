@@ -392,7 +392,13 @@ class TestSessionLifecycle:
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
                 "approval_resolved",
-                {"id": "s1:req-abc", "request_id": "req-abc", "session": "s1", "approved": True},
+                {
+                    "id": "s1:req-abc",
+                    "request_id": "req-abc",
+                    "session": "s1",
+                    "approved": True,
+                    "outcome": "approved",
+                },
             )
 
     @pytest.mark.asyncio
@@ -414,7 +420,13 @@ class TestSessionLifecycle:
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
                 "approval_resolved",
-                {"id": "s1:req-xyz", "request_id": "req-xyz", "session": "s1", "approved": True},
+                {
+                    "id": "s1:req-xyz",
+                    "request_id": "req-xyz",
+                    "session": "s1",
+                    "approved": True,
+                    "outcome": "approved",
+                },
             )
 
     @pytest.mark.asyncio
@@ -436,7 +448,13 @@ class TestSessionLifecycle:
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
                 "approval_resolved",
-                {"id": "s1:req-rej", "request_id": "req-rej", "session": "s1", "approved": False},
+                {
+                    "id": "s1:req-rej",
+                    "request_id": "req-rej",
+                    "session": "s1",
+                    "approved": False,
+                    "outcome": "rejected",
+                },
             )
 
 

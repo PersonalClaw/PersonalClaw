@@ -34,17 +34,17 @@ import { api } from '../lib/api'
 // the key is the shape the width tests below have always used, and the chip must not crash on it —
 // which is why the render guards on `use_cases.length` via a defaulted read.
 const SURFACES = [
-  { surface: 'search_ranking', available: false, floor: 'Keyword ranking', backlog: 3 },
-  { surface: 'inbox_classify', available: false, floor: 'Rules only', backlog: 0 },
+  { surface: 'search_ranking', label: 'Semantic search', available: false, floor: 'Keyword ranking', backlog: 3 },
+  { surface: 'inbox_enrichment', label: 'Inbox triage', available: false, floor: 'Rules only', backlog: 0 },
 ]
 
 /** The real registry shape: every `DegradedContract` declares the use-cases it needs
  *  (`degraded.py` ships exactly three distinct slugs — chat, embedding, stt). */
 const SURFACES_WITH_USE_CASES = [
-  { surface: 'inbox_classify', available: false, floor: 'Rules only', backlog: 0, use_cases: ['chat'] },
-  { surface: 'knowledge_enrich', available: false, floor: 'Documents still captured', backlog: 7, use_cases: ['embedding'] },
-  { surface: 'voice_capture', available: false, floor: 'Text input keeps working', backlog: 0, use_cases: ['stt'] },
-  { surface: 'future_thing', available: false, floor: 'Something still works', backlog: 0, use_cases: ['some_new_case'] },
+  { surface: 'inbox_enrichment', label: 'Inbox triage', available: false, floor: 'Rules only', backlog: 0, use_cases: ['chat'] },
+  { surface: 'search_ranking', label: 'Semantic search', available: false, floor: 'Keyword ranking', backlog: 7, use_cases: ['embedding'] },
+  { surface: 'transcription', label: 'Transcription', available: false, floor: 'Text input keeps working', backlog: 0, use_cases: ['stt'] },
+  { surface: 'future_thing', label: 'A future feature', available: false, floor: 'Something still works', backlog: 0, use_cases: ['some_new_case'] },
 ]
 
 /** Point `matchMedia('(max-width: 768px)')` at a fixed answer. Returns the listener-less
@@ -125,7 +125,7 @@ describe('DegradedChip width in the shell corner', () => {
   it('still renders nothing when every surface has a model', async () => {
     setViewport(true)
     vi.spyOn(api, 'degraded').mockResolvedValue({
-      surfaces: [{ surface: 'search_ranking', available: true, floor: '', backlog: 0 }],
+      surfaces: [{ surface: 'search_ranking', label: 'Semantic search', available: true, floor: '', backlog: 0 }],
     } as never)
     const { container } = render(<DegradedChip />)
     await waitFor(() => expect(api.degraded).toHaveBeenCalled())
@@ -143,7 +143,7 @@ describe('DegradedChip width in the shell corner', () => {
 //
 // The backend already treats this as the headline. Its own degradation notice is:
 //
-//     f"No model for {', '.join(contract.use_cases)} — {contract.floor}"
+//     f"No {needs} model — {contract.floor}"
 //
 // `floor` is the reassurance; `use_cases` is the diagnosis, and therefore the thing that tells you
 // what to go bind. The popover was the one surface stating the second half without the first.
@@ -162,6 +162,33 @@ async function openPopover(surfaces: unknown[]) {
   await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
   return r
 }
+
+// ── One name per surface, and it is the user's ───────────────────────────────
+//
+// The chip prettified the SLUG ("assistant_reasoning" → "Assistant reasoning"), and the backend's
+// notifications printed the slug raw ("inbox_enrichment recovered"). Measured on day 8: the first
+// model bind posted eleven such notifications, in names nobody but an engineer would recognise. Each
+// contract now declares its `label`, the notifications and this chip both show it, and there is no
+// second name for the same surface to drift from.
+describe('the degraded chip names a surface the way its contract does', () => {
+  const REASONING = { surface: 'assistant_reasoning', label: 'Background tasks', available: false, floor: 'They pause', backlog: 0, use_cases: ['chat'] }
+
+  it('in the one-surface summary', async () => {
+    setViewport(false)
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: [REASONING] } as never)
+    render(<DegradedChip />)
+    const chip = await screen.findByRole('button', { name: /degraded/i })
+    expect(chip.textContent).toContain('Background tasks degraded')
+    expect(chip.textContent).not.toMatch(/assistant/i)
+  })
+
+  it('and on its row in the popover', async () => {
+    await openPopover([REASONING])
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.textContent).toContain('Background tasks')
+    expect(dialog.textContent).not.toMatch(/assistant reasoning/i)
+  })
+})
 
 describe('the degraded popover names the missing use-case', () => {
   it('states what is missing beside what still works', async () => {
@@ -200,7 +227,7 @@ describe('the degraded popover names the missing use-case', () => {
 
   it('renders no use-case line for an empty use_cases array', async () => {
     const { container } = await openPopover([
-      { surface: 'x', available: false, floor: 'Still fine', backlog: 0, use_cases: [] },
+      { surface: 'x', label: 'X', available: false, floor: 'Still fine', backlog: 0, use_cases: [] },
     ])
     expect(container.textContent).toContain('Still fine')
     expect(container.textContent).not.toContain('No model for')
@@ -275,7 +302,7 @@ describe('the degraded popover links to where you fix it', () => {
     const link = screen.getByRole('dialog').querySelector(MODELS_LINK)!
     // Anchored on the first surface's NAME, not on a layout class: the action line carries the same
     // `border-b` hairline the rows do, so a class selector would match the action line itself.
-    const firstRowName = screen.getByText('Inbox classify')
+    const firstRowName = screen.getByText('Inbox triage')
     expect(
       link.compareDocumentPosition(firstRowName) & Node.DOCUMENT_POSITION_FOLLOWING,
       'the link must precede the surface rows, or a long list pushes it off-screen',

@@ -64,7 +64,6 @@ from personalclaw.dashboard.state import (
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
-    chat_approval_id,
     read_only_command,
     resolve_effective_risk,
     tool_input_to_str,
@@ -3813,6 +3812,9 @@ async def run_chat(
                 # Default "rejected": a never-answered approval must not execute the tool.
                 # The cancellation still propagates (the finally doesn't swallow it).
                 outcome = "rejected"
+                # How the approval ends if nobody answers it: its window closing is `expired`;
+                # the turn being torn down first is `cancelled`. See `request_approval`.
+                timed_out = False
                 try:
                     # ONE registration for every surface — inside the try, so a turn torn
                     # down mid-publication still leaves nothing listed. The live chat page
@@ -3848,12 +3850,16 @@ async def run_chat(
                     outcome = await asyncio.wait_for(fut, timeout=state._APPROVAL_TIMEOUT)
                 except asyncio.TimeoutError:
                     outcome = "rejected"
+                    timed_out = True
                 finally:
                     session._approval_futures.pop(request_id, None)
-                    # Unanswered on the way out — expired, or its turn was torn down — so
-                    # every surface still listing it drops it as denied. A no-op when a
-                    # decision already withdrew it.
-                    state.expire_approval(chat_approval_id(session.key, request_id))
+                    # Unanswered on the way out — expired, or its turn was torn down — so every
+                    # surface still listing it drops it saying which, and the transcript row
+                    # records it (a reload then shows what happened, not a dead live card). A
+                    # no-op when a decision already withdrew it.
+                    state.end_session_approval(
+                        session, request_id, outcome="expired" if timed_out else "cancelled"
+                    )
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True
                     outcome = "approved"
@@ -3950,14 +3956,22 @@ async def run_chat(
                         )
                 else:
                     await client.reject_tool(event.request_id)
-                    session.append("tool", f"{event.title} (rejected)", "msg msg-tool")
+                    # `cancelled` is the turn being stopped while it waited (see
+                    # `DashboardState.cancel_approval`), not a person's Deny — so it is not
+                    # written up as one, in the transcript or in the audit row.
+                    stopped = outcome == "cancelled"
+                    session.append(
+                        "tool",
+                        f"{event.title} ({'cancelled' if stopped else 'rejected'})",
+                        "msg msg-tool",
+                    )
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
                         tool_name=event.title,
                         tool_kind=event.tool_kind,
-                        outcome="rejected",
+                        outcome="cancelled" if stopped else "rejected",
                         request_id=event.request_id,
                         metadata={"reason": "interactive", "risk": effective_risk},
                     )

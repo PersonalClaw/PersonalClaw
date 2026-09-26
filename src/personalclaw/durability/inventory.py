@@ -1051,6 +1051,21 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_APPEND_DEDUP,
         help="the security event log (audit trail)",
     ),
+    # The log's rotated files (`sel._ARCHIVE_DIR`): the live file rotates here by size and they
+    # stay for the log's retention. Declared so a snapshot carries the whole retained trail, not
+    # only its newest file — the manual rotate's archive sat beside the log unclaimed, and a
+    # settings validation found it missing from snapshots. Each file is immutable once rotated,
+    # so a restore adds the ones that are absent and never overwrites one that is present.
+    StateEntry(
+        id="security_events_archive",
+        kind=KIND_TREE,
+        path="sel_archive",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_UNION_BY_ID,
+        help="rotated security event log files, kept for the log's retention",
+        # The rotation's cross-process lock: state of THIS process tree, not of the trail.
+        derived_within=(".rotate.lock",),
+    ),
     # EXTERNAL-ACCESS §10. The client registry EXPORTS: it holds an integration's
     # label and bindings, which a user restoring a home expects back, and losing it
     # silently means every external client stops working after a restore with no

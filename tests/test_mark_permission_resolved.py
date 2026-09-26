@@ -2,7 +2,7 @@
 
 import json
 
-from personalclaw.dashboard.state import _mark_permission_resolved
+from personalclaw.dashboard.approval_state import _mark_permission_resolved
 
 
 class TestMarkPermissionResolved:

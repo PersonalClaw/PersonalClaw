@@ -702,6 +702,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "the clone failed.",
     "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
     "says why.",
+    # ── pending approvals (dashboard/approval_owner.py) ──
+    # A 409 state refusal: the approval was listed, but the work that asked for it (its turn,
+    # subagent, workflow run or loop) has ended, so it was cancelled rather than answered and
+    # nothing ran. The message names which owner ended and how.
+    "approval_owner_ended": (
+        "The work that asked for this approval has ended, so it was cancelled and nothing ran."
+    ),
 }
 
 

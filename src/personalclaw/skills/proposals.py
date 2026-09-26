@@ -423,19 +423,24 @@ def _inbox_store_for_write() -> Any:
     """
     from personalclaw.inbox import InboxStore, live_store
 
-    state = None
-    try:
-        from personalclaw.inbox_providers.native_source import get_dashboard_state
-
-        state = get_dashboard_state()
-    except Exception:  # noqa: BLE001 — headless is normal, not an error
-        logger.debug("proposal inbox write: no dashboard state", exc_info=True)
+    state = _dashboard_state()
     live = live_store(state) if state is not None else None
     if live is not None:
         return live
     store = InboxStore()
     store.load()
     return store
+
+
+def _dashboard_state() -> Any:
+    """The running dashboard, or ``None`` headless (a CLI accept, a test, a background pass)."""
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        return get_dashboard_state()
+    except Exception:  # noqa: BLE001 — headless is normal, not an error
+        logger.debug("proposal inbox write: no dashboard state", exc_info=True)
+        return None
 
 
 def _resolve_inbox_item(pid: str, status: str) -> None:
@@ -450,17 +455,17 @@ def _resolve_inbox_item(pid: str, status: str) -> None:
     ``reject()`` has already marked the item dismissed and needs to correct it to handled.
     Never moves an item backwards into an open state, which would resurrect it.
     """
+    from personalclaw.inbox import set_item_status
+
     open_or_resolved = ("pending", "seen", "dismissed", "handled")
     try:
         store = _inbox_store_for_write()
-        changed = False
-        for item in store.items.values():
-            if item.refs.get("skill_proposal") == pid and item.status in open_or_resolved:
-                if item.status != status:
-                    item.status = status
-                    changed = True
-        if changed:
-            store.save()
+        rows = [
+            item
+            for item in store.items.values()
+            if item.refs.get("skill_proposal") == pid and item.status in open_or_resolved
+        ]
+        set_item_status(_dashboard_state(), store, rows, status)
     except Exception:
         logger.debug("proposal inbox resolve failed", exc_info=True)
 

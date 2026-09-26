@@ -28,8 +28,8 @@ import { join } from 'node:path'
 // popover explains rather than listing an empty set.
 
 const boom = () => Promise.reject(new Error('resilience read failed'))
-const degraded = { surfaces: [{ surface: 'chat', available: false, backlog: 2, floor: 'keyword search', use_case: 'chat' }] }
-const healthy = { surfaces: [{ surface: 'chat', available: true, backlog: 0, floor: '', use_case: 'chat' }] }
+const degraded = { surfaces: [{ surface: 'chat', label: 'Chat', available: false, backlog: 2, floor: 'keyword search', use_case: 'chat' }] }
+const healthy = { surfaces: [{ surface: 'chat', label: 'Chat', available: true, backlog: 0, floor: '', use_case: 'chat' }] }
 
 function mockApi(over: Record<string, unknown>) {
   vi.doMock('../lib/api', async (orig) => ({

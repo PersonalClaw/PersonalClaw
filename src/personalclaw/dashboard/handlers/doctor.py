@@ -87,7 +87,7 @@ async def api_degraded(request: web.Request) -> web.Response:
 
     Re-evaluates live each call (cheap, no-instantiate ``can_resolve_use_case``
     probes) and fires a down/recovery notification on a surface changing state, via
-    the live dashboard state. Returns ``{surfaces: [{surface, available, floor,
+    the live dashboard state. Returns ``{surfaces: [{surface, label, available, floor,
     backlog, use_cases}], degraded: [surface, ...], chat_provider}``.
 
     ``available`` answers "does a model resolve", which makes no network call — so a bound

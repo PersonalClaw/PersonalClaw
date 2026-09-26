@@ -363,6 +363,11 @@ async def api_approval_resolve(request: web.Request) -> web.Response:
     action = request.match_info["action"]
     if action not in ("approve", "reject"):
         return web.json_response({"error": "invalid action"}, status=400)
+    # Asked here as well as inside `resolve_approval` only to NAME the refusal: the decision path
+    # refuses on its own for every door, and this door is the one that can tell the user why.
+    ended = state.refuse_ended_owner(approval_id)
+    if ended:
+        return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
     ok = state.resolve_approval(approval_id, action == "approve")
     if not ok:
         return web.json_response({"error": "not found or expired"}, status=404)

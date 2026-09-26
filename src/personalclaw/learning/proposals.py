@@ -888,7 +888,7 @@ def _resolve_inbox_item(pid: str, status: str) -> None:
     visible in the UI until a restart.
     """
     try:
-        from personalclaw.inbox import InboxStore, live_store
+        from personalclaw.inbox import InboxStore, live_store, set_item_status
 
         state = None
         try:
@@ -899,19 +899,11 @@ def _resolve_inbox_item(pid: str, status: str) -> None:
             state = None
 
         store = live_store(state) if state is not None else None
-        persist = store is None
         if store is None:
             store = InboxStore()
             store.load()
-        changed = False
-        for item in store.items.values():
-            if item.refs.get("learning_proposal") == pid and item.status != status:
-                item.status = status
-                changed = True
-        if changed:
-            store.save()
-            if not persist:
-                logger.debug("resolved proposal inbox item in the live store")
+        rows = [i for i in store.items.values() if i.refs.get("learning_proposal") == pid]
+        set_item_status(state, store, rows, status)
     except Exception:
         logger.debug("proposal inbox resolve failed", exc_info=True)
 

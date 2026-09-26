@@ -52,6 +52,7 @@ from personalclaw.inbox import (
     InboxStore,
     ItemStatus,
     redact_item,
+    set_item_status,
     validate_updatable_fields,
 )
 
@@ -295,13 +296,15 @@ def test_the_store_applies_nothing_when_a_later_field_is_bad(env):
 def test_the_packages_own_enum_writes_are_not_refused(env):
     """🪤 Why `isinstance`, not `type(v) is`.
 
-    `handlers_inbox:428` calls `inbox.update(item.id, status=ItemStatus.DISMISSED)` — the enum
-    MEMBER, not its `.value`. All four string fields' enums subclass `str`, so `isinstance`
-    accepts them and an exact-type check would have refused the codebase's own writes. This
-    asserts the property rather than the four class declarations.
+    The package's own callers write enum MEMBERS, not their `.value`: "Dismiss all" moves rows
+    with `ItemStatus.DISMISSED` itself, and a PUT body's status is checked by the same
+    `validate_updatable_fields` before it moves the row. All four string fields' enums subclass
+    `str`, so `isinstance` accepts them and an exact-type check would have refused the
+    codebase's own writes. This asserts the property rather than the four class declarations.
     """
     _, store, _, _ = env
-    assert store.update(ITEM_ID, status=ItemStatus.DISMISSED) is not None
+    validate_updatable_fields({"status": ItemStatus.DISMISSED})
+    assert set_item_status(None, store, [store.items[ITEM_ID]], ItemStatus.DISMISSED)
     assert store.update(ITEM_ID, confidence=Confidence.NEEDS_REVIEW) is not None
 
 

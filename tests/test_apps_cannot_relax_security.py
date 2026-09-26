@@ -508,6 +508,9 @@ class _PendingApprovalState:
         session._approval_futures = {"req-1": future}
         self._sessions = {"s1": session}
 
+    def refuse_ended_owner(self, approval_id: str) -> str:
+        return ""  # a chat still waiting: the work that asked has not ended
+
     def decide_session_approval(self, session: Any, request_id: str, action: str) -> None:
         self.decisions.append((request_id, action))
 

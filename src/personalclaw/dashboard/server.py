@@ -87,12 +87,12 @@ async def _upload_sweep_loop() -> None:
 
 
 async def _sel_prune_loop() -> None:
-    """Periodically trim the SEL audit log so it can't grow unbounded.
+    """Periodically apply the SEL audit log's retention.
 
-    Every gateway/channel/mcp action (incl. dashboard polls) appends an entry, so
-    without this the file grows to millions of lines and the audit reads/verify
-    crawl. Prunes once at startup, then every few hours, on an executor thread
-    (the prune rewrites the whole file)."""
+    The live file's SIZE is bounded by the log's own rotation (`sel._ROTATE_BYTES`), which moves
+    it into `sel_archive/`; this is the AGE half — rows past retention leave the live file and
+    expired rotated files leave the archive. Once at startup, then every few hours, on an
+    executor thread (the prune rewrites the live file)."""
     from personalclaw import shutdown_event
 
     first = True
@@ -2202,6 +2202,18 @@ async def start_dashboard(
 
     app.on_cleanup.append(_discovery_shutdown)
 
+    async def _auth_tally_shutdown(app_: web.Application) -> None:
+        """Write the summary row of every still-open authentication window on gateway stop, so
+        the successes of the last quarter hour are counted rather than lost with the process."""
+        try:
+            from personalclaw.dashboard.token_auth import flush_success_tally
+
+            flush_success_tally()
+        except Exception:
+            logger.debug("auth success tally flush failed", exc_info=True)
+
+    app.on_cleanup.append(_auth_tally_shutdown)
+
     # Static files — React build under /assets, packaged static assets under /static
     if _DIST_DIR.is_dir():
         app.router.add_static(
@@ -2501,8 +2513,8 @@ async def start_dashboard(
     _reaper.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
     state._terminal_reaper = _reaper  # prevent GC
 
-    # Trim the append-only security-event log at startup + periodically so audit
-    # reads/verify stay fast (the chain is otherwise unbounded).
+    # Apply the security-event log's retention at startup + periodically (its size is bounded
+    # by rotation; see `_sel_prune_loop`).
     state._sel_prune_task = asyncio.create_task(_sel_prune_loop())  # prevent GC
 
     # Sweep abandoned resumable-upload session dirs (partial parts) so a never-
