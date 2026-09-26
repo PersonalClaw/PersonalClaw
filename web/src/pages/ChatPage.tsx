@@ -39,7 +39,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { sessionRowMeta } from './chat/sessionRowMeta'
-import { streamingAtMount } from './chat/liveRun'
+import { snapshotPredatesSend, streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
 import { chatFindPath, searchSourceLabel } from './chat/searchDeepLink'
@@ -75,7 +75,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle } from './chat/chatTypes'
 import { readOnlyCommandOf } from './chat/approvalMeta'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
@@ -107,9 +107,9 @@ import {
 } from './chat/sessionMap'
 import { useAppearance } from '../app/appearance'
 import { TOKENS } from '../design/tokenRegistry'
-import { applyCoalescedFlush, insertActivity, TextRunOwnership } from './chat/coalesceReducers'
-import { StreamFinalizationFence } from './chat/streamFinalizationFence'
-import { resolveStalledStream } from './chat/streamStall'
+import { TextRunOwnership } from './chat/coalesceReducers'
+import { SnapshotReplay } from './chat/snapshotReplay'
+import { resolveStalledStream, STREAM_HEAL_WARNING } from './chat/streamStall'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
@@ -149,6 +149,28 @@ function writeCachedDetail(key: string, d: ChatDetail): void {
   if (d.running) return
   writeQuery(detailKey(key), d, true)
 }
+
+/** How long a chat's mount read waits for the chat to be listening (see the load effect in
+ *  ChatSession). It is a cost bound, not a correctness one: a read that gives up is taken again
+ *  the moment the socket opens, so a slow handshake costs one extra read. */
+const LISTEN_BEFORE_READ_MS = 2_000
+
+/** How long a session read may hold the chat's live frames (see `readSnapshot`): a round trip,
+ *  generously. Past it the frames flow live and the read lands late, a repaint rather than a
+ *  wait — the measured cost of an unbounded hold was a gateway under load answering in 25-45 s
+ *  while the answer, its `chat_done` included, sat held. */
+const HOLD_LIMIT_MS = 4_000
+
+/** The frames whose effect lives in what a snapshot adoption replaces — the turns, the text
+ *  run, the streaming claim. A snapshot adopted after its frames flowed live (HOLD_LIMIT_MS)
+ *  paints over them, so they are applied again on top of it; every other frame's effect
+ *  survives an adoption and is not repeated (a voice chunk would play twice, a side-chat delta
+ *  would be appended twice). */
+const TRANSCRIPT_FRAMES = new Set([
+  'chat_chunk', 'chat_status', 'chat_thinking', 'chat_message', 'activity_event', 'tool_call',
+  'tool_result', 'approval', 'approval_resolved', 'chat_segment', 'chat_variant_switch',
+  'chat_done', 'chat_user_message',
+])
 
 // The approval-card scope picker's one vocabulary (resolved with the user): a per-
 // approval SCOPE choice, not a mode toggle. `approved` = allow once; `trust` = allow
@@ -679,42 +701,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // what send() actually branches on, so a `false` here would reopen the window a layer
   // below the button's label.
   const streamingRef = useRef(streaming)
-  // How many times a turn has been declared OVER on this instance. It settles ONE
-  // ordering: the `[sessionId]` load effect below issues `chatSessionDetail` the instant
-  // a send creates the session — while the turn is still running — so that snapshot
-  // honestly reports `running: true`. A turn that fails FAST (a context refusal, a 401,
-  // a rate limit: measured at ~1.4 s against the bundled model) terminates before the
-  // response lands, and re-arming streaming from it put the composer back on Stop the
-  // moment the turn had ended. Capturing this counter at ISSUE time and comparing it at
-  // RESOLVE time makes the stale response unable to win — no delay, no reordering, no
-  // "has it been N ms" guess. It is simply not allowed to describe a turn that has since
-  // ended.
-  //
-  // With the #3444 handoff above, the composer's full measured sequence on a fast-failing
-  // first turn was Stop (correct — the run was live) → Send (correct — `chat_done`) → Stop
-  // FOREVER, that third step being this snapshot landing late. Only the third is wrong,
-  // and only this guard removes it.
-  //
-  // 🔑 DISTINCT FROM `resolveStalledStream`, AND UPSTREAM OF IT. That reconciler is the
-  // safety net: it heals a false streaming claim from the server, whatever produced it,
-  // after the silent window has elapsed. This prevents one specific claim from being made
-  // at all — which matters because during that window the composer offers Stop/Steer, and
-  // a message sent into it takes the mid-stream path. Measured against a tree carrying only
-  // the reconciler: right after the terminal event the composer read **Stop**, the live
-  // region read *"Assistant is responding…"*, and a message sent there went out with
-  // `queue_mode: 'steer'` and rendered nowhere.
-  //
-  // 🪤 Counted UNCONDITIONALLY, not only on a `true → false` transition — because the
-  // terminal event is often not one. `streamingAtMount` hands off a live run only when
-  // ChatPage has one to hand off; every other way to arrive at a running session (a
-  // reload, a deep link, opening it from history) mounts with `streamingRef` already
-  // `false`, and there the frame that ends the turn changes nothing to key off.
-  const turnsEndedRef = useRef(0)
   // Bumped when a turn settles (streaming → false) so the session-skills review
   // (skill-ephemeral-promotion) re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
   const markStreaming = (v: boolean) => {
-    if (!v) turnsEndedRef.current += 1
     if (streamingRef.current && !v) {
       setSessionSkillsEpoch((n) => n + 1)
       // The turn-settled cue point (PERSONALITY-THEMES §S2). This branch is the ONE
@@ -1009,17 +999,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [regenningTitle, setRegenningTitle] = useState(false)
   // P15 rAF stream coalescer: chat_chunk pushes into this; it flushes ONE growing
   // reveal per animation frame (instead of a setTurns per chunk) via onFlush, which
-  // replaces the ACTIVE text run's text with the revealed-so-far prefix. Ownership
-  // is claimed synchronously when a flush is emitted: React may apply its state
-  // updater only after chat_done releases the run, so reading a mutable flag inside
-  // that deferred updater would append the terminal full-text flush as a duplicate.
+  // replaces the ACTIVE text run's text with the revealed-so-far prefix. Every
+  // ownership decision (replace-or-push, above-or-below the live text) is taken when
+  // its frame is DISPATCHED and handed to patchLastAssistant baked into the updater:
+  // React may apply that updater only after chat_done has released the run.
   const textRun = useRef(new TextRunOwnership()).current
-  // The first-send remount has two delivery paths for one answer: session detail
-  // can hydrate the finalized assistant message before the terminal WS text reaches
-  // this tab. Once that happens, history owns the text until chat_done; otherwise
-  // the coalescer appends the same answer beside it. Kept as a state machine so a
-  // fresh turn always clears the fence even if the prior terminal frame was lost.
-  const finalizationFence = useRef(new StreamFinalizationFence()).current
+  // The transcript is a server snapshot plus the frames that arrived after it: while a
+  // session-detail read is in flight its session's frames are held, then replayed on top of
+  // the adopted snapshot (see snapshotReplay.ts, and `readSnapshot` below).
+  const snapshots = useRef(new SnapshotReplay<WsMessage>((m) => TRANSCRIPT_FRAMES.has(m.type))).current
+  // The user-message stamps of the last snapshot adopted, so a replayed `chat_user_message`
+  // it already holds is recognised at dispatch.
+  const adoptedUserTs = useRef<Set<string>>(new Set())
   // Streaming reveal cadence (CHAT-CRAFT S3): 'immediate' short-circuits the rAF
   // coalescer so each chunk paints the instant it arrives; 'smooth' (default) keeps
   // the word-boundary-snapped animated reveal. Read from the server dashboard config
@@ -1045,12 +1036,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const stampOf = (turn: { ts?: string }) => (showTimestamps ? turn.ts : undefined)
   const showThinkingRef = useRef(false)
   useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
-  const coalescer = useStreamCoalescer((revealed) => {
-    const replacesOwnedTail = textRun.claimFlush()
-    patchLastAssistant((segs) => {
-      return applyCoalescedFlush(segs, revealed, replacesOwnedTail).segs
-    })
-  }, { immediate: streamRevealCfg === 'immediate' })
+  const coalescer = useStreamCoalescer((revealed) => patchLastAssistant(textRun.flush(revealed)),
+    { immediate: streamRevealCfg === 'immediate' })
   // 🔴 K44 / issue #548 — ONE mechanism for ending a coalesced text run, in two flavours, and
   // BOTH clear the coalescer buffer. That is the invariant that makes the leak unreachable: a
   // finished run holds no text, so no later flush can re-emit it.
@@ -1070,11 +1057,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   //    queued turn being dequeued, a session switch). Those all move the transcript tail FIRST,
   //    so landing the tail would write the old answer into the new turn — discard is correct.
   const endTextRun = () => { coalescer.seal(); textRun.release() }
-  const dropTextRun = () => {
-    coalescer.reset()
-    textRun.release()
-    finalizationFence.startTurn()
-  }
+  const dropTextRun = () => { coalescer.reset(); textRun.release() }
   const started = turns.length > 0
   // show the thinking indicator while streaming and the active assistant turn
   // has produced nothing renderable yet (no text/tool/approval segment)
@@ -1107,7 +1090,68 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       return next
     })
 
-  // Resume a deep-linked session: hydrate its messages from history.
+  // Rebuild the transcript from a session snapshot and continue the live answer from it.
+  // Every path that adopts session detail comes through here, so the three things that must
+  // agree — the turns, the text run's owner, the coalescer's text and watermark — are set
+  // together, at dispatch, from ONE snapshot.
+  const adoptSnapshot = (d: ChatDetail) => {
+    const messages = d.messages || []
+    const running = !!d.running
+    setTurns(hydrateTurns(messages, running))
+    adoptedUserTs.current = new Set(messages.flatMap((m) => (m.role === 'user' && m.ts ? [m.ts] : [])))
+    // The answer still being written continues IN the segment the snapshot paints for it:
+    // ownership is claimed before the coalescer can flush, so the next flush extends the
+    // partial rather than pushing a second copy beside it.
+    const partial = running ? livePartialOf(messages) : null
+    if (partial !== null) textRun.adopt(); else textRun.release()
+    coalescer.resume(partial, d.stream_seq ?? 0)
+  }
+  // Read session detail with this chat's live frames HELD, adopt the snapshot, then replay every
+  // frame since the read was issued on top of it — see snapshotReplay.ts for why that one rule
+  // is enough. `adopt` reports whether it replaced the transcript (the create-remount's first
+  // read can decline). The hold is bounded (HOLD_LIMIT_MS): the frames of a read too slow to
+  // hold the stream for flow live, and when it lands late the ones it paints over are applied
+  // again on top. Either way the replay paints with the snapshot, at once.
+  const readSnapshot = (key: string, adopt: (d: ChatDetail) => boolean): Promise<ChatDetail> => {
+    const gen = snapshots.begin()
+    const bound = window.setTimeout(() => snapshots.release(gen).forEach(applyFrame), HOLD_LIMIT_MS)
+    const settle = (d: ChatDetail | null) => {
+      window.clearTimeout(bound)
+      let adopted = false
+      const tryAdopt = d ? () => (adopted = sessionRef.current === key && adopt(d)) : null
+      snapshots.settle(gen, tryAdopt).forEach(applyFrame)
+      if (adopted) coalescer.reveal()
+    }
+    return api.chatSessionDetail(key).then(
+      (d) => { settle(d); return d },
+      (e: unknown) => { settle(null); throw e },
+    )
+  }
+  // A held frame, applied the way the socket applies a live one: `useChatSocket` isolates each
+  // message, so a frame whose handler throws cannot take the frames queued behind it with it —
+  // replay must not either, or one bad frame would silently drop the `chat_done` after it.
+  const applyFrame = (m: WsMessage) => {
+    try { onWs(m) } catch { /* same per-frame boundary as useChatSocket */ }
+  }
+  // Whether the snapshot this mount adopts may predate the send it was handed off from (the
+  // session-create remount). Cleared by the first snapshot it adopts.
+  const handedOffRef = useRef(streaming)
+  // Whether this chat is listening — subscribed to the tab's socket while it is open — and the
+  // reads waiting for it to be.
+  const listening = useRef<{ open: boolean; waiters: (() => void)[] }>({ open: false, waiters: [] })
+  // Set when the mount read gave up waiting for the socket: its first open must read again.
+  const rereadOnOpen = useRef(false)
+  // The stall reconciler's read is out (see the reconciler).
+  const probing = useRef(false)
+  /** Resolves `true` once the socket is listening, or `false` after `ms` without it. */
+  const whenListening = (ms: number) => new Promise<boolean>((resolve) => {
+    if (listening.current.open) { resolve(true); return }
+    const timer = window.setTimeout(() => resolve(false), ms)
+    listening.current.waiters.push(() => { window.clearTimeout(timer); resolve(true) })
+  })
+
+  // Open a session: hydrate its transcript from a snapshot and continue whatever is still
+  // being written.
   useEffect(() => {
     sessionRef.current = sessionId
     dropTextRun()  // drop any in-flight reveal from the prior session
@@ -1117,132 +1161,108 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
     setLoadFailure(null)
     let alive = true
-    // The terminal-event watermark as this read is ISSUED; compared again when it
-    // resolves, so a snapshot taken before the turn ended cannot re-arm streaming
-    // after it (see turnsEndedRef).
-    const endedAtIssue = turnsEndedRef.current
     // Only skeleton if we have nothing seeded from cache; a cache hit already
     // painted the transcript and we revalidate silently underneath it.
     if (!seededDetail) setLoadingHistory(true)
-    api.chatSessionDetail(sessionId).then((d) => {
+    // A live answer can only resume from a snapshot read while this chat is LISTENING. It
+    // subscribes to the tab's socket after this effect, and on a reload that socket is still
+    // opening, so a read issued at mount can reach the gateway before any frame can reach the
+    // chat, and the chunks broadcast in between are on neither transport — measured on a
+    // reload as 6 and 13 chars missing from the middle of the answer. So the read waits for
+    // it (at once when the socket is already open). Bounded, because a socket that never
+    // opens must not hold the transcript hostage; a read that gave up waiting is taken again
+    // when the socket does open (onSocketStatus), so the bound can cost a second read, never
+    // text.
+    whenListening(LISTEN_BEFORE_READ_MS).then((heard) => {
       if (!alive) return
-      // cache the settled detail so the next revisit paints instantly (writeCachedDetail
-      // skips running turns to avoid seeding a stale mid-stream snapshot).
-      writeCachedDetail(sessionId, d)
-      // hydrate the FULL segment model (text + tool + approval) so a refreshed /
-      // revisited session renders identically to a live one.
-      // Is this snapshot still describing a LIVE turn? A read ISSUED before a terminal
-      // event cannot answer that, however honest it was when taken (see turnsEndedRef).
-      // Decided once, because two things downstream read it: the arm below, and
-      // `hydrateTurns`, whose `running` leaves the last tool card spinning.
-      const stillRunning = !!d.running && turnsEndedRef.current === endedAtIssue
-      const hydrated = hydrateTurns(d.messages || [], stillRunning)
-      // BUT: this effect also fires right after a NEW chat's first send navigates
-      // `new → chat/{key}` (sessionId change → REMOUNT). At that instant the just-sent
-      // user turn was painted from the instant-paint seed and the assistant reply is
-      // streaming in, but the server snapshot fetched here can be MID-PERSIST — carrying
-      // the assistant reply but not yet the user message. Blindly replacing turns with
-      // it drops the user's OWN message until a manual reload. Guard: never let a load
-      // REDUCE the painted transcript below what we already show — if the hydrated
-      // snapshot has FEWER turns than what's painted (seed + live stream), it's stale;
-      // keep ours and let a later revalidation settle the canonical view. (streamingRef
-      // used to be unable to gate this — it was a fresh `false` on the remounted
-      // instance. It now seeds from ChatPage's live-run handoff, #3444, but the length
-      // floor stays: it is about the SNAPSHOT being behind, not about the flag.)
-      //
-      // The opposite race is just as real: this refresh can ADD the finalized
-      // assistant message before the terminal WS text reaches the remounted tab.
-      // Discard any buffered copy and fence later chat_chunk replay until chat_done.
-      // The refreshed history remains authoritative; non-text WS frames still refine
-      // its tool/activity segments.
-      const refreshedFinalAnswer = finalizationFence.armFromRefresh(
-        seededDetail?.messages ?? null,
-        d.messages || [],
-      )
-      if (refreshedFinalAnswer) {
-        coalescer.reset()
-        textRun.release()
-      }
-      setTurns((prev) => (hydrated.length >= prev.length ? hydrated : prev))
-      // rehydrate any still-pending queued messages (mid-stream FIFO) so a reload
-      // mid-queue shows them again above the composer.
-      setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => ({ id: q.id, content: q.content })) : [])
-      // Seed ↑/↓ prompt-history from the conversation's existing user turns, so
-      // recall works immediately on a revisited chat (not only after sending a
-      // new message this render). Oldest→newest, deduped against repeats.
-      setPromptHistory(hydrated.reduce<string[]>((acc, t) => {
-        if (t.role !== 'user') return acc
-        const txt = turnText(t).trim()
-        if (txt && acc[acc.length - 1] !== txt) acc.push(txt)
-        return acc
-      }, []).slice(-50))
-      setTitle(d.title || '')
-      // Seed the session cost chip from the ledger for a revisited chat (CATO-7).
-      refreshSessionCost(sessionId)
-      // Restore BOTH composer axes to the session's actual posture. Unlike
-      // agent/model (which must resolve against the discovered-agent catalog
-      // below), task_mode + approval are plain enums the backend hands back
-      // directly — set them now so a reopened/reloaded chat shows the real mode
-      // instead of silently reverting the segmented controls to their defaults.
-      setSelection((s) => ({
-        ...s,
-        taskMode: (d.task_mode || 'agent') as TaskMode,
-        approval: (d.approval || 'normal') as ApprovalMode,
-      }))
-      // Restore the session's memory mode too, so mode-gated affordances (e.g. Fork,
-      // which the backend refuses on a non-persistent session) reflect the real
-      // posture of a reopened chat instead of the 'persistent' default.
-      setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
-      // Natural voice (PT-7) — restore the composer pill from the RESOLVED state the
-      // backend sent, so a reopened chat shows what actually takes effect (including
-      // an agent-supplied default) rather than reverting to "agent default, off".
-      setNaturalVoice({
-        choice: ((d.natural_voice || '') as '' | 'on' | 'off'),
-        effective: !!d.natural_voice_effective,
-        source: d.natural_voice_source || '',
-        agentDefault: !!d.natural_voice_agent_default,
-      })
-      // Branch lineage (CC-7) — restore the "Branched from" breadcrumb on every open,
-      // including a plain browser reload, because it comes from persisted state rather
-      // than from whatever navigation happened to land us here.
-      setBranchedFrom(d.forked_from
-        ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
-        : null)
-      // Investigate origin chip (plan 60) — present on sessions opened via
-      // POST /api/investigate; survives the first turn (display fields kept).
-      setInvestigateOrigin((d as { investigate?: import('../lib/api').InvestigateOrigin | null }).investigate ?? null)
-      // remember the session's agent/model binding so the composer restores the
-      // SAME selection it was using (resolved against discovered agents below,
-      // once they've loaded).
-      sessionBindingRef.current = {
-        agent: d.agent || '', model: d.model || '',
-        acp_provider: d.acp_provider || '', acp_provider_agent: d.acp_provider_agent || '',
-        reasoning_effort: d.reasoning_effort || '',
-      }
-      setBindingNonce((n) => n + 1)
-      // restore the persisted side chat (flat role list → {q,a} pairs).
-      if (d.side?.messages?.length) {
-        const pairs: { q: string; a: string; runId: string; done: boolean }[] = []
-        for (const m of d.side.messages) {
-          if (m.role === 'user') pairs.push({ q: m.content, a: '', runId: '', done: true })
-          else if (pairs.length) pairs[pairs.length - 1].a += m.content
+      if (!heard) rereadOnOpen.current = true
+      return readSnapshot(sessionId, (d) => {
+        // The create-remount's first read can beat the send it was handed off from, and an
+        // honest-but-older snapshot would erase the user's own message. The send's frames
+        // replay onto the painted turn instead.
+        if (handedOffRef.current && snapshotPredatesSend(seededDetail?.messages, d.messages || [])) return false
+        handedOffRef.current = false
+        adoptSnapshot(d)
+        // Its `running` is the truth as of the read, and every frame after the read replays
+        // on top — so a turn that fails fast inside this round trip ends on its replayed
+        // terminal frame, and a turn that ENDED before this chat was listening (its
+        // `chat_done` reached the instance the remount replaced) settles here rather than
+        // stranding the composer on Stop until the stall reconciler notices.
+        if (d.running || streamingRef.current) markStreaming(!!d.running)
+        return true
+      }).then((d) => {
+        if (!alive) return
+        // cache the settled detail so the next revisit paints instantly (writeCachedDetail
+        // skips running turns to avoid seeding a stale mid-stream snapshot).
+        writeCachedDetail(sessionId, d)
+        // rehydrate any still-pending queued messages (mid-stream FIFO) so a reload
+        // mid-queue shows them again above the composer.
+        setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => ({ id: q.id, content: q.content })) : [])
+        // Seed ↑/↓ prompt-history from the conversation's existing user turns, so
+        // recall works immediately on a revisited chat (not only after sending a
+        // new message this render). Oldest→newest, deduped against repeats.
+        setPromptHistory(hydrateTurns(d.messages || []).reduce<string[]>((acc, t) => {
+          if (t.role !== 'user') return acc
+          const txt = turnText(t).trim()
+          if (txt && acc[acc.length - 1] !== txt) acc.push(txt)
+          return acc
+        }, []).slice(-50))
+        setTitle(d.title || '')
+        // Seed the session cost chip from the ledger for a revisited chat (CATO-7).
+        refreshSessionCost(sessionId)
+        // Restore BOTH composer axes to the session's actual posture. Unlike
+        // agent/model (which must resolve against the discovered-agent catalog
+        // below), task_mode + approval are plain enums the backend hands back
+        // directly — set them now so a reopened/reloaded chat shows the real mode
+        // instead of silently reverting the segmented controls to their defaults.
+        setSelection((s) => ({
+          ...s,
+          taskMode: (d.task_mode || 'agent') as TaskMode,
+          approval: (d.approval || 'normal') as ApprovalMode,
+        }))
+        // Restore the session's memory mode too, so mode-gated affordances (e.g. Fork,
+        // which the backend refuses on a non-persistent session) reflect the real
+        // posture of a reopened chat instead of the 'persistent' default.
+        setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
+        // Natural voice (PT-7) — restore the composer pill from the RESOLVED state the
+        // backend sent, so a reopened chat shows what actually takes effect (including
+        // an agent-supplied default) rather than reverting to "agent default, off".
+        setNaturalVoice({
+          choice: ((d.natural_voice || '') as '' | 'on' | 'off'),
+          effective: !!d.natural_voice_effective,
+          source: d.natural_voice_source || '',
+          agentDefault: !!d.natural_voice_agent_default,
+        })
+        // Branch lineage (CC-7) — restore the "Branched from" breadcrumb on every open,
+        // including a plain browser reload, because it comes from persisted state rather
+        // than from whatever navigation happened to land us here.
+        setBranchedFrom(d.forked_from
+          ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
+          : null)
+        // Investigate origin chip (plan 60) — present on sessions opened via
+        // POST /api/investigate; survives the first turn (display fields kept).
+        setInvestigateOrigin((d as { investigate?: import('../lib/api').InvestigateOrigin | null }).investigate ?? null)
+        // remember the session's agent/model binding so the composer restores the
+        // SAME selection it was using (resolved against discovered agents below,
+        // once they've loaded).
+        sessionBindingRef.current = {
+          agent: d.agent || '', model: d.model || '',
+          acp_provider: d.acp_provider || '', acp_provider_agent: d.acp_provider_agent || '',
+          reasoning_effort: d.reasoning_effort || '',
         }
-        setSideMsgs(pairs)
-        sideOpenedRef.current = true  // buffer already exists server-side
-      }
-      // resuming a still-running turn: show the live indicators and make the first
-      // incoming chunk start a fresh text run (don't concat onto hydrated text).
-      // `stillRunning`, not `d.running`, is what keeps a FAST failure out of this branch:
-      // a turn that ended while this read was in flight is over, whatever it says.
-      if (stillRunning) {
-        markStreaming(true)
-        // A persisted assistant message can become visible while the backend still
-        // reports the turn as running, before its terminal WS status reaches this
-        // tab. Keep the refresh fence armed in that state; it already reset the
-        // coalescer above. A plain mid-stream resume still needs the normal reset.
-        if (!refreshedFinalAnswer) dropTextRun()
-      }
-      setLoadingHistory(false)
+        setBindingNonce((n) => n + 1)
+        // restore the persisted side chat (flat role list → {q,a} pairs).
+        if (d.side?.messages?.length) {
+          const pairs: { q: string; a: string; runId: string; done: boolean }[] = []
+          for (const m of d.side.messages) {
+            if (m.role === 'user') pairs.push({ q: m.content, a: '', runId: '', done: true })
+            else if (pairs.length) pairs[pairs.length - 1].a += m.content
+          }
+          setSideMsgs(pairs)
+          sideOpenedRef.current = true  // buffer already exists server-side
+        }
+        setLoadingHistory(false)
+      })
     }).catch((e) => {
       if (!alive) return
       setLoadingHistory(false)
@@ -1289,13 +1309,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     switch (m.type) {
       case 'chat_chunk': {
         setStatusText('')
-        if (!finalizationFence.allows('chat_chunk')) break
         const chunk = String(d.content ?? '')
         // No break-flag check here any more: whichever boundary preceded this chunk already
         // CLEARED the coalescer (endTextRun / dropTextRun), so a push always opens a fresh run
         // when it needs to. Deferring the clear to this branch is what left the other five
-        // boundaries unguarded (#548).
-        coalescer.push(chunk)  // rAF-coalesced; onFlush does the setTurns once/frame
+        // boundaries unguarded (#548). The gateway's stamp lets the coalescer drop a chunk the
+        // transcript already shows because the snapshot it was rebuilt from held it.
+        coalescer.push(chunk, typeof d.seq === 'number' ? d.seq : undefined)  // rAF-coalesced; onFlush does the setTurns once/frame
         break
       }
       case 'chat_status': setStatusText(String(d.status ?? '')); break
@@ -1322,7 +1342,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         if (d.role === 'error') {
           endTextRun()  // land buffered text before the error segment
           markStreaming(false); setStatusText(''); setLatestActivity(null)
-          patchLastAssistant((segs) => [...segs, { kind: 'error', text: turnErrorText(d.content) }])
+          const text = turnErrorText(d.content)
+          // Idempotent: a snapshot read in flight when the turn failed can already show this
+          // (persisted) error by the time the held frame replays on top of it.
+          patchLastAssistant((segs) => {
+            const last = segs[segs.length - 1]
+            return last?.kind === 'error' && last.text === text ? segs : [...segs, { kind: 'error', text }]
+          })
         }
         break
       }
@@ -1338,13 +1364,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // activity kind, and absent on a `learned` event from a build before T2.2 — which
         // `learnedSurface()` renders as a non-tappable chip rather than a wrong link.
         const origin = String(d.origin ?? '')
-        // insertActivity (pure, K42-tested): keeps a mid-stream activity line BEFORE
-        // the coalescer's active text run so the next flush replaces-in-place instead
-        // of pushing a duplicate; de-dupes adjacent identical lines; tool cards win.
-        // `stampActivityOrigin` carries `origin` onto the segment insertActivity just created
-        // without widening that helper's signature (and re-baselining its K42/K44/K45 suite).
-        // Pure and tested there, rather than an inline reference-diff nothing could prove.
-        patchLastAssistant((segs) => stampActivityOrigin(segs, insertActivity(segs, text, kind, textRun.ownsTail()), origin))
+        // Keeps a mid-stream activity line BEFORE the coalescer's active text run so the next
+        // flush replaces-in-place instead of pushing a duplicate (K42); de-dupes adjacent
+        // identical lines; tool cards win; carries `origin` onto the new segment. Whether the
+        // run is live is decided HERE, not inside the updater: the stats line that ends every
+        // turn can share a render batch with `chat_done`, which releases the run first.
+        patchLastAssistant(textRun.activity(text, kind, origin))
         break
       }
       case 'tool_call': {
@@ -1443,7 +1468,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       case 'chat_done': {
         endTextRun()  // fully reveal any buffered tail before the turn closes
-        finalizationFence.finishTurn()
         markStreaming(false); setStatusText(''); setLatestActivity(null)
         setSteered([])  // steers belong to the turn they were injected into
         // Cancel-and-replace (PLATFORM-RESILIENCE §6.3): this turn was superseded by a
@@ -1587,10 +1611,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // the now-truncated transcript so the divider chip + tail disclosure appear.
       case 'chat_rewound': {
         const sk = sessionRef.current
-        if (sk) api.chatSessionDetail(sk).then((det) => {
-          writeCachedDetail(sk, det)
-          setTurns(hydrateTurns(det.messages || [], det.running))
-        }).catch(() => {})
+        if (sk) readSnapshot(sk, (det) => { writeCachedDetail(sk, det); adoptSnapshot(det); return true }).catch(() => {})
         break
       }
       // A queued message the server just dequeued and is about to run. Normal sends
@@ -1602,6 +1623,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_user_message': {
         const content = String(d.content ?? '')
         if (!content) break
+        // Replayed after a snapshot that already holds this message: the turn it opens is
+        // already on screen, and dropping the text run here would cut the answer that snapshot
+        // resumed in two.
+        if (d.ts && adoptedUserTs.current.has(String(d.ts))) break
         dropTextRun()
         setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
         setTurns((prev) => [...prev, userTurn(content, d.ts ? String(d.ts) : undefined)])
@@ -1652,21 +1677,38 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
     }
   }, [])
-  // On WS reconnect, re-sync the bound session from the server: messages that
-  // arrived during the outage were missed, and a turn that finished while the
-  // socket was down would otherwise leave the UI stuck on "Thinking…". Re-hydrate
-  // authoritatively (server's `running` flag corrects the streaming state).
-  const resyncOnReconnect = useCallback(() => {
+  // A socket that (re)opens after this session was last read can have missed frames while it
+  // was down — a drop, or a mount read that gave up waiting for it — including the `chat_done`
+  // that would have ended the turn. Read again and adopt: the snapshot holds
+  // everything broadcast before it (its `running` corrects the streaming claim), and the
+  // frames held while it was in flight replay on top.
+  const resync = useCallback(() => {
     const s = sessionRef.current
     if (!s) return
-    api.chatSessionDetail(s).then((d) => {
-      if (sessionRef.current !== s) return  // navigated away mid-fetch
-      setTurns(hydrateTurns(d.messages || [], d.running))
+    readSnapshot(s, (d) => {
+      adoptSnapshot(d)
       markStreaming(!!d.running)
       if (!d.running) setStatusText('')
+      return true
     }).catch(() => {})
   }, [])
-  useChatSocket(onWs, resyncOnReconnect, setWsConnected)
+  // Link state, and the moment this chat starts LISTENING: subscribed while the tab's socket is
+  // open (told at once when it already is). The gateway registers a socket in the same step
+  // that accepts it, so every frame broadcast from `onopen` on reaches it.
+  const onSocketStatus = useCallback((connected: boolean) => {
+    setWsConnected(connected)
+    listening.current.open = connected
+    if (!connected) return
+    listening.current.waiters.splice(0).forEach((wake) => wake())
+    if (rereadOnOpen.current) { rereadOnOpen.current = false; resync() }
+  }, [resync])
+  // Every frame the socket delivers: held while a snapshot read holds the stream (readSnapshot
+  // replays it), applied now otherwise — and recorded while any read is out, for the late
+  // adoption of one that stopped holding (snapshotReplay.ts).
+  const onSocketFrame = useCallback((m: WsMessage) => {
+    if (!snapshots.hold(m)) onWs(m)
+  }, [onWs])
+  useChatSocket(onSocketFrame, resync, onSocketStatus)
 
   // Idle stream-reconciler. A streaming claim can outlive the turn it describes in two
   // ways, and BOTH are silent — no `chat_done`, no error, and nothing on screen that says
@@ -1689,31 +1731,42 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (Date.now() - lastWsActivityRef.current < 3500) return  // WS still active — no need
       const showingApproval = turns.some((t) => t.segments.some((sg) => sg.kind === 'approval' && !(sg as ApprovalSegment).resolved))
       if (showingApproval) return  // card already up
+      // One read at a time. A snapshot read in flight settles the claim itself, and this
+      // reconciler's own read still out has not answered yet — issuing another every tick is
+      // how a slow gateway collected one read per two seconds, each holding the stream.
+      if (snapshots.busy() || probing.current) return
+      const activityAtIssue = lastWsActivityRef.current
+      probing.current = true
+      // A plain read, holding nothing: it only acts on a stream that stayed silent throughout.
       api.chatSessionDetail(s).then((d) => {
         if (sessionRef.current !== s) return
+        // A frame arrived while it was out, or a snapshot read began: the stream is alive (or
+        // that read settles it), and this snapshot can already be older than the transcript.
+        if (lastWsActivityRef.current !== activityAtIssue || snapshots.busy()) return
         const stall = resolveStalledStream({
           serverRunning: !!d.running,
           serverPendingApproval: !!d.pending_approval,
           msSinceTranscriptChange: Date.now() - transcriptChangedAt,
         })
         if (stall === 'wait') return  // genuinely just quiet (e.g. long model think) — leave it
-        // The server's transcript is authoritative for both readings, so hydrate from it
-        // first and act second. `settled` is by definition `!d.running`, so the one flag
-        // serves both branches.
-        setTurns(hydrateTurns(d.messages || [], !!d.running))
+        // The server's transcript is authoritative for both readings, so adopt it first and
+        // act second. `settled` is by definition `!d.running`, so adopting it also ends the
+        // text run without landing a buffered tail into the history that replaced it.
+        adoptSnapshot(d)
         if (stall === 'settled') {
           // The server holds no task for this session, so nothing is in flight and the
-          // composer's Stop button and the suppressed assistant action row are both lying.
-          // `dropTextRun` rather than `endTextRun`: the transcript tail has just been
-          // replaced from history, so landing a buffered tail would write the old answer
-          // into it — the boundary that comment calls the CLIENT's to make.
-          dropTextRun()
+          // composer's Stop button and the suppressed assistant action row are both lying:
+          // the terminal frame this socket should have delivered never arrived. Said out
+          // loud, because a safety net that catches silently hides the loss it caught — the
+          // e2e turn driver fails on this line, so a turn that only completed because of the
+          // net cannot read as a turn that completed.
+          console.warn(`[chat] ${s}: ${STREAM_HEAL_WARNING} — settled from session detail`)
           markStreaming(false); setStatusText(''); setLatestActivity(null)
           return
         }
         // Server is parked on an approval the client isn't showing → recovered above.
         lastWsActivityRef.current = Date.now()  // don't re-fire every tick
-      }).catch(() => {})
+      }).catch(() => {}).finally(() => { probing.current = false })
     }, 2000)
     return () => window.clearInterval(iv)
   }, [streaming, turns])
@@ -2087,8 +2140,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // The client has to believe what it answered.
     //
     // 🔑 This is the floor UNDER the streaming-claim fixes, not a duplicate of them.
-    // `turnsEndedRef` stops one stale claim being made and `resolveStalledStream` heals a
-    // claim that outlived its turn — but both are corrections to a belief, and any
+    // The snapshot replay (a terminal frame that lands during a read replays AFTER it) stops
+    // one stale claim being made and `resolveStalledStream` heals a claim that outlived its
+    // turn — but both are corrections to a belief, and any
     // remaining way for `streamingRef` to be stale re-opens this branch. Nothing here
     // should lose a message even when the belief IS wrong.
     if (isStreaming) {

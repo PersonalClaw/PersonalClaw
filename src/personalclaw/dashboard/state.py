@@ -1055,6 +1055,10 @@ class DashboardState(DashboardWebSocketState):
         self._ws_app: dict[web.WebSocketResponse, str] = {}
         self._ws_log_subscribers: set[web.WebSocketResponse] = set()
         self._ws_subagent_subscribers: set[web.WebSocketResponse] = set()
+        # The streamed-chunk stamp (`next_stream_seq`): the resume watermark a session
+        # detail reports and every chat_chunk carries. Based at the boot time in
+        # microseconds so it never restarts across a gateway restart (see there).
+        self._stream_seq = time.time_ns() // 1_000
         # The gateway's event loop, captured when the first WS client registers.
         # broadcast_ws is invoked from BOTH the loop (chat runner) and off-loop
         # threads (MCP tool subprocess callbacks, subagent/cron announce paths);

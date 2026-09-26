@@ -12,7 +12,7 @@ import {
 // load-bearing test is `catches a re-introduced K44 duplicate`: a trace that a CORRECT
 // coalescer collapses to one text segment. We prove the healthy fold does so (0 adjacent
 // duplicates) AND that a K44-shaped mis-drive (a flush that pushes instead of replacing,
-// modeled by dropping the coalescing flag) produces the duplicate the metric catches —
+// modeled by a spurious release of the text run) produces the duplicate the metric catches —
 // so a regression is caught by replay, not only by a hand-written unit test.
 
 // ── happy-path-chat: streamed reply coalesces to one segment ──────────────────

@@ -115,8 +115,11 @@ describe('ChatPage wires the stall reading', () => {
       .toMatch(/stall === 'settled'[\s\S]*markStreaming\(false\)/)
     // The transcript tail is replaced from history first, so a buffered coalescer tail must be
     // DISCARDED, not landed (`endTextRun` would write the old answer into the replaced tail).
-    expect(body, 'a settled stall must drop the coalescer run, not seal it')
-      .toMatch(/stall === 'settled'[\s\S]*dropTextRun\(\)/)
+    // Adopting the snapshot is what discards it: the run is re-based on the server's transcript,
+    // and a settled one holds no live partial, so the run is emptied rather than sealed.
+    expect(body, 'a settled stall must adopt the server transcript before acting on it')
+      .toMatch(/adoptSnapshot\(d\)[\s\S]*stall === 'settled'/)
+    expect(body, 'a settled stall must never land the stale run').not.toMatch(/endTextRun\(\)/)
   })
 
   it('feeds the reading the SERVER\'s running flag, not a client guess', () => {

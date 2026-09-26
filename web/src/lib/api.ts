@@ -6689,7 +6689,10 @@ export const api = {
      *  (`'' | 'on' | 'off'`); the other three are resolved by the backend, which owns
      *  the order — the composer displays `natural_voice_source`, it never derives it. */
     natural_voice?: string; natural_voice_agent_default?: boolean
-    natural_voice_effective?: boolean; natural_voice_source?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+    natural_voice_effective?: boolean; natural_voice_source?: string
+    /** The newest `chat_chunk.seq` these messages hold (read in the same step as them). A
+     *  chat resuming the in-flight `streaming` partial drops chunks stamped at or below it. */
+    stream_seq?: number }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   /** Set the per-conversation natural-voice scope (PT-7). `''` clears the override so
    *  the conversation inherits the bound agent's preference again. The response is the

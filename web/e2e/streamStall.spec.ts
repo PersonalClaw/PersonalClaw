@@ -6,13 +6,14 @@ const PROMPT = 'Index this turn on the session map, please'
 // ── A turn whose terminal frame never arrives must not strand the chat ─────────────────────────
 //
 // `chat_done` is the ONLY frame that clears the streaming state, `/api/chat?ws=1` is the ONLY
-// transport (`api.sendChat` has no SSE fallback), and that frame can be lost. The measured loss is
-// the session-create remount: `useChatSocket`'s effect is per-instance with its `everOpened` flag
-// closure-local, so the first send on a brand-new chat re-keys `ChatSession`, closes the socket,
-// and the replacement's first `onopen` is NOT a reconnect — so `resyncOnReconnect` never runs and
-// every frame emitted in the gap is delivered to nothing. `chat_handlers.py` records the same gap
-// for `routing_suggestion` (issue 569) and closed it by giving that payload a second transport; a
-// terminal frame has none, and an ordinary socket drop loses it anyway.
+// transport (`api.sendChat` has no SSE fallback), and that frame can be lost. The measured loss was
+// the session-create remount: the first send on a brand-new chat re-keys `ChatSession`, whose
+// socket was its own, so the replacement's was not yet listening while a fast turn streamed and
+// ended. That gap is closed at its cause now — the tab's one socket outlives the remount, and the
+// replacement reads the session only once it is listening and settles from that read — but `chat_handlers.py` records the same shape for `routing_suggestion`
+// (issue 569), a terminal frame has no second transport, and an ordinary socket drop loses it
+// anyway. This spec is where that loss is FORCED and the net is the thing under test; everywhere
+// else, `driveScriptedTurns` refuses a turn that needed the net.
 //
 // CI run 36091495547 (`e2e-a11y`, sessionMap.spec.ts SSM-13, and again on retry1) is that state:
 // the reply fully rendered, the ledger row landed ("unpriced · 51 tokens"), and the page still read
@@ -23,8 +24,8 @@ const PROMPT = 'Index this turn on the session map, please'
 test.describe('a chat whose terminal stream frame is lost', () => {
   // 🪤 THE LOSS IS FORCED, AND IT IS FORCED ON THE **SECOND** TURN. Two decisions, both measured:
   //
-  //  · `routeWebSocket` accepts the page's socket and forwards nothing. That is the same condition
-  //    the remount creates — socket open (so no reconnect fires, so `resyncOnReconnect` stays
+  //  · `routeWebSocket` accepts the page's socket and forwards nothing. That is the condition the
+  //    remount used to create — socket open (so no reconnect fires, so the reconnect's resync stays
   //    unreachable) and no frame ever delivered — without racing it. A test that waits for a race
   //    is a test that passes for the wrong reason.
   //  · The FIRST send cannot carry the clause, because it is the one send that remounts: the

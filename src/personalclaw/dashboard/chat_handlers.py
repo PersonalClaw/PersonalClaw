@@ -880,6 +880,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
         messages = all_msgs[start:end]
         has_more = start > 0
 
+    # Read in the same synchronous step as `messages` (nothing above awaits), so it is an
+    # exact resume point: these messages hold every chunk stamped <= it, and none after.
+    stream_seq = state.stream_seq
     prepared = _prepare_messages(messages, session.running)
 
     # Branch lineage (CHAT-CRAFT CC-7). `forked_from` is already persisted on the
@@ -921,6 +924,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             ],
             "total": total,
             "has_more": has_more,
+            # Where a live answer resumes: a client continuing the in-flight `streaming`
+            # partial drops chat_chunk frames stamped <= this and keeps the rest.
+            "stream_seq": stream_seq,
             # agent/model binding so the composer restores the SAME selection the
             # session was using when reopened (native agent/model OR ACP provider
             # + provider_agent + reasoning effort).

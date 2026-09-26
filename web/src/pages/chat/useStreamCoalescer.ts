@@ -22,7 +22,13 @@ import { runtime } from '../../design/runtime'
  *
  *  BOUNDARIES: a text run ends exactly two ways — `seal()` (land the tail, then clear) or
  *  `reset()` (clear without landing). Both CLEAR, which is the invariant: a finished run's
- *  text can never be re-emitted, so no caller needs a "did we already break?" flag. */
+ *  text can never be re-emitted, so no caller needs a "did we already break?" flag.
+ *
+ *  RESUME: a run can also be re-based on a server snapshot (`resume`) — a reload, a
+ *  reconnect or a remount rebuilds the transcript from session detail, and the live answer
+ *  continues from the partial that snapshot shows. Chunks carry the gateway's stamp, and the
+ *  snapshot reports the newest stamp it holds, so a chunk the transcript already shows is
+ *  dropped instead of written twice. */
 
 export const FRAME_MS = 16
 export const MIN_BUDGET = 2       // chars/frame floor while animating (never stalls)
@@ -38,9 +44,34 @@ export class CoalescerCore {
   private revealed = 0
   private ema = 0
   private drain = 1
+  // The newest chunk stamp (`chat_chunk.seq`) this transcript already shows. It is NOT per
+  // run — boundaries keep it — because the gateway stamps chunks process-wide, and a resume
+  // re-sets it from the snapshot it resumed from.
+  private watermark = 0
 
-  /** Append a chunk to the backlog. */
-  push(chunk: string): void { this.pending += chunk }
+  /** Append a chunk to the backlog. A stamped chunk at or below the watermark is already on
+   *  screen — the snapshot the transcript was rebuilt from holds it — and is refused. */
+  push(chunk: string, seq?: number): boolean {
+    if (seq !== undefined && seq <= this.watermark) return false
+    if (seq !== undefined) this.watermark = seq
+    this.pending += chunk
+    return true
+  }
+
+  /** Continue from a server snapshot that shows every chunk stamped `<= watermark`. With a
+   *  `partial` the snapshot ends in the live answer, and this run becomes that text, already
+   *  revealed — the transcript is painting it from the same snapshot. Without one, the run
+   *  restarts empty. The watermark becomes the snapshot's, even when that is lower: the
+   *  snapshot is authoritative for what the transcript now holds, and every frame after it is
+   *  replayed on top (snapshotReplay.ts). */
+  resume(partial: string | null, watermark: number): void {
+    this.reset()
+    if (partial) {
+      this.pending = partial
+      this.revealed = partial.length
+    }
+    this.watermark = watermark
+  }
 
   /** Chars not yet revealed. */
   backlog(): number { return this.pending.length - this.revealed }
@@ -59,7 +90,7 @@ export class CoalescerCore {
   /** Reveal everything immediately; returns the full text. */
   drainAll(): string { this.revealed = this.pending.length; return this.pending }
 
-  /** Clear all state for a fresh segment/turn. */
+  /** Clear the run for a fresh segment/turn (the watermark outlives runs — see above). */
   reset(): void { this.pending = ''; this.revealed = 0; this.ema = 0; this.drain = 1 }
 
   /** Advance the reveal by one frame's adaptive budget; returns the revealed prefix.
@@ -116,8 +147,16 @@ export class CoalescerCore {
 }
 
 export interface StreamCoalescer {
-  /** Append a streamed chunk. Schedules one rAF (animated) or flushes now (immediate). */
-  push: (chunk: string) => void
+  /** Append a streamed chunk. Schedules one rAF (animated) or flushes now (immediate). A
+   *  chunk stamped at or below the watermark is already on screen and is dropped. */
+  push: (chunk: string, seq?: number) => void
+  /** Continue the live answer from a server snapshot (see `CoalescerCore.resume`). The
+   *  partial is not re-emitted — the snapshot's transcript already paints it. */
+  resume: (partial: string | null, watermark: number) => void
+  /** Reveal everything buffered NOW, keeping the run open. Not a boundary — boundaries are
+   *  `seal` and `reset`, which clear. For the frames replayed onto an adopted snapshot: they
+   *  paint with it, at once, rather than animating back in text the tab was already showing. */
+  reveal: () => void
   /** END this text run at a boundary: land whatever is still buffered into the run's own
    *  segment, then CLEAR the buffer so the next `push` opens a fresh one.
    *
@@ -163,10 +202,10 @@ export function useStreamCoalescer(
     if (core.backlog() > 0) rafRef.current = requestAnimationFrame(frame)
   }, [])
 
-  // Reveal-everything-now, WITHOUT clearing — immediate mode only, where every push emits the
-  // whole accumulated run and the next push must extend it. Deliberately private: this is the
-  // drain-without-clear that leaked a finished run into the next turn when boundaries called it
-  // (#548). Boundaries get `seal`, which clears.
+  // Reveal-everything-now, WITHOUT clearing — for immediate mode, where every push emits the
+  // whole accumulated run and the next push must extend it, and for `reveal`. Never a boundary:
+  // this is the drain-without-clear that leaked a finished run into the next turn when
+  // boundaries called it (#548). Boundaries get `seal`, which clears.
   const drain = useCallback(() => {
     stop(); lastTsRef.current = 0
     onFlushRef.current(coreRef.current!.drainAll())
@@ -183,13 +222,24 @@ export function useStreamCoalescer(
     core.reset()
   }, [])
 
-  const push = useCallback((chunk: string) => {
-    coreRef.current!.push(chunk)
+  const push = useCallback((chunk: string, seq?: number) => {
+    if (!coreRef.current!.push(chunk, seq)) return
     if (isImmediate()) { drain(); return }
     if (!rafRef.current) rafRef.current = requestAnimationFrame(frame)
   }, [frame, drain])
 
+  const resume = useCallback((partial: string | null, watermark: number) => {
+    stop(); lastTsRef.current = 0
+    coreRef.current!.resume(partial, watermark)
+  }, [])
+
+  // Only when there IS a backlog: an emit on an empty run would write an empty text segment,
+  // the same reason `seal` checks `hasText()`.
+  const reveal = useCallback(() => {
+    if (coreRef.current!.backlog() > 0) drain()
+  }, [drain])
+
   useEffect(() => () => stop(), [])
 
-  return { push, seal, reset }
+  return { push, seal, reset, resume, reveal }
 }
