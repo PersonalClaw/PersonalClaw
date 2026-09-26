@@ -48,9 +48,13 @@ vi.mock('../../lib/api', async (orig) => {
 // 🪤 TWO REACT TRAPS THIS HIT ON THE WAY, both caught by running it rather than reading it:
 //   1. The report effect first landed BELOW each menu's `if (!open …) return null`, so the hook count
 //      changed between renders — React rejects that outright.
-//   2. Reporting the cursor from an effect whose deps include the parent's inline callback is an
-//      infinite loop; the host's setter returns `prev` unchanged when nothing moved, so React bails
-//      out of the re-render. Verified live: no "Maximum update depth" console error.
+//   2. The menus report the cursor from an effect whose deps include the host's callback, so an
+//      INLINE callback re-runs that effect on every host render. The host's setter returning `prev`
+//      was believed to make that harmless ("React bails out") and it does not: React still
+//      SCHEDULES a render for a same-value update whenever it cannot drop it eagerly, and typed
+//      fast, one per keystroke tripped React's nested-update limit — the chat composer's #185.
+//      The callbacks keep one identity now; `typingFastStaysUnderTheUpdateLimit.test.tsx` is the
+//      behavioural proof.
 
 // jsdom does not implement scrollIntoView, which the cursor effect calls to keep the active row in
 // view. A no-op keeps the harness honest about what it is standing in for.
@@ -132,8 +136,15 @@ describe('both typeahead menus, and the editor that speaks for them', () => {
     expect(code).toMatch(/comboComp\.current\.of\(\[\]\)/)
   })
 
-  it('the host dedupes the report, which is what stops the render loop', () => {
+  it('the menus get report callbacks that keep one identity — the dedupe alone never stopped the loop', () => {
     const code = codeOf('MarkdownInput.tsx')
+    // The guard: each menu's report effect runs only when its cursor really moves.
+    expect(code).toMatch(/const reportMentionCursor = useCallback\(\(index: number \| null\) => reportCursor\('mention', index\), \[reportCursor\]\)/)
+    expect(code).toMatch(/const reportSlashCursor = useCallback\(\(index: number \| null\) => reportCursor\('slash', index\), \[reportCursor\]\)/)
+    expect(code).toMatch(/onActiveIndex=\{reportMentionCursor\}/)
+    expect(code).toMatch(/onActiveIndex=\{reportSlashCursor\}/)
+    expect(code, 'an inline report callback is a new effect dependency on every render').not.toMatch(/onActiveIndex=\{\(/)
+    // Still there, and still worth a render saved when a result count changes under an unmoved cursor.
     expect(code).toMatch(/if \(prev\?\.list === list && prev\.index === index\) return prev/)
   })
 })

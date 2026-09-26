@@ -1546,7 +1546,9 @@ describe('direct fetches keep their rejection too — the 2026-09-05 false-empty
     ['pages/knowledge/KnowledgeListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setOutcomesErr\(e\);\s*setOutcomes\(null\)\s*\}\)/, 'gathered matches'],
     ['pages/skills/SkillsPage.tsx', /catch\s*\(e\)\s*\{\s*setSearchErr\(e\);\s*setResults\(null\)/, 'skill search results'],
     ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setReadyErr\(e\);\s*setReady\(null\)\s*\}\)/, 'ready tasks'],
-    ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*if\s*\(alive\)\s*\{\s*setSearchErr\(e\);\s*setResults\(null\)\s*\}\s*\}\)/, 'search results'],
+    // Recorded WITH the request it answered, so a new query hides it without a per-keystroke clearing
+    // set (the #185 family — see `ui/composer/typingFastStaysUnderTheUpdateLimit.test.tsx`).
+    ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*if\s*\(alive\)\s*\{\s*setSearchErr\(\{\s*request,\s*error:\s*e\s*\}\);\s*setResults\(null\)\s*\}\s*\}\)/, 'search results'],
     // #532's daily-digest row. Pinned here rather than trusted to §B's count because the RECORDS veto
     // makes the fixed shape invisible to the census: reverting only the render half — keeping
     // `setDigestsErr` while deleting the branch that shows it — moves no number in this file.
