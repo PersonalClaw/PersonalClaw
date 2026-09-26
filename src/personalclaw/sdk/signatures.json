@@ -2543,6 +2543,14 @@
     ],
     "returns": "bool | None"
    },
+   "mark_agent_stale": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "var_positional", "name": "names"},
+     {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "unnamed"}
+    ],
+    "returns": "list[str]"
+   },
    "mark_new": {
     "kind": "method",
     "params": [

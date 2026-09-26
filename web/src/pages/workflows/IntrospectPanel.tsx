@@ -136,6 +136,13 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   <Stat label="Cache hits" value={`${Math.round(data.stats.cache_hit_rate * 100)}%`} />
                   <Stat label="Models" value={data.stats.models.join(', ') || 'none recorded'} />
                 </dl>
+                {/* The Models cell names who answered; a step a chain fallback served also needs who
+                    it asked for, or the run reads as having run on the model it chose. */}
+                {(data.stats.substitutions ?? []).map((line) => (
+                  <p key={line} data-type="caption" data-testid="introspect-model-substituted" className="text-warning">
+                    {line}
+                  </p>
+                ))}
               </section>
 
               {/* Q6 continued — the template p50/p95 card. p50 answers "what does this usually

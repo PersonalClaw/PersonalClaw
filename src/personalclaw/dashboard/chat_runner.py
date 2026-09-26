@@ -31,6 +31,7 @@ from personalclaw.dashboard.chat_persistence import (
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_finish_reason,
+    stamp_model_substitution,
     stamp_turn_summary,
     stamp_turn_telemetry,
     summarize_session_turn,
@@ -39,6 +40,7 @@ from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
     _BLOCKED_SLASH_COMMANDS,
     _SLASH_COMMANDS,
+    MODEL_SUBSTITUTION_ACTIVITY_KIND,
     SLASH_FALLBACK_ACTIVITY_KIND,
     _apply_incognito_prefix,
     _broadcast_auto_tool,
@@ -52,6 +54,7 @@ from personalclaw.dashboard.chat_utils import (
     _project_context_preamble,
     _redact_for_display,
     _validate_tool_name,
+    model_substitution_notice,
     stream_slash_command,
     strip_status_sentinel,
     task_mode_denies,
@@ -2012,6 +2015,8 @@ async def run_chat(
         return
 
     _acquired = False
+    # "Ran on X instead of Y: …" when this turn's runtime serves in place of the chosen model.
+    _substitution_note = ""
     _mirror_stream_ts: str = ""
     _mirror_chan: str | None = ""
     _mirror_active_task = ""
@@ -2192,6 +2197,19 @@ async def run_chat(
             model_axis="loops" if getattr(session, "_app", "") == "loop" else "",
         )
         _acquired = True
+        # The chosen model could not run and another answers: said now, before the reply streams
+        # (an activity line is not drawn once tool cards arrive), and stamped on the reply below
+        # so a reload still says it.
+        _substitution_note = model_substitution_notice(client)
+        if _substitution_note:
+            state.broadcast_ws(
+                "activity_event",
+                {
+                    "session": session.key,
+                    "kind": MODEL_SUBSTITUTION_ACTIVITY_KIND,
+                    "text": _substitution_note,
+                },
+            )
         # Register this turn on the active-job tracker (PLATFORM-RESILIENCE §6.2) —
         # bookkeeping so the mid-turn cancel-and-replace decision can tell this
         # interactive turn apart from unattended work. Best-effort; never blocks a turn.
@@ -4344,6 +4362,7 @@ async def run_chat(
         # A reply cut at the model's output cap ends mid-sentence; the mark is what lets the
         # transcript say so instead of reading as the model trailing off.
         stamp_finish_reason(session, _stop_reason)
+        stamp_model_substitution(session, _substitution_note)
         # Save to history and trigger memory consolidation
         save_session_to_history(state, session)
         session._prompt_busy_retries = 0

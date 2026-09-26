@@ -515,6 +515,31 @@ async def test_an_all_failed_slate_names_what_the_calls_died_of(monkeypatch):
     )
 
 
+@pytest.mark.asyncio
+async def test_a_cause_longer_than_the_note_is_cut_at_a_line_not_mid_word(monkeypatch):
+    """🔴 Red on main. A model that cannot be built fails with its own WHAT/WHY/FIX envelope, which
+    runs past the note's cap, and the step's failure ended mid-word ("…or change 'X''s typ"). Cut
+    at a line it reads whole; the fix travels on the slate's `failure` as the suggested fix."""
+    what = "WHAT: the model pinned for use case 'background' ('Broken App:model-x') cannot be built"
+    why = (
+        "WHY: provider 'Broken App' declares type 'brokenapp', and no installed app registers "
+        "that type"
+    )
+    fix = (
+        "FIX: install an app that provides 'brokenapp' in the App Store, or change the "
+        "provider's type in Settings → Providers"
+    )
+
+    async def unbuildable(prompt, *, use_case="background", temperature=None, **_kw):
+        raise RuntimeError("\n".join((what, why, fix)))
+
+    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", unbuildable)
+    result = await best_of_n("q", n=2, judge_provider_factory=_judge_factory({}))
+    assert result["note"] == (
+        f"no candidate: all 2 sampling calls failed — RuntimeError: {what}\n{why} …"
+    )
+
+
 def test_sampling_outcomes_is_declared_and_snapshot_excluded():
     """Declared in the durability inventory (so audit_home sees it) but DERIVED, which
     is what keeps it out of every snapshot."""

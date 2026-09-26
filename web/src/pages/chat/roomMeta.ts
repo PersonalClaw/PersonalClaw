@@ -244,6 +244,9 @@ export function memberModelLabel(binding?: RoomMemberBinding): string {
   if (!binding) return ''
   if (!binding.configured) return 'No agent by this name is configured'
   if (!binding.model) return 'Default model'
+  // A pin that cannot run is still the member's choice, and still what the panel shows — with
+  // what that means, because its turns are answered by another model meanwhile.
+  if (binding.model_unavailable) return `${binding.model} · unavailable — answering on the chat model`
   return binding.model
 }
 

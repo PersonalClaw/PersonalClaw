@@ -93,7 +93,7 @@ from personalclaw.workflows.compaction import is_context_overflow
 
 if TYPE_CHECKING:
     from personalclaw.agents.provider import AgentRuntimeDefinition
-    from personalclaw.llm.base import ModelProvider
+    from personalclaw.llm.base import ModelProvider, ModelSubstitution
     from personalclaw.tool_providers.base import ToolProvider
 
 logger = logging.getLogger(__name__)
@@ -304,6 +304,10 @@ class NativeAgentRuntime(AgentProvider):
         self._agent_id = getattr(definition, "name", "") or ""
         self._max_turns = max_turns
         self._hook_fire = hook_fire
+        # Set by the builder (``provider_bridge._build_native_runtime``) when this runtime serves in
+        # place of a model someone chose — the agent's pin or the chat's own pick could not run —
+        # so the chat and a room can say which model answered instead of the one that was chosen.
+        self.model_substitution: ModelSubstitution | None = None
         self._extra_deny = list(extra_deny_patterns or [])
 
         # Conversation history — owned by the loop (complete() is stateless).

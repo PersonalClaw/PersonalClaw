@@ -1057,6 +1057,56 @@ def test_an_empty_reply_is_not_appended_as_the_member_but_the_room_says_so(enabl
     assert sessions.released == [f"room:{room.id}:analyst"], "the permit is still released"
 
 
+def test_a_member_whose_model_cannot_run_says_which_model_answered_instead(enabled):
+    """🔴 Red on main: the member's pinned model was missing, its runtime ran on the chat binding,
+    and the room showed the reply as the member's with the members panel still naming the pin.
+    The room now says so, in the member's slot and before the reply it describes."""
+    from personalclaw.llm.base import ModelSubstitution
+    from personalclaw.rooms import turn
+
+    room = store.create_room("Pinned")
+    store.add_member(room.id, "analyst")
+    sessions = _StreamingSessions(replies={f"room:{room.id}:analyst": "the numbers say yes"})
+    key = f"room:{room.id}:analyst"
+    provider = _StreamingProvider(key, "the numbers say yes")
+    provider.model_substitution = ModelSubstitution(
+        requested="fake-oai:no-such-model",
+        served="fake-oai:fake-model-1",
+        why="it is not one of the chat models set up in Settings → Models",
+        fix="pick another model for analyst on the Agents page, or add it in Settings → Models",
+        who="analyst's model",
+    )
+    sessions.providers[key] = provider
+
+    asyncio.run(turn.run_member_turn(sessions, room.id, "analyst"))
+
+    assert [
+        (m["role"], m.get("speaker", ""), m["content"]) for m in store.read_messages(room.id)
+    ] == [
+        (
+            store.ROOM_NOTE_ROLE,
+            "analyst",
+            "Ran on fake-oai:fake-model-1 instead of analyst's model fake-oai:no-such-model: it "
+            "is not one of the chat models set up in Settings → Models. Pick another model for "
+            "analyst on the Agents page, or add it in Settings → Models.",
+        ),
+        ("assistant", "analyst", "the numbers say yes"),
+    ]
+
+
+def test_a_member_on_its_own_model_gets_no_note(enabled):
+    """The control: nothing was substituted, so the transcript holds the reply alone."""
+    from personalclaw.rooms import turn
+
+    room = store.create_room("Own model")
+    store.add_member(room.id, "analyst")
+    sessions = _StreamingSessions(replies={f"room:{room.id}:analyst": "yes"})
+
+    asyncio.run(turn.run_member_turn(sessions, room.id, "analyst"))
+
+    assert [m["role"] for m in store.read_messages(room.id)] == ["assistant"]
+
+
 def test_one_members_failure_does_not_silence_the_rest_of_the_room(enabled):
     """A dead binding must not look like a room where nobody had anything to say."""
     room = store.create_room("Partial")

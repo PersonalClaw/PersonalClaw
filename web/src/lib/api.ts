@@ -1248,6 +1248,8 @@ export interface RoomMemberBinding {
   model: string
   provider: string
   description?: string
+  /** Set when `model` cannot run — the member answers on the chat model, and its turns say so. */
+  model_unavailable?: { why: string; fix: string } | null
 }
 
 /** One transcript line. `speaker` is the member name, `''` for the human. A line whose
@@ -1428,7 +1430,7 @@ export interface ChatHistoryMsg {
   // `[]`, when the turn loaded none, and never listing a REFUSED skill (named to the agent
   // but never loaded). `finish_reason: 'length'` marks a reply cut at the model's output cap —
   // absent when the reply finished on its own.
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string }
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string; model_substitution?: string }
 }
 
 // ── workspace / build entity types ──
@@ -1802,6 +1804,10 @@ export interface WorkflowNodeState {
   // failed — so this is the only thing on the row that says the `done` was reached without the
   // declared shape. Absent (not "") when there was nothing to report, like `cached`.
   schema_shortfall?: string
+  // "ran on X instead of Y: why" for each call a fallback in the user's model chain served
+  // because the model this step asked for could not. The row's `done` is true, and so is the
+  // model it names — this says it is not the model that was asked for. Absent when there is none.
+  model_substituted?: string[]
 }
 export interface WorkflowRunSummary {
   id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number
@@ -1985,6 +1991,10 @@ export interface WorkflowRunStats {
   // when no step produced output, which is not "0 ms". Whole-second resolution (journal stamps).
   first_byte_ms: number | null
   models: string[]
+  // "ran on X instead of Y: why", distinct, for every call a fallback in the user's model chain
+  // served because the model a step asked for could not. `models` names who answered; this says
+  // who did not. Empty on a run whose steps got what they asked for.
+  substitutions: string[]
   unverified_steps: number
   verification_debt: number
   cache_hit_rate: number
@@ -5144,6 +5154,10 @@ export interface SavedAgent {
   // Agent routing (AGENT-ROUTING) — suggest-first specialist routing metadata.
   specialty?: string; route_hints?: string
   reserved?: boolean; editable?: boolean
+  /** Set when the pinned `model` cannot run — `why` it cannot, and the `fix` for the model itself
+   *  ("add it in Settings → Models"). The pin is kept; the agent answers on the chat model until
+   *  it is changed, and each reply says so. `null` when the pin can run or there is none. */
+  model_unavailable?: { why: string; fix: string } | null
 }
 
 

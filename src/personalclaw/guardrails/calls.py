@@ -69,6 +69,10 @@ class ModelCall:
     #: every streamed event. What a workflow's stall clock reads, so a model that is still
     #: generating is not mistaken for one that went silent.
     last_event_at: float = field(default_factory=time.time)
+    #: ``"ran on X instead of Y: why"`` when this call served in place of the model that was asked
+    #: for (``ModelProvider.substituted_for``), else "". ``provider``/``model`` say who answered;
+    #: this says that it was not who was asked, which they cannot.
+    substitution: str = ""
 
 
 @dataclass
@@ -137,6 +141,11 @@ class CallLog:
         return _distinct(c.provider for c in self.calls)
 
     @property
+    def substitutions(self) -> list[str]:
+        """Every "ran on X instead of Y" these calls carried, distinct, in first-use order."""
+        return _distinct(c.substitution for c in self.calls)
+
+    @property
     def last_activity(self) -> float | None:
         """When any of these calls last heard from its provider, or ``None`` before the first."""
         return max((c.last_event_at for c in self.calls), default=None)
@@ -175,6 +184,7 @@ def open_call(
     *,
     temperature: float | None,
     unsent: dict[str, str] | None = None,
+    substitution: str = "",
 ) -> ModelCall | None:
     """Record the start of one model call on every bound log. ``None`` when nothing is bound.
 
@@ -185,7 +195,11 @@ def open_call(
     if not logs:
         return None
     call = ModelCall(
-        provider=provider, model=model, temperature=temperature, unsent=dict(unsent or {})
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        unsent=dict(unsent or {}),
+        substitution=substitution,
     )
     for log in logs:
         log.calls.append(call)

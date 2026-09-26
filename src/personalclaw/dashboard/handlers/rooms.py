@@ -202,7 +202,10 @@ def _member_bindings(room: store.Room) -> list[dict]:
     domain reads, the same reasoning that keeps ``session_export.render`` on this side of the
     line.
     """
-    agents = config_loader.AppConfig.load().agents
+    from personalclaw.providers.provider_bridge import agent_model_problem
+
+    cfg = config_loader.AppConfig.load()
+    agents = cfg.agents
     out: list[dict] = []
     for member in room.members:
         profile = agents.get(member.name)
@@ -219,6 +222,9 @@ def _member_bindings(room: store.Room) -> list[dict]:
                 "model": profile.model,
                 "provider": profile.provider,
                 "description": profile.description,
+                # The model above cannot run, and the member answers on the chat model: the panel
+                # shows the pin, so it has to say so too. The transcript says it on every turn.
+                "model_unavailable": agent_model_problem(profile, cfg),
             }
         )
     return out

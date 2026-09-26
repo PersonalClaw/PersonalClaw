@@ -2710,6 +2710,8 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
         # every row of a normal run is twenty fields carrying no information.
         if inst.schema_shortfall:
             row["schema_shortfall"] = inst.schema_shortfall
+        if inst.model_substituted:  # "ran on X instead of Y: why", omitted when there is none
+            row["model_substituted"] = list(inst.model_substituted)
         # Cache-origin (WF2-A1), so "did my edit actually re-run anything?" is answerable from
         # the run's own node list rather than by opening a per-node drawer on each row in turn.
         #
