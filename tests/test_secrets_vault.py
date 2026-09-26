@@ -104,6 +104,7 @@ class TestPresenceIsStructural:
     #: Module-level functions in `config.credentials` that RETURN a credential value.
     MODULE_VALUE_READERS = (
         "get_credential",
+        "find_credential",
         "_dotenv_credentials",
         "_keychain_credentials",
         "_keychain_get",

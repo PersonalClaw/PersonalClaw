@@ -213,14 +213,16 @@ def test_a_missing_credential_names_the_credential(home):
 
     assert "needs credential 'ghost-api-key'" in why
     assert "no secret in the credential store" in why
-    assert "set 'ghost-api-key' in Settings → Providers" in fix
+    assert "store 'ghost-api-key' in Settings → Secrets" in fix
 
 
-def test_a_present_credential_is_not_reported_as_missing(home):
+def test_a_present_credential_is_not_reported_as_missing(home, monkeypatch):
     """The control: with the secret in place, the credential branch must NOT fire."""
-    (home / "credentials.json").write_text(
-        json.dumps({"ghost-api-key": {"type": "api_key", "value": "shh"}}), encoding="utf-8"
-    )
+    from personalclaw.config.credentials import save_credential
+
+    monkeypatch.setenv("ghost-api-key", "x")
+    monkeypatch.delenv("ghost-api-key")  # registered: teardown drops the mirrored value
+    save_credential("ghost-api-key", "shh")
     _write_config(home, [_ghost_config_row()])
     _register_type({Capability.CHAT})
     _register_entry(declared_capabilities=frozenset({Capability.CHAT}), credential="ghost-api-key")

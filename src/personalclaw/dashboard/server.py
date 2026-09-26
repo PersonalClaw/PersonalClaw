@@ -1798,6 +1798,15 @@ async def start_dashboard(
         migrate_plaintext_secrets()
     except Exception:  # noqa: BLE001 — never block boot; the next start retries
         logger.warning("moving plaintext secrets into the credential store failed", exc_info=True)
+    # And `credentials.json`, the second store an earlier release kept, before the registry
+    # sync below resolves a provider entry's `credential` by name. Deleted only once every value
+    # in it reads back from the store; what it cannot settle, the Doctor lists.
+    from personalclaw.llm.credentials import move_credentials_file
+
+    try:
+        move_credentials_file()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving credentials.json into the credential store failed", exc_info=True)
     # Sync config.json provider entries into the LLM registry IMMEDIATELY after
     # extensions load (types are now registered). Must happen BEFORE any handler
     # resolves a provider (e.g. embedding/knowledge auto-embed at boot).

@@ -182,10 +182,10 @@ Model providers are installable apps — nothing is hardwired to a vendor.
    The same panel binds models for background work, embeddings, ingestion,
    speech, and more — they can all be different providers.
 
-Prefer the terminal? Once a provider app is installed,
-`personalclaw setup --provider NAME --credential NAME=VALUE` stores the
-credential without the dashboard, and `personalclaw doctor` verifies the result
-end to end.
+Prefer the terminal? `personalclaw setup --credential NAME=VALUE` saves a
+secret in the same credential store Settings → Secrets uses, where a workflow's
+`{{secret:NAME}}` and a provider entry whose `credential` is `NAME` read it.
+`personalclaw doctor` verifies the result end to end.
 
 ## 4. First chat
 

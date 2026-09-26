@@ -95,6 +95,9 @@ def _catalog_for_config_provider(p: dict[str, Any]):
         type=ptype,
         model=p.get("model", ""),
         options=dict(p.get("options") or {}),
+        # The credential it names in the store is part of how it authenticates: without it,
+        # discovery for an entry keyed that way asked the endpoint with no key at all.
+        credential=p.get("credential") or None,
     )
     return get_default_registry().build_catalog(entry)
 

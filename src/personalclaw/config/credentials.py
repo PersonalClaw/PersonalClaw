@@ -49,8 +49,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from personalclaw.config import loader as _loader
@@ -59,6 +60,9 @@ logger = logging.getLogger(__name__)
 
 
 CredentialBackend = Literal["keychain", "dotenv"]
+
+#: Where :func:`find_credential` found a value; ``""`` when it found none.
+CredentialLocation = Literal["keychain", "file", ""]
 
 #: Opt-in request. Only ``keychain`` turns the keychain on; anything else (unset,
 #: empty, ``dotenv``, or a typo) resolves to ``dotenv``, which is the fail-closed
@@ -369,7 +373,7 @@ def _keychain_delete(key: str) -> bool:
 def _dotenv_remove_credentials(keys: Iterable[str]) -> list[str]:
     """Delete ``KEY=VALUE`` lines from ``~/.personalclaw/.env``; return what was removed.
 
-    The mirror of :func:`_dotenv_save_credential` and it shares that function's write
+    The mirror of :func:`_dotenv_save_credentials` and it shares that function's write
     contract exactly — ``atomic_write`` at 0600 with ``fsync``, comments and unrelated
     lines preserved. A truncated ``.env`` here would lose the credentials this operation
     exists to *keep*, so the in-place write that function's comment rejects is rejected
@@ -462,8 +466,9 @@ def _decode_dotenv_value(raw: str) -> str:
     return "".join(out)
 
 
-def _dotenv_save_credential(key: str, value: str) -> None:
-    """Upsert ``KEY=VALUE`` into ``~/.personalclaw/.env`` at mode 0600.
+def _dotenv_save_credentials(values: Mapping[str, str]) -> None:
+    """Upsert every ``KEY=VALUE`` in *values* into ``~/.personalclaw/.env`` at mode 0600, in one
+    write.
 
     Preserves other lines and comments. 0600 is the floor this backend exists to
     hold — do not relax it. One line per credential, whatever the value holds
@@ -471,21 +476,18 @@ def _dotenv_save_credential(key: str, value: str) -> None:
     """
     ep = _loader.env_path()
     ep.parent.mkdir(parents=True, exist_ok=True)
-    entry = f"{key}={_encode_dotenv_value(value)}"
+    remaining = dict(values)
     lines: list[str] = []
-    found = False
     if ep.exists():
         for line in ep.read_text().splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 k = stripped.split("=", 1)[0].strip()
-                if k == key:
-                    lines.append(entry)
-                    found = True
+                if k in remaining:
+                    lines.append(f"{k}={_encode_dotenv_value(remaining.pop(k))}")
                     continue
             lines.append(line)
-    if not found:
-        lines.append(entry)
+    lines.extend(f"{k}={_encode_dotenv_value(v)}" for k, v in remaining.items())
     # `atomic_write(mode=0o600)`, not write_text-then-chmod. Two defects in that pair:
     #
     #  • A CREATION WINDOW. `write_text` creates the file at the umask default (0644 under the
@@ -504,10 +506,15 @@ def _dotenv_save_credential(key: str, value: str) -> None:
     atomic_write(ep, "\n".join(lines) + "\n", mode=0o600, fsync=True)
 
 
-def _dotenv_credentials() -> dict[str, str]:
-    """Parse ``~/.personalclaw/.env`` into a dict, repairing loose permissions."""
+def _env_file(home: Path | None) -> Path:
+    """``<home>/.env`` for an explicit *home*, else the active home's (``loader.env_path``)."""
+    return Path(home) / ".env" if home is not None else _loader.env_path()
+
+
+def _dotenv_credentials(home: Path | None = None) -> dict[str, str]:
+    """Parse ``<home>/.env`` into a dict, repairing loose permissions."""
     creds: dict[str, str] = {}
-    ep = _loader.env_path()
+    ep = _env_file(home)
     if not ep.exists():
         return creds
     try:
@@ -536,23 +543,45 @@ def save_credential(key: str, value: str) -> None:
     filtered by name in ``sandbox.py``, independent of the backend). An OWNED key
     (:func:`is_owned_key`) is not: it is read only through its settings reference.
     """
-    if not (credential_backend() == "keychain" and _keychain_save(key, value)):
-        _dotenv_save_credential(key, value)
-    if not is_owned_key(key):
-        os.environ[key] = value
+    save_credentials({key: value})
 
 
-def get_credential(key: str) -> str:
-    """Read one credential, backend-transparently. ``""`` when it is not stored.
+def save_credentials(values: Mapping[str, str]) -> None:
+    """Persist several credentials at once, each with :func:`save_credential`'s contract.
 
-    Keychain first (it is where a migrated or keychain-written secret lives), then
-    ``.env``. Both halves are consulted whichever backend is active — see the
-    selector note above for why reads are a union while writes are not.
+    On the ``.env`` backend it is ONE atomic write of the file, so a crash leaves either every
+    value stored or none of them. The keychain holds one entry per credential, so there each
+    value is its own write, and one that fails falls back to ``.env`` with the rest.
+    """
+    pending = dict(values)
+    if credential_backend() == "keychain":
+        pending = {key: value for key, value in pending.items() if not _keychain_save(key, value)}
+    if pending:
+        _dotenv_save_credentials(pending)
+    for key, value in values.items():
+        if not is_owned_key(key):
+            os.environ[key] = value
+
+
+def find_credential(key: str, *, home: Path | None = None) -> tuple[str, CredentialLocation]:
+    """One credential and where it was found: ``"keychain"``, ``"file"`` (``.env``), or
+    ``("", "")`` when neither holds it.
+
+    Keychain first (it is where a migrated or keychain-written secret lives), then ``.env``.
+    Both halves are consulted whichever backend is active — see the selector note above for why
+    reads are a union while writes are not. *home* names the ``.env`` to read (the active home's
+    by default); the OS keychain has one namespace for every home.
     """
     value = _keychain_get(key)
     if value:
-        return value
-    return _dotenv_credentials().get(key, "")
+        return value, "keychain"
+    value = _dotenv_credentials(home).get(key, "")
+    return (value, "file") if value else ("", "")
+
+
+def get_credential(key: str) -> str:
+    """Read one credential, backend-transparently. ``""`` when it is not stored."""
+    return find_credential(key)[0]
 
 
 def _dotenv_names() -> list[str]:

@@ -27,7 +27,6 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import save_credential
 from personalclaw.dashboard.handlers import providers as H
 from personalclaw.llm.branded_specs import BrandedProviderSpec
-from personalclaw.llm.credentials import CredentialStore
 from personalclaw.llm.registry import get_default_registry
 from personalclaw.providers.settings import ProviderSettings
 from personalclaw.sdk.provider_helpers import register_branded_app
@@ -43,7 +42,7 @@ SECRETS = {
     "provider key typed in Settings": PROVIDER_KEY,
     "app settings token": APP_TOKEN,
     "credential-store value (.env)": VAULT_VALUE,
-    "credentials.json inline value": DESCRIPTOR_VALUE,
+    "a value left in an older release's credentials.json": DESCRIPTOR_VALUE,
     "gateway .local_secret": LOCAL_SECRET,
     "per-app .app_secret": APP_PROXY_SECRET,
 }
@@ -78,7 +77,10 @@ def home(monkeypatch):
     # monkeypatch restore the process environment at teardown.
     monkeypatch.delenv("FIXTURE_VAULT_TOKEN", raising=False)
     save_credential("FIXTURE_VAULT_TOKEN", VAULT_VALUE)
-    CredentialStore(home).save({"legacy": {"type": "api_key", "value": DESCRIPTOR_VALUE}})
+    # An older release's credentials.json, still on disk while a value in it is not moved.
+    (home / "credentials.json").write_text(
+        json.dumps({"legacy": {"type": "api_key", "value": DESCRIPTOR_VALUE}}), encoding="utf-8"
+    )
     (home / ".local_secret").write_text(LOCAL_SECRET, encoding="utf-8")
     (home / "apps" / APP / ".app_secret").write_text(APP_PROXY_SECRET, encoding="ascii")
     yield home

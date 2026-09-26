@@ -5,10 +5,10 @@ A pack declares the MCP connectors its skills/templates expect — never their c
 On import, each declaration must be RESOLVED against this machine, three ways:
 
 * **configure** — the declared connector is known (in the seeded catalog or self-contained):
-  collect the required credential, store it in the credential store (the WORK-R19 fallback:
-  :meth:`CredentialStore.save` until a dedicated project-secrets store lands), and write the
-  MCP server through :mod:`providers.mcp_instances` (the existing multi-instance seam with
-  its injectable-key guard). A credential NEVER lands in the pack or a plaintext config
+  collect the required credential, store it in the credential store under its own name (the
+  one Settings → Secrets lists), and write the MCP server through
+  :mod:`providers.mcp_instances` (the existing multi-instance seam with its injectable-key
+  guard). A credential NEVER lands in the pack or a plaintext config
   field — it goes to the credential store, keyed by name, and the server spec references it
   by env-var name only.
 * **substitute** — the user points the requirement at a DIFFERENT catalog entry of the SAME
@@ -241,21 +241,27 @@ class ConnectorResolutionError(Exception):
 
 
 def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
-    """Persist each required credential to the credential store (the WORK-R19 fallback).
+    """Save each required credential in the credential store under its own name.
 
-    Writes a ``static_token`` descriptor per name whose ``value_env`` is the credential's
-    own name — so the server spec need only reference it (``{{secret:NAME}}``, resolved from
-    the store at spawn time), never carry the value. The plaintext value is
-    written ONLY into the 0o600 credential store (via :meth:`CredentialStore.save`), never a
-    config field or the pack. Returns the names written.
+    The store is the one Settings → Secrets lists, and the server spec references each value
+    by that name (``{{secret:NAME}}``, resolved from the store at spawn time), so a value never
+    lands in a config field or the pack. Returns the names written.
 
     Raises :class:`ConnectorResolutionError` if a required credential has no value — a
     half-configured connector (server written, credential missing) fails on first use for a
-    reason nobody can name, so refuse before writing the server.
+    reason nobody can name, so refuse before writing the server. A pack chooses these names, so
+    one that is not a credential name, or that is reserved for a key PersonalClaw manages (a
+    provider's own ``PCSECRET_…`` key), is refused too: storing it would overwrite that key.
     """
-    from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.config.credentials import save_credentials
+    from personalclaw.secrets_vault import is_reserved_key, valid_key_name
 
-    home = config_dir()
+    unusable = [n for n in names if not valid_key_name(n) or is_reserved_key(n)]
+    if unusable:
+        raise ConnectorResolutionError(
+            f"the pack names credential(s) PersonalClaw cannot store for it: "
+            f"{', '.join(sorted(unusable))}"
+        )
     missing = [n for n in names if not values.get(n)]
     if missing:
         raise ConnectorResolutionError(
@@ -263,21 +269,7 @@ def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
         )
     if not names:
         return []
-    store = CredentialStore(home)
-    # Merge into the existing descriptor map so we never clobber unrelated credentials.
-    descriptors: dict[str, dict[str, object]] = {c.name: {"type": c.kind} for c in store.list()}
-    for name in names:
-        # The secret rides ONLY into the credential store's env-file, keyed by the credential
-        # name; the descriptor points value_env at that same name. No inline value in the
-        # descriptor (which is world-readable-ish JSON) — the store's .env is the 0o600 sink.
-        descriptors[name] = {"type": "static_token", "value_env": name}
-    store.save(descriptors)
-    # Persist the actual secret to <home>/.env under the same key (0o600), the resolution
-    # chain's file fallback that value_env → env → .env reads back.
-    from personalclaw.config.credentials import save_credential
-
-    for name in names:
-        save_credential(name, values[name])
+    save_credentials({name: values[name] for name in names})
     return list(names)
 
 

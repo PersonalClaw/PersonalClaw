@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.llm.build_kwargs import output_cap, per_call_temperature
 from personalclaw.llm.capabilities import Capability
-from personalclaw.llm.credentials import Credential
+from personalclaw.llm.credentials import Credential, OwnedCredentialRefused
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing, ProviderEntry
 from personalclaw.llm.subscription_credentials import resolve_subscription_credential
@@ -197,9 +197,17 @@ def resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Cre
             f"{label} provider entry {entry.name!r} declares credential "
             f"{entry.credential!r} but no credential_store was passed to build()"
         )
-    cred = store.resolve(entry.credential)  # type: ignore[attr-defined]
+    try:
+        cred = store.resolve(entry.credential)  # type: ignore[attr-defined]
+    except OwnedCredentialRefused as refused:
+        raise CredentialMissing(f"{label}: {refused}") from None
+    except KeyError:
+        cred = None
     if cred is None or cred.secret is None:
-        raise CredentialMissing(f"{label} credential {entry.credential!r} is not configured")
+        raise CredentialMissing(
+            f"{label} credential {entry.credential!r} is not configured: store it in "
+            "Settings → Secrets under that name"
+        )
     return cred
 
 
@@ -233,7 +241,7 @@ def resolve_spec_secret(
     declares a subscription source that is NOT usable ("" otherwise), so a caller can say
     "sign in with `x login` first" instead of naming an env var the app doesn't have.
 
-    ``entry.credential`` (the explicit credential-store descriptor) outranks everything here
+    ``entry.credential`` (a credential named in the store) outranks everything here
     but is registry-only, so it is resolved by :func:`resolve_credential` BEFORE this is
     consulted: five hops on the registry path, four on the config path, identical tail.
     """

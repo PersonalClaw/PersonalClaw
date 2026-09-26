@@ -311,7 +311,8 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         _endpoint = options.pop("endpoint", None)
         base_url = str(_base or _endpoint or spec.default_base_url)
         # Credential resolution order for a config-registry entry:
-        #   1. an explicit credential-store descriptor (entry.credential — resolved above),
+        #   1. a named credential (entry.credential — resolved above from the store
+        #      Settings → Secrets writes),
         #      else 2. the per-instance api_key in entry.options, else 3. the spec's
         #      subscription credential_source, else 4. the spec's api_key_env, else
         #      5. the anon placeholder.

@@ -184,7 +184,7 @@ says what that means.
   inside `personalclaw setup` and `personalclaw doctor`, and a connector pack's source
   parsers run on what its sources fetch. That code can
   read and write every file in your PersonalClaw home: `config.json` with every security
-  setting, `mcp.json`, the credential files (`.env`, `credentials.json`), and
+  setting, `mcp.json`, the credential file (`.env`), and
   `session_key`, the key that signs every session token, yours included. The home's
   0600/0700 modes (§5) keep other accounts out, not code running as you. The one
   exception is a backend that names a sandbox tier (`backend.sandbox`), which launches
@@ -281,13 +281,14 @@ Data leaving the running system:
 - **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
   `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
   in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
-  provider instance records, `mcp.json`, the agent config, `.env`, `credentials.json` and
-  `auth/` are all written that way; `.local_secret`, `telemetry_salt` and `.app_secret` have
-  writers of their own that create them 0600. A file written some other way (a log, a lock, a
-  database) keeps the umask mode inside the 0700 home.
+  provider instance records, `mcp.json`, the agent config, `.env` and `auth/` are all written
+  that way; `.local_secret`, `telemetry_salt` and `.app_secret` have writers of their own that
+  create them 0600. A file written some other way (a log, a lock, a database) keeps the umask
+  mode inside the 0700 home.
 - **Credential-free snapshots** (`durability/inventory.py`, `credential=True`): `.env`,
-  `.env.pre-keychain`, `credentials.json` and `.local_secret` never enter a snapshot, and a
-  per-app `.app_secret` enters neither a snapshot nor an export. No settings file an archive
+  `.env.pre-keychain`, `.local_secret`, and an older release's `credentials.json` (kept only
+  while the Doctor lists a value in it the boot move could not settle) never enter a snapshot,
+  and a per-app `.app_secret` enters neither a snapshot nor an export. No settings file an archive
   carries holds a stored value (`tests/test_export_carries_no_credential_store_value.py`
   searches every member for every value the store holds). What a reference cannot cover (copies
   made before the upgrade, a value with a NUL character, Claude Code's own config) is in
