@@ -21,10 +21,12 @@ import { accentChip } from '../design/accent'
 /** Left corner — attached to the nav's top-right edge. Rendered inside the main
  *  area (which is `relative`), pinned top-left so it hugs the nav boundary.
  *  Publishes its measured width to `--shell-corner-l` so page TopBars pad to
- *  clear it. */
+ *  clear it, and its height to `--shell-corner-lh`, which a TopBar whose row has
+ *  moved below the corners (too narrow a band between them) clears instead. */
 export function ShellCornerLeft({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   useShellCornerWidth(ref, '--shell-corner-l')
+  useShellCornerHeight(ref, '--shell-corner-lh')
   return (
     // A pull-tab hugging the nav's top-right edge: flush to the left (no gap),
     // rounded only on the right so it reads as physically attached to the rail.
@@ -103,7 +105,8 @@ function useShellCornerWidth(ref: React.RefObject<HTMLDivElement | null>, varNam
 
 /** Publish a corner's measured HEIGHT (incl. its padding) as a CSS var, so a
  *  right-docked side panel can start below the corner band instead of letting
- *  the floating corner overlap its sticky header / close button. */
+ *  the floating corner overlap its sticky header / close button, and a TopBar
+ *  whose row cannot fit between the corners can lay it out below both. */
 function useShellCornerHeight(ref: React.RefObject<HTMLDivElement | null>, varName: string) {
   useEffect(() => {
     const el = ref.current
