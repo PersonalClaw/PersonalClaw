@@ -22,6 +22,7 @@ import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
+import { TriggerReview } from './TriggerReview'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
@@ -93,6 +94,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // it by the pattern it listens for.
   const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
   const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
+  // What a restart left for you to decide: missed runs and interrupted runs. Live, like schedules.
+  const { data: review = [], error: reviewErr, refresh: refreshReview } = useQuery('triggers:review', () => api.triggerReview(), { persist: false })
   // How much each row's action may do UNATTENDED (AUTONOMY-GUARDRAILS §6.1). The ladder is
   // keyed on the action-provider name — the same identity the backend dispatch seams hold —
   // so this page annotates a row without knowing anything about action types. A failed read
@@ -105,6 +108,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
   const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
   const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
+  const loadReview = () => { invalidateKeys('triggers:review'); refreshReview() }
   // Keep schedule next-run/running fresh, paused while hidden and slower while nobody is here.
   useVisiblePoll(refreshSchedules, 10_000, { immediate: false })
   // 🔴 A trigger written anywhere else (a loop's auto-nudge, the chat's automation tools, another
@@ -114,9 +118,17 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   useChatSocket((m: WsMessage) => {
     const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
     if (Array.isArray(kinds) && kinds.includes('crons')) {
-      loadSchedules(); loadHooks(); loadStores()
+      loadSchedules(); loadHooks(); loadStores(); loadReview()
     }
   })
+
+  // Above the list AND the week grid: the "Missed scheduled runs" notice sends you to this page,
+  // whichever view you last left it in.
+  const reviewPanel = (
+    <TriggerReview cards={review} error={reviewErr} onRetry={loadReview}
+      onDecided={() => { loadReview(); loadSchedules(); loadStores() }}
+      onOpen={(openId) => setQuery({ open: openId, edit: null, view: 'list' })} />
+  )
 
   const triggers = useMemo<Trigger[] | null>(() => {
     if (schedules === undefined || hooks === undefined || stores === undefined) return null
@@ -207,11 +219,17 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
       }
     >
       {view === 'week' ? (
-        // Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell and
-        // a row lead to one inspector rather than two surfaces that drift apart.
-        <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
+        <>
+          {(review.length > 0 || reviewErr != null) && (
+            <div className="mx-auto px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>{reviewPanel}</div>
+          )}
+          {/* Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell
+              and a row lead to one inspector rather than two surfaces that drift apart. */}
+          <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
+        </>
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {reviewPanel}
         {loadFailed ? (
           <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr}
             onRetry={() => { loadSchedules(); refreshHooks(); loadStores() }} />

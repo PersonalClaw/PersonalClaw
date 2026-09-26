@@ -104,6 +104,18 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(SelfRemediationActionProvider())
+    if "heartbeat-tasks" not in _providers:
+        # The HEARTBEAT.md task queue, re-homed off the heartbeat loop onto its own system trigger
+        # so the Triggers page lists it. Registered unconditionally for the reason
+        # `self-remediation` records directly above: the row exists whether it is switched on or
+        # off, and a live row naming an unregistered provider saves and then fails at fire time.
+        # Added to `ALLOWED_HOOK_PROVIDERS`, to `triggers/screen.py`'s write-capable set and to
+        # `guardrails/rungs.py`'s action table in the SAME commit.
+        from personalclaw.action_providers.heartbeat_tasks_provider import (
+            HeartbeatTasksActionProvider,
+        )
+
+        register_action_provider(HeartbeatTasksActionProvider())
     if "identity-report" not in _providers:
         # LEARNING-VISIBILITY T2.5 (LV-4): the periodic "how I've adapted to you" report.
         # Registered unconditionally rather than behind the cadence, for the reason

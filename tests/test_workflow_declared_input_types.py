@@ -6,7 +6,7 @@ it into a prompt, and the launch form printed it as a caption. Nothing checked a
 against it. Measured on `origin/main` by executing the real run-start path:
 
     the then-declared-only required-input check                    -> []
-    service._with_declared_defaults(spec, {"apply": "banana", ...})   -> unchanged
+    service.with_declared_defaults(spec, {"apply": "banana", ...})   -> unchanged
     start_run(..., inputs={"apply": "banana", "min_cluster_size": "not-a-number"})
         -> run b9aae0d3 CREATED, store row: {"apply": "banana", "min_cluster_size": "not-a-number"}
 
@@ -198,7 +198,7 @@ class TestPassThroughs:
     def test_blank_is_this_system_s_unset_marker_and_belongs_to_the_presence_check(
         self, blank: Any
     ) -> None:
-        """`_with_declared_defaults` writes `""` for every optional input with no default, so a
+        """`with_declared_defaults` writes `""` for every optional input with no default, so a
         blank value means "declared but unset" here. Whether that is ACCEPTABLE is
         `apply_extraction`'s question; answering it twice is how two checks come to disagree —
         and a required blank is already refused by the form's `missingRequired`."""

@@ -2614,6 +2614,22 @@ function _triggerToHook(t: Trigger): HookItem {
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
 // the catalog of things a trigger can run. settingsSchema drives the config form.
+/** One decision a restart left on the Triggers page (`GET /api/triggers/review`). `latest` is the slot
+ *  a Run now stands in for (the newest missed slot, or when the interrupted run started); `count`
+ *  is how many slots the card covers, and `count_is_floor` marks it "at least". */
+export interface TriggerReviewCard {
+  trigger_id: string
+  kind: 'missed' | 'interrupted'
+  count: number
+  latest: number
+  oldest: number
+  reason: string
+  count_is_floor: boolean
+  name: string
+  /** The id the list opens the automation's panel with (`?open=`). */
+  open_id: string
+}
+
 export interface ActionProvider {
   name: string; display_name: string; supports_blocking: boolean
   settingsSchema: { type?: string; properties?: Record<string, unknown>; required?: string[] }
@@ -7742,6 +7758,13 @@ export const api = {
   // Lifecycle* components consume). All route through the unified /api/triggers.
   hooks: () => get<{ triggers: Trigger[] }>('/api/triggers?type=lifecycle').then((d) => d.triggers.map(_triggerToHook)),
   actionProviders: () => get<{ providers: ActionProvider[] }>('/api/action-providers').then((d) => d.providers),
+  /** What a restart left for you to decide: each automation's missed runs, and each run the restart
+   *  interrupted (`triggers/review.py`). Nothing on it runs on its own. */
+  triggerReview: () => get<{ cards: TriggerReviewCard[] }>('/api/triggers/review').then((d) => d.cards),
+  /** Decide one card: `run_now` runs the automation once, now, and records the run as late;
+   *  `dismiss` records that you chose not to. */
+  decideTriggerReview: (body: { trigger_id: string; kind: TriggerReviewCard['kind']; action: 'run_now' | 'dismiss' }) =>
+    post<{ ok: boolean; outcome?: string; reason?: string; result?: string; refused?: string }>('/api/triggers/review', body),
   createHook: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
       trigger_type: 'lifecycle', name: body.name, event: body.event, matcher: body.matcher,

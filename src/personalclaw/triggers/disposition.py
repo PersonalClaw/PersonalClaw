@@ -132,10 +132,12 @@ DISPOSITION: tuple[Row, ...] = (
     ),
     Row(
         surface="heartbeat.py tasks",
-        module="personalclaw.heartbeat",
+        module="personalclaw.action_providers.heartbeat_tasks_provider",
         verdict=Verdict.ABSORBED,
-        keeps=("HEARTBEAT_KEEP retry semantics via the deferred outcome",),
-        note="The 4 tick-modulo maintenance sub-tasks become visible, pausable system triggers.",
+        keeps=("HEARTBEAT_KEEP retention: an unfinished task stays for the next pass",),
+        note="The HEARTBEAT.md queue is the `system:heartbeat-tasks` trigger: listed on the "
+        "Triggers page with its cadence, its runs and its switch. The file format and the "
+        "retention rule stay in `personalclaw.heartbeat.run_tasks`.",
     ),
     Row(
         surface="Inbox poll loop",

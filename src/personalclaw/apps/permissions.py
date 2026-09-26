@@ -838,6 +838,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/triggers/{id}/run": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/{id}/test": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/view/render": OwnerOnly(_FIRES_AUTOMATION),
+    # Deciding a restart's missed or interrupted run: `run_now` fires the automation.
+    "POST /api/triggers/review": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/{id}/fire": AppMay(
         "the external webhook fire — admitted only by a client token you minted and scoped to "
         "this trigger; an app's identity adds nothing"

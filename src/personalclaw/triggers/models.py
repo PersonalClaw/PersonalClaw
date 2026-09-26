@@ -364,6 +364,24 @@ def provider_is_zero_token(provider: Any) -> bool:
     return isinstance(provider, str) and provider in ZERO_TOKEN_PROVIDERS
 
 
+#: Action providers whose every fire works through whatever is waiting, so a fire the gateway
+#: missed is done by the next one. A missed slot of any other action is a decision the user makes
+#: after a restart (`missed.review_at_boot`, §3.4); one of these has nothing to decide. The
+#: HEARTBEAT.md queue runs every task still queued on each pass, so a pass missed while the
+#: gateway was down loses nothing, and a card offering to run it would follow every restart.
+MISSED_FIRE_SUPERSEDED_PROVIDERS: frozenset[str] = frozenset({"heartbeat-tasks"})
+
+
+def missed_fire_superseded(workflow: Any) -> bool:
+    """Whether a missed fire of a trigger whose action is `workflow` is done by its next fire."""
+    if not isinstance(workflow, dict):
+        return False
+    inline = workflow.get("inline")
+    action = inline if isinstance(inline, dict) else workflow
+    provider = action.get("provider")
+    return isinstance(provider, str) and provider in MISSED_FIRE_SUPERSEDED_PROVIDERS
+
+
 def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
     """Structural issues in an `event` trigger's `agent_scope` (§1.4 decision 2 — S131).
 

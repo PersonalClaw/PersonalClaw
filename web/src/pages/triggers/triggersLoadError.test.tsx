@@ -26,6 +26,7 @@ function mockApi(over: Record<string, () => Promise<unknown>>) {
       schedules: () => Promise.resolve({ jobs: [] }),
       hooks: () => Promise.resolve([]),
       storeTriggers: () => Promise.resolve([]),
+      triggerReview: () => Promise.resolve([]),
       actionProviders: () => Promise.resolve([]),
       ...good,
       ...over,

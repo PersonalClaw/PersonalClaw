@@ -24,7 +24,7 @@ When this run was started by a scheduled job, `notify_attachment` (and the notif
 
 ### Heartbeat (monitor-until-done)
 
-For "keep checking / monitor / let me know when" or tasks longer than ~30 min, use the heartbeat queue (`~/.personalclaw/workspace/HEARTBEAT.md`): write a checklist entry, end the session, and the heartbeat re-processes retained tasks each cycle. Retention is decided by your response — include `HEARTBEAT_KEEP` while the task is incomplete; omit it when done; an exception auto-retains.
+For "keep checking / monitor / let me know when" or tasks longer than ~30 min, use the heartbeat queue (`~/.personalclaw/workspace/HEARTBEAT.md`): write a checklist entry, end the session, and the "Heartbeat tasks" automation re-processes retained tasks every minute (the user can switch it off on the Triggers page). Retention is decided by your response — include `HEARTBEAT_KEEP` while the task is incomplete; omit it when done; an exception auto-retains.
 
 ## Rules
 

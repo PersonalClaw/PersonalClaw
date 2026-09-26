@@ -26,6 +26,10 @@ from personalclaw.triggers.models import ZERO_TOKEN_PROVIDERS
 
 SELF_QA = {"selfqa-triage", "selfqa-file-finding", "selfqa-evidence", "selfqa-commit-watch"}
 
+#: Every internal action: the Self-QA steps, and the HEARTBEAT.md queue's pass, whose one trigger
+#: (`system:heartbeat-tasks`) is written by its reconciler, like the Self-QA loop's.
+INTERNAL = SELF_QA | {"heartbeat-tasks"}
+
 
 def _catalog() -> dict[str, dict]:
     req = make_mocked_request("GET", "/api/action-providers", app=web.Application())
@@ -44,7 +48,7 @@ def test_user_facing_actions_are_not_internal():
     catalog = _catalog()
     for name in ("notify", "bash", "run-script", "invoke-agent", "run-prompt", "create-task"):
         assert catalog[name]["internal"] is False, name
-    assert {n for n, p in catalog.items() if p["internal"]} == SELF_QA
+    assert {n for n, p in catalog.items() if p["internal"]} == INTERNAL
 
 
 def test_invokes_model_is_the_backend_table_read_back():

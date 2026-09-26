@@ -114,7 +114,7 @@ def fix_branch_enabled() -> bool:
     The `self-qa` template declares ``fix_branch_enabled`` as an input and routes its
     ``fix-route`` branch on it, and the config leaf has had a Settings control (behind a
     confirmation dialog) since SV-10. Nothing joined the two: :func:`check` supplied only
-    ``{"repo", "commits"}``, so ``_with_declared_defaults`` filled the template's own
+    ``{"repo", "commits"}``, so ``with_declared_defaults`` filled the template's own
     ``false`` and the switch could never reach the gate — issue #3490. This is that join.
 
     Read HERE rather than baked into the trigger's action config (``selfqa/install.py``

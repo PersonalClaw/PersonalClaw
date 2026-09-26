@@ -180,7 +180,7 @@ def _drive_the_template() -> tuple[RunStatus, str, _FakeSubagents]:
     """Drive the REAL bundled `general-project` spec through a REAL `RunController`.
 
     Both declared inputs are supplied. `start_run` fills a declared default via
-    `_with_declared_defaults`, and constructing the run directly skips that — measured, omitting
+    `with_declared_defaults`, and constructing the run directly skips that — measured, omitting
     `exit_condition` fails every step on `unresolved reference at 'exit_condition'`, which would
     put a test-construction artifact in front of the product behaviour under test.
     """

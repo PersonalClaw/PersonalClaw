@@ -646,7 +646,7 @@ async def start_run(
     # failed on `binding failed: unresolved reference at 'acceptance'` — so every optional input
     # was a landmine, and a template could only be run by passing every key it declared. Found by
     # starting a bundled template from the UI with its optional field left blank.
-    inputs = _with_declared_defaults(spec, inputs or {})
+    inputs = with_declared_defaults(spec, inputs or {})
 
     # Run-start preflight (WF2-R12): credentials, binaries, models and action providers.
     # Blocking here rather than degrading at node 7, which has already paid for six nodes.
@@ -837,7 +837,7 @@ async def start_kind_run(
 
     `exit_condition` is the loop's `success_criteria` under the name the template declares for it —
     the same concept ("what done means"), not a new input. Left blank, or unclaimed by any input,
-    the template's own declared default applies via `_with_declared_defaults`.
+    the template's own declared default applies via `with_declared_defaults`.
 
     The template is read HERE as well as inside `start_run`, and deliberately: the alternative is to
     teach the generic door the loop vocabulary, which would put `success_criteria` in the signature
@@ -2616,7 +2616,7 @@ async def _raw_def(name: str) -> Any | None:
     return None
 
 
-def _with_declared_defaults(spec: dict[str, Any], provided: dict[str, Any]) -> dict[str, Any]:
+def with_declared_defaults(spec: dict[str, Any], provided: dict[str, Any]) -> dict[str, Any]:
     """Fill in every declared input the caller omitted, using its declared default.
 
     Applied at RUN START, once, so the run record shows the values the run actually used — a run
