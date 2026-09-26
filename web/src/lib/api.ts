@@ -985,6 +985,15 @@ export interface AppCatalogEntry {
   maintainer?: string
   lastValidated?: string
   lastScanVerdict?: string
+  /** Why this registry listing cannot be installed, as one sentence (`apps/catalog.py`), or
+   *  absent/empty when it can. A listing that names a folder on this machine, this computer, a
+   *  private network or the cloud metadata service is still listed so the Store can say so; its
+   *  card offers no Install. Render the sentence verbatim. */
+  refused?: string
+  /** The registry whose listing named where this app downloads from. The install dialog sends
+   *  it back (`InstallTarget.listedBy`), so the gateway holds the fetch to the listing rules even
+   *  before it has read that index itself. Empty when the app downloads from the owner's source. */
+  listedBy?: string
 }
 /** The `/api/apps/catalog` payload. Spelled ONCE — the shape used to be written out inline at
  *  three call sites, which is how a new field (`networkSources`) reaches one consumer and not
@@ -8770,12 +8779,17 @@ export const api = {
   // (or updating `name` to it) grants and runs, the scan of those exact bytes, and the
   // `consent` digest the commit must echo. Commits nothing. A bundle it could read always
   // answers 200, a refusal included; an unreadable source rejects with the envelope's message.
-  previewApp: (source: string, name?: string) =>
-    post<AppInstallResult>('/api/apps/preview', name ? { source, name } : { source }),
+  // `listedBy` names the registry whose listing the source came from (a Store card's own
+  // field): the fetch is then held to the listing rules, and it can only ever make it stricter.
+  previewApp: (source: string, name?: string, listedBy?: string) =>
+    post<AppInstallResult>('/api/apps/preview', {
+      source, ...(name ? { name } : {}), ...(listedBy ? { listedBy } : {}),
+    }),
   // install/update return the InstallResult body on ANY status (a 409 carries the fresh
   // review when the bytes changed since `consent` was issued, so we must NOT throw on
   // non-2xx). Network failures still surface as a thrown error with ok:false.
-  installApp: (source: string, consent: string) => _installReq('/api/apps', { source, consent }),
+  installApp: (source: string, consent: string, listedBy?: string) =>
+    _installReq('/api/apps', { source, consent, ...(listedBy ? { listedBy } : {}) }),
   updateApp: (name: string, source: string, consent: string) =>
     _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, consent }),
   enableApp: (name: string) => post<{ ok: boolean; providerErrors?: string[] }>(`/api/apps/${encodeURIComponent(name)}/enable`),

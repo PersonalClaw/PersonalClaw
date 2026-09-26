@@ -190,7 +190,20 @@ chokepoint:
   (user-configured POSTs), `LOOPBACK_INTERNAL` (loopback only — **never
   widened** by config), `REGISTRY`/`LISTED` (exclusive allow-lists),
   `FETCH_ACTION` (the `net-fetch` action provider — exclusive over an EMPTY
-  base list, so an unconfigured instance reaches nowhere).
+  base list, so an unconfigured instance reaches nowhere), `LISTING` (git
+  fetching an app from where a registry listing says it lives — public hosts
+  only, plus the owner's allow-list and the host of the registry source they
+  added).
+- `net/git.py` is the same chokepoint for `git`, which owns its sockets: it
+  resolves names itself and follows redirects, so a check made before
+  `git clone` checks a name, not the connection. `run_git_guarded` points git
+  at a loopback CONNECT tunnel (`http.proxy`) that evaluates EVERY host git
+  connects to, redirect hops included, dials only the addresses the guard
+  returned, and allows port 443 only. Git runs HTTPS-only
+  (`GIT_ALLOW_PROTOCOL`), with no saved credentials, no global or system
+  config, and none of the environment that would route it around the tunnel
+  (`https_proxy`, `NO_PROXY`, injected `GIT_CONFIG_*`). Used for registry
+  listings (`apps/source.py`); an owner-typed URL clones as before.
 - The **exclusive** profiles — `LISTED`, `SYNC`, `FETCH_ACTION`, and the derived
   `capture`/`a2a-outbound` — are the ones where a caller, not a person, picks the
   URL. Each is `allow_only=True` over an empty base, so "nothing named yet" means

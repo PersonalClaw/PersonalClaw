@@ -103,7 +103,7 @@ describe('a clean-scanning app still asks before it installs', () => {
     const onInstalled = grid()
     const dialog = await openReview()
 
-    expect(previewApp).toHaveBeenCalledWith(SOURCE, undefined)
+    expect(previewApp).toHaveBeenCalledWith(SOURCE, undefined, undefined)
     expect(installApp, 'the card click alone must not install anything').not.toHaveBeenCalled()
     // Titled with the app's display name — "Install growth" named nobody's app.
     expect(within(dialog).getByText('Install Growth Tracker')).toBeTruthy()
@@ -118,7 +118,7 @@ describe('a clean-scanning app still asks before it installs', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /^Install$/ }))
     await waitFor(() => expect(installApp).toHaveBeenCalledTimes(1))
     // …and it consents to exactly the bytes that were reviewed.
-    expect(installApp).toHaveBeenCalledWith(SOURCE, DIGEST)
+    expect(installApp).toHaveBeenCalledWith(SOURCE, DIGEST, undefined)
     await waitFor(() => expect(onInstalled).toHaveBeenCalledWith('growth'))
     expect(screen.queryByRole('dialog'), 'a finished install closes its dialog').toBeNull()
   })
@@ -172,7 +172,7 @@ describe('what the dialog discloses is what the app gets', () => {
     }
     grid(pointer)
     const dialog = await openReview()
-    expect(previewApp).toHaveBeenCalledWith('https://github.com/acme/apps.git#growth', undefined)
+    expect(previewApp).toHaveBeenCalledWith('https://github.com/acme/apps.git#growth', undefined, undefined)
     expect(text(dialog)).toMatch(/Run background agents/)
     expect(text(dialog)).toMatch(/Installing turns on a scheduled job/)
   })
@@ -192,7 +192,7 @@ describe('what the dialog discloses is what the app gets', () => {
     expect(toasts).toEqual([])
 
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Install$/ }))
-    await waitFor(() => expect(installApp).toHaveBeenLastCalledWith(SOURCE, 'b'.repeat(64)))
+    await waitFor(() => expect(installApp).toHaveBeenLastCalledWith(SOURCE, 'b'.repeat(64), undefined))
   })
 })
 

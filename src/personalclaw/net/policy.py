@@ -282,6 +282,32 @@ FETCH_ACTION = EgressPolicy(
     timeout_s=20.0,
 )
 
+# App-registry LISTING fetch: the posture for `git` fetching an app from wherever a registry
+# index's listing says it lives. The index is third-party text, so this is STRICT's public-only
+# stance, applied to a connection the gateway makes because someone else's data named the host.
+# It is enforced by `net/git.py`, which runs git through a tunnel that evaluates EVERY host git
+# connects to against this profile — the listing's own host when git dials it (not when the Store
+# read it, so a name that rebinds in between is judged on its new answer) and every redirect hop.
+#
+#   * `allow_schemes=("https",)` — the listing form (`apps/catalog.listing_repo_refusal`) already
+#     admits only plain https, and git runs with every other protocol disabled; this makes the guard
+#     say the same thing rather than accepting an `http` it will never see.
+#   * `deny_hosts=METADATA_SERVICE_HOSTS` — refused by NAME before DNS, like SYNC and FETCH_ACTION,
+#     so an allow-listed or source-trusted host can never be the metadata service's name.
+#   * `timeout_s=120.0` — a whole-repo shallow clone, not a page fetch; the same bound
+#     `apps/source._CLONE_TIMEOUT` puts on the git process itself.
+#
+# Not exclusive: a listing may name any PUBLIC host, as it always could. What the owner can add is
+# the other direction, private hosts they vouch for — their `security.egress.allow_hosts`, layered
+# on by `egress_policy_for`, and the host of the registry source they added themselves (see
+# :func:`listing_egress_policy`).
+LISTING = EgressPolicy(
+    name="listing",
+    allow_schemes=("https",),
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    timeout_s=120.0,
+)
+
 _PROFILES: dict[str, EgressPolicy] = {
     p.name: p
     for p in (
@@ -295,6 +321,7 @@ _PROFILES: dict[str, EgressPolicy] = {
         SYNC,
         BROWSE,
         FETCH_ACTION,
+        LISTING,
     )
 }
 
@@ -433,6 +460,25 @@ def fetch_action_egress_policy() -> EgressPolicy:
     call site that composed its own could compose a permissive one.
     """
     return egress_policy_for(FETCH_ACTION)
+
+
+def listing_egress_policy(source_host: str = "") -> EgressPolicy:
+    """The posture a fetch runs under when a registry LISTING named the URL (:data:`LISTING`).
+
+    :func:`egress_policy_for` layers the operator's ``security.egress`` config on, so a host they
+    allow-listed stays reachable when it is private and a host they denied is refused.
+
+    ``source_host`` is the host of the registry source the owner ADDED, whose index listed the app.
+    The owner chose that host, so its own listings may point back at it, private or not; a
+    self-hosted registry on a LAN is useless otherwise. It is the one host added, and it cannot be
+    the metadata service: :data:`LISTING` denies those names before this allow-list is read, and
+    the guard refuses a metadata or link-local ADDRESS for every policy.
+    """
+    layered = egress_policy_for(LISTING)
+    host = source_host.strip().lower()
+    if not host:
+        return layered
+    return layered.with_overrides(allow_hosts=tuple(dict.fromkeys([*layered.allow_hosts, host])))
 
 
 class SyncEndpointRefused(ValueError):

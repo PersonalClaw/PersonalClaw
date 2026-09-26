@@ -6,7 +6,7 @@ import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Archive, HardDrive, MapPin, AlertTriangle,
-  Boxes, Package, Store, KeyRound, RotateCw,
+  Boxes, Package, Store, KeyRound, RotateCw, ShieldAlert,
 } from 'lucide-react'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
@@ -49,7 +49,7 @@ import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The ONE install-consent path, shared with the first-run essential-apps step: every
 // install and update below opens its dialog through `useAppInstall`.
-import { useAppInstall, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
+import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
@@ -955,7 +955,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {g.items.map((e, i) => (
                   <AppCard key={e.name} item={e} index={i}
-                    onInstall={() => install.begin({ source: e.pointer || e.source, label: e.displayName || e.name })}
+                    onInstall={() => install.begin(installTargetFor(e))}
                     onOpen={() => onOpen(e.name)} onAction={onAction} />
                 ))}
               </div>
@@ -1242,7 +1242,9 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
       ]
     : [
       { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
-      { icon: <Download size={15} />, label: 'Install', onSelect: onInstall },
+      // A refused listing has no Install anywhere — not a disabled one, which would read as
+      // "try again later" — and says why instead (`ListingRefusal`).
+      ...(item.refused ? [] : [{ icon: <Download size={15} />, label: 'Install', onSelect: onInstall }]),
     ]
   // PEP-3 — ONE card anatomy, art-forward, whatever the manifest declares. Previously
   // the card had four shapes (hero+icon · hero-only · icon-only · neither) and only the
@@ -1283,7 +1285,9 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
   // verdict is on the record and a listing's month-old claim would be the weaker of two facts
   // sitting next to each other. And `null` for a card that is not registry-sourced comes from
   // the data, not from a test here — only `_pointer_to_entry` fills these fields in.
-  const listing = item.installed
+  // A refused listing gets its refusal instead: "rescanned when you install" is untrue of a
+  // listing that cannot be installed.
+  const listing = item.installed || item.refused
     ? null
     : registryListing({
         maintainer: item.maintainer,
@@ -1381,6 +1385,8 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
             declared no block — an unbadged app and a failing app are different states. */}
         <QualityBadges quality={item.quality} />
 
+        {!item.installed && item.refused && <ListingRefusal refused={item.refused} compact />}
+
         {/* ET-5 — a registry listing's own provenance. Two lines, and the ORDER is the control:
             the non-endorsement is the first thing read, the facts second. Reversing them would
             put "clean" above "community-listed" and turn a stale third-party check into what
@@ -1425,7 +1431,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
               // click re-activates (the same Activate/Deactivate toggle every surface shares).
               <span onClick={stop}><Button variant="primary" size="sm" onClick={() => onAction(app, 'toggle')}><Power size={14} /> Activate</Button></span>
             )
-          ) : (
+          ) : item.refused ? null : (
             <span onClick={stop}><Button variant="secondary" size="sm" onClick={onInstall}><Download size={14} /> Install
             </Button></span>
           )}
@@ -1433,6 +1439,20 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
       </div>
     </motion.div>
     </ContextMenu>
+  )
+}
+
+/** Why a registry listing cannot be installed, where its Install would be: the sentence from
+ *  `apps/catalog.py`, verbatim, so the card, the detail panel and the install dialog's error all
+ *  say the same thing. `compact` is the card's clamped form; the full sentence is in `title` and
+ *  in the detail panel. */
+function ListingRefusal({ refused, compact = false }: { refused: string; compact?: boolean }) {
+  return (
+    <div role="note" data-testid="store-listing-refused" className="flex items-start gap-1.5 text-warn"
+      data-type={compact ? 'label-s' : 'body-s'}>
+      <ShieldAlert size={compact ? 13 : 15} className="mt-0.5 shrink-0" aria-hidden />
+      <span className={compact ? 'line-clamp-3' : undefined} title={compact ? refused : undefined}>{refused}</span>
+    </div>
   )
 }
 
@@ -1740,7 +1760,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
 // hero/icon + metadata, what the app gets, and an Install that opens the SAME consent
 // dialog as the card, so the panel is a full parallel to AppDetailPanel for uninstalled
 // catalog entries. */
-function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled: (name: string) => void }) {
+export function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled: (name: string) => void }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
   // A registry-indexed (P20) item installs from its `pointer` (repo[#subdirectory]); a
@@ -1792,29 +1812,38 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
           scanned manifest that declares nothing gets PermissionList's own "None — no gateway
           capability" disclosure, while a registry pointer — whose manifest is read when the
           install is reviewed — says so rather than pretending it asks for nothing. */}
-      {disclosure ? (
-        <AppDisclosureView disclosure={disclosure} action="install" />
+      {/* A refused listing has nothing to install, so nothing to disclose either: it gets the
+          sentence saying why in place of the whole install half of the panel. */}
+      {item.refused ? (
+        <div className="rounded-md border border-outline-variant bg-surface-high p-m">
+          <ListingRefusal refused={item.refused} />
+        </div>
       ) : (
-        <div data-type="body-s" className="text-on-surface-low">
-          Permissions: not known yet — this is a registry listing, and its manifest is read when
-          you choose Install. You will see everything it gets before anything is installed.
-        </div>
+        <>
+          {disclosure ? (
+            <AppDisclosureView disclosure={disclosure} action="install" />
+          ) : (
+            <div data-type="body-s" className="text-on-surface-low">
+              Permissions: not known yet — this is a registry listing, and its manifest is read when
+              you choose Install. You will see everything it gets before anything is installed.
+            </div>
+          )}
+
+          <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
+            <div className="flex items-center gap-2 text-on-surface"><Download size={14} /> Not installed</div>
+            <div className="mt-1 text-on-surface-low" data-type="label-s">
+              Installing shows you what this app gets and what the security scanner found first — nothing
+              installs until you confirm, and a dangerous verdict is always refused.
+            </div>
+          </div>
+
+          <div>
+            <Button variant="primary" size="sm" onClick={() => install.begin(installTargetFor(item))}>
+              <Download size={15} /> Install
+            </Button>
+          </div>
+        </>
       )}
-
-      <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
-        <div className="flex items-center gap-2 text-on-surface"><Download size={14} /> Not installed</div>
-        <div className="mt-1 text-on-surface-low" data-type="label-s">
-          Installing shows you what this app gets and what the security scanner found first — nothing
-          installs until you confirm, and a dangerous verdict is always refused.
-        </div>
-      </div>
-
-      <div>
-        <Button variant="primary" size="sm"
-          onClick={() => install.begin({ source: item.pointer || item.source, label: item.displayName })}>
-          <Download size={15} /> Install
-        </Button>
-      </div>
       {install.dialog}
     </div>
   )

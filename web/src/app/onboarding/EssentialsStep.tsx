@@ -8,7 +8,7 @@ import { TextLink } from '../../ui/TextLink'
 import { listItemEnter, stagger, spring } from '../../design/motion'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { catalogApps } from '../../lib/appCatalog'
-import { useAppInstall } from '../../pages/apps/installConsent'
+import { installTargetFor, useAppInstall } from '../../pages/apps/installConsent'
 import { SchemaField, schemaDefaults } from '../../pages/settings/ProviderConfigForm'
 import { SchemaFields } from '../../pages/tools/schema'
 import { BundledModelOffer } from './BundledModelOffer'
@@ -110,7 +110,9 @@ export function candidatesByLane(
 ): Record<LaneId, AppCatalogEntry[]> {
   const out: Record<LaneId, AppCatalogEntry[]> = { model: [], search: [], speech: [], channel: [] }
   for (const e of catalogApps(c)) {
-    if (!e?.name || installed.has(e.name)) continue
+    // A listing the gateway will not fetch (`refused`) is not an essential anyone can install
+    // here; the Store still shows it, with the sentence saying why.
+    if (!e?.name || installed.has(e.name) || e.refused) continue
     const lane = laneOf(e)
     if (lane) out[lane].push(e)
   }
@@ -317,7 +319,7 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
     pendingRef.current = entry
     const lane = laneOf(entry)
     if (lane && await isInstalledOnServer(entry.name)) { recordInstall(entry, lane); return }
-    void consent.begin({ source: entry.pointer || entry.source, label: entry.displayName || entry.name })
+    void consent.begin(installTargetFor(entry))
   }, [consent, recordInstall])
 
   // OU-13 — a local/LAN Ollama bind needs no API key and no model pick (the endpoint's own

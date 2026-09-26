@@ -586,8 +586,17 @@ def _consent_token(body: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _listed_by(body: Any) -> str:
+    """The registry a Store card says listed the source (``listedBy``), or ``""``.
+
+    It can only make a fetch stricter: a source named here is held to the listing rules
+    (``apps/source.resolve``), and a registry the owner did not configure trusts no host."""
+    value = body.get("listedBy") if isinstance(body, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
 async def api_app_preview(request: web.Request) -> web.Response:
-    """POST /api/apps/preview — review ``{source, name?}`` before anything is installed.
+    """POST /api/apps/preview — review ``{source, name?, listedBy?}`` before anything is installed.
 
     Stages the source (clones a git URL) and answers what installing it — or, with
     ``name``, updating that installed app to it — would grant and run
@@ -597,7 +606,8 @@ async def api_app_preview(request: web.Request) -> web.Response:
 
     200 for every bundle it could read, a refusal included — "the scanner found dangerous
     content" is a finished review whose answer is no, and the dialog shows it.
-    400 ``app_source_unresolved`` when the source cannot be fetched, and
+    400 ``app_listing_refused`` when a registry listing named an address PersonalClaw will
+    not fetch from for it, ``app_source_unresolved`` when the source cannot be fetched, and
     ``app_preview_failed`` when the bundle cannot be offered at all (the message says why).
     """
     from personalclaw.apps import app_manager
@@ -610,7 +620,9 @@ async def api_app_preview(request: web.Request) -> web.Response:
     name = str(body.get("name") or "").strip() or None
 
     try:
-        resolved = await asyncio.to_thread(app_source.resolve, src)
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
+    except app_source.SourceRefused as exc:
+        return json_error("app_listing_refused", message=str(exc), status=400)
     except app_source.SourceError as exc:
         return json_error("app_source_unresolved", message=str(exc), status=400)
 
@@ -651,7 +663,7 @@ async def api_app_install(request: web.Request) -> web.Response:
     consent = _consent_token(body)
 
     try:
-        resolved = await asyncio.to_thread(app_source.resolve, src)
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
     except app_source.SourceError as exc:
         _sel_log("apps.install", "error", src, request, error=str(exc))
         return web.json_response({"error": str(exc)}, status=400)
@@ -713,7 +725,7 @@ async def api_app_update(request: web.Request) -> web.Response:
     consent = _consent_token(body)
 
     try:
-        resolved = await asyncio.to_thread(app_source.resolve, src)
+        resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
     except app_source.SourceError as exc:
         return web.json_response({"error": str(exc)}, status=400)
 

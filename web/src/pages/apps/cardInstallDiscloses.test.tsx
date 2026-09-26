@@ -90,7 +90,7 @@ describe('a card-grid install discloses the grants at consent', () => {
   it('reviews THIS card’s source and shows the enforced permissions and the job, not just the scan', async () => {
     grid()
     const text = await openConsentFrom(screen.getByRole('button', { name: /^Install$/ }))
-    expect(previewApp).toHaveBeenCalledWith(SOURCE, undefined)
+    expect(previewApp).toHaveBeenCalledWith(SOURCE, undefined, undefined)
     // The scan report is there…
     expect(text).toMatch(/Security scan: warning/)
     expect(text).toMatch(/python_exec/)
@@ -134,7 +134,7 @@ describe('a Manage Sources install discloses the grants for the source it instal
     render(<SourcesPanel catalog={catalog} reloadCatalog={() => {}} onInstalled={() => {}} />)
     const row = screen.getByText(SOURCE).parentElement!
     const text = await openConsentFrom(row.querySelector('button')!)
-    expect(previewApp).toHaveBeenCalledWith(SOURCE, undefined)
+    expect(previewApp).toHaveBeenCalledWith(SOURCE, undefined, undefined)
     expect(text).toMatch(/Permissions the gateway enforces/)
     expect(text).toMatch(/Scheduled jobs/)
     expect(text).toMatch(/nightly-digest/)
@@ -152,7 +152,7 @@ describe('a Manage Sources install discloses the grants for the source it instal
       reloadCatalog={() => {}} onInstalled={() => {}} />)
     const row = screen.getByText(unindexed).parentElement!
     const text = await openConsentFrom(row.querySelector('button')!)
-    expect(previewApp).toHaveBeenCalledWith(unindexed, undefined)
+    expect(previewApp).toHaveBeenCalledWith(unindexed, undefined, undefined)
     expect(text).toMatch(/Storage/)
     expect(text).not.toMatch(/not known|could not read/)
     // Titled with the name the review read, not the URL the row showed.
@@ -174,7 +174,7 @@ describe('a Manage Sources install discloses the grants for the source it instal
       reloadCatalog={() => {}} onInstalled={() => {}} />)
     fireEvent.click(screen.getByText(registry).parentElement!.querySelector('button')!)
     expect(await screen.findByRole('dialog', { name: `Install ${registry}` })).toBeTruthy()
-    expect(previewApp).toHaveBeenCalledWith(registry, undefined)
+    expect(previewApp).toHaveBeenCalledWith(registry, undefined, undefined)
     expect(screen.queryByRole('dialog', { name: /Null Channel/ })).toBeNull()
   })
 })

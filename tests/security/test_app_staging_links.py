@@ -481,7 +481,7 @@ def fake_clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (beside / "app.json").write_text("{}", encoding="utf-8")
     os.symlink(beside, clone / "apps" / "sneaky")
 
-    def _fake(url: str) -> app_source.ResolvedSource:
+    def _fake(url: str, *, policy: object = None) -> app_source.ResolvedSource:
         return app_source.ResolvedSource(path=clone, origin="external", cleanup=False)
 
     monkeypatch.setattr(app_source, "_clone_git", _fake)

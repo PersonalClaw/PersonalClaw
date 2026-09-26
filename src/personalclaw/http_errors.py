@@ -711,6 +711,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # dangerous content" is a completed review whose answer is no, and the dialog shows it.
     "app_source_unresolved": "The app source could not be read — the path does not exist or "
     "the clone failed.",
+    # `app_listing_refused`: a registry LISTING named where the app downloads from, and that is
+    # a place PersonalClaw does not fetch from for someone else's data (a folder on this machine,
+    # this computer, a private network, the cloud metadata service), directly or by redirect.
+    # The message is the same sentence the Store card shows for the listing.
+    "app_listing_refused": "A registry listing named a download address PersonalClaw will not "
+    "fetch from for it; the message says which and why.",
     "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
     "says why.",
     # ── pending approvals (dashboard/approval_owner.py) ──
