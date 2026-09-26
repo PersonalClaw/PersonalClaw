@@ -139,10 +139,11 @@ class Rule:
     mode: str = "immediate"
     targets: tuple[str, ...] = DEFAULT_TARGETS
     conditions: Conditions = field(default_factory=Conditions)
-    #: Opt into the INU-6 second-opinion verification pass for this kind. Only meaningful
-    #: for a kind whose registration is ``verifiable=True`` — the rules PUT rejects
-    #: ``verify:true`` on a non-verifiable kind, so a persisted ``verify`` on an ineligible
-    #: kind cannot arise through the API. Defaults off: no rule verifies until asked.
+    #: Opt into the INU-6 second-opinion verification pass for this kind. Only ever True for a
+    #: kind whose registration is ``verifiable=True``: the rules PUT rejects ``verify:true`` on
+    #: any other kind, and :func:`_coerce_rule` reads a stored one (e.g. on ``system/
+    #: agent_request``, from before that kind became a decision) as off. Defaults off: no rule
+    #: verifies until asked.
     verify: bool = False
     #: The cue VOICE an open client plays when a mobile push for this kind arrives
     #: (MOBILE-COMPANION `MC-6`) — one of :data:`SOUND_CUES`, or ``None`` (the default) for a
@@ -265,13 +266,18 @@ def _coerce_sound(raw: Any) -> str | None:
     return None
 
 
-def _coerce_rule(source: str, kind: str, raw: Any, default_mode: str) -> Rule:
-    """One rule from its persisted form, falling back to *default_mode* per field.
+def _coerce_rule(registered: nk.NotificationKind, raw: Any) -> Rule:
+    """*registered*'s rule from its persisted form, falling back to its default per field.
 
     Per-FIELD fallback, not per-rule: a rule with a good mode and a malformed targets
     list keeps its mode. Failing the whole rule back to defaults would discard a
     deliberate ``never`` because of an unrelated typo.
+
+    ``verify`` is read only for a kind that may be verified. A stored ``verify: true`` on any
+    other kind (one written while ``system/agent_request`` still accepted it) reads as off, so
+    neither the gate nor the rules matrix acts on an opt-in the kind cannot honour.
     """
+    source, kind, default_mode = registered.source, registered.kind, registered.default_mode
     if not isinstance(raw, dict):
         return Rule(source, kind, default_mode)
     mode = str(raw.get("mode", default_mode)).strip().lower()
@@ -290,7 +296,7 @@ def _coerce_rule(source: str, kind: str, raw: Any, default_mode: str) -> Rule:
         mode=mode,
         targets=_coerce_targets(raw.get("targets")),
         conditions=_coerce_conditions(raw.get("conditions")),
-        verify=bool(raw.get("verify")),
+        verify=registered.verifiable and bool(raw.get("verify")),
         sound=_coerce_sound(raw.get("sound")),
     )
 
@@ -401,7 +407,7 @@ def ensure_target(source: str, kind: str, target: str) -> bool:
     rules = rules if isinstance(rules, dict) else {}
     if registered.key in rules:
         return False
-    existing = _coerce_rule(registered.source, registered.kind, None, registered.default_mode)
+    existing = _coerce_rule(registered, None)
     rules[registered.key] = {
         "mode": existing.mode,
         "targets": list(existing.targets) + [target],
@@ -417,7 +423,7 @@ def resolve_rule(source: str, kind: str) -> Rule:
     registered = nk.resolve_kind(source, kind)
     stored = load_rules().get("rules")
     raw = stored.get(registered.key) if isinstance(stored, dict) else None
-    return _coerce_rule(registered.source, registered.kind, raw, registered.default_mode)
+    return _coerce_rule(registered, raw)
 
 
 def resolve_rule_for_legacy(flat_kind: str) -> Rule:
@@ -450,12 +456,7 @@ def rules_document() -> dict[str, Any]:
     stored = stored if isinstance(stored, dict) else {}
     rows = []
     for registered in nk.configurable_kinds():
-        rule = _coerce_rule(
-            registered.source,
-            registered.kind,
-            stored.get(registered.key),
-            registered.default_mode,
-        )
+        rule = _coerce_rule(registered, stored.get(registered.key))
         rows.append(
             {
                 "key": rule.key,
@@ -472,7 +473,9 @@ def rules_document() -> dict[str, Any]:
                     "name_mention": rule.conditions.name_mention,
                 },
                 # INU-6: whether this kind may be verified (registry) and whether the user
-                # opted in (rule). The matrix renders the toggle only for a verifiable kind.
+                # opted in (rule, never on for a kind that may not be). No matrix control writes
+                # `verify` today; `PUT /api/notifications/rules` is its only writer, and it
+                # refuses a kind that is not verifiable, a decision included.
                 "verifiable": registered.verifiable,
                 "verify": rule.verify,
                 # MOBILE-COMPANION MC-6. `wire` is the flat kind a push payload carries — the SW

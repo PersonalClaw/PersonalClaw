@@ -110,7 +110,8 @@ class ItemStatus(str, Enum):
     FILTERED (INU-6) is a fifth terminal-until-restored state: a verifiable kind whose rule
     opted into verification was REFUTED by the second-opinion pass, so its row was persisted
     but its notification withheld. Restore flips it back to PENDING and fires the withheld
-    notification once — so a false positive is recoverable, never a silent drop.
+    notification once — so a false positive is recoverable, never a silent drop. A decision
+    (``NotificationKind.decision``) is never verifiable, so it is never FILTERED.
     """
 
     PENDING = "pending"
@@ -853,7 +854,10 @@ def emit_attention_item(
     # verify — every other emit is byte-for-byte unchanged and makes NO model call. A clear
     # REFUTED verdict files the row as FILTERED and withholds its notification (recorded in
     # refs so Restore can replay it exactly, once); every other verdict, and every failure
-    # path, delivers normally carrying refs["verify"].
+    # path, delivers normally carrying refs["verify"]. A DECISION (an approval, a gate, a
+    # trust prompt, a paused room) never reaches it: a decision kind is never verifiable
+    # (`notification_kinds.register` refuses the pair), so its row is open and its
+    # notification fires the moment it is raised, with no model call in front of either.
     withheld = False
     if _verification_opted_in(source, kind):
         from personalclaw.notification_verify import REFUTED, run_verification_sync
@@ -915,6 +919,10 @@ def emit_attention_item(
 
 def _verification_opted_in(source: str, kind: str) -> bool:
     """True only when *kind* is a verifiable registration AND its rule set ``verify:true``.
+
+    This is where a decision is kept out of the model's reach: a decision kind is never
+    verifiable, so a ``verify:true`` stored against one (a rule written while
+    ``system/agent_request`` still accepted it, or a hand edit) cannot reach the verdict.
 
     Fail-CLOSED to False (deliver without verifying) on any error: a broken policy read must
     never *start* filtering notifications that would otherwise be delivered. The registry

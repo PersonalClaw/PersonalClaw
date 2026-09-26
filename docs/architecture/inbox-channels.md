@@ -172,6 +172,17 @@ toast stands down for a note whose `refs` name an approval (it still lands in th
 Home's inbox count and To triage recognise the row as the approval they already list
 (`mirroredApprovalId`).
 
+**No model's verdict can hide one.** `system/agent_request`, the kind the row rides, is a
+*decision* (`NotificationKind.decision`): work is parked on the answer. So are
+`loop/needs_input` (workflow gates, blocked loops, sign-in handoffs, control-bridge
+confirmations), `agent/room_paused` and the `approval/requested` ping. A decision is never
+`verifiable` — `notification_kinds.register` refuses the pair — so INU-6's second-opinion pass
+never runs on one: the row is open and its notification fires the moment it is raised, with no
+model call in front of either. `PUT /api/notifications/rules` refuses `verify` for a decision
+and says why, and a `verify` stored against one reads as off. Until this, `system/agent_request`
+was verifiable: with `verify: true`, every approval's registration waited on a model call made
+on the gateway's loop, and a REFUTED filed the row as `filtered` and withheld its notification.
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**

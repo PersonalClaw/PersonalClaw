@@ -93,8 +93,17 @@ class NotificationKind:
     #: ``attention`` is "does this persist a row", ``verifiable`` is "may a rule ask a model
     #: whether the row's claim holds". Setting this alone changes nothing — verification runs
     #: only when a rule sets ``verify:true``, which the rules PUT rejects for a
-    #: non-verifiable kind.
+    #: non-verifiable kind. Never set on a ``decision`` kind: :func:`register` refuses the pair.
     verifiable: bool = False
+    #: True when an item of this kind is a DECISION the user owes: work is parked until they
+    #: answer (a tool call awaiting Allow/Deny, a workflow gate, a folder awaiting Trust, a room
+    #: stopped until they reply). It is listed and notified the moment it is raised, and only the
+    #: user may close it — so it is never ``verifiable``. A REFUTED verdict files a verified row
+    #: as filtered and withholds its notification, and the model call runs synchronously inside
+    #: the emit, holding the gateway's loop until it answers: a verdict could hide a pending
+    #: approval and would delay every one. Nor is there a claim to check: that an approval is
+    #: pending is a fact the registry holds, not something a model can know better.
+    decision: bool = False
     #: Dotted module that owns a production emission path for this kind. ``None`` means
     #: resolution-only: old persisted wire values still resolve, but the kind is not a
     #: configurable row because no current producer can consult that policy.
@@ -118,6 +127,11 @@ def register(k: NotificationKind) -> None:
         raise ValueError(f"{k.key}: unknown mode {k.default_mode!r}")
     if k.default_severity not in (SEV_INFO, SEV_WARNING, SEV_ERROR):
         raise ValueError(f"{k.key}: severity must be 1, 2 or 3 (got {k.default_severity})")
+    if k.decision and k.verifiable:
+        raise ValueError(
+            f"{k.key}: a decision cannot be verifiable — no model's verdict may hide a decision "
+            "the user owes"
+        )
     _REGISTRY[ident] = k
 
 
@@ -259,6 +273,9 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_ERROR,
         owner="personalclaw.loop.watchdog",
     ),
+    # A decision: every emitter of this pair parks work on the user's answer — a loop that is
+    # blocked or needs input, a workflow gate, a browse run's sign-in handoff, a control-bridge
+    # action awaiting Confirm.
     NotificationKind(
         "loop",
         "needs_input",
@@ -266,6 +283,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "immediate",
         SEV_WARNING,
         attention=True,
+        decision=True,
         owner="personalclaw.loop.watchdog",
     ),
     NotificationKind(
@@ -314,9 +332,9 @@ _KINDS: tuple[NotificationKind, ...] = (
     # paused room is a STANDING request — the deliberation is stopped until the human reads it
     # — so a toast that scrolls past would leave the room silently halted. INFO rather than
     # WARNING: nothing failed and nothing is at risk; the agents simply reached the bound the
-    # user configured, and the room resumes the moment they reply. `verifiable=False` because
-    # the payload is a count of turns this module took, not an AI claim a second model could
-    # check.
+    # user configured, and the room resumes the moment they reply. A `decision`: the room stays
+    # stopped until they reply or archive it, so no verdict may hide it — and the payload is a
+    # count of turns this module took, not an AI claim a second model could check.
     NotificationKind(
         "agent",
         "room_paused",
@@ -324,7 +342,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "immediate",
         SEV_INFO,
         attention=True,
-        verifiable=False,
+        decision=True,
         owner="personalclaw.rooms.arbiter",
     ),
     # system-level warnings and drift
@@ -442,6 +460,12 @@ _KINDS: tuple[NotificationKind, ...] = (
         verifiable=True,
         owner="personalclaw.inbox",
     ),
+    # A decision: every emitter of this pair parks work on the user's answer — the approval
+    # registry (a tool call awaiting Allow/Deny, `DashboardState._hold_approval`), the project-
+    # trust prompt (a folder whose scripts stay in Preview until Trusted) and the autonomy
+    # ladder's one-tap hold (an action withheld until decided). It WAS `verifiable`, so a rule's
+    # `verify:true` put a model call in front of every pending approval, and a REFUTED answer
+    # filed the approval's Inbox row as filtered and withheld its notification.
     NotificationKind(
         "system",
         "agent_request",
@@ -449,7 +473,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "immediate",
         SEV_WARNING,
         attention=True,
-        verifiable=True,
+        decision=True,
         owner="personalclaw.inbox",
     ),
     NotificationKind(
@@ -533,14 +557,16 @@ _KINDS: tuple[NotificationKind, ...] = (
     # approval's durable Inbox row rides `system/agent_request` below — raised by the pending-
     # approval registry (`DashboardState._hold_approval`) the moment the approval is, closed the
     # moment it is answered or expires, and swept at boot, because the approval itself is an
-    # in-memory future that no restart survives.
+    # in-memory future that no restart survives. A `decision` for the same reason as that row.
     NotificationKind(
         "approval",
         "requested",
         "Approval needed",
         "immediate",
         SEV_WARNING,
-        owner="personalclaw.dashboard.state",
+        decision=True,
+        # The ping is sent by `_push_approval`, which moved here with the registry (#3594).
+        owner="personalclaw.dashboard.approval_state",
     ),
     # user — a note the user captured themselves (INU-9). The FIRST kind whose emitter is a
     # person rather than a subsystem, and the whole registration exists so it is not a
