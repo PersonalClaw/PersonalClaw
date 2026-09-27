@@ -72,6 +72,9 @@ STATE_TO_STATUS: dict[InstanceState, TaskStatus] = {
     #: A rewind discarded this instance. SKIPPED rather than cancelled: the run moved past it, which
     #: is the same thing a declined branch means to someone reading the board.
     InstanceState.DISCARDED: TaskStatus.SKIPPED,
+    #: A person declined the approval. CANCELLED: closed by a decision, which is neither work still
+    #: to do nor a block waiting on a fix — and the board has no fourth word for "a person said no".
+    InstanceState.DECLINED: TaskStatus.CANCELLED,
 }
 
 #: Failure classes mapped to the WHY of a block. A `blocked_kind` the surface does not recognize

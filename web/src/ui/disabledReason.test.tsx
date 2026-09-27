@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { Pause } from 'lucide-react'
 import { Button } from './Button'
+import { HeaderControl } from './HeaderActions'
 
 // ── A disabled submit that cannot say why ─────────────────────────────────────────────
 //
@@ -88,6 +90,42 @@ describe('an unavailable button says why', () => {
   it('stays NATIVELY disabled while loading, even with a reason', () => {
     render(<Button loading disabledReason="x">Go</Button>)
     expect(screen.getByRole('button').hasAttribute('disabled')).toBe(true)
+  })
+})
+
+// ── The same rule for a header control ────────────────────────────────────────────────
+// The run page's "Pausing…" moved from a `QuietButton` (which carries a reason) into the
+// responsive header cluster, whose `HeaderControl` only knew the native attribute: the control
+// would have left the tab order, and `disabled:pointer-events-none` hides its tooltip from the
+// pointer too — a state nobody could ask about. Outside a cluster the control renders at FULL, as
+// it does in the row.
+
+describe('an unavailable header control says why', () => {
+  it('stays reachable, says why in its tooltip, and refuses the click', () => {
+    const onClick = vi.fn()
+    render(
+      <HeaderControl icon={Pause} label="Pausing…" title="Pausing" disabled
+        disabledReason="the step in flight is being stopped" onClick={onClick} />,
+    )
+    const b = screen.getByRole('button', { name: 'Pausing…' })
+    expect(b.hasAttribute('disabled'), 'the native attribute would remove the tab stop').toBe(false)
+    expect(b.getAttribute('aria-disabled')).toBe('true')
+    expect(b.getAttribute('title')).toBe('Pausing — the step in flight is being stopped')
+    fireEvent.click(b)
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('stays NATIVELY disabled with no reason given, and enabled it carries no reason', () => {
+    const { unmount } = render(<HeaderControl icon={Pause} label="Pause" disabled />)
+    expect(screen.getByRole('button', { name: 'Pause' }).hasAttribute('disabled')).toBe(true)
+    unmount()
+    const onClick = vi.fn()
+    render(<HeaderControl icon={Pause} label="Pause" disabledReason="stale reason" onClick={onClick} />)
+    const b = screen.getByRole('button', { name: 'Pause' })
+    expect(b.getAttribute('aria-disabled')).toBeNull()
+    expect(b.getAttribute('title')).toBe('Pause')
+    fireEvent.click(b)
+    expect(onClick).toHaveBeenCalledTimes(1)
   })
 })
 

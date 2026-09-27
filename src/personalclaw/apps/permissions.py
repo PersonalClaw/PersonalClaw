@@ -1026,6 +1026,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     # Arming is the owner's: a pack stages its automations switched off so that only you arm them.
     "POST /api/triggers/{id}/toggle": OwnerOnly("switching your automations on and off"),
     "POST /api/triggers/{id}/run": OwnerOnly(_FIRES_AUTOMATION),
+    # Answering the question an automation stopped on (`triggers/parks.py`): Approve runs its
+    # action again, now, through the Run button's own path — the same firing by hand.
+    "POST /api/triggers/{id}/answer": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/{id}/test": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/view/render": OwnerOnly(_FIRES_AUTOMATION),
     # Deciding a restart's missed or interrupted run: `run_now` fires the automation.

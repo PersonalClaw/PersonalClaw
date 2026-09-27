@@ -30,11 +30,13 @@ const docs: UiDoc[] = [
     props: [
       { name: 'icon', description: 'Lucide icon — required to reach the ICON tier.' },
       { name: 'label', description: 'Text label; becomes tooltip + aria-label at the ICON tier.' },
+      { name: 'title', description: 'The tooltip, when the control says more than its label. Defaults to the label; the accessible name stays the label.' },
       { name: 'onClick', description: 'Activation handler.' },
       { name: 'variant', description: 'Visual emphasis of the control.' },
       { name: 'active', description: 'Renders the control as currently-on (toggle state); announces aria-pressed.' },
       { name: 'ariaExpanded', description: 'This control shows/hides an adjacent region — announces aria-expanded and suppresses aria-pressed, since a control cannot honestly claim both.' },
       { name: 'disabled', description: 'Dim + block interaction.' },
+      { name: 'disabledReason', description: "Why it is unavailable. Given one, a disabled control stays reachable: aria-disabled with the reason in its tooltip (Button's rule), and the reason as the … menu row's hint." },
       { name: 'danger', description: 'Style as destructive (also flags the overflow menu row).' },
       { name: 'priority', description: "OVERFLOW shedding order: 'primary' stays visible longest, 'low' sheds first." },
       { name: 'hint', description: 'Secondary hint text shown on the overflow menu row.' },

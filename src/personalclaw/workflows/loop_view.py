@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 #: Two rows are projections rather than renames, and say what they cost:
 #:
 #: * ``cancelled`` → ``stopped`` (stop reason ``user``). A run is only ever cancelled by a person.
+#:   ``declined`` → ``stopped`` (``user``) for the same reason: a person said no at an approval, and
+#:   the row's error names the gate and who.
 #: * ``escalated`` → ``complete`` with a non-``done`` stop reason, which every loop surface already
 #:   renders "Ended early": the run stopped before its done condition and a human decides what
 #:   happens next. The loop vocabulary has no terminal "needs a decision" state, and borrowing an
@@ -56,6 +58,7 @@ _STATUS: dict[RunStatus, LoopStatus] = {
     RunStatus.FAILED: LoopStatus.FAILED,
     RunStatus.CANCELLED: LoopStatus.STOPPED,
     RunStatus.ESCALATED: LoopStatus.COMPLETE,
+    RunStatus.DECLINED: LoopStatus.STOPPED,
 }
 
 #: The escalation reasons that mean the loop spent its cycle budget, as opposed to giving up on the
@@ -114,7 +117,7 @@ def _stop_reason(run: WorkflowRun) -> str:
     """The closed `LoopStopReason` a projected ENDED row carries; ``""`` while it has not ended."""
     if run.status == RunStatus.COMPLETE:
         return LoopStopReason.DONE.value
-    if run.status == RunStatus.CANCELLED:
+    if run.status in (RunStatus.CANCELLED, RunStatus.DECLINED):
         return LoopStopReason.USER.value
     if run.status == RunStatus.ESCALATED:
         reason = str((run.attention or {}).get("reason") or "")

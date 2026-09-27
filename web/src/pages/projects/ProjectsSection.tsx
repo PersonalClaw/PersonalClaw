@@ -30,6 +30,7 @@ import { DEFAULT_PROJECT_KEY, useDefaultProject } from '../../lib/defaultProject
 import { notify } from '../../app/appSdk'
 import { PageTitle } from '../../ui/PageTitle'
 import { loopStatusColor, loopStatusLabel } from '../../lib/loopStatus'
+import { runLook } from '../workflows/workflowMeta'
 import { loopRoute } from '../../lib/loopKind'
 import { reportingWrite } from '../../app/reportingWrite'
 
@@ -1062,6 +1063,9 @@ export const WORK_OUTCOME_LOOK: Record<WorkOutcome, { label: string; icon: Lucid
   failed: { label: loopStatusLabel('failed'), icon: OctagonAlert, tone: loopStatusColor('failed') },
   stopped: { label: loopStatusLabel('stopped'), icon: CircleStop, tone: loopStatusColor('stopped') },
   ended_early: { label: loopStatusLabel('ended_early'), icon: TriangleAlert, tone: loopStatusColor('ended_early') },
+  // A run a person declined: the run registry's word and glyph (`workflowMeta.runLook`), in the
+  // same informational tone a cancelled row takes — a decision someone made, not a fault.
+  declined: { label: runLook('declined').label, icon: runLook('declined').icon, tone: 'var(--color-on-surface-low)' },
 }
 
 /** The state-grouped Work board body (WORK-CONTAINERS §1/§5.2/§6.1). Exported so the

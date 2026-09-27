@@ -24,10 +24,10 @@ one place (:func:`_resolve_state`):
 
 * **The auth_needed surfacing.** :func:`surface_auth_expired` runs at the moment
   ``handoff.mark_expired`` writes ``auth_state=expired``: it raises a persistent banner (a
-  ``browse_auth_expired`` frame + the ``GET /api/browse/status`` read the banner polls) and, for a
-  dispatch no workflow run owns, a durable ``needs_input`` inbox item, deduped per site so a
-  scheduled watcher that re-hits the wall every tick does not stack a row per tick. A park inside
-  a run is asked by the run's own row instead.
+  ``browse_auth_expired`` frame + the ``GET /api/browse/status`` read the banner polls). The
+  question itself is asked by whatever the park belongs to — a workflow run's own row
+  (`workflows.gate_answers`), or a trigger's (`triggers.parks`) — each answerable, and each
+  running the step again with the answer.
 
 **Why this is a ``browse`` module and not a ``dashboard`` handler.** These relays are called from
 the domain — the action provider's per-step sink and its login park — so they must sit BELOW the
@@ -56,10 +56,6 @@ WS_BROWSE_STEP = "browse_step"
 WS_BROWSE_KILL = "browse_kill"
 WS_BROWSE_AUTH_EXPIRED = "browse_auth_expired"
 WS_BROWSE_GRANT = "browse_grant"
-
-#: One inbox row per expired site, keyed so a scheduled watcher hitting the same wall every tick
-#: re-uses the row instead of stacking one per tick (the dedup `emit_attention_item` honours).
-_AUTH_DEDUP_PREFIX = "browse-auth-expired:"
 
 
 def _resolve_state(state: Any) -> Any:
@@ -124,62 +120,28 @@ def broadcast_grants(pending: int, *, state: Any = None) -> None:
         logger.debug("browse mirror: grant signal failed", exc_info=True)
 
 
-def surface_auth_expired(url: str, *, state: Any = None, inbox_item: bool = True) -> None:
-    """Raise the persistent banner + a needs_input inbox item for a newly-expired site (BA-5 §(c)).
+def surface_auth_expired(url: str, *, state: Any = None) -> None:
+    """Raise the persistent banner for a newly-expired site (BA-5 §(c)).
 
-    Called at the ``auth_state=expired`` write, NOT on every dependent tick: the inbox row is
-    deduped per site, and the banner is a projection of the ``.meta.json`` state (which
-    ``handoff.mark_expired`` already persisted), so a re-hit is idempotent. The card carries no
-    field a credential could occupy — the agent never handles credentials (§5.2, unchanged).
+    Called at the ``auth_state=expired`` write, NOT on every dependent tick: the banner is a
+    projection of the ``.meta.json`` state (which ``handoff.mark_expired`` already persisted), so a
+    re-hit is idempotent. It carries no field a credential could occupy — the agent never handles
+    credentials (§5.2, unchanged).
 
-    ``inbox_item=False`` raises the banner alone. The provider passes it for a park inside a
-    workflow run, whose engine raises the run's own row for the same question — answerable, and
-    resuming that run. This site-level row resumes nothing, so beside it it would be the same
-    question asked twice.
+    It raises no Inbox row. It used to raise one per site, "Sign-in needed", which resumed nothing:
+    beside a workflow run's own answerable row it asked the same question twice, and a trigger's
+    park now has its own answerable row too (`triggers.parks`). Every path that can reach this
+    park asks where the answer can be acted on.
     """
     from personalclaw.browse.handoff import site_slug
 
-    slug = site_slug(url)
     st = _resolve_state(state)
-    if st is not None:
-        try:
-            st.broadcast_ws(WS_BROWSE_AUTH_EXPIRED, {"site": slug})
-        except Exception:
-            logger.debug("browse mirror: auth-expired broadcast failed", exc_info=True)
-    if not inbox_item:
+    if st is None:
         return
     try:
-        from personalclaw.inbox import emit_attention_item
-        from personalclaw.workflows import needs_input
-
-        item = needs_input.build_item(
-            run_id="",
-            node_id="browse",
-            ask={
-                "kind": "approval",
-                "prompt": f"Sign in to {slug} — the saved browse session has expired.",
-                "choices": ["I have signed in", "Skip for now"],
-            },
-            evidence={"site": slug, "reason": "session_expired"},
-        )
-        emit_attention_item(
-            st,
-            source="loop",
-            kind="needs_input",
-            item_kind="needs_input",
-            title=f"Sign-in needed: {slug}",
-            body=(
-                f"The saved browse session for {slug} expired. Open the site in the handoff "
-                "window and sign in — the run resumes with the session you create. PersonalClaw "
-                "never sees what you type."
-            ),
-            refs={**needs_input.card_refs(item), "site": slug, "browse_auth": "expired"},
-            dedup_key=f"{_AUTH_DEDUP_PREFIX}{slug}",
-        )
+        st.broadcast_ws(WS_BROWSE_AUTH_EXPIRED, {"site": site_slug(url)})
     except Exception:
-        # Best-effort: a run must not fail because the inbox could not be written — the banner and
-        # the .meta.json state already carry the signal a human needs.
-        logger.debug("browse mirror: could not raise the auth-expired inbox item", exc_info=True)
+        logger.debug("browse mirror: auth-expired broadcast failed", exc_info=True)
 
 
 __all__ = [

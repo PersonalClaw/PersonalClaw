@@ -55,7 +55,7 @@ interface ChildReg {
    *  renders icon-only. It still participates in the tier decision. */
   neverOverflow?: boolean
   /** Overflow menu row descriptor (used when this control is pushed into `…`). */
-  menu: { label: string; icon?: LucideIcon; hint?: string; danger?: boolean; onSelect?: () => void }
+  menu: { label: string; icon?: LucideIcon; hint?: string; danger?: boolean; disabled?: boolean; onSelect?: () => void }
 }
 
 interface ClusterCtx {
@@ -96,7 +96,7 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
     return () => ctx.unregister(id)
     // Re-register when the descriptor's identity-bearing fields change so the
     // container's overflow math + menu labels stay correct.
-  }, [ctx, id, reg.priority, reg.canIcon, reg.menu.label, reg.menu.danger, reg.menu.hint])
+  }, [ctx, id, reg.priority, reg.canIcon, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled])
   if (!ctx) return { visible: true, tier: 'full' }
   const visible = ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id)
   return { visible, tier: ctx.tier }
@@ -495,7 +495,7 @@ function sameSet(a: Set<number> | null, b: Set<number>): boolean {
 }
 
 /** The internal `…` menu the container owns — the collapsed tail of the cluster. */
-function HeaderOverflow({ actions }: { actions: { id: number; label: string; icon?: LucideIcon; hint?: string; danger?: boolean; onSelect?: () => void }[] }) {
+function HeaderOverflow({ actions }: { actions: { id: number; label: string; icon?: LucideIcon; hint?: string; danger?: boolean; disabled?: boolean; onSelect?: () => void }[] }) {
   return (
     <Popover align="right" width={220} placement="bottom"
       trigger={(open, toggle) => (
@@ -510,7 +510,7 @@ function HeaderOverflow({ actions }: { actions: { id: number; label: string; ico
           {actions.map((a) => (
             <div key={a.id} className={a.danger ? '[&_button]:text-danger' : ''}>
               <MenuRow icon={a.icon ? <a.icon size={16} /> : undefined} label={a.label} hint={a.hint}
-                onClick={() => { a.onSelect?.(); close() }} />
+                disabled={a.disabled} onClick={() => { a.onSelect?.(); close() }} />
             </div>
           ))}
         </div>
@@ -537,11 +537,14 @@ const variants: Record<Variant, string> = {
  *  the greedy fill — as a row in the container's `…` menu (nothing is rendered here
  *  in that case; the container draws the menu row from this control's declaration). */
 export function HeaderControl({
-  icon: Icon, label, onClick, variant = 'ghost', active, ariaExpanded, disabled, danger,
-  priority = 'default', hint, className,
+  icon: Icon, label, onClick, variant = 'ghost', active, ariaExpanded, disabled, disabledReason, danger,
+  priority = 'default', hint, title, className,
 }: {
   icon?: LucideIcon
   label: string
+  /** The tooltip, when a control says more than its label ("Pause — stops the step in flight").
+   *  Defaults to the label. The accessible name stays the label either way. */
+  title?: string
   onClick?: () => void
   variant?: Variant
   active?: boolean
@@ -554,16 +557,23 @@ export function HeaderControl({
    *  for content that appeared. */
   ariaExpanded?: boolean
   disabled?: boolean
+  /** Why the control is unavailable. Given one, a disabled control stays REACHABLE and says so —
+   *  `aria-disabled` with the reason in `title`, `Button`'s rule (`disabledReason.test.tsx`) —
+   *  instead of dropping out of the tab order with a tooltip no pointer can reach. In the `…` menu
+   *  the reason is the row's hint. */
+  disabledReason?: string
   danger?: boolean
   priority?: Priority
   /** Secondary line shown on the `…`-menu row (not in the button). */
   hint?: string
   className?: string
 }) {
+  // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
+  const softOff = !!disabled && !!disabledReason
   const { visible, tier } = useHeaderChild({
     priority,
     canIcon: !!Icon,
-    menu: { label, icon: Icon, hint, danger, onSelect: disabled ? undefined : onClick },
+    menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick },
   })
   if (!visible) return null // container is showing this as a `…`-menu row
   // Rendering per tier:
@@ -580,7 +590,10 @@ export function HeaderControl({
   const eff: Variant = danger ? 'danger' : variant
   return (
     <motion.button
-      type="button" onClick={onClick} disabled={disabled} title={label}
+      type="button" onClick={disabled ? undefined : onClick}
+      disabled={softOff ? undefined : disabled}
+      aria-disabled={softOff || undefined}
+      title={softOff ? [title ?? label, disabledReason].join(' — ') : (title ?? label)}
       aria-label={iconOnly ? label : undefined}
       // 🔴 `active` DECIDED A COLOUR AND NOTHING ELSE. 14 call sites across 7 files pass it — the chat
       // Activity/History panels, the code cockpit's terminal, the files explorer, inbox settings, the
@@ -597,6 +610,8 @@ export function HeaderControl({
       className={cx(
         'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
         'transition-colors duration-100 disabled:opacity-40 disabled:pointer-events-none',
+        // Same dim as the native attribute, without swallowing the hover that shows the reason.
+        'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
         iconOnly ? 'size-10' : 'h-10 px-l',
         active ? variants.secondary : variants[eff],
         className,

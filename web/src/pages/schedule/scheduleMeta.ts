@@ -149,6 +149,10 @@ export function statusMeta(s?: string | null): StatusMeta {
   // `deferred`, so it takes that tone; the row's `error` says when it resumes. It rendered as
   // "never run" before, beside a fire that had in fact been held.
   if (s === 'needs_input') return { ...statusMeta('deferred'), label: 'budget spent' }
+  // The action stopped for you — browse at a sign-in page (`triggers.parks`). Not a success: it has
+  // not done what it was asked yet, and its question is in the Inbox. `deferred`, as the runs feed
+  // maps it; the row's summary says on what it waits.
+  if (s === 'waiting') return { ...statusMeta('deferred'), label: 'waiting for you' }
   // "launched": started a background turn — honest "started ≠ succeeded" (T7).
   // Neutral tone, NOT ok-green: a green tick would imply the work succeeded.
   if (s === 'launched') return { label: 'launched', tone: 'var(--color-info)', icon: Rocket, noFault: true }

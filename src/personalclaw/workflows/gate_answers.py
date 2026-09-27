@@ -3,16 +3,21 @@
 Two kinds of step wait on a person: a gate, and an action that stopped for one (browse at a
 sign-in page, `outcome="needs_input"`) or asked a question in its output (`awaits_human`). When
 one parks, `ensure_continuation` mints its durable resume point once per `(path, epoch)`, with the
-pending half of the typed confirmation, the escalation's outcome question (PP-9) and the inbox row.
-When one is answered, `RunController.resume` applies it — a parked action through
-`settle_parked_step`, which runs it again; the `revise` verb — "change step 3, then carry on" — is
-`resume_revise`, and a human overriding a judge on the same gate is recorded by
-`emit_judge_divergence`. When the run ends, `close_waits` ends every wait it still holds.
+pending half of the typed confirmation, the escalation's outcome question (PP-9) and the inbox row
+— the step's own ask, under an id that is this ask's alone. When one is answered,
+`RunController.resume` applies it — a parked action through `settle_parked_step`, which runs it
+again; the `revise` verb — "change step 3, then carry on" — is `resume_revise`, and a human
+overriding a judge on the same gate is recorded by `emit_judge_divergence`. A NO is `decline`, and
+only an approval lets what follows an approval run: `unapproved_gate` finds the approval the run
+did not get — declined, or never given in time — and `end_at_gate` ends the run there. When the run
+ends, `close_waits` ends every wait it still holds, and an ask that closes with nobody answering it
+is `withdraw_asks`'s: its confirmation resolves `withdrawn`, saying why.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.ledger import outcomes
@@ -24,12 +29,11 @@ from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_STATES,
-    Failure,
-    FailureClass,
     InstanceState,
     NodeKind,
     RunStatus,
     now_stamp,
+    run_ending,
     spec_path,
     walk,
 )
@@ -109,11 +113,23 @@ def ensure_continuation(ctl: RunController, path: str) -> None:
         if existing.instance_path == path and existing.epoch == inst.epoch:
             return
     node = dict(walk(ctl.root)).get(spec_path(path))
-    ask = dict(ctl.run.attention or {}) if ctl.run.attention else {}
+    # THIS step's ask, kept on its instance when it began to wait (ledger 249). It was read off
+    # `run.attention`, one slot for the whole run: two steps waiting at once — parallel gates —
+    # both asked whatever the later one had written there.
+    ask = dict(inst.ask)
     card = _parked_card(ctl, path, node)
     outstanding = [
         p for p, i in ctl.instances.items() if i.state not in TERMINAL_STATES and p != path
     ]
+    # The typed CONFIRMATION record's id (TASKS-SOPS §4, S61i), minted with the ask and carried
+    # on it. From `(run, gate, epoch)` and which ask of this step it is, NOT from the resume token
+    # — and not from `(run, gate, epoch)` alone, which a gate asking twice in one epoch (a parked
+    # step approved and stopping again, a rewind that does not force) repeated: the second ask
+    # then carried the first one's id, and the first one's answer read as its answer.
+    gate_id = (node.id if node else "") or path
+    confirmation_id = stable_confirmation_id(
+        ctl.run.id, gate_id, inst.epoch, ask=_times_asked(ctl, path)
+    )
     cont = create_continuation(
         ctl.run.id,
         node_id=node.id if node else "",
@@ -129,6 +145,7 @@ def ensure_continuation(ctl: RunController, path: str) -> None:
             next_steps=[f"answer the gate at {node.id if node else path}"],
             attempted=(card or {}).get("attempted") or [],
         ),
+        confirmation_id=confirmation_id,
     )
     ctl._publish(
         "workflow_needs_input",
@@ -141,15 +158,10 @@ def ensure_continuation(ctl: RunController, path: str) -> None:
             "expires_at": cont.expires_at,
         },
     )
-    # The typed CONFIRMATION record's pending half (TASKS-SOPS §4, S61i). Emitted HERE rather
-    # than at a second site so it inherits this method's `(path, epoch)` idempotency for free:
-    # the watchdog polls a waiting run repeatedly, and a per-poll emission would put one
-    # "awaiting approval" row per poll into the ledger for a single question.
-    #
-    # `confirmation_id` is derived from `(run, gate, epoch)` by `confirmation.request_id`, NOT
-    # from the resume token. The token is single-use and rotates on rewind; the ID has to stay
-    # stable so `confirmation_pending` and `confirmation_resolved` pair up in the ledger.
-    confirmation_id = stable_confirmation_id(ctl.run.id, cont.node_id or path, inst.epoch)
+    # The confirmation's pending half. Emitted HERE rather than at a second site so it inherits
+    # this method's `(path, epoch)` idempotency for free: the watchdog polls a waiting run
+    # repeatedly, and a per-poll emission would put one "awaiting approval" row per poll into the
+    # ledger for a single question.
     ctl.publish_confirmation_pending(
         path,
         cont.node_id,
@@ -199,7 +211,7 @@ def _parked_card(ctl: RunController, path: str, node: Any) -> dict[str, Any] | N
 
 
 def settle_parked_step(
-    ctl: RunController, cont: Any, inst: Any, *, approved: bool, answer: Any
+    ctl: RunController, cont: Any, inst: Any, *, approved: bool, answer: Any, who: str
 ) -> None:
     """Apply a person's answer to a step that PARKED on them (`Ask.rerun`).
 
@@ -211,10 +223,12 @@ def settle_parked_step(
     output is ARCHIVED rather than overwritten, because the notes a ceiling-parked browse kept are
     real work. The answer rides the dispatch it starts, and only that one (`_park_answers`,
     popped by `step_dispatch.execute`): the browse step you confirmed a sign-in for goes on to the
-    run instead of re-reading a session record your sign-in never wrote.
+    run instead of re-reading a session record your sign-in never wrote. That answer lives only in
+    memory: a restart between the answer and the dispatch loses it, and the step then parks on the
+    same check and asks again — a repeated question, never a skipped one.
 
-    Denying ends the step as declined, which fails the run the way a denied gate does; the parked
-    output stays on the step for a reader.
+    Denying DECLINES the step, as Deny on a gate does: nothing after it runs and the run ends
+    `declined`. The parked output stays on the step for a reader.
     """
     inst.degraded_reason = ""
     if approved:
@@ -227,17 +241,173 @@ def settle_parked_step(
         inst.attempt = 0
         ctl._park_answers[cont.instance_path] = answer
         return
-    inst.state = InstanceState.FAILED
-    inst.failure = Failure(
-        failure_class=FailureClass.USER,
-        cause_plain="you declined to let this step continue",
-        remediation="fork the run to try this step again once what stopped it is fixed",
-        terminal_reason="declined",
-    )
+    decline(ctl, cont.instance_path, inst, who=who)
+
+
+def is_approval_gate(node: Any) -> bool:
+    """Is `node` a gate whose passing is a person's approval? Only then does a no end the run: a
+    judge, an expression or a verifier failing is a FAILURE, which `on_error` governs."""
+    if node is None or getattr(node, "kind", None) != NodeKind.GATE:
+        return False
+    return str((node.config or {}).get("kind", "") or "") == "approval"
+
+
+def decliner(responder: str, channel: str) -> str:
+    """Who declined, as the run's record names them.
+
+    A dashboard, CLI or HTTP answer carries no responder — the gateway already authenticated the
+    one person who can give it — so it names the owner (Settings → Account → "Your name"), or
+    "you" when no name was given. A channel reply must come from the run's owner
+    (`gate_policy.may_answer`) and names where it came from. A trigger that answers a gate is an
+    automation, and is named as one.
+    """
+    from personalclaw.identity import operator_name
+
+    responder = (responder or "").strip()
+    if responder.startswith("trigger:"):
+        return f"the trigger {responder.split(':', 1)[1]}"
+    if responder == "trigger":
+        return "a trigger"
+    name = responder or operator_name() or "you"
+    return f"{name} in {channel}" if channel else name
+
+
+def decline(
+    ctl: RunController, path: str, inst: Any, *, who: str, record: dict[str, Any] | None = None
+) -> None:
+    """Record a person's NO on the step at `path` — a gate's Deny, or Deny on a parked step.
+
+    DECLINED, not FAILED: nothing went wrong, and `on_error` is a failure policy that must not
+    walk past it. The caption under the step names who declined, and the next `_step` ends the
+    run there (`end_at_gate`). `record` is what a gate stores as its output — the answer, with
+    `approved: false` — for the run's Inspect; a parked step keeps the output it parked with.
+    Not bound downstream: DECLINED is not a success state.
+    """
+    inst.state = InstanceState.DECLINED
+    inst.failure = None
+    inst.degraded_reason = f"declined by {who}"
     inst.completed_at = now_stamp()
+    if record is not None:
+        payload = {**record, "approved": False, "declined_by": who}
+        inst.output_ref = ctl.journal.store_output(path, payload)[0]
 
 
-def close_waits(ctl: RunController) -> None:
+def unapproved_gate(ctl: RunController) -> str | None:
+    """The approval the run did not get, if any: a step a person DECLINED, or an approval gate
+    that ended FAILED — nobody answered in time, or it could not even ask.
+
+    Only an approval lets what follows an approval gate run. `needs` means AFTER, not after-success,
+    so the frontier would schedule the next step behind either; this is read before the frontier
+    (`RunController._step`) so it never gets the chance. Sorted, so which of two refused approvals
+    ends the run is decided the same way every time.
+    """
+    nodes: dict[str, Any] | None = None
+    for path in sorted(ctl.instances):
+        state = ctl.instances[path].state
+        if state == InstanceState.DECLINED:
+            return path
+        if state == InstanceState.FAILED:
+            nodes = nodes if nodes is not None else dict(walk(ctl.root))
+            if is_approval_gate(nodes.get(spec_path(path))):
+                return path
+    return None
+
+
+async def end_at_gate(ctl: RunController, path: str) -> None:
+    """End the run at the approval it did not get (`unapproved_gate`).
+
+    Every step after the gate in each sequence that holds it is marked skipped with the reason, so
+    the run page shows what the refusal stopped instead of those steps simply never appearing.
+    Anything still in flight elsewhere is stopped, as a cancel stops it, and every other open
+    question closes with the run (`close_waits`). The run ends `declined` for a person's no and
+    `failed` for an approval nobody gave, and its error names the gate and why.
+    """
+    inst = ctl.instances[path]
+    nodes = dict(walk(ctl.root))
+    node = nodes.get(spec_path(path))
+    label = str((getattr(node, "label", "") or getattr(node, "id", "") or "")) or path
+    declined = inst.state == InstanceState.DECLINED
+    followers = _followers(ctl, path, nodes)
+    reason = f"not run: “{label}” was {'declined' if declined else 'not approved'}"
+    for later in followers:
+        ctl._skip(later, reason=reason)
+    if declined:
+        ending = RunStatus.DECLINED
+        sentence = f"“{label}” was {inst.degraded_reason}"
+    else:
+        ending = RunStatus.FAILED
+        cause = inst.failure.cause_plain if inst.failure else "it did not pass"
+        sentence = f"“{label}” was not approved: {cause}"
+        # Its own question closes saying why — "no answer within 45 seconds" — rather than with
+        # the run's ending, which is all `close_waits` knows of it.
+        withdraw_asks(ctl, reason=cause, instance_prefix=path)
+    if followers:
+        sentence += ", so nothing after it ran"
+    await ctl._cancel_inflight(ending)
+    await ctl._finish(ending, error=f"{sentence}.")
+
+
+#: The last segment of an instance path, and what it says about the step's parent: a sequence or
+#: parallel child (`.children[i]`), a branch case, or a container body (`.body`, a `foreach`
+#: item's `.body#i`, a loop iteration's `.body@i`).
+_LAST_SEGMENT = re.compile(r"\.(children\[(\d+)\]|cases\[[^\]]*\]|default|body(?:[#@]\d+)?)$")
+
+
+def _followers(ctl: RunController, path: str, nodes: dict[str, Any]) -> list[str]:
+    """Every step after `path` in each SEQUENCE that holds it, innermost first — the steps a
+    refused approval stops. Instance paths, so a gate inside a `foreach` item stops what follows
+    it in THAT item, and then what follows the fan-out in the sequence around it."""
+    out: list[str] = []
+    cursor = path
+    while True:
+        match = _LAST_SEGMENT.search(cursor)
+        if match is None:
+            return out
+        parent = cursor[: match.start()]
+        container = nodes.get(spec_path(parent))
+        if (
+            match.group(2) is not None
+            and container is not None
+            and container.kind == NodeKind.SEQUENCE
+        ):
+            index = int(match.group(2))
+            out.extend(f"{parent}.children[{i}]" for i in range(index + 1, len(container.children)))
+        cursor = parent
+
+
+#: The verb an ask's confirmation closes with when NOBODY answered it: the run ended under it, or
+#: a rewind dropped it (ledger 249). Written so a `confirmation_pending` is never left open for good
+#: — "how long did this wait" has an end — and marked `answered: false`, so it grades no escalation
+#: bet as the person's no. Not a verb a person can send (`confirmation.resolve`).
+WITHDRAWN = "withdrawn"
+
+
+def withdraw_asks(ctl: RunController, *, reason: str, instance_prefix: str = "") -> int:
+    """Close every ask still pending under `instance_prefix` (the whole run when empty) without
+    an answer: its confirmation resolves `withdrawn`, saying why, and its token is dropped. Returns
+    how many were withdrawn."""
+    from personalclaw.workflows.human_input import list_continuations
+
+    # The same selection `drop_continuations` makes below, so what is closed is what is dropped.
+    pending = [
+        cont
+        for cont in list_continuations(ctl.run.id)
+        if cont.instance_path.startswith(instance_prefix)
+    ]
+    for cont in pending:
+        ctl.publish_confirmation_resolved(
+            cont.instance_path,
+            cont.node_id,
+            confirmation_id=cont.confirmation_id,
+            verb=WITHDRAWN,
+            approved=False,
+            resolved_by="engine",
+            reason=reason,
+        )
+    return drop_continuations(ctl.run.id, instance_prefix=instance_prefix) if pending else 0
+
+
+def close_waits(ctl: RunController, status: RunStatus) -> None:
     """End every wait a run that has ENDED is still holding (#3620's ended-owner rule).
 
     `_finish` already closes the run's Inbox rows and cancels its approvals for every ending. A
@@ -246,7 +416,8 @@ def close_waits(ctl: RunController) -> None:
     "what needs my approval" kept listing a question nothing could answer. A finished run asks
     nothing, so each wait is CANCELLED — journaled `step_cancelled` with the zero a gate that
     times out also records, because the wait itself sent nothing — published to the live view,
-    and its question's reason cleared; then every pending token is dropped.
+    and its question's reason cleared; then every pending ask is withdrawn: its confirmation
+    resolves `withdrawn` with the run's ending as the reason, and its token is dropped.
 
     Called from the single terminal writer, for every ending: the rule is about the run being
     over, not about which verb ended it.
@@ -271,7 +442,7 @@ def close_waits(ctl: RunController) -> None:
                 "node_epoch": inst.epoch,
             },
         )
-    drop_continuations(ctl.run.id)
+    withdraw_asks(ctl, reason=f"the run {run_ending(status)}")
 
 
 def _resolved_for_path(ctl: RunController, path: str) -> dict[str, Any]:
@@ -473,6 +644,10 @@ def _open_escalation_outcome(
     Ledger-sourced on purpose: this resolves on a box with no vector store, because the ground
     truth is an event we wrote ourselves.
 
+    Only an ANSWER grades it (`answered: true`): an ask withdrawn because the run ended under it
+    (`WITHDRAWN`) is an interruption nobody answered, which the horizon closes as inconclusive —
+    not the person's no that its `approved: false` would otherwise read as.
+
     Emitted at the same site as `confirmation_pending` so it inherits that site's
     `(path, epoch)` idempotency — one question per gate, not one per watchdog poll.
     """
@@ -482,7 +657,7 @@ def _open_escalation_outcome(
             subject=f"escalated gate `{node_id or path}` to the user",
             metric=journal_mod.CONFIRMATION_RESOLVED,
             metric_source=outcomes.SOURCE_LEDGER,
-            match={"confirmation_id": confirmation_id},
+            match={"confirmation_id": confirmation_id, "answered": True},
             value_field="approved",
             horizon_secs=ESCALATION_ANSWER_HORIZON_SECS,
             # The bet is an approval: we only stop to ask when we expect a yes.
@@ -497,21 +672,31 @@ def _open_escalation_outcome(
         logger.debug("escalation outcome open failed for run %s", ctl.run.id, exc_info=True)
 
 
-def stable_confirmation_id(run_id: str, gate_id: str, epoch: int) -> str:
-    """The stable confirmation id for one (run, gate, epoch).
+def stable_confirmation_id(run_id: str, gate_id: str, epoch: int, ask: int = 0) -> str:
+    """The stable confirmation id for one ask: (run, gate, epoch) and which ask of that gate it is.
 
     Delegates to `confirmation.request_id` rather than composing a string here. Two id schemes for
     one record is the failure mode where `confirmation_pending` and `confirmation_resolved` never
     pair up in the ledger, and nobody notices until someone asks how long a gate waited.
 
     The EPOCH is in the key because a rewind SHOULD produce a new confirmation — the question is
-    being asked about different work. Deriving from the resume token instead would break that: a
-    token is single-use and rotates per poll, so pending and resolved would carry different ids for
-    the same question.
+    being asked about different work — and the ASK's ordinal because the same gate can ask again
+    within one epoch, and that is a new question too (ledger 249). Minted ONCE, when the ask is,
+    and carried on its continuation (`Continuation.confirmation_id`): every later half — the answer,
+    the withdrawal — reads it from there rather than deriving it again, so the halves pair by
+    construction.
     """
     from personalclaw.workflows.confirmation import request_id
 
-    return request_id(run_id, gate_id, epoch)
+    return request_id(run_id, gate_id, epoch, ask)
+
+
+def _times_asked(ctl: RunController, path: str) -> int:
+    """How many asks this step has made in the run so far — the ordinal of the next one. Read off
+    the run's own ledger (`confirmation_pending` rows for the path), which is durable and append-
+    only: a restart, a claimed token and a dropped one all leave it counting."""
+    rows = journal_mod.ledger(ctl.run.id, kinds={journal_mod.CONFIRMATION_PENDING})
+    return sum(1 for row in rows if row.get("instance_path") == path)
 
 
 def _confirmation_kind(node_config: dict[str, Any]) -> str:

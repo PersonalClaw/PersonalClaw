@@ -2149,12 +2149,77 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     return web.json_response({"ok": ran, "name": row.trigger.name, "result": note + paused_note})
 
 
+async def api_trigger_answer(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/answer — answer the question a trigger's action stopped on.
+
+    Body ``{resume_token, answer}``, ``answer`` a boolean. The token is the park's
+    (`triggers.parks`), single-use: a double click runs nothing twice. Approve runs the trigger's
+    action once more, now, through the Run button's own dispatch — the same grants, the same
+    capability fence — with the answer on that dispatch (`ActionContext.answer`), so the browse
+    action you confirmed a sign-in for goes on to the run. Deny closes the question; the trigger
+    asks again the next time its action stops. The refusals a Run button honours are read BEFORE
+    the token is spent, so a refused answer leaves the question answerable.
+    """
+    from personalclaw.triggers import parks
+    from personalclaw.triggers import tools as T
+
+    _kind, raw = _split_id(request.match_info["id"])
+    body = await json_object_body(request)
+    answer = body.get("answer")
+    if not isinstance(answer, bool):
+        return json_error("invalid_request", message="'answer' must be true or false", status=400)
+    token = str(body.get("resume_token", "") or "")
+    row = _trigger_store().get(raw)
+    if row is None:
+        # Deleted since it asked: there is nothing left to run, so the question goes too.
+        parks.withdraw(raw, state=request.app["state"])
+        return json_error(
+            "not_found",
+            message="This trigger no longer exists, so there is nothing to run.",
+            status=404,
+        )
+    if answer:
+        refusal = T.manual_refusal()
+        if refusal:
+            return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
+    park = parks.claim(raw, token)
+    if park is None:
+        return json_error(
+            "trigger_park_gone",
+            message=(
+                "This question was already answered, or the trigger no longer waits on it — "
+                "run it again to be asked afresh."
+            ),
+            status=409,
+        )
+    parks.close_row(request.app["state"], raw)
+    if not answer:
+        return web.json_response(
+            {"ok": True, "approved": False, "name": row.trigger.name, "result": "declined"}
+        )
+    ran, note = await _dispatch_store_action(
+        row.trigger, {"trigger_id": raw, "manual": True}, event="manual.answer", answer=True
+    )
+    return web.json_response(
+        {
+            "ok": ran,
+            "approved": True,
+            "name": row.trigger.name,
+            "result": note,
+            # The run it started stopped for you again (a sign-in page mid-run): a NEW question,
+            # with its own row — the answer's surface says so rather than "it ran".
+            "waiting": parks.load(raw) is not None,
+        }
+    )
+
+
 async def _dispatch_store_action(
     trigger: Any,
     payload: dict[str, Any],
     *,
     event: str = "manual.run",
     late: str = "",
+    answer: Any = None,
 ) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry.
 
@@ -2234,6 +2299,9 @@ async def _dispatch_store_action(
         payload=payload,
         status_url=status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
         trigger_id=str(getattr(trigger, "id", "") or ""),
+        # A person's answer to this trigger's park (`api_trigger_answer`), on the one dispatch it
+        # starts: the browse action you confirmed a sign-in for goes on to the run.
+        answer=answer,
     )
     from personalclaw.triggers.firepath import action_timeout
 
@@ -2297,6 +2365,7 @@ async def _record_manual_run(
         from datetime import datetime, timezone
 
         from personalclaw.schedule_history import ScheduleRun, status_for_result
+        from personalclaw.triggers import parks
 
         trigger_id = str(getattr(trigger, "id", "") or "")
         if not trigger_id:
@@ -2323,6 +2392,9 @@ async def _record_manual_run(
                 status = "ran_late"
             error = ""
             summary = str(getattr(result, "stdout", "") or "") if result is not None else ""
+            if status == "waiting":
+                # A park's row says it waits on you and on what, not the payload it parked with.
+                summary = parks.waiting_line(result)
         if late and status != "failure":
             summary = f"{late[:1].upper()}{late[1:]}." + (f" {summary}" if summary else "")
 
@@ -2343,6 +2415,9 @@ async def _record_manual_run(
                 error=error,
             )
         )
+        # A park asks you, once, with the action's own card; a run that went through withdraws the
+        # question an earlier one asked (ledger 248).
+        parks.settle(trigger, result)
 
         # Advance the SAME last-run stamp the autonomous recorder writes, so `_last_run_ts` moves
         # and the completion watcher clears the pill. `state`/`health`/`enabled` are left untouched
@@ -2978,6 +3053,7 @@ def register_trigger_routes(app: web.Application) -> None:
     app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
     app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)
     app.router.add_post("/api/triggers/{id}/run", api_trigger_run)
+    app.router.add_post("/api/triggers/{id}/answer", api_trigger_answer)
     # The external webhook fire endpoint (WF2AUT-12). Beside `/run`, same `{id}` shape, so it needs
     # no special ordering relative to the literal `/week`/`/doctor`/`/view/render` segments above.
     app.router.add_post("/api/triggers/{id}/fire", api_trigger_fire)

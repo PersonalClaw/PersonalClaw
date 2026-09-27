@@ -243,7 +243,7 @@ def announce_loop_end(state: Any, run: Any, status: Any) -> str:
     * ``escalated`` → a durable **needs a decision** inbox row plus its one notification (the
       loop stopped before its done condition and a human decides what happens next — the
       standing-request shape, like a loop waiting on input);
-    * ``cancelled`` → nothing: the user did it.
+    * ``cancelled`` and ``declined`` → nothing: the user did it.
 
     Its refs carry ``loop`` (every loop surface deep-links by it, and ``#/loops/<id>`` lands on
     the run page) AND ``workflow``, so deleting the run closes the row with the run's others.

@@ -848,6 +848,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "There is not enough free disk space for this download; the message says how much it "
         "needs and how much is free."
     ),
+    # ── answering a trigger's parked action (triggers/parks.py; dashboard/handlers/triggers.py —
+    #    POST /api/triggers/{id}/answer) ──
+    # 409: the token answers nothing now — already answered (a second click), or the trigger's
+    # question was withdrawn because a later run went through.
+    "trigger_park_gone": (
+        "This question was already answered, or the trigger no longer waits on it; run it again "
+        "to be asked afresh."
+    ),
 }
 
 

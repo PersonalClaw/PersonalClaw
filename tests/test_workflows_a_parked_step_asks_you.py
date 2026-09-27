@@ -39,7 +39,6 @@ from personalclaw.workflows import journal as J
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import (
-    FailureClass,
     InstanceState,
     OriginKind,
     RunOrigin,
@@ -191,9 +190,10 @@ async def test_a_step_parked_on_a_sign_in_page_asks_you() -> None:
     assert inst.output_ref, "the park kept no output"
     kept = store.read_output(c.run.id, STEP)
     assert kept["site"] == slug and kept["reason"] == "no_session"
+    assert "headful_launch_args" not in kept
     # Kept, the handoff's sentence is on the run (a declined step's Inspect shows it), so it says
-    # where to sign in — the browser the step drives — and not that a window was opened: nothing
-    # launches one (`headful_launch_args` is handed back and never run).
+    # where to sign in — the browser the step drives — and not that a window was opened: core
+    # launches no browser. The payload carries no launch argv any more either.
     assert kept["sentence"] == (
         f"Browse needs you to sign in to {slug}, in the browser this step drives: authenticate "
         "there (password, 2FA, whatever it asks), then answer this item and the run continues "
@@ -261,10 +261,12 @@ async def test_denying_a_parked_step_ends_it_as_declined() -> None:
     assert result["ok"] and result["approved"] is False, result
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
 
-    assert c.run.status == RunStatus.FAILED
+    # Deny on a parked step is Deny on a gate: DECLINED, not failed, and the run ends there.
+    assert c.run.status == RunStatus.DECLINED
     inst = c.instances[STEP]
-    assert inst.state == InstanceState.FAILED
-    assert inst.failure is not None and inst.failure.failure_class == FailureClass.USER
+    assert inst.state == InstanceState.DECLINED
+    assert inst.failure is None and inst.degraded_reason.startswith("declined by ")
+    assert inst.output_ref, "the parked step's output stays for a reader"
     assert len(step.contexts) == 1, "a declined step must not run again"
     assert _open_rows(state, c.run.id) == []
 

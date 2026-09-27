@@ -1688,7 +1688,7 @@ export interface ProjectKnowledgeItem {
 // needs-input pinned first.
 export type WorkState = 'needs_input' | 'working' | 'queued' | 'suspended' | 'review' | 'done'
 /** How a `done` row ended (`containers.BoardOutcome`); `''` on a row that has not ended. */
-export type WorkOutcome = 'completed' | 'cancelled' | 'skipped' | 'failed' | 'stopped' | 'ended_early'
+export type WorkOutcome = 'completed' | 'cancelled' | 'skipped' | 'failed' | 'stopped' | 'ended_early' | 'declined'
 export interface WorkClaim { holder: string; expires_at: number; taken_at: number; renewals: number }
 export interface WorkRow {
   run_id: string; title: string; state: WorkState; origin: string; project_id: string
@@ -1903,7 +1903,7 @@ export interface WorkflowLedgerRow {
   }
 }
 export type WorkflowRunStatus =
-  'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
+  'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated' | 'declined'
 // A node INSTANCE. `instance_path` is the engine's addressing key (a foreach body
 // produces many instances of one node id), so it — not node_id — is the list key.
 export interface WorkflowNodeState {
@@ -7894,6 +7894,14 @@ export const api = {
       `/api/triggers/${encodeURIComponent(triggerId)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   scheduleHistory: (id: string, limit = 10, offset = 0) => get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history?limit=${limit}&offset=${offset}`),
   scheduleRunDetail: (id: string, runId: string) => get<{ run: ScheduleRun }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
+  /** Answer the question a trigger's action stopped on (`triggers.parks`, ledger 248): Approve runs
+   *  the action again now, with the answer; Deny closes the question until it next runs. `triggerId`
+   *  is the store id the park's Inbox row carries (`refs.trigger`), addressed as `store:` so an id
+   *  that itself reads `schedule:…` cannot be split as a facade prefix. `waiting` is true when the
+   *  run Approve started stopped for you again — a new question, with its own row. */
+  answerTriggerPark: (triggerId: string, body: { resume_token: string; answer: boolean }) =>
+    post<{ ok: boolean; approved: boolean; name?: string; result?: string; refused?: string; waiting?: boolean }>(
+      `/api/triggers/store:${encodeURIComponent(triggerId)}/answer`, body),
   triggerVariables: () => get<TriggerVariables>('/api/triggers/variables'),
 
   // tasks

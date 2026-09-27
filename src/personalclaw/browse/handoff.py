@@ -432,32 +432,6 @@ def looks_like_login_url(url: str) -> bool:
     return any(token in f"{path}/" for token in _LOGIN_PATH_TOKENS)
 
 
-def chrome_launch_args(url: str, *, headful: bool) -> list[str]:
-    """The Chrome flags that bind a window to ``url``'s persistent profile.
-
-    Returned rather than executed: this module owns WHICH profile, and BA-2's transport docstring
-    records that launching a browser is deliberately not core's job — the caller supplies the
-    process. Handing back argv keeps that split while making the profile decision unforgeable, so a
-    caller cannot accidentally launch the handoff window against a *different* user-data-dir than
-    the run will later read.
-
-    ``headful`` is the handoff's defining property (§5.2 step 2 / §4.2's "headful for credential
-    handoff"): the human must be able to see and type into the window. Passing ``headful=False``
-    yields the unattended-run form. ``--disable-blink-features=AutomationControlled`` is §4.2's
-    anti-detection baseline and is present in both.
-    """
-    pdir = profile_dir(url)
-    args = [
-        f"--user-data-dir={pdir}",
-        "--disable-blink-features=AutomationControlled",
-        "--no-first-run",
-        "--no-default-browser-check",
-    ]
-    if not headful:
-        args.append("--headless=new")
-    return args
-
-
 @dataclass
 class LoginHandoff:
     """One ``request_login`` park: what the user reads, and the card that asks them.
@@ -525,8 +499,8 @@ def request_login(
     safe_url = screen_url(url)
     blocker = _REASON_BLOCKER.get(reason, "needs you to sign in")
     # Where to sign in is the browser the step DRIVES — the one it resumes in. Nothing opens a
-    # window for the person: `chrome_launch_args` is handed back, never executed (see its
-    # docstring), so a sentence saying a window "is open" sent them looking for one.
+    # window for the person (core launches no browser, `browse/transport.py`), so a sentence saying
+    # a window "is open" sent them looking for one.
     sentence = (
         f"Browse needs you to sign in to {slug}, in the browser this step drives: authenticate "
         "there (password, 2FA, whatever it asks), then answer this item and the run continues "

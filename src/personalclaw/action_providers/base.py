@@ -22,11 +22,11 @@ class ActionContext:
     the note links back to what produced it. Kept out of `payload` on purpose: payload
     is the event itself, and it reaches bash stdin and webhook bodies verbatim.
     `answer` is what a person answered when this step last parked on them
-    (`outcome="needs_input"`), set only on the ONE workflow dispatch that answer started — a
-    browse step asked "sign in, then confirm" gets `True` once the user has confirmed. None
-    everywhere else. Out of `payload` for the same reason as `status_url`, and one more: a
-    trigger's payload is third-party event data, and a fact only the engine may state must not
-    be something a webhook body can spell.
+    (`outcome="needs_input"`), set only on the ONE dispatch that answer started — a workflow
+    step's re-run, or a trigger's (`triggers.parks`) — so a browse step asked "sign in, then
+    confirm" gets `True` once the user has confirmed. None everywhere else. Out of `payload`
+    for the same reason as `status_url`, and one more: a trigger's payload is third-party event
+    data, and a fact only the engine may state must not be something a webhook body can spell.
     `trigger_id` is the store id of the trigger whose fire this is, set by the two store-trigger
     dispatches (its own fire, and Run now). A provider that starts an agent hands it on
     (`SubagentManager.spawn(trigger_id=…)`), so an approval that agent asks for, and the note it
@@ -85,8 +85,11 @@ class ActionResult:
     #               step's output is kept, `stderr` (or the card under the
     #               output's `needs_input` key) is the question, approving runs the
     #               step again with `ActionContext.answer` set, and denying ends it
-    #               as declined. `triggers.executor.STATUS_TO_OUTCOME` maps it to
-    #               `Outcome.DEFERRED` — both readers exist, per the rule above.
+    #               as declined. From a trigger, its run is recorded `waiting` and
+    #               asks the same way (`triggers.parks`): approving runs the action
+    #               again with the answer set. `triggers.executor.STATUS_TO_OUTCOME`
+    #               maps it to `Outcome.DEFERRED` — both readers exist, per the rule
+    #               above.
     outcome: str = ""
     # PLATFORM-LEGIBILITY §2: the WHAT/WHY/FIX envelope for a failed action. The
     # three dispatch seams wrap an uncaught provider exception into one, so

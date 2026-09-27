@@ -23,6 +23,9 @@ const RUN_LOOK: Record<WorkflowRunStatus, StatusLook> = {
   failed: { label: 'Failed', icon: OctagonAlert, tone: 'text-danger' },
   cancelled: { label: 'Cancelled', icon: CircleSlash, tone: 'text-on-surface-low' },
   escalated: { label: 'Escalated', icon: TriangleAlert, tone: 'text-danger' },
+  // A person refused an approval the run needed. Informational like `cancelled`: it is a decision
+  // someone made, not a fault to look for, so it never takes the danger tone.
+  declined: { label: 'Declined', icon: CircleSlash, tone: 'text-on-surface-low' },
 }
 
 export function runLook(status: string): StatusLook {
@@ -49,6 +52,7 @@ const NODE_LOOK: Record<string, StatusLook> = {
   blocked: { label: 'Blocked', icon: OctagonAlert, tone: 'text-danger' },
   escalated: { label: 'Escalated', icon: TriangleAlert, tone: 'text-danger' },
   cancelled: { label: 'Cancelled', icon: CircleSlash, tone: 'text-on-surface-low' },
+  declined: { label: 'Declined', icon: CircleSlash, tone: 'text-on-surface-low' },
   discarded: { label: 'Discarded', icon: CircleSlash, tone: 'text-on-surface-low' },
 }
 
@@ -58,7 +62,7 @@ export function nodeLook(state: string): StatusLook {
 
 /** Statuses after which a run will not move on its own. Used to decide whether to hold an
  *  SSE connection open and whether to offer live controls. */
-export const TERMINAL_RUN_STATUSES = new Set<string>(['complete', 'failed', 'cancelled', 'escalated'])
+export const TERMINAL_RUN_STATUSES = new Set<string>(['complete', 'failed', 'cancelled', 'escalated', 'declined'])
 
 export const isTerminal = (status: string) => TERMINAL_RUN_STATUSES.has(status)
 
@@ -77,6 +81,7 @@ export const isPrelaunch = (status: string) => PRELAUNCH_RUN_STATUSES.has(status
  *  gates the Inspect affordance on this so the click is offered only where it can succeed. */
 export const TERMINAL_NODE_STATES = new Set<string>([
   'done', 'degraded', 'failed', 'skipped', 'no_change', 'scope_violation', 'discarded', 'escalated', 'blocked', 'cancelled',
+  'declined',
 ])
 
 export const isNodeTerminal = (state: string) => TERMINAL_NODE_STATES.has(state)

@@ -38,7 +38,7 @@ describe('a parked step asks through the gate renderer', () => {
       <WorkflowAsk continuation={cont} runId="r1" busy={false} onAnswer={onAnswer} />,
     )
     expect(getByText(`Tried: ${TRIED}`)).toBeInTheDocument()
-    expect(getByText('Approve runs this step again. Deny ends it as failed.')).toBeInTheDocument()
+    expect(getByText('Approve runs this step again. Deny ends the run here.')).toBeInTheDocument()
     expect(queryByLabelText("Don't ask again for this step in this run")).toBeNull()
     fireEvent.click(getByText('Approve').closest('button')!)
     expect(onAnswer).toHaveBeenCalledWith(cont, true, false)
@@ -51,6 +51,21 @@ describe('a parked step asks through the gate renderer', () => {
     )
     expect(getByLabelText("Don't ask again for this step in this run")).toBeInTheDocument()
     expect(queryByText(/^Tried:/)).toBeNull()
-    expect(queryByText('Approve runs this step again. Deny ends it as failed.')).toBeNull()
+    expect(queryByText('Approve runs this step again. Deny ends the run here.')).toBeNull()
+    // …and says what Deny does, since a declined approval ends the run (ledger 247).
+    expect(queryByText('Deny ends the run here — nothing after this step runs.')).not.toBeNull()
+  })
+
+  it('says what a trigger park does instead of a run', () => {
+    const { getByText } = render(
+      <WorkflowAsk
+        continuation={continuation({ rerun: true }, [TRIED])}
+        runId=""
+        busy={false}
+        onAnswer={vi.fn()}
+        rerunCaption="Approve runs it again now. Deny leaves it until it next runs."
+      />,
+    )
+    expect(getByText('Approve runs it again now. Deny leaves it until it next runs.')).toBeInTheDocument()
   })
 })

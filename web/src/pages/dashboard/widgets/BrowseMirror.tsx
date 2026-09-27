@@ -311,8 +311,9 @@ export function BrowseMirror() {
         >
           <ShieldAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
           <p data-type="body-m" className="min-w-0 flex-1">
-            <strong>Sign-in needed for {e.site}</strong> — the saved browse session expired. Open the
-            site in the handoff window and sign in; PersonalClaw never sees what you type.
+            <strong>Sign-in needed for {e.site}</strong> — the saved browse session expired. The next
+            step that uses it asks you to sign in, in the browser browse drives; PersonalClaw never
+            sees what you type.
             {e.key_present
               ? ' Re-auth reuses the existing profile.'
               : ' A new profile will be created on sign-in.'}

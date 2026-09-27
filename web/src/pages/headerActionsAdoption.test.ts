@@ -30,12 +30,10 @@ import { join } from 'node:path'
 //    cluster whenever it shares the slot.
 //  · Counting JSX tags OVERCOUNTS conditional branches, so the rail allows an explicit,
 //    justified exemption list rather than pretending the count is the truth.
-//    `WorkflowRunDetail` declares 5 QuietButtons but renders at most 4, and only 2 in the
-//    state I could actually reach: a terminal run shows Workspace + Fork, which measured
-//    **1px overflow, 0 unreachable** at 390px and clean at 834px. Its 4-control mid-run
-//    branch needs a live running workflow to observe, and I could not drive one from the
-//    seeded fixture — so it is LOGGED as a candidate rather than converted blind. Converting
-//    a surface whose defect you have not measured is how a "fix" becomes a regression.
+//    `WorkflowRunDetail` was its one entry, logged rather than converted blind because its
+//    mid-run branch had never been measured. Measured since on a live run: eight labelled
+//    controls in a fixed strip took the whole row at 1280px, the title read one letter, and the
+//    controls ran over it. It goes through the cluster now, and the list is empty.
 
 const PAGES = join(process.cwd(), 'src/pages')
 
@@ -86,12 +84,7 @@ const CONTROL = /<(Button|IconButton|SquareIconButton|QuietButton|Segmented|Filt
 /** Slots whose control count is inflated by mutually-exclusive branches, with the measurement
  *  that justifies the exemption. Add to this list only with a driven measurement — never to
  *  make a red go green. */
-const EXEMPT: Record<string, string> = {
-  'workflows/WorkflowRunDetail.tsx':
-    '5 declared, at most 4 rendered (Steer/Pause/Cancel are mid-run only; a terminal run shows ' +
-    'Workspace + Fork). Measured on a terminal run at 390px: 1px overflow, 0 unreachable. The ' +
-    '4-control mid-run branch needs a live running workflow to observe — logged, not converted.',
-}
+const EXEMPT: Record<string, string> = {}
 
 describe('header right slots use the responsive cluster', () => {
   const files = pageFiles()

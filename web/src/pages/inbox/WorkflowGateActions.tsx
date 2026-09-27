@@ -9,13 +9,14 @@ import { TextLink } from '../../ui/TextLink'
  *  one attempt, so every way it can stop is a way it stops for good"). Mirrored rather than
  *  derived because the wire carries a bare string; the rail in `terminalRunHasNoGate.test.tsx`
  *  compares this set against the Python source so the two cannot drift. */
-const TERMINAL_RUN_STATUSES = new Set(['complete', 'failed', 'cancelled', 'escalated'])
+const TERMINAL_RUN_STATUSES = new Set(['complete', 'failed', 'cancelled', 'escalated', 'declined'])
 
 /** How to say each ending in a sentence. `complete` is included for completeness of the map, not
  *  because a completed run's gate is a common sight — a run that finished having left a gate open
  *  is exactly as unanswerable as one that failed. */
 const ENDED_VERB: Record<string, string> = {
   complete: 'finished', failed: 'failed', cancelled: 'was cancelled', escalated: 'was escalated',
+  declined: 'was declined',
 }
 
 /** Answer a workflow's human-input gate from the inbox (WF2-R7).

@@ -15,6 +15,7 @@ import { InboxMessageBody } from './ForeignContent'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { DeniedCallRerun } from './DeniedCallRerun'
 import { InboxSection as Section } from './InboxSection'
+import { TriggerParkActions } from './TriggerParkActions'
 import { invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -80,6 +81,8 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   const target = refTarget(item)
   // A workflow gate is answerable in place (below), which changes what the deep link is for.
   const answerableGate = item.item_kind === 'needs_input' && !!item.refs?.workflow
+  // A trigger's action that stopped for you (`triggers.parks`) — answerable here too.
+  const triggerPark = item.item_kind === 'needs_input' && !!item.refs?.trigger_park
 
   return (
     <div className="flex flex-col gap-l">
@@ -169,6 +172,13 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
         </Section>
       )}
 
+      {/* A trigger's action that stopped for you (`triggers.parks`), answered at the trigger. */}
+      {triggerPark && (
+        <Section label="Waiting on you">
+          <TriggerParkActions item={item} onChanged={onChanged} />
+        </Section>
+      )}
+
       {/* F-33: a call denied without an answer — the one next step it really has (ask the chat
           again, run its trigger again, run its workflow step again), or how its retry ended. */}
       <DeniedCallRerun item={item} navigate={navigate} onChanged={onChanged} />
@@ -178,7 +188,7 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
           Skipped for anything answerable in place above (proposals, workflow gates): the
           in-place form already offers the run as its fallback, and two "go there" buttons for
           one row reads as two different destinations. */}
-      {!channelBacked && target && item.item_kind !== 'proposal' && !answerableGate && (
+      {!channelBacked && target && item.item_kind !== 'proposal' && !answerableGate && !triggerPark && (
         <Section label="Source">
           <Button size="sm" variant="secondary" onClick={() => navigate(target)}>
             <ExternalLink size={14} /> {refLabel(item)}

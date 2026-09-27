@@ -48,6 +48,8 @@ const STATE_MAP: Record<string, DagNodeState> = {
   skipped: 'todo',
   discarded: 'todo',
   cancelled: 'todo',
+  // A person said no — a decision like a cancel, not an error in the work.
+  declined: 'todo',
   blocked: 'blocked',
   failed: 'error',
   scope_violation: 'error',

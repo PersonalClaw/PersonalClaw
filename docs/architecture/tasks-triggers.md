@@ -209,6 +209,46 @@ with the reason; **Dismiss** records `skipped_missed`. Both go through
 `missed.resolve_missed` and land in that automation's history
 (`POST /api/triggers/review`).
 
+### An action that stops for you asks you
+
+An action can stop on something only a person can lift: browse at a sign-in
+page returns `outcome="needs_input"` with the card its handoff composes ("Sign
+in to example.com, then confirm", and what it tried). Inside a workflow run
+the engine parks the step and asks through the run
+([workflows.md](workflows.md#waiting-on-a-person)); from a trigger,
+`triggers/parks.py` asks. Both recorders — the fire path
+(`gateway._record_fire_outcome`) and the Run button (`_record_manual_run`) —
+record the run `waiting` (`schedule_history.status_for_result`; the runs feed
+reads it as `deferred`), with the summary "Waiting for you." and the question,
+then call `parks.settle`:
+
+- **A park raises one question.** One park file per trigger
+  (`trigger_parks/` in the home) holds a single-use token and the card; its
+  ONE Inbox row carries the card and the token, deduped per trigger, so a
+  trigger that runs again before anyone answers asks nothing new. An expired
+  browse session raises no row of its own: the mirror's banner says it
+  expired, and the trigger's row is the one that runs anything.
+- **Approve runs it again, with the answer.** `POST
+  /api/triggers/{id}/answer {resume_token, answer}` spends the token once
+  (a double click runs nothing twice; a stale token answers `409
+  trigger_park_gone`), then dispatches the action through the Run button's own
+  path — its grants and capability fence — with `ActionContext.answer=True` on
+  that one dispatch, which is what lets browse leave its pre-run sign-in check,
+  as an approved in-run park does. A refusal the Run button honours (incident
+  mode, the kill switch) is read before the token is spent. **Deny** closes the
+  question until the trigger next stops.
+- **A run that goes through withdraws it.** A later plain success (a session
+  signed in since) makes the question moot, so the park and its row go; a
+  failure or a skip leaves it standing.
+
+The park holds the trigger's id and the card, never the action's config:
+Approve re-reads the trigger, so a secret the config names is resolved at run
+time and never written to the park. The answer route is the owner's alone
+(`apps/permissions.ROUTE_AUTHZ`, for the reason Run now's is), and
+`trigger_parks/` is in the durability inventory's `IGNORED`: the question is
+about a sign-in in this machine's browser profile, which no snapshot carries
+either, so a restored copy could only ask again.
+
 ### The HEARTBEAT.md queue is a system trigger
 
 `workspace/HEARTBEAT.md` is the queue the agent writes "keep checking until

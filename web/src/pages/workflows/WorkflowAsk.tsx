@@ -24,11 +24,14 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  same resume path the typed controls use — the run advances instead of the answer landing
  *  in a chat. `runId` is required rather than optional precisely so a caller cannot render
  *  an interactive gate widget whose submit has nowhere to go. */
-export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
+export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption }: {
   continuation: WorkflowContinuation
   runId: string
   busy: boolean
   onAnswer: (c: WorkflowContinuation, value: unknown, alwaysAllow: boolean) => void | Promise<void>
+  /** What Approve and Deny do for a step that parked (`ask.rerun`), when its owner is not a run —
+   *  a trigger's park runs again from the trigger, and Deny leaves it for its next run. */
+  rerunCaption?: string
 }) {
   const { ask, handoff, expired } = continuation
   const kind = ask.kind || 'approval'
@@ -149,15 +152,24 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
         </div>
       )}
 
+      {/* What each answer DOES, because Deny is not a soft no: nothing after a declined approval
+          runs, and the run ends there (`gate_answers.end_at_gate`). */}
       {rerun ? (
         <p data-type="caption" className="text-on-surface-low">
-          Approve runs this step again. Deny ends it as failed.
+          {rerunCaption ?? 'Approve runs this step again. Deny ends the run here.'}
         </p>
       ) : (
-        <label data-type="caption" className="inline-flex items-center gap-s text-on-surface-low">
-          <Checkbox checked={alwaysAllow} onChange={setAlwaysAllow} ariaLabel="Don't ask again for this step in this run" />
-          Don&apos;t ask again for this step in this run
-        </label>
+        <>
+          {kind === 'approval' && (
+            <p data-type="caption" className="text-on-surface-low">
+              Deny ends the run here — nothing after this step runs.
+            </p>
+          )}
+          <label data-type="caption" className="inline-flex items-center gap-s text-on-surface-low">
+            <Checkbox checked={alwaysAllow} onChange={setAlwaysAllow} ariaLabel="Don't ask again for this step in this run" />
+            Don&apos;t ask again for this step in this run
+          </label>
+        </>
       )}
 
       <div className="flex items-center gap-s">

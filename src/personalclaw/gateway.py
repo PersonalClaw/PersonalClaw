@@ -2037,6 +2037,11 @@ class GatewayOrchestrator:
             reported = str(getattr(result, "error", "") or "") if result is not None else ""
             run_error = error or ("" if ok_exit else reported or "the action reported failure")
             output = str(getattr(result, "stdout", "") or "") if result is not None else ""
+            from personalclaw.triggers import parks
+
+            if ok_exit and parks.parked(result):
+                # A park's row says it waits on you and on what, not the payload it parked with.
+                output = parks.waiting_line(result)
             await store_runs.append(
                 ScheduleRun(
                     run_id=f"fire-{int(now * 1000)}",
@@ -2050,6 +2055,10 @@ class GatewayOrchestrator:
                     error=run_error[:_ERROR_SUMMARY_MAX],
                 )
             )
+            if ok_exit:
+                # A park asks you, once, with the action's own card; a fire that went through
+                # withdraws the question an earlier one asked (ledger 248).
+                parks.settle(trigger, result, state=getattr(self, "dashboard_state", None))
             # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
             # (`count = consecutive_failures + 1`, then pauses at the threshold). Counting the row
             # just written would double-count and pause after FOUR failures — caught by driving the

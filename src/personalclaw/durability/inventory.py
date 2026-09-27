@@ -1720,6 +1720,12 @@ IGNORED: tuple[str, ...] = (
     # pre-restore home already decided about — the storm §3.4's "review, don't auto-run" exists to
     # prevent, arriving by backup. Nothing is lost: the history rows record what happened.
     "trigger-review.json",
+    # A trigger's open question (`triggers/parks.py`): its action stopped for a person on THIS
+    # machine — browse at a sign-in page, in a browser profile `browse` above keeps out of every
+    # snapshot. Restored elsewhere, its Approve would run the action against a profile that was not
+    # carried, which stops at the same page and asks again. Nothing is lost without it: the history
+    # row says the run waited, and the trigger's next run that stops asks afresh.
+    "trigger_parks",
     # The poll cursors of the file, web and view triggers (`file_poll`, `web_poll`,
     # `pull_on_view`). Each module treats a MISSING state as a quiet re-seed — a watch's first
     # look records what it sees and fires nothing, a view binding refreshes on its next render —
