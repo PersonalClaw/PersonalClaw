@@ -1,4 +1,4 @@
-import { Code2, Compass, Palette, Target, Telescope, type LucideIcon } from 'lucide-react'
+import { ClipboardList, Code2, Compass, Palette, Target, Telescope, type LucideIcon } from 'lucide-react'
 import type { PresetDef } from '../../ui/PresetEmptyState'
 import type { WorkflowDefSummary } from '../../lib/api'
 import { templateForKind } from './containerKey'
@@ -19,27 +19,37 @@ import { templateForKind } from './containerKey'
  *  are the template's own data: `summary` is its NAME and `description` is its
  *  `description` field, straight off `GET /api/workflows`. Only the `title` is authored
  *  here, and it names the KIND, not the template — the same five kinds
- *  `KIND_TO_TEMPLATE` already enumerates. Restating a template's purpose in a card
- *  would be a second copy of one fact, and the card is the copy that rots.
+ *  `KIND_TO_TEMPLATE` already enumerates, plus the one card that is not a kind (below).
+ *  Restating a template's purpose in a card would be a second copy of one fact, and the
+ *  card is the copy that rots.
  *
  *  Showing the machine name as the accent line is deliberate, not a leak: it is the
  *  vocabulary every other workflow surface uses (rows, run titles, the suggest
  *  dialog's fallback), so a preset card teaches it once instead of hiding it until the
  *  user needs it. */
 
-/** One kind offered as a card: its icon and its human label. The TEMPLATE is resolved
- *  through {@link templateForKind}, never named here — a second table of kind→template
- *  would be the drift `KIND_TO_TEMPLATE`'s backend-parity test exists to prevent.
+/** One card: its icon, its human label, and what it starts. A KIND card's template is
+ *  resolved through {@link templateForKind}, never named here — a second table of
+ *  kind→template would be the drift `KIND_TO_TEMPLATE`'s backend-parity test exists to
+ *  prevent.
+ *
+ *  The planning card is the one card that is not a kind, so it names its template. It used
+ *  to be the `general` kind's card under the title "Plan a project" (F-61), and `general`
+ *  resolves to `general-project` — "iterate on any task in judged steps until it is genuinely
+ *  done" — so picking it started a loop working on the brief instead of a plan, while
+ *  `project-planning` was offered nowhere. The general loop keeps its card, titled for what it
+ *  does (the composer's own blurb: "loop until done").
  *
  *  Order is leverage order, not alphabetical: the two kinds a newcomer most often
  *  arrives with (code, research) lead, and `general` is last because it is the
  *  fallback kind rather than a thing to reach for. */
-const KIND_CARDS: Array<{ kind: string; icon: LucideIcon; title: string }> = [
-  { kind: 'code', icon: Code2, title: 'Work on code' },
-  { kind: 'research', icon: Telescope, title: 'Research a topic' },
-  { kind: 'design', icon: Palette, title: 'Design something' },
-  { kind: 'goal', icon: Target, title: 'Pursue a goal' },
-  { kind: 'general', icon: Compass, title: 'Plan a project' },
+const CARDS: Array<{ id: string; kind?: string; template?: string; icon: LucideIcon; title: string }> = [
+  { id: 'code', kind: 'code', icon: Code2, title: 'Work on code' },
+  { id: 'research', kind: 'research', icon: Telescope, title: 'Research a topic' },
+  { id: 'design', kind: 'design', icon: Palette, title: 'Design something' },
+  { id: 'goal', kind: 'goal', icon: Target, title: 'Pursue a goal' },
+  { id: 'plan', template: 'project-planning', icon: ClipboardList, title: 'Plan a project' },
+  { id: 'general', kind: 'general', icon: Compass, title: 'Loop until done' },
 ]
 
 /** What picking a workflow preset seeds: the template NAME, which is all the existing
@@ -48,7 +58,7 @@ const KIND_CARDS: Array<{ kind: string; icon: LucideIcon; title: string }> = [
  *  those questions would be a second create path rather than a seeded one. */
 export type WorkflowPrefill = string
 
-/** The presets offerable on THIS install, in {@link KIND_CARDS} order.
+/** The presets offerable on THIS install, in {@link CARDS} order.
  *
  *  A kind whose template is absent from `defs` is dropped rather than shown: offering a
  *  card that resolves to a template the install does not ship is a dead menu entry, and
@@ -58,12 +68,12 @@ export type WorkflowPrefill = string
 export function workflowPresets(defs: WorkflowDefSummary[]): PresetDef<WorkflowPrefill>[] {
   const byName = new Map(defs.map((d) => [d.name, d]))
   const out: PresetDef<WorkflowPrefill>[] = []
-  for (const card of KIND_CARDS) {
-    const template = templateForKind(card.kind)
+  for (const card of CARDS) {
+    const template = card.kind ? templateForKind(card.kind) : card.template
     const def = template ? byName.get(template) : undefined
     if (!def) continue
     out.push({
-      id: card.kind,
+      id: card.id,
       icon: card.icon,
       title: card.title,
       summary: def.name,

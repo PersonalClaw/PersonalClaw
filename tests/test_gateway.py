@@ -781,7 +781,13 @@ class TestInitCron:
 
         src = inspect.getsource(GatewayOrchestrator._init_cron)
         guard = src.index("if self._no_crons:")
-        for armed in ("_clock_task", "_reaper_task", "_file_watch_task", "migrate_and_arm()"):
+        for armed in (
+            "_clock_task",
+            "_reaper_task",
+            "_task_due_task",
+            "_file_watch_task",
+            "migrate_and_arm()",
+        ):
             assert src.index(armed) > guard, f"{armed} must sit inside the --no-crons else-branch"
 
 

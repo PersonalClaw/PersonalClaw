@@ -70,6 +70,13 @@ PAYLOAD_PREFIX = "project/"
 MAX_MEMBERS = 5000
 MAX_TOTAL_EXTRACTED = 64 * 1024 * 1024
 
+#: Cap on the UPLOAD itself, enforced while it streams (`hierarchy_handlers._read_project_upload`).
+#: The two ceilings above are checked only once the whole file is on disk, so without this an
+#: upload of any size was written out in full before being refused. Compression never makes an
+#: archive larger than its contents by more than its framing, so twice the extraction ceiling
+#: leaves room for any framing while still bounding what an upload can write.
+MAX_ARCHIVE_BYTES = 2 * MAX_TOTAL_EXTRACTED
+
 
 class ArchiveRefused(Exception):
     """A structural refusal: the archive is not readable as a project export at all.
@@ -461,6 +468,62 @@ def read_archive_plan(
     return plan, archive
 
 
+#: The one portable entity that is not a file of the project's: it is the definition store's
+#: RECORD of the project (`projects/<id>/project.json`). An import has already written a fresh one
+#: — a new id, a collision-free name, this machine's origin — and the archive's copy was written
+#: over it verbatim, so the new project read back with the SOURCE's id and name. Measured on one
+#: machine: two projects with one id, so a rename or a delete of the "copy" addressed the
+#: original (F-62). The archive's record now only contributes :data:`_RECORD_FIELDS`.
+PROJECT_RECORD = "project.json"
+
+#: What the archive's record may give the new project. Everything else it holds is identity
+#: (`id`, `origin_harness`, `created_at`), the store's (`is_builtin`, `updated_at`), this
+#: machine's business (`workspace_dir` is a folder on the machine the archive came from, and
+#: binding it here would point at a path that may not exist), or already decided by the import
+#: (`name` — the plan's collision-free one).
+_RECORD_FIELDS = ("brief", "agent_instructions_template")
+
+
+def import_project(
+    plan: ImportPlan,
+    archive: ExtractedArchive,
+    *,
+    store: Any,
+    projects_root: Path,
+) -> tuple[Any, list[str]]:
+    """Create the imported project and write what it carries. Returns ``(project, written)``.
+
+    The ONE import path — the route and `personalclaw project import` both call it — so a new
+    project is created exactly one way: by the store, under the plan's name, with only the
+    portable fields of the archive's record.
+    """
+    record = _archived_record(plan, archive)
+    project = store.create_project(
+        plan.project_name,
+        agent_instructions_template=str(record.get("agent_instructions_template") or ""),
+        brief=str(record.get("brief") or ""),
+    )
+    written = commit_import(plan, archive, project_root=projects_root / project.id)
+    if PROJECT_RECORD in plan.accepted:
+        # Applied, even when it had nothing portable to give: the count the summary states
+        # ("N entities imported") is the accepted list, and `written` must agree with it.
+        written.insert(0, PROJECT_RECORD)
+    return project, written
+
+
+def _archived_record(plan: ImportPlan, archive: ExtractedArchive) -> dict[str, Any]:
+    """The portable fields of the archive's project record, when it carried an accepted one."""
+    if PROJECT_RECORD not in plan.accepted:
+        return {}
+    try:
+        raw = json.loads((archive.contents.get(PROJECT_RECORD) or b"").decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {k: raw[k] for k in _RECORD_FIELDS if isinstance(raw.get(k), str) and raw[k].strip()}
+
+
 def commit_import(
     plan: ImportPlan,
     archive: ExtractedArchive,
@@ -473,10 +536,15 @@ def commit_import(
     import the normal outcome for an archive that travelled. `safe_member` runs a THIRD time here
     rather than trusting the plan, because this function is separately callable and a caller that
     hand-built a plan must not be able to talk it into writing outside the project.
+
+    Never :data:`PROJECT_RECORD`: that file is the store's record of the destination project,
+    and :func:`import_project` is what applies the archive's copy of it.
     """
     written: list[str] = []
     root = project_root.resolve()
     for rel in plan.accepted:
+        if rel == PROJECT_RECORD:
+            continue
         safe, _why = safe_member(rel)
         if not safe:
             continue

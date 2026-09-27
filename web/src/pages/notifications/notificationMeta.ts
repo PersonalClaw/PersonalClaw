@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, RefreshCw, Receipt, UserRound, StickyNote } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -66,6 +66,9 @@ const KINDS: Record<string, KindMeta> = {
   // `ShieldQuestion` + warn to match `ApprovalPrompt`'s own chrome — the same event, so it
   // must not be a different colour in the feed than it is on the card.
   approval: { label: 'Approval needed', icon: ShieldQuestion, tone: 'var(--color-warn)' },
+  // tasks/due (F-31) — a task's due date is coming. Its wire string is `task_due`. Info tone: a
+  // reminder, not a warning; nothing has failed yet.
+  task_due: { label: 'Task due', icon: CalendarClock, tone: 'var(--color-info)' },
   // knowledge/research_finding (WF2KNO-12). Newspaper like the digest — both are written
   // output — but the primary tone, not the low one: a finding is a thing to read, whereas
   // the digest is the wrapper it may arrive in.
@@ -169,6 +172,7 @@ export function notificationLink(n: Pick<NotificationItem, 'statusUrl'>): { labe
   const route = path.split(/[/?]/)[0]
   if (!route) return null
   if (route === 'triggers') return { label: /[?&]open=/.test(path) ? 'Open trigger' : 'Open triggers', path }
+  if (route === 'tasks') return { label: /[?&]open=/.test(path) ? 'Open task' : 'Open tasks', path }
   if (path.startsWith('workflows/runs/')) return { label: 'Open run', path }
   return { label: 'Open', path }
 }

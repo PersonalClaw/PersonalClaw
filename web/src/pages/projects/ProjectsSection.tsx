@@ -1,11 +1,11 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { MoreRow } from '../../ui/MoreRow'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
@@ -24,12 +24,14 @@ import { InlineError } from '../../ui/InlineError'
 import { StatusPill } from '../../ui/StatusPill'
 import { WorkspacePicker } from '../code/WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
-import { api, ApiError, MAX_NAME_LEN, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
+import { api, ApiError, MAX_NAME_LEN, type ProjectImportResult, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { DEFAULT_PROJECT_KEY, useDefaultProject } from '../../lib/defaultProject'
 import { notify } from '../../app/appSdk'
 import { PageTitle } from '../../ui/PageTitle'
 import { loopStatusColor, loopStatusLabel } from '../../lib/loopStatus'
+import { loopRoute } from '../../lib/loopKind'
+import { reportingWrite } from '../../app/reportingWrite'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
@@ -57,6 +59,34 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
   const [err, setErr] = useState<string | null>(null)
   // The default project, so its row carries a star.
   const { defaultProjectId, setDefaultProject } = useDefaultProject()
+  // Importing an archive (F-62): `api.projectImport` had no caller, so the archive the project
+  // page's Export writes could only come back in through `curl`. The archive is PREVIEWED first —
+  // the route plans without writing — so the user sees what arrives, what is refused and which
+  // credentials to re-enter before anything touches the home.
+  const importInput = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState<{ file: File; plan: ProjectImportResult } | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+
+  async function previewImport(file: File) {
+    setErr(null)
+    try {
+      setImporting({ file, plan: await api.projectImport(file, { preview: true }) })
+    } catch (e) { setErr(`Couldn't read that archive: ${(e as Error).message || 'unknown error'}`) }
+  }
+  async function commitImport() {
+    if (!importing || importBusy) return
+    setImportBusy(true)
+    try {
+      const done = await api.projectImport(importing.file)
+      setImporting(null)
+      invalidateKeys('projects:list'); refresh()
+      if (done.summary) notify(done.summary, 'success')
+      if (done.project_id) onOpen(done.project_id)
+    } catch (e) {
+      setImporting(null)
+      setErr(`Couldn't import that archive: ${(e as Error).message || 'unknown error'}`)
+    } finally { setImportBusy(false) }
+  }
 
   async function create(form: { name: string; brief: string; workspaceDir: string; makeDefault: boolean }) {
     const name = form.name.trim()
@@ -156,7 +186,10 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
         // "Loops": the nav's Projects tile is the home of loops too (a loop deep-link lights it),
         // and Home's "loops running" pill lands here — which had no way to the loops at all
         // (measured 2026-09-25).
-        right={<HeaderActions><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
+        right={<HeaderActions><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
+      {/* Forwarded to by the header's Import control, which is the keyboard-reachable control. */}
+      <input ref={importInput} type="file" accept=".zip,application/zip" className="hidden"
+        onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void previewImport(file) }} />
 
       {!!projects?.length && (
         <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}
@@ -169,6 +202,11 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
 
       {creating && (
         <NewProjectModal busy={busy} onClose={() => setCreating(false)} onCreate={create} />
+      )}
+
+      {importing && (
+        <ImportProjectModal plan={importing.plan} fileName={importing.file.name} busy={importBusy}
+          onClose={() => setImporting(null)} onImport={commitImport} />
       )}
 
       {/* body row: list column + (optional) the right-docked project peek panel,
@@ -440,6 +478,61 @@ export function ProjectKnowledgeList({ items }: { items: ProjectKnowledgeItem[] 
   )
 }
 
+/** What importing an archive WOULD do, before it does it (F-62). Every line is the route's own
+ *  preview: its summary sentence, the name the project lands under (a collision takes an
+ *  `imported-N` slot), what it refused and why, and the credentials the far side must re-enter —
+ *  an archive never carries them, and a project that looks complete and fails on its first run is
+ *  the outcome this dialog exists to prevent. */
+function ImportProjectModal({ plan, fileName, busy, onClose, onImport }: {
+  plan: ProjectImportResult
+  fileName: string
+  busy: boolean
+  onClose: () => void
+  onImport: () => void
+}) {
+  return (
+    <Modal title="Import a project" icon={<Upload size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex flex-col gap-l">
+        <div className="flex flex-col gap-xs">
+          <p data-type="body-m" className="text-on-surface">{plan.summary}</p>
+          <p data-type="body-s" className="text-on-surface-low">
+            From <span className="font-mono">{fileName}</span>. It arrives as a new project named{' '}
+            <span className="text-on-surface">{plan.project_name}</span>. Nothing is written until you import it.
+          </p>
+        </div>
+        {plan.refused.length > 0 && (
+          <div className="flex flex-col gap-xs">
+            <span data-type="label-m" className="text-on-surface">Not imported</span>
+            <ul className="flex flex-col gap-xs">
+              {plan.refused.map((issue) => (
+                <li key={issue.path} data-type="body-s" className="text-on-surface-var">
+                  <span className="font-mono">{issue.path}</span>: {issue.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {plan.secrets_expected.length > 0 && (
+          <div className="flex flex-col gap-xs">
+            <span data-type="label-m" className="flex items-center gap-xs text-on-surface"><KeyRound size={14} /> Credentials to re-enter</span>
+            <p data-type="body-s" className="text-on-surface-var">
+              An archive never carries credentials. After importing, add these in Settings → Secrets:{' '}
+              <span className="font-mono">{plan.secrets_expected.join(', ')}</span>
+            </p>
+          </div>
+        )}
+        <div className="flex justify-end gap-s">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={onImport} loading={busy} disabled={busy || !plan.ok}
+            disabledReason={!plan.ok ? 'Nothing in this archive can be imported' : undefined}>
+            Import
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 /** New-project modal: name + brief + an optional workspace binding + a make-default
  *  toggle — so the whole project can be set up in one step (the old inline form only
  *  took name + brief, leaving the user to bind a workspace + make it the default afterwards). */
@@ -568,6 +661,21 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   // the rest of the detail page uses — the board paints from cache, then swaps in the
   // fresh projection when it lands.
   const { data: work, loading: workLoading } = useQuery(`projects:work:${id}`, () => api.projectWork(id), { persist: true })
+  // Resume does what the work's OWN page does, then opens that page (F-30). It used to navigate to
+  // `loop/<id>`, the loop COMPOSER, which ignores the id: Resume opened an empty "new loop" form
+  // and resumed nothing. A failed resume still opens the work — its page says why, one look away,
+  // and `reportingWrite` has already said that it failed.
+  const resumeWork = async (row: WorkRow) => {
+    if (row.source === 'loop') {
+      await reportingWrite('resume this loop', () => api.uLoopAction(row.run_id, 'resume'))
+      invalidateKeys(`projects:work:${id}`)
+      navigate(loopRoute({ id: row.run_id, kind: row.kind }))
+      return
+    }
+    await reportingWrite('resume this run', () => api.resumeWorkflowRun(row.run_id, {}))
+    invalidateKeys(`projects:work:${id}`)
+    navigate(`workflows/runs/${row.run_id}`)
+  }
   // Legibility §7 — whether context adapters are enabled (Settings › Legibility). The
   // "Refresh context files" action only makes sense when this is on AND a workspace is
   // bound, so the button appears only then (server still re-checks + 403s if stale).
@@ -867,8 +975,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
               source is per-section isolated — a failing source degrades ONE section
               (inline degraded note) rather than blanking the board. */}
           <HubColumn title={`Work · ${workCount}`}>
-            <WorkBoardColumn work={work} loading={workLoading}
-              onResume={(runId) => navigate(`loop/${runId}`)} />
+            <WorkBoardColumn work={work} loading={workLoading} onResume={resumeWork} />
           </HubColumn>
 
           {/* TASKS — a plain list of task lists; clicking one opens its tasks in the
@@ -963,7 +1070,7 @@ export const WORK_OUTCOME_LOOK: Record<WorkOutcome, { label: string; icon: Lucid
  *  board (the FE half of per-section isolation), a suspended row offers Resume, and a
  *  collapsed row starts collapsed. */
 export function WorkBoardColumn({ work, loading, onResume }: {
-  work: WorkBoard | undefined; loading: boolean; onResume: (runId: string) => void
+  work: WorkBoard | undefined; loading: boolean; onResume: (row: WorkRow) => void
 }) {
   if (loading && !work) return <ListSkeleton rows={4} />
   const board = work?.board ?? []
@@ -992,7 +1099,7 @@ export function WorkBoardColumn({ work, loading, onResume }: {
               tone={group.state === 'needs_input' ? 'ok' : 'muted'} />
             {group.rows.map((row) => (
               <WorkRowCard key={`${row.origin}:${row.run_id}`} row={row}
-                onResume={() => onResume(row.run_id)} />
+                onResume={() => onResume(row)} />
             ))}
           </div>
         ))

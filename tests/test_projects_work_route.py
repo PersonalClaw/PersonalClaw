@@ -267,3 +267,42 @@ async def test_claim_on_missing_project_is_404(tmp_path):
             "/api/projects/p-nope/work/claim", json={"target_id": "x", "holder": "y"}
         )
         assert r.status == 404
+
+
+@pytest.mark.asyncio
+async def test_a_resumable_row_says_what_it_is_so_resume_can_reach_it(tmp_path):
+    """F-30: the board's Resume navigated to `#/loop/<id>` for every row, which is the loop
+    COMPOSER — it ignores the id — so Resume on a suspended run or a paused loop opened an empty
+    "new loop" form. The row cannot be routed without knowing what it is: a run and a legacy loop
+    both carry their id in `run_id`, and a loop row is tagged `origin: "manual"` like a run a user
+    started. So every row names its `source`, and a loop row its `kind` (a code loop opens in
+    Code, every other kind in the loop cockpit)."""
+    from personalclaw.loop import store as loop_store
+    from personalclaw.loop.loop import Loop, LoopStatus
+    from personalclaw.workflows import store as run_store
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    async with _client(tmp_path) as client:
+        pid = await _mk_project(client)
+        run = run_store.create(
+            WorkflowRun(id="", workflow_name="paused-run", status=RunStatus.PAUSED, project_id=pid)
+        )
+        code_loop = loop_store.create(
+            Loop(id="", kind="code", name="Paused code", task="c" * 30, project_id=pid)
+        )
+        loop_store.update_status(code_loop.id, LoopStatus.RUNNING)
+        loop_store.update_status(code_loop.id, LoopStatus.PAUSED)
+        await client.post("/api/tasks", json={"title": "A task", "project_id": pid})
+
+        body = await (await client.get(f"/api/projects/{pid}/work")).json()
+        rows = {row["title"]: row for group in body["board"] for row in group["rows"]}
+
+        assert rows["paused-run"]["resumable"] is True
+        assert rows["paused-run"]["source"] == "run"
+        assert rows["paused-run"]["run_id"] == run.id
+        assert rows["Paused code"]["resumable"] is True
+        assert rows["Paused code"]["source"] == "loop"
+        assert rows["Paused code"]["kind"] == "code"
+        assert rows["Paused code"]["run_id"] == code_loop.id
+        assert rows["A task"]["source"] == "task"
+        assert rows["A task"]["resumable"] is False

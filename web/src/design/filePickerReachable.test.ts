@@ -43,6 +43,7 @@ import { join } from 'node:path'
 //   settings/PortabilityPanel   `hidden`, real Button
 //   files/browse/FileTree       `hidden`, ContextMenu item "Upload here"
 //   ui/Composer                 `hidden`, PlusMenu item
+//   projects/ProjectsSection    `hidden`, header control "Import" (F-62's project archive import)
 //
 // 🔑 A `hidden` input is FINE when a real button forwards to it — the button is the control and it is
 // keyboard-operable. What is never fine is a `hidden` input whose only trigger is a click-only `div`
@@ -95,6 +96,7 @@ const FORWARDED: Record<string, RegExp> = {
   'pages/settings/PortabilityPanel.tsx': /<Button[^>]*onClick=\{\(\) => fileRef\.current\?\.click\(\)\}/,
   'pages/files/browse/FileTree.tsx': /label: 'Upload here', onClick: \(\) => uploadInput\.current\?\.click\(\)/,
   'ui/Composer.tsx': /onAttach=\{\(\) => fileRef\.current\?\.click\(\)\}/,
+  'pages/projects/ProjectsSection.tsx': /<HeaderControl[^>]*label="Import" onClick=\{\(\) => importInput\.current\?\.click\(\)\}/,
 }
 
 describe('every file picker can be reached without a mouse', () => {

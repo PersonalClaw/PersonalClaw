@@ -141,7 +141,7 @@ def _import(args: argparse.Namespace) -> int:
         print(f"❌ {exc}")
         return 1
 
-    print(import_summary(plan))
+    print(import_summary(plan, preview=True))
     if plan.refused:
         print(f"   ✖ {len(plan.refused)} refused:")
         for issue in plan.refused[:10]:
@@ -156,8 +156,9 @@ def _import(args: argparse.Namespace) -> int:
         print("❌ Nothing importable in this archive.")
         return 1
 
-    created = store.create_project(plan.project_name)
-    written = pa.commit_import(plan, extracted, project_root=config_dir() / "projects" / created.id)
+    created, written = pa.import_project(
+        plan, extracted, store=store, projects_root=config_dir() / "projects"
+    )
     print(f"✅ Imported as {created.name} ({created.id}) — {len(written)} entities written")
     if plan.secrets_expected:
         print(

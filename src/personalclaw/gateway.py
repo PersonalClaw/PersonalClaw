@@ -403,6 +403,7 @@ class GatewayOrchestrator:
         self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
+        self._task_due_task: "asyncio.Task[None] | None" = None  # F-31 task due-date notices
         # The event bus's router (`triggers.event_fire`): fires `kind: "event"` triggers.
         self._event_router: Any = None
         # RUM-5: a staged auto-update waiter that HOLDS until in-flight work drains,
@@ -1093,6 +1094,30 @@ class GatewayOrchestrator:
 
         store = TriggerStore(base_dir=config_dir())
         await reaper.run_forever(store=store, base_dir=store.base_dir)
+
+    async def _task_due_loop(self) -> None:
+        """Announce the tasks whose due date is coming (F-31), every `due_notices.SWEEP_SECS`.
+
+        Like `_clock_loop`, this supplies only what the gateway knows — the one notification choke
+        point — and leaves every rule (when, once, quiet hours, who) to `tasks/due_notices.py`. A
+        sweep that raises is logged and the next one runs: one bad task provider must not end the
+        reminders for good.
+        """
+        from personalclaw.tasks import due_notices
+
+        while True:
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                # Started with the other timers, before the dashboard that owns `notify` — so wait
+                # for it rather than skip a whole interval: a notice that fell due while the
+                # gateway was down goes out as it comes back, not five minutes later.
+                await asyncio.sleep(due_notices.STARTUP_POLL_SECS)
+                continue
+            try:
+                await due_notices.run_once(state.notify, now=time.time())
+            except Exception:  # noqa: BLE001 - the loop outlives one failed sweep
+                logger.warning("task due-notice sweep failed", exc_info=True)
+            await asyncio.sleep(due_notices.SWEEP_SECS)
 
     def _start_event_triggers(self, *, enabled: bool = True) -> None:
         """Attach the event bus's router, so `kind: "event"` triggers fire in this process.
@@ -2549,6 +2574,9 @@ class GatewayOrchestrator:
             # survives a restart. It needs no `sessions`: the subagent manager's own live reaper
             # owns the spawned PROCESS, and this owns the CLAIM (see `triggers/reaper.py`).
             self._reaper_task = asyncio.create_task(self._trigger_reaper_loop())
+            # Task due-date notices (F-31). Unattended background work that notifies, so it sits
+            # with the clock and the reaper and `--no-crons` disables it too.
+            self._task_due_task = asyncio.create_task(self._task_due_loop())
 
     async def _run_heartbeat_task(self, task_text: str, deliver: str) -> str | None:
         """One HEARTBEAT.md task as an unattended background turn, and its result delivered.
@@ -4320,6 +4348,7 @@ class GatewayOrchestrator:
             self._web_watch_task,
             self._clock_task,
             self._reaper_task,
+            self._task_due_task,
             self._staged_apply_task,
         ):
             if _task is None:

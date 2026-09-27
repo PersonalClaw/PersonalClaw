@@ -506,6 +506,8 @@ def _as_board_row(d: dict) -> containers.BoardRow:
         attention=bool(d.get("attention", False)),
         resumable=bool(d.get("resumable", False)),
         outcome=outcome,
+        source=str(d.get("source", "") or "run"),
+        kind=str(d.get("kind", "") or ""),
     )
 
 
@@ -540,6 +542,8 @@ def _loop_rows(pid: str) -> list[dict]:
                 resumable=state is containers.BoardState.SUSPENDED,
                 attention=state is containers.BoardState.NEEDS_INPUT,
                 outcome=_loop_outcome(str(lp.status), str(lp.stop_reason or "")),
+                source="loop",
+                kind=str(lp.kind or ""),
             ).to_dict()
         )
     return rows
@@ -566,6 +570,7 @@ def _task_rows(tasks: list, pid: str) -> list[dict]:
                 project_id=pid,
                 attention=state is containers.BoardState.NEEDS_INPUT,
                 outcome=_TASK_OUTCOME.get(status),
+                source="task",
             ).to_dict()
         )
     return rows
@@ -1177,7 +1182,7 @@ async def api_projects_import(request: web.Request) -> web.Response:
         upload.unlink(missing_ok=True)
 
     payload = plan.to_dict()
-    payload["summary"] = _import_summary(plan)
+    payload["summary"] = _import_summary(plan, preview=preview)
     if preview:
         payload["preview"] = True
         return web.json_response(payload)
@@ -1187,29 +1192,33 @@ async def api_projects_import(request: web.Request) -> web.Response:
             {**payload, "error": "the archive contributed nothing importable"}, status=400
         )
 
-    created = store.create_project(plan.project_name)
-    project_root = config_dir() / "projects" / created.id
-    written = await asyncio.to_thread(pa.commit_import, plan, archive, project_root=project_root)
+    created, written = await asyncio.to_thread(
+        pa.import_project, plan, archive, store=store, projects_root=config_dir() / "projects"
+    )
     payload.update({"preview": False, "project_id": created.id, "written": written})
     return web.json_response(payload, status=201)
 
 
-def _import_summary(plan) -> str:
+def _import_summary(plan, *, preview: bool) -> str:
     from personalclaw.workflows.project_export import import_summary
 
-    return import_summary(plan)
+    return import_summary(plan, preview=preview)
 
 
 async def _read_project_upload(request: web.Request):
-    """Read a multipart `file` field into a unique temp file.
+    """Read a multipart `file` field into a unique temp file, refusing one past the archive cap.
 
-    Mirrors `dashboard.handlers.portability._read_upload_file`'s shape rather than sharing it: that
+    Mirrors `dashboard.handlers.durability._read_upload_file`'s shape rather than sharing it: that
     one lives in the dashboard package and importing it here would put a handler module's private
-    helper on the tasks package's import path.
+    helper on the tasks package's import path. Unlike that one it is capped
+    (`project_archive.MAX_ARCHIVE_BYTES`): no project archive is larger, and the cap is counted as
+    the bytes arrive, so an oversized upload is never written out in full.
     """
     import tempfile
 
     from aiohttp.multipart import BodyPartReader
+
+    from personalclaw.workflows import project_archive as pa
 
     ctype = request.headers.get("Content-Type", "")
     if not ctype.lower().startswith("multipart/"):
@@ -1226,12 +1235,24 @@ async def _read_project_upload(request: web.Request):
     if part is None or not isinstance(part, BodyPartReader) or part.name != "file":
         return None, web.json_response({"error": "file field required"}, status=400)
 
+    cap = pa.MAX_ARCHIVE_BYTES
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     try:
+        received = 0
         while True:
             chunk = await part.read_chunk(65536)
             if not chunk:
                 break
+            received += len(chunk)
+            if received > cap:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
+                return None, json_error(
+                    "request_too_large",
+                    message=f"the archive is larger than {_size_words(cap)}; a project "
+                    f"archive holds at most {_size_words(pa.MAX_TOTAL_EXTRACTED)} of files",
+                    status=413,
+                )
             tmp.write(chunk)
         tmp.close()
         return Path(tmp.name), None
@@ -1239,6 +1260,14 @@ async def _read_project_upload(request: web.Request):
         tmp.close()
         Path(tmp.name).unlink(missing_ok=True)
         raise
+
+
+def _size_words(n: int) -> str:
+    """``n`` bytes as the largest whole binary unit that divides it (the caps are powers of 2)."""
+    for unit, size in (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)):
+        if n >= size and n % size == 0:
+            return f"{n // size} {unit}"
+    return f"{n} bytes"
 
 
 def register_hierarchy_routes(app: web.Application) -> None:
