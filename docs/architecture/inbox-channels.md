@@ -155,6 +155,17 @@ so a card can say "cancelled" for a stopped turn instead of reading it as a Deny
 survives a restart, so `close_orphaned_approval_rows` closes, at boot, any row still asking for
 one.
 
+**Which chat channel asks.** An approval asks on a chat channel when the `approval/requested`
+rule has the `channel_dm` target (`_ask_on_a_channel`, then a link when the channel has no
+Approve/Deny), and a subagent's request to start always does (`GatewayOrchestrator._interactive_approval`).
+Both ask where the owner's **Send approvals to** says (`agent.approval_channel`, Settings →
+Notifications), resolved once in `channel_delivery`: `approval_providers()` is the chosen channel
+alone — and none while it is not connected, so no other channel stands in and the approval waits in
+the dashboard — or, left empty, every connected channel in name order; `approval_delivery()` is the
+first of those that knows the owner and can prompt. Before the setting, the order was the only rule,
+so with Discord paired every approval asked on Discord. A press on the channel and an answer in the
+dashboard resolve the same entry.
+
 **How long it waits, and what a denial without an answer leaves.** Every approval that waits
 waits one window, the owner's `agent.approval_timeout_minutes` (Settings → Agent defaults →
 Approval wait; two hours by default, one minute to one week), read per approval by
@@ -290,10 +301,10 @@ to a rule:
   (batch into `digest_queue.jsonl` for the scheduled summary);
 - **targets** — `dashboard` today; `native` raises a real OS notification whenever the
   desktop shell reports the capability; `push` sends a content-free `{kind, item_id}`
-  ping to a registered device; `channel_dm` is the one target still accepted and
-  persisted but **inert** — nothing in `notify()` consumes it, and the matrix dims it
-  accordingly. (`ChannelDelivery.deliver_notification` exists and is live, but the heartbeat
-  path in `gateway.py` calls it directly; it is not wired to this target.)
+  ping to a registered device; `channel_dm` sends the note to the owner's DM on the first
+  connected chat channel that reaches them (`channel_delivery.reach_owner`, from `notify()`),
+  and on the `approval/requested` row it asks the approval on a channel — see *Which chat
+  channel asks* below.
 - **conditions** — keywords / name-mention that **escalate** a quieter mode to
   `immediate`. Escalation is capped at `immediate` and never adds targets the
   user didn't choose. Name-mention matches the **user's** name (Settings →

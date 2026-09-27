@@ -517,6 +517,13 @@ def _approval_minutes(raw: object) -> int:
     return min(raw, APPROVAL_TIMEOUT_MINUTES_MAX)
 
 
+def _approval_channel(raw: object) -> str:
+    """``agent.approval_channel`` as ``load()`` reads it: the channel's name, trimmed, or ``""``
+    (the default order) for anything that is not a string. A name no connected channel answers to
+    is kept as written, so Settings can show it as not connected rather than as the default."""
+    return raw.strip() if isinstance(raw, str) else ""
+
+
 @dataclass
 class SelfQaConfig:
     """Self-QA Companion settings (SELF-VERIFICATION §3) — the commit-watch QA loop.
@@ -605,6 +612,20 @@ class AgentConfig:
             "How long a tool approval waits for your answer before it is denied. An approval a "
             "subagent or workflow step asks for also ends when that work's own time limit does. "
             "Unattended runs never wait: no one is there to ask, so they are denied at once.",
+        ),
+    )
+    #: Which chat channel asks you to approve a tool call ("Send approvals to"). Empty asks the
+    #: first connected channel that knows you, in name order, which is all there was before an
+    #: owner with several channels paired could choose. A channel's name asks only there: when
+    #: it cannot reach you the approval waits in PersonalClaw, and no other channel is asked.
+    approval_channel: str = field(
+        default="",
+        metadata=_meta(
+            "Send Approvals To",
+            "The chat channel that asks you to approve a tool call, by its name (telegram, "
+            "discord, email, slack). Empty asks the first connected channel that knows you, in "
+            "name order. A named channel asks only there; when it cannot reach you, the approval "
+            "waits in PersonalClaw.",
         ),
     )
     acp_concurrent_sessions: bool = field(
@@ -4039,6 +4060,7 @@ class AppConfig:
                 approval_timeout_minutes=_approval_minutes(
                     agent_data.get("approval_timeout_minutes")
                 ),
+                approval_channel=_approval_channel(agent_data.get("approval_channel")),
                 acp_concurrent_sessions=agent_data.get("acp_concurrent_sessions", False),
                 # Defaults ON (PROMPT-CACHE-SUBSTRATE §C6): caching is semantically
                 # transparent — the model sees the same tokens either way and every

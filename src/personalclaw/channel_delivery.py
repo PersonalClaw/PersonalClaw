@@ -301,6 +301,51 @@ def owner_reachable() -> "ChannelDelivery | None":
     return None
 
 
+def approval_channel() -> str:
+    """The channel the owner chose in "Send approvals to" (``agent.approval_channel``), or ``""``.
+
+    ``""`` is the default order: the connected channels by name, the first that knows the owner
+    asking. Read per approval, so a choice saved in Settings applies to the next one."""
+    from personalclaw.config.loader import AppConfig
+
+    return AppConfig.load().agent.approval_channel
+
+
+def approval_providers() -> list[str]:
+    """The channels an approval may ask on, in the order they are tried.
+
+    The chosen channel alone when the owner chose one, and none while it is not connected: a
+    channel the owner did not choose never stands in for it, and the approval waits in
+    PersonalClaw, where every approval is listed. Otherwise every connected channel in name
+    order, as :func:`reach_owner` tries them — which is where every approval went before the
+    owner could choose, so Discord asked whenever it was paired.
+    """
+    chosen = approval_channel()
+    if chosen:
+        return [chosen] if chosen in _REGISTRY else []
+    return sorted(_REGISTRY)
+
+
+def approval_delivery() -> "ChannelDelivery | None":
+    """The channel that asks the owner an approval: the first of :func:`approval_providers` that
+    knows the owner (``owner_id_for``) and has an Approve/Deny prompt, or None when none does.
+
+    A channel with no owner id cannot ask anyone, so it is passed over rather than asked and left
+    to answer "cannot prompt" — which ended a subagent's approval at the dashboard while the next
+    channel in the order could have asked."""
+    from personalclaw.config.credentials import owner_id_for
+
+    for key in approval_providers():
+        delivery = _REGISTRY.get(key)
+        if (
+            delivery is not None
+            and getattr(delivery, "request_approval", None) is not None
+            and owner_id_for(key)
+        ):
+            return delivery
+    return None
+
+
 @dataclass(frozen=True)
 class OwnerDelivery:
     """What happened to one message for the owner: which channel took it, or why none did."""

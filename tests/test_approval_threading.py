@@ -25,6 +25,16 @@ import pytest
 from personalclaw.llm_helpers import LLMEvent
 
 
+@pytest.fixture(autouse=True)
+def _the_channel_knows_its_owner(monkeypatch):
+    """The owner the harness's channel reaches, under the key ``_owner_id`` is read from.
+
+    A channel asks an approval only of an owner it knows (``channel_delivery.approval_delivery``
+    passes over one with no owner id), and in the gateway both come from the shared owner key.
+    """
+    monkeypatch.setenv("PERSONALCLAW_OWNER_ID", "U000")
+
+
 def _make_gateway():
     from personalclaw.gateway import GatewayOrchestrator
 

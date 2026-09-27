@@ -66,6 +66,16 @@ def _isolated_home(tmp_path, monkeypatch):
     yield home
 
 
+@pytest.fixture(autouse=True)
+def _the_channel_knows_its_owner(monkeypatch):
+    """The owner the harness's channel reaches, under the key ``_owner_id`` is read from.
+
+    A channel asks an approval only of an owner it knows (``channel_delivery.approval_delivery``
+    passes over one with no owner id), and in the gateway both come from the shared owner key.
+    """
+    monkeypatch.setenv("PERSONALCLAW_OWNER_ID", "U000")
+
+
 def _make_gateway():
     """The core approval harness, mirroring ``tests/test_approval_threading.py``."""
     from personalclaw.gateway import GatewayOrchestrator
