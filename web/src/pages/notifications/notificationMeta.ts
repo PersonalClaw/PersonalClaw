@@ -20,6 +20,10 @@ const KINDS: Record<string, KindMeta> = {
   // removal — scheduled-job failures arrived as `error` and were indistinguishable from any other
   // system error — so the trigger substrate now emits this pair for a CLOCK trigger that breaks.
   cron_failed: { label: 'Scheduled job failed', icon: XCircle, tone: 'var(--color-danger)' },
+  // cron/trigger_import — the triggers an upgrade brought over from an older version and left
+  // switched off until the owner reviews them. Warn tone: they have stopped, and only the owner
+  // can start them again.
+  trigger_import: { label: 'Triggers brought over for review', icon: ShieldQuestion, tone: 'var(--color-warn)' },
   hook: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   fired: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   agent: { label: 'Agent message', icon: Bot, tone: 'var(--color-primary)' },

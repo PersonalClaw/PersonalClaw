@@ -149,6 +149,9 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   // resolves exactly as it did. It is the reason the pause card is not a second notice: the row
   // and the card are one event with one destination, and this is the link between them.
   if (refs.room) return `chat/room/${encodeURIComponent(refs.room)}`
+  // The review item for triggers an upgrade brought over (`legacy_import.announce`) lists them in
+  // `refs.triggers`; the Triggers page is where each one is opened, reviewed and switched on.
+  if (Array.isArray(refs.triggers) && refs.triggers.length > 0) return 'triggers'
   return ''
 }
 
@@ -164,6 +167,7 @@ export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   if (refs.workflow) return 'Go to workflow'
   if (refs.artifact) return 'Open the report'
   if (refs.room) return 'Go to the room'
+  if (Array.isArray(refs.triggers) && refs.triggers.length > 0) return 'Go to Triggers'
   return 'Go to source'
 }
 

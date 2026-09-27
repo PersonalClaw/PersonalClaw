@@ -101,6 +101,12 @@ class VerifyReport:
     #: legacy file is not a clean migration, and reporting it as one is how a user skips a check
     #: that never ran.
     unreadable: str = ""
+    #: The legacy file diffed: `crons.json`, or the `crons.json.imported-<date>` copy the import
+    #: kept once it ran (`legacy_import`).
+    source: str = "crons.json"
+    #: Whether the home has imported `crons.json` already. A job missing BEFORE the import is one
+    #: the next start brings over; one missing after it will not come over by itself.
+    imported: bool = False
 
     @property
     def missing(self) -> list[str]:
@@ -139,6 +145,8 @@ class VerifyReport:
             "drifted": self.drifted,
             "broken": self.broken,
             "unreadable": self.unreadable,
+            "source": self.source,
+            "imported": self.imported,
             "rows": [r.to_dict() for r in self.rows],
         }
 
@@ -208,6 +216,8 @@ def verify(
     if error:
         return VerifyReport(unreadable=error)
 
+    from personalclaw.triggers.legacy_import import needs_review
+
     notes = notes_by_id or {}
     loaded = {row.trigger.id: row for row in store.load()}
     rows: list[RowDiff] = []
@@ -224,12 +234,18 @@ def verify(
             rows.append(RowDiff(job_id=job_id, present=False))
             continue
         was_enabled = bool(job.get("enabled", False))
+        note = notes.get(job_id, "")
+        if not note and needs_review(found.trigger):
+            note = (
+                "brought over switched off: it has not been allowed to run here — switch it on "
+                "from the Triggers page, which asks you to allow what it runs"
+            )
         rows.append(
             RowDiff(
                 job_id=job_id,
                 present=True,
                 paused=was_enabled and not found.trigger.enabled,
-                note=notes.get(job_id, ""),
+                note=note,
                 field_drift=_field_drift(job, found.trigger),
                 errors=[i.message for i in getattr(found, "errors", [])],
             )
@@ -268,15 +284,22 @@ def verify_home(base_dir: Path | str | None = None) -> VerifyReport:
     place to get the paths wrong.
     """
     from personalclaw.config.loader import config_dir
+    from personalclaw.triggers.legacy_import import retired_copies
     from personalclaw.triggers.store import TriggerStore
 
     root = Path(base_dir) if base_dir else config_dir()
-    crons = root / "crons.json"
-    return verify(
+    # Once the import has run, the copy it kept is what was imported — a `crons.json` found in the
+    # home after that is one PersonalClaw ignores, so diffing it would report on nothing it read.
+    kept = retired_copies(root, "crons.json")
+    crons = kept[-1] if kept else root / "crons.json"
+    report = verify(
         crons_path=crons,
         store=TriggerStore(base_dir=root),
         notes_by_id=report_notes(crons),
     )
+    report.source = crons.name
+    report.imported = bool(kept)
+    return report
 
 
 def render(report: VerifyReport) -> str:
@@ -295,7 +318,10 @@ def render(report: VerifyReport) -> str:
             f"✗ MISSING from triggers.json ({len(report.missing)}): {', '.join(report.missing)}"
         )
         lines.append(
-            "   These jobs did not migrate. crons.json is still intact — re-run the migration."
+            f"   These jobs did not come over, and {report.source} still has them: make each one "
+            "you want again on the Triggers page."
+            if report.imported
+            else "   These jobs are not imported yet: PersonalClaw's next start brings them over."
         )
     if report.paused:
         lines.append(
@@ -305,7 +331,7 @@ def render(report: VerifyReport) -> str:
             if row.paused:
                 why = row.note or "the migration could not fully interpret this row"
                 lines.append(f"   · {row.job_id}: {why}")
-        lines.append("   Read the note, then re-enable each one you still want.")
+        lines.append("   Read the note, then switch on each one you still want.")
     if report.drifted:
         lines.append(f"⚠ FIELDS not carried ({len(report.drifted)}):")
         for row in report.rows:
@@ -326,5 +352,5 @@ def render(report: VerifyReport) -> str:
         f"{len(report.paused)} paused, {len(report.missing)} missing, "
         f"{len(report.drifted)} drifted."
     )
-    lines.append("crons.json is READ-ONLY for one release and was not modified by this check.")
+    lines.append(f"This check read {report.source} and changed nothing.")
     return "\n".join(lines)

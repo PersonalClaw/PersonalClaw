@@ -9,6 +9,7 @@ import { RunHistory } from '../schedule/ScheduleDetail'
 import { triggerStatusMeta, explainsCause } from '../schedule/scheduleMeta'
 import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
 import { DryRunResult } from './DryRunResult'
+import { ConfigReadout, ReviewNote } from './ReviewNote'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -89,8 +90,11 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
   // this panel and the list can never read `run_count` two different ways.
   const hasRun = (trigger.run_count ?? 0) > 0
   const lc = triggerStatusMeta({ health: trigger.health, state: trigger.state, hasRun })
-  const statusLine =
-    trigger.state === 'autopaused'
+  // Brought over from an older version and not allowed to run here yet (the server's verdict).
+  const needsReview = trigger.needs_review === true
+  const statusLine = needsReview
+    ? 'Waiting for your review — it does not run until you switch it on'
+    : trigger.state === 'autopaused'
       ? 'Stopped by the system after repeated failures'
       : trigger.state === 'quarantined'
         ? 'Quarantined — a payload matched an injection pattern; re-author it to resume'
@@ -169,6 +173,7 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
           </div>
         </div>
       )}
+      {needsReview && <ReviewNote />}
 
       <div className="flex items-center justify-between">
         <div>
@@ -241,6 +246,9 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
 
       <Section label="What it runs">
         <div data-type="body-m" className="text-on-surface">{actionLabel(trigger.action?.provider)}</div>
+        {/* The step itself, for the row the owner has to decide about: "Run a shell command" is not
+            enough to allow one — the command is. */}
+        {needsReview && <ConfigReadout config={trigger.action?.config} />}
       </Section>
 
       {/* 🔴 A store trigger's run history, which this panel never showed (S168). The backend has

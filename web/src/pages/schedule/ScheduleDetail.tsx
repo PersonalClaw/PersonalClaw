@@ -13,6 +13,7 @@ import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type Trig
 import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
+import { ReviewNote } from '../triggers/ReviewNote'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
 } from './ScheduleForm'
@@ -278,6 +279,9 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           </div>
         </div>
       )}
+      {/* A schedule brought over from an older version waits, switched off, for the owner to allow
+          what it runs — the sections below are what they are deciding about. */}
+      {job.needs_review && <ReviewNote />}
 
       {/* what runs — provider-aware: show the action's defining field(s) */}
       {provider === 'run-prompt' ? (

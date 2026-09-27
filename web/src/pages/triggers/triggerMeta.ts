@@ -278,6 +278,9 @@ export interface Trigger {
    *  arms, so a row the page lets you toggle is always a row the service would actually fire. */
   author?: string
   readOnly?: boolean
+  /** Brought over from an older version and switched off until the owner switches it on, which
+   *  asks them to allow what it runs. The server's verdict (`needs_review`), passed through. */
+  needsReview?: boolean
   broken?: string[]          // parse ERRORS (S87 lenient load) — shown, not hidden
   /** WARNING-severity issues from the same load — advisory, not a fault (issue 531). Kept apart
    *  from `broken` because the row RUNS as authored: a sub-floor interval is a choice the backend
@@ -351,6 +354,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     broken: j.broken ?? [],
     warnings: j.warnings ?? [],
     author: j.author, readOnly: j.read_only === true,
+    needsReview: j.needs_review === true,
   }
 }
 /** Humanize an event name for a list label without needing the fetched catalog
@@ -419,6 +423,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     storeKind: t.store_kind, broken: t.broken ?? [], warnings: t.warnings ?? [], store: t,
     ...(isEvent ? { eventPattern: pattern, eventMatcher: pm ? eventMatcherValue(spec, pm.matcher) : '' } : {}),
     author: t.author, readOnly: t.read_only === true,
+    needsReview: t.needs_review === true,
   }
 }
 

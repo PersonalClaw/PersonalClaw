@@ -44,7 +44,10 @@ def _job(jid, kind="cron", *, enabled=True, **over):
         "name": f"J-{jid}",
         "enabled": enabled,
         "schedule": schedule,
-        "action": {"provider": "run-prompt", "config": {"message": "go"}},
+        # Read-only, so the import carries the job's switch and only the migration's own NOTES
+        # pause a row here. A job that runs anything needing a grant arrives off to wait for the
+        # owner's review, which `test_legacy_trigger_import` pins, verify's note included.
+        "action": {"provider": "notify", "config": {"title_template": "go"}},
     }
     job.update(over)
     return job
@@ -81,12 +84,14 @@ def test_an_unmigrated_store_reports_every_job_missing(home):
     assert report.ok is False
 
 
-def test_the_render_tells_the_user_crons_json_is_intact(home):
-    """A user seeing "missing" needs to know their source file survived before they panic."""
+def test_the_render_says_what_a_missing_job_is_waiting_for(home):
+    """A user seeing "missing" needs to know what happens next before they panic: before the import
+    has run, the next start brings the jobs over."""
     _write_crons(home, _crons(_job("a")))
     text = V.render(V.verify_home(home))
     assert "MISSING" in text
-    assert "crons.json is still intact" in text
+    assert "the next start of PersonalClaw" not in text
+    assert "next start brings them over" in text
 
 
 # ── 🔴 the paused-but-lossless gap ──
@@ -126,7 +131,7 @@ def test_the_render_lists_each_paused_row_with_its_reason(home):
     text = V.render(V.verify_home(home))
     assert "PAUSED by the migration (1)" in text
     assert "j-every:" in text
-    assert "re-enable" in text
+    assert "switch on each one" in text
 
 
 def test_a_row_that_was_ALREADY_disabled_is_not_reported_as_paused(home):
@@ -255,16 +260,20 @@ def test_verify_writes_nothing(home):
     """
     store = _migrated(home, _crons(_job("j-every", "every")))
     before = store.path.read_text()
-    crons_before = (home / "crons.json").read_text()
+    (kept,) = home.glob("crons.json.imported-*")
+    kept_before = kept.read_text()
     V.verify_home(home)
     assert store.path.read_text() == before
-    assert (home / "crons.json").read_text() == crons_before
+    assert kept.read_text() == kept_before
 
 
 def test_the_render_states_the_legacy_file_was_not_modified(home):
-    """§7: "old file read-only one release". The user should not have to trust that silently."""
+    """The user should not have to trust silently that a check left their file alone — and the file
+    it names is the copy the import kept, which is what it read."""
     _migrated(home, _crons(_job("j-every", "every")))
-    assert "READ-ONLY" in V.render(V.verify_home(home))
+    text = V.render(V.verify_home(home))
+    assert "This check read crons.json.imported-" in text
+    assert "changed nothing" in text
 
 
 # ── the whole legacy vocabulary, in the owner's real shape ──

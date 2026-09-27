@@ -722,6 +722,44 @@ def capability_allows(
     )
 
 
+def ungranted_providers(trigger: Any) -> list[str]:
+    """The write-capable providers `trigger`'s action runs that its frozen block does not permit.
+
+    The question the fence asks at fire time, asked before one: `[]` for a read-only action or a
+    row that holds its grant, otherwise what switching it on would have to grant. A row a boot
+    imported from a legacy store arrives with no block at all (`triggers.legacy_import`), which is
+    how the owner's toggle knows it must ask before turning that row on.
+    """
+    frozen = getattr(trigger, "capabilities", None)
+    block = frozen if isinstance(frozen, dict) else {}
+    return [
+        provider
+        for provider in capabilities_for_action(trigger).get("providers", [])
+        if not capability_allows(block, key="providers", value=provider).allowed
+    ]
+
+
+def grant_action(trigger: Any) -> list[str]:
+    """Freeze the providers `trigger`'s action runs into its block. Returns what was granted.
+
+    This is the owner saying yes, so only a caller holding that yes may call it: the Triggers page's
+    toggle, after its consent dialog. Nothing that runs unattended grants — a boot, a chat tool or
+    an import writing this block would be authority nobody gave. A `providers` value that is not a
+    list is replaced rather than extended, because the fence refuses a non-list and extending one
+    would grant nothing.
+    """
+    granted = ungranted_providers(trigger)
+    if not granted:
+        return []
+    current = getattr(trigger, "capabilities", None)
+    block = dict(current) if isinstance(current, dict) else {}
+    held = block.get("providers")
+    providers = [p for p in held if isinstance(p, str)] if isinstance(held, (list, tuple)) else []
+    block["providers"] = [*providers, *(p for p in granted if p not in providers)]
+    trigger.capabilities = block
+    return granted
+
+
 def freeze_capabilities(capabilities: dict[str, Any] | None) -> dict[str, list[str]]:
     """Normalize a capability block for persistence AT SAVE (R3).
 

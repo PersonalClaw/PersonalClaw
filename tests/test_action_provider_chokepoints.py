@@ -319,6 +319,12 @@ def test_the_site_list_is_not_STALE():
         # call. The properties that earn the exemption are asserted in
         # `test_the_delegating_provider_only_hands_off_to_a_frozen_name` below.
         "personalclaw.action_providers.selfqa_watch_provider",
+        # The legacy-import review copy — `triggers.legacy_import` resolves a provider to read ONE
+        # attribute, `display_name`, for the words the owner reads in the review item and the
+        # switch-on consent ("runs Bash Command when a matching event happens"). The rows it
+        # writes are switched off and nothing is run; the properties that earn the exemption are
+        # asserted in `test_the_legacy_import_label_only_reads_the_display_name` below.
+        "personalclaw.triggers.legacy_import",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }
@@ -327,6 +333,25 @@ def test_the_site_list_is_not_STALE():
         "these modules reach an action provider but are not in EXECUTION_SITES: "
         f"{sorted(unaccounted)}. Add them (with a policy check) or document the exemption."
     )
+
+
+def test_the_legacy_import_label_only_reads_the_display_name():
+    """The properties that earn `triggers.legacy_import`'s exemption.
+
+    A legacy automation file's rows are written switched off, waiting for the owner, and what the
+    owner is asked about has to say what each one runs: "Bash Command", not the bare id `bash`.
+    That takes the provider's `display_name` and nothing more. "It's different" is not an
+    exemption, so the difference is asserted: if this module ever USES the provider it resolves,
+    this fails and it must argue its way into `EXECUTION_SITES` with a real policy gate instead.
+    """
+    import re
+
+    src = _source("personalclaw.triggers.legacy_import")
+    calls = re.findall(r"get_action_provider\(", src)
+    assert calls, "the exemption is stale if the review copy no longer resolves a provider"
+    assert ".execute(" not in src, "the review copy must never execute a provider"
+    assert ".reverse(" not in src, "the review copy must never undo through a provider"
+    assert '"display_name"' in src, "the only reason to resolve here is the display name"
 
 
 def test_the_delegating_provider_only_hands_off_to_a_frozen_name():

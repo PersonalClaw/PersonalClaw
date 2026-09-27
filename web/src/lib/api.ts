@@ -1507,6 +1507,8 @@ export interface ScheduleJob {
   // attribution (TSE-4) — see the same pair on `Trigger`. A schedule row is served by the same
   // store, so it carries the same verdict.
   author?: string; read_only?: boolean
+  // Brought over from an older version and not switched on by the owner yet — see `Trigger`.
+  needs_review?: boolean
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -2612,6 +2614,11 @@ export interface Trigger {
   // path uses — the page must not re-derive it from `author`, or the UI and the scheduler end up
   // with two opinions about who owns a trigger.
   author?: string; read_only?: boolean
+  // The row was brought over from an older version's automation file and is switched off until
+  // the owner switches it on, which asks them to allow what it runs (`triggers/legacy_import.py`).
+  // The server's verdict: `created_by` alone cannot say it, because an imported row that needs no
+  // permission (one that only notifies) arrives switched on and is not waiting for anything.
+  needs_review?: boolean
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -7544,7 +7551,12 @@ export const api = {
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
   runSchedule: (id: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
-  enableSchedule: (id: string, enabled: boolean) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`, { enabled }),
+  // Switching a trigger ON can grant what its action runs — a trigger brought over from an older
+  // version has been allowed nothing — so the gateway may ask first (`confirmation_required`), and
+  // the owner is asked in its words before the switch is resent with consent.
+  enableSchedule: (id: string, enabled: boolean) =>
+    withSecurityConsent((c) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`,
+      c ? { enabled, confirm: true } : { enabled })),
   scheduleToChat: (id: string) => post<{ ok: boolean; session: string }>(`/api/triggers/schedule:${encodeURIComponent(id)}/to-chat`),
   // Per-trigger run history. `triggerId` is the FULL facade id (`schedule:abc`, `store:file:notes`)
   // — these wrappers hardcoded a `schedule:` prefix, so a store trigger's history was unrequestable
@@ -7927,8 +7939,10 @@ export const api = {
   // here so the Automations page can list/pause/run/delete them. The raw_id is
   // itself <kind>:<slug>, so the namespaced route is `store:<raw_id>`.
   storeTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=store').then((d) => d.triggers),
+  // Asks first when switching ON grants what the action runs — see `enableSchedule`.
   toggleStoreTrigger: (rawId: string, enabled: boolean) =>
-    post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`, { enabled }),
+    withSecurityConsent((c) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
+      c ? { enabled, confirm: true } : { enabled })),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
   runStoreTrigger: (rawId: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),

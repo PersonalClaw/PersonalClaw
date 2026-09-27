@@ -1568,12 +1568,32 @@ class GatewayOrchestrator:
         self._surface_missed_review(report, interrupted)
 
     def _surface_held_boot_review(self) -> None:
-        """Send the boot's notice the passes held for the dashboard (`_record_boot_review`)."""
+        """Send what the boot passes found once the dashboard can deliver it.
+
+        The missed-run notice the passes held (`_record_boot_review`), and the review item for the
+        triggers a legacy import brought over and switched off (`legacy_import.announce`). The
+        import runs in `_init_cron`, long before the inbox service exists, so its item is raised
+        here — from the rows still waiting in the store, which is also what makes it survive a
+        crash between the import and this line.
+        """
         held = getattr(self, "_held_boot_review", None)
-        if held is None:
-            return
-        self._held_boot_review = None
-        self._surface_missed_review(*held)
+        if held is not None:
+            self._held_boot_review = None
+            self._surface_missed_review(*held)
+        try:
+            from personalclaw.triggers import legacy_import
+            from personalclaw.triggers.store import TriggerStore
+
+            home = config_dir()
+            legacy_import.announce(
+                getattr(self, "dashboard_state", None),
+                store=TriggerStore(base_dir=home),
+                home=home,
+            )
+        except Exception:  # noqa: BLE001 - the rows wait on the Triggers page either way
+            logger.warning(
+                "could not announce the triggers a legacy import brought over", exc_info=True
+            )
 
     def _surface_missed_review(
         self, report: dict[str, Any], interrupted: list[dict[str, Any]] | tuple = ()
@@ -2378,14 +2398,14 @@ class GatewayOrchestrator:
             # and NOTHING polled it — the clock tick skips it (no `next_fire_at`) and the file
             # poller only reads `file`.
             self._web_watch_task = asyncio.create_task(self._web_watch_poll_loop())
-            # Import `crons.json` into the unified trigger store and arm the imported clocks (S98).
-            # Measured: `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json`
-            # was empty on a real machine — every cron lived only in the legacy file, which blocks
-            # re-pointing `/api/triggers` at the store (§6) and leaves the tick nothing to fire.
-            # Idempotent and additive: `crons.json` stays on disk (§6's "read-only one release",
-            # which `verify-migration` needs to diff) and the legacy scheduler still runs from
-            # it, so a bad import is fixed by editing the legacy file and restarting rather than
-            # by restoring a deletion.
+            # Import the legacy automation files (`crons.json`, `event_triggers.json`) into the
+            # unified trigger store and arm the imported clocks (S98). Measured:
+            # `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json` was
+            # empty on a real machine.
+            # Each file is imported once per home and renamed `<name>.imported-<date>`, and nothing
+            # it brings over runs until the owner allows it (`triggers/legacy_import.py`); the
+            # review item for what it switched off is raised once the dashboard is up
+            # (`_surface_held_boot_review`).
             try:
                 from personalclaw.triggers.boot_migrate import migrate_and_arm
 

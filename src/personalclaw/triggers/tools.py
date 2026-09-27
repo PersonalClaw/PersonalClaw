@@ -660,6 +660,14 @@ def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> AutomationT
         ):
             if refusal is not None:
                 return refusal
+    # `enabled` is patchable, so this is a second way to switch a trigger on, and it answers the
+    # way `set_paused` does for a row a legacy import brought over and nobody has reviewed.
+    from personalclaw.triggers.legacy_import import needs_review
+
+    # Truthiness, not `is True`: the value is stored as sent, and a `1` or a `"true"` switches the
+    # row on just the same.
+    if applied.get("enabled") and needs_review(row.trigger):
+        return _awaiting_review_refusal(row.trigger)
     if "spec" in applied:
         if row.trigger.kind == "event" and isinstance(applied["spec"], dict):
             # The same derivation `create` applies: an edit that names a pattern has named its
@@ -694,10 +702,19 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
     switches itself off when its last allowance fires ("tell me the NEXT time X"), and resuming it
     without clearing the count would flip `enabled` and change nothing — every later fire would meet
     the budget gate. The person pressing Resume has asked for it to run again.
+
+    A trigger brought over from a legacy store and still waiting for review is REFUSED here: turning
+    one on is the owner allowing what it runs (`legacy_import`), and this function is also the
+    chat's `automation_resume`, where the one asking is an agent. The Triggers page's toggle asks
+    the owner, grants, and only then calls this.
     """
+    from personalclaw.triggers.legacy_import import needs_review
+
     row = store.get(trigger_id)
     if row is None:
         return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+    if not paused and needs_review(row.trigger):
+        return _awaiting_review_refusal(row.trigger)
     saved = store.set_enabled(trigger_id, not paused)
     if saved is not None and not paused:
         from personalclaw.triggers.service import budget_spent
@@ -722,6 +739,17 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
         True,
         f"{'Paused' if paused else 'Resumed'} {saved.id} ({saved.name}).",
         {"trigger": saved.to_dict()},
+    )
+
+
+def _awaiting_review_refusal(trigger: Any) -> AutomationToolResult:
+    """Why an imported row waiting for review is not switched on or run from here, and where."""
+    return AutomationToolResult(
+        False,
+        f"Error: {trigger.id} ({trigger.name}) was brought over from an older version of "
+        "PersonalClaw and has not been allowed to run here. Switch it on from the Triggers page, "
+        "which shows what it runs and asks the owner to allow it first.",
+        {"needs_review": True},
     )
 
 
@@ -878,7 +906,9 @@ def run(
 
     A DISABLED automation still runs manually: pausing means "stop firing on your own", and
     refusing a hand-driven run of a paused automation would remove the main way a user tests one
-    before re-enabling it. Reported in the result so nobody mistakes it for a resume.
+    before re-enabling it. Reported in the result so nobody mistakes it for a resume. The one
+    exception is a row a legacy import brought over that the owner has not switched on yet: it is
+    off because nobody has allowed what it runs, not because it was paused.
 
     `runner` is injected — this tool does NOT own the turn (S90 does). A `dry_run` never calls it
     at all, which is the property that makes observe-mode safe to offer.
@@ -913,6 +943,12 @@ def run(
     if refusal:
         lines.append(f"  refused: {refusal}")
         return AutomationToolResult(False, "\n".join(lines), {"plan": plan, "refused": refusal})
+    # Not the agent's to run before the owner has allowed it (`triggers.legacy_import`); the HTTP
+    # route the runner posts to refuses it too.
+    from personalclaw.triggers.legacy_import import needs_review
+
+    if needs_review(trigger):
+        return _awaiting_review_refusal(trigger)
     if runner is None:
         # Honest refusal rather than a fabricated success. "Launched" with nothing behind it is the
         # fire-and-forget lie S90's executor was written to keep out of this codebase.

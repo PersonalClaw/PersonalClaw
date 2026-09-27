@@ -1511,6 +1511,84 @@ async def _probe_credentials_file(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_legacy_trigger_files(ctx: DoctorContext) -> ProbeResult:
+    """automations — is a legacy automation file back after this home imported it?
+
+    `crons.json`, `event_triggers.json` and `autonudge.json` are imported once per home and renamed
+    `<name>.imported-<date>` (`triggers.legacy_import`). A copy by that name means the import
+    happened, so a file found again later — a restored snapshot, a copy from another machine, an
+    older build run against this home — is left where it is and never read. Nothing in it will run,
+    and nothing in it will appear on the Triggers page, which is what this row exists to say.
+    Read-only: it lists names, never the file's contents.
+    """
+    from personalclaw.triggers.legacy_import import reappeared
+
+    found = await asyncio.to_thread(reappeared, ctx.home)
+    if not found:
+        return ProbeResult(ok=True, detail="no legacy automation file is waiting to be read")
+    return ProbeResult(
+        ok=False,
+        detail=" ".join(
+            f"{item.name} is back in your home, but this home already brought its {item.held} over "
+            f"(the copy it kept is {item.retired}), so PersonalClaw does not read it again and "
+            "nothing in it runs."
+            for item in found
+        ),
+        evidence={"files": [item.name for item in found], "kept": [item.retired for item in found]},
+        remedy=(
+            "No automatic fix, because what is in the file is yours to judge: if it holds an "
+            "automation you want, make it again on the Triggers page, then delete the file (or "
+            "move it out of your PersonalClaw home). Nothing is read from it in the meantime."
+        ),
+    )
+
+
+async def _probe_legacy_mcp_settings(ctx: DoctorContext) -> ProbeResult:
+    """tools — does the legacy ``settings/mcp.json`` still hold a server that no longer runs?
+
+    It was the MCP store before ``mcp.json`` became the one store (UT3). A fold at every start used
+    to copy whatever it held into ``mcp.json``, where the boot probe spawned it and the next agent
+    rebuild allowed its tools without asking — so a file restored from an old snapshot, or put there
+    by anything at all, became running servers nobody had chosen. Nothing reads it now, so a server
+    left in it runs nowhere, and this row names it. Read-only: names only, never a value.
+    """
+    import json
+
+    def _left_behind() -> list[str]:
+        try:
+            legacy = json.loads((ctx.home / "settings" / "mcp.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        servers = legacy.get("mcpServers") if isinstance(legacy, dict) else None
+        if not isinstance(servers, dict):
+            return []
+        try:
+            current = json.loads((ctx.home / "mcp.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            current = {}
+        known = current.get("mcpServers") if isinstance(current, dict) else None
+        return sorted(str(name) for name in servers if name not in (known or {}))
+
+    names = await asyncio.to_thread(_left_behind)
+    if not names:
+        return ProbeResult(ok=True, detail="no MCP server is left in the legacy settings/mcp.json")
+    count = len(names)
+    return ProbeResult(
+        ok=False,
+        detail=(
+            f"settings/mcp.json holds {count} MCP server{'s' if count != 1 else ''} that "
+            f"PersonalClaw no longer reads, so {'they do' if count != 1 else 'it does'} not run: "
+            + ", ".join(names)
+        ),
+        evidence={"names": names},
+        remedy=(
+            "No automatic fix, because each server is yours to judge: if you want one, add it on "
+            "the Tools page (Add tool server), then delete settings/mcp.json. Nothing in it runs "
+            "in the meantime."
+        ),
+    )
+
+
 async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
     """knowledge — which ingested items can search NOT fully reach? (RET-2, RET-4)
 
@@ -2144,6 +2222,24 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_timezone,
             "Wall-clock timezone for timed triggers",
+        )
+    )
+    register_probe(
+        Probe(
+            "automations.legacy_files",
+            "automations",
+            Tier.CAPABILITY,
+            _probe_legacy_trigger_files,
+            "A legacy automation file back after its import",
+        )
+    )
+    register_probe(
+        Probe(
+            "tools.legacy_mcp_settings",
+            "tools",
+            Tier.CAPABILITY,
+            _probe_legacy_mcp_settings,
+            "MCP servers left in the legacy settings/mcp.json",
         )
     )
 
