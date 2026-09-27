@@ -17,7 +17,11 @@ import { join } from 'node:path'
 // ceiling to the new count in the same change — never raise it.
 // 669 → 653: onboarding's import step moved whole onto the roles. `c2a599568` measured 671 — two
 // over this ceiling already, from elsewhere — so 653 is the tree's measured count, not 669 − 18.
-const CEILING = 653
+// 653 → 643: the surfaces added since moved onto the roles (the callback panel, the heartbeat queue,
+// the attachment chips and their preview, the agent's model and hook notes, the palette's empty
+// state and footer). `ecaf8b673` measured 674, 21 over, because those surfaces landed on raw sizes;
+// 643 is the tree's measured count after moving 31.
+const CEILING = 643
 
 const RAW_SIZE = /text-\[0?\.[0-9]+rem\]/g
 

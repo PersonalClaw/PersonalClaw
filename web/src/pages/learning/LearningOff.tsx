@@ -42,7 +42,7 @@ export function LearningOff({ onTurnedOn }: { onTurnedOn: () => void }) {
       <h2 id="learning-off-heading" data-type="title-m" className="flex items-center gap-s text-on-surface">
         <Brain size={16} className="text-on-surface-var" aria-hidden /> Learning is off
       </h2>
-      <p className="text-on-surface-low text-[0.8125rem]">
+      <p data-type="body-s" className="text-on-surface-low">
         While it is off, nothing new is learned from your chats or runs. What was already learned
         stays.
       </p>
