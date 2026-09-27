@@ -244,18 +244,20 @@ class TestCronCli:
         assert self._only(tmp_path).trigger.created_by == "user"
 
     def test_cron_add_without_a_cadence_is_refused(self, tmp_path, capsys):
-        _cron(
-            argparse.Namespace(
-                cron_action="add",
-                name="ops",
-                message="check",
-                every=None,
-                cron_expr=None,
-                channel=None,
-                approval_mode="",
+        with pytest.raises(SystemExit) as exited:
+            _cron(
+                argparse.Namespace(
+                    cron_action="add",
+                    name="ops",
+                    message="check",
+                    every=None,
+                    cron_expr=None,
+                    channel=None,
+                    approval_mode="",
+                )
             )
-        )
-        assert "Provide --every or --cron" in capsys.readouterr().out
+        assert exited.value.code == 1
+        assert "Provide --every or --cron" in capsys.readouterr().err
         assert self._store(tmp_path).load() == []
 
     def _seed(self, tmp_path, **over):
@@ -377,52 +379,58 @@ class TestCronCli:
 
     def test_cron_update_whitespace_channel_skipped(self, tmp_path, capsys):
         self._seed(tmp_path)
-        _cron(
-            argparse.Namespace(
-                cron_action="update",
-                job_id="clock:ops",
-                name=None,
-                message=None,
-                every_secs=None,
-                cron_expr=None,
-                channel="   ",
-                approval_mode=None,
+        with pytest.raises(SystemExit) as exited:
+            _cron(
+                argparse.Namespace(
+                    cron_action="update",
+                    job_id="clock:ops",
+                    name=None,
+                    message=None,
+                    every_secs=None,
+                    cron_expr=None,
+                    channel="   ",
+                    approval_mode=None,
+                )
             )
-        )
-        assert "Provide at least one field to update" in capsys.readouterr().out
+        assert exited.value.code == 1
+        assert "Provide at least one field to update" in capsys.readouterr().err
 
     def test_cron_update_every_and_cron_exclusive(self, tmp_path, capsys):
         self._seed(tmp_path)
-        _cron(
-            argparse.Namespace(
-                cron_action="update",
-                job_id="clock:ops",
-                name=None,
-                message=None,
-                every_secs=600,
-                cron_expr="0 9 * * *",
-                channel=None,
-                approval_mode=None,
+        with pytest.raises(SystemExit) as exited:
+            _cron(
+                argparse.Namespace(
+                    cron_action="update",
+                    job_id="clock:ops",
+                    name=None,
+                    message=None,
+                    every_secs=600,
+                    cron_expr="0 9 * * *",
+                    channel=None,
+                    approval_mode=None,
+                )
             )
-        )
-        assert "Provide --every or --cron, not both" in capsys.readouterr().out
+        assert exited.value.code == 1
+        assert "Provide --every or --cron, not both" in capsys.readouterr().err
         # And nothing may have been written on the way to that refusal.
         assert self._only(tmp_path).trigger.spec == {"kind": "interval", "interval_secs": 300}
 
     def test_cron_update_not_found(self, tmp_path, capsys, fakechat):
-        _cron(
-            argparse.Namespace(
-                cron_action="update",
-                job_id="nope",
-                name=None,
-                message=None,
-                every_secs=None,
-                cron_expr=None,
-                channel="fakechat:C0AP77JJSN6",
-                approval_mode=None,
+        with pytest.raises(SystemExit) as exited:
+            _cron(
+                argparse.Namespace(
+                    cron_action="update",
+                    job_id="nope",
+                    name=None,
+                    message=None,
+                    every_secs=None,
+                    cron_expr=None,
+                    channel="fakechat:C0AP77JJSN6",
+                    approval_mode=None,
+                )
             )
-        )
-        assert "Job not found: nope" in capsys.readouterr().out
+        assert exited.value.code == 1
+        assert "Job not found: nope" in capsys.readouterr().err
 
     def test_cron_pause_and_resume(self, tmp_path):
         store = self._seed(tmp_path, enabled=True)
@@ -436,9 +444,10 @@ class TestCronCli:
         legacy "Job not found" — the row does exist, so that message was wrong as well as unhelpful.
         """
         self._seed(tmp_path, spec={}, enabled=False)  # no spec.kind → invalid clock row
-        _cron(argparse.Namespace(cron_action="resume", job_id="clock:ops"))
-        out = capsys.readouterr().out
-        assert "parse error" in out
+        with pytest.raises(SystemExit) as exited:
+            _cron(argparse.Namespace(cron_action="resume", job_id="clock:ops"))
+        assert exited.value.code == 1
+        assert "parse error" in capsys.readouterr().err
         assert self._store(tmp_path).get("clock:ops").trigger.enabled is False
 
     def test_cron_remove_deletes_the_row(self, tmp_path):
@@ -447,8 +456,10 @@ class TestCronCli:
         assert store.get("clock:ops") is None
 
     def test_cron_remove_not_found(self, tmp_path, capsys):
-        _cron(argparse.Namespace(cron_action="remove", job_id="nope"))
-        assert "Job not found: nope" in capsys.readouterr().out
+        with pytest.raises(SystemExit) as exited:
+            _cron(argparse.Namespace(cron_action="remove", job_id="nope"))
+        assert exited.value.code == 1
+        assert "Job not found: nope" in capsys.readouterr().err
 
     def test_cron_list_renders_the_stores_rows(self, tmp_path, capsys):
         self._seed(tmp_path)

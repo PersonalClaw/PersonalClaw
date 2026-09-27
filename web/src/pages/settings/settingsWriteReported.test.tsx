@@ -19,7 +19,10 @@ import { join } from 'node:path'
 //
 //   settingsWidgets.mutate()   reconciled, said nothing   → now notifies too (7 hub tiles inherit it)
 //   VoicePanel.saveSettings    kept the REFUSED value     → rolls back (owns no read) + notifies
-//   ModelsPanel.repair         no catch at all            → notifies, like its two siblings in-file
+//   ModelsPanel.repair         no catch at all            → notified; since then it runs through the
+//                                                           row's download machine, which draws the
+//                                                           refusal under the row it was pressed on
+//                                                           (`modelRepairShowsProgress.test.tsx`)
 //
 // 🪤 `VoicePanel`'s section takes `settings`/`setSettings` as PROPS and owns no read, so it cannot
 // reconcile by re-reading — it rolls back to the pre-patch value instead. `WidgetFrame.pin` rolls
@@ -129,14 +132,6 @@ describe('the shared settings mutation reports as well as reconciles', () => {
     const sites = code.match(/\bmutate\(/g) ?? []
     // 7 call sites + the definition. A tile that stops using it silently loses the report.
     expect(sites.length, 'call sites through the shared helper').toBeGreaterThanOrEqual(8)
-  })
-
-  it("the model repair reports, like the two siblings in its own file", () => {
-    const code = codeOf('pages/settings/ModelsPanel.tsx')
-    const at = code.indexOf('const repair =')
-    const fn = code.slice(at, at + 520)
-    expect(fn, 'an unhandled rejection made a failed repair look like a dead click').toMatch(/catch \(e\)[\s\S]{0,200}?notify\(/)
-    expect(fn, 'and the pending flag still clears on both paths').toMatch(/finally \{ setRepairing\(null\) \}/)
   })
 
   it('the deliberate optimists are still named, and still deliberate', () => {

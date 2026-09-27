@@ -108,9 +108,11 @@ def _setup(
     print("PersonalClaw Setup\n")
     print(f"  {DATA_WARNING.replace(chr(10), chr(10) + '  ')}\n")
 
-    # Non-interactive mode/provider/credential flags (R8.8, R12.1)
+    # Non-interactive mode/provider/credential flags (R8.8, R12.1). They are what an unattended
+    # install runs, so a refused one exits 1 rather than letting the script carry on.
     if mode or provider or credential:
-        _setup_noninteractive(mode=mode, provider=provider, credential=credential)
+        if not _setup_noninteractive(mode=mode, provider=provider, credential=credential):
+            sys.exit(1)
         if not agent_only:
             return
 
@@ -178,8 +180,8 @@ def _setup_noninteractive(
     mode: str = "",
     provider: str = "",
     credential: str = "",
-) -> None:
-    """Apply non-interactive setup flags (R8.8, R12.1).
+) -> bool:
+    """Apply non-interactive setup flags (R8.8, R12.1). False when one was refused.
 
     ``--mode docker`` prints a ``docker compose up`` quick-start hint.
     ``--mode service`` prints a ``personalclaw service install`` hint.
@@ -188,7 +190,10 @@ def _setup_noninteractive(
     in config.json (the entry must already be declared in the config).
     ``--credential <name=value>`` saves a secret under that name in the credential
     store Settings → Secrets lists (:func:`_store_named_credential`).
+
+    Each refusal is said on stderr when it happens; the flags after it still run.
     """
+    applied = True
     if mode == "docker":
         print(
             "  Deployment mode: docker\n"
@@ -203,7 +208,8 @@ def _setup_noninteractive(
     elif mode == "none":
         pass  # no deployment hints — CI / manual setup
     elif mode:
-        print(f"  ⚠️  Unknown --mode {mode!r}. Valid values: docker, service, none")
+        print(f"  ❌ Unknown --mode {mode!r}. Valid values: docker, service, none", file=sys.stderr)
+        applied = False
 
     if provider:
 
@@ -217,16 +223,19 @@ def _setup_noninteractive(
             mutate_config(_set_provider, path=config_path())
             print(f"  ✅ Provider set: {provider}")
         except Exception as exc:
-            print(f"  ❌ Could not set provider: {exc}")
+            print(f"  ❌ Could not set provider: {exc}", file=sys.stderr)
+            applied = False
 
-    if credential:
-        _store_named_credential(credential)
+    if credential and not _store_named_credential(credential):
+        applied = False
+    return applied
 
 
-def _store_named_credential(credential: str) -> None:
+def _store_named_credential(credential: str) -> bool:
     """``--credential NAME=VALUE`` (or ``NAME``, the value read from the environment variable
     of that name): save the secret under NAME in the credential store, the one Settings →
-    Secrets lists and every ``{{secret:NAME}}`` and provider ``credential`` reads."""
+    Secrets lists and every ``{{secret:NAME}}`` and provider ``credential`` reads. False, with
+    the reason on stderr, when nothing was stored."""
     from personalclaw.config.credentials import save_credential
     from personalclaw.secrets_vault import is_reserved_key, valid_key_name
 
@@ -235,27 +244,29 @@ def _store_named_credential(credential: str) -> None:
     else:
         cred_name, cred_val = credential, os.environ.get(credential, "")
     cred_name = cred_name.strip()
+    refusal = ""
     if not valid_key_name(cred_name):
-        print(
+        refusal = (
             f"  ❌ --credential {cred_name!r}: a credential name is letters, digits and "
             "underscores, and does not start with a digit"
         )
-        return
-    if is_reserved_key(cred_name):
-        print(
+    elif is_reserved_key(cred_name):
+        refusal = (
             f"  ❌ --credential {cred_name!r}: that name is reserved for a key PersonalClaw "
             "manages itself; choose another"
         )
-        return
-    if not cred_val:
-        print(f"  ⚠️  --credential {cred_name!r}: no value given and ${cred_name} is not set")
-        return
-    try:
-        save_credential(cred_name, cred_val)
-    except OSError as exc:
-        print(f"  ❌ Could not store credential {cred_name!r}: {exc}")
-        return
+    elif not cred_val:
+        refusal = f"  ❌ --credential {cred_name!r}: no value given and ${cred_name} is not set"
+    else:
+        try:
+            save_credential(cred_name, cred_val)
+        except OSError as exc:
+            refusal = f"  ❌ Could not store credential {cred_name!r}: {exc}"
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return False
     print(f"  ✅ Stored {cred_name} in the credential store (listed in Settings → Secrets)")
+    return True
 
 
 def _setup_workspace_dir() -> None:

@@ -203,16 +203,19 @@ def test_git_release_channel_on_latest_tag_rides_tags_not_commits(
 def test_git_release_channel_offline_makes_no_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
 ) -> None:
-    """Offline (resolve_target → "") ⇒ nothing to update to, tree untouched."""
+    """Offline (resolve_target → "") ⇒ nothing to update to, tree untouched, and exit 1: the
+    update did not happen, which a script must not read as "already current"."""
     _as_git_checkout(monkeypatch, tmp_path)
     _channel(monkeypatch, "stable")
     _fake_resolve(monkeypatch, "")
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
 
-    cli_server._update()
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update()
 
-    assert "No matching release found" in capsys.readouterr().out
+    assert exc.value.code == 1
+    assert "No matching release found" in capsys.readouterr().err
     assert not git.ran("checkout") and not spawns
 
 
@@ -541,10 +544,11 @@ def test_pip_pin_miss_refuses_and_never_installs_latest(
     _fake_release_list(monkeypatch)
     _fake_installer(monkeypatch)
 
-    cli_server._update()
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update()
 
-    out = capsys.readouterr().out
-    assert "No release matches the pinned version" in out
+    assert exc.value.code == 1
+    assert "No release matches the pinned version" in capsys.readouterr().err
     assert not spawns  # nothing was installed
 
 
@@ -612,11 +616,13 @@ def test_container_pin_miss_refuses_and_prints_no_pull(
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
 
-    cli_server._update()
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update()
 
-    out = capsys.readouterr().out
-    assert "No release matches the pinned version" in out
-    assert "docker compose" not in out  # nothing to pull — no commands offered
+    printed = capsys.readouterr()
+    assert exc.value.code == 1
+    assert "No release matches the pinned version" in printed.err
+    assert "docker compose" not in printed.out + printed.err  # nothing to pull — no commands
     assert not git.calls and not spawns
 
 
