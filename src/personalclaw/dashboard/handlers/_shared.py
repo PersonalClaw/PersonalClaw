@@ -4,10 +4,42 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from aiohttp import web
+
 from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import ConfigPreserveError, ConfigWriteError
 from personalclaw.dashboard.state import DashboardState
 
 logger = logging.getLogger(__name__)
+
+
+class RefusedInConfigTransaction(Exception):
+    """A config write refused INSIDE the config transaction (``config.transactions``).
+
+    Raised, not returned, so the transaction writes nothing. It carries the answer — and the
+    audit row, when the refusal has one — for the handler to give once the lock is released.
+    """
+
+    def __init__(self, response: web.Response, *, audit: dict[str, Any] | None = None) -> None:
+        super().__init__(response.status)
+        self.response = response
+        self.audit = audit
+
+    def answer(self) -> web.Response:
+        if self.audit is not None:
+            # Resolved per call: tests replace the package's `sel`.
+            import personalclaw.dashboard.handlers as _pkg  # noqa: F811 — circular import
+
+            _pkg.sel().log_api_access(**self.audit)
+        return self.response
+
+
+def config_write_refusal(exc: ConfigWriteError) -> web.Response:
+    """The answer to a config write the transaction refused, which wrote nothing: 500 for a
+    file that cannot be read (it needs repairing), 503 for a write that could not get its turn
+    (another writer held the lock; try again)."""
+    status = 500 if isinstance(exc, ConfigPreserveError) else 503
+    return web.json_response({"error": str(exc)}, status=status)
 
 
 def _get_memory(state: DashboardState):

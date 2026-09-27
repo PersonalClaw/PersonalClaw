@@ -178,6 +178,21 @@ mapping, (3) `to_dict()`, (4) an API write path (the `_EDITABLE_CONFIG` PATCH
 allowlist or a dedicated PUT), and optionally (5) a frontend control.
 `tests/test_config_roundtrip.py` enforces (1)–(3) generically.
 
+Every write of `config.json` goes through `config/transactions.py`, because the
+gateway, the CLI and the setup wizard all write it, often at the same time. A
+writer takes an OS lock beside the file (`config.json.lock`, released by the OS
+if the process dies), reads the document under it, changes it, stores any
+secret it carries in the credential store, and replaces the file before letting
+go. `AppConfig.save()` applies only what the object changed since it was
+loaded, so a stale object cannot put another process's setting back;
+`update_config` loads a fresh `AppConfig` under the lock for a change that has
+to check the current state first; `mutate_config` edits the raw document. A file
+that cannot be read is refused rather than written over, and a writer that
+cannot get the lock within a few seconds refuses rather than waits forever.
+Whole-home restores (snapshot restore, import into an empty home, time-travel
+rollback) replace the file through their own mechanisms and do not take the
+lock.
+
 Entity settings deliberately live *outside* config.json:
 `~/.personalclaw/entity_settings/{inbox,notifications}.json`, use-case settings
 under `~/.personalclaw/extensions/use_case_settings/`, model bindings in

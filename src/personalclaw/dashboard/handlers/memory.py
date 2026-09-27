@@ -10,13 +10,20 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import ConfigWriteError
+from personalclaw.config.transactions import mutate_config_async
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.vector_memory import SemanticRejectCode
 
-from ._shared import _blocks_reads_session, _get_memory, _is_restricted_session
+from ._shared import (
+    _blocks_reads_session,
+    _get_memory,
+    _is_restricted_session,
+    config_write_refusal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +135,7 @@ _SETTINGS_FIELDS: tuple[str, ...] = (
 
 async def api_memory_settings(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/settings — memory consolidation config."""
-    from personalclaw.config.loader import AppConfig, config_path  # noqa: F811
+    from personalclaw.config.loader import AppConfig  # noqa: F811
 
     cfg = AppConfig.load()
     if request.method == "PUT":
@@ -175,22 +182,30 @@ async def api_memory_settings(request: web.Request) -> web.Response:
         if not applied:
             return _deny("no settings provided")
 
-        # Read existing config, update memory section only
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
-
-        async with _get_config_lock():
-            path = config_path()
-            try:
-                data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            except Exception:
-                data = {}
-            mem = data.setdefault("memory", {})
+        # The memory section only, in the config transaction. An unreadable config.json is
+        # refused rather than read as `{}`: that read wrote `{"memory": …}` over the file and
+        # deleted every other setting and every configured model provider with it.
+        def _apply(data: dict) -> None:
+            mem = data.get("memory")
+            if not isinstance(mem, dict):
+                mem = data["memory"] = {}
             mem.update(applied)
             # Writing the vault mode also drops the retired `vault_enabled` bool, so
             # config.json cannot keep two answers about the same thing.
             if "vault_mode" in applied:
                 mem.pop("vault_enabled", None)
-            atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+
+        try:
+            await mutate_config_async(_apply)
+        except ConfigWriteError as exc:
+            _sel().log_api_access(
+                caller=caller,
+                operation="memory.settings.update",
+                outcome="error",
+                source="dashboard",
+                resources=type(exc).__name__,
+            )
+            return config_write_refusal(exc)
         _sel().log_api_access(
             caller=caller,
             operation="memory.settings.update",
@@ -593,18 +608,15 @@ _migrate_lock: asyncio.Lock | None = None
 
 
 async def _set_migrated(value: bool) -> None:
-    """Set memory.migrated in config.json."""
-    from personalclaw.config.loader import config_path  # noqa: F811
-    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+    """Set memory.migrated in config.json, in the config transaction."""
 
-    async with _get_config_lock():
-        path = config_path()
-        try:
-            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except Exception:
-            data = {}
-        data.setdefault("memory", {})["migrated"] = value
-        atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+    def _apply(data: dict) -> None:
+        mem = data.get("memory")
+        if not isinstance(mem, dict):
+            mem = data["memory"] = {}
+        mem["migrated"] = value
+
+    await mutate_config_async(_apply)
 
 
 async def api_memory_episodic_search(request: web.Request) -> web.Response:
@@ -901,7 +913,12 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
         counts = await loop.run_in_executor(None, store.migrate_from_markdown)
     # Auto-set migrated=true if migration produced entries
     if counts.get("semantic", 0) > 0 or counts.get("episodic", 0) > 0:
-        await _set_migrated(True)
+        try:
+            await _set_migrated(True)
+        except ConfigWriteError:
+            # The migration itself is done; only the flag that records it is not. It is set on
+            # the running consolidator below, and the next migrate records it.
+            logger.warning("memory migrated, but config.json could not record it", exc_info=True)
         state: DashboardState = request.app["state"]
         if state.consolidator:
             state.consolidator._migrated = True

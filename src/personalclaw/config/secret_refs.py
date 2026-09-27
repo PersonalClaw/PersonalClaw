@@ -931,12 +931,13 @@ def store_config_secrets(
 ) -> dict[str, Any]:
     """The STORED form of a whole ``config.json`` document, updated in place and returned.
 
-    For every writer that can put a secret into the file: ``AppConfig.save()`` (which every API
-    handler that saves the config, and the boot-time config migration, go through) and the CLI's
-    ``config set`` / ``--file`` / ``unset``. The secret-bearing sections (``hooks``) and every
-    ``providers[]`` record's ``options``: ``config get --reveal`` prints both with their values, so
-    the documented ``--reveal`` → edit → ``config set --file`` loop hands them back in plaintext. A
-    value typed into the file by hand is moved at the next boot (:func:`migrate_plaintext_secrets`).
+    Called by the config transaction (``config.transactions``) on every write of the file, so
+    ``AppConfig.save()``, the API handlers, the boot-time migration and the CLI's ``config set``
+    / ``--file`` / ``unset`` / ``edit`` all store what they carry. The secret-bearing sections
+    (``hooks``) and every ``providers[]`` record's ``options``: ``config get --reveal`` prints
+    both with their values, so the documented ``--reveal`` → edit → ``config set --file`` loop
+    hands them back in plaintext. A value typed into the file by hand is moved at the next boot
+    (:func:`migrate_plaintext_secrets`).
     ``previous`` is the document on disk before the write, so a secret this write drops —
     ``config unset hooks.webhook_token`` — is deleted from the store. A whole-document writer, so
     it judges no reference: one naming another owner's key must not make every config save fail,
@@ -1050,14 +1051,37 @@ def _point_at(values: Mapping[str, Any], fields: Iterable[str], owner: SecretOwn
     return moved
 
 
-def _move_config_document(path: Path, *, point_only: bool) -> bool:
-    """``providers[].options`` and the secret-bearing sections (``hooks``) of one config
-    document. ``point_only`` (``config.json.bak``) replaces a plaintext secret with a reference
-    to the LIVE record's key without storing the backup's value — a backup can hold an older
-    key, and storing it would overwrite a rotation."""
+def _point_config_backup(path: Path) -> bool:
+    """``config.json.bak``: each plaintext secret replaced by a reference to the LIVE record's key,
+    without storing the backup's value — a backup can hold an older key, and storing it would
+    overwrite a rotation."""
     doc = _read_json(path)
-    if not isinstance(doc, dict):
+    if not isinstance(doc, dict) or not _move_config_secrets(doc, point_only=True):
         return False
+    _write_json(path, doc)
+    return True
+
+
+def _move_live_config(path: Path) -> bool:
+    """:func:`_move_config_secrets` for the live ``config.json``, inside the config transaction.
+
+    The gateway moves these at boot, and a CLI in another terminal can be writing the file at the
+    same moment: outside the transaction, whichever wrote second put the other's change back. A
+    file that cannot be read is left alone — the loader reports it, and nothing here can move a
+    secret out of a document it cannot parse."""
+    from personalclaw.config.loader import ConfigPreserveError
+    from personalclaw.config.transactions import mutate_config
+
+    try:
+        return mutate_config(lambda doc: _move_config_secrets(doc, point_only=False), path=path)
+    except ConfigPreserveError:
+        return False
+
+
+def _move_config_secrets(doc: dict[str, Any], *, point_only: bool) -> bool:
+    """Move ``providers[].options`` and the secret-bearing sections (``hooks``) of one config
+    document into the store, in place — or, ``point_only``, only point them at the key the live
+    record keeps them under (:func:`_point_config_backup`). ``True`` when anything changed."""
     changed = False
     for section, declared in _CONFIG_SECRET_FIELDS.items():
         values = doc.get(section)
@@ -1092,8 +1116,6 @@ def _move_config_document(path: Path, *, point_only: bool) -> bool:
         if moved != options:
             record["options"] = moved
             changed = True
-    if changed:
-        _write_json(path, doc)
     return changed
 
 
@@ -1210,8 +1232,8 @@ def migrate_plaintext_secrets() -> list[str]:
     home = config_dir()
     mcp_json, agent_config = mcp_documents()
     steps: list[tuple[Path, Any]] = [
-        (home / "config.json", lambda p: _move_config_document(p, point_only=False)),
-        (home / "config.json.bak", lambda p: _move_config_document(p, point_only=True)),
+        (home / "config.json", _move_live_config),
+        (home / "config.json.bak", _point_config_backup),
         # `mcp.json` first: the agent config's copies point at the keys it stores.
         (mcp_json, lambda p: _move_mcp_document(p, live=None)),
         (agent_config, lambda p: _move_mcp_document(p, live=mcp_json)),

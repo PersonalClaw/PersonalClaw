@@ -29,6 +29,7 @@ everything" is one `return 400` away from an endpoint that saves nothing at all.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -551,6 +552,30 @@ def test_the_shared_validator_rejects_a_bool_for_a_numeric_field():
 # ── both write paths serialise under ONE lock (#754) ─────────────────────────
 
 
+@contextmanager
+def _another_writer_holds_the_config_lock():
+    """Hold the config transaction's lock from another thread, as any other writer would
+    while it writes — the gateway's other handlers, or a CLI in another terminal."""
+    import threading
+
+    from personalclaw.config.transactions import mutate_config
+
+    entered, release = threading.Event(), threading.Event()
+
+    def hold(document: dict) -> None:
+        entered.set()
+        release.wait(10)
+
+    holder = threading.Thread(target=mutate_config, args=(hold,), kwargs={"timeout": 10})
+    holder.start()
+    assert entered.wait(5), "the holder never took the lock"
+    try:
+        yield
+    finally:
+        release.set()
+        holder.join(10)
+
+
 @pytest.mark.asyncio
 async def test_put_waits_on_the_same_lock_patch_holds(cfg_file, sel_rows):
     """PUT and PATCH both read-modify-write the WHOLE file, and only PATCH took the lock.
@@ -559,7 +584,8 @@ async def test_put_waits_on_the_same_lock_patch_holds(cfg_file, sel_rows):
     concurrent modifier's change surviving. Interleaved, the later writer's read predates the
     earlier writer's write, so it serialises a `data` that never saw it and one field silently
     reverts — a write that reports success having done something other than what was asked,
-    which is this file's whole subject.
+    which is this file's whole subject. The lock is the config transaction's, which every writer
+    of the file takes (`config.transactions`).
 
     Asserted by HOLDING the lock and showing PUT blocks, rather than by racing two requests:
     a race that happens to run sequentially passes whether or not the lock is there, and a
@@ -567,17 +593,15 @@ async def test_put_waits_on_the_same_lock_patch_holds(cfg_file, sel_rows):
     """
     import asyncio
 
-    from personalclaw.dashboard.handlers.agents import _get_config_lock
-
     async with TestClient(TestServer(_config_app())) as client:
-        async with _get_config_lock():
+        with _another_writer_holds_the_config_lock():
             task = asyncio.ensure_future(
                 client.put("/api/config/personalclaw", json={"agent": {"max_subagents": 4}})
             )
             # Give the handler every chance to reach the lock and get stuck on it.
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-            assert not task.done(), "PUT did not wait on the lock PATCH holds"
+            assert not task.done(), "PUT did not wait on the lock every config writer takes"
 
         # Released — the same request now completes and applies.
         resp = await task
@@ -606,10 +630,8 @@ async def test_a_refused_put_does_not_hold_the_lock(cfg_file, sel_rows):
     PUT while the lock is held — it must answer 400 without waiting for the holder."""
     import asyncio
 
-    from personalclaw.dashboard.handlers.agents import _get_config_lock
-
     async with TestClient(TestServer(_config_app())) as client:
-        async with _get_config_lock():
+        with _another_writer_holds_the_config_lock():
             resp = await asyncio.wait_for(
                 client.put("/api/config/personalclaw", json={"agent": {"nonsense": 1}}),
                 timeout=2.0,

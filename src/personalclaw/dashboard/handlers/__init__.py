@@ -57,7 +57,6 @@ from personalclaw.dashboard.handlers.agents import (  # noqa: E402, F401
     _THEME_CSS_VARS_SET,
     _auto_install_agent,
     _find_agent_config,
-    _get_config_lock,
     _installed_agent_config,
     _sanitize_css_value,
     _slugify_theme_name,

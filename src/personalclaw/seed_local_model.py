@@ -78,6 +78,7 @@ ALREADY_BOUND = "already_bound"
 SKIPPED_NO_SERVER = "skipped_no_server"
 SKIPPED_NO_MODEL = "skipped_no_model"
 SKIPPED_NO_PROVIDER_APP = "skipped_no_provider_app"
+SKIPPED_CONFIG_UNREADABLE = "skipped_config_unreadable"
 
 
 @dataclass
@@ -215,18 +216,23 @@ def _resolve_app_source(apps_dir: str | None) -> Path | None:
     return None
 
 
-def _config_has_entry(name: str) -> bool:
-    from personalclaw.config.loader import config_path
-
-    path = config_path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        return False
+def _has_entry(data: dict, name: str) -> bool:
     providers = data.get("providers")
-    if not isinstance(providers, list):
-        return False
-    return any(isinstance(p, dict) and p.get("name") == name for p in providers)
+    return isinstance(providers, list) and any(
+        isinstance(p, dict) and p.get("name") == name for p in providers
+    )
+
+
+def _config_has_entry(name: str) -> bool:
+    """Whether ``config.json`` already names a provider *name*.
+
+    Raises :class:`~personalclaw.config.loader.ConfigPreserveError` for a file that exists and
+    cannot be read: "no entry" would be a guess, and the write that followed it used to replace
+    the whole unreadable file with one ``providers[]`` entry.
+    """
+    from personalclaw.config.loader import config_path, read_config_for_merge
+
+    return _has_entry(read_config_for_merge(config_path()), name)
 
 
 def _write_provider_entry(*, endpoint: str, model: str, embedding_model: str) -> None:
@@ -235,18 +241,11 @@ def _write_provider_entry(*, endpoint: str, model: str, embedding_model: str) ->
     Same keys, same nesting as ``dashboard/handlers/providers.api_provider_create`` —
     a hand-written entry that drifts from that shape is one the UI cannot edit. No
     ``credential`` key is emitted: the absence IS the contract, and the ollama factory
-    only resolves a credential when the entry declares one.
+    only resolves a credential when the entry declares one. In the config transaction, and
+    only if no entry of that name has appeared since the check: a second bind appends nothing.
     """
-    from personalclaw.atomic_write import atomic_write
-    from personalclaw.config.loader import config_path
+    from personalclaw.config.transactions import mutate_config
 
-    path = config_path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
     options: dict[str, object] = {
         "endpoint": endpoint,
         "default_model": model,
@@ -254,20 +253,23 @@ def _write_provider_entry(*, endpoint: str, model: str, embedding_model: str) ->
     }
     if embedding_model:
         options["embedding_model"] = embedding_model
-    providers = data.setdefault("providers", [])
-    if not isinstance(providers, list):
-        providers = []
-        data["providers"] = providers
-    providers.append(
-        {
-            "name": PROVIDER_ENTRY_NAME,
-            "type": PROVIDER_TYPE,
-            "model": model,
-            "options": options,
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+
+    def _append(data: dict) -> None:
+        if _has_entry(data, PROVIDER_ENTRY_NAME):
+            return
+        providers = data.get("providers")
+        if not isinstance(providers, list):
+            providers = data["providers"] = []
+        providers.append(
+            {
+                "name": PROVIDER_ENTRY_NAME,
+                "type": PROVIDER_TYPE,
+                "model": model,
+                "options": options,
+            }
+        )
+
+    mutate_config(_append)
 
 
 def _write_active_models(*, model: str, embedding_model: str) -> None:
@@ -310,7 +312,20 @@ def bind_local_model(
     want_model = (model or os.environ.get(MODEL_ENV, "")).strip()
     want_embedding = (embedding_model or os.environ.get(EMBEDDING_MODEL_ENV, "")).strip()
 
-    if _config_has_entry(PROVIDER_ENTRY_NAME):
+    from personalclaw.config.loader import ConfigPreserveError
+
+    try:
+        already_bound = _config_has_entry(PROVIDER_ENTRY_NAME)
+    except ConfigPreserveError as exc:
+        return BindResult(
+            status=SKIPPED_CONFIG_UNREADABLE,
+            detail=(
+                f"{exc} — nothing was written. Repair config.json (`personalclaw doctor` says "
+                f"what is wrong with it) and re-run."
+            ),
+            endpoint=endpoint,
+        )
+    if already_bound:
         return BindResult(
             status=ALREADY_BOUND,
             detail=(

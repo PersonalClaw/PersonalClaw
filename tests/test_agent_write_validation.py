@@ -364,8 +364,10 @@ class TestUnavailableNames:
 
         src = inspect.getsource(A.api_personalclaw_agents_create)
         call = "_unavailable_agent_name(name)"
-        assert call in src
-        assert src.index(call) < src.index("cfg.save()"), "the name check must precede the write"
+        # The write is the profile going into the config the transaction then saves.
+        write = "cfg.agents[name] = AgentProfile("
+        assert call in src and write in src
+        assert src.index(call) < src.index(write), "the name check must precede the write"
 
     @pytest.mark.asyncio
     async def test_an_ordinary_name_in_the_same_namespace_is_still_allowed(self, home):

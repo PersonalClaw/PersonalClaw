@@ -33,8 +33,6 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from personalclaw.atomic_write import atomic_write
-
 logger = logging.getLogger(__name__)
 
 #: Env var carrying the JSON overlay from parent to child. Read once, in the child.
@@ -273,29 +271,28 @@ def patch_child_config(dotted: str, value: object) -> str:
     home), and a private copy would be a second answer to "how does a cell edit its own
     config" — one answer too many for a writer whose whole job is to touch nothing else.
     """
+    from personalclaw.config.transactions import mutate_config
+
     home = throwaway_home()
     home.mkdir(parents=True, exist_ok=True)
-    path = home / "config.json"
-    data: dict = {}
-    if path.is_file():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, ValueError):
-            data = {}
     parts = [p for p in dotted.split(".") if p]
     if not parts:
         raise ValueError("config_flag target must be a dotted config path")
-    cursor = data
-    for part in parts[:-1]:
-        nxt = cursor.get(part)
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cursor[part] = nxt
-        cursor = nxt
-    cursor[parts[-1]] = value
-    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+    def _set(data: dict) -> None:
+        cursor = data
+        for part in parts[:-1]:
+            nxt = cursor.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                cursor[part] = nxt
+            cursor = nxt
+        cursor[parts[-1]] = value
+
+    # The throwaway home IS this child's home, so this is its live config: written in the
+    # config transaction like every other writer of it, which also refuses a file it cannot read
+    # rather than replacing the cell's whole fixture config with this one key.
+    mutate_config(_set, path=home / "config.json")
     return f"config.json:{dotted}={value!r}"
 
 

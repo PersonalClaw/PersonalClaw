@@ -310,7 +310,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "apps/catalog.py::_scan_git_source::subprocess.run": "operator: git app source scan",
     "apps/source.py::_clone_git::subprocess.run": "operator: git app clone",
     # CLI commands — operator at a terminal.
-    "cli_config.py::_config_cmd::os.execvp": "operator: opens $EDITOR on config",
+    "cli_config.py::_edit_config::subprocess.run": "operator: opens $EDITOR on a copy of config",
     "cli_doctor.py::_doctor::subprocess.run": "operator: doctor host probes",
     # Same class as the probes in `_doctor` above, split out into its own helper so the
     # `git repo:` row can distinguish "git says no" from "git could not answer" (#2907).

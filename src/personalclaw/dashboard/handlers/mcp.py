@@ -645,9 +645,9 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
         # 2. Sync to personalclaw.json tools/allowedTools (lock prevents lost updates vs agents.py)
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
-        async with _get_config_lock():
+        async with _get_agent_file_lock():
             _sync_mcp_to_agent(name, enabled)
 
     return web.json_response({"ok": True, "name": name, "enabled": enabled, "applied": True})
@@ -779,9 +779,9 @@ async def api_mcp_toggle_all(request: web.Request) -> web.Response:
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
         # Batch sync: single read-modify-write of personalclaw.json
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
-        async with _get_config_lock():
+        async with _get_agent_file_lock():
             _sync_mcp_to_agent_batch(toggled, enabled)
 
     return web.json_response({"ok": True, "enabled": enabled, "count": len(servers)})
@@ -1151,10 +1151,10 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
                 )
         # Out of mcp.json AND the agent config, so the second write deletes its stored values.
         # Never Claude Code's own file: removing a server here is not removing it there.
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
         async with _get_mcp_lock():
-            async with _get_config_lock():
+            async with _get_agent_file_lock():
                 removed = bool(remove_mcp_servers([name]))
         sel().log_api_access(
             caller="dashboard",
@@ -1244,9 +1244,9 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
 
     # The agent config's copy: added if new (with its `@name` refs), then rebuilt from mcp.json,
     # so an edit reaches what `list_servers` lists and the Tools page probes.
-    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+    from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
-    async with _get_config_lock():
+    async with _get_agent_file_lock():
         _sync_mcp_to_agent(name, True)
     await asyncio.to_thread(_rebuild_agent_config_logged)
 
@@ -1326,10 +1326,10 @@ async def api_mcp_server_sign_in(request: web.Request) -> web.Response:
         )
 
     if request.method == "DELETE":
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
         async with _get_mcp_lock():
-            async with _get_config_lock():
+            async with _get_agent_file_lock():
                 removed = await asyncio.to_thread(remove_mcp_sign_in, name)
         _forget_connections(request, name)
         sel().log_api_access(
@@ -1475,7 +1475,7 @@ async def api_mcp_oauth_callback(request: web.Request) -> web.Response:
             status=500,
         )
     name = finished.server
-    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+    from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
     async with _get_mcp_lock():
         try:
@@ -1510,7 +1510,7 @@ async def api_mcp_oauth_callback(request: web.Request) -> web.Response:
         entry[MCP_SIGN_IN] = finished.block
         servers[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
-    async with _get_config_lock():
+    async with _get_agent_file_lock():
         _sync_mcp_to_agent(name, True)
     await asyncio.to_thread(_rebuild_agent_config_logged)
     _forget_connections(request, name)
