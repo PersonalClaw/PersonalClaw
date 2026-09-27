@@ -154,35 +154,36 @@ def cache_hit_pct(
     Deliberately a module-level function, not a :class:`Stats` method: it derives a
     per-turn ratio from three numbers the caller already holds. Putting it on the
     singleton would invite a second, turn-scoped store beside the process-lifetime
-    counters at ``stats.py:43-44`` (``cache_creation_tokens`` / ``cache_read_tokens``),
-    and those counters stay the only tally.
+    counters in ``stats.py::Stats._init_counters`` (``cache_creation_tokens`` /
+    ``cache_read_tokens``), and those counters stay the only tally.
 
     THE DENOMINATOR — ``input_tokens + cache_read_tokens + cache_creation_tokens``.
     The three buckets on ``LLMEvent`` are DISJOINT: ``input_tokens`` EXCLUDES the
     cached tokens, so they must be added back to recover the turn's whole prompt.
     Evidence:
 
-    * ``llm/anthropic.py:564-566`` (and its twin at ``:753-755``) assigns
-      ``input_tokens`` verbatim from ``usage.input_tokens``, while the cache counts
+    * ``llm/anthropic.py::AnthropicProvider.stream`` (and its twin
+      ``llm/anthropic.py::AnthropicProvider.complete``) assigns ``input_tokens``
+      verbatim from ``usage.input_tokens``, while the cache counts
       come from the SDK's separate ``cache_creation_input_tokens`` /
-      ``cache_read_input_tokens`` fields via ``_read_cache_usage``
-      (``llm/anthropic.py:85-100``). No arithmetic ever relates the three.
-    * ``pricing.py:110-115`` bills them additively — ``input * in_rate + cache_read *
-      cache_read_rate + cache_creation * cache_write_rate``. If ``input_tokens``
+      ``cache_read_input_tokens`` fields via ``llm/anthropic.py::_read_cache_usage``.
+      No arithmetic ever relates the three.
+    * ``pricing.py::estimate_cost`` bills them additively — ``input * in_rate +
+      cache_read * cache_read_rate + cache_creation * cache_write_rate``. If ``input_tokens``
       already contained the cached tokens, the shipped cost model would double-bill
       every cached turn.
-    * ``usage_ledger.py:238-241`` (``_fold``) sums the three into three SEPARATE
+    * ``usage_ledger.py::_fold`` sums the three into three SEPARATE
       aggregate keys, side by side. A subset relation would make that fold
       double-count on every cached turn, so the persisted ledger's own arithmetic
       only balances if the buckets are disjoint. Cited over PCS-7's own
-      ``pricing.py:168-170``, which adds the same three but is this module's
+      ``pricing.py::cache_savings_usd``, which adds the same three but is this module's
       counterpart — evidence for a premise must not be the code the premise
       justifies.
 
     Returns ``None`` when the denominator is 0: no prompt tokens is NO MEASUREMENT,
     not ``0%``. Same honesty rule as ``context_pct`` on the turn-complete line — see
-    ``dashboard/chat_runner.py:734-735``, whose ``if context_pct is not None`` guard
-    exists because a defaulted ``0`` printed ``context 0%`` for providers that
+    ``dashboard/chat_runner.py::_turn_complete_line``, whose ``if context_pct is not None``
+    guard exists because a defaulted ``0`` printed ``context 0%`` for providers that
     reported nothing, a number the backend never supplied. A measured 0 (prompt
     tokens present, none of them cached) is a real answer and returns ``0.0``.
     """
