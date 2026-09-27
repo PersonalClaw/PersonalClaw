@@ -54,6 +54,23 @@ describe('the owner section', () => {
     expect(onChanged).toHaveBeenCalled()
   })
 
+  it('a channel whose code is not sent in a DM says how it is sent', async () => {
+    // Email is paired by mailing the code to the mailbox: "a direct message to your bot" would
+    // send its owner looking for a bot that does not exist.
+    const hint = 'Mail this code to me@example.test from the address that should get your approvals'
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ channel: 'email', display_name: 'Email', pairing_hint: hint }))
+    const expires = new Date(Date.now() + 600_000).toISOString()
+    vi.spyOn(api, 'startChannelOwnerPairing').mockResolvedValue({
+      code: '48151623', expires_at: expires, ttl_secs: 600,
+      pairing: { active: true, expires_at: expires, attempts_left: 5, ended: '', ended_at: '' },
+    })
+    render(<ChannelOwnerSection channel="email" />)
+    fireEvent.click(await screen.findByRole('button', { name: /Pair as owner/ }))
+    expect(await screen.findByText('48151623')).toBeTruthy()
+    expect(screen.getByText(`${hint}:`)).toBeTruthy()
+    expect(screen.queryByText(/direct message/)).toBeNull()
+  })
+
   it('says why a pairing ended when the code was guessed at too often', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const read = vi.spyOn(api, 'channelOwner').mockResolvedValue(status())

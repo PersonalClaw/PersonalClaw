@@ -26,6 +26,11 @@ from personalclaw.acp.types import (  # noqa: F401
     STOP_REASON_STOPPED_BY_USER,
     is_cancelled_stop,
 )
+
+# ── The approval prompt's content (what will run, masked) ──
+# A channel's `request_approval` renders from this alone: the tool, its arguments, the purpose
+# and the summary line, as the dashboard's card shows them, every string already masked.
+from personalclaw.approval_brief import approval_brief_for
 from personalclaw.atomic_write import atomic_write
 
 # ── Auth posture (#3511) ──
@@ -59,6 +64,7 @@ from personalclaw.channel_trust import (
     is_allowed_sender,
     is_tracked_channel,
     note_unknown_sender,
+    redeem_owner_pairing_code,
     redeem_pairing_code,
     track,
     trust_policies,
@@ -133,10 +139,15 @@ from personalclaw.dashboard.origin import (
 # `core-must-not-import-the-http-surface` edge to this file, and that rule grandfathers the four
 # above precisely so a fifth cannot be added ("an allowlist is a thing that rots, a measured
 # floor is not"). The HTTP surface is deliberately not part of the app type contract.
+# `owner_sign_in_token` is the mint a channel's "open the dashboard" link uses: it signs in as the
+# owner, so it is minted for the channel's own owner id and refused, with a sentence, for anyone
+# else.
 from personalclaw.dashboard.token_auth import (
     LINK_WINDOW_SECS,
     MAX_SESSION_TTL_SECS,
+    NOT_THE_OWNER_SENTENCE,
     generate_token,
+    owner_sign_in_token,
     parse_duration,
 )
 from personalclaw.doc_parser import extract_text, is_parseable_document
@@ -294,6 +305,7 @@ __all__ = [
     "McpServerInfo",
     "MemoryService",
     "ModelProvider",
+    "NOT_THE_OWNER_SENTENCE",
     "OutboundMessage",
     "ProviderSettings",
     "ResourceRead",
@@ -324,6 +336,7 @@ __all__ = [
     "active_voice_params",
     "allow_sender",
     "apply_trust_action",
+    "approval_brief_for",
     "assert_channel_contract",
     "atomic_write",
     "build_cancelled_turn_preamble",
@@ -355,6 +368,7 @@ __all__ = [
     "note_unknown_sender",
     "owner_id_credential",
     "owner_id_for",
+    "owner_sign_in_token",
     "parse_dashboard_url",
     "parse_duration",
     "parse_title",
@@ -362,6 +376,7 @@ __all__ = [
     "redact_and_truncate",
     "redact_credentials",
     "redact_exfiltration_urls",
+    "redeem_owner_pairing_code",
     "redeem_pairing_code",
     "render_use_case_prompt",
     "resolve_bind_host",

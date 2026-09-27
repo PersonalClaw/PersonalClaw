@@ -2716,9 +2716,15 @@ class InboxConfig:
         default="",
         metadata=_meta("User ID", "Your user ID on the message source (set during setup)."),
     )
+    #: Handed to every source's ``poll``; a source that reads it says so (``watches_channels``),
+    #: and Settings → Inbox shows the list while one is polled.
     watched_channels: list[str] = field(
         default_factory=list,
-        metadata=_meta("Watched Channels", "Channel IDs to monitor."),
+        metadata=_meta(
+            "Channels to Read",
+            "The channels an installed chat app reads into your Inbox, each by its id. A "
+            "channel's first read starts after its newest message.",
+        ),
     )
     poll_interval_seconds: int = field(
         default=60,

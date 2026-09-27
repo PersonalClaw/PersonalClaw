@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, Row, Toggle, SavedToast, StrListField } from './settingsUI'
+import { storedChannels, watchedChannelReaders, watchedChannelsHint } from '../inbox/watchedChannels'
 import { TriageRulesCard } from './TriageRulesCard'
-import { NumberField } from '../../ui/forms'
+import { FieldError, NumberField } from '../../ui/forms'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { notify } from '../../app/appSdk'
@@ -30,7 +31,13 @@ export function InboxSettingsPanel() {
   // until it resolves rather than rendering `false` (an unread switch is not an off switch).
   const [triageOn, setTriageOn] = useState<boolean | null>(null)
   const [autoExecOn, setAutoExecOn] = useState<boolean | null>(null)
+  // `inbox.watched_channels`, as stored. `null` until the config is read, and the list is not shown
+  // until then: an unread list is not an empty one.
+  const [channels, setChannels] = useState<string[] | null>(null)
   const [cfgErr, setCfgErr] = useState('')
+  // Which polled sources read those channels: the list is shown, named by them, only while one is.
+  const { data: sourceList, error: sourcesErr } = useQuery('inbox:providers', () => api.inboxProviders(), { persist: false })
+  const channelReaders = watchedChannelReaders(sourceList)
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload. The
   // editable form state `s` is seeded/rehydrated from this read-only `data`;
@@ -59,6 +66,7 @@ export function InboxSettingsPanel() {
       setSourcesOn(Boolean(c?.inbox?.enabled))
       setTriageOn(Boolean(c?.proactive?.triage_enabled))
       setAutoExecOn(Boolean(c?.proactive?.auto_execute_enabled))
+      setChannels(storedChannels(c?.inbox?.watched_channels))
       setCfgErr('')
     })
     .catch((e) => setCfgErr(String((e as Error)?.message || e)))
@@ -133,6 +141,14 @@ export function InboxSettingsPanel() {
       .catch(() => setEngagementOn(!v))
   }
 
+  // One channel in or out per write, never this panel's copy of the list (`StrListField`); the
+  // chips then show the list as stored. A refused id keeps the list as it was and says why.
+  const editChannels = (_key: string, next: string[], onSaved: () => void) => {
+    api.saveListEdits('inbox.watched_channels', channels ?? [], next)
+      .then((stored) => { setChannels(stored); onSaved() })
+      .catch((e) => notify(`Couldn't change the channels to read: ${String((e as Error)?.message || e)}`, 'error'))
+  }
+
   if (!data && loadErr) return <LoadError what="inbox settings" error={loadErr} onRetry={refresh} />
   if (!data || !s) return <FormSkeleton sections={2} what="inbox settings" />
   return (
@@ -169,6 +185,13 @@ export function InboxSettingsPanel() {
           hint="Rank the inbox by how much you engage with each channel/sender (favorites, opens, replies boost; dismisses lower) on top of recency. Off = pure newest-first.">
           <Toggle on={!!engagementOn} onChange={setEngagement} label="Engagement ranking" disabled={engagementOn === null} />
         </Row>
+        {sourcesErr ? (
+          <FieldError>Couldn't read the inbox sources, so the channels they read can't be shown: {String((sourcesErr as Error)?.message || sourcesErr)}</FieldError>
+        ) : channels !== null && channelReaders.length > 0 && (
+          <StrListField label="Channels to read" hint={watchedChannelsHint(channelReaders)}
+            cfg={{ watched_channels: channels }} field="watched_channels" editList={editChannels}
+            placeholder="Add a channel id…" />
+        )}
       </Section>
 
       {/* PROACTIVE-ASSISTANT §5.2 — the digest's own switches, then the rules it taught itself.

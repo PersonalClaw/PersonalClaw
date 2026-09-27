@@ -751,6 +751,32 @@ def generate_token(user_id: str, ttl_seconds: int = 3600, *, app: str = "") -> s
     ).token
 
 
+#: What a channel says to anyone but its owner who asks for a dashboard link.
+NOT_THE_OWNER_SENTENCE = (
+    "Only this channel's owner can get a dashboard link: the link signs in as the owner, so "
+    "nobody else is sent one."
+)
+
+
+def owner_sign_in_token(provider: str, user_id: str, ttl_seconds: int = 3600) -> str:
+    """A dashboard sign-in token for *user_id*, minted only when that is *provider*'s owner.
+
+    The one mint a channel's "open the dashboard" link uses. A token opens the whole dashboard as
+    the owner, whatever id it names, so it may reach nobody else: *user_id* must be the owner id
+    this channel keeps (``owner_id_for(provider)``, the id its owner pairing stored). Anyone else
+    — an allowed correspondent, a group member, a stranger — is refused with ``ValueError``
+    carrying :data:`NOT_THE_OWNER_SENTENCE`, which is what the channel tells them, and so is a
+    channel that knows no owner. A lifetime over :data:`MAX_SESSION_TTL_SECS` is refused with
+    :func:`generate_token`'s own sentence.
+    """
+    from personalclaw.config.credentials import owner_id_for
+
+    owner = owner_id_for(provider)
+    if not owner or str(user_id or "") != owner:
+        raise ValueError(NOT_THE_OWNER_SENTENCE)
+    return generate_token(owner, ttl_seconds)
+
+
 #: ``(user, app)`` → ``(token, nonce, expires_at)``: the app-scoped token each app is using.
 _APP_TOKENS: dict[tuple[str, str], tuple[str, str, float]] = {}
 _APP_TOKENS_LOCK = threading.Lock()

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from aiohttp import web
@@ -144,8 +145,6 @@ def _record_signals(state: "DashboardState", items: list, signal: str) -> None:
     store = _engagement_store(state)
     if store is None:
         return
-    import time
-
     now = time.time()
     for item in items:
         for tk in _topic_keys(item):
@@ -221,8 +220,6 @@ def _rank_items(state: "DashboardState", items: list) -> list:
     store = _engagement_store(state)
     if store is None:
         return baseline
-    import time
-
     from personalclaw.engagement_signals import rank_by_engagement
 
     now = time.time()
@@ -529,8 +526,7 @@ async def api_inbox_update(request: web.Request) -> web.Response:
     # 4. Mutate.
     status_before = item.status
     if body.get("mute_thread"):
-        thread_key = item.thread_ts or item.id.split("_", 1)[1]
-        inbox_state.muted_threads.add(thread_key)
+        inbox_state.muted_threads.add(item.thread_key)
         inbox_state.save()
 
     # Handle dismiss → the one dismissal owner: suppression set, engagement signal, and the
@@ -755,7 +751,7 @@ async def api_inbox_send(request: web.Request) -> web.Response:
             session.enqueue_or_run_prompt(text, run_chat, state)
             delivered = True
         status_before = item.status
-        inbox.update(item_id, draft=recorded)
+        inbox.update(item_id, draft=recorded, replied_at=time.time())
         set_item_status(state, inbox, [item], ItemStatus.HANDLED)
         _record_signal(state, item, "reply")  # replying = a positive engagement signal
         _announce_unless_moved(state, item, status_before)
@@ -812,7 +808,7 @@ async def _send_to_polled_source(
             status=409,
         )
     status_before = item.status
-    inbox.update(item.id, draft=recorded)
+    inbox.update(item.id, draft=recorded, replied_at=time.time())
     set_item_status(state, inbox, [item], ItemStatus.HANDLED)
     _record_signal(state, item, "reply")
     _announce_unless_moved(state, item, status_before)
@@ -930,6 +926,9 @@ async def api_inbox_status(request: web.Request) -> web.Response:
                     "active": polled,
                     "kind": "poll",
                     "can_reply": name != "filesystem",
+                    # It reads the channels in `inbox.watched_channels`, which Settings → Inbox
+                    # lists while one such source is polled.
+                    "watches_channels": bool(getattr(source, "watches_channels", False)),
                     "ok": bool(row.get("ok", True)),
                     "error": str(row.get("error") or ""),
                     "last_poll_at": float(row.get("last_poll_at") or 0.0),
@@ -1032,6 +1031,7 @@ async def api_inbox_providers(request: web.Request) -> web.Response:
             "display_name": source_label(source),
             "source_name": str(source.source_name),
             "polled": polled,
+            "watches_channels": bool(getattr(source, "watches_channels", False)),
         }
         for source, polled in source_catalog()
     ]

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from personalclaw.inbox import Classification, Confidence, InboxItem, InboxState, InboxStore
-from personalclaw.inbox_service import InboxService, fence_message_for_prompt
+from personalclaw.inbox_service import InboxService, fence_message_for_prompt, polled_item_id
 
 
 @pytest.fixture(autouse=True)
@@ -275,7 +275,7 @@ def test_ingest_creates_item_and_fires_keyword_alert(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_dashboard_state", lambda: dash)
     n = svc._ingest([_incoming()], source=_SLACK)
     assert n == 1
-    item = svc.inbox.items["C9_1700000000.5"]
+    item = svc.inbox.items[polled_item_id("slack", _incoming())]
     assert item.channel_name == "#ops" and item.sender_name == "Ravi"
     assert item.source == "slack" and item.can_reply is True  # the row names its source
     dash.notify.assert_called_once()  # the keyword alert fired
@@ -288,7 +288,7 @@ def test_ingest_dedups_and_honors_mute_dismiss_own(tmp_path, monkeypatch):
     assert svc._ingest([_incoming()], source=_SLACK) == 0  # same id → dedup
     svc.state.muted_threads.add("T1")
     assert svc._ingest([_incoming(id="m2", timestamp=2.0, thread_id="T1")], source=_SLACK) == 0
-    svc.state.dismissed.add("C9_3.0")
+    svc.state.dismissed.add(polled_item_id("slack", _incoming(id="m3", timestamp=3.0)))
     assert svc._ingest([_incoming(id="m3", timestamp=3.0)], source=_SLACK) == 0
     # own message skipped unless test_mode
     own = _incoming(id="m4", timestamp=4.0, sender_id="ME")

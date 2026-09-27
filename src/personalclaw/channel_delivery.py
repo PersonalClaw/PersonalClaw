@@ -195,22 +195,28 @@ class ChannelDelivery(Protocol):
         ``on_prompted`` hook (invoked with the pending record) when provided by the
         caller. ``sessions`` is the live SessionManager for cross-surface reconcile.
 
-        **The approval brief (additive meta).** ``event.tool_meta`` carries the core-
-        composed brief under
-        :data:`~personalclaw.approval_brief.APPROVAL_BRIEF_META_KEY`, so a channel can
-        tell the owner what the call would TOUCH, not just what it is called::
+        **What the prompt shows: the approval brief.** ``event.tool_meta`` carries the
+        core-composed brief under
+        :data:`~personalclaw.approval_brief.APPROVAL_BRIEF_META_KEY`, which a channel reads
+        with ``personalclaw.sdk.channel.approval_brief_for(event)`` (that also composes one
+        for an approval the channel's own turn raised)::
 
-            {"tool": str,              # tool identity, same value as event.title
+            {"tool": str,              # the tool, masked
+             "input": str,             # its arguments, masked, as the dashboard's card
+                                       #   shows them ("" when it takes none)
+             "purpose": str,           # why the runner says it is calling it, masked
              "risk": str,              # EFFECTIVE per-invocation risk (not the
                                        #   DECLARED event.risk_level)
+             "summary": str,           # "Can: writes files · Risk: Caution", or ""
              "blastRadius": {"writes": bool, "network": bool,
                              "shell": bool, "readOnly": bool},   # optional
              "blastRadiusLine": str}                             # optional
 
-        Reading it is OPTIONAL and purely additive: the method's arguments are
-        unchanged, no existing field or ``tool_meta`` key is replaced, and a channel
-        that ignores the key prompts exactly as it did before. Two rules for a
-        renderer:
+        A prompt shows the tool, the arguments, the purpose and the summary line, which is
+        what the dashboard's approval card shows, and splits like a reply when that is too
+        long for one message, the buttons on the last part. Every string is already masked
+        (:func:`~personalclaw.security.redact_field`), so a channel masks nothing itself.
+        Two rules for a renderer that reads the facets itself:
 
         * ``blastRadius``/``blastRadiusLine`` are ABSENT when nothing could be
           established — show no blast-radius line at all, rather than "nothing
@@ -219,9 +225,7 @@ class ChannelDelivery(Protocol):
           enumerate all four with on/off states: a ``False`` means "not established",
           and painting it as "no network" turns absence of evidence into an all-clear.
 
-        The brief is a compact summary for a surface with no room — the dashboard
-        remains the rich approval surface, and rendering logic stays in the channel's
-        own bundle."""
+        The rendering stays in the channel's own bundle."""
         ...
 
 

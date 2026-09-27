@@ -31,6 +31,8 @@ a hope, not a property, and every shipping channel duly forgot it (#950).
 shows; whoever sends it in a DM becomes that channel's OWNER (its id is stored under
 ``owner_id_credential(provider)``). Same machinery, plus a cap on wrong guesses
 (:data:`OWNER_PAIRING_MAX_ATTEMPTS`), because it hands over the owner's DMs and approval prompts.
+A channel whose messages carry the code inside other text (a mail's body) redeems it with
+:func:`redeem_owner_pairing_code`, by the same rules.
 
 **Audit.** These security events are emitted through the SEL: ``pairing_code_created`` and
 ``owner_pairing_code_created`` (never carrying a code), ``sender_paired``, ``owner_paired``,
@@ -677,6 +679,31 @@ def _pair_owner(provider: str, sender_id: str, sender_name: str) -> None:
     _write_store(store)
     allow_sender(provider, sender_id, sender_name, via="owner_pairing")
     _emit_sel("owner_paired", "paired", provider, sender_id)
+
+
+def redeem_owner_pairing_code(provider: str, sender_id: str, code: str, name: str = "") -> bool:
+    """Redeem the OWNER's code where a message carries it inside other text.
+
+    :func:`guard_inbound` redeems the owner's code when a DM is the code and nothing else. A
+    channel whose messages cannot be that (a mail's body, under a quote and a signature) finds
+    the code-shaped words in the text itself and hands each here, after a sender's code had its
+    turn (:func:`redeem_pairing_code`). A match makes ``sender_id`` the owner exactly as the gate
+    does: stored under ``owner_id_credential(provider)``, trusted, the code spent,
+    ``owner_paired`` audited. A code-shaped word that does not match counts as a wrong guess at
+    the outstanding code, as a code-shaped DM does at the gate, so the cap on wrong guesses
+    (:data:`OWNER_PAIRING_MAX_ATTEMPTS`) holds however the code arrives. ``False`` when no owner
+    code is outstanding, when it expired, and for text that is not code-shaped.
+    """
+    candidate = (code or "").strip()
+    if not _looks_like_a_pairing_code(candidate):
+        return False
+    verdict = _owner_code_verdict(provider, candidate)
+    if verdict == "match":
+        _pair_owner(provider, sender_id, name)
+        return True
+    if verdict == "miss":
+        _count_wrong_owner_code(provider, sender_id)
+    return False
 
 
 def _count_wrong_owner_code(provider: str, sender_id: str) -> None:

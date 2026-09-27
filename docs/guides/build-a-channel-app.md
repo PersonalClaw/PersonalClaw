@@ -118,6 +118,17 @@ purpose and input, a stream's progress. It holds your handle behind the mask
 delivery methods need not mask it again. What your app sends on its own paths, text it builds or
 relays without core, is yours to mask (`personalclaw.sdk.channel.redact`).
 
+### An approval prompt shows what will run
+
+Render `request_approval`'s prompt from `personalclaw.sdk.channel.approval_brief_for(event)`: the
+tool, its arguments (`input`), the purpose the runner gave, and the `summary` line (what the call
+can touch, and its risk). That is what the dashboard's approval card shows, and a prompt showing
+less asks the owner to approve a call they cannot see. Every string in the brief is already masked
+with core's mask, so print it as it is and add no masking of your own. When the prompt is too long
+for one message, split it the way you split a reply and put the buttons on the last part. The same
+read composes a brief for an approval your own turn raised, so a channel that runs its own turns
+renders both from one place.
+
 ### Declare capabilities honestly
 
 `ChannelCapabilities` is the routing input, so a field you set to `True` is a promise:
@@ -242,6 +253,10 @@ What that one call gets you, and what you must not re-implement:
   `owner_id_credential(PROVIDER)` and trusting them — and returns
   `reason == "owner_paired"` with a canned reply your transport delivers like any other. Five
   wrong codes cancel the code. Without the flag the page shows only who your channel reaches.
+  A channel whose messages cannot be the code alone (a mail, under a quote and a signature)
+  hands each code-shaped word it finds to `redeem_owner_pairing_code(PROVIDER, sender, word)`,
+  which pairs by the same rules, and says over the code how it is sent there
+  (`owner_pairing_hint()`, e.g. "Mail this code to … from your own address").
 - **A DM that is one conversation.** Declare `dm_thread_is_channel=True` when every message in
   a DM reaches core with the DM's channel id as its `thread_id` (Telegram's chat id, a Discord
   DM channel). A chat the owner hands to your channel from its menu ("Continue on …") is then
@@ -255,10 +270,13 @@ What that one call gets you, and what you must not re-implement:
   not an address) rather than handing it to your API. When no connected channel gets it
   through, it goes to the Inbox with a sentence naming why each one could not.
 
-Linking the channel to the dashboard: build a session link with the token-auth helpers
-(`generate_token`, `LINK_WINDOW_SECS`) over `dashboard_origin()`, and give the owner a way
-back the other direction with `build_thread_link`. Treat any token you print as a
-credential — it is a bearer token with a long TTL.
+Linking the channel to the dashboard: mint the link's token with
+`owner_sign_in_token(PROVIDER, user_id, ttl)` (and `LINK_WINDOW_SECS`) over `dashboard_origin()`,
+and give the owner a way back the other direction with `build_thread_link`. A token signs in as
+the owner whatever id it names, so `owner_sign_in_token` mints only for your channel's owner and
+refuses anyone else with `NOT_THE_OWNER_SENTENCE`: show them that, send them nothing. Treat any
+token you print as a credential — it is a bearer token with a long TTL — and send it only in the
+owner's DM.
 
 ---
 

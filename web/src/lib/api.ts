@@ -645,6 +645,9 @@ export interface ChannelOwnerStatus {
   owner_id: string
   source: ChannelOwnerRef['source']
   pairing_supported: boolean
+  /** How the owner sends the code on this channel when it is not a DM to the bot (a mail to the
+   *  mailbox, say), in the channel's words; absent or "" for the page's own sentence. */
+  pairing_hint?: string
   pairing: ChannelOwnerPairing
 }
 /** One approved sender on a channel (EA-7). `provider` is an opaque runtime key the transport
@@ -3964,6 +3967,8 @@ export interface InboxItem {
   // which source produced it (native / filesystem / slack / …) + whether the
   // source supports a reply (drives the Send gate). reply_target is native-only.
   source?: string; can_reply?: boolean; reply_target?: string
+  /** When the reply in `draft` was sent, epoch seconds; absent or 0 while none was. */
+  replied_at?: number
   // P11: user-favorited (a strong engagement signal + a star in the UI).
   favorited?: boolean
   // Feedback Signal (plan 58): per-judgment producer meta the thumbs attribute to.
@@ -4014,7 +4019,9 @@ export interface InboxOwnerCount { username: string; total: number; open: number
 /** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
  *  unattributed rows) — the same number `InboxStatus.my_open_count` reports. */
 export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
-export interface InboxProvider { name: string; display_name: string; source_name: string; polled?: boolean }
+/** A source the inbox knows. `watches_channels`: it reads the channels in `inbox.watched_channels`,
+ *  which Settings → Inbox lists while such a source is `polled`. */
+export interface InboxProvider { name: string; display_name: string; source_name: string; polled?: boolean; watches_channels?: boolean }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
 /** One source the inbox knows. A poll source is `active` while it is polled (an installed inbox
  *  app's always is; the drop folder only while `inbox.enabled` is on), and `error` is the sentence
@@ -4022,6 +4029,7 @@ export interface InboxHealth { running: boolean; last_poll_at?: number; last_pol
 export interface InboxSourceHealth {
   name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean
   label?: string; ok?: boolean; error?: string; last_poll_at?: number; last_ok_at?: number
+  watches_channels?: boolean
 }
 export interface InboxStatus {
   enabled: boolean; user_id?: string

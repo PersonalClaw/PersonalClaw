@@ -61,7 +61,11 @@ class FilesystemSourceProvider(MessageSourceProvider):
                     data = json.loads(f.read_text())
                     for raw in data.get("messages", []):
                         msg = IncomingMessage(
-                            id=raw.get("id", f"{f.stem}_{len(messages)}"),
+                            # The message's own id when the file names one. None is not
+                            # made up from the file's name: a file dropped again under a used
+                            # name named its messages as the first one's were, and the inbox
+                            # keys a message with no id by its content instead.
+                            id=str(raw.get("id") or ""),
                             channel_id=raw.get("channel_id", "filesystem"),
                             channel_name=raw.get("channel_name", "local"),
                             thread_id=raw.get("thread_id"),

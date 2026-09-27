@@ -51,7 +51,7 @@
       ]
     },
     "src/personalclaw/sdk/channel.py": {
-      "inert": 88,
+      "inert": 86,
       "surfaces": [
         "sdk_export:AcpError",
         "sdk_export:AcpProcessDied",
@@ -72,7 +72,6 @@
         "sdk_export:HOOK_REPLY",
         "sdk_export:HistoryConsolidator",
         "sdk_export:LINK_WINDOW_SECS",
-        "sdk_export:MAX_SESSION_TTL_SECS",
         "sdk_export:MemoryService",
         "sdk_export:STOP_REASON_CANCELLED",
         "sdk_export:STOP_REASON_END_TURN",
@@ -107,7 +106,6 @@
         "sdk_export:fence_channel_content",
         "sdk_export:format_schedule",
         "sdk_export:get_update_info",
-        "sdk_export:is_allowed_sender",
         "sdk_export:is_cancelled_stop",
         "sdk_export:is_local_bind",
         "sdk_export:is_parseable_document",
@@ -350,9 +348,9 @@
       "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 148,
+      "sdk_export": 146,
       "trigger_kind": 0
     },
-    "inert": 162
+    "inert": 160
   }
 }

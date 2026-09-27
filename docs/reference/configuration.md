@@ -250,7 +250,7 @@ Alert keywords, name-mention alerts, and retention live in the Inbox settings pa
 |---|---|---|---|---|
 | `inbox.enabled` | boolean | `false` | Inbox → Settings ("Poll the drop folder" toggle) | Polls the built-in drop folder, `<home>/inbox/incoming/`, where a program on this machine can drop messages as JSON files. Off by default, since anything that can write to the machine can drop one there. It is not a switch for the inbox apps: an installed inbox app (Mail Inbox, Slack) is polled while its app is enabled. The inbox reads it at every poll, so a change applies at the next one, with no restart.
 | `inbox.user_id` | string | `""` | channel-app setup | Your user id on the connected channel — used to skip your own messages. |
-| `inbox.watched_channels` | list of strings | `[]` | channel-app setup | Channel ids the poll loop watches. |
+| `inbox.watched_channels` | list of strings | `[]` | Settings → Inbox ("Channels to read", shown while a polled source reads channels) | The channels an installed chat app's inbox source reads into the Inbox (Slack's), each by its id. Every source's poll is handed the list; one that reads it says so (`watches_channels`). Read at every poll, so an added channel is read from the next one; its first read starts after its newest message. An entry that is not one id is refused. |
 | `inbox.poll_interval_seconds` | integer (min 30) | `60` | backend-only | Poll cadence. |
 | `inbox.style_rules` | list of strings | `[]` | backend-only | Voice/style lines injected into AI reply drafting. |
 | `inbox.test_mode` | boolean | `false` | backend-only | Ingest your OWN messages too (demo/testing). |
