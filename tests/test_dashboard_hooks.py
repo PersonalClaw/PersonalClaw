@@ -81,6 +81,8 @@ class TestAgentSpawnHookInjection:
                 "provider": "bash",
                 "provider_config": {"command": "echo 'Enable caveman mode'"},
                 "timeout": 5,
+                # The owner's yes (`triggers.grants`): an ungranted hook injects nothing.
+                "capabilities": {"providers": ["bash"]},
             }
         )
         state._hook_store = hook_store

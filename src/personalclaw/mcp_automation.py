@@ -73,7 +73,8 @@ def _list_tools() -> list[dict[str, Any]]:
                 "`when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a "
                 "cadence becomes a cron schedule, an event becomes an event trigger. Give `when` "
                 "+ `name` + `message` (what the automation should do). Announced to you on "
-                "creation, and capped by workflows.self_schedule_max_outstanding."
+                "creation, and capped by workflows.self_schedule_max_outstanding. It does not run "
+                "until the owner allows it on the Triggers page, so tell them it is waiting."
             ),
             "inputSchema": {
                 "type": "object",
@@ -122,7 +123,10 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "automation_update",
             "description": "Patch an automation. Only settable fields apply (name, spec, gates, "
-            "workflow, enabled, delivery, …); health/run fields are rejected and reported.",
+            "workflow, enabled, delivery, …); health/run fields are rejected and reported. An "
+            "edit that changes what its action runs switches it off until the owner allows the "
+            "change on the Triggers page, and letting its agent approve its own tool calls is "
+            "the owner's to change, not yours.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -219,7 +223,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "need to wait for something outside this turn — 'check the build in 20 minutes', "
                 "'follow up tomorrow morning'. The task wakes you with `message` as the "
                 "instruction. Counts against your outstanding-task allowance; it frees a slot "
-                "when it fires, since a one-time task disables itself."
+                "when it fires, since a one-time task disables itself. It does not run until the "
+                "owner allows it on the Triggers page, unless it wakes a parked run "
+                "(`resume_run_id`), which needs no allowing."
             ),
             "inputSchema": {
                 "type": "object",
@@ -257,7 +263,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at "
                 "9', 'hourly', 'every Monday'. Use for ongoing monitoring you should keep doing "
                 "rather than a single follow-up. Counts against your outstanding-task allowance "
-                "for as long as it stays enabled, so pause or delete one you no longer need."
+                "for as long as it stays enabled, so pause or delete one you no longer need. It "
+                "does not run until the owner allows it on the Triggers page, unless it wakes a "
+                "parked run (`resume_run_id`), which needs no allowing."
             ),
             "inputSchema": {
                 "type": "object",

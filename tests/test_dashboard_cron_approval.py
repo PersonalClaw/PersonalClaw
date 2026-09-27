@@ -79,6 +79,8 @@ class TestScheduleTriggerApprovalMode:
                 "every": 300,
                 "silent": True,
                 "action": _action(),
+                # The owner's yes to the dialog an agent action is created behind.
+                "confirm": True,
             }
         )
         resp = await api_trigger_create(request)
@@ -94,7 +96,14 @@ class TestScheduleTriggerApprovalMode:
     @pytest.mark.asyncio
     async def test_no_approval_mode_accepted(self):
         request = self._make_request(
-            {"trigger_type": "schedule", "name": "t", "every": 300, "action": _action()}
+            # The owner's yes to the dialog an agent action is created behind.
+            {
+                "trigger_type": "schedule",
+                "name": "t",
+                "every": 300,
+                "action": _action(),
+                "confirm": True,
+            }
         )
         resp = await api_trigger_create(request)
         assert resp.status == 200
@@ -182,7 +191,15 @@ class TestCreateHonorsEnabledOverTheWire:
         monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
 
     def _body(self, **over):
-        body = {"trigger_type": "schedule", "name": "t", "every": 300, "action": _action()}
+        # `confirm: true` is the owner's yes to the dialog an agent action is created behind; the
+        # `enabled` rule is checked before that question is asked.
+        body = {
+            "trigger_type": "schedule",
+            "name": "t",
+            "every": 300,
+            "action": _action(),
+            "confirm": True,
+        }
         body.update(over)
         return body
 

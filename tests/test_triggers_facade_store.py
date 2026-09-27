@@ -1119,11 +1119,15 @@ def test_a_broken_clock_row_is_listed_with_its_error(home, state):
 
 
 def _create_schedule(state, **over):
+    # `confirm: true` is the owner's yes to the dialog a `bash` action is created behind: these
+    # tests are about where the row lands, and the question itself is
+    # `test_a_grant_is_for_the_action_the_owner_allowed`'s.
     body = {
         "trigger_type": "schedule",
         "name": "Nightly",
         "cron": "0 9 * * *",
         "action": {"provider": "bash", "config": {"command": "echo hi"}},
+        "confirm": True,
     }
     body.update(over)
     return _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body=body)))

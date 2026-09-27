@@ -132,6 +132,11 @@ def test_create_lifecycle(state):
         "matcher": "write_file",
         "action": {"provider": "bash", "config": {"command": "log"}},
     }
+    # A `bash` action is created behind the owner's yes; the question is asked first.
+    asked = _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body=body)))
+    assert asked.status == 400
+    assert _body(asked)["error"]["code"] == "confirmation_required"
+    body["confirm"] = True
     resp = _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body=body)))
     assert resp.status == 200
     t = _body(resp)["trigger"]

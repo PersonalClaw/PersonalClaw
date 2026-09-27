@@ -523,10 +523,14 @@ The posture is announced on stderr, so stdout stays pipeable.
         epilog="""
 Examples:
   personalclaw cron list
-  personalclaw cron add 'daily-status' 'show status' --every 86400
-  personalclaw cron add 'weekday-9am' 'check issues' --cron '0 9 * * MON-FRI' --approval-mode auto
-  personalclaw cron update <job-id> --approval-mode auto
+  personalclaw cron add 'daily-status' 'show status' --every 86400 --yes
+  personalclaw cron add 'weekday-9am' 'check issues' --cron '0 9 * * MON-FRI' --yes
+  personalclaw cron update <job-id> --approval-mode auto --yes
   personalclaw cron remove <job-id>
+
+A job runs an agent with its tools when you are not there, so adding one, changing what it
+runs and --approval-mode auto each need your yes: without --yes the command says what it would
+allow and changes nothing.
 """,
         formatter_class=_fmt,
     )
@@ -550,6 +554,11 @@ Examples:
         default="",
         help='Tool approval mode ("auto" to auto-approve all tools)',
     )
+    cron_add.add_argument(
+        "--yes",
+        action="store_true",
+        help="Allow what the job needs your yes for (the command says what) without asking",
+    )
     cron_update = cron_sub.add_parser("update", help="Update a cron job")
     cron_update.add_argument("job_id", help="Job ID to update")
     cron_update.add_argument("--name", help="New job name")
@@ -565,6 +574,11 @@ Examples:
         choices=["auto", "default"],
         default=None,
         help='Tool approval mode ("auto" to auto-approve, "default" to reset)',
+    )
+    cron_update.add_argument(
+        "--yes",
+        action="store_true",
+        help="Allow what the change needs your yes for (the command says what) without asking",
     )
     cron_rm = cron_sub.add_parser("remove", help="Remove a cron job")
     cron_rm.add_argument("job_id", help="Job ID to remove")

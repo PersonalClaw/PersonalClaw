@@ -41,10 +41,10 @@ def _home(tmp_path, monkeypatch):
     caps_mod.reset_for_tests()
 
 
-def _make_webhook(tmp_path, slug="my-hook", capabilities=None):
+def _make_webhook(tmp_path, slug="my-hook", capabilities=None, *, enabled=True, state="active"):
     """Upsert a valid `webhook` trigger and return its serialized (`store:webhook:<slug>`) id.
 
-    Granted by default, as `tools.create` freezes it; pass `capabilities={}` for one whose action
+    Granted by default, as the owner's yes freezes it; pass `capabilities={}` for one whose action
     it is not allowed to run.
     """
     if capabilities is None:
@@ -54,7 +54,8 @@ def _make_webhook(tmp_path, slug="my-hook", capabilities=None):
             id=f"webhook:{slug}",
             name="WH",
             kind="webhook",
-            enabled=True,
+            enabled=enabled,
+            state=state,
             spec={"token_ref": "{{secret:WH_TOKEN}}"},
             workflow={"provider": "run-prompt", "config": {}},
             capabilities=dict(capabilities),
@@ -245,6 +246,51 @@ async def test_a_non_webhook_trigger_is_404(tmp_path):
     client = await _client(state)
     try:
         assert (await _fire(client, file_id, token)).status == 404
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "paused",
+    [{"enabled": False}, {"state": "autopaused"}],
+    ids=["switched off", "paused after failures"],
+)
+async def test_a_paused_webhook_trigger_answers_like_one_that_is_not_there(
+    tmp_path, monkeypatch, paused
+):
+    """🔴 Red on main: 202, and the paused trigger's action ran — `/fire` never read the switch.
+    A paused trigger does not fire, and the caller is told exactly what an unknown trigger tells
+    it: 404 is the inbound gate's answer for a surface that is switched off, so the sender learns
+    that there is nothing to fire and not why. The audit row, which only the owner reads, says."""
+    trigger_id = _make_webhook(tmp_path, **paused)
+    ghost = "store:webhook:ghost"
+    dispatched: list = []
+
+    async def _fake_dispatch(trigger, payload, *, event="manual.run"):
+        dispatched.append(trigger.id)
+        return True, "ran"
+
+    audited: list[dict] = []
+    monkeypatch.setattr(T, "_dispatch_store_action", _fake_dispatch)
+    monkeypatch.setattr("personalclaw.inbound.audit.audit", lambda *a, **k: audited.append(dict(k)))
+    _rec, token = clients_mod.create_client(
+        "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
+    )
+    _rec, ghost_token = clients_mod.create_client(
+        "gh", surfaces=["webhook"], scope={"trigger": ghost}
+    )
+    state = _State()
+    client = await _client(state)
+    try:
+        answered = await _fire(client, trigger_id, token)
+        unknown = await _fire(client, ghost, ghost_token)
+        assert answered.status == unknown.status == 404
+        assert await answered.json() == await unknown.json()
+        await asyncio.gather(*state._background_tasks)
+        assert dispatched == []
+        assert audited[0]["status"] == 404
+        assert audited[0]["refused"] == "the trigger is switched off or paused"
     finally:
         await client.close()
 

@@ -641,6 +641,11 @@ class ScriptHook:
     - exit 0: success (stdout → context for AgentSpawn/UserPromptSubmit)
     - exit 2: block tool (PreToolUse only, stderr → LLM)
     - other: warning (stderr shown to user)
+
+    ``capabilities`` is the grant a store trigger carries (`triggers.grants`): what the owner
+    allowed its action to run, frozen when they said yes. A hook fires unattended on the agent's own
+    events — every prompt, every tool call — so one whose action it is not allowed to run is refused
+    like a trigger's (:func:`run_script_hook`).
     """
 
     id: str = ""
@@ -651,6 +656,7 @@ class ScriptHook:
     provider_config: dict = field(default_factory=dict)
     timeout: int = 30  # seconds
     enabled: bool = True
+    capabilities: dict = field(default_factory=dict)
     last_run: float = 0.0
     # "ok" | "error" | "timeout" | "launched" | "queued" | "skipped_incident" | "held_for_rung" |
     # "blocked" (the exit-2 block was HONORED, or guardrails refused the action) | "advisory" (the
@@ -659,11 +665,18 @@ class ScriptHook:
     last_status: str = ""
     run_count: int = 0
 
+    @property
+    def workflow(self) -> dict:
+        """The hook's action in the shape a store trigger holds its own (``workflow.inline``), which
+        is the shape the grant reads (`triggers.grants`), so one rule answers for both."""
+        return {"inline": {"provider": self.provider, "config": self.provider_config}}
+
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> "ScriptHook":
+        capabilities = data.get("capabilities")
         return cls(
             id=data.get("id", str(uuid.uuid4())[:8]),
             name=data.get("name", ""),
@@ -673,6 +686,7 @@ class ScriptHook:
             provider_config=dict(data.get("provider_config") or {}),
             timeout=data.get("timeout", 30),
             enabled=data.get("enabled", True),
+            capabilities=dict(capabilities) if isinstance(capabilities, dict) else {},
             last_run=data.get("last_run", 0.0),
             last_status=data.get("last_status", ""),
             run_count=data.get("run_count", 0),
@@ -782,6 +796,28 @@ async def run_script_hook(
             hook_name=hook.name,
             event=hook.event,
             error=f"Unknown action provider {hook.provider!r}",
+        )
+
+    # 🔴 THE GRANT (`triggers.grants`), as every trigger's dispatch checks it. A hook runs its action
+    # on the agent's own events with nobody pressing anything, so one whose action the owner has not
+    # allowed — a hook made before hooks carried a grant, or a hooks.json edited by hand — does not
+    # run it. Measured on `main`: an ungranted `bash` hook ran its command on the next prompt. On
+    # the gating seam the refusal BLOCKS the tool rather than letting it through: a policy hook that
+    # is not allowed to run cannot say the call is safe, and a block the owner can lift with one
+    # Allow is the direction that cannot quietly switch a safeguard off.
+    from personalclaw.triggers import grants
+
+    ungranted = grants.missing(hook)
+    if ungranted:
+        refusal = grants.refusal(hook, ungranted)
+        _record("blocked")
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            stderr=refusal if enforced else "",
+            exit_code=2 if enforced else -1,
+            error=refusal,
         )
 
     ctx = ActionContext(event=hook.event, context=context, payload=hook_event)
@@ -985,7 +1021,18 @@ class ScriptHookStore:
                 raise ValueError("timeout must be an integer between 1 and 300")
         if "provider_config" in data and not isinstance(data["provider_config"], dict):
             raise ValueError("provider_config must be an object")
-        for k in ("name", "event", "matcher", "provider", "provider_config", "timeout", "enabled"):
+        # `capabilities` is written by the grant path alone (`triggers.grants`): the handler builds
+        # this patch from the fields a save may change, and the grant is not one of them.
+        for k in (
+            "name",
+            "event",
+            "matcher",
+            "provider",
+            "provider_config",
+            "timeout",
+            "enabled",
+            "capabilities",
+        ):
             if k in data:
                 setattr(hook, k, data[k])
         self._save()

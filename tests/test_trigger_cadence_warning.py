@@ -118,7 +118,9 @@ NOTIFY = {"provider": "notify", "config": {"title_template": "Standup nudge: rev
 
 
 def _create(state, *, name, every=None, cron=None, action=AGENT):
-    body = {"trigger_type": "schedule", "name": name, "action": action}
+    # `confirm: true` is the owner's yes to the dialog an agent action is created behind — these
+    # tests are about the cadence warning, not that question.
+    body = {"trigger_type": "schedule", "name": name, "action": action, "confirm": True}
     if every is not None:
         body["every"] = every
     if cron is not None:

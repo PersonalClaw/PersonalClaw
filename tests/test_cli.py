@@ -105,6 +105,9 @@ class TestCronCli:
 
     They also had no `config_dir` isolation at all (the mock was the only thing between them and
     the user's real home). The store is a real file, so the fixture now redirects it.
+
+    `yes=True` is the owner's `--yes`: an agent job, and `--approval-mode auto`, need it, and what
+    the command says without it is `test_a_grant_is_for_the_action_the_owner_allowed`'s.
     """
 
     @pytest.fixture(autouse=True)
@@ -159,6 +162,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="",
+                yes=True,
             )
         )
         row = self._only(tmp_path)
@@ -178,6 +182,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel="fakechat:C0AP77JJSN6",
                 approval_mode="",
+                yes=True,
             )
         )
         # `delivery` is the store's spelling of the legacy `channel=` kwarg.
@@ -193,6 +198,7 @@ class TestCronCli:
                 cron_expr="0 9 * * MON-FRI",
                 channel="fakechat",
                 approval_mode="",
+                yes=True,
             )
         )
         row = self._only(tmp_path)
@@ -210,6 +216,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="auto",
+                yes=True,
             )
         )
         inline = (self._only(tmp_path).trigger.workflow or {}).get("inline") or {}
@@ -231,6 +238,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="",
+                yes=True,
             )
         )
         assert self._only(tmp_path).trigger.created_by == "user"
@@ -286,6 +294,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="auto",
+                yes=True,
             )
         )
         config = ((self._only(tmp_path).trigger.workflow or {})["inline"]).get("config") or {}

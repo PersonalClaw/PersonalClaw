@@ -234,21 +234,25 @@ def test_capabilities_for_action_leaves_a_read_only_action_EMPTY():
     assert capabilities_for_action(trigger) == {}
 
 
-def test_tools_create_FREEZES_the_capability_set(tmp_path):
-    """The chat tools and the API both create through here. Without the freeze, every trigger they
-    make would refuse on its next fire."""
+def test_tools_create_FREEZES_the_capability_set_with_the_owners_yes(tmp_path):
+    """The owner's surfaces create through here after asking (the create dialog, `cron add
+    --yes`). Without the freeze every trigger they make would refuse on its next fire — and without
+    their yes nothing is frozen, so a trigger the chat makes waits for the owner's Allow."""
     from personalclaw.triggers import tools as T
 
     store = TriggerStore(base_dir=tmp_path)
-    T.create(
-        store,
-        name="writer",
-        kind="clock",
-        spec={"kind": "interval", "interval_secs": 3600},
-        workflow={"provider": "bash", "config": {"command": "x"}},
-        created_by="user",
-    )
+    for name, consented in (("writer", True), ("asked", False)):
+        T.create(
+            store,
+            name=name,
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "bash", "config": {"command": "x"}},
+            created_by="user",
+            owner_consented=consented,
+        )
     assert store.get("clock:writer").trigger.capabilities == {"providers": ["bash"]}
+    assert store.get("clock:asked").trigger.capabilities == {}
 
 
 def test_a_created_write_trigger_actually_FIRES(tmp_path):
@@ -264,6 +268,7 @@ def test_a_created_write_trigger_actually_FIRES(tmp_path):
         spec={"kind": "interval", "interval_secs": 60},
         workflow={"provider": "run-prompt", "config": {"message": "go"}},
         created_by="user",
+        owner_consented=True,
     )
     row = store.get("clock:writer").trigger
     row.next_fire_at = "2027-01-15T07:00:00+00:00"

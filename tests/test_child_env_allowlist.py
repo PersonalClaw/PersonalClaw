@@ -84,6 +84,8 @@ def test_a_hook_child_cannot_read_a_planted_gateway_secret() -> None:
         provider_config={"command": "env"},
         timeout=_TIMEOUT,
         enabled=True,
+        # The owner's yes (`triggers.grants`): this is about what an allowed hook's child can read.
+        capabilities={"providers": ["bash"]},
     )
     result = asyncio.run(run_script_hook(hook, "phf4"))
 
