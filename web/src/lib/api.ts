@@ -1623,6 +1623,12 @@ export interface WorkRow {
   run_id: string; title: string; state: WorkState; origin: string; project_id: string
   claim: WorkClaim | null; collapsed: boolean; attention: boolean; resumable: boolean
   outcome: WorkOutcome | ''
+  /** WHAT the row is. `run_id` holds each source's own id, so this is what says where the row
+   *  opens and which resume applies — `origin` says who started the work, and a loop row is
+   *  `manual` exactly like a run a user started. */
+  source: 'run' | 'loop' | 'task'
+  /** A loop row's kind (a `code` loop opens in Code); empty for runs and tasks. */
+  kind: string
 }
 export interface WorkGroup { state: WorkState; count: number; attention: number; rows: WorkRow[] }
 export interface WorkSection { name: string; items: WorkRow[]; status: 'ok' | 'loading' | 'error'; error: string; loadedAt: number }
@@ -1652,6 +1658,8 @@ export interface TaskItem {
   // WHO created it (TEAM-SHARED-ENTITIES §1) — distinct from assignee, who does it.
   author?: string
   labels?: string[]; depends_on?: string[]; due?: string; url?: string
+  // Whether the due date is announced the day before (F-31); on unless the task opted out.
+  due_reminder?: boolean
   created_at?: string; updated_at?: string
   // rich / forward-looking (may be absent from the backend today)
   task_list?: string

@@ -4,7 +4,7 @@ import { api, type TaskItem, type ExitCriterion, type ActionPlanItem, type TaskN
 import { STATUSES, PRIORITIES, isExitComplete } from './taskMeta'
 import { prereqIds } from './dag'
 import { useDefaultProject } from '../../lib/defaultProject'
-import { Field, TextInput, TextArea, DateInput, Segmented, ChipInput, Select } from '../../ui/forms'
+import { Field, TextInput, TextArea, DateInput, Segmented, ChipInput, Select, Checkbox } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { ChecklistEditor, DependencyEditor, NotesEditor } from './formControls'
 
@@ -75,6 +75,16 @@ export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: T
           <Field label="Assignee"><TextInput value={draft.assignee ?? ''} onChange={(v) => set('assignee', v)} placeholder="Who owns it" /></Field>
           <Field label="Due"><DateInput value={draft.due ?? ''} onChange={(v) => set('due', v)} /></Field>
         </div>
+        {/* The per-task opt-out for the due-date notice (`tasks/due_notices.py`): on unless the
+            user says the date is a soft target. Offered only once there is a date to be reminded
+            of; the choice is kept if the date is cleared and set again. */}
+        {draft.due && (
+          <label className="flex items-center gap-s">
+            <Checkbox checked={draft.due_reminder !== false} onChange={(v) => set('due_reminder', v)}
+              ariaLabel="Remind me the day before it is due" />
+            <span data-type="body-s" className="text-on-surface">Remind me the day before it is due</span>
+          </label>
+        )}
         <Field label="Tags"><ChipInput values={draft.labels ?? []} onChange={(v) => set('labels', v)} placeholder="Add a tag, Enter" max={10} /></Field>
       </Section>
 
@@ -256,6 +266,7 @@ export function draftToPayload(d: TaskDraft): Record<string, unknown> {
     task_list_id: d.task_list_id ?? '',
     assignee: d.assignee ?? '',
     due: d.due ?? '',
+    due_reminder: d.due_reminder !== false,
     labels: d.labels ?? [],
     exit_criteria: d.exit_criteria ?? [],
     action_plan: d.action_plan ?? [],

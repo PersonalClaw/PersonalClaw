@@ -28,6 +28,21 @@ relative to `PersonalClaw/src/personalclaw/`.
 - **One registry, every surface** (`tasks/registry.py`) — the chat
   `task_create` tool and the Tasks UI share the same provider registry, so
   a task created in conversation is the same object the board shows.
+- **Due dates announce themselves** (`tasks/due_notices.py`) — a gateway
+  loop (`gateway._task_due_loop`: once the dashboard is up, then every five
+  minutes; off under `--no-crons`) sends one `tasks/due` notification per due
+  date: at 09:00 the day before a date-only due date (what the task form
+  writes), 24 hours before one with a time. What was sent is recorded as
+  `{task_id: due}` in `task_due_notices.json` (its own durability entry), so a
+  restart neither repeats a notice nor loses one — a notice missed while the
+  gateway was down goes out as it starts again, unless the due moment is more
+  than a day gone. Moving the date re-arms it; a record is dropped only once
+  its date can no longer be announced, never because one sweep did not see
+  the task. Quiet hours hold the notice until the
+  window ends (the gate would otherwise drop an INFO note); mute and a raised
+  minimum severity mean "not at all". Only the owner's open tasks are
+  announced, and only while the task's `due_reminder` is on — the per-task
+  opt-out beside the Due field in the task form.
 
 ## Triggers & schedules
 

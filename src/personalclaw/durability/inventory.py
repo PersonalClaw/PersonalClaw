@@ -811,6 +811,17 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_APPEND_DEDUP,
         help="notification history",
     ),
+    StateEntry(
+        id="task_due_notices",
+        kind=KIND_JSON_FILE,
+        path="task_due_notices.json",
+        domain=DOMAIN_PLATFORM,
+        # One document, synced as one row: a home without it adopts the other side's (and does
+        # not announce again what that side already did), and a copy on both sides keeps the
+        # local one. A lost entry costs one repeated reminder, and entries expire on their own.
+        merge=MERGE_LWW,
+        help="which task due dates have had their notice (tasks/due_notices.py)",
+    ),
     # ── config ──
     StateEntry(
         id="config",
