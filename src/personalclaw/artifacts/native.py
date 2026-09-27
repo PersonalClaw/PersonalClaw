@@ -34,6 +34,7 @@ from personalclaw.artifacts.models import (
     MAX_VERSIONS,
     Artifact,
     ArtifactEvent,
+    ArtifactStaleWrite,
     ArtifactVersionConflict,
     clean_event_metadata,
     clean_tags,
@@ -43,12 +44,14 @@ from personalclaw.artifacts.models import (
     mime_for_ext,
     normalize_kind,
     normalize_source,
+    redacted,
     slugify,
 )
 from personalclaw.artifacts.provider import ArtifactProvider
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.config import loader as config_loader
 from personalclaw.security import is_sensitive_path
+from personalclaw.stale_write import revision_of
 
 
 def config_dir() -> Path:
@@ -276,6 +279,19 @@ class NativeArtifactProvider(ArtifactProvider):
 
     def _current_content(self, slug: str) -> str | None:
         return self._read_text(self._artifact_dir(slug) / "current.html")
+
+    def _live_body(self, art: Artifact) -> str | None:
+        """The body a live read of *art* shows — what ``get()`` hands out as ``content``.
+
+        The raw-URL ref for a binary kind; for a file-backed artifact the file it points at, or
+        ``current.html`` when that file cannot be read; else ``current.html``. One definition,
+        because a body save's precondition (``update(expect_revision=…)``) must be compared
+        against exactly what the read it was built from showed.
+        """
+        if is_binary_kind(art.kind):
+            return self._raw_ref(art.slug)
+        live = self._try_read_source_path(art.source_path) if art.source_path else None
+        return live if live is not None else self._current_content(art.slug)
 
     def _version_content(self, slug: str, version: int) -> str | None:
         return self._read_text(self._artifact_dir(slug) / "versions" / f"v{version}.html")
@@ -508,9 +524,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 art.live_dirty = False
                 return art
             # Live view: disk for file-backed, else current.html.
-            live = self._try_read_source_path(art.source_path) if art.source_path else None
-            if live is None:
-                live = self._current_content(slug)
+            live = self._live_body(art)
             art.content = live
             nums = self._list_version_numbers(slug)
             latest_snap = self._version_content(slug, nums[-1]) if nums else None
@@ -814,6 +828,9 @@ class NativeArtifactProvider(ArtifactProvider):
         collection: str | None = None,
         event_metadata: dict | None = None,
         source_path: str | None = None,
+        expect_revision: str | None = None,
+        add_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        remove_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
     ) -> Artifact | None:
         # Validate event type BEFORE any side effect so an invalid type can't
         # orphan a versions/vN.html. 'reverted' is NOT an update event — it has its
@@ -828,6 +845,13 @@ class NativeArtifactProvider(ArtifactProvider):
             if art is None:
                 return None
             _refuse_if_readonly(art)
+            # 🔴 A BODY BUILT FROM A STALE COPY IS REFUSED BEFORE ANYTHING IS WRITTEN — under the
+            # lock the agent's `artifact_update` (an executor thread) and every other writer take,
+            # so nothing can land between this comparison and the write below.
+            if expect_revision is not None:
+                current = redacted(self._live_body(art))
+                if revision_of(current) != expect_revision:
+                    raise ArtifactStaleWrite(slug, current)
 
             # Metadata-only updates never bump a version or snapshot.
             meta_changed = False
@@ -840,6 +864,13 @@ class NativeArtifactProvider(ArtifactProvider):
             if tags is not None:
                 art.tags = clean_tags(tags)
                 meta_changed = True
+            if add_tags or remove_tags:
+                dropped = set(clean_tags(remove_tags))
+                kept = [t for t in art.tags if t not in dropped]
+                edited = clean_tags(kept + clean_tags(add_tags))
+                if edited != art.tags:
+                    art.tags = edited
+                    meta_changed = True
             if collection is not None:
                 art.collection = collection.strip()[:MAX_NAME_LEN]
                 meta_changed = True

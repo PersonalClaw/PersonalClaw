@@ -163,7 +163,9 @@ class FakeTaskProvider(TaskProvider):
     async def create_task(self, **fields: object) -> Task:
         raise NotImplementedError("read-only fake")
 
-    async def update_task(self, task_id: str, **fields: object) -> Task | None:
+    async def update_task(
+        self, task_id: str, *, base_revision: str | None = None, **fields: object
+    ) -> Task | None:
         raise NotImplementedError("read-only fake")
 
     async def delete_task(self, task_id: str) -> bool:

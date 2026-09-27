@@ -29,6 +29,7 @@ import shutil
 import time
 from typing import Any
 
+from personalclaw.stale_write import revision_of
 from personalclaw.workflows import (
     attention,
     blocks,
@@ -1008,6 +1009,9 @@ def status(run_id: str) -> dict[str, Any]:
         # user overrode; an empty dict means "kind/template defaults throughout". The run
         # view's prelaunch policy editor renders and writes this (seam 4f).
         policy_overrides=run.policy_overrides,
+        # The overlay's revision: the editor PUTs the WHOLE overlay, so the write names the
+        # revision of the copy it was built from (`personalclaw/stale_write.py`).
+        revisions={"policy_overrides": revision_of(run.policy_overrides)},
         # A run started as a loop is headed by the loop's name, not by its template's — the run
         # page was titled "general-project" for a loop the user had just named.
         loop_kind=run.loop_kind,
@@ -1070,6 +1074,8 @@ def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> dict[str, An
         run_id=updated.id,
         status=updated.status.value,
         policy_overrides=updated.policy_overrides,
+        # What the editor's next write names — the same field `status` reports it under.
+        revisions={"policy_overrides": revision_of(updated.policy_overrides)},
     )
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { AlertTriangle, Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, BookOpenText, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -7,7 +7,10 @@ import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { ChipInput, FieldError } from '../../ui/forms'
-import type { KnowledgeAnnotation, KnowledgeItem, IntentOutcome, IntentOutcomeField, KnowledgeStaleness } from '../../lib/api'
+import type { KnowledgeAnnotation, KnowledgeItem, KnowledgeItemEdit, IntentOutcome, IntentOutcomeField, KnowledgeStaleness } from '../../lib/api'
+import { rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { ReadingView } from './ReadingView'
 import { readingTimeLabel } from './readingTime'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
@@ -25,6 +28,12 @@ function gistFence(code: string, lang?: string): string {
   const fence = '`'.repeat(Math.max(3, longest + 1))
   return `${fence}${(lang || '').trim()}\n${code}\n${fence}`
 }
+
+/** The editable fields of an item, as the editor seeds its draft from them. */
+function draftOf(src: KnowledgeItem) {
+  return { title: src.title ?? '', content: src.content ?? '', summary: src.summary ?? '', tags: src.tags ?? [], item_type: src.item_type ?? src.type ?? 'note', gist_language: src.gist_language ?? '', url: src.url ?? '' }
+}
+type Draft = ReturnType<typeof draftOf>
 
 /** Knowledge item inspector: type-aware preview (markdown / link card / inline
  *  image·audio·video / code gist / doc), extracted content, AI insights,
@@ -104,20 +113,33 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   const [editing, setEditing] = useState(false)
   // Tag autocomplete, fetched lazily when the user first enters edit mode.
   const [knownTags, setKnownTags] = useState<string[]>([])
-  // Reseed the draft from the freshest FULL item before editing — the list seeds a
-  // truncated content preview (content_truncated), so editing must never start from
-  // (and save) a clipped body. Fetch full content first, then open the editor.
+  const [draft, setDraft] = useState<Draft>(() => draftOf(item))
+  // The draft as it was SEEDED, and its body with the revision of the read it came from. A save
+  // sends only what the user changed from THIS — not from `full`, which the ingest stream refreshes
+  // under an open editor: diffed against that, an untouched field reads as changed and its stale
+  // value is written back (a title the pipeline just promoted, reverted by a tag edit). Refs, so the
+  // Save published into the page header always reads the current seed.
+  const seeded = useRef<Draft>(draftOf(item))
+  const bodyBase = useRef<Revisioned<string>>({ value: item.content ?? '', revision: item.content_revision ?? '' })
+  const seedFrom = useCallback((src: KnowledgeItem) => {
+    const next = draftOf(src)
+    seeded.current = next
+    bodyBase.current = { value: next.content, revision: src.content_revision ?? '' }
+    setDraft(next)
+  }, [])
+  // Reseed the draft from a FULL detail read before editing — the list seeds a truncated
+  // content preview (content_truncated), and only the detail read carries the body's revision —
+  // so editing never starts from (and saves) a clipped body, or one no save can name the base of.
   const startEdit = async () => {
     if (!knownTags.length) api.knowledgeTags().then(setKnownTags).catch(() => {})
     let src = full
-    if (src.content_truncated || item.content_truncated) {
+    if (src.content_revision === undefined || src.content_truncated || item.content_truncated) {
       const fresh = await getKnowledge(item.id)
       if (fresh) { src = fresh; setFull(fresh) }
     }
-    setDraft({ title: src.title ?? '', content: src.content ?? '', summary: src.summary ?? '', tags: src.tags ?? [], item_type: src.item_type ?? src.type ?? 'note', gist_language: src.gist_language ?? '', url: src.url ?? '' })
+    seedFrom(src)
     setEditing(true)
   }
-  const [draft, setDraft] = useState({ title: item.title ?? '', content: item.content ?? '', summary: item.summary ?? '', tags: item.tags ?? [], item_type: item.item_type ?? item.type ?? 'note', gist_language: item.gist_language ?? '', url: item.url ?? '' })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const tm = resolveType(full)
@@ -144,7 +166,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   useEffect(() => {
     let alive = true
     setEditing(false); setItemIntents([]); setNodePhases({}); setIngestGraph(null)
-    getKnowledge(item.id).then((d) => { if (alive && d) { setFull(d); setProcStatus(d.processing_status ?? ''); setDraft({ title: d.title ?? '', content: d.content ?? '', summary: d.summary ?? '', tags: d.tags ?? [], item_type: d.item_type ?? d.type ?? 'note', gist_language: d.gist_language ?? '', url: d.url ?? '' }) } }).catch(() => setFull(item))
+    getKnowledge(item.id).then((d) => { if (alive && d) { setFull(d); setProcStatus(d.processing_status ?? ''); seedFrom(d) } }).catch(() => setFull(item))
     api.knowledgeItemIntents(item.id).then((r) => { if (alive) setItemIntents(r.outcomes || []) }).catch(() => {})
     api.knowledgeItemGraph(item.id).then((g) => { if (alive) setIngestGraph(g) }).catch(() => {})
     return () => { alive = false }
@@ -201,41 +223,108 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     } catch (e) { setErr(e instanceof Error ? e.message : 'Insight generation failed') } finally { setGenning(false) }
   }
 
+  // The other fields a body save carries, and whether its write ran — set just before the save,
+  // read by `write` and `onSaved`, which a save re-applied from the notice runs again later.
+  const rider = useRef<KnowledgeItemEdit>({})
+  const wroteBody = useRef(false)
+  // The body as last seen stored, with its revision: what a body save wrote, or the re-read a
+  // refusal made. It is the editor's new base once a body save lands.
+  const stored = useRef<Revisioned<string>>({ value: '', revision: '' })
+
+  /** A save landed: fold what it changed into the item on screen and leave the editor. */
+  const settle = (fields: KnowledgeItemEdit, body: Revisioned<string> | null, reenrich: boolean) => {
+    // The transient reingest flag is not a field, and the tag edits apply to the tags on screen
+    // exactly as the gateway applied them to the stored ones.
+    const { reingest: _r, add_tags: added = [], remove_tags: removed = [], ...applied } = fields
+    setFull((f) => {
+      const kept = (f.tags ?? []).filter((t) => !removed.includes(t))
+      return {
+        ...f, ...applied, tags: [...kept, ...added.filter((t) => !kept.includes(t))],
+        ...(body ? { content: body.value, content_revision: body.revision } : {}),
+      }
+    })
+    if (reenrich) setProcStatus('queued')  // reflect the re-enqueue
+    onChanged(); setEditing(false)
+  }
+
+  // 🔴 THE BODY IS SAVED WHOLE, over the revision this editor read it at. The agent's
+  // `knowledge_update`, the ingest pipeline and a rename's relink all rewrite item bodies, and so can
+  // another tab; a save from an editor opened before any of them used to write its copy over that
+  // change without a word. A stale copy is now refused and KEPT, and the edit — a three-way line
+  // merge against the copy it started from — is re-applied on top of what is stored
+  // (`ui/StaleWriteNotice`). The scalar fields and the tag edits need no revision: they ride along.
+  const guard = useStaleWriteGuard<string>({
+    read: () => api.knowledgeItem(item.id).then((d) => {
+      stored.current = { value: d.content ?? '', revision: d.content_revision ?? '' }
+      return stored.current
+    }),
+    write: async (next, base) => {
+      const r = await api.saveKnowledgeItem(item.id, { ...rider.current, content: next }, base)
+      stored.current = { value: next, revision: r.content_revision }
+      wroteBody.current = true
+    },
+    onSaved: () => {
+      // What is stored now is this editor's base: a save that fails below, or the next one, must
+      // not be refused for a change this editor itself made.
+      const body = stored.current
+      bodyBase.current = body
+      seeded.current = { ...seeded.current, content: body.value }
+      const fields = rider.current
+      const reingests = fields.reingest !== false
+      if (wroteBody.current) { settle(fields, body, reingests); return }
+      // The stored body already said this, so nothing was written — and so nothing carried the
+      // other fields this save changed. Send them now, or they would be dropped without a word.
+      const { reingest: _r, ...rest } = fields
+      if (Object.keys(rest).length === 0) { settle(fields, body, false); return }
+      updateKnowledge(item.id, fields)
+        .then(() => settle(fields, body, 'url' in fields && reingests))
+        .catch((e) => setErr(e instanceof Error ? e.message : 'Save failed'))
+    },
+    onDiscard: () => {
+      // Dropping the change shows what is stored: the editor reopens on a fresh read.
+      getKnowledge(item.id).then((d) => {
+        if (d) { setFull(d); seedFrom(d) } else setErr('Couldn’t re-read this item — reload the page to see what is stored.')
+      })
+    },
+  })
+
   async function save() {
     setSaving(true); setErr('')
     try {
+      const seed = seeded.current
       // Send only the fields the user actually changed. Sending everything would
       // needlessly re-enrich on an unchanged body, and would trip journal immutability
       // (the backend rejects a title/content key on a past-day journal even if its
       // value is identical) when the user only tweaked tags.
-      const fields: Record<string, unknown> = {}
-      if (draft.title !== (full.title ?? '')) fields.title = draft.title
-      if (draft.content !== (full.content ?? '')) fields.content = draft.content
-      if (draft.url !== (full.url ?? '')) fields.url = draft.url
-      if (draft.summary !== (full.summary ?? '')) fields.summary = draft.summary
-      if (draft.item_type !== (full.item_type ?? full.type)) { fields.type = draft.item_type; fields.item_type = draft.item_type }
-      if ((draft.item_type === 'gist') && draft.gist_language !== (full.gist_language ?? '')) fields.gist_language = draft.gist_language
-      // Tags: compare as SETS, not ordered lists. Tags are stored as rows and read back
-      // in name order, so the order the user typed them in is not preserved — an ordered
-      // comparison would see every save as a change and fire a pointless PATCH (which,
-      // because a tag write re-syncs the search index, is not free).
-      const sameTags = (a: string[], b: string[]) => {
-        if (a.length !== b.length) return false
-        const sortedB = [...b].sort()
-        return [...a].sort().every((t, i) => t === sortedB[i])
-      }
-      if (!sameTags(draft.tags ?? [], full.tags ?? [])) fields.tags = draft.tags
-      if (Object.keys(fields).length === 0) { setEditing(false); return }
+      const fields: KnowledgeItemEdit = {}
+      if (draft.title !== seed.title) fields.title = draft.title
+      if (draft.url !== seed.url) fields.url = draft.url
+      if (draft.summary !== seed.summary) fields.summary = draft.summary
+      if (draft.item_type !== seed.item_type) { fields.type = draft.item_type; fields.item_type = draft.item_type }
+      if ((draft.item_type === 'gist') && draft.gist_language !== seed.gist_language) fields.gist_language = draft.gist_language
+      // Tags as the names added and the names removed, each applied to the tags stored when the
+      // save lands — so a tag added elsewhere since survives it. Compared as SETS: tags are stored
+      // as rows and read back in name order, so the order the user typed them in is not preserved,
+      // and an ordered comparison would see every save as a change.
+      const added = draft.tags.filter((t) => !seed.tags.includes(t))
+      const removed = seed.tags.filter((t) => !draft.tags.includes(t))
+      if (added.length) fields.add_tags = added
+      if (removed.length) fields.remove_tags = removed
+      const bodyChanged = draft.content !== seed.content
+      if (!bodyChanged && Object.keys(fields).length === 0) { setEditing(false); return }
       // Re-ingest control: when off, tell the backend NOT to re-run enrichment even
       // though content changed (a quick fix that shouldn't burn a model pass).
-      const changedBody = 'content' in fields || 'url' in fields
+      const changedBody = bodyChanged || 'url' in fields
       if (changedBody && !reingest) fields.reingest = false
+      if (bodyChanged) {
+        rider.current = fields
+        wroteBody.current = false
+        // Landed → `onSaved` settles it. Refused → the notice holds it and the draft stays open.
+        await guard.save(bodyBase.current, draft.content, rebaseText(bodyBase.current.value, draft.content))
+        return
+      }
       await updateKnowledge(item.id, fields)
-      // Optimistic local merge must not include the transient reingest flag.
-      const { reingest: _r, ...applied } = fields
-      setFull((f) => ({ ...f, ...applied }))
-      if (changedBody && reingest) setProcStatus('queued')  // reflect the re-enqueue
-      onChanged(); setEditing(false)
+      settle(fields, null, changedBody && reingest)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
@@ -321,8 +410,12 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       <HeaderControl icon={Trash2} label="Delete" priority="low" danger onClick={del} />
       {editing ? (
         <>
-          <HeaderControl icon={X} label="Cancel" onClick={() => { setEditing(false); setErr('') }} />
-          <HeaderControl icon={Check} label={saving ? 'Saving…' : 'Save'} variant="primary" priority="primary" onClick={save} disabled={saving} />
+          {/* Cancel drops the edit — and with it any refused copy the notice is holding, which
+              would otherwise greet the next edit with a change the user already walked away from. */}
+          <HeaderControl icon={X} label="Cancel" onClick={() => { if (guard.conflict) guard.discard(); setEditing(false); setErr('') }} />
+          {/* Off while a refused save is pending: the notice is where that one is settled, and a
+              second save would be refused the same way. */}
+          <HeaderControl icon={Check} label={saving ? 'Saving…' : 'Save'} variant="primary" priority="primary" onClick={save} disabled={saving || guard.conflict !== null} />
         </>
       ) : (
         <HeaderControl icon={Pencil} label="Edit" variant="primary" priority="primary" onClick={startEdit} />
@@ -382,14 +475,16 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     onHeader({ wand: wandBtn, actions: actionCluster, editing })
     return () => onHeader(null)
     // `draft`, `full` and `reingest` MUST be deps: the published Save button closes over
-    // save(), which reads all three. Without them the header keeps a closure from
-    // edit-open time where draft===full → save() sees zero changed fields and silently
-    // discards the edit. (Deps are still hand-picked — actionCluster/wandBtn are fresh
-    // objects every render; listing them would republish unconditionally and loop.)
+    // save(), which reads `draft` and `reingest`, and the flag controls read `full`. Without
+    // them the header keeps a closure from edit-open time where the draft is still the seed →
+    // save() sees zero changed fields and silently discards the edit. (Deps are still
+    // hand-picked — actionCluster/wandBtn are fresh objects every render; listing them would
+    // republish unconditionally and loop.)
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // `reading` joins them for the same reason: the published Reading-mode control reads it
     // for `active`, so without it the header would keep showing the pre-toggle state.
-  }, [full, draft, reingest, aiTitleAvailable, detailsCount, detailsOpen, editing, saving, reading])
+    // `guard.conflict` for the same reason: the published Save is off while a refusal is pending.
+  }, [full, draft, reingest, aiTitleAvailable, detailsCount, detailsOpen, editing, saving, reading, guard.conflict])
 
   // Fleeting notes are content-only (auto-titled) and journals are date-driven — neither
   // exposes an editable title (matches the create flow + journal immutability).
@@ -428,53 +523,59 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     return (
       <>
       <div className="flex h-full min-h-0 flex-col gap-l">
+        <StaleWriteNotice guard={guard} what="This item" className="shrink-0" />
         {err && <FieldError className="shrink-0">{err}</FieldError>}
-        {titleEditable && (
-          <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} autoFocus placeholder="Title"
-            className="shrink-0 w-full bg-transparent text-on-surface outline-none border-b border-outline-variant/40 pb-1.5 text-[1.0625rem] focus:border-primary" data-type="title-l" />
-        )}
-        {draft.item_type === 'gist' && (
-          <div className="shrink-0 flex items-center gap-2">
-            <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Language</span>
-            <select value={draft.gist_language || ''} onChange={(e) => setDraft({ ...draft, gist_language: e.target.value })}
-              data-type="body-s" className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
-              <option value="">(none)</option>
-              {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-          </div>
-        )}
-        {/* Bookmark → its URL is the editable field (the page is re-scraped on save). */}
-        {tm.key === 'bookmark' && (
-          <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
-            <ExternalLink size={15} className="shrink-0 text-on-surface-low" />
-            <input value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://…"
-              data-type="body-m" className="flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
-          </div>
-        )}
-        {/* Tags edited inline, in the same place the preview shows them. */}
-        <div className="shrink-0"><ChipInput values={draft.tags} onChange={(v) => setDraft({ ...draft, tags: v })} placeholder="Add a tag, Enter" suggestions={knownTags} /></div>
-        {/* The editable body — only TEXT types have a user-authored body. Bookmark's
-            body is scraped (URL edited above); media/document content is an extracted
-            artifact of the file (not editable) → show the read-only preview so the user
-            still sees what they're titling/tagging. */}
-        {journalLocked && <p data-type="caption" className="shrink-0 text-on-surface-low">This journal entry is immutable — its day has passed. You can still curate tags, pin, and archive.</p>}
-        {draft.item_type === 'gist' ? (
-          // Gists get the full Monaco code editor (syntax highlighting by language),
-          // not a raw textarea — same editor surface as the Files page.
-          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container">
-            <GistEditor value={draft.content} onChange={(v) => setDraft({ ...draft, content: v })} language={draft.gist_language} />
-          </div>
-        ) : tm.group === 'text' ? (
-          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
-            <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} readOnly={journalLocked}
-              placeholder="Markdown supported…"
-              data-type="body-s" className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
-          </div>
-        ) : (
-          <div className="relative flex min-h-0 flex-1 overflow-hidden">
-            <Preview item={full} tm={tm} prominent />
-          </div>
-        )}
+        {/* Frozen while a refused save is held: an edit made now would be left out of the change
+            Reload and reapply puts back. */}
+        <HeldChange guard={guard}>
+          {titleEditable && (
+            <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} autoFocus placeholder="Title"
+              className="shrink-0 w-full bg-transparent text-on-surface outline-none border-b border-outline-variant/40 pb-1.5 text-[1.0625rem] focus:border-primary" data-type="title-l" />
+          )}
+          {draft.item_type === 'gist' && (
+            <div className="shrink-0 flex items-center gap-2">
+              <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Language</span>
+              <select value={draft.gist_language || ''} onChange={(e) => setDraft({ ...draft, gist_language: e.target.value })}
+                data-type="body-s" className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+                <option value="">(none)</option>
+                {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+          )}
+          {/* Bookmark → its URL is the editable field (the page is re-scraped on save). */}
+          {tm.key === 'bookmark' && (
+            <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
+              <ExternalLink size={15} className="shrink-0 text-on-surface-low" />
+              <input value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://…"
+                data-type="body-m" className="flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
+            </div>
+          )}
+          {/* Tags edited inline, in the same place the preview shows them. */}
+          <div className="shrink-0"><ChipInput values={draft.tags} onChange={(v) => setDraft({ ...draft, tags: v })} placeholder="Add a tag, Enter" suggestions={knownTags} /></div>
+          {/* The editable body — only TEXT types have a user-authored body. Bookmark's
+              body is scraped (URL edited above); media/document content is an extracted
+              artifact of the file (not editable) → show the read-only preview so the user
+              still sees what they're titling/tagging. */}
+          {journalLocked && <p data-type="caption" className="shrink-0 text-on-surface-low">This journal entry is immutable — its day has passed. You can still curate tags, pin, and archive.</p>}
+          {draft.item_type === 'gist' ? (
+            // Gists get the full Monaco code editor (syntax highlighting by language),
+            // not a raw textarea — same editor surface as the Files page.
+            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container">
+              <GistEditor value={draft.content} onChange={(v) => setDraft({ ...draft, content: v })} language={draft.gist_language}
+                readOnly={guard.conflict !== null} />
+            </div>
+          ) : tm.group === 'text' ? (
+            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
+              <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} readOnly={journalLocked}
+                placeholder="Markdown supported…"
+                data-type="body-s" className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
+            </div>
+          ) : (
+            <div className="relative flex min-h-0 flex-1 overflow-hidden">
+              <Preview item={full} tm={tm} prominent />
+            </div>
+          )}
+        </HeldChange>
       </div>
       {editBar && <div className="-mx-l shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">{editBar}</div>}
       </>

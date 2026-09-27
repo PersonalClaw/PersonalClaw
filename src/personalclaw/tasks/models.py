@@ -466,6 +466,30 @@ class Task:
         ]
 
 
+#: The two task fields a revision leaves out, because they move without anyone editing the task:
+#: ``updated_at`` is restamped by EVERY write, one that changes nothing included, and ``project``
+#: is re-derived from the task list on every read (a project rename moves it; no write sets it).
+#: Covering either would refuse a save for a difference the user could never see.
+_UNREVISIONED_TASK_FIELDS: frozenset[str] = frozenset({"updated_at", "project"})
+
+
+def task_document(task: Task) -> dict[str, Any]:
+    """The task as a whole-form save replaces it: its wire dict minus the fields no edit makes.
+
+    What :func:`task_revision` digests and what the store compares a write's base against, so
+    the value a read hands out and the value a write is checked against are built one way.
+    """
+    return {k: v for k, v in task.to_dict().items() if k not in _UNREVISIONED_TASK_FIELDS}
+
+
+def task_revision(task: Task) -> str:
+    """The revision every read of *task* reports, and a whole-form save names in ``If-Match``
+    (``personalclaw/stale_write.py``)."""
+    from personalclaw.stale_write import revision_of
+
+    return revision_of(task_document(task))
+
+
 @dataclass
 class TaskComment:
     id: str

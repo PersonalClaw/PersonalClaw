@@ -567,28 +567,33 @@ export function TextRow({ label, hint, cfg, field, patch, placeholder, mono }: {
  *
  *  Declared HERE rather than a second time in a second panel: `AgentDefaultsPanel` had the only
  *  copy, module-private, and `panelFieldNames.test.tsx` already anticipated "a second call site".
- *  Every edit commits the WHOLE list — the PATCH allowlist takes a `str_list`, not a delta — so a
- *  removed chip and an added one travel the same way and neither can half-apply.
+ *
+ *  🔴 AN EDIT IS ONE NAME IN OR OUT, NEVER THE LIST. This used to commit the whole list, built from
+ *  the panel's copy — so a second tab opened before a path was added here dropped that path the
+ *  next time it touched any chip, with nothing on either screen to say so. `editList` receives the
+ *  list as this field would leave it, and the panel sends only the difference
+ *  (`api.saveListEdits`), which the gateway applies to what is stored at that moment.
  *
  *  `placeholder` is a prop because the add input is the only vendor-specific pixel: "Add path…"
  *  and "Add host…" are the same control over different nouns. The `aria-label` is NOT a prop —
  *  it derives from `label`, so a raw input inside a `Field` (which cannot claim the Field's
  *  published label; only the form-family components read `FieldLabelCtx`) still names itself
  *  correctly at every call site. */
-export function StrListField({ label, hint, cfg, field, patch, placeholder = 'Add…' }: {
+export function StrListField({ label, hint, cfg, field, editList, placeholder = 'Add…' }: {
   label: string
   hint?: string
   cfg: Record<string, unknown>
   field: string
-  /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
-  patch: (k: string, v: never, cb: () => void, label?: string) => void
+  /** `(key, next, onSaved, label)` — the panel's list writer: it sends the edits from the stored
+   *  list to `next`, never `next` itself. */
+  editList: (k: string, next: string[], cb: () => void, label?: string) => void
   placeholder?: string
 }) {
   const [saved, setSaved] = useState(false)
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
   const list = Array.isArray(cfg[field]) ? (cfg[field] as string[]) : []
   const [adding, setAdding] = useState('')
-  const commit = (next: string[]) => patch(field, next as never, flash, label)
+  const commit = (next: string[]) => editList(field, next, flash, label)
   const add = () => { commit([...list, adding.trim()]); setAdding('') }
   return (
     <Field label={label} hint={hint}>

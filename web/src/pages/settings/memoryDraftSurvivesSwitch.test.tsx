@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { StudioDocEditor } from './MemoryPanel'
+import { StudioDocEditor, type DocDraft } from './MemoryPanel'
 
 /** An unsaved memory-doc edit is not thrown away (issue 525).
  *
@@ -23,16 +23,17 @@ const saveMemoryDoc = vi.fn()
 
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
-  return { ...actual, api: { ...actual.api, memoryDoc: (w: string) => memoryDoc(w), saveMemoryDoc: (w: string, c: string) => saveMemoryDoc(w, c) } }
+  return { ...actual, api: { ...actual.api, memoryDoc: (w: string) => memoryDoc(w), saveMemoryDoc: (w: string, c: string, base: string) => saveMemoryDoc(w, c, base) } }
 })
 
 beforeEach(() => {
-  memoryDoc.mockReset().mockResolvedValue(DOC)
-  saveMemoryDoc.mockReset().mockResolvedValue(undefined)
+  memoryDoc.mockReset().mockResolvedValue({ value: DOC, revision: 'r1' })
+  // The gateway answers a save with what it stored and that copy's revision.
+  saveMemoryDoc.mockReset().mockImplementation((_w: string, c: string) => Promise.resolve({ value: c, revision: 'r-saved' }))
 })
 afterEach(() => vi.restoreAllMocks())
 
-function mount(drafts: Map<string, string>, which: 'preferences' | 'projects' | 'history' = 'preferences') {
+function mount(drafts: Map<string, DocDraft>, which: 'preferences' | 'projects' | 'history' = 'preferences') {
   return render(<StudioDocEditor which={which} onSaved={() => {}} drafts={drafts} />)
 }
 
@@ -45,7 +46,7 @@ const text = () => (box() as HTMLTextAreaElement).value
 describe('switching Studio items keeps the edit', () => {
   it('restores the draft after the editor is unmounted and remounted', async () => {
     // The measured repro: type, leave (unmount), come back.
-    const drafts = new Map<string, string>()
+    const drafts = new Map<string, DocDraft>()
     const first = mount(drafts)
     await waitFor(() => expect(box()).toHaveValue(DOC))
     await userEvent.type(box(), 'zz75 ABANDONED EDIT')
@@ -60,7 +61,7 @@ describe('switching Studio items keeps the edit', () => {
 
   it('keeps each doc its own draft', async () => {
     // Three docs share one cache; a Preferences edit must not appear under Projects.
-    const drafts = new Map<string, string>()
+    const drafts = new Map<string, DocDraft>()
     const first = mount(drafts, 'preferences')
     await waitFor(() => expect(box()).toHaveValue(DOC))
     await userEvent.type(box(), 'PREFS ONLY')
@@ -73,15 +74,16 @@ describe('switching Studio items keeps the edit', () => {
   })
 
   it('re-reads the file on every mount, so a restored draft is measured against CURRENT content', async () => {
-    // Only the draft is cached. If the baseline were cached too, a Save would silently overwrite a
-    // change made elsewhere while this doc was off screen.
-    const drafts = new Map<string, string>()
+    // The dirty baseline is the fresh read, never a cached one: "Unsaved changes" compares the draft
+    // with what is on disk NOW. (The copy the draft was typed on rides along only as the base its
+    // save names — see the stale-write tests below.)
+    const drafts = new Map<string, DocDraft>()
     const first = mount(drafts)
     await waitFor(() => expect(box()).toHaveValue(DOC))
     await userEvent.type(box(), 'MINE')
     first.unmount()
 
-    memoryDoc.mockResolvedValue('# rewritten elsewhere\n')
+    memoryDoc.mockResolvedValue({ value: '# rewritten elsewhere\n', revision: 'r2' })
     const second = mount(drafts)
     await waitFor(() => expect(text()).toContain('MINE'))
     expect(memoryDoc).toHaveBeenCalledTimes(2)
@@ -91,7 +93,7 @@ describe('switching Studio items keeps the edit', () => {
 
   it('holds nothing once the text matches the file again', async () => {
     // Typing back to the original is not an unsaved edit, so the cache must not claim one.
-    const drafts = new Map<string, string>()
+    const drafts = new Map<string, DocDraft>()
     const view = mount(drafts)
     await waitFor(() => expect(box()).toHaveValue(DOC))
     await userEvent.type(box(), 'x')
@@ -103,26 +105,26 @@ describe('switching Studio items keeps the edit', () => {
   })
 
   it('drops the cached draft once it is saved', async () => {
-    const drafts = new Map<string, string>()
+    const drafts = new Map<string, DocDraft>()
     const view = mount(drafts)
     await waitFor(() => expect(box()).toHaveValue(DOC))
     await userEvent.type(box(), 'SAVE ME')
     await userEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() => expect(drafts.has('preferences')).toBe(false))
-    expect(saveMemoryDoc).toHaveBeenCalledWith('preferences', expect.stringContaining('SAVE ME'))
+    expect(saveMemoryDoc).toHaveBeenCalledWith('preferences', expect.stringContaining('SAVE ME'), 'r1')
     view.unmount()
   })
 
   it('KEEPS the cached draft when the save is refused', async () => {
     // A failed save must not become the same data loss by another route.
     saveMemoryDoc.mockRejectedValue(new Error('nope'))
-    const drafts = new Map<string, string>()
+    const drafts = new Map<string, DocDraft>()
     const view = mount(drafts)
     await waitFor(() => expect(box()).toHaveValue(DOC))
     await userEvent.type(box(), 'KEEP ME')
     await userEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
-    expect(drafts.get('preferences')).toContain('KEEP ME')
+    expect(drafts.get('preferences')?.text).toContain('KEEP ME')
     view.unmount()
   })
 })
@@ -146,7 +148,7 @@ const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 describe('the host owns the cache and the guard has one implementation', () => {
   it('MemoryStudio holds the cache, because the editor is what unmounts', () => {
     const code = read('pages/settings/MemoryPanel.tsx')
-    expect(code).toMatch(/const docDrafts = useRef\(new Map<string, string>\(\)\)/)
+    expect(code).toMatch(/const docDrafts = useRef\(new Map<string, DocDraft>\(\)\)/)
     expect(code, 'and hands it down').toMatch(/docDrafts=\{docDrafts\.current\}/)
     expect(code, 'through the inspector to the editor').toMatch(/drafts=\{docDrafts\}/)
   })

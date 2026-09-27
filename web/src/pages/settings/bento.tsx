@@ -240,8 +240,10 @@ export function CardSkeleton({ rows = 2 }: { rows?: number }) {
 // shows a brief spinner while its async mutation is in flight.
 
 /** A labelled inline switch. `onToggle` may be async; a spinner shows while it runs. */
-export function Switch({ on, onToggle, label, disabled }: {
+export function Switch({ on, onToggle, label, disabled, disabledReason }: {
   on: boolean; onToggle: (next: boolean) => void | Promise<void>; label?: string; disabled?: boolean
+  /** Why the switch is off, when `disabled` — forwarded to `Toggle`, which keeps it reachable. */
+  disabledReason?: string
 }) {
   const [busy, setBusy] = useState(false)
   const run = async () => {
@@ -256,7 +258,7 @@ export function Switch({ on, onToggle, label, disabled }: {
   // stop would preempt the inner switch button, so its onClick would never fire.
   return (
     <span className="pointer-events-auto relative inline-flex" onClick={(e) => e.stopPropagation()}>
-      <Toggle on={on} onChange={run} label={label} disabled={disabled || busy} size="sm" />
+      <Toggle on={on} onChange={run} label={label} disabled={disabled || busy} disabledReason={disabled ? disabledReason : undefined} size="sm" />
       {busy && (
         <span className="pointer-events-none absolute inset-0 grid place-items-center">
           <Loader2 size={9} className="animate-spin text-on-surface-low" />

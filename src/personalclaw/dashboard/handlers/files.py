@@ -24,6 +24,7 @@ from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.file_view import file_as_read, read_head, whole_text
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
@@ -35,6 +36,7 @@ from personalclaw.security import (
     redact_exfiltration_urls,
     system_subtrees,
 )
+from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.validation import (
     FILE_READ_SCHEMA,
     ValidationError,
@@ -1412,6 +1414,11 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
     a chat file-mention that opens the side panel can also live-watch the file.
     Without identical resolution the panel would fetch content fine but the
     watch would 400 and clobber it.
+
+    Each frame is ``{content, mtime, revision}``: the content exactly as ``file-read`` would
+    serve it now (:func:`file_as_read`), and the revision that read would report — ``null`` when
+    it would be truncated or binary. A page that takes a frame as its new copy of the file needs
+    that revision to save over it.
     """
 
     raw_path = request.query.get("path", "")
@@ -1452,14 +1459,9 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
     await resp.prepare(request)
 
     poll_interval = 1.0
-    read_cap = 512_000
     last_mtime: float = 0.0
     last_content = ""
     resolved_at_start = await asyncio.to_thread(os.path.realpath, path)
-
-    def _read_file(p: str, cap: int) -> str:
-        with open(p, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(cap)
 
     try:
         while not (request.transport is None or request.transport.is_closing()):
@@ -1487,9 +1489,8 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
                     )
                     break
                 try:
-                    content = await asyncio.to_thread(_read_file, current_resolved, read_cap)
-                    content, _ = redact_exfiltration_urls(content)
-                    content, _ = redact_credentials(content)
+                    raw = await asyncio.to_thread(read_head, current_resolved)
+                    content, truncated, binary = file_as_read(raw)
                 except Exception:
                     logger.warning("file-watch read error for %s", path, exc_info=True)
                     await asyncio.sleep(poll_interval)
@@ -1497,7 +1498,8 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
 
                 if content != last_content:
                     last_content = content
-                    payload = json.dumps({"content": content, "mtime": mtime})
+                    revision = None if truncated or binary else revision_of(content)
+                    payload = json.dumps({"content": content, "mtime": mtime, "revision": revision})
                     await resp.write(f"data: {payload}\n\n".encode())
 
             await asyncio.sleep(poll_interval)
@@ -1530,7 +1532,13 @@ async def api_config_fs_watch(request: web.Request) -> web.StreamResponse:
 
 
 async def api_file_read(request: web.Request) -> web.Response:
-    """GET /api/file-read?path=... — read file content for the markdown panel."""
+    """GET /api/file-read?path=... — read file content for the markdown panel.
+
+    Plain text, redacted (:func:`file_as_read`). A whole read carries its revision in the
+    ``ETag`` header — the revision ``POST /api/file-write`` must name in ``If-Match``
+    (`personalclaw/stale_write.py`). A truncated (``X-Truncated``) or binary (``X-Binary``) read
+    carries none.
+    """
     import logging  # noqa: F811
 
     from personalclaw.validation import (  # noqa: F811
@@ -1580,28 +1588,17 @@ async def api_file_read(request: web.Request) -> web.Response:
         )
         return web.Response(status=200)
     try:
-        read_cap = 512_000
-        # Read RAW bytes first so a binary file (a .pyc/.so/.db/image-with-odd-ext) is
-        # DETECTED, not decoded into mojibake (utf-8 errors='replace' turns NUL/binary
-        # into a wall of  that renders as garbage in the editor). A NUL byte in the
-        # head is git's own binary heuristic; signal it so the FE shows a clean
-        # "binary file" placeholder instead of trying to display + edit it.
-        with open(path, "rb") as f:
-            raw = f.read(read_cap + 1)
-        truncated = len(raw) > read_cap
-        raw = raw[:read_cap]
-        if b"\x00" in raw[:8192]:
-            _sel().log_tool_invocation(
-                session_key="dashboard", tool_name="file_read", outcome="success", resources=path
-            )
-            return web.Response(text="", content_type="text/plain", headers={"X-Binary": "true"})
-        content = raw.decode("utf-8", errors="replace")
-        content, _ = redact_exfiltration_urls(content)
-        content, _ = redact_credentials(content)
+        # RAW bytes first, so a binary file (a .pyc/.so/.db/image-with-odd-ext) is DETECTED and
+        # the FE shows a clean "binary file" placeholder instead of an editor full of mojibake.
+        content, truncated, binary = file_as_read(read_head(path))
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_read", outcome="success", resources=path
         )
-        headers = {"X-Truncated": "true"} if truncated else {}
+        if binary:
+            return web.Response(text="", content_type="text/plain", headers={"X-Binary": "true"})
+        # The body IS the text, so the revision rides beside it as the ETag. A truncated read
+        # names none: it is not a copy of the file, so nothing may be saved over the file from it.
+        headers = {"X-Truncated": "true"} if truncated else {"ETag": f'"{revision_of(content)}"'}
         return web.Response(text=content, content_type="text/plain", headers=headers)
     except Exception:
         logging.getLogger(__name__).exception("file_read failed for %s", path)
@@ -1707,7 +1704,16 @@ async def api_file_raw(request: web.Request) -> web.Response:
 
 
 async def api_file_write(request: web.Request) -> web.Response:
-    """POST /api/file-write — write file content from the markdown panel."""
+    """POST /api/file-write — write file content from the markdown panel.
+
+    The body replaces the WHOLE file, built from the copy the page read — and the agent
+    (``write_file``/``edit_file``), an artifact's write-through or another tab may have changed the
+    file since. So the request names the revision it was built from in ``If-Match``: the ``ETag``
+    of the ``file-read``, or the ``revision`` of the ``file-watch`` frame, its copy came from. None
+    is ``428 revision_required``; one the file no longer has is ``409 stale_write``, and nothing is
+    written (`personalclaw/stale_write.py`). A saved file answers with the ``revision`` it now
+    reads back at, so a page that stays open saves again from that.
+    """
     import logging  # noqa: F811
 
     from personalclaw.validation import (  # noqa: F811
@@ -1756,8 +1762,18 @@ async def api_file_write(request: web.Request) -> web.Response:
             session_key="dashboard", tool_name="file_write", outcome="not_found", resources=path
         )
         return web.json_response({"error": "not found"}, status=404)
+    content = body.get("content", "")
     try:
-
+        # 🔴 A PAGE'S COPY IS SAVED ONLY OVER THE FILE IT WAS BUILT FROM. Read, compared and
+        # replaced with no await in between, so nothing in this process lands between the check
+        # and the write. A file that no longer reads back whole — it grew past the read cap, or is
+        # binary now — was no page's copy: `whole_text` is None and no base matches it.
+        stale = stale_write_refusal(request, whole_text(read_head(path)), what=f"the file {path!r}")
+        if stale is not None:
+            _sel().log_tool_invocation(
+                session_key="dashboard", tool_name="file_write", outcome="denied", resources=path
+            )
+            return stale
         tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
         try:
             try:
@@ -1765,7 +1781,7 @@ async def api_file_write(request: web.Request) -> web.Response:
             except OSError:
                 pass
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                f.write(body.get("content", ""))
+                f.write(content)
             os.replace(tmp_path, path)
         except Exception:
             try:
@@ -1776,7 +1792,10 @@ async def api_file_write(request: web.Request) -> web.Response:
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_write", outcome="success", resources=path
         )
-        return web.json_response({"ok": True})
+        written = whole_text(content.encode("utf-8"))
+        return web.json_response(
+            {"ok": True, "revision": None if written is None else revision_of(written)}
+        )
     except Exception:
         logging.getLogger(__name__).exception("file_write failed for %s", path)
         _sel().log_tool_invocation(

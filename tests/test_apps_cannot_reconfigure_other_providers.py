@@ -30,6 +30,7 @@ tree without them each test fails on its own rather than the module failing to c
 from __future__ import annotations
 
 import json
+import re
 import sys
 import types
 from contextlib import asynccontextmanager
@@ -212,20 +213,39 @@ def _denials(rows: MagicMock, app: str, path: str) -> list:
 # ── the gateway a user's clicks and an app's backend reach ─────────────────────────────────────
 
 
+#: The writes that replace a whole settings record, and so name the copy they were built from in
+#: `If-Match` (`personalclaw/stale_write.py`): the SPA reads the record first and sends the revision
+#: that read reported, and so does this gateway's caller. A caller the read refuses gets no
+#: revision, and its write is refused before any handler runs, as before.
+_WHOLE_RECORD_WRITES = re.compile(
+    r"/api/providers/[^/]+/config|/api/providers/[^/]+/instances/[^/]+|/api/apps/[^/]+/config"
+)
+
+
 class _Gateway:
     def __init__(self, client: TestClient) -> None:
         self.client = client
 
-    async def call(
-        self, method: str, path: str, body: Any = None, *, as_app: str = ""
+    async def _send(
+        self, method: str, path: str, body: Any, headers: dict[str, str]
     ) -> tuple[int, Any]:
-        headers = {AS_APP: as_app} if as_app else {}
         resp = await self.client.request(method, path, json=body, headers=headers)
         text = await resp.text()
         try:
             return resp.status, json.loads(text)
         except ValueError:
             return resp.status, text
+
+    async def call(
+        self, method: str, path: str, body: Any = None, *, as_app: str = ""
+    ) -> tuple[int, Any]:
+        headers = {AS_APP: as_app} if as_app else {}
+        if method in ("PATCH", "PUT") and _WHOLE_RECORD_WRITES.fullmatch(path):
+            status, read = await self._send("GET", path, None, headers)
+            record = read.get("instance", read) if isinstance(read, dict) else {}
+            if status < 300 and isinstance(record, dict) and record.get("revision"):
+                headers = {**headers, "If-Match": f'"{record["revision"]}"'}
+        return await self._send(method, path, body, headers)
 
     async def ok(self, method: str, path: str, body: Any = None, *, as_app: str = "") -> Any:
         status, data = await self.call(method, path, body, as_app=as_app)

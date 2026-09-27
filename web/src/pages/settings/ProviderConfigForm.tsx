@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { api, type ProviderSchema, type ProviderSchemaProp } from '../../lib/api'
 // The SAME serialize/parse pair the Apps Configure dialog uses for structured fields —
@@ -10,6 +10,9 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
 import { Select, TextArea, TextInput } from '../../ui/forms'
 import { SavedToast } from './settingsUI'
+import { HELD_CHANGE_REASON, presentSecrets, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 
 /** Seed {key: default} from a schema's properties so a created instance submits
  *  the same defaults the form shows (else a field with a `default` renders but
@@ -22,12 +25,24 @@ export function schemaDefaults(schema: ProviderSchema | null | undefined): Recor
   return out
 }
 
+/** The form's starting values from a config read: the config with every stored secret BLANKED,
+ *  and the revision that read reported. A sensitive field with a stored secret arrives MASKED
+ *  (write-only over the API); editing dots is nonsense, and a blank submit means "keep the stored
+ *  secret" — the same treatment the Apps Configure dialog gives its own secrets (#43). */
+function editableConfig(c: { config?: Record<string, unknown>; _secret_set?: string[]; revision: string }): Revisioned<Record<string, unknown>> {
+  const next = { ...(c.config ?? {}) }
+  for (const k of c._secret_set ?? []) next[k] = ''
+  return { value: next, revision: c.revision }
+}
+
 /** Renders a provider's settingsSchema (JSON-Schema + x-meta) as an editable
  *  form and saves via PATCH /api/providers/{name}/config. Lives under a
  *  provider's toggle — only mounted when the provider is enabled + has a schema.
  *  `onSaved` runs after a save the gateway accepted: the save rebuilt the provider. */
 export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: () => void }) {
   const [schema, setSchema] = useState<ProviderSchema | null>(null)
+  // The config as the form last read or saved it — the copy a save names the revision of.
+  const [base, setBase] = useState<Revisioned<Record<string, unknown>>>({ value: {}, revision: '' })
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [secretSet, setSecretSet] = useState<string[]>([])
   const [dirty, setDirty] = useState(false)
@@ -35,25 +50,37 @@ export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: 
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState('')
 
+  const show = useCallback((c: { config?: Record<string, unknown>; _secret_set?: string[]; revision: string }) => {
+    const read = editableConfig(c)
+    setSecretSet(c._secret_set ?? [])
+    setBase(read)
+    setValues(read.value)
+  }, [])
   useEffect(() => {
     let live = true
     Promise.all([api.providerSchema(name), api.providerConfig(name)])
       .then(([s, c]) => {
         if (!live) return
         setSchema(s)
-        // A sensitive field with a stored secret arrives MASKED (write-only over the
-        // API). Start its input BLANK rather than pre-filled with the mask: editing dots
-        // is nonsense, and a blank submit means "keep the stored secret" — the same
-        // treatment the Apps Configure dialog already gives its own secrets (#43).
-        const set = c._secret_set ?? []
-        const next = { ...(c.config ?? {}) }
-        for (const k of set) next[k] = ''
-        setSecretSet(set)
-        setValues(next)
+        show(c)
       })
       .catch(() => { if (live) setSchema({ properties: {} }) })
     return () => { live = false }
-  }, [name])
+  }, [name, show])
+
+  // 🔴 THE FORM IS SAVED WHOLE, over the revision it was read at. It PATCHes every field it shows,
+  // so a form opened before this app's settings were saved elsewhere — Apps → Configure writes the
+  // same file, and so does the app itself — put its stale values back over that save. A stale copy
+  // is now refused and the edit re-applied field by field on top of what is stored
+  // (`ui/StaleWriteNotice`), compared in the same blanked-secrets form this form edits.
+  const guard = useStaleWriteGuard<Record<string, unknown>>({
+    read: () => api.providerConfig(name).then(editableConfig),
+    write: (next, rev) => api.saveProviderConfig(name, next, rev).then(show),
+    onSaved: () => {
+      setDirty(false); setSaved(true); setTimeout(() => setSaved(false), 2000); onSaved?.()
+    },
+    onDiscard: () => { setDirty(false); void api.providerConfig(name).then(show) },
+  })
 
   if (!schema) return <div data-type="caption" className="py-2 text-on-surface-low"><Loader2 size={12} className="inline animate-spin" /> Loading config…</div>
   const props = Object.entries(schema.properties ?? {})
@@ -62,7 +89,8 @@ export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: 
   const set = (k: string, v: unknown) => { setValues((p) => ({ ...p, [k]: v })); setDirty(true); setSaved(false); setErr('') }
   const save = async () => {
     setSaving(true); setErr('')
-    try { await api.saveProviderConfig(name, values); setDirty(false); setSaved(true); setTimeout(() => setSaved(false), 2000); onSaved?.() }
+    // `false` is a refused stale copy: the notice keeps the edit, and the form stays dirty.
+    try { await guard.save(base, values, rebaseRecord(base.value, values)) }
     catch (e) {
       let msg = e instanceof Error ? e.message : 'Save failed'
       try { const p = JSON.parse(msg); msg = p.error + (p.details ? `: ${p.details.join('; ')}` : '') } catch { /* raw */ }
@@ -73,12 +101,17 @@ export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: 
 
   return (
     <div className="mt-3 flex flex-col gap-3 border-t border-outline-variant/30 pt-3">
-      {props.map(([key, prop]) => (
-        <SchemaField key={key} fieldKey={key} prop={prop} value={values[key]}
-          secretAlreadySet={secretSet.includes(key)} onChange={(v) => set(key, v)} />
-      ))}
+      <HeldChange guard={guard}>
+        {props.map(([key, prop]) => (
+          <SchemaField key={key} fieldKey={key} prop={prop} value={values[key]}
+            secretAlreadySet={secretSet.includes(key)} onChange={(v) => set(key, v)} />
+        ))}
+      </HeldChange>
+      <StaleWriteNotice guard={guard} what="These settings"
+        present={presentSecrets((k) => !!schema.properties?.[k]?.['x-meta']?.sensitive, secretSet)} />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} loading={saving} disabled={!dirty || saving} disabledReason={!dirty && !saving ? 'No changes to save' : undefined}>Save</Button>
+        <Button size="sm" onClick={save} loading={saving} disabled={!dirty || saving || guard.conflict !== null}
+          disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : !dirty && !saving ? 'No changes to save' : undefined}>Save</Button>
         <SavedToast show={saved} />
         {dirty && !saved && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
         {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}

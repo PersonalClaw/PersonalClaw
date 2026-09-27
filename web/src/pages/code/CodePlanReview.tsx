@@ -9,8 +9,11 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Markdown } from '../../ui/Markdown'
 import { LoadError } from '../../ui/ListScaffold'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { spring } from '../../design/motion'
 import { api, SDLC_STAGES, sdlcStageLabel, type Loop, type CodeStage, type PlanStep, type SkillItem, type SkillSearchResult, type WorkflowDefStub } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseRecord, sameDocument, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import type { CodeDraft } from './codeDraft'
 import { WorkspacePicker } from './WorkspacePicker'
 
@@ -18,10 +21,59 @@ import { WorkspacePicker } from './WorkspacePicker'
 // verify_command/test_command live in kind_config; the stage list is `plan`).
 const kc = (p: Loop) => (p.kind_config || {}) as Record<string, unknown>
 
+/** What the launch writes: the stage plan, the drive mode and the capability lists. */
+type LaunchSpec = Record<string, unknown>
+
+/** Everything on this screen that a launch writes. */
+interface LaunchFields {
+  stages: CodeStage[]
+  autopilot: boolean
+  skillIds: Set<string>
+  workflowIds: Set<string>
+}
+
+/** The project as stored, as this screen's fields: what the screen is painted with — on arrival, and
+ *  again when a refused launch is dropped — and what the launch's base is derived from. */
+function fieldsOf(p: Loop): LaunchFields {
+  return {
+    stages: ((p.plan ?? []) as unknown as CodeStage[]).map((s) => ({ ...s, exit_criteria: [...(s.exit_criteria ?? [])] })),
+    autopilot: p.autopilot !== false,
+    skillIds: new Set(p.skill_ids ?? []),
+    workflowIds: new Set(p.workflow_ids ?? []),
+  }
+}
+
+/** What a Launch writes, from the screen's fields. THE ONE DERIVATION: a launch writes `launchSpec` of
+ *  what is on screen, and names as its base `launchSpec` of what it read (`launchSpecOf`) — so a stage
+ *  the user leaves alone is the same on both sides, and in a refusal it is nobody's change.
+ *
+ *  🔴 THE BASE USED TO BE THE PLAN AS STORED, while the launch cleaned the stages it wrote — every
+ *  stage gained `tasks: []` and a trimmed TaskList name — so each stage read as edited here, and any
+ *  re-plan made elsewhere turned a drive-mode-only launch into "can't be re-applied on its own".
+ *
+ *  The cleaning: stages with neither an objective nor a title are dropped, each keeps a TaskList name
+ *  (its own, else its title or stage type), and blank task rows are dropped so they aren't seeded. */
+function launchSpec(f: LaunchFields): LaunchSpec {
+  const plan = f.stages
+    .filter((s) => (s.objective || '').trim() || (s.title || '').trim())
+    .map((s) => ({
+      ...s,
+      task_list_name: (s.task_list_name || s.title || s.stage || '').trim(),
+      tasks: (s.tasks ?? []).filter((t) => (t.title || '').trim()),
+    }))
+  return { plan, autopilot: f.autopilot, skill_ids: [...f.skillIds], workflow_ids: [...f.workflowIds] }
+}
+
+/** The project as read, in the launch write's own shape, with the revision the same read reported —
+ *  the base a launch names, and what a refused launch is re-applied onto. */
+function launchSpecOf(p: Loop): Revisioned<LaunchSpec> {
+  return { value: launchSpec(fieldsOf(p)), revision: p.revision ?? '' }
+}
+
 /** Plan Review — the single confirm-and-edit screen between create and launch.
  *  Shows the full SDLC stage plan the classifier proposed; the user can edit each
  *  stage's objective + exit criteria, reorder/remove stages, add a stage, then
- *  launch. On launch it persists the edited plan (updateULoop) and starts the
+ *  launch. On launch it persists the edited plan (saveULoopSpec) and starts the
  *  loop (uLoopAction 'start'), which provisions the Tasks Project + per-stage
  *  TaskLists and arms the autonomous worker. */
 export function CodePlanReview({ draft, onBack, onLaunched }: {
@@ -38,6 +90,11 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   // kept the spinner up forever. A load failure is its own state, drawn in place of the spinner.
   const [loadErr, setLoadErr] = useState<unknown>(null)
   const [attempt, setAttempt] = useState(0)
+  // 🔴 LAUNCH WRITES THE PLAN, THE DRIVE MODE AND THE CAPABILITY LISTS FROM THE COPY THIS SCREEN READ,
+  // so a write that landed since — the cockpit's autopilot toggle, another tab's launch, a re-plan —
+  // used to be put back without a word. `base` is that read in the launch's own shape, with its
+  // revision; a stale launch is refused, nothing starts, and the notice offers it back.
+  const [base, setBase] = useState<Revisioned<LaunchSpec> | null>(null)
   // A brownfield project needs a bound workspace before it can start — Launch calls
   // uLoopAction('start') directly, which the backend rejects without one. This surface
   // is reachable for such a project (resume of a `review` project, or a walkthrough that
@@ -88,15 +145,18 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
     } finally { setInstalling((m) => ({ ...m, [s.id]: false })) }
   }
 
+  // Everything the launch writes, seeded from the project as stored — with the launch's base derived
+  // from the same read. On arrival, and again when the user drops a refused launch.
+  function paint(p: Loop) {
+    const f = fieldsOf(p)
+    setProject(p)
+    setStages(f.stages); setAutopilot(f.autopilot); setSkillIds(f.skillIds); setWorkflowIds(f.workflowIds)
+    setBase(launchSpecOf(p))
+  }
+
   useEffect(() => {
     setLoadErr(null)
-    api.uLoop(draft.projectId).then((p) => {
-      setProject(p)
-      setStages(((p.plan ?? []) as unknown as CodeStage[]).map((s) => ({ ...s, exit_criteria: [...(s.exit_criteria ?? [])] })))
-      setAutopilot(p.autopilot !== false)
-      setSkillIds(new Set(p.skill_ids ?? []))
-      setWorkflowIds(new Set(p.workflow_ids ?? []))
-    }).catch(setLoadErr)
+    api.uLoop(draft.projectId).then(paint).catch(setLoadErr)
     api.skills().then(setInstalledSkills).catch(() => {})
     // No workflow catalog until WORKFLOWS-V2 Slice 0 lands the def store. The
     // picker below is length-guarded, so an empty list renders no section; the
@@ -155,31 +215,47 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   // would 422 otherwise) and route the click to the picker instead.
   const needsWorkspace = !!project && String(kc(project).project_kind ?? '') === 'brownfield' && !project.workspace_dir
 
-  async function launch() {
-    if (launching) return
-    // A brownfield project can't start without a workspace — open the picker rather
-    // than firing a start that the backend rejects with a bare error + no recourse.
-    if (needsWorkspace) { setPickWs(true); return }
+  // Starting is what Launch is FOR, so it follows the spec write however that write landed — on the
+  // first try, or re-applied from the notice after another write got there first. Never after a
+  // refusal: the project would run on a plan the user did not review.
+  async function start() {
     setLaunching(true); setError(null)
     try {
-      // Persist the edited stage plan (+ task_list_name defaults), then start.
-      const cleaned = stages
-        .filter((s) => (s.objective || '').trim() || (s.title || '').trim())
-        .map((s) => ({
-          ...s,
-          task_list_name: (s.task_list_name || s.title || s.stage || '').trim(),
-          // drop blank task rows the user left empty so they aren't seeded
-          tasks: (s.tasks ?? []).filter((t) => (t.title || '').trim()),
-        }))
-      await api.updateULoop(draft.projectId, {
-        plan: cleaned, autopilot,
-        skill_ids: [...skillIds], workflow_ids: [...workflowIds],
-      })
       await api.uLoopAction(draft.projectId, 'start')
       onLaunched(draft.projectId)
     } catch (e) {
       setError((e as Error).message || 'Could not launch the project'); setLaunching(false)
     }
+  }
+  const guard = useStaleWriteGuard<LaunchSpec>({
+    read: async () => launchSpecOf(await api.uLoop(draft.projectId)),
+    write: (next, revision) => api.saveULoopSpec(draft.projectId, next, revision),
+    onSaved: () => { void start() },
+    onDiscard: () => {
+      setError(null)
+      api.uLoop(draft.projectId).then(paint)
+        .catch((e) => setError(`Couldn't read the project as it is stored: ${(e as Error).message || 'unknown error'}`))
+    },
+  })
+  const held = guard.conflict !== null
+
+  // Persist the edited stage plan (cleaned — `launchSpec`) over `from`; `start` follows it.
+  async function saveAndStart(from: Revisioned<LaunchSpec>) {
+    setLaunching(true); setError(null)
+    const mine = launchSpec({ stages, autopilot, skillIds, workflowIds })
+    try {
+      if (!(await guard.save(from, mine, rebaseRecord(from.value, mine)))) setLaunching(false)
+    } catch (e) {
+      setError(`Couldn't save the plan, so the project was not launched: ${(e as Error).message || 'unknown error'}`); setLaunching(false)
+    }
+  }
+
+  async function launch() {
+    if (launching || !base) return
+    // A brownfield project can't start without a workspace — open the picker rather
+    // than firing a start that the backend rejects with a bare error + no recourse.
+    if (needsWorkspace) { setPickWs(true); return }
+    await saveAndStart(base)
   }
 
   return (
@@ -220,75 +296,88 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                   so that context carries into the launch decision. */}
               {artifacts.length > 0 && <PlanArtifacts steps={artifacts} />}
 
-              {/* Capabilities the worker will load actively every cycle (the planner's
-                  suggested skills/workflows, threaded onto the loop at create). Editable
-                  here — toggle off a mis-suggested skill or add one the planner missed;
-                  persisted on launch. */}
-              <PlanCapabilities skills={installedSkills} workflows={installedWorkflows}
-                skillIds={skillIds} workflowIds={workflowIds}
-                onToggleSkill={(k) => setSkillIds((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n })}
-                onToggleWorkflow={(id) => setWorkflowIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })}
-                suggested={new Set(project.skill_ids ?? [])} suggestedWf={new Set(project.workflow_ids ?? [])}
-                marketplace={marketplaceSuggestions} installing={installing} installed={installed}
-                onInstall={installMarketplaceSkill} />
+              {/* Everything a Launch writes is edited in the two held blocks below — the capabilities
+                  and the stage plan here, the drive mode after the notice. Off while a refused launch
+                  is held: Reload and reapply puts back the change as it was at Launch, so an edit made
+                  after the refusal would be left out of what it launches. The notice, the error line
+                  and Cancel/Launch stay outside, where the change is settled. */}
+              <HeldChange guard={guard}>
+                {/* Capabilities the worker will load actively every cycle (the planner's
+                    suggested skills/workflows, threaded onto the loop at create). Editable
+                    here — toggle off a mis-suggested skill or add one the planner missed;
+                    persisted on launch. */}
+                <PlanCapabilities skills={installedSkills} workflows={installedWorkflows}
+                  skillIds={skillIds} workflowIds={workflowIds}
+                  onToggleSkill={(k) => setSkillIds((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n })}
+                  onToggleWorkflow={(id) => setWorkflowIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })}
+                  suggested={new Set(project.skill_ids ?? [])} suggestedWf={new Set(project.workflow_ids ?? [])}
+                  marketplace={marketplaceSuggestions} installing={installing} installed={installed}
+                  onInstall={installMarketplaceSkill} />
 
-              {/* the stage plan */}
-              <div className="flex items-center justify-between">
-                <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>Stages ahead ({stages.length})</span>
-                <button type="button" onClick={addStage} data-type="caption" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-on-surface-low hover:text-on-surface hover:bg-surface-high"><Plus size={13} /> Add stage</button>
-              </div>
-
-              {/* Stages that collide on launch (one TaskList + one status entry per
-                  effective key = stage type, or title for an untyped stage) — the
-                  backend drops the duplicate, so warn the user to disambiguate it
-                  rather than silently lose a stage. */}
-              {/* Raw size kept: a data-type role's inherited font-variation-settings would flatten the browser-bold <b> child (variable font: fvs beats font-weight; no exact-match fw-700 utility). */}
-              {dupStages.length > 0 && (
-                <div role="alert" className="rounded-lg px-3 py-2 text-[0.8125rem]"
-                  style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
-                  Stages collide on <b>{dupStages.join(', ')}</b> — only the first is kept on launch. Give each a distinct type (or title, if untyped).
+                {/* the stage plan */}
+                <div className="flex items-center justify-between">
+                  <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>Stages ahead ({stages.length})</span>
+                  <button type="button" onClick={addStage} data-type="caption" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-on-surface-low hover:text-on-surface hover:bg-surface-high"><Plus size={13} /> Add stage</button>
                 </div>
-              )}
 
-              <div className="flex flex-col gap-3">
-                {stages.map((s, i) => (
-                  <StageCard key={i} index={i} count={stages.length} stage={s}
-                    onPatch={(p) => patchStage(i, p)} onRemove={() => removeStage(i)} onMove={(d) => move(i, d)} />
-                ))}
-                {stages.length === 0 && (
-                  <p data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/40 py-8 text-center text-on-surface-low">
-                    No stages — add one, or launch to let the worker plan as it goes.
-                  </p>
+                {/* Stages that collide on launch (one TaskList + one status entry per
+                    effective key = stage type, or title for an untyped stage) — the
+                    backend drops the duplicate, so warn the user to disambiguate it
+                    rather than silently lose a stage. */}
+                {/* Raw size kept: a data-type role's inherited font-variation-settings would flatten the browser-bold <b> child (variable font: fvs beats font-weight; no exact-match fw-700 utility). */}
+                {dupStages.length > 0 && (
+                  <div role="alert" className="rounded-lg px-3 py-2 text-[0.8125rem]"
+                    style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
+                    Stages collide on <b>{dupStages.join(', ')}</b> — only the first is kept on launch. Give each a distinct type (or title, if untyped).
+                  </div>
                 )}
-              </div>
+
+                <div className="flex flex-col gap-3">
+                  {stages.map((s, i) => (
+                    <StageCard key={i} index={i} count={stages.length} stage={s}
+                      onPatch={(p) => patchStage(i, p)} onRemove={() => removeStage(i)} onMove={(d) => move(i, d)} />
+                  ))}
+                  {stages.length === 0 && (
+                    <p data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/40 py-8 text-center text-on-surface-low">
+                      No stages — add one, or launch to let the worker plan as it goes.
+                    </p>
+                  )}
+                </div>
+              </HeldChange>
 
               {error && (
                 <div role="alert" data-type="body-s" className="rounded-lg px-4 py-3"
                   style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)', color: 'var(--color-danger)' }}>{error}</div>
               )}
+              {/* A launch refused because the project changed since this screen read it.
+                  Reapplying saves the change onto what is stored and then launches — Launch is what
+                  the user pressed. */}
+              <StaleWriteNotice guard={guard} what="This project" />
 
-              {/* Drive mode — choose before launch how the phased tasks execute. */}
-              <div className="flex flex-col gap-1.5 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
-                <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>How should it run?</span>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setAutopilot(true)} aria-pressed={autopilot}
-                    className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
-                    <Rocket size={15} className={`mt-0.5 shrink-0 ${autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
-                    <span>
-                      <span data-type="body-s" className="block text-on-surface">Autopilot</span>
-                      <span data-type="caption" className="block text-on-surface-low">The system queues + drives every phase to completion.</span>
-                    </span>
-                  </button>
-                  <button type="button" onClick={() => setAutopilot(false)} aria-pressed={!autopilot}
-                    className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${!autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
-                    <Hand size={15} className={`mt-0.5 shrink-0 ${!autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
-                    <span>
-                      <span data-type="body-s" className="block text-on-surface">One-by-one</span>
-                      <span data-type="caption" className="block text-on-surface-low">You queue tasks yourself, at your own pace.</span>
-                    </span>
-                  </button>
+              {/* Drive mode — choose before launch how the phased tasks execute. Held with the plan. */}
+              <HeldChange guard={guard}>
+                <div className="flex flex-col gap-1.5 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
+                  <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>How should it run?</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setAutopilot(true)} aria-pressed={autopilot}
+                      className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
+                      <Rocket size={15} className={`mt-0.5 shrink-0 ${autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
+                      <span>
+                        <span data-type="body-s" className="block text-on-surface">Autopilot</span>
+                        <span data-type="caption" className="block text-on-surface-low">The system queues + drives every phase to completion.</span>
+                      </span>
+                    </button>
+                    <button type="button" onClick={() => setAutopilot(false)} aria-pressed={!autopilot}
+                      className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${!autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
+                      <Hand size={15} className={`mt-0.5 shrink-0 ${!autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
+                      <span>
+                        <span data-type="body-s" className="block text-on-surface">One-by-one</span>
+                        <span data-type="caption" className="block text-on-surface-low">You queue tasks yourself, at your own pace.</span>
+                      </span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </HeldChange>
 
               <div className="flex items-center justify-end gap-2 pb-4">
                 <Button variant="ghost" size="sm" onClick={onBack}>Cancel</Button>
@@ -303,7 +392,9 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                     enabled and relabel it to OPEN the picker, so the missing binding is
                     fixable in one click. dup-collision still hard-disables. */}
                 <span title={dupStages.length > 0 ? `Resolve the colliding stage${dupStages.length === 1 ? '' : 's'} (${dupStages.join(', ')}) before launching — each needs a distinct type or title.` : needsWorkspace ? 'This brownfield project needs a workspace folder — choosing one starts it.' : undefined}>
-                  <Button size="md" onClick={launch} loading={launching} disabled={launching || dupStages.length > 0} disabledReason={dupStages.length > 0 && !launching ? 'Two stages share a name — rename one first' : undefined}>needsWorkspace ? <FolderOpen size={15} /> : <Rocket size={15} /> {launching ? 'Launching…' : needsWorkspace ? 'Choose workspace & launch' : 'Launch'}
+                  <Button size="md" onClick={launch} loading={launching} disabled={launching || dupStages.length > 0 || held}
+                    disabledReason={launching ? undefined : held ? HELD_CHANGE_REASON : dupStages.length > 0 ? 'Two stages share a name — rename one first' : undefined}>
+                    {needsWorkspace ? <FolderOpen size={15} /> : <Rocket size={15} />} {launching ? 'Launching…' : needsWorkspace ? 'Choose workspace & launch' : 'Launch'}
                   </Button>
                 </span>
               </div>
@@ -315,16 +406,23 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
         <WorkspacePicker mode="brownfield" onClose={() => setPickWs(false)}
           onPick={async (dir) => {
             setPickWs(false); setError(null); setLaunching(true)
-            // Bind the chosen folder, then start — surface a failure (bad dir, 422,
+            // Bind the chosen folder, then launch — surface a failure (bad dir, 422,
             // agent gone) the same way launch() does, and reflect the binding so the
             // header chip + needsWorkspace gate update if the start half fails.
-            try {
-              setProject(await api.updateULoop(draft.projectId, { workspace_dir: dir }))
-              await api.uLoopAction(draft.projectId, 'start')
-              onLaunched(draft.projectId)
-            } catch (e) {
-              setError((e as Error).message || 'Could not launch with that folder'); setLaunching(false)
-            }
+            let bound: Loop
+            try { bound = await api.updateULoop(draft.projectId, { workspace_dir: dir }) }
+            catch (e) { setError((e as Error).message || 'Could not launch with that folder'); setLaunching(false); return }
+            setProject(bound)
+            if (!base) { setLaunching(false); return }
+            // 🔴 THE REVIEWED PLAN IS SAVED ON THIS PATH TOO. It used to bind the folder and start at
+            // once, so every stage, the drive mode and the capability picks edited on this screen
+            // were dropped for a brownfield project — it launched on the plan as the planner left
+            // it. The binding is this screen's own write and moves the revision the review was read
+            // at: when nothing the launch writes moved with it, the save is based on the bound
+            // project; when something did, the old base stays and the save is refused and offered
+            // back like any other stale launch.
+            const now = launchSpecOf(bound)
+            await saveAndStart(sameDocument(now.value, base.value) ? { value: base.value, revision: now.revision } : base)
           }} />
       )}
     </div>

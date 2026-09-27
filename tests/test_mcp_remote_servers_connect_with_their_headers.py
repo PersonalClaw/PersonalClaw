@@ -41,6 +41,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import mcp_server_prefix, ref_key, write_mcp_document
 from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs
+from personalclaw.stale_write import revision_of
 
 NAME = "remote-fixture"
 AUTH = "Bearer fixture-remote-auth-0f1e2d3c4b5a69788796a5b4"
@@ -178,7 +179,17 @@ def _servers(path: Path) -> dict:
 def _call(method: str, body: dict | None = None):
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    req = make_mocked_request(method, f"/api/mcp/servers/{NAME}", match_info={"name": NAME})
+    headers = {}
+    if method == "PUT":
+        # As the Tools page saves: the edit form reads the server first and saves over that read;
+        # the Add form, on a name nobody has configured, has nothing to read
+        # (`personalclaw/stale_write.py`).
+        read = _call("GET")
+        if read.status == 200:
+            headers["If-Match"] = f'"{json.loads(read.text)["revision"]}"'
+    req = make_mocked_request(
+        method, f"/api/mcp/servers/{NAME}", headers=headers, match_info={"name": NAME}
+    )
 
     async def _json():
         return body
@@ -281,7 +292,10 @@ def test_the_tools_page_adds_edits_and_rotates_a_remote_server(home, remote) -> 
     resp = _call("GET")
     assert resp.status == 200, resp.text
     assert AUTH not in resp.text and KEY not in resp.text, "a stored value reached the browser"
-    assert json.loads(resp.text) == {
+    view = json.loads(resp.text)
+    # With the revision of exactly this view — the one the form's save is compared against.
+    assert view.pop("revision") == revision_of(view)
+    assert view == {
         "name": NAME,
         "editable": True,
         "transport": remote.transport,

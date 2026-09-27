@@ -459,6 +459,10 @@ class TestSkillDetailPut:
         updated = _skill_body("editable", body="# Updated\nNew body.")
         r, loader = self._put_req(tmp_path, "editable", {"content": updated})
         loader.create_skill("editable", _skill_body("editable", body="# Original\nUntouched."))
+        # A whole-SKILL.md replace names the revision of the copy it was built from.
+        read = _req(name="editable")
+        read.method, read.app = "GET", r.app
+        r.headers = {"If-Match": _body(_run(api_skill_detail(read)))["revision"]}
         resp = _run(api_skill_detail(r))
         assert resp.status == 200
         assert _body(resp)["ok"] is True

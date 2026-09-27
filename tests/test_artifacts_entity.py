@@ -434,13 +434,19 @@ async def test_rest_restricted_session_403(patched_native) -> None:
 
 @pytest.mark.asyncio
 async def test_rest_dedup_by_source_path(patched_native, tmp_path) -> None:
+    from personalclaw.stale_write import revision_of
+
     f = tmp_path / "shared.md"
     f.write_text("orig")
+    # A file-backed save overwrites the file, so it names the revision of the copy it was built
+    # from — the file-read ETag of "orig", which the first save writes back unchanged.
+    based_on = {"If-Match": f'"{revision_of("orig")}"'}
     client = await _client(patched_native)
     try:
         r1 = await client.post(
             "/api/artifacts",
             json={"name": "Doc", "content": "orig", "kind": "markdown", "source_path": str(f)},
+            headers=based_on,
         )
         assert r1.status == 201
         slug1 = (await r1.json())["slug"]
@@ -448,6 +454,7 @@ async def test_rest_dedup_by_source_path(patched_native, tmp_path) -> None:
         r2 = await client.post(
             "/api/artifacts",
             json={"name": "Doc", "content": "updated", "kind": "markdown", "source_path": str(f)},
+            headers=based_on,
         )
         assert r2.status == 200
         assert (await r2.json())["slug"] == slug1

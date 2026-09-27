@@ -44,6 +44,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
+from personalclaw.stale_write import revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -944,12 +945,15 @@ async def api_app_config_get(request: web.Request) -> web.Response:
     # the STORED form, so this route never reads a credential: each reference is masked,
     # whether or not the schema declared its field sensitive.
     masked, secret_set = mask_secrets(read_stored(name), schema)
+    # The PUT below writes the whole file, so the config carries the revision it must name
+    # (`personalclaw/stale_write.py`) — of this masked form, never of the stored secrets.
     return web.json_response(
         {
             "name": name,
             "config": masked,
             "schema": schema,
             "_secret_set": secret_set,
+            "revision": revision_of(masked),
         }
     )
 
@@ -975,11 +979,23 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     schema = _effective_config_schema(manifest)
+    stored = read_stored(name)
+    # 🔴 THE FILE IS WRITTEN ONLY OVER THE COPY THE FORM WAS BUILT FROM. This replaces the
+    # whole file — and deletes the credentials the new one stops referencing — with a form built
+    # from the copy it read, so a form opened before Settings → Providers, another tab, or the
+    # app itself saved this file put its stale values back over that save. Compared in the
+    # masked form the GET hands out; no `await` between this check and the write below.
+    stale = stale_write_refusal(
+        request, mask_secrets(stored, schema)[0], what=f"the app {name!r}'s settings"
+    )
+    if stale is not None:
+        _sel_log("apps.config", "denied", name, request, error="stale base")
+        return stale
     # A sensitive field carrying the mask sentinel (or empty when it was already set)
     # means "keep the stored secret" — don't overwrite it with the placeholder (#43). What is
     # folded back is the stored REFERENCE, which the write keeps as it is; a reference that
     # names another owner's credential is refused there, with what to do instead.
-    values = preserve_unchanged_secrets(values, read_stored(name), schema)
+    values = preserve_unchanged_secrets(values, stored, schema)
     try:
         write_config(name, values, schema)
     except AppConfigError as exc:
@@ -992,10 +1008,17 @@ async def api_app_config_put(request: web.Request) -> web.Response:
 
     await apply_saved_settings(name)
     # Never echo the freshly-saved secret back either: the response is what reached the disk,
-    # masked — a credential-named field the schema did not declare included.
+    # masked — a credential-named field the schema did not declare included. The revision is
+    # of this same read, so a form that stays open saves its next edit over what it now shows.
     masked, secret_set = mask_secrets(read_stored(name), schema)
     return web.json_response(
-        {"ok": True, "name": name, "config": masked, "_secret_set": secret_set}
+        {
+            "ok": True,
+            "name": name,
+            "config": masked,
+            "_secret_set": secret_set,
+            "revision": revision_of(masked),
+        }
     )
 
 

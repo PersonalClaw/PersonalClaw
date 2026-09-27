@@ -268,6 +268,35 @@ def submit_artifact(session: PlanSession, step_id: str, artifact: dict) -> bool:
     return False
 
 
+def step_markdown(step: PlanStep) -> str:
+    """The step's markdown body as a read shows it — the one thing :func:`edit_artifact`
+    replaces, and so the document an edit's revision describes."""
+    return str((step.artifact or {}).get("markdown") or "")
+
+
+def step_revision(step: PlanStep) -> str:
+    """The revision an edit of ``step``'s markdown names in ``If-Match``
+    (``personalclaw/stale_write.py``).
+
+    Of the markdown alone, because that is all an edit writes: the structured fields stay as
+    the planner authored them. A redraft replaces the markdown, so an edit of the draft it
+    replaced no longer matches and is refused instead of putting the old draft's text back.
+    """
+    from personalclaw.stale_write import revision_of
+
+    return revision_of(step_markdown(step))
+
+
+def wire(session: PlanSession) -> dict[str, Any]:
+    """``session`` as a read hands it out: :meth:`PlanSession.to_dict` with each step carrying
+    the ``revision`` an edit of it must name. Not persisted — a revision is derived, never
+    stored, so no writer can forget to bump one."""
+    out = session.to_dict()
+    for step, row in zip(session.steps, out["steps"]):
+        row["revision"] = step_revision(step)
+    return out
+
+
 def edit_artifact(session: PlanSession, step_id: str, markdown: str) -> bool:
     """The user directly edits an artifact's human-facing ``markdown`` body while
     it's awaiting review — finalizing it themselves instead of round-tripping the

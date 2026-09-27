@@ -104,9 +104,11 @@ def _app(store, enqueued=None):
     return app
 
 
-def _req(store, method, body=None, match_info=None, enqueued=None):
+def _req(store, method, body=None, match_info=None, enqueued=None, base=None):
     app = _app(store, enqueued=enqueued)
-    req = make_mocked_request(method, "/", app=app, match_info=match_info or {})
+    # `base` is the revision a body edit replaces, named the way the page names it.
+    headers = {"If-Match": f'"{base}"'} if base is not None else {}
+    req = make_mocked_request(method, "/", app=app, match_info=match_info or {}, headers=headers)
     if body is not None:
 
         async def _json():
@@ -114,6 +116,14 @@ def _req(store, method, body=None, match_info=None, enqueued=None):
 
         req.json = _json
     return req
+
+
+def _body_base(store, item_id):
+    """The ``content_revision`` the item's read reports — what a body edit names in If-Match."""
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    resp = _run(H.get_item(_req(store, "GET", match_info={"id": item_id})))
+    return json.loads(resp.body)["content_revision"]
 
 
 class TestHandlers:
@@ -270,8 +280,11 @@ class TestHandlers:
         from personalclaw.dashboard.handlers import knowledge as H
 
         jid = store.create_typed_item(item_type="journal", title="J", content="today's entry")
+        base = _body_base(store, jid)
         resp = _run(
-            H.update_item(_req(store, "PATCH", {"content": "edited same day"}, {"id": jid}))
+            H.update_item(
+                _req(store, "PATCH", {"content": "edited same day"}, {"id": jid}, base=base)
+            )
         )
         assert resp.status == 200
         assert store.get_item(jid)["content"] == "edited same day"
@@ -298,7 +311,10 @@ class TestHandlers:
         nid = store.create_typed_item(item_type="note", title="N", content="body")
         store.db.execute("UPDATE items SET created_at = '2026-01-01T08:00:00' WHERE id = ?", (nid,))
         store.db.commit()
-        resp = _run(H.update_item(_req(store, "PATCH", {"content": "edited later"}, {"id": nid})))
+        base = _body_base(store, nid)
+        resp = _run(
+            H.update_item(_req(store, "PATCH", {"content": "edited later"}, {"id": nid}, base=base))
+        )
         assert resp.status == 200  # only journals are immutable
 
     def test_cannot_change_text_item_to_media_type(self, store):
@@ -328,7 +344,16 @@ class TestHandlers:
         nid = store.create_typed_item(item_type="note", title="N", content="old body")
         enq: list[str] = []
         resp = _run(
-            H.update_item(_req(store, "PATCH", {"content": "new body"}, {"id": nid}, enqueued=enq))
+            H.update_item(
+                _req(
+                    store,
+                    "PATCH",
+                    {"content": "new body"},
+                    {"id": nid},
+                    enqueued=enq,
+                    base=_body_base(store, nid),
+                )
+            )
         )
         assert resp.status == 200 and json.loads(resp.body)["reenriching"] is True
         assert nid in enq
@@ -336,7 +361,7 @@ class TestHandlers:
         # A tags-only edit must NOT re-enrich.
         enq2: list[str] = []
         resp2 = _run(
-            H.update_item(_req(store, "PATCH", {"tags": ["x"]}, {"id": nid}, enqueued=enq2))
+            H.update_item(_req(store, "PATCH", {"add_tags": ["x"]}, {"id": nid}, enqueued=enq2))
         )
         assert json.loads(resp2.body)["reenriching"] is False and enq2 == []
 
@@ -355,6 +380,7 @@ class TestHandlers:
                     {"content": "fixed typo", "reingest": False},
                     {"id": nid},
                     enqueued=enq,
+                    base=_body_base(store, nid),
                 )
             )
         )

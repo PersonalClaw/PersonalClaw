@@ -16,9 +16,9 @@ import { SnippetDetail } from './SnippetDetail'
 // for an empty one, and licensed a write.
 
 const listRow: PromptItem = { name: 'triage', kind: 'user', title: 'Triage', description: 'sort the inbox', source: 'user' }
-const fullPrompt: PromptItem = { ...listRow, content: 'Sort {{items}} by urgency.', variables: [{ name: 'items' }] as PromptItem['variables'] }
+const fullPrompt: PromptItem = { ...listRow, content: 'Sort {{items}} by urgency.', variables: [{ name: 'items' }] as PromptItem['variables'], revision: 'p1' }
 const snippetRow: PromptSnippet = { name: 'tone', title: 'Tone', source: 'user' }
-const fullSnippet: PromptSnippet = { ...snippetRow, content: 'Be brief.' }
+const fullSnippet: PromptSnippet = { ...snippetRow, content: 'Be brief.', revision: 's1' }
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 30)))
 
@@ -47,7 +47,7 @@ function clickSaveTheMomentItAppears() {
 describe('editing a prompt', () => {
   it('a failed read of the prompt shows the failure, not an empty editor, and nothing can be saved', async () => {
     vi.spyOn(api, 'prompt').mockRejectedValue(new Error('prompt store unreadable'))
-    const save = vi.spyOn(api, 'savePrompt').mockResolvedValue({ ok: true, prompt: fullPrompt })
+    const save = vi.spyOn(api, 'savePrompt').mockResolvedValue({ ok: true, prompt: fullPrompt, revision: 'p2' })
     openPrompt()
     expect(await screen.findByRole('heading', { name: "Couldn't load your prompt" })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Retry/ })).toBeInTheDocument()
@@ -66,18 +66,19 @@ describe('editing a prompt', () => {
   it('once the prompt is read, the editor holds its template and saves it', async () => {
     // The control: the whole-record write is right when the record it replaces was read.
     vi.spyOn(api, 'prompt').mockResolvedValue(fullPrompt)
-    const save = vi.spyOn(api, 'savePrompt').mockResolvedValue({ ok: true, prompt: fullPrompt })
+    const save = vi.spyOn(api, 'savePrompt').mockResolvedValue({ ok: true, prompt: fullPrompt, revision: 'p2' })
     clickSaveTheMomentItAppears()
     openPrompt()
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(save.mock.calls[0][1], 'a Save in the form\'s first commit sent the list row').toMatchObject({ content: 'Sort {{items}} by urgency.' })
+    expect(save.mock.calls[0][2], 'the save names the revision of the record it was seeded from').toBe('p1')
   })
 })
 
 describe('editing a snippet', () => {
   it('a failed read of the snippet shows the failure, and nothing can be saved', async () => {
     vi.spyOn(api, 'snippet').mockRejectedValue(new Error('snippet store unreadable'))
-    const save = vi.spyOn(api, 'saveSnippet').mockResolvedValue({ ok: true, snippet: fullSnippet })
+    const save = vi.spyOn(api, 'saveSnippet').mockResolvedValue({ ok: true, snippet: fullSnippet, revision: 's2' })
     openSnippet()
     expect(await screen.findByRole('heading', { name: "Couldn't load your snippet" })).toBeInTheDocument()
     expect(saveButton(), 'an edit form was offered over an unread snippet').toBeNull()
@@ -87,10 +88,11 @@ describe('editing a snippet', () => {
 
   it('once the snippet is read, the editor saves its body', async () => {
     vi.spyOn(api, 'snippet').mockResolvedValue(fullSnippet)
-    const save = vi.spyOn(api, 'saveSnippet').mockResolvedValue({ ok: true, snippet: fullSnippet })
+    const save = vi.spyOn(api, 'saveSnippet').mockResolvedValue({ ok: true, snippet: fullSnippet, revision: 's2' })
     clickSaveTheMomentItAppears()
     openSnippet()
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(save.mock.calls[0][1], 'a Save in the form\'s first commit sent the list row').toMatchObject({ content: 'Be brief.' })
+    expect(save.mock.calls[0][2], 'the save names the revision of the record it was seeded from').toBe('s1')
   })
 })

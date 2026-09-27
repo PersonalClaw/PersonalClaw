@@ -5,21 +5,19 @@ Uses aiohttp for HTTP communication.
 
 Mirrors the TypeScript @personalclaw/client API surface.
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import math
 import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 import aiohttp
-
-from personalclaw_client.errors import PersonalClawError, ErrorCode, http_error
+from personalclaw_client.errors import ErrorCode, PersonalClawError, http_error
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +38,14 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 def _is_loopback(url: str) -> bool:
     try:
         from urllib.parse import urlparse
+
         return urlparse(url).hostname in _LOOPBACK_HOSTS
     except Exception:
         return False
 
 
 def _compute_backoff(attempt: int, base_delay: float) -> float:
-    return min(base_delay * (2 ** attempt), _MAX_BACKOFF)
+    return min(base_delay * (2**attempt), _MAX_BACKOFF)
 
 
 def _read_app_secret(app_name: str) -> str:
@@ -143,9 +142,7 @@ class PersonalClawClient:
         if self.token or not self._app_secret or not self.app_name:
             return True
         try:
-            self.token = await _exchange_app_token(
-                self.base_url, self.app_name, self._app_secret
-            )
+            self.token = await _exchange_app_token(self.base_url, self.app_name, self._app_secret)
             return True
         except Exception:
             return False
@@ -189,8 +186,12 @@ class PersonalClawClient:
         method: str,
         path: str,
         body: Any = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
-        """Core request with retry logic."""
+        """Core request with retry logic.
+
+        *headers* carries a write's precondition (``If-Match``).
+        """
         self._check_auth()
         session = self._ensure_session()
         url = f"{self.base_url}{path}"
@@ -198,7 +199,7 @@ class PersonalClawClient:
 
         for attempt in range(self.max_retries + 1):
             try:
-                kwargs: dict[str, Any] = {"headers": self._auth_headers()}
+                kwargs: dict[str, Any] = {"headers": {**self._auth_headers(), **(headers or {})}}
                 if body is not None:
                     kwargs["json"] = body
 
@@ -230,14 +231,18 @@ class PersonalClawClient:
                         if resp.status == 429:
                             retry_after = resp.headers.get("Retry-After")
                             try:
-                                delay = float(retry_after) if retry_after else _compute_backoff(attempt, self.retry_base_delay)
+                                delay = (
+                                    float(retry_after)
+                                    if retry_after
+                                    else _compute_backoff(attempt, self.retry_base_delay)
+                                )
                             except (ValueError, TypeError):
                                 delay = _compute_backoff(attempt, self.retry_base_delay)
                         else:
                             delay = _compute_backoff(attempt, self.retry_base_delay)
                         await asyncio.sleep(delay)
 
-            except PersonalClawError as e:
+            except PersonalClawError:
                 # Non-retryable errors (4xx except 429) were raised directly
                 # above — re-raise them immediately. Retryable errors (5xx,
                 # 429) are stored in last_error and fall through to the
@@ -259,8 +264,8 @@ class PersonalClawClient:
     async def _post(self, path: str, body: Any = None) -> Any:
         return await self._request("POST", path, body)
 
-    async def _put(self, path: str, body: Any = None) -> Any:
-        return await self._request("PUT", path, body)
+    async def _put(self, path: str, body: Any = None, headers: dict[str, str] | None = None) -> Any:
+        return await self._request("PUT", path, body, headers)
 
     async def _delete(self, path: str) -> Any:
         return await self._request("DELETE", path)
@@ -315,7 +320,7 @@ class PersonalClawClient:
         return str(result.get("id", ""))
 
     async def spawn_many(self, tasks: list[str], agents: list[str] | None = None) -> list[str]:
-        
+
         coros = [
             self.spawn(task, agents[i] if agents and i < len(agents) else "")
             for i, task in enumerate(tasks)
@@ -382,16 +387,38 @@ class PersonalClawClient:
         return result if isinstance(result, list) else []
 
     async def register_mcp_server(
-        self, name: str, command: str, args: list[str] | None = None, env: dict[str, str] | None = None,
+        self,
+        name: str,
+        command: str,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
+        """Add the server, or replace the definition configured under *name* with this one.
+
+        The arguments are the caller's WHOLE definition, not an edit of a copy it read earlier, so a
+        replace reads the server just before and names that revision (``If-Match``) — the Gateway
+        refuses any replace that names none (``428``). One changed between that read and the write
+        is refused (``409``) rather than overwritten. Adding a new name names no revision.
+        """
         if not name or not command:
-            raise PersonalClawError(ErrorCode.VALIDATION_ERROR, "MCP server requires name and command")
+            raise PersonalClawError(
+                ErrorCode.VALIDATION_ERROR, "MCP server requires name and command"
+            )
         body: dict[str, Any] = {"command": command}
         if args:
             body["args"] = args
         if env:
             body["env"] = env
-        await self._put(f"/api/mcp/servers/{name}", body)
+        path = f"/api/mcp/servers/{name}"
+        headers: dict[str, str] = {}
+        try:
+            current = await self._get(path)
+        except PersonalClawError as exc:
+            if exc.status != 404:
+                raise
+        else:
+            headers["If-Match"] = f'"{current.get("revision", "")}"'
+        await self._put(path, body, headers)
 
     async def remove_mcp_server(self, name: str) -> None:
         await self._delete(f"/api/mcp/servers/{name}")
@@ -399,7 +426,9 @@ class PersonalClawClient:
     # ── Agent Runtime ──
 
     async def dispatch_agent(self, agent: str, prompt: str) -> dict[str, Any]:
-        return await self._post("/api/chat", {"message": prompt, "agent": agent, "app": self.app_name})
+        return await self._post(
+            "/api/chat", {"message": prompt, "agent": agent, "app": self.app_name}
+        )
 
     async def dispatch_agent_async(self, agent: str, prompt: str) -> str:
         result = await self._post("/api/spawn", {"task": prompt, "agent": agent})
@@ -417,13 +446,25 @@ class PersonalClawClient:
     async def get_app_config(self) -> dict[str, Any]:
         return await self._get(f"/api/apps/{self.app_name}/config")
 
-    async def set_app_config(self, config: dict[str, Any]) -> None:
-        await self._put(f"/api/apps/{self.app_name}/config", config)
+    async def set_app_config(self, config: dict[str, Any], *, revision: str) -> dict[str, Any]:
+        """Replace this app's saved settings with *config*, over the copy it was built from.
+
+        The Gateway writes the whole file, so the write names the revision of the read *config*
+        was built from — ``get_app_config()["revision"]`` — and refuses one that changed since
+        (``409``, nothing saved) rather than put the older copy back over that change. It is the
+        caller's revision, never one read here just before the write: that would name whatever
+        is stored now and overwrite it, which is the lost update the precondition exists to stop.
+        Returns the settings as saved, with the revision the next write names.
+        """
+        return await self._put(
+            f"/api/apps/{self.app_name}/config", config, {"If-Match": f'"{revision}"'}
+        )
 
     # ── Memory ──
 
     async def memory_search(self, query: str, top_k: int = 8) -> list[dict[str, Any]]:
         from urllib.parse import quote
+
         result = await self._get(f"/api/memory/episodic/search?q={quote(query)}&top_k={top_k}")
         return result if isinstance(result, list) else []
 
@@ -439,8 +480,11 @@ class PersonalClawClient:
         max_age: float | None = None,
     ) -> None:
         entry = ContextEntry(
-            content=content, source=source, ephemeral=ephemeral,
-            max_age=max_age, injected_at=time.time(),
+            content=content,
+            source=source,
+            ephemeral=ephemeral,
+            max_age=max_age,
+            injected_at=time.time(),
         )
         if session_id is None:
             self._pending_buffer.append(entry)
@@ -448,26 +492,35 @@ class PersonalClawClient:
                 self._pending_buffer.pop(0)
             return
 
-        await self._post(f"/api/chat/sessions/{session_id}/context", {
-            "content": content, "source": source,
-            "ephemeral": ephemeral, "maxAge": max_age,
-        })
+        await self._post(
+            f"/api/chat/sessions/{session_id}/context",
+            {
+                "content": content,
+                "source": source,
+                "ephemeral": ephemeral,
+                "maxAge": max_age,
+            },
+        )
 
     async def flush_pending_context(self, session_id: str) -> None:
         now = time.time()
         to_flush = [
-            e for e in self._pending_buffer
-            if e.max_age is None or e.injected_at + e.max_age >= now
+            e for e in self._pending_buffer if e.max_age is None or e.injected_at + e.max_age >= now
         ]
         self._pending_buffer.clear()
         failed: list[Any] = []
         last_exc: Exception | None = None
         for entry in to_flush:
             try:
-                await self._post(f"/api/chat/sessions/{session_id}/context", {
-                    "content": entry.content, "source": entry.source,
-                    "ephemeral": entry.ephemeral, "maxAge": entry.max_age,
-                })
+                await self._post(
+                    f"/api/chat/sessions/{session_id}/context",
+                    {
+                        "content": entry.content,
+                        "source": entry.source,
+                        "ephemeral": entry.ephemeral,
+                        "maxAge": entry.max_age,
+                    },
+                )
             except Exception as exc:
                 last_exc = exc
                 failed.append(entry)

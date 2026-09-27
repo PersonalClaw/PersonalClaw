@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import {
   Clock, RotateCcw, Loader2, Trash2, FileSymlink, History, Tag, Download, ChevronUp, FileWarning,
   GitCompare, Lock,
 } from 'lucide-react'
 import { api, type Artifact, type ArtifactEvent } from '../../lib/api'
+import { rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { isArtifactUpdateFor } from './artifactUpdateSignal'
 import { notify } from '../../app/appSdk'
@@ -14,7 +17,7 @@ import { QuietButton } from '../../ui/QuietButton'
 import { ChipInput } from '../../ui/forms'
 import { downloadText, safeFilename } from '../../lib/download'
 import { artifactKindMeta, relTime } from '../files/fileMeta'
-import { ContentSurface } from '../../ui/content/ContentSurface'
+import { ContentSurface, type DraftEntry } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { useDocumentEditing } from '../../ui/content/documentEditing'
 import { ArtifactCompare } from './ArtifactCompare'
@@ -39,7 +42,9 @@ interface ViewerProps {
   defaultDetailsOpen?: boolean
 }
 
-/** Unsaved artifact drafts, keyed by slug, owned at MODULE scope so they outlive the viewer.
+/** Unsaved artifact drafts, keyed by slug, owned at MODULE scope so they outlive the viewer —
+ *  each with the revisioned copy it was edited against (`DraftEntry.base`), so a draft picked up
+ *  again after navigating away still saves over THAT copy and is refused if the body moved on.
  *
  *  🔴 Navigating away from an artifact mid-edit discarded the edit with no warning and no
  *  recovery (issue 691): `ContentSurface` supports draft persistence and it is entirely
@@ -55,7 +60,7 @@ interface ViewerProps {
  *  point (it is the recovery) — and is bounded by how many artifacts one session edits. It is
  *  in memory only: a reload starts clean, which is the honest limit of this fix.
  */
-const artifactDrafts = new Map<string, { draft: string; base: string; warned?: boolean }>()
+const artifactDrafts = new Map<string, DraftEntry>()
 
 export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, commentTarget, initialVersion, onVersionChange, defaultDetailsOpen = false }: ViewerProps) {
   const [art, setArt] = useState<Artifact | null>(null)
@@ -122,6 +127,38 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   }
   useEffect(() => { setComparing(false); reload({ keepVersion: initialVersion != null }) }, [slug])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 🔴 THE COPY THE DRAFT WAS BUILT FROM — the base a body save names (`lib/staleWrite.ts`). The
+  // agent's `artifact_update`, a workflow, a write to the file this artifact points at, or another
+  // tab can change the body while it is open here, and the next save used to write this page's
+  // copy over that change without a word. The base follows the stored body only while the draft
+  // holds nothing of the user's the stored body lacks; under an unsaved edit it stays put, so the
+  // save is refused and the edit re-applied on top (`ui/StaleWriteNotice`).
+  const [base, setBase] = useState<Revisioned<string> | null>(null)
+  const [draft, setDraft] = useState<string | null>(null)  // mirrored from the surface
+  const baseFor = useRef('')
+  useEffect(() => {
+    if (!art || art.slug !== slug) return
+    const stored = { value: art.content ?? '', revision: art.content_revision ?? '' }
+    if (baseFor.current !== slug) {
+      // A draft picked up again from the store keeps the copy it was edited against.
+      baseFor.current = slug
+      setBase(artifactDrafts.get(slug)?.base ?? stored)
+    } else if (draft === stored.value) {
+      setBase((b) => (b && b.revision === stored.revision && b.value === stored.value ? b : stored))
+    }
+  }, [art, draft, slug])
+  // Which save the guarded write is — a plain save or a snapshot. Set before each, so a notice's
+  // "Reload and reapply" re-runs the one that was refused.
+  const writeTo = useRef((next: string, rev: string): Promise<unknown> => api.saveArtifactBody(slug, next, rev))
+  const guard = useStaleWriteGuard<string>({
+    read: () => api.artifact(slug).then((a) => ({ value: a.content ?? '', revision: a.content_revision ?? '' })),
+    write: (next, rev) => writeTo.current(next, rev),
+    // Landed (first try or re-applied) or dropped: either way the editor re-seeds from what is
+    // stored. The store entry goes first, so the remount cannot pick the pre-reapply draft back up.
+    onSaved: () => { artifactDrafts.delete(slug); void reload().then(() => onChanged()) },
+    onDiscard: () => { artifactDrafts.delete(slug); void reload() },
+  })
+
   // AE-10 — the live-refresh trigger behind the split-view iterate panel. The panel
   // is a `ChatEmbed` (a sandboxed iframe, a separate document with no bridge back
   // here), so a version the agent writes from inside it would otherwise sit
@@ -182,23 +219,22 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
 
   // ContentSurface owns the draft + edit toggle. A plain Save records an 'edited'
   // event; the separate "Snapshot" action (below, passed as a ContentAction) cuts
-  // a new immutable version.
-  const onSave = async (draft: string) => {
-    if (!art) return
+  // a new immutable version. Both send the draft over `base`; a refusal because the body moved
+  // on resolves `false` into the notice, which holds the change.
+  const onSave = async (text: string) => {
+    if (!art || !base) return
+    writeTo.current = (next, rev) => api.saveArtifactBody(slug, next, rev)
     // Re-throw after notifying: ContentSurface's save keeps the draft dirty on a throw,
     // so the user doesn't lose their edit + sees why it failed (was silently swallowed).
-    try {
-      await api.updateArtifact(slug, { content: draft, snapshot: false, event_type: 'edited' })
-      await reload(); onChanged()
-    } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error'); throw e }
+    try { await guard.save(base, text, rebaseText(base.value, text)) }
+    catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error'); throw e }
   }
   // "Snapshot" — persist the draft AND cut a new immutable version (event 'iterated').
-  const snapshot = async (draft: string) => {
-    if (!art) return
-    try {
-      await api.updateArtifact(slug, { content: draft, snapshot: true, event_type: 'iterated' })
-      await reload(); onChanged()
-    } catch (e) { notify(`Could not snapshot artifact: ${(e as Error).message}`, 'error'); throw e }
+  const snapshot = async (text: string) => {
+    if (!art || !base) return
+    writeTo.current = (next, rev) => api.snapshotArtifactBody(slug, next, rev)
+    try { await guard.save(base, text, rebaseText(base.value, text)) }
+    catch (e) { notify(`Could not snapshot artifact: ${(e as Error).message}`, 'error'); throw e }
   }
   const revert = async () => {
     if (!art || selVersion === null) return
@@ -212,15 +248,20 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
     } catch (e) { notify(`Could not revert: ${(e as Error).message}`, 'error') }
     finally { setBusy(false) }
   }
-  // Tags (#669): the PATCH accepted `tags` all along — this is its first UI writer.
-  // Pessimistic, like every other write here: persist first, repaint from reload,
-  // so a refused write never leaves an optimistic value on screen. The busy guard
-  // also serializes rapid chip edits, which are computed from the rendered values.
+  // Tags (#669), one name at a time. The ChipInput hands back the whole next list, and its
+  // difference from the rendered list IS the user's edit — so that is what is sent, applied to the
+  // tags stored when it lands. Sending the list itself dropped any tag the agent or another tab
+  // added since this page read it. Pessimistic, like every other write here: persist first,
+  // repaint from reload, so a refused write never leaves an optimistic value on screen. The busy
+  // guard also serializes rapid chip edits, which are computed from the rendered values.
   const saveTags = async (next: string[]) => {
     if (!art || busy) return
+    const add = next.filter((t) => !art.tags.includes(t))
+    const remove = art.tags.filter((t) => !next.includes(t))
+    if (!add.length && !remove.length) return
     setBusy(true)
     try {
-      await api.updateArtifact(slug, { tags: next })
+      await api.editArtifactTags(slug, { add, remove })
       await reload({ keepVersion: true, quiet: true }); onChanged()
     } catch (e) { notify(`Could not update tags: ${(e as Error).message}`, 'error') }
     finally { setBusy(false) }
@@ -377,6 +418,10 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               // includes the version but `docId` (the slug) does not, so the store cannot tell
               // them apart on its own.
               draftStore={editable ? artifactDrafts : undefined}
+              draftBase={base ?? undefined}
+              locked={guard.conflict !== null}
+              onDraftChange={(d) => setDraft(d)}
+              banner={<StaleWriteNotice guard={guard} what="This artifact" className="mx-m mt-s" />}
               onSave={editable ? onSave : undefined}
               // 🔴 A document save cut a version on disk and this header kept reading `· v1 · 1
               // event` until a reload (issue 2753). A binary artifact has no visible content diff
@@ -395,7 +440,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               // its restore are inherited machinery rather than a second write path.
               // A historical/frozen version keeps annotate (a correction is a request,
               // not a mutation) but offers no persist.
-              iterate={{ slug: art.slug, persistVersion: editable ? snapshot : undefined }}
+              iterate={{ slug: art.slug, persistVersion: editable && !guard.conflict ? snapshot : undefined }}
               commentTarget={commentTarget}
               actions={editable ? [{ icon: History, label: 'Snapshot', title: 'Save as a new version snapshot', primary: true, run: snapshot }] : undefined}
             />

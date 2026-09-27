@@ -318,14 +318,15 @@ describe('SecurityPanel — allow all private networks', () => {
           builtin: [], user: [], user_additions: 0,
           baseline: { version: '1', pattern_count: 0, sha256: 'a'.repeat(64), verified: true, user_additions: 0 },
         }),
-        securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: allowPrivate }),
+        securityEgress: () => Promise.resolve({ value: { allow_hosts: [], deny_hosts: [], allow_private: allowPrivate }, revision: 'r1' }),
         outsideHome: () => Promise.resolve({ places: [], allowed: [] }),
         setSecurityEgress,
         desktopState: () => Promise.resolve({
           connected: false, shell: null, capabilities: {}, registered_at: '', last_seen: '',
         }),
         credentialStore: () => Promise.resolve(null),
-        setUserDeniedCommands: () => Promise.resolve({}),
+        addDeniedCommand: () => Promise.resolve({}),
+        removeDeniedCommand: () => Promise.resolve({}),
         personalclawConfig: () => Promise.resolve({ sandbox: {} }),
         patchConfig: () => Promise.resolve({}),
       },
@@ -348,9 +349,9 @@ describe('SecurityPanel — allow all private networks', () => {
     const box = screen.getByRole('checkbox', { name: /allow all private networks/i })
     await act(async () => { fireEvent.click(box); await flush() })
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    // …carrying the consent, so the gateway does not ask a second time.
+    // …over the revision it was read at, carrying the consent, so the gateway does not ask again.
     expect(setSecurityEgress).toHaveBeenCalledWith(
-      expect.objectContaining({ allow_private: true }), true,
+      expect.objectContaining({ allow_private: true }), 'r1', true,
     )
   })
 
@@ -369,7 +370,7 @@ describe('SecurityPanel — allow all private networks', () => {
     await act(async () => { fireEvent.click(box); await flush() })
     expect(confirmSpy, 'turning it off is not the relaxing direction').not.toHaveBeenCalled()
     expect(setSecurityEgress).toHaveBeenCalledWith(
-      expect.objectContaining({ allow_private: false }), false,
+      expect.objectContaining({ allow_private: false }), 'r1', false,
     )
   })
 })

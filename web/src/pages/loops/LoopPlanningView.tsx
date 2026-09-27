@@ -21,7 +21,7 @@ function makeCfg(loopId: string): WalkthroughConfig {
       retry: (id) => api.uLoopPlanRetry(id),
       approve: (id, sid) => api.uLoopPlanApprove(id, sid),
       comment: (id, sid, text) => api.uLoopPlanComment(id, sid, text),
-      edit: (id, sid, md) => api.uLoopPlanEdit(id, sid, md),
+      edit: (id, sid, md, base) => api.uLoopPlanEdit(id, sid, md, base),
       isReady: (id) => api.uLoop(id).then((l) => l.status === 'review').catch(() => false),
     },
     // Kind-neutral copy — this walkthrough serves every non-code kind (goal/general/

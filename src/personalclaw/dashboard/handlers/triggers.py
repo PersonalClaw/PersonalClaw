@@ -25,6 +25,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.handlers import trigger_revisions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
@@ -447,7 +448,7 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
     projected["warnings"] = warnings
     projected["needs_review"] = _needs_review(trigger)
     projected.update(_attribution(trigger, owner=owner))
-    return projected
+    return trigger_revisions.with_revision(projected, schedule=True)
 
 
 def _needs_review(trigger: Any) -> bool:
@@ -461,7 +462,7 @@ def _needs_review(trigger: Any) -> bool:
 def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
     from personalclaw.hooks import BLOCKING_EVENTS, hook_enforcement
 
-    return {
+    row = {
         "kind": _LIFECYCLE,
         "id": f"{_LIFECYCLE}:{hook.id}",
         "raw_id": hook.id,
@@ -486,6 +487,7 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
             hook.event, enabled=bool(hook.enabled), bound=bool(used_by)
         ),
     }
+    return trigger_revisions.with_revision(row, schedule=False)
 
 
 def _hook_store(state: DashboardState):
@@ -1168,6 +1170,15 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
+    # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
+    problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
+    stale = trigger_revisions.refusal(
+        request, body, schedule=kind == _SCHEDULE, current=lambda: _row_now(state, kind, raw)
+    )
+    if stale is not None:
+        return stale
     unconsented = _unconsented_action(
         request,
         body,
@@ -1176,16 +1187,21 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     )
     if unconsented is not None:
         return unconsented
-    problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
-    if problem:
-        return json_error("invalid_request", message=problem, status=400)
 
     if kind == _LIFECYCLE:
-        return await _update_lifecycle(state, raw, body)
-    return await _update_schedule(state, raw, body)
+        return _update_lifecycle(state, raw, body)
+    return _update_schedule(state, raw, body)
 
 
-async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
+def _row_now(state: DashboardState, kind: str, raw: str) -> dict[str, Any] | None:
+    """The row a fresh read hands out for the trigger as stored now, or ``None`` when absent."""
+    if kind == _SCHEDULE:
+        return None if (row := _trigger_store().get(raw)) is None else _schedule_row_for(state, row)
+    hook = _hook_store(state).get(raw)
+    return None if hook is None else _serialize_lifecycle(hook, _used_by_index().get(raw, []))
+
+
+def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
     from personalclaw.validation import HOOK_UPDATE_SCHEMA, ValidationError, validate_tool_args
 
     patch: dict[str, Any] = {}
@@ -1212,7 +1228,7 @@ async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.
     )
 
 
-async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Response:
+def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Response:
     from zoneinfo import available_timezones
 
     from personalclaw.triggers import delivery as _delivery

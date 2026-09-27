@@ -323,8 +323,10 @@ _UPDATE_TASK_CALL_SITES: dict[str, int] = {
     # the façade's own call into the provider implementation it routes to
     "tasks/registry.py": 1,
     # guarded doors: PUT /api/tasks/{id} and POST /api/tasks/bulk op:update, both behind
-    # registry.engine_owned_refusal (#390)
-    "tasks/handlers.py": 2,
+    # registry.engine_owned_refusal (#390) — plus the PUT door's `tick` form (`handlers._tick`),
+    # which writes ONE checklist item onto the stored list and so only ever `exit_criteria` or
+    # `action_plan`, neither of them an ENGINE_OWNED field
+    "tasks/handlers.py": 3,
     # guarded door: the agent's task_update tool, behind the same refusal resolver
     "agents/native/builtin_tools.py": 1,
     # the non-engine door this issue closes: filtered by managed()/ENGINE_OWNED_FIELDS instead
@@ -364,14 +366,14 @@ def test_every_update_task_call_site_is_classified():
     """The census the issue asked for: every non-test call site that reaches
     `registry.update_task` (or, for the façade itself, the provider's own `update_task`),
     classified into guarded doors, engine/loop writers, the façade, and the one non-engine
-    door that defers field-wise. 12 sites total. A 13th — anywhere in the tree — reds here
+    door that defers field-wise. 13 sites total. A 14th — anywhere in the tree — reds here
     instead of silently joining "engine/loop writers" or disappearing from the count."""
     found = _update_task_call_line_counts()
     assert found == _UPDATE_TASK_CALL_SITES, (
         f"the update_task call-site census drifted: found {found}, classified "
         f"{_UPDATE_TASK_CALL_SITES}. Classify the new/removed site before updating this table."
     )
-    assert sum(_UPDATE_TASK_CALL_SITES.values()) == 12
+    assert sum(_UPDATE_TASK_CALL_SITES.values()) == 13
 
 
 def test_reconcile_direct_status_writes_are_declared():

@@ -643,6 +643,17 @@
   .squircle { corner-shape: superellipse; border-radius: var(--radius-xl); }
 }
 
+/* A held change (ui/StaleWriteNotice `HeldChange`): the editor a refused save was made in, frozen
+   until the change is reapplied or discarded. Its disabled fieldset turns every control inside off
+   natively, but the form primitives dim on their own `disabled` prop, not on `:disabled` — so a
+   frozen field still looked live. `:disabled` also matches the controls the fieldset reached. */
+@layer base {
+  fieldset[data-held-change]:disabled :is(input, textarea, select, button):disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
 /* highlight.js — NE-tokenized syntax colors (uses the JSON-syntax palette feel) */
 @layer base {
   .hljs { color: var(--color-on-surface); background: transparent; }

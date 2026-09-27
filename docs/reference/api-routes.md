@@ -347,7 +347,7 @@ The 864 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/side/turn` | ask one side question. |
 | `POST` | `/api/chat/sessions/{session}/stop` | cooperative stop with kill fallback. |
 | `POST` | `/api/chat/sessions/{session}/switch-variant` | switch which regenerated variant is active. |
-| `PUT` | `/api/chat/sessions/{session}/tags` | replace the session's tag list. |
+| `PUT` | `/api/chat/sessions/{session}/tags` | add tags to a session and remove tags from it. |
 | `PATCH` | `/api/chat/sessions/{session}/title` | rename a chat session. |
 | `GET` | `/api/chat/sessions/{session}/tool-result/{rid}` | the FULL raw output of |
 | `POST` | `/api/chat/sessions/{session}/undo` | roll back the last N conversation turns. |
@@ -978,7 +978,7 @@ The 864 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/voice/resolve` | which level wins, and why. |
 | `POST` | `/api/voice/synthesize` | sentence-chunked Piper TTS. |
 | `GET` | `/api/workflows` | _(no summary)_ |
-| `POST` | `/api/workflows` | _(no summary)_ |
+| `POST` | `/api/workflows` | validate a definition and, unless ``save: false``, save it. |
 | `GET` | `/api/workflows/attention` | per-template §4.4 attention summaries. |
 | `GET` | `/api/workflows/audit` | Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default |
 | `GET` | `/api/workflows/manifest` | the machine-readable self-description of this instance. |
@@ -1013,7 +1013,7 @@ The 864 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/runs/{run_id}/workspace` | GET the run's workspace review: changed files + the two reintegration verbs (§4.1). |
 | `GET` | `/api/workflows/surfacing` | The templates list with its surfacing state — what the UX renders. |
 | `DELETE` | `/api/workflows/{name}` | _(no summary)_ |
-| `GET` | `/api/workflows/{name}` | _(no summary)_ |
+| `GET` | `/api/workflows/{name}` | one definition, and the ``revision`` a save over it names. |
 | `POST` | `/api/workflows/{name}/a2a-publish` | the template detail UI's publish toggle. |
 | `GET` | `/api/workflows/{name}/ledger` | recent runs of this template with their ledger totals. |
 | `POST` | `/api/workflows/{name}/refine` | fire the refiner over this template on demand. |

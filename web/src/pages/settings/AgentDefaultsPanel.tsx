@@ -81,6 +81,15 @@ export function AgentDefaultsPanel() {
       notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
+  // A list field sends the names added and removed, never this panel's copy of the list; the chips
+  // then show the list as stored, which includes anything another tab added meanwhile.
+  const editList = (key: string, next: string[], onSaved: () => void, label?: string) => {
+    const prev = Array.isArray(cfg[key]) ? (cfg[key] as string[]) : []
+    api.saveListEdits(`agent.${key}`, prev, next).then((stored) => {
+      setCfg((c) => ({ ...c, [key]: stored }))
+      onSaved()
+    }).catch((e) => notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error'))
+  }
 
   // YOLO goes through the ONE writer (`agentYolo.setAgentYolo`), which asks before turning it on,
   // carries the consent the server requires, and reports a failed write itself — the hub tile calls
@@ -136,7 +145,7 @@ export function AgentDefaultsPanel() {
           <NumberRow label="Max turns per subagent" cfg={cfg} field="subagent_max_turns" patch={patch} min={1} max={200} />
           <NumberRow label="Subagent timeout" cfg={cfg} field="subagent_timeout_secs" patch={patch} min={60} max={7200} suffix="s" />
           <NumberRow label="Min free memory to spawn" cfg={cfg} field="spawn_min_memory_gb" patch={patch} min={0} max={64} step={0.5} suffix="GB" />
-          <StrListField label="Allowed working directories" hint="Roots a subagent may run in." cfg={cfg} field="subagent_cwd_allowed_roots" patch={patch} placeholder="Add path…" />
+          <StrListField label="Allowed working directories" hint="Roots a subagent may run in." cfg={cfg} field="subagent_cwd_allowed_roots" editList={editList} placeholder="Add path…" />
         </RowGroup>
       </Section>
 

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
@@ -30,6 +31,7 @@ from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
+from personalclaw.stale_write import revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -508,15 +510,13 @@ async def api_security_egress(_request: web.Request) -> web.Response:
     """GET /api/security/egress — the operator's outbound-egress overrides for the
     Security panel. Defaults (public-only, no allow/deny) are enforced in code; these
     are the self-hoster's relaxations, edited via PATCH /api/config/personalclaw
-    ``security.egress``."""
-    eg = AppConfig.load().security.egress
-    return web.json_response(
-        {
-            "allow_hosts": list(eg.allow_hosts),
-            "deny_hosts": list(eg.deny_hosts),
-            "allow_private": bool(eg.allow_private),
-        }
-    )
+    ``security.egress``.
+
+    The object is one document — the panel saves all three keys together — so it carries the
+    ``revision`` that write must name (`personalclaw/stale_write.py`), taken from the same value
+    the PATCH compares against."""
+    eg = _value_in_effect("security.egress")
+    return web.json_response({**(eg if isinstance(eg, dict) else {}), "revision": revision_of(eg)})
 
 
 async def api_security_outside_home(_request: web.Request) -> web.Response:
@@ -724,7 +724,44 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
         if not fields:
             return _app_config_refusal(app_name, "permissions.config", "config.read")
         full = _declared_settings(full, fields)
-    return web.json_response(full)
+    return web.json_response(_with_revisions(full))
+
+
+#: The spec types whose value is a whole DOCUMENT: a list or an object that a ``value`` write
+#: replaces wholesale. A page builds that value from the copy it read, so a ``value`` write of one
+#: must name the revision it was built from, and a stale copy is refused instead of undoing a change
+#: made since (`personalclaw/stale_write.py`). A ``str_list`` also takes the per-item ``add`` and
+#: ``remove`` forms, which apply one name to what is stored now and so need no revision.
+_DOCUMENT_TYPES = frozenset({"str_list", "egress", "projection_rules", "skill_catalogs"})
+
+#: The editable paths holding a document — the ones a read reports a revision for.
+_DOCUMENT_PATHS = tuple(p for p, s in _EDITABLE_CONFIG.items() if s["type"] in _DOCUMENT_TYPES)
+
+
+def _lookup(full: dict, path_key: str) -> tuple[bool, object]:
+    """``(True, value)`` at dotted *path_key* in *full*, or ``(False, None)`` when it is absent."""
+    node: object = full
+    for part in path_key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False, None
+        node = node[part]
+    return True, node
+
+
+def _with_revisions(full: dict) -> dict:
+    """*full* as a read hands it out: the settings plus ``revisions``, the revision of each
+    document it holds, keyed by dotted path.
+
+    Taken from the very dict being returned, so a revision always describes the value beside it
+    and never a later one. A path missing from *full* (an app's pruned read) gets none, and a read
+    holding no document at all carries no ``revisions`` key.
+    """
+    revisions: dict[str, str] = {}
+    for path_key in _DOCUMENT_PATHS:
+        found, value = _lookup(full, path_key)
+        if found:
+            revisions[path_key] = revision_of(value)
+    return {**full, "revisions": revisions} if revisions else full
 
 
 def _value_in_effect(path_key: str) -> object:
@@ -734,17 +771,30 @@ def _value_in_effect(path_key: str) -> object:
     loosen the control?" is a question about the value in effect: an absent key IS its default,
     and a hand-edited value `load()` normalises is the normalised one. ``None`` when the path
     does not resolve, which every `loosens` rule reads as "cannot prove this is not looser".
+
+    It is also the document a read's revision is taken from (`_with_revisions` walks the same
+    ``to_dict()``), which is what lets a write's base be compared against it.
     """
-    node: object = AppConfig.load().to_dict()
-    for part in path_key.split("."):
-        if not isinstance(node, dict) or part not in node:
-            return None
-        node = node[part]
-    return node
+    return _lookup(AppConfig.load().to_dict(), path_key)[1]
 
 
 async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
-    """PATCH /api/config/personalclaw — update a single config field."""
+    """PATCH /api/config/personalclaw — update a single config field.
+
+    Three body forms:
+
+    * ``{path, value}`` — set the field. When the field holds a document (a list or an object,
+      `_DOCUMENT_TYPES`) the value replaces all of it, so the request must name the revision it
+      was built from in ``If-Match`` — ``revisions[path]`` from the read. A stale one is refused
+      with ``409 stale_write`` and nothing is written.
+    * ``{path, add: name}`` / ``{path, remove: name}`` — for a list of names (``str_list``): add
+      the name if it is missing, or remove it if present, applied to what is stored at the moment
+      of the write. No revision: one name in or out cannot undo anyone else's change.
+
+    Both are decided inside the config transaction (`config.transactions`), so the revision check
+    or the add/remove and the write are one step no other writer — this process or another — can
+    come between.
+    """
     caller = request.get("user")
     if not caller:
         logger.warning(
@@ -783,7 +833,9 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     # worse than illegible: `dict.get(["a"])` raises on an unhashable key, so the request-shape
     # boundary caught the TypeError and answered a generic `bad_request` that named nothing.
     path_key = body.get("path")
-    value = body.get("value")
+    # Typed once for every form of the body: by the write it is the validated value — `value`
+    # itself, or the list an `add`/`remove` makes.
+    value: Any = body.get("value")
     if path_key is None:
         return _deny(
             "missing required 'path' (the config field to edit, e.g. agent.yolo)", "missing path"
@@ -824,14 +876,70 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     if app_name and path_key not in _app_config_fields(app_name):
         return _app_config_refusal(app_name, path_key, "config.patch")
 
+    # Which form: the whole value, or one name added to / removed from a list of names.
+    op = "add" if "add" in body else "remove" if "remove" in body else "value"
+    item: str = ""
+    if op != "value":
+        if "value" in body or ("add" in body and "remove" in body):
+            return _deny(
+                "send one of 'value', 'add' or 'remove' — not several", f"{path_key}: mixed forms"
+            )
+        if spec["type"] != "str_list":
+            return _deny(
+                f"'{op}' applies to a list of names, and {path_key} is not one — send its "
+                "whole 'value'",
+                f"{path_key}: {op} on {spec['type']}",
+            )
+        # Taken as sent, not stripped: a name is matched exactly on remove, and a stored entry
+        # carrying surrounding whitespace must stay removable.
+        item = body[op]
+        if not isinstance(item, str) or not item.strip():
+            return _deny(f"'{op}' must be a non-empty string", f"{path_key}: {op}={item!r}")
+
     # Validate value. The rules live in `config/edit_spec.py` because three other write
-    # paths need exactly these ones — see that module for why they are one function.
+    # paths need exactly these ones — see that module for why they are one function. An item
+    # is validated alone here (its type and, for a pattern list, its regex); the list it makes
+    # is validated again inside the transaction, where it is known.
     try:
-        value = coerce_edit_value(path_key, value, spec)
+        if op == "value":
+            value = coerce_edit_value(path_key, value, spec)
+        else:
+            coerce_edit_value(path_key, [item], {**spec, "max_items": 1})
     except ConfigValueError as exc:
         return _deny(str(exc), exc.resources, exc.status)
 
     def _apply(data: dict) -> None:
+        # `value` becomes what this write stores — the value sent, or the list an `add`/`remove`
+        # makes of what is stored now — and the live-apply steps after the transaction read it.
+        nonlocal value
+        current = _value_in_effect(path_key)
+        if op == "value" and spec["type"] in _DOCUMENT_TYPES:
+            # 🔴 A WHOLE DOCUMENT IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The page builds
+            # this list from what it read; another tab, the CLI or the gateway may have saved
+            # since, and replacing that newer list with this one would erase the change without a
+            # word. Inside the transaction, so no writer can land between this comparison and the
+            # write, and before the consent check: a stale write is refused whatever its
+            # direction, and asking the owner to consent to one would be asking about the wrong
+            # list.
+            stale = stale_write_refusal(request, current, what=path_key)
+            if stale is not None:
+                raise RefusedInConfigTransaction(
+                    stale, audit=_audit("denied", f"{path_key}: stale base")
+                )
+        elif op != "value":
+            names = [n for n in current if isinstance(n, str)] if isinstance(current, list) else []
+            if op == "add":
+                value = names if item in names else [*names, item]
+            else:
+                value = [n for n in names if n != item]
+            try:
+                value = coerce_edit_value(path_key, value, spec)
+            except ConfigValueError as exc:
+                raise RefusedInConfigTransaction(
+                    web.json_response({"error": str(exc)}, status=exc.status),
+                    audit=_audit("denied", exc.resources or str(exc)),
+                ) from exc
+
         # 🔴 A WRITE THAT LOOSENS A SECURITY SETTING NEEDS THE OWNER'S CONSENT ON THE WIRE, not
         # only in a dialog. The Settings hub's YOLO tile turned YOLO on ~40 ms after one click
         # because the panel's dialog was the only gate and a second writer never called it (#3596,
@@ -847,9 +955,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         #
         # A record that the owner was asked, not authorization — anything holding the owner's
         # session can send the flag. The authorization half is `app_write_refusal` above.
-        consent = unconsented_loosening(
-            path_key, spec, current=_value_in_effect(path_key), new=value, body=body
-        )
+        consent = unconsented_loosening(path_key, spec, current=current, new=value, body=body)
         if consent:
             raise RefusedInConfigTransaction(
                 consent_required(path_key, consent),
@@ -1030,7 +1136,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     # this, writing the one setting it declared handed back every other setting too.
     if app_name:
         full = _declared_settings(full, _app_config_fields(app_name))
-    return web.json_response(full)
+    return web.json_response(_with_revisions(full))
 
 
 # ── Incident kill switch (AUTONOMY-GUARDRAILS §1.3) ────────────────────

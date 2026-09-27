@@ -152,7 +152,7 @@ async def _create(state: _State, home, body: dict) -> dict:
 async def _update(state: _State, raw: str, body: dict) -> tuple[int, dict]:
     from personalclaw.dashboard.handlers import triggers as handlers
 
-    resp = await handlers._update_schedule(state, raw, body)
+    resp = handlers._update_schedule(state, raw, body)
     return resp.status, json.loads(resp.body.decode())
 
 

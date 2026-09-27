@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Globe, FolderGit2, Lock } from 'lucide-react'
-import { api, type AlwaysOnItem, type AlwaysOnResponse, type ProjectItem } from '../../lib/api'
+import { api, type AlwaysOnDocument, type AlwaysOnItem, type AlwaysOnResponse, type ProjectItem } from '../../lib/api'
 import { notify } from '../../app/appSdk'
+import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { Section } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -25,9 +28,6 @@ export function AlwaysOnConventions() {
   const [data, setData] = useState<AlwaysOnResponse | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [openId, setOpenId] = useState('')
-  const [draft, setDraft] = useState('')
-  const [loadingDoc, setLoadingDoc] = useState(false)
-  const [saving, setSaving] = useState(false)
 
   const load = useCallback((pid: string) => {
     setError(null)
@@ -39,45 +39,7 @@ export function AlwaysOnConventions() {
 
   // Close any open editor when the project changes — keeping a draft from another project
   // open would let a save land on a document the user is no longer looking at.
-  useEffect(() => { setOpenId(''); setDraft('') }, [projectId])
-
-  const openEditor = async (item: AlwaysOnItem) => {
-    if (openId === item.id) { setOpenId(''); return }
-    setOpenId(item.id)
-    setDraft('')
-    setLoadingDoc(true)
-    try {
-      // Fetch the VERBATIM body. The list carries a redacted preview, and saving a redacted
-      // preview back would write the redaction over the user's real text.
-      const doc = await api.alwaysOnDoc(item.id, item.project_id)
-      setDraft(doc.body ?? '')
-    } catch (e) {
-      notify(`Couldn't open ${item.name}: ${String((e as Error)?.message || e)}`, 'error')
-      setOpenId('')
-    } finally {
-      setLoadingDoc(false)
-    }
-  }
-
-  const save = async (item: AlwaysOnItem) => {
-    setSaving(true)
-    try {
-      const res = await api.saveAlwaysOnDoc(item.id, item.project_id, draft)
-      // Render what the store now holds, not what we hoped we wrote.
-      setDraft(res.item.body ?? '')
-      notify(`Saved ${item.name} — every session in this project now receives it.`, 'success')
-      load(projectId)
-    } catch (e) {
-      // A failed write must never read as a save. The server rejects rather than answering
-      // ok:true, so the user's draft stays on screen — it is their only copy of the edit.
-      notify(
-        `Couldn't save ${item.name}: ${String((e as Error)?.message || e)}. Your edit is still here — it was NOT saved.`,
-        'error',
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
+  useEffect(() => { setOpenId('') }, [projectId])
 
   // One line, deliberately: the loading-noun ratchet pairs a skeleton's `what` to a LoadError
   // noun found on a SINGLE line, so splitting this across lines makes the skeleton's noun read
@@ -144,33 +106,9 @@ export function AlwaysOnConventions() {
                 key={item.id}
                 item={item}
                 open={openId === item.id}
-                onToggle={() => openEditor(item)}
+                onToggle={() => setOpenId(openId === item.id ? '' : item.id)}
                 editor={openId === item.id ? (
-                  <div className="mt-3">
-                    {loadingDoc ? (
-                      <p data-type="body-s" className="text-on-surface-low">Loading the exact text a session receives…</p>
-                    ) : (
-                      <>
-                        <label className="sr-only" htmlFor={`always-on-editor-${item.id}`}>{item.name}</label>
-                        <textarea
-                          id={`always-on-editor-${item.id}`}
-                          value={draft}
-                          onChange={(e) => setDraft(e.target.value)}
-                          rows={10}
-                          spellCheck={false}
-                          data-type="body-s" className="w-full rounded-md bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
-                        />
-                        <div className="mt-2 flex items-center gap-2">
-                          <Button size="sm" loading={saving} disabled={saving} onClick={() => save(item)}>
-                            {saving ? 'Saving…' : 'Save'}
-                          </Button>
-                          <Button size="sm" variant="secondary" onClick={() => { setOpenId(''); setDraft('') }}>
-                            Cancel
-                          </Button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                  <InstructionEditor key={item.id} item={item} onClose={() => setOpenId('')} onSaved={() => load(projectId)} />
                 ) : undefined}
               />
             ))}
@@ -178,6 +116,108 @@ export function AlwaysOnConventions() {
         )}
       </Section>
     </>
+  )
+}
+
+/** An item's verbatim body as the editor round-trip serves it, with the revision of that body. */
+const bodyOf = (doc: AlwaysOnDocument): Revisioned<string> => ({ value: doc.body ?? '', revision: doc.revision })
+
+/** The editor for one editable project instruction — mounted per open document, so a save the
+ *  gateway refused (and the change it holds) belongs to that document and closes with it.
+ *
+ *  🔴 SAVED OVER THE COPY IT WAS BUILT FROM. The overview is not this page's alone: every workflow
+ *  run that completes in the project appends a line to it. Save used to write the editor's copy
+ *  straight over it — a run that finished while the editor was open lost its line without a word.
+ *  The save now names the revision of the body it was seeded from, a stale one is refused, and the
+ *  edit is re-applied onto what is stored (`ui/StaleWriteNotice`). */
+function InstructionEditor({ item, onClose, onSaved }: {
+  item: AlwaysOnItem
+  onClose: () => void
+  /** The save landed: the list re-reads what every session now receives. */
+  onSaved: () => void
+}) {
+  const [draft, setDraft] = useState('')
+  // The copy `draft` was seeded from — the base its save names. `null` while the body is read.
+  const [base, setBase] = useState<Revisioned<string> | null>(null)
+  const [saving, setSaving] = useState(false)
+  const seed = (doc: Revisioned<string>) => { setBase(doc); setDraft(doc.value) }
+  // What the gateway reported storing, from the guard's own reads and writes. A landed save renders
+  // THIS — what the store now holds (it trims and caps the overview), not what we hoped we wrote —
+  // and a discard re-seeds from the re-read the refusal made.
+  const latest = useRef<Revisioned<string> | null>(null)
+  const guard = useStaleWriteGuard<string>({
+    read: () => api.alwaysOnDoc(item.id, item.project_id).then((doc) => { latest.current = bodyOf(doc); return latest.current }),
+    write: (next, revision) => api.saveAlwaysOnDoc(item.id, item.project_id, next, revision).then((res) => { latest.current = bodyOf(res.item) }),
+    onSaved: () => {
+      if (latest.current) seed(latest.current)
+      notify(`Saved ${item.name} — every session in this project now receives it.`, 'success')
+      onSaved()
+    },
+    onDiscard: () => { if (latest.current) seed(latest.current) },
+  })
+  const held = guard.conflict !== null
+
+  useEffect(() => {
+    let alive = true
+    // Fetch the VERBATIM body. The list carries a redacted preview, and saving a redacted
+    // preview back would write the redaction over the user's real text.
+    api.alwaysOnDoc(item.id, item.project_id)
+      .then((doc) => { if (alive) seed(bodyOf(doc)) })
+      .catch((e) => {
+        if (!alive) return
+        notify(`Couldn't open ${item.name}: ${String((e as Error)?.message || e)}`, 'error')
+        onClose()
+      })
+    return () => { alive = false }
+    // Keyed by the item at its mount site, so this runs once per opened document.
+  }, [item.id, item.project_id])
+
+  const save = async () => {
+    if (!base) return
+    setSaving(true)
+    try {
+      // `false` is a refusal the notice below now holds, with the draft still on screen.
+      await guard.save(base, draft, rebaseText(base.value, draft))
+    } catch (e) {
+      // A failed write must never read as a save. The server rejects rather than answering
+      // ok:true, so the user's draft stays on screen — it is their only copy of the edit.
+      notify(
+        `Couldn't save ${item.name}: ${String((e as Error)?.message || e)}. Your edit is still here — it was NOT saved.`,
+        'error',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!base) {
+    return <p data-type="body-s" className="mt-m text-on-surface-low">Loading the exact text a session receives…</p>
+  }
+  return (
+    <div className="mt-m">
+      <label className="sr-only" htmlFor={`always-on-editor-${item.id}`}>{item.name}</label>
+      {/* Read-only while a refused save waits for the user's choice: the notice re-applies the text
+          it kept, so anything typed meanwhile would be dropped by that save. */}
+      <textarea
+        id={`always-on-editor-${item.id}`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        readOnly={held}
+        rows={10}
+        spellCheck={false}
+        data-type="body-s" className="w-full rounded-md bg-surface-high px-m py-s font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
+      />
+      <StaleWriteNotice guard={guard} what={`This project's ${item.name}`} className="mt-s" />
+      <div className="mt-s flex items-center gap-s">
+        <Button size="sm" loading={saving} disabled={saving || held} onClick={save}
+          disabledReason={held ? HELD_CHANGE_REASON : undefined}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   )
 }
 

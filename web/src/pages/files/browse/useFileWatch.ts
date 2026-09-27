@@ -2,10 +2,12 @@ import { useEffect, useRef } from 'react'
 import { api } from '../../../lib/api'
 
 /** Live-watch a file's content via the /api/file-watch SSE stream. Calls
- *  `onChange(content)` whenever the file changes on disk. Disabled when
- *  `enabled` is false or `path` is empty. EventSource carries the auth cookie
- *  through the same-origin dev proxy (no header needed). */
-export function useFileWatch(path: string | null, enabled: boolean, onChange: (content: string) => void) {
+ *  `onChange(content, revision)` whenever the file changes on disk — the text exactly as
+ *  `api.fileRead` would serve it now, and the revision that read would report (`null` when it
+ *  would be truncated or binary). A page that takes the new text as its copy needs that revision
+ *  to save over it (`lib/staleWrite.ts`). Disabled when `enabled` is false or `path` is empty.
+ *  EventSource carries the auth cookie through the same-origin dev proxy (no header needed). */
+export function useFileWatch(path: string | null, enabled: boolean, onChange: (content: string, revision: string | null) => void) {
   const cbRef = useRef(onChange)
   cbRef.current = onChange
 
@@ -22,7 +24,7 @@ export function useFileWatch(path: string | null, enabled: boolean, onChange: (c
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data)
-        if (typeof data.content === 'string') cbRef.current(data.content)
+        if (typeof data.content === 'string') cbRef.current(data.content, typeof data.revision === 'string' ? data.revision : null)
       } catch { /* ignore malformed frame */ }
     }
     // On error the browser auto-reconnects; nothing to do but keep it quiet.

@@ -12,7 +12,7 @@ import { TextInput } from '../../ui/forms'
 import { spring } from '../../design/motion'
 import { api, type FsEntry } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { FileViewer, type FileViewerHandle } from '../files/browse/FileViewer'
+import { FileViewer, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
 import { baseName } from '../files/fileMeta'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 
@@ -70,7 +70,8 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   const { width, fitWidth: dockW, onHandleDown, onHandleKey, min, max } = useResizablePanel(
     'chat-file', { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
   const [expanded, setExpanded] = useState(false)
-  const [artModal, setArtModal] = useState<{ entry: FsEntry; content: string; name: string } | null>(null)
+  // `save` is the viewer's own: it sends the draft over the copy it was built from (`FileViewer`).
+  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact; name: string } | null>(null)
   const viewerRef = useRef<FileViewerHandle>(null)
   const entry: FsEntry = { name: baseName(path), path, is_dir: false }
 
@@ -83,11 +84,14 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
   }, [expanded, onClose])
 
-  const saveAsArtifact = (e: FsEntry, content: string) => setArtModal({ entry: e, content, name: baseName(e.path) })
+  const saveAsArtifact = (e: FsEntry, save: SaveAsArtifact) => setArtModal({ entry: e, save, name: baseName(e.path) })
   const confirmArtifact = async () => {
     if (!artModal || !artModal.name.trim()) return
+    const { entry: target, save, name } = artModal
     try {
-      await api.createArtifact({ name: artModal.name.trim(), content: artModal.content, source: 'manual', source_path: artModal.entry.path, kind: guessKind(artModal.entry.name) })
+      // Closed either way: a save refused as stale leaves the draft under the viewer's notice.
+      await save((content, base) =>
+        api.saveFileAsArtifact({ name: name.trim(), content, source_path: target.path, kind: guessKind(target.name) }, base))
       setArtModal(null)
     } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
   }

@@ -27,6 +27,7 @@ from personalclaw.providers.use_cases import (
     load_active_models,
     save_active_models,
 )
+from personalclaw.stale_write import revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -479,13 +480,22 @@ async def api_models_available(request: web.Request) -> web.Response:
 async def api_models_active(request: web.Request) -> web.Response:
     """GET /api/models/active — active models per use-case.
 
-    Returns {use_cases: {chat: [model_ids...], embedding: [model_id], ...}}.
+    Returns ``{use_cases: {chat: [model_ids...], embedding: [model_id], ...}, revisions: {...}}``.
+
+    Each use case's chain is ONE document — the PUT below replaces all of it — so each carries
+    the revision that write must name (`personalclaw/stale_write.py`), keyed by use case and
+    taken from the very chain beside it.
     """
     active = load_active_models()
     normalized: dict[str, list[str]] = {}
     for uc in USE_CASES:
         normalized[uc] = active.get(uc, [])
-    return web.json_response({"use_cases": normalized})
+    return web.json_response(
+        {
+            "use_cases": normalized,
+            "revisions": {uc: revision_of(chain) for uc, chain in normalized.items()},
+        }
+    )
 
 
 async def api_models_active_set(request: web.Request) -> web.Response:
@@ -495,6 +505,10 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     for EVERY use case (MODEL-USE-CASES-V2): position 0 is the default, later
     entries are fallbacks resolution walks when an earlier provider's breaker is
     open or its build fails. Order is preserved verbatim.
+
+    The chain is replaced whole, so the request names the revision it was built from in
+    ``If-Match`` — ``revisions[use_case]`` from the GET — and a chain that changed since is
+    refused with ``409 stale_write`` (`personalclaw/stale_write.py`).
     """
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
@@ -585,6 +599,17 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         logger.debug("active-model provider validation skipped", exc_info=True)
 
     active = load_active_models()
+    # 🔴 A CHAIN IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The Models panel builds the
+    # chain it sends from the one it read — a toggle appends to it, a reorder swaps two of its
+    # entries — so a tab opened before another tab (or onboarding, or a provider's removal)
+    # changed this use case replaced that change with its own copy, without a word. Checked here,
+    # with no `await` before the save, so nothing can land between the comparison and the write.
+    stale = stale_write_refusal(
+        request, active.get(use_case, []), what=f"the {use_case} model chain"
+    )
+    if stale is not None:
+        _sel_log("models.active_set", "denied", f"{use_case}: stale base", request)
+        return stale
     active[use_case] = [str(m) for m in models]
     save_active_models(active)
 
@@ -596,7 +621,15 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         f"{use_case}={','.join(active[use_case]) or '(cleared)'}",
         request,
     )
-    return web.json_response({"ok": True, "use_case": use_case, "models": active[use_case]})
+    # The new revision, so a panel that stays open saves its next edit over this one.
+    return web.json_response(
+        {
+            "ok": True,
+            "use_case": use_case,
+            "models": active[use_case],
+            "revision": revision_of(active[use_case]),
+        }
+    )
 
 
 async def api_models_chat(request: web.Request) -> web.Response:

@@ -39,8 +39,22 @@ def tmp_config(tmp_path):
         yield cfg_path
 
 
+def _based_on(path) -> dict:
+    """What the SPA sends with a write that replaces a whole list or object: the revision of the
+    value it replaces (`personalclaw/stale_write.py`), read here from what is stored. Scalars need
+    none. These tests pin validation, so every write names the right base."""
+    from personalclaw.dashboard.handlers.core import _DOCUMENT_PATHS, _value_in_effect
+    from personalclaw.stale_write import revision_of
+
+    if path not in _DOCUMENT_PATHS:
+        return {}
+    return {"If-Match": revision_of(_value_in_effect(path))}
+
+
 async def _patch(client, path, value):
-    return await client.patch("/api/config/personalclaw", json={"path": path, "value": value})
+    return await client.patch(
+        "/api/config/personalclaw", json={"path": path, "value": value}, headers=_based_on(path)
+    )
 
 
 # ── General ──────────────────────────────────────────────────────────────
@@ -794,7 +808,9 @@ class TestYoloAppliesLive:
 
 async def _patch_consented(client, path, value):
     return await client.patch(
-        "/api/config/personalclaw", json={"path": path, "value": value, "confirm": True}
+        "/api/config/personalclaw",
+        json={"path": path, "value": value, "confirm": True},
+        headers=_based_on(path),
     )
 
 

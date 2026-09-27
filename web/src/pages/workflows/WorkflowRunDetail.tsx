@@ -11,7 +11,7 @@ import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 import { fmtElapsed, isNodeTerminal, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
-import { PolicyOverridesPanel } from './PolicyOverridesPanel'
+import { PolicyOverridesPanel, overlayOf } from './PolicyOverridesPanel'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
 import { useWorkflowStream } from './useWorkflowStream'
@@ -564,12 +564,16 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 backend's phase gate — once launched, the engine's whole-row saves would
                 silently revert a live overlay edit and the route 409s, so offering the
                 editor on a running run would teach the user the UI lies. Keyed on the run
-                id so navigating between runs re-seeds from that run's own overlay. */}
+                id so navigating between runs re-seeds from that run's own overlay — prefixed,
+                because `DeliverablePanel` below is a sibling keyed on the same run: two siblings
+                with one key left React re-rendering one while the other's stale copies piled up
+                on the page (3–6 "Policy overrides" editors, the top ones dead, and a save from
+                one of those refused with no notice anywhere). */}
             {isPrelaunch(run.status) && (
               <PolicyOverridesPanel
-                key={run.run_id}
+                key={`policy:${run.run_id}`}
                 runId={runId}
-                initial={run.policy_overrides ?? {}}
+                initial={overlayOf(run)}
                 onSaved={() => refetch()}
               />
             )}
@@ -774,7 +778,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 navigating between runs refetches rather than showing the previous run's document,
                 which on a reading surface would be the worst kind of wrong: plausible prose about
                 someone else's work. Below the steps because it is what they produced. */}
-            <DeliverablePanel key={run.run_id} runId={runId} />
+            <DeliverablePanel key={`deliverable:${run.run_id}`} runId={runId} />
           </div>
         )}
       </div>

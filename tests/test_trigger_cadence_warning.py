@@ -88,11 +88,11 @@ class _EmptyStore:
         return []
 
 
-def _req(method, path, state, *, body=None, match_info=None, query=None):
+def _req(method, path, state, *, body=None, match_info=None, query=None, headers=None):
     app = web.Application()
     app["state"] = state
     full = path + ("?" + query if query else "")
-    req = make_mocked_request(method, full, match_info=match_info or {}, app=app)
+    req = make_mocked_request(method, full, match_info=match_info or {}, app=app, headers=headers)
     req["user"] = "tester"
     if body is not None:
 
@@ -137,6 +137,12 @@ def _spec(home, trigger_id):
 def _row_from_list(state, wire_id):
     data = _body(_run(T.api_triggers(_req("GET", "/api/triggers", state))))
     return next(t for t in data["triggers"] if t["id"] == wire_id)
+
+
+def _based_on_the_list(state, wire_id):
+    """The `If-Match` the edit form's whole-form save names — the revision the list read reports
+    for the row (`personalclaw/stale_write.py`)."""
+    return {"If-Match": f'"{_row_from_list(state, wire_id)["revision"]}"'}
 
 
 # ── the wire carries the warning ──
@@ -337,6 +343,7 @@ def test_a_NAME_ONLY_edit_leaves_the_CADENCE_alone(home, state):
                     "approval_mode": "",
                 },
                 match_info={"id": "schedule:clock:odd-cadence"},
+                headers=_based_on_the_list(state, "schedule:clock:odd-cadence"),
             )
         )
     )
@@ -385,6 +392,7 @@ def test_a_NAME_ONLY_edit_does_not_RE_PHASE_the_schedule(home, state, monkeypatc
                     "approval_mode": "",
                 },
                 match_info={"id": "schedule:clock:hourly"},
+                headers=_based_on_the_list(state, "schedule:clock:hourly"),
             )
         )
     )

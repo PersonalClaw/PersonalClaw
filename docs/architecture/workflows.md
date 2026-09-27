@@ -495,6 +495,19 @@ WHOLE editable definition back — `runtime_hints`, `defaults`, `on_overlap` and
 than dropping — and places every returned issue by its `path`, the same `walk()`
 path the engine keys instances by.
 
+Because the save replaces the whole definition, a save over one of yours names
+the `revision` its read reported, in `If-Match` (the contract every
+whole-document write has, `personalclaw/stale_write.py`). When another tab, the
+agent's `workflow_author`, the A2A publish toggle or an accepted refiner
+proposal saved the definition after the editor read it — or another tab deleted
+it — the save is refused with `409 stale_write` before anything is written or
+any consent is asked, and the editor keeps the edit: **Reload and reapply**
+merges it into what is stored field by field. A restore is not merged into a
+newer version — it is saved over one only from **Review the difference**. A
+copy under a new name and a Check replace nothing and name no revision; a copy
+whose name was taken after the editor's check is refused (`428`) rather than
+saved over the workflow that took it.
+
 The read is stripped (WF2-R14), so the definition the editor holds has
 `_has_<key>` flags where values were. `author_def` re-injects them before it
 validates anything (`secrets.reinject_secrets`): a node's values are found

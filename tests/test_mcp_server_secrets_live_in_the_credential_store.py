@@ -78,7 +78,17 @@ def echo_server(tmp_path):
 def _put(name: str, body: dict):
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    req = make_mocked_request("PUT", f"/api/mcp/servers/{name}", match_info={"name": name})
+    # As the Tools page saves: an edit is made over the definition the form read, an add of a name
+    # nobody has configured has nothing to read (`personalclaw/stale_write.py`).
+    read = asyncio.run(
+        mcp_mod.api_mcp_server_detail(
+            make_mocked_request("GET", f"/api/mcp/servers/{name}", match_info={"name": name})
+        )
+    )
+    headers = {"If-Match": f'"{json.loads(read.text)["revision"]}"'} if read.status == 200 else {}
+    req = make_mocked_request(
+        "PUT", f"/api/mcp/servers/{name}", headers=headers, match_info={"name": name}
+    )
 
     async def _json():
         return body

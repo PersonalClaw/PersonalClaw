@@ -1,10 +1,10 @@
 """Tests for personalclaw_client — mirrors TS @personalclaw/client test coverage."""
+
 from __future__ import annotations
 
 import pytest
-
 from personalclaw_client import PersonalClawClient, PersonalClawError
-from personalclaw_client.errors import ErrorCode, http_status_to_code, http_error
+from personalclaw_client.errors import ErrorCode, http_error, http_status_to_code
 
 
 class TestErrors:
@@ -87,6 +87,60 @@ class TestMcpValidation:
         with pytest.raises(PersonalClawError) as exc_info:
             await pc.register_mcp_server("my-server", "")
         assert exc_info.value.code == ErrorCode.VALIDATION_ERROR
+
+
+class TestMcpRegisterNamesWhatItReplaces:
+    """The Gateway replaces a configured server's definition only over the revision it was read at
+    (``If-Match``), so registering over an existing name reads it first; a new name needs none."""
+
+    @staticmethod
+    def _gateway(pc, existing):
+        calls = []
+
+        async def fake_request(method, path, body=None, headers=None):
+            calls.append((method, path, body, headers or {}))
+            if method == "GET":
+                if existing is None:
+                    raise http_error(404, "not found")
+                return existing
+            return {"ok": True}
+
+        pc._request = fake_request
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_a_new_name_is_added_with_no_base(self):
+        pc = PersonalClawClient()
+        calls = self._gateway(pc, existing=None)
+        await pc.register_mcp_server("files", "npx", ["server-files"])
+        assert calls[-1] == (
+            "PUT",
+            "/api/mcp/servers/files",
+            {"command": "npx", "args": ["server-files"]},
+            {},
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_existing_name_is_replaced_over_the_revision_just_read(self):
+        pc = PersonalClawClient()
+        calls = self._gateway(pc, existing={"name": "files", "editable": True, "revision": "r7"})
+        await pc.register_mcp_server("files", "npx")
+        assert [c[0] for c in calls] == ["GET", "PUT"]
+        assert calls[-1][3] == {"If-Match": '"r7"'}
+
+    @pytest.mark.asyncio
+    async def test_a_read_that_fails_otherwise_writes_nothing(self):
+        pc = PersonalClawClient()
+        calls = []
+
+        async def fake_request(method, path, body=None, headers=None):
+            calls.append(method)
+            raise http_error(500, "boom")
+
+        pc._request = fake_request
+        with pytest.raises(PersonalClawError):
+            await pc.register_mcp_server("files", "npx")
+        assert calls == ["GET"]
 
 
 class TestContextBuffer:

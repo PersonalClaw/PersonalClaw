@@ -517,6 +517,33 @@ async def handle_notification_rules_get(request: web.Request) -> web.Response:
     return web.json_response(notification_rules.rules_document())
 
 
+def _list_edit_refusal(
+    edit: Any, where: str, *, known: tuple[str, ...] | None
+) -> web.Response | None:
+    """400 unless *edit* is ONE ``{"add": name}`` or ``{"remove": name}`` — the only way a rule's
+    ``targets`` or ``keywords`` change (`notification_rules.edited_list` says why a whole list
+    is not accepted). *known* closes the set of names an edit may carry, when there is one."""
+    if not isinstance(edit, dict) or len(edit) != 1 or next(iter(edit)) not in ("add", "remove"):
+        return json_error(
+            "invalid_request",
+            message=f'{where} change one entry at a time: send {{"add": name}} or '
+            '{"remove": name}',
+            status=400,
+        )
+    name = next(iter(edit.values()))
+    if not isinstance(name, str) or not name.strip():
+        return json_error(
+            "invalid_request", message=f"{where}: the name must be a non-empty string", status=400
+        )
+    if known is not None and name not in known:
+        return json_error(
+            "invalid_request",
+            message=f"{where}: unknown {name!r} — one of {sorted(known)}",
+            status=400,
+        )
+    return None
+
+
 async def handle_notification_rules_put(request: web.Request) -> web.Response:
     """PUT /api/notifications/rules — replace rules for the keys named in the body.
 
@@ -524,6 +551,12 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
     unknown key, an unknown mode, or a malformed conditions block is REJECTED rather than
     persisted, because a rules file that silently fails to parse degrades to defaults —
     the user would set `never` on a noisy kind, see it accepted, and keep getting notified.
+
+    Every value a rule holds is a single one — ``mode``, ``verify``, ``sound``,
+    ``conditions.name_mention`` — except its two lists, which change ONE entry per edit:
+    ``targets: {"add"|"remove": name}`` and ``conditions.keywords: {"add"|"remove": keyword}``,
+    applied to the rule as stored at the moment of the write. So no write here is built from a
+    copy of the rules, and none needs a revision (`personalclaw/stale_write.py`).
     """
     from personalclaw import notification_kinds as nk
     from personalclaw import notification_rules
@@ -577,13 +610,11 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
                 )
             targets = raw.get("targets")
             if targets is not None:
-                if not isinstance(targets, list):
-                    return web.json_response(
-                        {"error": f"rule '{key}': targets must be a list"}, status=400
-                    )
-                unknown = [t for t in targets if t not in notification_rules.TARGETS]
-                if unknown:
-                    return web.json_response({"error": f"unknown targets {unknown}"}, status=400)
+                refused = _list_edit_refusal(
+                    targets, f"rule '{key}': targets", known=notification_rules.TARGETS
+                )
+                if refused is not None:
+                    return refused
             conditions = raw.get("conditions")
             if conditions is not None:
                 if not isinstance(conditions, dict):
@@ -591,12 +622,10 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
                         {"error": f"rule '{key}': conditions must be an object"}, status=400
                     )
                 kws = conditions.get("keywords")
-                if kws is not None and (
-                    not isinstance(kws, list) or any(not isinstance(k, str) for k in kws)
-                ):
-                    return web.json_response(
-                        {"error": f"rule '{key}': keywords must be a list of strings"}, status=400
-                    )
+                if kws is not None:
+                    refused = _list_edit_refusal(kws, f"rule '{key}': keywords", known=None)
+                    if refused is not None:
+                        return refused
                 nm = conditions.get("name_mention")
                 if nm is not None and not isinstance(nm, bool):
                     return web.json_response(
@@ -646,7 +675,27 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
             # `test_rules_put_merges_rather_than_replacing`.
             base = stored.get(key)
             merged = dict(base) if isinstance(base, dict) else {}
-            merged.update(raw)
+            merged.update({k: v for k, v in raw.items() if k not in ("targets", "conditions")})
+            # 🔴 A LIST IS CHANGED ONE ENTRY AT A TIME, ON WHAT IS STORED NOW. The matrix used to
+            # send the whole `targets` list and the whole `conditions` object, both built from the
+            # copy it read — so a tab opened before the phone turned push on (`ensure_target`), or
+            # before another tab added a keyword, saved its copy and silently undid that change.
+            # An add or a remove applied here cannot, and `name_mention` merges on its own
+            # instead of riding along with a cached keyword list.
+            registered = kinds_by_key[key]
+            if targets is not None:
+                merged["targets"] = notification_rules.edited_list(
+                    registered, base, "targets", targets
+                )
+            if conditions is not None:
+                held = merged.get("conditions")
+                next_conditions = dict(held) if isinstance(held, dict) else {}
+                next_conditions.update({k: v for k, v in conditions.items() if k != "keywords"})
+                if conditions.get("keywords") is not None:
+                    next_conditions["keywords"] = notification_rules.edited_list(
+                        registered, base, "keywords", conditions["keywords"]
+                    )
+                merged["conditions"] = next_conditions
             # An EMPTY rule is not a rule (#285, second shape). `{}` carries no policy, so storing
             # it changes exactly one thing — it flips `configured` true and pins the row off the
             # registry — which is the defect above arriving by a different door. Treated as a clear.

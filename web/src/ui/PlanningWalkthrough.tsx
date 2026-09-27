@@ -8,8 +8,17 @@ import { fvs, withWeight } from '../design/fontWeight'
 import { confirm } from './dialog'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { cleanSay, toolDetail } from '../lib/agentFeed'
+import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../lib/staleWrite'
+import { useStaleWriteGuard } from '../lib/useStaleWriteGuard'
 import { planningTarget, type CommentTarget } from './content/commentTarget'
+import { StaleWriteNotice } from './StaleWriteNotice'
 import type { PlanSession, PlanStep } from '../lib/api'
+
+/** A step's prose body as the page shows it — the markdown an edit replaces — with the revision the
+ *  same read reported. */
+function draftOf(step: PlanStep): Revisioned<string> {
+  return { value: typeof step.artifact?.markdown === 'string' ? step.artifact.markdown : '', revision: step.revision ?? '' }
+}
 
 /** The shared live-breakdown + stepwise gated planning walkthrough — used by BOTH
  *  the Code feature and Goal Loop (the vision's "factored once, serves both").
@@ -30,8 +39,10 @@ export interface WalkthroughConfig {
     start: (id: string) => Promise<unknown>
     approve: (id: string, stepId: string) => Promise<unknown>
     comment: (id: string, stepId: string, text: string) => Promise<unknown>
-    /** Direct in-place edit of an artifact's markdown body (no planner round-trip). */
-    edit: (id: string, stepId: string, markdown: string) => Promise<{ session: PlanSession }>
+    /** Direct in-place edit of an artifact's markdown body (no planner round-trip). It replaces
+     *  the whole body, so it names the draft it was made on — `base`, the step's `revision` as read
+     *  — and a draft the planner or another tab replaced since is refused, not saved over. */
+    edit: (id: string, stepId: string, markdown: string, base: string) => Promise<{ session: PlanSession }>
     /** True once the host's entity has flipped to `review` (planning complete). */
     isReady: (id: string) => Promise<boolean>
     /** Explicit retry of a FAILED design pass — clears the failure marker, then
@@ -100,6 +111,30 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
   const [err, setErr] = useState<string | null>(null)
   // In-place edit of the current artifact's markdown body (null = not editing).
   const [editText, setEditText] = useState<string | null>(null)
+  // 🔴 AN EDIT REPLACES THE WHOLE BODY, so it names the draft it was made on: the step's markdown
+  // when Edit was clicked, with the revision the same poll reported. A redraft landing while the
+  // editor was open — a comment sent from another tab — used to be overwritten by this save, the old
+  // draft plus the edit put back without a word. Now it is refused and offered back
+  // (`ui/StaleWriteNotice`), and the change is kept until the user reapplies or drops it.
+  const [editBase, setEditBase] = useState<(Revisioned<string> & { step: string; title: string }) | null>(null)
+  // The step the last edit was saved to (id and title): what a refused edit's recovery re-reads,
+  // writes and names, even after the walkthrough has moved on to another step.
+  const editedStep = useRef({ id: '', title: '' })
+  const guard = useStaleWriteGuard<string>({
+    read: async () => {
+      const stored = (await cfg.api.getSession(id))?.steps.find((s) => s.id === editedStep.current.id)
+      if (!stored) throw new Error('this step is no longer in the plan')
+      return draftOf(stored)
+    },
+    write: async (next, revision) => {
+      const r = await cfg.api.edit(id, editedStep.current.id, next, revision)
+      if (r?.session) setSession(r.session)
+    },
+    onSaved: () => setEditText(null),
+    // Dropping the change shows the step as stored: the session poll below keeps it on screen.
+    onDiscard: () => setEditText(null),
+  })
+  const held = guard.conflict !== null
   const planKey = cfg.planSessionKey(id)
   const feedRef = useRef<HTMLDivElement>(null)
   const started = useRef(false)
@@ -306,16 +341,14 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
     finally { setBusy(false); inFlight.current = false }
     const s = await cfg.api.getSession(id).catch(() => null); if (s) setSession(s)
   }
-  async function saveEdit(step: PlanStep) {
-    if (editText === null) return
+  async function saveEdit() {
+    if (editText === null || !editBase) return
     if (inFlight.current) return
     inFlight.current = true
     setBusy(true); setErr(null)
-    try {
-      const r = await cfg.api.edit(id, step.id, editText)
-      if (r?.session) setSession(r.session)
-      setEditText(null)
-    }
+    editedStep.current = { id: editBase.step, title: editBase.title }
+    // A refusal keeps the editor and its text, with the notice below offering the way back.
+    try { await guard.save(editBase, editText, rebaseText(editBase.value, editText)) }
     catch (e) { setErr(`Couldn't save your edit: ${(e as Error).message || 'unknown error'}`) }
     finally { setBusy(false); inFlight.current = false }
   }
@@ -442,18 +475,22 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                             This step's structured detail is preserved — this box only adds/edits a prose summary alongside it.
                           </p>
                         )}
-                        <textarea autoFocus value={editText} onChange={(e) => setEditText(e.target.value)} rows={14}
-                          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!busy) void saveEdit(current) } }}
+                        {/* Read-only while a refused edit is held: what the notice reapplies is the
+                            text as it was refused, so typing on would be dropped by the reapply. */}
+                        <textarea autoFocus value={editText} onChange={(e) => setEditText(e.target.value)} rows={14} readOnly={held}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!busy && !held) void saveEdit() } }}
                           placeholder="Write the step's prose body in markdown…"
                           data-type="caption"
                           className="w-full resize-y rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 font-mono text-on-surface outline-none focus:border-primary placeholder:text-on-surface-low" />
                         <div className="flex items-center gap-2">
-                          <button type="button" disabled={busy} onClick={() => saveEdit(current)}
+                          <button type="button" onClick={() => saveEdit()}
+                            {...unavailableWhen(held, HELD_CHANGE_REASON, { busy })}
                             data-type="body-s"
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-on-primary disabled:opacity-50">
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-on-primary disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
                             <Check size={14} /> Save edits
                           </button>
-                          <button type="button" disabled={busy} onClick={() => setEditText(null)}
+                          {/* Cancelling a refused edit drops the kept change, exactly as "Discard my change" does. */}
+                          <button type="button" disabled={busy} onClick={() => { if (held) guard.discard(); else setEditText(null) }}
                             data-type="body-s"
                             className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var">
                             <X size={14} /> Cancel
@@ -471,7 +508,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                             no easy focus), so editing a step's artifact was reachable only
                             with a mouse (the WorkspacePicker "Use" fix, same class). */}
                         <button type="button" title="Edit this artifact"
-                          onClick={() => setEditText(typeof current.artifact?.markdown === 'string' ? current.artifact.markdown as string : '')}
+                          onClick={() => { const d = draftOf(current); setEditBase({ ...d, step: current.id, title: current.title }); setEditText(d.value) }}
                           data-type="caption"
                           className="absolute right-0 top-0 z-10 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-on-surface-low opacity-60 transition-opacity hover:bg-surface-high hover:text-on-surface hover:opacity-100 focus-visible:opacity-100 group-hover/art:opacity-100">
                           <Pencil size={12} /> Edit
@@ -537,6 +574,10 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
               </motion.div>
               )}
             </AnimatePresence>
+            {/* Outside the step card: a refused edit is kept until the user reapplies or drops it,
+                including after a redraft closed the editor or the walkthrough moved on — so it
+                names its step rather than borrowing whichever card is current. */}
+            <StaleWriteNotice guard={guard} what={`The step “${editedStep.current.title}”`} />
           </div>
 
           {/* SIDE RAIL: the planner's live activity — secondary, full-height, scrolls

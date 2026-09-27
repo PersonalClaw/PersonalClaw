@@ -34,7 +34,7 @@ import { AgentForm, toDraft } from './AgentForm'
 import { isBuiltinDefaultAgent } from './agentMeta'
 
 const agentNamed = (name: string, system_prompt = ''): SavedAgent =>
-  ({ name, provider: 'native', description: '', system_prompt, skills: [], tools: [], triggers: [] }) as SavedAgent
+  ({ name, provider: 'native', description: '', system_prompt, skills: [], tools: [], triggers: [], revision: 'r1' }) as SavedAgent
 
 function mount(agent: SavedAgent, isDefault: boolean) {
   render(
@@ -51,7 +51,7 @@ function mount(agent: SavedAgent, isDefault: boolean) {
 }
 
 beforeEach(() => {
-  agentMetadata.mockReset().mockResolvedValue('')
+  agentMetadata.mockReset().mockResolvedValue({ value: '', revision: 'r0' })
   routingStatus.mockReset().mockResolvedValue({ enabled: true, muted: [], dismissals: {} })
   mcpActive.mockReset().mockResolvedValue([])
   agentHooks.mockReset().mockResolvedValue({})

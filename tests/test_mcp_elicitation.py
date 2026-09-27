@@ -437,14 +437,17 @@ def test_the_dashboard_control_reaches_the_field(fresh_home):
     invisible to every Python rail and to a passing frontend build.
     """
     api_ts = (REPO_ROOT / "web" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
-    assert "'security.mcp_elicitation_servers'" in api_ts
-    assert "setMcpElicitationServers" in api_ts
+    # One server's grant in or out — never the list — so a tab opened before another tab's grant
+    # cannot revoke it (`personalclaw/stale_write.py`).
+    assert "patchConfigItem('security.mcp_elicitation_servers', 'add'" in api_ts
+    assert "patchConfigItem('security.mcp_elicitation_servers', 'remove'" in api_ts
 
     tools_page = (REPO_ROOT / "web" / "src" / "pages" / "tools" / "ToolsPage.tsx").read_text(
         encoding="utf-8"
     )
     assert "onToggleElicitation" in tools_page
-    assert "api.setMcpElicitationServers" in tools_page
+    assert "api.grantMcpElicitation" in tools_page
+    assert "api.revokeMcpElicitation" in tools_page
     assert "ask you questions" in tools_page
 
 

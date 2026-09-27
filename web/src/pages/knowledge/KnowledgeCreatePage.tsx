@@ -8,7 +8,7 @@ import { Button } from '../../ui/Button'
 import { ChipInput } from '../../ui/forms'
 import { PageTitle } from '../../ui/PageTitle'
 import { Meter } from '../../ui/Meter'
-import { api, type KnowledgeType } from '../../lib/api'
+import { api, type KnowledgeItemEdit, type KnowledgeType } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { TYPES, typeMeta, createKind, ACCEPTED_MIMES, GIST_LANGUAGES, fmtBytes } from './knowledgeMeta'
 import { GistEditor } from './GistEditor'
@@ -107,9 +107,11 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
         // created item. A user-typed title (≠ the seeded filename) also blocks the
         // pipeline's AI-title promotion (it only replaces filename-seeded titles);
         // same for tags vs AI topics. Skip on dedup: the hit is someone else's item.
-        const custom: Record<string, unknown> = {}
+        // Tags as names ADDED: the pipeline may already have tagged the new item by the time this
+        // lands, and adding keeps what it wrote instead of replacing it with the form's list.
+        const custom: KnowledgeItemEdit = {}
         if (title.trim() && title.trim() !== file.name) custom.title = title.trim()
-        if (tags.length) custom.tags = tags
+        if (tags.length) custom.add_tags = tags
         if (res.item_id && !(res as { deduped?: boolean }).deduped && Object.keys(custom).length) {
           // 🔴 This is the ONLY carrier for the title and tags the user typed — ingest takes bytes
           // only. `catch(() => {})` meant a refused patch produced a fully successful-looking create

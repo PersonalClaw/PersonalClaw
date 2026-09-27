@@ -32,7 +32,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       personalclawConfig: () => personalclawConfig(),
       patchConfig: (path: string, value: unknown) => patchConfig(path, value),
       modelsAvailable: () => Promise.resolve([]),
-      modelsActive: () => Promise.resolve({}),
+      activeChains: () => Promise.resolve({}),
       modelsHealth: () => Promise.resolve({ providers: [] }),
       // The panel's HuggingFace-token section (LMMV-4) fetches on mount too.
       hfTokenStatus: () => Promise.resolve({ sources: [] }),

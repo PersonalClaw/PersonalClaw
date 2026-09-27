@@ -246,16 +246,25 @@ def test_the_marked_body_passes_the_same_check_an_edit_applies(skill_root):
 
     resp, loader = _create(skill_root, "q4-release-checklist", _DIALOG_DEFAULT_BODY)
     assert resp.status == 200
-    stored = loader.load_skill("q4-release-checklist")
+    app = {"state": SimpleNamespace(context_builder=SimpleNamespace(skills=loader))}
+    # The editor's read: the body it seeds from, and the revision its save must name.
+    read = MagicMock()
+    read.method = "GET"
+    read.match_info = {"name": "q4-release-checklist"}
+    read.app = app
+    got = json.loads(asyncio.run(api_skill_detail(read)).body)
+    stored = got["content"]
+    assert stored == loader.load_skill("q4-release-checklist")
     req = MagicMock()
     req.method = "PUT"
     req.match_info = {"name": "q4-release-checklist"}
+    req.headers = {"If-Match": got["revision"]}
 
     async def _json():
         return {"content": stored}
 
     req.json = _json
-    req.app = {"state": SimpleNamespace(context_builder=SimpleNamespace(skills=loader))}
+    req.app = app
     put = asyncio.run(api_skill_detail(req))
     assert put.status == 200, put.body
 

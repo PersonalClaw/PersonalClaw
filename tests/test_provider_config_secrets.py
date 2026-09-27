@@ -76,6 +76,17 @@ async def _client(tmp_path: Path):
             yield client
 
 
+async def _save(client, values: dict):
+    """PATCH the form the way Settings → Providers does: over the revision of the config it read
+    — the form sends every field it shows, so a save names the copy it replaces
+    (`personalclaw/stale_write.py`)."""
+    read = await client.get("/api/providers/fake-channel/config")
+    revision = (await read.json())["revision"]
+    return await client.patch(
+        "/api/providers/fake-channel/config", json=values, headers={"If-Match": f'"{revision}"'}
+    )
+
+
 def _config_file(tmp_path: Path) -> Path:
     return tmp_path / "apps" / "fake-channel" / "data" / "config.json"
 
@@ -95,9 +106,8 @@ def _stored(tmp_path: Path) -> dict:
 async def test_get_config_masks_sensitive_fields(tmp_path):
     """A configured token never leaves the backend through this route."""
     async with _client(tmp_path) as client:
-        r = await client.patch(
-            "/api/providers/fake-channel/config",
-            json={"bot_token": _SECRET, "app_token": "xapp-1-fixture", "command": "pclaw"},
+        r = await _save(
+            client, {"bot_token": _SECRET, "app_token": "xapp-1-fixture", "command": "pclaw"}
         )
         assert r.status == 200, await r.text()
 
@@ -117,9 +127,7 @@ async def test_get_config_masks_sensitive_fields(tmp_path):
 @pytest.mark.asyncio
 async def test_patch_response_does_not_echo_the_saved_secret(tmp_path):
     async with _client(tmp_path) as client:
-        raw = await (
-            await client.patch("/api/providers/fake-channel/config", json={"bot_token": _SECRET})
-        ).text()
+        raw = await (await _save(client, {"bot_token": _SECRET})).text()
         assert _SECRET not in raw, "PATCH echoed the token it had just been given"
         assert json.loads(raw)["config"]["bot_token"] == SECRET_MASK
 
@@ -132,11 +140,8 @@ async def test_patching_the_mask_back_preserves_the_stored_secret(tmp_path):
     saved an unrelated field on the same form — a worse bug than the one being fixed.
     """
     async with _client(tmp_path) as client:
-        await client.patch("/api/providers/fake-channel/config", json={"bot_token": _SECRET})
-        r = await client.patch(
-            "/api/providers/fake-channel/config",
-            json={"bot_token": SECRET_MASK, "command": "renamed"},
-        )
+        await _save(client, {"bot_token": _SECRET})
+        r = await _save(client, {"bot_token": SECRET_MASK, "command": "renamed"})
         assert r.status == 200, await r.text()
         assert _stored(tmp_path)["bot_token"] == _SECRET
         assert _stored(tmp_path)["command"] == "renamed"
@@ -146,8 +151,8 @@ async def test_patching_the_mask_back_preserves_the_stored_secret(tmp_path):
 async def test_an_empty_sensitive_field_over_a_stored_value_preserves_it(tmp_path):
     """The second shape a round-tripped masked form produces (field cleared by the widget)."""
     async with _client(tmp_path) as client:
-        await client.patch("/api/providers/fake-channel/config", json={"bot_token": _SECRET})
-        await client.patch("/api/providers/fake-channel/config", json={"bot_token": ""})
+        await _save(client, {"bot_token": _SECRET})
+        await _save(client, {"bot_token": ""})
         assert _stored(tmp_path)["bot_token"] == _SECRET
 
 
@@ -155,10 +160,8 @@ async def test_an_empty_sensitive_field_over_a_stored_value_preserves_it(tmp_pat
 async def test_a_real_new_value_still_overwrites(tmp_path):
     """Masking must not make a token unchangeable."""
     async with _client(tmp_path) as client:
-        await client.patch("/api/providers/fake-channel/config", json={"bot_token": _SECRET})
-        await client.patch(
-            "/api/providers/fake-channel/config", json={"bot_token": "xoxb-ROTATED-fixture"}
-        )
+        await _save(client, {"bot_token": _SECRET})
+        await _save(client, {"bot_token": "xoxb-ROTATED-fixture"})
         assert _stored(tmp_path)["bot_token"] == "xoxb-ROTATED-fixture"
 
 
@@ -172,14 +175,11 @@ async def test_a_patch_naming_another_owners_key_is_refused(tmp_path, monkeypatc
 
     monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     async with _client(tmp_path) as client:
-        await client.patch("/api/providers/fake-channel/config", json={"bot_token": _SECRET})
+        await _save(client, {"bot_token": _SECRET})
         before = _config_file(tmp_path).read_text(encoding="utf-8")
         save_credential("VAULT_FIXTURE_KEY", "ghp-vault-value-never-an-apps")
 
-        r = await client.patch(
-            "/api/providers/fake-channel/config",
-            json={"bot_token": make_ref("VAULT_FIXTURE_KEY"), "command": "renamed"},
-        )
+        r = await _save(client, {"bot_token": make_ref("VAULT_FIXTURE_KEY"), "command": "renamed"})
 
         text = await r.text()
         assert r.status == 400, text

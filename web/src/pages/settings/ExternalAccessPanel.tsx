@@ -114,6 +114,15 @@ export function ExternalAccessPanel() {
       await api.patchConfig(path, value)
       onSaved()
     }, label ?? path)
+  // The hosts added and removed — never this page's copy of the list, which another tab may have
+  // changed, and which reads as empty when the caps could not be read (the whole stored list used
+  // to be replaced by the one host added then).
+  const editCapList = (path: string, next: string[], onSaved: () => void, label?: string) =>
+    act(async () => {
+      const prev = Array.isArray(capsCfg[path]) ? (capsCfg[path] as string[]) : []
+      await api.saveListEdits(path, prev, next)
+      onSaved()
+    }, label ?? path)
 
   const master = Boolean(data?.enabled)
   const surfaces = data?.surfaces ?? []
@@ -272,7 +281,7 @@ export function ExternalAccessPanel() {
             hint="Hosts the capture proxy may forward a recorded turn to. Empty means it may forward NOWHERE, so a freshly enabled capture proxy refuses everything until you name at least one host (api.openai.com, api.anthropic.com)."
             cfg={capsCfg}
             field="external_access.capture.upstream_allowlist"
-            patch={patchCap}
+            editList={editCapList}
             placeholder="Add host…" />
         </RowGroup>
         <div data-type="body-s" className="mt-3 rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">

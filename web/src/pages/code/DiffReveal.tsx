@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { lineDiff, type DiffRow as Row } from '../../lib/lineDiff'
 
 /** A line-level diff animation for a MODIFIED file (the worker edited an existing
  *  file). Per the directive: the new/added lines reveal first (write, left→right),
@@ -7,30 +8,6 @@ import { useEffect, useRef, useState } from 'react'
  *  Pacing mirrors TypingReveal: per-character but capped to a fast total per phase
  *  so large diffs animate quickly. Honors prefers-reduced-motion (instant).
  */
-type Row = { kind: 'same' | 'add' | 'del'; text: string }
-
-/** Line-level LCS diff of old→new. Returns rows in display order: a removed line
- *  appears (as 'del') just before the kept/added lines that follow it. */
-export function lineDiff(oldText: string, newText: string): Row[] {
-  const a = oldText.split('\n')
-  const b = newText.split('\n')
-  const n = a.length, m = b.length
-  // LCS length table (O(n*m) — fine for typical file sizes).
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
-  for (let i = n - 1; i >= 0; i--)
-    for (let j = m - 1; j >= 0; j--)
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
-  const rows: Row[] = []
-  let i = 0, j = 0
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { rows.push({ kind: 'same', text: a[i] }); i++; j++ }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ kind: 'del', text: a[i] }); i++ }
-    else { rows.push({ kind: 'add', text: b[j] }); j++ }
-  }
-  while (i < n) { rows.push({ kind: 'del', text: a[i] }); i++ }
-  while (j < m) { rows.push({ kind: 'add', text: b[j] }); j++ }
-  return rows
-}
 
 const MIN_MS = 350
 const MAX_MS = 1200

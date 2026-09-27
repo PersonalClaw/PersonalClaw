@@ -30,12 +30,12 @@ import { join } from 'node:path'
 const SRC = readFileSync(join(process.cwd(), 'src/pages/tools/ToolsPage.tsx'), 'utf8')
 const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-// 🪤 `setMcpElicitationServers` is a TOGGLE, not an exception, and belongs in this list rather than
-// in `ALSO_ROUTED`. Its wire value is the whole allowlist because the grant is per server, but the
-// control over it is one data-driven switch per row whose pressed state reads the refetched list —
-// the exact shape the four above have, and the exact failure mode this file exists for: a failed
-// write leaves the switch where it was and says nothing.
-const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'setMcpElicitationServers']
+// 🪤 The elicitation grant is a TOGGLE, not an exception, and belongs in this list rather than in
+// `ALSO_ROUTED`. It writes one server's grant in or out (`grantMcpElicitation` /
+// `revokeMcpElicitation`, one call site), and the control over it is one data-driven switch per row
+// whose pressed state reads the refetched list — the exact shape the four above have, and the exact
+// failure mode this file exists for: a failed write leaves the switch where it was and says nothing.
+const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'revokeMcpElicitation', 'grantMcpElicitation']
 
 describe('a tool toggle that fails tells the user', () => {
   it('the reporter is the SHARED one, and this file keeps no copy of it', () => {

@@ -16,6 +16,7 @@ from personalclaw.skills.loader import (
     validate_skill_md,
     with_source_marker,
 )
+from personalclaw.stale_write import revision_of, stale_write_refusal
 
 from ._shared import _get_skills, _list_marketplace_skills
 
@@ -70,6 +71,44 @@ def _snippet_to_listing(snip: "Any") -> dict[str, Any]:
         "variables": [v.to_dict() for v in snip.variables],
         "tags": list(snip.tags),
         "updated_at": getattr(snip, "updated_at", 0.0),
+    }
+
+
+# ── What a detail read's `revision` describes ──
+#
+# The editors save a prompt or a snippet WHOLE — every field is rebuilt from the copy the page
+# read — so a save from a copy that went stale would undo whatever changed since
+# (`personalclaw/stale_write.py`). The revision is taken over exactly the fields the editor sends
+# back, as the detail read shows them (content redacted, as it is on the wire). The fields the
+# page never sends are left out on purpose: `updated_at` is the file's mtime, which the
+# migrate-on-read and the bundled-snippet seeder rewrite without touching the content, and
+# `used_by`/`merged_variables`/`includes` move when ANOTHER record changes. Counting any of them
+# would refuse a save over a change that did not touch this record's text.
+
+
+def _prompt_document(tpl: "Any") -> dict[str, Any]:
+    """The part of a prompt its editor edits and sends back, as the detail read shows it."""
+    return {
+        "name": tpl.name,
+        "kind": tpl.kind,
+        "title": tpl.title,
+        "description": tpl.description,
+        "content": redact_for_display(tpl.content),
+        "variables": [v.to_dict() for v in tpl.variables],
+        "tags": list(tpl.tags),
+        "launch_spec": dict(tpl.launch_spec or {}),
+    }
+
+
+def _snippet_document(snip: "Any") -> dict[str, Any]:
+    """The part of a snippet its editor edits and sends back, as the detail read shows it."""
+    return {
+        "name": snip.name,
+        "title": snip.title,
+        "description": snip.description,
+        "content": redact_for_display(snip.content),
+        "variables": [v.to_dict() for v in snip.variables],
+        "tags": list(snip.tags),
     }
 
 
@@ -205,6 +244,8 @@ async def api_prompt_detail(request: web.Request) -> web.Response:
             "content": content,
             "merged_variables": [v.to_dict() for v in merged],
             "includes": included_snippet_names(tpl.content),
+            # What `PUT /api/prompts/{name}` must name in `If-Match` (see `_prompt_document`).
+            "revision": revision_of(_prompt_document(tpl)),
         }
     )
 
@@ -310,7 +351,12 @@ def _rematerialize(use_cases: "list[str] | tuple[str, ...]") -> None:
 
 
 async def api_prompt_save(request: web.Request) -> web.Response:
-    """PUT /api/prompts/{name} — update an existing prompt template."""
+    """PUT /api/prompts/{name} — update an existing prompt template.
+
+    Every field is replaced by the body, so the request names the revision it was built from
+    in ``If-Match`` — the detail read's ``revision``. A copy that went stale is refused with
+    ``409 stale_write`` and nothing is written; the response carries the new revision.
+    """
     raw = request.match_info["name"]
     bare = raw.split("/", 1)[-1] if "/" in raw else raw
     try:
@@ -323,12 +369,21 @@ async def api_prompt_save(request: web.Request) -> web.Response:
     provider = _get_default_prompt_provider()
     if provider is None:
         return web.json_response({"error": "no prompt provider registered"}, status=503)
-    # The editor is seeded from the REDACTED read, so it echoes our own masks back. Restore
-    # them from the stored value before anything is written — otherwise a save (even a
-    # title-only one) persists `[REDACTED: …]` over the real content, and prompts keep no
-    # history to recover it from. See `restore_masked_spans`.
     stored = provider.get_prompt(bare)
     if stored is not None:
+        # 🔴 THE WHOLE PROMPT IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The editor rebuilds
+        # every field — `variables`, `tags` and `launch_spec` wholesale — from what it read, so a
+        # save from a tab opened before another save (or before an app update or a history
+        # rollback rewrote the file) replaced that newer prompt without a word. Checked before the
+        # mask restore below, which reads hidden values back from what is stored NOW — right only
+        # for a copy that was built from it.
+        stale = stale_write_refusal(request, _prompt_document(stored), what=f"the prompt {bare!r}")
+        if stale is not None:
+            return stale
+        # The editor is seeded from the REDACTED read, so it echoes our own masks back. Restore
+        # them from the stored value before anything is written — otherwise a save (even a
+        # title-only one) persists `[REDACTED: …]` over the real content, and prompts keep no
+        # history to recover it from. See `restore_masked_spans`.
         merged = _restore_masked_content(body, stored.content)
         if merged is None:
             return web.json_response({"error": _MASK_CONFLICT}, status=409)
@@ -341,7 +396,12 @@ async def api_prompt_save(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     _rematerialize([uc for uc in _MATERIALIZED_USE_CASES if _serves(uc, bare)])
-    return web.json_response({"ok": True, "prompt": tpl.to_dict()})
+    # The new revision is taken from a re-read: it must describe what is STORED, because that
+    # is what the next save from this editor is compared against.
+    saved = provider.get_prompt(bare) or tpl
+    return web.json_response(
+        {"ok": True, "prompt": tpl.to_dict(), "revision": revision_of(_prompt_document(saved))}
+    )
 
 
 async def api_prompt_delete(request: web.Request) -> web.Response:
@@ -754,6 +814,8 @@ async def api_snippet_detail(request: web.Request) -> web.Response:
             **_snippet_to_listing(snip),
             "content": content,
             "used_by": _snippet_usages(provider, bare),
+            # What `PUT /api/prompt-snippets/{name}` must name in `If-Match` (`_snippet_document`).
+            "revision": revision_of(_snippet_document(snip)),
         }
     )
 
@@ -780,7 +842,12 @@ async def api_snippet_create(request: web.Request) -> web.Response:
 
 
 async def api_snippet_save(request: web.Request) -> web.Response:
-    """PUT /api/prompt-snippets/{name} — update a snippet."""
+    """PUT /api/prompt-snippets/{name} — update a snippet.
+
+    A whole-record replace, like a prompt save: the request names the detail read's
+    ``revision`` in ``If-Match``, a stale one is refused with ``409 stale_write``, and the
+    response carries the new revision.
+    """
     bare = request.match_info["name"]
     try:
         body = await request.json()
@@ -791,9 +858,16 @@ async def api_snippet_save(request: web.Request) -> web.Response:
     provider = _get_default_prompt_provider()
     if provider is None:
         return web.json_response({"error": "no prompt provider registered"}, status=503)
-    # Same read/write asymmetry as a prompt save — `api_snippet_detail` redacts too.
     stored_snip = provider.get_snippet(bare)
     if stored_snip is not None:
+        # The whole snippet is rebuilt from the page's copy — the prompt save's rule, for the same
+        # reason: a stale copy is refused before anything is restored or written.
+        stale = stale_write_refusal(
+            request, _snippet_document(stored_snip), what=f"the snippet {bare!r}"
+        )
+        if stale is not None:
+            return stale
+        # Same read/write asymmetry as a prompt save — `api_snippet_detail` redacts too.
         merged = _restore_masked_content(body, stored_snip.content)
         if merged is None:
             return web.json_response({"error": _MASK_CONFLICT}, status=409)
@@ -805,7 +879,10 @@ async def api_snippet_save(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    return web.json_response({"ok": True, "snippet": snip.to_dict()})
+    saved = provider.get_snippet(bare) or snip
+    return web.json_response(
+        {"ok": True, "snippet": snip.to_dict(), "revision": revision_of(_snippet_document(saved))}
+    )
 
 
 async def api_snippet_delete(request: web.Request) -> web.Response:
@@ -1014,7 +1091,11 @@ def _skill_write_refusal(name: str, content: str) -> web.Response | None:
 
 async def api_skill_detail(request: web.Request) -> web.Response:
     """GET/PUT /api/skills/{name} — get or update a skill. (Listing is served by
-    handlers/skills.py::api_skills_list; deletion by api_skills_delete.)"""
+    handlers/skills.py::api_skills_list; deletion by api_skills_delete.)
+
+    The read carries the ``revision`` of the ``content`` it returns — the body a session loads,
+    accepted refinements included — and the PUT, which replaces the whole SKILL.md, must name it
+    in ``If-Match``. A stale one is refused with ``409 stale_write`` and nothing is written."""
     state: DashboardState = request.app["state"]
     name = request.match_info["name"]
     skills = _get_skills(state)
@@ -1034,10 +1115,22 @@ async def api_skill_detail(request: web.Request) -> web.Response:
         refusal = _skill_write_refusal(name, content)
         if refusal is not None:
             return refusal
-        ok = skills.update_skill(name, content)
+        current = skills.load_skill(name)
+        if current is not None:
+            # 🔴 A SKILL.md IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. The gateway rewrites
+            # skills on its own — the curator ages them, a session refines them, an app or pack
+            # update re-seeds them, an accepted refinement lands in the overlay — and an editor
+            # opened before any of that used to save its old copy straight over it. Compared
+            # against what the read returned (`load_skill`, overlay included), with no await
+            # before the write.
+            stale = stale_write_refusal(request, current, what=f"the skill {name!r}")
+            if stale is not None:
+                return stale
+        # A skill no read can find is not written either: there is no copy to be based on.
+        ok = current is not None and skills.update_skill(name, content)
         if not ok:
             return web.json_response({"error": "not found"}, status=404)
-        return web.json_response({"ok": True})
+        return web.json_response({"ok": True, "revision": revision_of(skills.load_skill(name))})
 
     # GET
     content = skills.load_skill(name)
@@ -1059,7 +1152,7 @@ async def api_skill_detail(request: web.Request) -> web.Response:
                 break
     if content is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({"name": name, "content": content})
+    return web.json_response({"name": name, "content": content, "revision": revision_of(content)})
 
 
 async def api_skills_create(request: web.Request) -> web.Response:

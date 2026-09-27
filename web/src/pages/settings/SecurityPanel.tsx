@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { FieldError, FieldHintProvider } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
@@ -9,7 +9,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import {
   api, type DesktopCapabilityWire, type EgressPolicyConfig, type DenylistBaseline,
-  type OutsideHomePlace, type OutsideHomeState,
+  type OutsideHomePlace,
 } from '../../lib/api'
 import { confirm } from '../../ui/dialog'
 import {
@@ -17,7 +17,10 @@ import {
 } from '../../lib/desktopBridge'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
-import { useQuery } from '../../lib/data'
+import { invalidateKeys, useQuery } from '../../lib/data'
+import { rebaseList, type Rebase } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { PanelHeader, Section, SavedToast, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -132,6 +135,14 @@ function ChildProcessCeilings({ note, onScopesSaved }: {
       notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
+  // The names added and removed, never this panel's copy of the list (`StrListField`).
+  const editList = (key: string, next: string[], onSaved: () => void, label?: string) => {
+    const prev = Array.isArray((cfg ?? {})[key]) ? ((cfg ?? {})[key] as string[]) : []
+    api.saveListEdits(`sandbox.${key}`, prev, next).then((stored) => {
+      setCfg((c) => ({ ...c, [key]: stored }))
+      onSaved()
+    }).catch((e) => notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error'))
+  }
 
   return (
     <Section title="Child process ceilings"
@@ -158,7 +169,7 @@ function ChildProcessCeilings({ note, onScopesSaved }: {
                 hint="Process ceiling for an agent child. 0 disables it, and leaving it at 0 is the recommendation — this limit counts ALL of your existing processes, not just the child's, so an absolute cap can make a busy machine fail with “cannot fork”. Real per-child containment is the cgroup tier below." />
               <ToggleRow label="Cgroup scopes (Linux)" cfg={cfg} field="cgroup_scopes" patch={patch}
                 hint="Wrap each agent-influenced spawn in a transient systemd user scope carrying the ceilings above, so they bound the child's WHOLE process tree instead of one process. This is the fork-bomb containment the process limit cannot give. Linux only, and a no-op where a systemd user manager is unavailable (macOS, most containers)." />
-              <StrListField label="Child environment passthrough" cfg={cfg} field="env_passthrough" patch={patch}
+              <StrListField label="Child environment passthrough" cfg={cfg} field="env_passthrough" editList={editList}
                 placeholder="Add name…"
                 hint="Extra environment VARIABLE NAMES a child may inherit, on top of the minimal base (PATH, locale, home, proxy/CA settings). Everything else is withheld — a child does not inherit the gateway's environment. Names matching the credential floor (AWS secrets, SSH agent socket, GPG home, git askpass) are refused even when declared here." />
             </RowGroup>
@@ -508,33 +519,53 @@ function DesktopCapabilitiesPanel() {
  *  THEIR network here (a homelab LAN service) without weakening the default. A deny wins
  *  over an allow. */
 function EgressPolicyEditor() {
-  const { data: eg, refresh } = useQuery(
+  const { data: stored, refresh } = useQuery(
     'settings:egress', () => api.securityEgress().catch(() => null), { persist: true },
   )
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  if (!eg) return null
-
   // `confirmed` only from the private-networks checkbox, which asks its own question below. A host
   // list change that widens the guard is asked about by the gateway instead (`api.patchConfig`).
-  const save = async (next: EgressPolicyConfig, confirmed = false) => {
+  // Held for the save it belongs to, so a re-applied save carries the consent the owner gave.
+  const confirmed = useRef(false)
+  const reread = () => { invalidateKeys('settings:egress'); refresh() }
+  // 🔴 THE THREE KEYS ARE ONE DOCUMENT, written over the revision it was read at. Every edit here
+  // resent `{...eg, <one key>}` from this panel's copy, so a host allowed in another tab was dropped
+  // by the next edit made here. A stale copy is now refused and the edit re-applied on top.
+  const guard = useStaleWriteGuard<EgressPolicyConfig>({
+    read: api.securityEgress,
+    write: (next, base) => api.setSecurityEgress(next, base, confirmed.current),
+    onSaved: reread,
+    onDiscard: reread,
+  })
+  if (!stored) return null
+  const eg = stored.value
+
+  const save = async (op: Rebase<EgressPolicyConfig>, consented = false): Promise<boolean> => {
+    confirmed.current = consented
     setBusy(true); setErr('')
-    try { await api.setSecurityEgress(next, confirmed); refresh() }
-    catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save') }
+    try { return await guard.apply(stored, op) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save'); return false }
     finally { setBusy(false) }
+  }
+  // A host list edit as an operation — these names in, those out — so it re-applies onto a list
+  // another tab has changed.
+  const editHosts = (key: 'allow_hosts' | 'deny_hosts', hosts: string[]) => {
+    const edit = rebaseList(eg[key], hosts)
+    return save((theirs) => ({ ...theirs, [key]: edit(theirs[key]) }))
   }
 
   return (
     <Section title="Network egress" hint="The agent's outbound fetches, scrapes, and webhooks are blocked from reaching non-public addresses (loopback, LAN, cloud metadata) by default — SSRF protection. Relax it for your own network below; a deny always wins over an allow.">
       <div className="flex flex-col gap-4">
         <HostList label="Allowed hosts" hint="Reachable even if they resolve to a private/LAN address (e.g. a homelab service). Bare domain covers subdomains."
-          hosts={eg.allow_hosts} disabled={busy}
-          onChange={(hosts) => save({ ...eg, allow_hosts: hosts })} />
+          hosts={eg.allow_hosts} disabled={busy || guard.conflict !== null}
+          onChange={(hosts) => editHosts('allow_hosts', hosts)} />
         <HostList label="Denied hosts" hint="Never reachable, even if public. Overrides an allow."
-          hosts={eg.deny_hosts} disabled={busy}
-          onChange={(hosts) => save({ ...eg, deny_hosts: hosts })} />
+          hosts={eg.deny_hosts} disabled={busy || guard.conflict !== null}
+          onChange={(hosts) => editHosts('deny_hosts', hosts)} />
         <label className="flex items-start gap-2.5 rounded-lg bg-surface-container px-3 py-2.5 cursor-pointer">
-          <input type="checkbox" checked={eg.allow_private} disabled={busy}
+          <input type="checkbox" checked={eg.allow_private} disabled={busy || guard.conflict !== null}
             onChange={async (e) => {
               const next = e.target.checked
               if (next && !(await confirm({
@@ -543,7 +574,7 @@ function EgressPolicyEditor() {
                 confirmLabel: 'Allow private networks',
                 danger: true,
               }))) return
-              save({ ...eg, allow_private: next }, next)
+              save((theirs) => ({ ...theirs, allow_private: next }), next)
             }}
             className="mt-0.5 size-4 shrink-0 accent-primary" />
           <span className="min-w-0">
@@ -551,6 +582,7 @@ function EgressPolicyEditor() {
             <span data-type="body-s" className="block text-on-surface-low">Permit egress to any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN.</span>
           </span>
         </label>
+        <StaleWriteNotice guard={guard} what="Your network egress overrides" />
         {err && <FieldError>{err}</FieldError>}
       </div>
     </Section>
@@ -582,7 +614,7 @@ export function OutsideHomeEditor() {
   }
   if (!data) return null
 
-  const set = async (state: OutsideHomeState, place: OutsideHomePlace, on: boolean) => {
+  const set = async (place: OutsideHomePlace, on: boolean) => {
     if (on && !(await confirm({
       // Only the first letter lowers: "Skills other AI tools share" keeps its "AI".
       title: `Let PersonalClaw read ${place.label.charAt(0).toLowerCase()}${place.label.slice(1)}?`,
@@ -594,11 +626,10 @@ export function OutsideHomeEditor() {
       ),
       confirmLabel: 'Allow reading it',
     }))) return
-    const next = on
-      ? [...new Set([...state.allowed, place.id])]
-      : state.allowed.filter((id) => id !== place.id)
+    // The one place, not the list this page read: another tab may have allowed or revoked a place
+    // since, and a saved place no longer offered (an app since removed) is left as it is.
     setBusy(place.id); setErr('')
-    try { await api.setOutsideHome(next, on); refresh() }
+    try { await api.setOutsideHomePlace(place.id, on, on); refresh() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save') }
     finally { setBusy('') }
   }
@@ -608,7 +639,7 @@ export function OutsideHomeEditor() {
       <RowGroup>
         {data.places.map((place) => (
           <OutsidePlaceRow key={place.id} place={place} busy={busy !== ''}
-            onChange={(on) => set(data, place, on)} />
+            onChange={(on) => set(place, on)} />
         ))}
       </RowGroup>
       {err && <FieldError>{err}</FieldError>}
@@ -664,17 +695,21 @@ export function hostRefusal(raw: string, hosts: string[]): string | null {
 
 /** A small add/remove editor for a bare-hostname list. */
 function HostList({ label, hint, hosts, disabled, onChange }: {
-  label: string; hint: string; hosts: string[]; disabled: boolean; onChange: (hosts: string[]) => void
+  label: string; hint: string; hosts: string[]; disabled: boolean
+  /** Resolves true once the list is stored. A refused save (the list changed in another tab) keeps
+   *  the typed host in the box, where the stale-write notice says the change is kept. */
+  onChange: (hosts: string[]) => Promise<boolean>
 }) {
   const [draft, setDraft] = useState('')
   const [refused, setRefused] = useState('')
-  const add = () => {
+  const add = async () => {
     const h = draft.trim().toLowerCase()
     if (!h) return
     const why = hostRefusal(draft, hosts)
     // The draft is KEPT on a refusal — emptying it is what a successful add looks like.
     if (why) { setRefused(why); return }
-    setRefused(''); onChange([...hosts, h]); setDraft('')
+    setRefused('')
+    if (await onChange([...hosts, h])) setDraft('')
   }
   return (
     <div>
@@ -761,14 +796,18 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  const save = async (next: string[]) => {
+  // One pattern in or out, applied to the stored list — never this panel's copy of it, which a
+  // second tab may have changed since (a pattern added there would have been dropped here).
+  const save = async (write: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true)
     setErr('')
     try {
-      await api.setUserDeniedCommands(next)
+      await write()
       onChange()
+      return true
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save')
+      return false
     } finally {
       setBusy(false)
     }
@@ -778,8 +817,8 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
     const p = draft.trim()
     if (!p || user.includes(p)) { setDraft(''); return }
     try { new RegExp(p) } catch { setErr('Not a valid regular expression'); return }
-    await save([...user, p])
-    setDraft('')
+    // The draft is kept on a failure — emptying it is what a successful add looks like.
+    if (await save(() => api.addDeniedCommand(p))) setDraft('')
   }
 
   return (
@@ -827,7 +866,7 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
             {user.map((p) => (
               <div key={p} className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
                 <code data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p}</code>
-                <button type="button" disabled={busy} onClick={() => save(user.filter((x) => x !== p))}
+                <button type="button" disabled={busy} onClick={() => save(() => api.removeDeniedCommand(p))}
                   className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface" aria-label={`Remove ${p}`}>
                   <X size={15} />
                 </button>

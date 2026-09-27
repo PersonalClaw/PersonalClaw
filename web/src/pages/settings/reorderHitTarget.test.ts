@@ -64,8 +64,10 @@ describe('reorder buttons carry a 24px+ target', () => {
     // The reason this file keeps its own button. `unavailableWhen` goes natively disabled while busy;
     // SquareIconButton never does. Losing that would let an in-flight save be fired twice.
     const src = routing()
-    expect(src).toMatch(/unavailableWhen\(i === 0, 'Already tried first', \{ busy \}\)/)
-    expect(src).toMatch(/unavailableWhen\(i === shown\.length - 1, 'Already tried last', \{ busy \}\)/)
+    // Each also stays unavailable while a refused reorder waits in the stale-write notice, so a
+    // second move is not built from the same stale order — the busy option is unchanged.
+    expect(src).toMatch(/unavailableWhen\(i === 0 \|\| conflicted, conflicted \? HELD_CHANGE_REASON : 'Already tried first', \{ busy \}\)/)
+    expect(src).toMatch(/unavailableWhen\(i === shown\.length - 1 \|\| conflicted, conflicted \? HELD_CHANGE_REASON : 'Already tried last', \{ busy \}\)/)
     const helper = readFileSync(join(SRC, 'ui/unavailable.ts'), 'utf8')
     expect(helper, 'busy must still mean NATIVE disabled').toMatch(/if \(opts\?\.busy\) return \{ disabled: true/)
   })

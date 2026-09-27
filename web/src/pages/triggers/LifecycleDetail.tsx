@@ -10,6 +10,21 @@ import { Toggle } from '../../ui/Toggle'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
 import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
 import { accentChip } from '../../design/accent'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+
+/** What the edit form saves: the whole trigger, its action config replaced as one object. */
+type HookEdit = { name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown> }
+
+/** A trigger as the editor starts from it, with the revision the same read reported — the base the
+ *  save names. */
+function baseOf(h: HookItem): Revisioned<HookEdit> {
+  return {
+    value: { name: h.name, event: h.event, matcher: h.matcher, provider: h.provider, provider_config: h.provider_config ?? {} },
+    revision: h.revision ?? '',
+  }
+}
 
 /** Lifecycle-trigger inspector for the SidePanel: view ↔ in-panel edit, plus a
  *  Test button that fires the action with a sample context. Backed by the hooks
@@ -29,21 +44,44 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
   const [matcher, setMatcher] = useState(hook.matcher)
   const [provider, setProvider] = useState(hook.provider)
   const [config, setConfig] = useState<Record<string, unknown>>(hook.provider_config ?? {})
+  // 🔴 THE SAVE REPLACES THE WHOLE TRIGGER — its action config as one object — over the copy the
+  // draft was seeded from. A change made since (another tab, the agent's automation tools) was put
+  // back by the next save here without a word. `base` is that copy with the revision the same read
+  // reported; a stale save is refused and offered back (`ui/StaleWriteNotice`).
+  const [base, setBase] = useState<Revisioned<HookEdit>>(() => baseOf(hook))
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [testOut, setTestOut] = useState<string | null>(null)
 
-  // ONE restore path, shared by the mount/switch effect and Cancel. Cancel must run it too:
-  // the effect below keys on `hook.id`, so re-opening the SAME trigger fires no reset and an
-  // abandoned draft would otherwise be handed to the next edit session (issue 510).
+  // ONE restore path, shared by the effect below and Cancel. Cancel must run it too, so an abandoned
+  // draft is never handed to the next edit session (issue 510). The effect runs it whenever the
+  // editor opens or another trigger is picked, so an edit starts from the trigger as the panel shows
+  // it — with the revision of that same copy — and never while the editor stays open, where a list
+  // refresh landing mid-edit must not replace what is typed.
   function restoreDraft() {
-    setName(hook.name); setEvent(hook.event); setMatcher(hook.matcher)
-    setProvider(hook.provider); setConfig(hook.provider_config ?? {})
+    const b = baseOf(hook)
+    setBase(b)
+    setName(b.value.name); setEvent(b.value.event); setMatcher(b.value.matcher)
+    setProvider(b.value.provider); setConfig(b.value.provider_config)
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on identity, not on the draft
-  useEffect(() => { restoreDraft(); setTestOut(null) }, [hook.id])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on identity and mode, not on the draft
+  useEffect(() => { restoreDraft() }, [hook.id, editing])
+  useEffect(() => { setTestOut(null) }, [hook.id])
+
+  const guard = useStaleWriteGuard<HookEdit>({
+    read: async () => {
+      const stored = (await api.hooks()).find((h) => h.id === hook.id)
+      if (!stored) throw new Error(`the trigger “${hook.name}” no longer exists`)
+      return baseOf(stored)
+    },
+    write: (next, revision) => api.updateHook(hook.id, next, revision),
+    onSaved: () => { onSaved(); setEditing(false) },
+    // Dropping the change leaves the panel on what is stored: the list re-reads, and the next Edit
+    // seeds from it.
+    onDiscard: () => { onSaved(); setEditing(false); setErr('') },
+  })
 
   const catalog = useTriggerVariables()
   const em = lifecycleEventMeta(catalog, event)
@@ -66,7 +104,9 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
     const coerced = coerceActionConfig(providers, provider, config)
     if (coerced.error) { setErr(coerced.error); return }
     setSaving(true); setErr('')
-    try { await api.updateHook(hook.id, { name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: coerced.config }); onSaved(); setEditing(false) }
+    const mine: HookEdit = { name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: coerced.config }
+    // A refusal keeps the draft and the editor open, with the notice below offering the way back.
+    try { await guard.save(base, mine, rebaseRecord(base.value, mine)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
@@ -92,18 +132,22 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
-        <Field label="Name"><TextInput value={name} onChange={setName} placeholder="Block risky writes" autoFocus /></Field>
-        <Field label="Fires on" hint={em.desc}>
-          <Combobox options={eventOptions} value={event} onChange={(v) => setEvent(v)} placeholder="Pick a lifecycle event…" emptyText="No events" />
-        </Field>
-        <Field label={eventTakesToolMatcher(event) ? 'Tool matcher' : 'Context matcher'} hint={eventTakesToolMatcher(event) ? 'Glob on tool name. Empty = all tools.' : 'Glob on the event context. Empty = always.'}>
-          <TextInput value={matcher} onChange={setMatcher} placeholder={eventTakesToolMatcher(event) ? 'write_file' : '*'} />
-        </Field>
-        <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider} onConfig={setConfig} vars={em.vars} />
+        <HeldChange guard={guard}>
+          <Field label="Name"><TextInput value={name} onChange={setName} placeholder="Block risky writes" autoFocus /></Field>
+          <Field label="Fires on" hint={em.desc}>
+            <Combobox options={eventOptions} value={event} onChange={(v) => setEvent(v)} placeholder="Pick a lifecycle event…" emptyText="No events" />
+          </Field>
+          <Field label={eventTakesToolMatcher(event) ? 'Tool matcher' : 'Context matcher'} hint={eventTakesToolMatcher(event) ? 'Glob on tool name. Empty = all tools.' : 'Glob on the event context. Empty = always.'}>
+            <TextInput value={matcher} onChange={setMatcher} placeholder={eventTakesToolMatcher(event) ? 'write_file' : '*'} />
+          </Field>
+          <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider} onConfig={setConfig} vars={em.vars} />
+        </HeldChange>
+        <StaleWriteNotice guard={guard} what="This trigger" />
         <FormFooter error={err}>
-          <Button variant="ghost" size="sm" onClick={() => { restoreDraft(); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} loading={saving} disabled={saving || !name.trim()}
-            disabledReason={!name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
+          {/* Cancelling a refused save drops the kept change, exactly as "Discard my change" does. */}
+          <Button variant="ghost" size="sm" onClick={() => { if (guard.conflict) guard.discard(); else { restoreDraft(); setEditing(false); setErr('') } }}><X size={15} /> Cancel</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !name.trim() || guard.conflict !== null}
+            disabledReason={guard.conflict ? HELD_CHANGE_REASON : !name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )

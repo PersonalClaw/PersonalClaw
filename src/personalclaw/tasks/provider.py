@@ -6,6 +6,19 @@ from typing import Any
 from personalclaw.tasks.models import Task, TaskComment
 
 
+class StaleTaskWrite(Exception):
+    """A write named a base revision the stored task no longer has, so nothing was written.
+
+    Carries the task as it was stored at the moment of the comparison, so the caller can answer
+    with the refusal every document write uses (``stale_write.stale_write_refusal``) against
+    exactly the copy the store compared.
+    """
+
+    def __init__(self, task: Task) -> None:
+        super().__init__(f"task {task.id} changed since the write's base was read")
+        self.task = task
+
+
 class TaskProvider(ABC):
     """Provider interface for task backends.
 
@@ -39,7 +52,19 @@ class TaskProvider(ABC):
     async def create_task(self, **fields: Any) -> Task: ...
 
     @abstractmethod
-    async def update_task(self, task_id: str, **fields: Any) -> Task | None: ...
+    async def update_task(
+        self, task_id: str, *, base_revision: str | None = None, **fields: Any
+    ) -> Task | None:
+        """Apply ``fields`` to the task; ``None`` when there is no such task.
+
+        ``base_revision`` is the revision a whole-form save was built from (``If-Match``):
+        when it is given, the write lands only if the stored task still has it
+        (``models.task_revision``) — compared and written as ONE step, so no other writer can
+        land in between — and otherwise raises :class:`StaleTaskWrite` having written
+        nothing. ``None`` is a write that replaces no copy of the task (a status change, a
+        server-side writer) and is applied to what is stored.
+        """
+        ...
 
     @abstractmethod
     async def delete_task(self, task_id: str) -> bool: ...

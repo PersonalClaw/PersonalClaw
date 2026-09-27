@@ -32,6 +32,9 @@ const updateModelProvider = vi.fn()
 const testModelProvider = vi.fn()
 const chatModels = vi.fn()
 const setActiveModel = vi.fn()
+// The chat chain as the bind reads it, with its revision — the bind replaces the whole chain, so it
+// names the revision of the one it read.
+const activeChain = vi.fn()
 const saveOnboardingState = vi.fn()
 const detectLocalModel = vi.fn()
 const scanLocalModels = vi.fn()
@@ -64,6 +67,7 @@ vi.mock('../../lib/api', async (orig) => ({
     testModelProvider: (...a: unknown[]) => testModelProvider(...a),
     chatModels: () => chatModels(),
     setActiveModel: (...a: unknown[]) => setActiveModel(...a),
+    activeChain: (...a: unknown[]) => activeChain(...a),
     saveOnboardingState: (...a: unknown[]) => saveOnboardingState(...a),
     detectLocalModel: () => detectLocalModel(),
     scanLocalModels: () => scanLocalModels(),
@@ -80,6 +84,7 @@ vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
 
 import { EssentialsStep, laneOf, candidatesByLane, typesMissingFromCatalog } from './EssentialsStep'
 import { invalidateKeys } from '../../lib/data'
+import { ApiError } from '../../lib/api'
 
 function entry(over: Partial<AppCatalogEntry> & { name: string }): AppCatalogEntry {
   return {
@@ -180,7 +185,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   // A COLD cache per test: `useQuery` memoizes module-globally, and a warm entry
   // would hide both the loading and the load-FAILURE branch on every test after the first.
-  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:local-model', 'apps']) invalidateKeys(k)
+  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:chat-chain', 'onboarding:local-model', 'apps']) invalidateKeys(k)
   try { sessionStorage.clear() } catch { /* jsdom always has it */ }
   appCatalog.mockResolvedValue(CATALOG)
   apps.mockResolvedValue([])
@@ -197,6 +202,8 @@ beforeEach(() => {
   testModelProvider.mockResolvedValue({ ok: true, message: 'Reachable' })
   chatModels.mockResolvedValue([{ name: 'openai/gpt-5', model_id: 'gpt-5', provider: 'openai' }])
   setActiveModel.mockResolvedValue({ ok: true })
+  // Nothing bound to chat yet, at the revision of that empty chain.
+  activeChain.mockResolvedValue({ value: [], revision: 'rev-empty' })
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   installApp.mockResolvedValue({ ok: true, name: 'openai-models', error: '', needs_consent: false, scan: null })
   previewApp.mockImplementation((source: string) => Promise.resolve(reviewOf(source)))
@@ -463,7 +470,28 @@ describe('the model lane completes entirely in-flow', () => {
   it('binds the chosen chat model as a canonical provider:model ref', async () => {
     await walkModelLane()
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['openai:gpt-5']))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['openai:gpt-5'], 'rev-empty'))
+  })
+
+  it('a chat model bound elsewhere since the step opened is not replaced: the pick waits in the notice', async () => {
+    // The bind names the revision of the chain the step read — empty. Another tab, or the chat
+    // screen's model download, binding a model meanwhile makes that stale, and the gateway refuses
+    // the write instead of throwing that model away.
+    setActiveModel.mockRejectedValueOnce(new ApiError('The chat model chain changed.', 409, 'stale_write'))
+    await walkModelLane()
+    const pick = await screen.findByRole('button', { name: /gpt-5/ })
+    activeChain.mockResolvedValue({ value: ['bundled-chat:SmolLM2-135M-Instruct-Q8_0'], revision: 'rev-bound' })
+    fireEvent.click(pick)
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['openai:gpt-5'], 'rev-empty'))
+    const said = await screen.findByText(/changed elsewhere/)
+    expect(said.closest('[role="alert"]')).not.toBeNull()
+    // Not bound, so not verified — and the pick is kept for the user to re-apply or drop.
+    expect(onboardingModelCheck).not.toHaveBeenCalled()
+    const reapply = await screen.findByRole('button', { name: 'Reload and reapply' })
+    await waitFor(() => expect(reapply.getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(reapply)
+    await waitFor(() => expect(setActiveModel).toHaveBeenLastCalledWith('chat', ['openai:gpt-5'], 'rev-bound'))
+    await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
   })
 
   it('shows a failed Test inline and lets the user retry in place', async () => {
@@ -942,7 +970,7 @@ describe('#3529 — a provider type whose app is already installed is not a dead
     await waitFor(() => expect(testModelProvider).toHaveBeenCalledWith('ollama'))
 
     fireEvent.click(await screen.findByRole('button', { name: /llama3\.2:3b/ }))
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['ollama:llama3.2:3b']))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['ollama:llama3.2:3b'], 'rev-empty'))
 
     await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ })).not.toHaveAttribute('aria-disabled'))
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
@@ -1088,7 +1116,7 @@ describe('the model lane reads ready only after a build check', () => {
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
 
     // The binding WAS written — and that is precisely not enough.
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['openai:gpt-5']))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['openai:gpt-5'], 'rev-empty'))
     await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
     const cont = screen.getByRole('button', { name: /Continue/ })
     expect(cont.getAttribute('aria-disabled')).toBe('true')
@@ -1493,7 +1521,7 @@ describe('the small model at step 3 (OU-14)', () => {
     act(() => stream.emit('done', running({ state: 'done', downloaded_bytes: OFFER.bytes, progress: 1 })))
 
     // It became the chat model — that is what the user asked for — and the lane checked it.
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF]))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF], 'rev-empty'))
     await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
     expect(await screen.findByText('Downloaded SmolLM2-135M-Instruct. It answers your chats now.')).toBeTruthy()
     expect(screen.getByText(/small model PersonalClaw downloaded/)).toBeTruthy()
@@ -1518,6 +1546,7 @@ describe('the small model at step 3 (OU-14)', () => {
       needs_model: false, has_model_provider: true, has_chat_binding: true,
       chat_model_refs: [REF], chat_is_bundled_floor: true, chat_download_offer: null,
     })
+    activeChain.mockResolvedValue({ value: [REF], revision: 'rev-bound' })
     act(() => FakeEventSource.all[0].emit('done', running({ state: 'done', progress: 1 })))
     await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
     expect(setActiveModel).not.toHaveBeenCalled()
@@ -1579,7 +1608,7 @@ describe('the small model at step 3 (OU-14)', () => {
     onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: [REF], floor: true, provider: 'bundled-chat' })
     act(() => FakeEventSource.all[0].emit('done', running({ state: 'done', downloaded_bytes: OFFER.bytes, progress: 1 })))
 
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF]))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF], 'rev-empty'))
     expect(await screen.findByText('Downloaded SmolLM2-135M-Instruct. It answers your chats now.')).toBeTruthy()
     expect(screen.queryByText(/isn.t answering/)).toBeNull()
     await waitFor(() => expect(continueDisabled()).toBe(false))

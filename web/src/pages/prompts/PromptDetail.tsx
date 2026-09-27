@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
 import { Pencil, Trash2, Check, X, Play, Lock, Code2, Eye, Puzzle, Rocket } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -9,11 +9,18 @@ import { LoadError, Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseRecord } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { Field, FieldError } from '../../ui/forms'
 import { isReadOnly, sourceTone, sourceLabel, promptVars, seedRenderValues } from './promptMeta'
 import { toDraft, draftToPayload, type PromptDraft } from './PromptForm'
 import { PromptEditFields } from './PromptEditFields'
 import { accentChip } from '../../design/accent'
+
+/** A prompt as its editor sends it — the fields a save replaces — so the copy a draft started from,
+ *  the draft, and a fresh re-read are merged in one shape when a stale save is re-applied. */
+const promptDocument = (p: PromptItem) => draftToPayload(toDraft(p))
 
 /** Substitute each variable's default into the template so the rendered view
  *  reads naturally (e.g. {{bot_name}} → "PersonalClaw"). Placeholders without a
@@ -59,24 +66,60 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
   // demonstrably exists (it came from the list) and the panel never said a word (#3394's (B)
   // subclass). `refetch` is already here for the post-save re-read, so the retry is free.
   const { data: fetched, error: hydrateErr, refresh: refetch } = useQuery<PromptItem | undefined>(`prompt:${prompt.name}`, () => (prompt.content == null ? api.prompt(prompt.name) : Promise.resolve(undefined)), { persist: true })
-  const full = prompt.content != null ? prompt : fetched
+  const upstream = prompt.content != null ? prompt : fetched
 
-  // 🔴 SEEDED DURING RENDER, NOT IN AN EFFECT. The edit form below renders the moment `full` lands,
-  // and an effect seeds only AFTER that commit — so for one commit the form's Save closed over the
-  // list-row draft (`content: ''`) and a click there wiped the template: measured by the control in
-  // `editWaitsForTheRecord.test.tsx`, which clicked Save in that window under load and sent `''`.
+  // 🔴 SEEDED DURING RENDER, NOT IN AN EFFECT. The edit form below renders the moment the record
+  // lands, and an effect seeds only AFTER that commit — so for one commit the form's Save closed over
+  // the list-row draft (`content: ''`) and a click there wiped the template: measured by the control
+  // in `editWaitsForTheRecord.test.tsx`, which clicked Save in that window under load and sent `''`.
   // Updating state while rendering makes React re-render before anything commits, so no committed
-  // form ever holds an unseeded draft. It re-seeds whenever `full` changes, e.g. the post-save re-read.
-  const [seededFrom, setSeededFrom] = useState<PromptItem | undefined>(full)
-  if (full && full !== seededFrom) { setSeededFrom(full); setDraft(toDraft(full)) }
-
-  async function save() {
-    if (!draft.name.trim()) { setErr('Name is required'); return }
-    setSaving(true); setErr('')
+  // form ever holds an unseeded draft. It re-seeds whenever the record read changes, e.g. the
+  // post-save re-read.
+  //
+  // `seededFrom` is the record the draft came from, and so the base its save names. Both start
+  // UNSEEDED, never at the first record: a record already in the cache on mount used to be taken
+  // as "seeded" while the draft still held the list row. `seen` tracks the upstream read apart from
+  // `seededFrom`, so a discard that re-seeds from a fresh re-read is not undone by the next render.
+  const [seededFrom, setSeededFrom] = useState<PromptItem | undefined>(undefined)
+  const [seen, setSeen] = useState<PromptItem | undefined>(undefined)
+  const seed = (p: PromptItem) => { setSeededFrom(p); setDraft(toDraft(p)) }
+  // The record a refused save's re-read found: the prop may be a parent's copy this component
+  // cannot refresh, so "Discard my change" re-seeds from this instead.
+  const reread = useRef<PromptItem | null>(null)
+  // 🔴 THE WHOLE PROMPT IS SAVED OVER THE COPY IT WAS BUILT FROM. Every field is rebuilt from the
+  // record the draft was seeded from, so a tab opened before another save — or before an app update
+  // or a history rollback rewrote the prompt — replaced that newer prompt without a word. A stale
+  // copy is refused now, and the edit is re-applied field by field onto what is stored.
+  const guard = useStaleWriteGuard<Record<string, unknown>>({
+    read: () => api.prompt(prompt.name).then((p) => {
+      reread.current = p
+      return { value: promptDocument(p), revision: p.revision ?? '' }
+    }),
+    write: (next, revision) => api.savePrompt(prompt.name, next, revision),
     // invalidateKeys alone is not enough: this component stays mounted after Save
     // (same list-row key), so the hydration hook never re-runs and the view keeps
     // showing the PRE-save record. Explicitly refetch after invalidating.
-    try { const r = await api.savePrompt(prompt.name, draftToPayload(draft)); invalidateKeys(`prompt:${prompt.name}`); refetch(); onSaved(r.prompt?.name ?? prompt.name); setEditing(false) }
+    onSaved: () => { invalidateKeys(`prompt:${prompt.name}`); refetch(); onSaved(prompt.name); setEditing(false) },
+    onDiscard: () => {
+      invalidateKeys(`prompt:${prompt.name}`); refetch()
+      if (reread.current) seed(reread.current)
+    },
+  })
+  if (upstream !== seen) {
+    setSeen(upstream)
+    // Never under a refused save: the draft it kept is the user's only copy until they choose.
+    if (upstream && guard.conflict === null) seed(upstream)
+  }
+  const full = seededFrom ?? upstream
+
+  async function save() {
+    if (!draft.name.trim()) { setErr('Name is required'); return }
+    if (!seededFrom) return
+    setSaving(true); setErr('')
+    const base = { value: promptDocument(seededFrom), revision: seededFrom.revision ?? '' }
+    const mine = draftToPayload(draft)
+    // `false` is a refusal the notice now holds; the draft stays in the form.
+    try { await guard.save(base, mine, rebaseRecord(base.value, mine)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
@@ -123,11 +166,16 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
               `on-surface-low`. See `design/accentChipTone.test.tsx`. */}
           <span data-type="caption" className="ml-auto inline-flex items-center rounded-pill px-m h-6" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full.tags)}</span>
         </div>
-        <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
+        {/* Locked while a refused save waits for the user's choice: the notice re-applies the draft
+            it kept, so an edit typed meanwhile would be dropped by that save. */}
+        <fieldset disabled={guard.conflict !== null} title={guard.conflict !== null ? HELD_CHANGE_REASON : undefined} className="contents">
+          <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
+        </fieldset>
+        <StaleWriteNotice guard={guard} what="This prompt" />
         <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
-            disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim() || guard.conflict !== null}
+            disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : !draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )

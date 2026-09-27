@@ -141,12 +141,16 @@ describe('api.patchConfig on the wire', () => {
 
   it('the dedicated security writers take the same path', async () => {
     const bodies = gateway()
-    await api.setSecurityEgress({ allow_hosts: [], deny_hosts: [], allow_private: true }, true)
-    await api.setMcpElicitationServers(['srv'])
+    await api.setSecurityEgress({ allow_hosts: [], deny_hosts: [], allow_private: true }, 'r1', true)
+    await api.grantMcpElicitation('srv')
+    await api.removeDeniedCommand('rm -rf')
     expect(bodies[0]).toMatchObject({ path: 'security.egress', confirm: true })
+    // One name in or out — never the page's copy of the list — and still asked about.
     expect(bodies.slice(1)).toEqual([
-      { path: 'security.mcp_elicitation_servers', value: ['srv'] },
-      { path: 'security.mcp_elicitation_servers', value: ['srv'], confirm: true },
+      { path: 'security.mcp_elicitation_servers', add: 'srv' },
+      { path: 'security.mcp_elicitation_servers', add: 'srv', confirm: true },
+      { path: 'security.denied_commands', remove: 'rm -rf' },
+      { path: 'security.denied_commands', remove: 'rm -rf', confirm: true },
     ])
   })
 })
@@ -160,10 +164,10 @@ describe('an automation whose agent approves itself asks the same way', () => {
     new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } })
 
   function gateway(ok: unknown) {
-    const sent: Array<{ url: string; method: string; body: Record<string, unknown> }> = []
+    const sent: Array<{ url: string; method: string; body: Record<string, unknown>; ifMatch?: string }> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
       const body = (init.body ? JSON.parse(String(init.body)) : {}) as Record<string, unknown>
-      sent.push({ url, method: String(init.method), body })
+      sent.push({ url, method: String(init.method), body, ifMatch: (init.headers as Record<string, string> | undefined)?.['If-Match'] })
       if (body.confirm !== true) {
         return reply(400, {
           error: {
@@ -181,12 +185,12 @@ describe('an automation whose agent approves itself asks the same way', () => {
   const trigger = { id: 'schedule:t', raw_id: 't', kind: 'schedule', name: 't', action: { provider: 'invoke-agent', config: {} } }
   const writers: Array<[string, () => Promise<unknown>, unknown]> = [
     ['createSchedule', () => api.createSchedule({ name: 't', every: 300, approval_mode: 'auto' }), { ok: true, trigger }],
-    ['updateSchedule', () => api.updateSchedule('t', { approval_mode: 'auto' }), { ok: true, trigger }],
+    ['updateSchedule', () => api.updateSchedule('t', { approval_mode: 'auto' }, 's1'), { ok: true, trigger }],
     ['createEvent', () => api.createEvent({ pattern: 'AppEvent', action: { provider: 'invoke-agent', config: { approval_mode: 'auto' } } }), { ok: true, trigger: { ...trigger, kind: 'store' } }],
     ['createHook', () => api.createHook({ name: 'h', event: 'stop', provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
-    ['updateHook', () => api.updateHook('h', { provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
+    ['updateHook', () => api.updateHook('h', { provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }, 'h1'), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
     ['saveWorkflowDef', () => api.saveWorkflowDef({ name: 'w', root: { kind: 'stage', id: 's', config: { approval_mode: 'auto' } }, save: true }), { saved: true, valid: true, issues: [] }],
-    ['setWorkflowRunPolicyOverrides', () => api.setWorkflowRunPolicyOverrides('r1', { max_cycles: 9 }), { run_id: 'r1', status: 'running', policy_overrides: { max_cycles: 9 } }],
+    ['setWorkflowRunPolicyOverrides', () => api.setWorkflowRunPolicyOverrides('r1', { max_cycles: 9 }, 'v1'), { run_id: 'r1', status: 'running', policy_overrides: { max_cycles: 9 }, revisions: { policy_overrides: 'v2' } }],
     ['syncAgents', () => api.syncAgents(), { ok: true, synced: ['helper'], skipped: [], unreadable: [], scanned: 1, message: '' }],
   ]
 
@@ -202,6 +206,25 @@ describe('an automation whose agent approves itself asks the same way', () => {
     expect(sent[1].method).toBe(sent[0].method)
     const { confirm: _c, ...resent } = sent[1].body
     expect(resent).toEqual(sent[0].body)
+    // …and over the same base: a whole-document write's resend names the revision the first did.
+    expect(sent[1].ifMatch).toBe(sent[0].ifMatch)
+  })
+
+  it('the run-override resend carries the base revision the first write named', async () => {
+    const sent = gateway({ run_id: 'r1', status: 'draft', policy_overrides: { max_cycles: 0 }, revisions: { policy_overrides: 'v2' } })
+    await api.setWorkflowRunPolicyOverrides('r1', { max_cycles: 0 }, 'v1')
+    expect(sent.map((s) => s.ifMatch)).toEqual(['"v1"', '"v1"'])
+  })
+
+  it('an automation edit and its consented resend both name the copy the form was built from', async () => {
+    // The edit forms save the WHOLE trigger, so the base is not optional — and a resend that dropped
+    // it would be a 428 behind a dialog the user already answered.
+    const schedule = gateway({ ok: true, trigger })
+    await api.updateSchedule('t', { approval_mode: 'auto' }, 's1')
+    expect(schedule.map((s) => s.ifMatch)).toEqual(['"s1"', '"s1"'])
+    const hook = gateway({ ok: true, trigger: { ...trigger, kind: 'lifecycle' } })
+    await api.updateHook('h', { provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }, 'h1')
+    expect(hook.map((s) => s.ifMatch)).toEqual(['"h1"', '"h1"'])
   })
 
   it.each(writers)('%s sends nothing more when the owner declines', async (_name, write, ok) => {

@@ -49,6 +49,7 @@ function instance(config: Record<string, unknown>, secretSet?: string[]): Provid
     display_name: 'Primary',
     config,
     enabled: true,
+    revision: 'rev-1',
     ...(secretSet ? { _secret_set: secretSet } : {}),
   }
 }

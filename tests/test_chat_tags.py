@@ -293,7 +293,7 @@ class TestTagVocabulary:
 
 class TestSessionTags:
     @pytest.mark.asyncio
-    async def test_assign_filters_unknown_and_dedupes(self, tmp_path, monkeypatch):
+    async def test_add_dedupes_and_refuses_an_unknown_or_non_string_id(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         app = _make_tags_app(state)
@@ -304,12 +304,21 @@ class TestSessionTags:
             state._sessions["s1"] = session
             with patch("personalclaw.dashboard.chat_tags.save_session_to_history"):
                 resp = await client.put(
-                    "/api/chat/sessions/s1/tags",
-                    json={"tags": [t1["id"], "ghost", t1["id"], t2["id"], 7]},
+                    "/api/chat/sessions/s1/tags", json={"add": [t1["id"], t1["id"], t2["id"]]}
                 )
-            assert resp.status == 200
-            data = await resp.json()
-            assert data["tags"] == [t1["id"], t2["id"]]
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["tags"] == [t1["id"], t2["id"]]
+                assert session.tags == [t1["id"], t2["id"]]
+                # A tag that does not exist, or an id that is not a string, is refused whole —
+                # nothing of the request is applied.
+                ghost = await client.put("/api/chat/sessions/s1/tags", json={"add": ["ghost"]})
+                assert ghost.status == 400
+                assert (await ghost.json())["error"]["code"] == "unknown_tag_id"
+                seven = await client.put(
+                    "/api/chat/sessions/s1/tags", json={"remove": [t1["id"]], "add": [7]}
+                )
+                assert seven.status == 400
             assert session.tags == [t1["id"], t2["id"]]
 
     @pytest.mark.asyncio
@@ -333,7 +342,7 @@ class TestSessionTags:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             t1 = await (await client.post("/api/chat/tags", json={"name": "T1"})).json()
-            resp = await client.put("/api/chat/sessions/on_disk/tags", json={"tags": [t1["id"]]})
+            resp = await client.put("/api/chat/sessions/on_disk/tags", json={"add": [t1["id"]]})
             assert resp.status == 200
             assert (await resp.json())["tags"] == [t1["id"]]
 
@@ -358,7 +367,7 @@ class TestSessionTags:
         state._sessions["s1"] = _ChatSession("s1")
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.put("/api/chat/sessions/s1/tags", json={"tags": "not-a-list"})
+            resp = await client.put("/api/chat/sessions/s1/tags", json={"add": "not-a-list"})
             assert resp.status == 400
 
 

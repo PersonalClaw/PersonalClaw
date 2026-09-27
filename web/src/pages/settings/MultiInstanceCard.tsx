@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plug, Plus, Wifi, Pencil, Trash2, X, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { api, type SettingsProvider, type ProviderInstance, type ProviderSchema, type ProviderTestResult } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
@@ -13,6 +13,9 @@ import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
 import { setActivation } from '../../app/appActivation'
+import { HELD_CHANGE_REASON, presentSecrets, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 
 /** A multiInstance=true provider rendered as a frame for N named instances.
  *  Each instance has its own schema-driven config (test / edit / delete); an
@@ -117,6 +120,12 @@ export function editableConfig(inst: ProviderInstance): Record<string, unknown> 
   return next
 }
 
+/** The instance as its editor starts from — the editable config (`editableConfig`) with the
+ *  revision the list read reported for it, which a save names. */
+function editableInstance(inst: ProviderInstance): Revisioned<Record<string, unknown>> {
+  return { value: editableConfig(inst), revision: inst.revision }
+}
+
 function InstanceRow({ ext, inst, schema, onChanged }: {
   ext: SettingsProvider; inst: ProviderInstance; schema: ProviderSchema | null | undefined; onChanged: () => void
 }) {
@@ -127,6 +136,23 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
+  // A closed editor always opens on the instance as it is stored now, not on the copy it had.
+  useEffect(() => { if (!editing) setConfig(editableConfig(inst)) }, [inst, editing])
+  // 🔴 THE CONFIG IS SAVED WHOLE, over the revision the list read it at. The editor used to PUT its
+  // copy back — so a card opened before another tab saved this instance replaced that save. A stale
+  // copy is now refused and the edit re-applied field by field on top of what is stored
+  // (`ui/StaleWriteNotice`). The re-read uses the same editable form, secrets blanked, so a secret
+  // left alone compares as unchanged rather than as a conflict with its mask.
+  const guard = useStaleWriteGuard<Record<string, unknown>>({
+    read: () => api.providerInstances(ext.name).then((all) => {
+      const now = all.find((i) => i.id === inst.id)
+      if (!now) throw new Error('This instance was removed elsewhere.')
+      return editableInstance(now)
+    }),
+    write: (next, base) => api.updateProviderInstance(ext.name, inst.id, next, base),
+    onSaved: () => { setEditing(false); onChanged() },
+    onDiscard: () => { setEditing(false); onChanged() },
+  })
 
   const runTest = async () => {
     setTesting(true); setTest(null)
@@ -140,9 +166,10 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
     // empty catch below (silence), by a different mechanism. Leaving the editor OPEN on failure is
     // deliberate: the config the user typed is still on screen to retry from.
     try {
-      if (!(await reportingWrite('save this instance', () => api.updateProviderInstance(ext.name, inst.id, { config })))) return
-      setEditing(false)
-      onChanged()
+      // Only a failure is reported here: a landed save closes the editor (`onSaved`), and a stale
+      // copy keeps it open with the notice below holding the edit.
+      const base = editableInstance(inst)
+      await reportingWrite('save this instance', () => guard.save(base, config, rebaseRecord(base.value, config)))
     } finally { setSaving(false) }
   }
   const remove = async () => {
@@ -179,12 +206,20 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
       )}
       {editing && props.length > 0 && (
         <div className="mt-3 flex flex-col gap-3 border-t border-outline-variant/30 pt-3">
-          {props.map(([k, p]) => <SchemaField key={k} fieldKey={k} prop={p} value={config[k]}
-            secretAlreadySet={secretSet.includes(k)}
-            onChange={(v) => setConfig((c) => ({ ...c, [k]: v }))} />)}
+          <HeldChange guard={guard}>
+            {props.map(([k, p]) => <SchemaField key={k} fieldKey={k} prop={p} value={config[k]}
+              secretAlreadySet={secretSet.includes(k)}
+              onChange={(v) => setConfig((c) => ({ ...c, [k]: v }))} />)}
+          </HeldChange>
+          <StaleWriteNotice guard={guard} what="This instance's settings"
+            present={presentSecrets((k) => !!schema?.properties?.[k]?.['x-meta']?.sensitive, secretSet)} />
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} loading={saving}>Save</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setConfig(editableConfig(inst)) }}>Cancel</Button>
+            <Button size="sm" onClick={save} loading={saving} disabled={guard.conflict !== null}
+              disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : undefined}>Save</Button>
+            {/* Cancelling with a refused edit waiting drops that edit too, rather than leaving it to
+                reappear the next time the editor opens. */}
+            <Button variant="ghost" size="sm"
+              onClick={() => { if (guard.conflict) guard.discard(); else setEditing(false) }}>Cancel</Button>
           </div>
         </div>
       )}

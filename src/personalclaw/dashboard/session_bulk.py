@@ -104,11 +104,11 @@ async def api_chat_sessions_bulk(request: web.Request) -> web.Response:
     # because the list renders an orphan tag as nothing and an unknown folder as ungrouped —
     # the UI self-heals over state that is wrong, which is what kept it invisible.
     #
-    # 400 rather than the single tag path's silent FILTER, because the shapes differ: `PUT
-    # /tags` replaces a whole list, so dropping an unknown member still does what was asked,
-    # while bulk names ONE tag to add across N sessions — dropping it means the call did
-    # nothing and reported `changed`. `untag` validates too: it would remove nothing, and a
-    # caller passing an id we do not know is a caller with a stale vocabulary either way.
+    # 400 rather than a silent FILTER: bulk names ONE tag to add across N sessions, so dropping
+    # it means the call did nothing and reported `changed` — the reason the single-session
+    # `PUT /tags` refuses an unknown id to add the same way. `untag` validates too: it would
+    # remove nothing, and a caller passing an id we do not know is a caller with a stale
+    # vocabulary either way.
     if op in ("tag", "untag") and tag_id not in known_tag_ids(state):
         return json_error(
             "unknown_tag_id",

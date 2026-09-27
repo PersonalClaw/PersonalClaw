@@ -340,6 +340,7 @@ def _gateway_app() -> web.Application:
     app = web.Application()
     app["state"] = type("State", (), {"_background_tasks": set()})()
     app.router.add_get("/api/mcp", h.api_mcp_servers)
+    app.router.add_get("/api/mcp/servers/{name}", h.api_mcp_server_detail)
     app.router.add_put("/api/mcp/servers/{name}", h.api_mcp_server_detail)
     app.router.add_post("/api/mcp/servers/{name}/sign-in", h.api_mcp_server_sign_in)
     app.router.add_delete("/api/mcp/servers/{name}/sign-in", h.api_mcp_server_sign_in)
@@ -380,6 +381,14 @@ class Gateway:
             page = await browser.get(callback)
         await self.settle()
         return page.status_code, page.text, callback
+
+    async def edit(self, body: dict):
+        """The Tools page's edit form saving the server: the definition replaces the one the form
+        read, so it names that read's revision (`If-Match`)."""
+        base = (await (await self.client.get(f"/api/mcp/servers/{NAME}")).json())["revision"]
+        return await self.client.put(
+            f"/api/mcp/servers/{NAME}", json=body, headers={"If-Match": f'"{base}"'}
+        )
 
     async def sign_in(self, **body) -> str:
         status, started = await self.start(**body)
@@ -617,18 +626,14 @@ def test_a_sign_in_is_never_sent_to_an_address_it_was_not_granted_for(home, http
 
         # Editing the server to another address drops the sign-in and deletes its tokens.
         moved = http_remote.base + "/elsewhere/mcp"
-        resp = await gw.client.put(
-            f"/api/mcp/servers/{NAME}", json={"transport": "http", "url": moved}
-        )
+        resp = await gw.edit({"transport": "http", "url": moved})
         assert resp.status == 200, await resp.text()
         for doc in (home / "mcp.json", home / "agents" / "personalclaw.json"):
             assert MCP_SIGN_IN not in _servers(doc)[NAME], doc
         assert _owned_sign_in_keys() == set()
 
         # A sign-in written for one address and a URL changed by hand: the token is not sent.
-        await gw.client.put(
-            f"/api/mcp/servers/{NAME}", json={"transport": "http", "url": http_remote.url}
-        )
+        await gw.edit({"transport": "http", "url": http_remote.url})
         await gw.sign_in()
         token = _tokens(home)["access_token"]
         doc = json.loads((home / "mcp.json").read_text(encoding="utf-8"))

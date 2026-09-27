@@ -145,6 +145,17 @@ class ArtifactProvider(ABC):
         #: completed loop ended up with two byte-identical rows, one file-backed and one a
         #: snapshot. `None` leaves it untouched; `""` detaches.
         source_path: str | None = None,
+        #: The revision of the body the caller's `content` was built from — the precondition of
+        #: a page's whole-body save (`personalclaw/stale_write.py`). Compared UNDER THE SAME LOCK
+        #: as the write, against the body as a read presents it (`models.redacted`), and a
+        #: mismatch raises `ArtifactStaleWrite` before anything is written. `None` is
+        #: last-write-wins, which is what every agent-side edit path does.
+        expect_revision: str | None = None,
+        #: Tag names to add to / remove from the tags stored at the moment of the write. One name
+        #: in or out cannot undo another writer's tag, so these need no revision; `tags` replaces
+        #: the whole list.
+        add_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        remove_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
     ) -> Artifact | None: ...
 
     def revert(

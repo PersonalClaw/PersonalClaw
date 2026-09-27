@@ -18,6 +18,7 @@ from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -824,6 +825,40 @@ def _definition_of(name: str) -> dict[str, Any] | None:
     return spec if isinstance(spec, dict) else None
 
 
+def _definition_view(name: str, spec: dict[str, Any]) -> dict[str, Any]:
+    """*spec* as ``GET /api/mcp/servers/{name}`` hands it to the edit form — names, plain values
+    and, for a stored value, only whether one is saved.
+
+    Also the document a ``PUT`` compares its base against (`personalclaw/stale_write.py`), so the
+    revision the form reads and the one its save is checked against are taken from one shape —
+    the masked one, which is all the form ever sees.
+    """
+    from personalclaw.config.secret_refs import mcp_env_view, mcp_headers_view
+    from personalclaw.mcp_discovery import mcp_transport
+
+    reason = _not_editable_reason(name, spec)
+    if reason is not None:
+        return {"name": name, "editable": False, "reason": reason}
+    transport = mcp_transport(spec)
+    if transport != "stdio":
+        return {
+            "name": name,
+            "editable": True,
+            "transport": transport,
+            "url": str(spec.get("url") or ""),
+            "headers": mcp_headers_view(spec),
+        }
+    args = spec.get("args")
+    return {
+        "name": name,
+        "editable": True,
+        "transport": transport,
+        "command": spec.get("command", ""),
+        "args": [str(a) for a in args] if isinstance(args, list) else [],
+        "env": mcp_env_view(spec),
+    }
+
+
 def _has_saved_value(value: Any) -> bool:
     from personalclaw.config.credentials import credential_names
     from personalclaw.config.secret_refs import ref_key
@@ -1042,9 +1077,15 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     hasValue}]`` — a plain variable's value, and for a stored one only whether a value is saved. A
     remote server's ``url`` and ``headers`` as ``[{name, hasValue}]``. A stored value never leaves
     the server. ``editable`` is false, with a ``reason``, for a server the form does not own
-    (PersonalClaw's own, an app's, one over a transport PersonalClaw has no client for).
+    (PersonalClaw's own, an app's, one over a transport PersonalClaw has no client for). Every
+    read carries the ``revision`` of exactly that view.
 
-    PUT adds or edits a server, the one write path for both. A stdio server's body::
+    PUT adds or edits a server, the one write path for both, told apart by whether the name is
+    configured when the write lands. ADDING one replaces nothing and needs no revision. EDITING
+    one replaces its definition with the form's copy, so the request names the revision the form
+    read in ``If-Match``: none is ``428 revision_required`` (the Add form reached a name that is
+    already taken), a stale one is ``409 stale_write``, and so is a revision for a server removed
+    since (`personalclaw/stale_write.py`). A stdio server's body::
 
         { "transport": "stdio", "command": "node", "args": ["server.js"],
           "env": {"KEY": "val"}, "plainEnv": ["LOG_LEVEL"], "keepEnv": ["API_KEY"] }
@@ -1062,7 +1103,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     stored value moved into the file. The definition is replaced whole, so switching a server's
     transport leaves nothing of the old one behind. Keys the form does not own (``disabled``,
     ``disabledTools``, ``autoApprove``, ``cwd``) are kept, and the agent config's copy is rebuilt
-    to match.
+    to match. The response carries the saved server's new ``revision``.
 
     DELETE removes the server from ``mcp.json`` and the agent config and deletes the values it
     owns in the credential store (``secret_refs.remove_mcp_servers``, the one delete).
@@ -1071,12 +1112,10 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         MCP_DEFINITION_KEYS,
         MCP_SIGN_IN,
         ForeignSecretReference,
-        mcp_env_view,
-        mcp_headers_view,
         remove_mcp_servers,
         store_mcp_spec,
     )
-    from personalclaw.mcp_discovery import MCP_TRANSPORTS, mcp_transport
+    from personalclaw.mcp_discovery import MCP_TRANSPORTS
     from personalclaw.mcp_oauth import covers
 
     name = request.match_info["name"]
@@ -1102,31 +1141,8 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             return json_error(
                 "not_found", message=f"No MCP server named '{name}' is configured.", status=404
             )
-        reason = _not_editable_reason(name, spec)
-        if reason is not None:
-            return web.json_response({"name": name, "editable": False, "reason": reason})
-        transport = mcp_transport(spec)
-        if transport != "stdio":
-            return web.json_response(
-                {
-                    "name": name,
-                    "editable": True,
-                    "transport": transport,
-                    "url": str(spec.get("url") or ""),
-                    "headers": mcp_headers_view(spec),
-                }
-            )
-        args = spec.get("args")
-        return web.json_response(
-            {
-                "name": name,
-                "editable": True,
-                "transport": transport,
-                "command": spec.get("command", ""),
-                "args": [str(a) for a in args] if isinstance(args, list) else [],
-                "env": mcp_env_view(spec),
-            }
-        )
+        view = _definition_view(name, spec)
+        return web.json_response({**view, "revision": revision_of(view)})
 
     if request.method == "DELETE":
         # An app-contributed MCP server (``{app}:{server}``) is OWNED by its app —
@@ -1211,6 +1227,18 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         reason = _not_editable_reason(name, {"type": transport})
         if reason is not None:
             return json_error("mcp_server_not_editable", message=reason, status=409)
+        # 🔴 AN EDIT IS WRITTEN ONLY OVER THE COPY THE FORM READ. The edit form sends the whole
+        # definition as it was seeded when the form opened, so a change made since — the provider
+        # card's edit, another tab's — was replaced by that copy without a word. Taken the way the
+        # GET takes it, under this lock and with no `await` before the write. A name nobody has
+        # configured is an add, which replaces nothing; a revision for one is a form whose server
+        # was removed after it read it.
+        configured = _definition_of(name)
+        if configured is not None or claimed_revision(request):
+            current = _definition_view(name, configured) if configured is not None else None
+            stale = stale_write_refusal(request, current, what=f"the MCP server {name!r}")
+            if stale is not None:
+                return stale
 
         if transport == "stdio":
             definition = _stdio_definition(name, existing, requested)
@@ -1241,6 +1269,9 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             return json_error("invalid_headers", message=str(exc), status=400)
         servers[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
+        # Read back, so the revision handed out is the one the next GET of this server reports.
+        saved = _definition_of(name)
+        revision = revision_of(_definition_view(name, saved)) if saved is not None else ""
 
     # The agent config's copy: added if new (with its `@name` refs), then rebuilt from mcp.json,
     # so an edit reaches what `list_servers` lists and the Tools page probes.
@@ -1257,7 +1288,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         outcome="completed",
         resources=name,
     )
-    return web.json_response({"ok": True, "name": name}, status=200)
+    return web.json_response({"ok": True, "name": name, "revision": revision}, status=200)
 
 
 # ─── Signing in to a remote server (OAuth) ──────────────────────────────
