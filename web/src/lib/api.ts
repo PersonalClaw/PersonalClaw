@@ -2147,6 +2147,9 @@ export interface WorkflowGateStats {
   node_id: string
   passes: number
   rejects: number
+  // Asks answered with a revise (ledger 292): a step sent back to be changed, then asked again. Neither
+  // a pass nor a reject, so it is outside `total` and `pass_rate` and read as its own count.
+  revised: number
   retries_consumed: number
   total: number
   pass_rate: number

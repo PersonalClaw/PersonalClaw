@@ -319,7 +319,7 @@ describe('the said-no fake-check badge', () => {
     // phrasing here would drift from the rule that fired.
     const warning = '`review` passed 40/40 times and has never rejected — a 100% pass rate over this many runs is evidence it is not checking'
     introspect = async () => payload({
-      gates: { review: { node_id: 'review', passes: 40, rejects: 0, retries_consumed: 0, total: 40, pass_rate: 1, fake_check_warning: warning } },
+      gates: { review: { node_id: 'review', passes: 40, rejects: 0, revised: 0, retries_consumed: 0, total: 40, pass_rate: 1, fake_check_warning: warning } },
     })
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText(/never said no/i)).toBeTruthy()
@@ -330,11 +330,21 @@ describe('the said-no fake-check badge', () => {
     // "0 rejections in 0 runs" and "0 in 40" are different claims. A badge on the third run of a
     // new template teaches the user to ignore badges before the metric was ever right.
     introspect = async () => payload({
-      gates: { review: { node_id: 'review', passes: 2, rejects: 0, retries_consumed: 0, total: 2, pass_rate: 1, fake_check_warning: '' } },
+      gates: { review: { node_id: 'review', passes: 2, rejects: 0, revised: 0, retries_consumed: 0, total: 2, pass_rate: 1, fake_check_warning: '' } },
     })
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     await screen.findByText('review')
     expect(screen.queryByText(/never said no/i)).toBeNull()
+  })
+
+  it('counts a revise apart from a pass and a reject (ledger 292)', async () => {
+    // A reviewer who sent a step back to be changed neither passed the work nor rejected it: the
+    // gate asked again, and that answer is the pass. The revise is its own count, beside the two.
+    introspect = async () => payload({
+      gates: { review: { node_id: 'review', passes: 1, rejects: 0, revised: 1, retries_consumed: 0, total: 1, pass_rate: 1, fake_check_warning: '' } },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText(/1 passed · 0 rejected · 1 revised/)).toBeTruthy()
   })
 })
 

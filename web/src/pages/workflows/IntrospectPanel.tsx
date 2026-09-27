@@ -189,6 +189,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                           <span className="font-mono text-on-surface">{g.node_id}</span>
                           <span className="text-on-surface-low tabular-nums">
                             {g.passes} passed · {g.rejects} rejected
+                            {g.revised ? ` · ${g.revised} revised` : ''}
                             {g.retries_consumed ? ` · ${g.retries_consumed} retries` : ''}
                           </span>
                           {g.fake_check_warning ? (

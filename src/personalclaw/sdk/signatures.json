@@ -109,7 +109,8 @@
     {"annotation": "AgentError | None", "default": "None", "kind": "positional_or_keyword", "name": "agent_error"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "reversal"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "failure_class"},
-    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "retry_after"}
+    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "retry_after"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "summary"}
    ],
    "returns": "None"
   },
@@ -3335,7 +3336,8 @@
     {"annotation": "str", "default": "'active'", "kind": "positional_or_keyword", "name": "state"},
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "park_retry_after"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "last_alert_hash"},
-    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "last_alert_at"}
+    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "last_alert_at"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "last_waiting_at"}
    ],
    "returns": "None"
   },

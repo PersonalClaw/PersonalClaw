@@ -1,17 +1,18 @@
 """Applying mid-flight mutations (WF2-R2 / R20).
 
-`RunController.submit_mutation` validates a batch and QUEUES it (`queue_mutation`, in memory and
-beside the run, so a restart does not lose it — `reload_mutations`); `drain_mutations` applies the
-queue under the lock, between scheduling steps — the designated safe point — re-verifying every
-batch against the state it now meets. A committed batch swaps in the candidate spec and applies its
-state effects: a rewind or `run_from` resets its binding closure, a skip marks a subtree, a fork
-branches a child run, and done nodes whose inputs changed are flagged stale.
+`RunController.submit_mutation` validates a batch against the spec the queue will leave
+(`projected_spec`) and QUEUES it (`queue_mutation`, in memory and beside the run, so a restart does
+not lose it — `reload_mutations`); `drain_mutations` applies the queue in order under the lock,
+between scheduling steps — the designated safe point — preparing every batch again against the spec
+the batch before it left and the state it now meets. A committed batch swaps in its candidate spec
+and applies its state effects: a rewind or `run_from` resets its binding closure, a skip marks a
+subtree, a fork branches a child run, and done nodes whose inputs changed are flagged stale.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.workflows import attention
 from personalclaw.workflows import journal as journal_mod
@@ -47,37 +48,63 @@ def queue_mutation(ctl: RunController, result: mutations.BatchResult, actor: str
     _save_queue(ctl)
 
 
+def _raw_ops(result: mutations.BatchResult) -> list[dict[str, Any]]:
+    """A batch's ops as submitted — what the queue keeps, and what the drain prepares again."""
+    return [op.raw or op.to_dict() for op in result.ops]
+
+
 def _save_queue(ctl: RunController) -> None:
     store.write_pending_mutations(
         ctl.run.id,
-        [
-            {"ops": [op.raw or op.to_dict() for op in result.ops], "actor": actor}
-            for result, actor in ctl._pending_mutations
-        ],
+        [{"ops": _raw_ops(result), "actor": actor} for result, actor in ctl._pending_mutations],
     )
 
 
+def projected_spec(ctl: RunController) -> dict[str, Any]:
+    """The spec the run will have once the queue drains: the last queued batch's candidate, or
+    the run's own spec when nothing is queued (ledger 293).
+
+    A batch is checked against THIS, not against the spec the run has now: two edits made while a
+    run is paused apply one after the other, so the second has to be valid on the spec the first
+    leaves — which is what lets it change a step the first one added. Each queued batch was itself
+    prepared against the projection when it was queued, so the last ok one's candidate IS the
+    projection. A batch a restart found no longer applying (not ok) projects nothing.
+    """
+    spec = ctl.spec
+    for result, _actor in ctl._pending_mutations:
+        if result.ok and result.spec is not None:
+            spec = result.spec
+    return spec
+
+
 def reload_mutations(ctl: RunController) -> list[tuple[mutations.BatchResult, str]]:
-    """The edits an earlier controller queued on this run and never applied, prepared against
-    the spec and state this one starts from. A batch that no longer prepares is kept, not
-    ok, so the drain journals it rejected rather than it vanishing."""
+    """The edits an earlier controller queued on this run and never applied, in their order, each
+    prepared against the spec the ones before it will leave. A batch that no longer prepares is
+    kept, not ok, so the drain journals it rejected rather than it vanishing."""
     queued: list[tuple[mutations.BatchResult, str]] = []
+    spec = ctl.spec
     for entry in store.read_pending_mutations(ctl.run.id):
         ops = entry.get("ops")
         if not isinstance(ops, list):
             continue
-        result = mutations.prepare_batch(ops, ctl.spec, ctl.instances, effects=ctl._effects)
+        result = mutations.prepare_batch(ops, spec, ctl.instances, effects=ctl._effects)
+        if result.ok and result.spec is not None:
+            spec = result.spec
         queued.append((result, str(entry.get("actor") or "user")))
     return queued
 
 
 def drain_mutations(ctl: RunController) -> None:
-    """Apply queued batches. Called under the lock, between scheduling steps.
+    """Apply queued batches, in order. Called under the lock, between scheduling steps.
 
-    Each batch is RE-VERIFIED here (WF2-R2 TOCTOU): nodes complete while a user reads a
-    preview, so a node that was pending at submit may be frozen by now. Re-validating
-    against current state is the only way to catch that, and `validate_batch` is pure
-    so running it twice costs nothing.
+    Each batch is PREPARED AGAIN here, against the spec the batch before it left and the state the
+    run is in now — never swapped in as the candidate it was queued with (ledger 293). That
+    candidate was computed from the spec at submit, so two edits made while a run was paused each
+    carried a spec without the other's change, and committing the second put back the spec from
+    before the first: the first edit vanished. Preparing again is also the re-verification
+    (WF2-R2 TOCTOU): nodes complete while a user reads a preview, so a node that was pending at
+    submit may be frozen by now, and a batch that no longer applies is rejected and journaled as
+    rejected — a silently dropped batch is indistinguishable from an applied one.
 
     The queue on disk is cleared BEFORE any batch applies: an edit applies at most once, so a
     crash mid-drain loses the batches not yet applied rather than applying a committed one again
@@ -88,22 +115,12 @@ def drain_mutations(ctl: RunController) -> None:
     queued = list(ctl._pending_mutations)
     ctl._pending_mutations.clear()
     _save_queue(ctl)
-    for result, actor in queued:
+    for submitted, actor in queued:
+        result = mutations.prepare_batch(
+            _raw_ops(submitted), ctl.spec, ctl.instances, effects=ctl._effects
+        )
         if not result.ok:
-            # Only a batch reloaded after a restart can arrive here not ok (a live submit refuses
-            # one): the spec it was written against has moved on. Rejected, and said so.
             _reject(ctl, result, actor, result.issues)
-            continue
-        try:
-            root = Node.from_dict(ctl.spec.get("root") or {})
-        except ValueError:
-            logger.warning("workflow %s: spec unreadable, dropping mutation", ctl.run.id)
-            continue
-        issues = mutations.validate_batch(result.ops, root, ctl.instances)
-        if issues:
-            # The state moved under the preview. Rejected, and journaled as rejected —
-            # a silently dropped batch is indistinguishable from an applied one.
-            _reject(ctl, result, actor, issues)
             continue
         commit_mutation(ctl, result, actor)
 

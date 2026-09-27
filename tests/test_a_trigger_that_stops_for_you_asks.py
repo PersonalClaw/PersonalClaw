@@ -444,6 +444,205 @@ def test_a_failed_run_keeps_the_question(home):
     assert _token() == token
 
 
+# ── a run that waits is not a success, and it still clears the Run button (ledger 293) ──
+
+
+def _live(home: Path) -> Trigger:
+    loaded = TriggerStore(base_dir=home).get(TID)
+    assert loaded is not None
+    return loaded.trigger
+
+
+def _last_run_ts(trigger: Trigger) -> float | None:
+    """The `last_run_ts` both list projections publish — what the Run button's completion watcher
+    waits on (`ScheduleDetail`: finished once it moves past where it was at the click)."""
+    from personalclaw.triggers.schedule_view import _last_run_ts
+
+    return _last_run_ts(trigger)
+
+
+def _epoch(stamp: str) -> float:
+    from personalclaw.triggers.service import to_epoch
+
+    return to_epoch(stamp)
+
+
+def test_a_run_now_that_waits_for_you_is_not_a_success_and_still_clears_the_run_button(
+    home, browse
+):
+    """🔴 Red on main: the Run button's recorder stamped `last_success_at` for a run that had done
+    nothing it was asked — and that stamp was the only thing that moved `last_run_ts`, so the
+    button cleared only because the run was recorded as a success. The run is stamped
+    `last_waiting_at` now, and `last_run_ts` reads it."""
+    trigger = _trigger(home)
+    assert _last_run_ts(trigger) is None
+
+    _run()
+
+    live = _live(home)
+    assert live.last_success_at == "", "a run that stopped for you is not a success"
+    assert live.last_waiting_at, "the run must be stamped, or the Run button never clears"
+    assert _last_run_ts(live) == _epoch(live.last_waiting_at)
+    assert live.last_failure_at == "" and live.last_run_id.startswith("manual-")
+
+
+def test_a_scheduled_fire_that_waits_for_you_is_not_a_success_either(home):
+    trigger = _trigger(home)
+
+    _fire(trigger, _parked_result(home, trigger))
+
+    live = _live(home)
+    assert live.last_success_at == ""
+    assert live.last_waiting_at
+    assert _last_run_ts(live) == _epoch(live.last_waiting_at)
+    assert live.health_status == "ok" and live.last_failure_at == "", "a park is not a failure"
+
+
+def test_the_run_that_goes_through_afterwards_is_the_success(home):
+    trigger = _trigger(home)
+    _fire(trigger, _parked_result(home, trigger))
+    waited = _live(home).last_waiting_at
+
+    _fire(trigger, ActionResult(success=True, stdout="balance: 12"))
+
+    live = _live(home)
+    assert live.last_success_at and live.last_waiting_at == waited
+    assert _epoch(live.last_success_at) >= _epoch(waited)
+    assert _last_run_ts(live) == _epoch(live.last_success_at)
+
+
+def test_a_run_that_goes_through_stamps_success_and_not_waiting(home, finishes):
+    """CONTROL for the three above: the same recorder, over a browse run that finished."""
+    _trigger(home, workflow=_PUBLIC)
+
+    _run()
+
+    live = _live(home)
+    assert live.last_success_at and live.last_waiting_at == ""
+    assert _last_run_ts(live) == _epoch(live.last_success_at)
+
+
+def test_the_waiting_stamp_survives_a_reload_and_stays_in_this_home(home, browse):
+    """It is written to the row, read back from it, and — like every stamp of what has happened to
+    a trigger here — dropped when a snapshot brings the row into another home."""
+    from personalclaw.triggers.store import RUNTIME_FIELDS
+
+    _trigger(home)
+    _run()
+
+    stored = json.loads((home / "triggers.json").read_text())["triggers"][0]
+    assert stored["last_waiting_at"] == _live(home).last_waiting_at != ""
+    assert "last_waiting_at" in RUNTIME_FIELDS
+
+
+# ── a run that went through says what it did, not its JSON (ledger 295) ──
+
+_PUBLIC = {
+    "inline": {
+        "provider": "browse",
+        "config": {"goal": "read my balance", "start_url": "http://127.0.0.1:9/balance"},
+    }
+}
+NOTES = ("The balance is $12.34", "The last payment was on Monday.")
+SAID = (
+    "Browse finished in 3 steps at 127.0.0.1:9. Noted: The balance is $12.34; The last payment "
+    "was on Monday."
+)
+
+
+@pytest.fixture
+def finishes(monkeypatch):
+    """The real browse provider, over a loop that finished in three steps and noted two things. No
+    browser: `_open` hands back placeholders, and the loop returns the account a real run would."""
+    import personalclaw.action_providers.browse_provider as bp
+    from personalclaw.browse.loop import BrowseLoopResult, BrowseStep
+
+    async def _open(_self, _cfg, _ctx, *, cdp_url=""):
+        return object(), object(), None
+
+    async def _loop(**kw):
+        return BrowseLoopResult(
+            ok=True,
+            goal=kw["goal"],
+            final_url=kw["start_url"] + "?tab=summary",
+            steps=tuple(
+                BrowseStep(index=i, url=kw["start_url"], action="read the page", fenced=True)
+                for i in range(3)
+            ),
+            notes=NOTES,
+            visited_urls=(kw["start_url"],),
+        )
+
+    monkeypatch.setattr(bp.BrowseActionProvider, "_open", _open)
+    monkeypatch.setattr(bp, "run_browse_loop", _loop)
+
+
+def _trace(home: Path, run_id: str) -> str:
+    """The run's trace — what its row opens to; the list read leaves it out."""
+    run = asyncio.run(ScheduleRunStore(home).get_run(TID, run_id))
+    assert run is not None
+    return str(run.get("trace") or "")
+
+
+def _finished_result(trigger: Trigger) -> ActionResult:
+    from personalclaw.action_providers import ActionContext, get_action_provider
+    from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
+    _ensure_default_providers_registered()
+    provider = get_action_provider("browse")
+    assert provider is not None
+    result = asyncio.run(
+        provider.execute(dict(trigger.workflow["inline"]["config"]), ActionContext(event="clock"))
+    )
+    assert result.success and result.outcome == "", result
+    return result
+
+
+def test_a_run_now_that_finished_says_what_it_did_not_its_json(home, finishes):
+    """🔴 Red on main: the row's line was the loop's whole account, as JSON."""
+    _trigger(home, workflow=_PUBLIC)
+
+    assert _run()["ok"] is True
+
+    (row,) = _history(home)
+    assert row["status"] == "success"
+    assert row["summary"] == SAID
+    # What the action printed is still the trace a person can open.
+    assert json.loads(_trace(home, row["run_id"]))["notes"] == list(NOTES)
+
+
+def test_a_scheduled_fire_that_finished_says_the_same(home, finishes):
+    trigger = _trigger(home, workflow=_PUBLIC)
+
+    _fire(trigger, _finished_result(trigger))
+
+    (row,) = _history(home)
+    assert (row["status"], row["summary"]) == ("success", SAID)
+    assert json.loads(_trace(home, row["run_id"]))["notes"] == list(NOTES)
+
+
+def test_the_runs_feed_reads_the_sentence_too(home, finishes):
+    from personalclaw.triggers.history import schedule_run_to_record
+
+    _trigger(home, workflow=_PUBLIC)
+    _run()
+    (row,) = _history(home)
+
+    assert schedule_run_to_record(row, trigger_id=f"schedule:{TID}").reason == SAID
+
+
+def test_an_action_with_no_sentence_of_its_own_still_shows_what_it_printed(home):
+    """CONTROL: `summary` is the action's to write, and an action that writes none — a bash
+    script's output, most actions today — keeps its row exactly as before."""
+    trigger = _trigger(home)
+
+    _fire(trigger, ActionResult(success=True, stdout="balance: 12"))
+
+    (row,) = _history(home)
+    assert row["summary"] == "balance: 12"
+    assert _trace(home, row["run_id"]) == "balance: 12"
+
+
 # ── no surface tells anyone to look for a window nothing opens ──
 
 _ROOT = Path(__file__).resolve().parent.parent

@@ -130,19 +130,29 @@
           }
         },
         {
-          "kind": "gate",
-          "id": "fix_enabled",
+          "kind": "branch",
+          "id": "fix_or_report",
           "config": {
-            "kind": "expression",
-            "expr": "{{inputs.fix}} == true",
-            "prompt": "Fixing is off for this run. Approve to apply the confirmed findings anyway, or deny to keep this a report-only audit."
-          }
-        },
-        {
-          "kind": "stage",
-          "id": "apply_fixes",
-          "config": {
-            "prompt": "Fix the CONFIRMED findings below — the ones that survived refutation. Leave the refuted ones alone.\n\nFix the cause, not the symptom, and stop if a fix would need a decision you cannot make; a half-applied fix is worse than a reported finding.\n\nTarget:\n{{inputs.target}}\n\nConfirmed:\n{{nodes.verify_confirmed.output}}"
+            "on": "{{inputs.fix}}"
+          },
+          "cases": {
+            "true": {
+              "kind": "stage",
+              "id": "apply_fixes",
+              "config": {
+                "prompt": "Fix the CONFIRMED findings below — the ones that survived refutation. Leave the refuted ones alone.\n\nFix the cause, not the symptom, and stop if a fix would need a decision you cannot make; a half-applied fix is worse than a reported finding.\n\nTarget:\n{{inputs.target}}\n\nConfirmed:\n{{nodes.verify_confirmed.output}}"
+              }
+            }
+          },
+          "default": {
+            "kind": "transform",
+            "id": "report_only",
+            "config": {
+              "expr": {
+                "fixed": false,
+                "note": "Fixing is off for this run, so the confirmed findings are reported and nothing was changed."
+              }
+            }
           }
         },
         {

@@ -112,6 +112,22 @@ OUTCOME_SKIP = "skip"
 #: and the background axis is bound to the cheap models digests use.
 USE_CASE = "reasoning"
 
+#: How much of a finished run's notes its one-line summary quotes. The notes stay whole on
+#: `stdout`; the history row shows a line, and a page of notes is not one.
+_SUMMARY_NOTES_MAX = 300
+
+
+def _site_of(url: str) -> str:
+    """`host[:port]` of a URL for a sentence — never its path, query or credentials."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url or "")
+        host, port = parsed.hostname or "", parsed.port
+    except ValueError:
+        return ""
+    return f"{host}:{port}" if host and port else host
+
 
 def _budget_check() -> tuple[str, str]:
     """The day + run budget verdict, consulted before every model call in the loop.
@@ -316,13 +332,15 @@ class BrowseActionProvider(ActionProvider):
                 # `resolve_cdp_url` never reads that key on this branch, so the gateway profile is
                 # unreachable from here rather than merely unused.
                 typed = disconnected_skip(status)
+                said = f"{typed.what}. {status.fix}."
                 return ActionResult(
                     success=True,
                     outcome=OUTCOME_SKIP,
                     stdout=json.dumps({"skipped": True, "target": target, "reason": status.reason}),
-                    stderr=f"{typed.what}. {status.fix}.",
+                    stderr=said,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     agent_error=typed,
+                    summary=said,
                 )
             # ── BA-9: the per-task grant, requested BEFORE the browser is touched ──
             #
@@ -630,7 +648,34 @@ class BrowseActionProvider(ActionProvider):
                 stderr=self._park_sentence(result),
                 duration_ms=duration,
             )
-        return ActionResult(success=True, stdout=payload, duration_ms=duration)
+        return ActionResult(
+            success=True,
+            stdout=payload,
+            duration_ms=duration,
+            summary=self._done_sentence(result),
+        )
+
+    @staticmethod
+    def _done_sentence(result: BrowseLoopResult) -> str:
+        """What a person reads on a run that finished: how far it went, where, and what it noted.
+
+        A finished run's history row used to be its `stdout` — the loop's whole account as JSON,
+        which is the right trace and not a line anyone reads (ledger 295). The notes are what the
+        run was sent for, so they are the sentence; the JSON on `stdout` keeps everything else.
+        """
+        count = result.step_count
+        head = f"Browse finished in {count} step{'' if count == 1 else 's'}"
+        site = _site_of(result.final_url)
+        if site:
+            head += f" at {site}"
+        noted = [" ".join(n.split()).rstrip(" .;") for n in result.notes]
+        noted = [n for n in noted if n]
+        if not noted:
+            return f"{head}, and noted nothing."
+        said = "; ".join(noted)
+        if len(said) > _SUMMARY_NOTES_MAX:
+            return f"{head}. Noted: {said[: _SUMMARY_NOTES_MAX - 1].rstrip(' .;')}…"
+        return f"{head}. Noted: {said}."
 
     @staticmethod
     def _park_sentence(result: BrowseLoopResult) -> str:

@@ -280,17 +280,20 @@ def _int_or_none(value: Any) -> int | None:
 
 
 def _last_run_ts(trigger: Any) -> float | None:
-    """The newest of the trigger's success/failure stamps, as an epoch, or None.
+    """The newest of the trigger's success/failure/waiting stamps, as an epoch, or None.
 
     `LEGACY_FIELD_MAP` splits `last_run_ts` into `last_success_at` / `last_failure_at`, which is the
     better model (a failure is not a success), but the wire field means "when did it last RUN" — so
-    the newest of the two is the honest answer rather than only the successful one.
+    the newest stamp is the honest answer rather than only the successful one. A run that stopped
+    for a person (`last_waiting_at`) ran too, and this field moving is what tells a Run button its
+    run is over.
     """
     from personalclaw.triggers.service import to_epoch
 
     stamps = [
         to_epoch(getattr(trigger, "last_success_at", "")),
         to_epoch(getattr(trigger, "last_failure_at", "")),
+        to_epoch(getattr(trigger, "last_waiting_at", "")),
     ]
     newest = max(stamps)
     return newest if newest > 0 else None

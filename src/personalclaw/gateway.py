@@ -2009,7 +2009,11 @@ class GatewayOrchestrator:
         """
         try:
             from personalclaw.config.loader import config_dir
-            from personalclaw.schedule_history import ScheduleRun, status_for_result
+            from personalclaw.schedule_history import (
+                ScheduleRun,
+                status_for_result,
+                summary_for_result,
+            )
             from personalclaw.triggers import autopause
             from personalclaw.triggers.models import TriggerState
             from personalclaw.triggers.store import TriggerStore
@@ -2047,11 +2051,14 @@ class GatewayOrchestrator:
             reported = str(getattr(result, "error", "") or "") if result is not None else ""
             run_error = error or ("" if ok_exit else reported or "the action reported failure")
             output = str(getattr(result, "stdout", "") or "") if result is not None else ""
+            # What a person reads on the row: the sentence the action wrote, else what it printed,
+            # which stays the trace — a browse run's JSON account (ledger 295).
+            line = summary_for_result(result)
             from personalclaw.triggers import parks
 
             if ok_exit and parks.parked(result):
                 # A park's row says it waits on you and on what, not the payload it parked with.
-                output = parks.waiting_line(result)
+                output = line = parks.waiting_line(result)
             await store_runs.append(
                 ScheduleRun(
                     run_id=f"fire-{int(now * 1000)}",
@@ -2060,8 +2067,8 @@ class GatewayOrchestrator:
                     started_at=now,
                     finished_at=now,
                     status=status_for_result(result) if ok_exit else "failure",
-                    summary=output if ok_exit else run_error,
-                    trace=output if ok_exit else run_error,
+                    summary=line if ok_exit else run_error,
+                    trace=(output or line) if ok_exit else run_error,
                     error=run_error[:_ERROR_SUMMARY_MAX],
                 )
             )
@@ -2100,7 +2107,11 @@ class GatewayOrchestrator:
             from datetime import datetime, timezone
 
             stamp = datetime.now(timezone.utc).isoformat()
-            if exit_type == autopause.ExitType.OK.value:
+            if ok_exit and parks.parked(result):
+                # A fire that stopped for you is not a success (ledger 293): it did nothing it was
+                # asked yet. It stamps its own outcome, which `last_run_ts` reads as a run.
+                live.last_waiting_at = stamp
+            elif ok_exit:
                 live.last_success_at = stamp
             else:
                 live.last_failure_at = stamp

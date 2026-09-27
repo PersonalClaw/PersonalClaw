@@ -109,6 +109,7 @@ def test_a_memory_sourced_question_stays_open_without_a_vector_store(home):
     _open_question(run, horizon=0.0)  # past-horizon, but no store to measure with
     assert outcome_resolver.resolve(MemoryService.over_vector_store(None)) == {
         "resolved": 0,
+        "unscored": 0,
         "inconclusive": 0,
         "pending": 1,
         "proposed": 0,
@@ -145,7 +146,7 @@ def test_a_ledger_sourced_question_resolves_without_a_vector_store(home):
     )
     opened = outcome_resolver._epoch(q["ts"])
     report = outcome_resolver.resolve(MemoryService.over_vector_store(None), now=opened + 1_000.0)
-    assert report == {"resolved": 1, "inconclusive": 0, "pending": 0, "proposed": 0}
+    assert report == {"resolved": 1, "unscored": 0, "inconclusive": 0, "pending": 0, "proposed": 0}
     (resolved,) = journal_mod.ledger(run.id, kinds={journal_mod.OUTCOME_RESOLVED})
     assert resolved["producer"] == outcomes.PRODUCER_ESCALATION
     assert resolved["pending_event_id"] == q["event_id"]
@@ -161,7 +162,7 @@ def test_an_unanswered_escalation_is_inconclusive(home):
     q = _open_escalation(run, horizon=100.0)
     opened = outcome_resolver._epoch(q["ts"])
     report = outcome_resolver.resolve(MemoryService.over_vector_store(None), now=opened + 1_000.0)
-    assert report == {"resolved": 0, "inconclusive": 1, "pending": 0, "proposed": 0}
+    assert report == {"resolved": 0, "unscored": 0, "inconclusive": 1, "pending": 0, "proposed": 0}
     (resolved,) = journal_mod.ledger(run.id, kinds={journal_mod.OUTCOME_RESOLVED})
     assert resolved["resolution"] == outcomes.INCONCLUSIVE
     assert resolved["measured"] is None
@@ -192,6 +193,7 @@ def test_a_run_with_no_open_questions_resolves_nothing(svc, home):
     _run()  # a terminal run, but it journaled no pending_outcome
     assert outcome_resolver.resolve(svc) == {
         "resolved": 0,
+        "unscored": 0,
         "inconclusive": 0,
         "pending": 0,
         "proposed": 0,
@@ -210,7 +212,7 @@ def test_a_question_inside_its_horizon_stays_pending(svc, home):
     opened = outcome_resolver._epoch(q["ts"])
     # 'now' one second after the question opened — far inside the 10_000s horizon
     report = outcome_resolver.resolve(svc, now=opened + 1.0)
-    assert report == {"resolved": 0, "inconclusive": 0, "pending": 1, "proposed": 0}
+    assert report == {"resolved": 0, "unscored": 0, "inconclusive": 0, "pending": 1, "proposed": 0}
     assert P.list_pending(kind=P.Kind.LESSON_BATCH.value) == []
 
 
@@ -296,7 +298,7 @@ def test_a_second_tick_is_idempotent(svc, home):
     assert first["resolved"] == 1 and first["proposed"] == 1
 
     second = outcome_resolver.resolve(svc, now=opened + 2_000.0)
-    assert second == {"resolved": 0, "inconclusive": 0, "pending": 0, "proposed": 0}
+    assert second == {"resolved": 0, "unscored": 0, "inconclusive": 0, "pending": 0, "proposed": 0}
     # exactly one resolution and one proposal survive
     assert len(journal_mod.ledger(run.id, kinds={journal_mod.OUTCOME_RESOLVED})) == 1
     assert len(P.list_pending(kind=P.Kind.LESSON_BATCH.value)) == 1

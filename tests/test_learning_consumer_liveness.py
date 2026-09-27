@@ -286,7 +286,7 @@ def test_a_fresh_work_unit_does_not_fire(home):
     runs = [_cycle("fresh", f"fresh-{i}") for i in range(3)]
 
     graded = _grade(runs, after_days=1.0)  # inside the 7-day horizon
-    assert graded == {"resolved": 0, "inconclusive": 0, "pending": 3, "proposed": 0}
+    assert graded == {"resolved": 0, "unscored": 0, "inconclusive": 0, "pending": 3, "proposed": 0}
     assert all(_resolutions(run) == [] for run in runs)
 
     report = consumer_liveness.sweep()

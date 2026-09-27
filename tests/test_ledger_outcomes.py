@@ -280,6 +280,74 @@ def test_presence_alone_measures_when_no_value_field_is_declared(home):
     assert outcomes.measure_from_events(question, [question_record, _answer()]) == 1.0
 
 
+# ── an answer with no number (ledger 292) ──
+
+
+def _answered(verb: str, *, approved: bool = False) -> dict[str, Any]:
+    return {**_answer(approved=approved), "verb": verb}
+
+
+def _asks_which_answer() -> dict[str, Any]:
+    return {**_escalation(), "answer_field": "verb", "unscored_answers": ["revised"]}
+
+
+def test_an_unscored_answer_is_read_as_that_answer_with_no_number(home):
+    """A revise answers the ask and is no point on the yes/no scale it was bet on: read as `revised`
+    with no number, never as the 0.0 a no would score."""
+    (question,) = outcomes.open_questions([_asks_which_answer()])
+    events = [_asks_which_answer(), _answered("revised")]
+    assert outcomes.measure_from_events(question, events) is None
+    assert outcomes.answer_from_events(question, events) == "revised"
+    # A scored answer still reads as before, and names itself.
+    scored = [_asks_which_answer(), _answered("approve", approved=True)]
+    assert outcomes.measure_from_events(question, scored) == 1.0
+    assert outcomes.answer_from_events(question, scored) == "approve"
+
+
+def test_the_last_answer_wins_whether_or_not_it_has_a_number(home):
+    (question,) = outcomes.open_questions([_asks_which_answer()])
+    revised_last = [_asks_which_answer(), _answered("reject"), _answered("revised")]
+    assert outcomes.measure_from_events(question, revised_last) is None
+    assert outcomes.answer_from_events(question, revised_last) == "revised"
+    scored_last = [_asks_which_answer(), _answered("revised"), _answered("reject")]
+    assert outcomes.measure_from_events(question, scored_last) == 0.0
+
+
+def test_an_answer_is_ground_truth_even_without_a_number(home):
+    """Somebody answered: MEASURED, not the INCONCLUSIVE an unread metric gets."""
+    assert outcomes.resolution_for(None, answer="revised") == outcomes.MEASURED
+    assert outcomes.resolution_for(None) == outcomes.INCONCLUSIVE
+
+
+def test_a_question_that_declares_no_answer_field_names_no_answer(home):
+    """CONTROL: the answer half is opt-in. A question without `answer_field` reads exactly as before
+    — `verb` on the event is not consulted, and a verb nobody listed is not unscored."""
+    (question,) = outcomes.open_questions([_escalation()])
+    events = [_escalation(), _answered("revised")]
+    assert outcomes.answer_from_events(question, events) == ""
+    assert outcomes.measure_from_events(question, events) == 0.0
+
+
+def test_opening_a_question_records_its_answer_field_and_unscored_answers(home):
+    run = _run()
+    opened = journal_mod.Journal(run.id).open_outcome(
+        producer=outcomes.PRODUCER_ESCALATION,
+        subject="asked a person",
+        metric=journal_mod.CONFIRMATION_RESOLVED,
+        metric_source=outcomes.SOURCE_LEDGER,
+        horizon_secs=10.0,
+        baseline=1.0,
+        match={"confirmation_id": "c-1"},
+        value_field="approved",
+        answer_field="verb",
+        unscored_answers=("revised", "later"),
+    )
+    (question,) = outcomes.open_questions([opened])
+    assert question.answer_field == "verb"
+    assert question.unscored_answers == frozenset({"revised", "later"})
+    assert opened["unscored_answers"] == ["later", "revised"], "sorted, so the record is stable"
+
+
 # ── producer 1: a published artifact opens a question ──
 
 
