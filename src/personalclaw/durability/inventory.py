@@ -1075,6 +1075,20 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,
         help="what you allowed to run as you: MCP servers, hooks, heartbeat tasks, callbacks",
     ),
+    # The callbacks an agent registered for an outside system to post results to
+    # (`webhook_callbacks.py`, #3725): each one's id and the context its unattended turn starts
+    # from. The owner's yes to each lives in `grants/` above, so a restore brings the registrations
+    # back registered-and-waiting until that store says otherwise. Replace-only for the same reason
+    # as the grants: one small document, and a callback merged in from another machine without its
+    # grant would only be a registration nobody answered there.
+    StateEntry(
+        id="webhook_callbacks",
+        kind=KIND_JSON_FILE,
+        path="webhook_callbacks.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_REPLACE_ONLY,
+        help="callbacks an agent registered so an outside system can hand it results later",
+    ),
     # 🔴 #2217 — the credential DESCRIPTORS an older release kept (`llm/credentials.py`
     # `CREDENTIALS_FILE`). Nothing writes it any more: the gateway moves it into the credential
     # store at boot and deletes it (`move_credentials_file`), and it stays on a home only while
@@ -1788,6 +1802,19 @@ IGNORED: tuple[str, ...] = (
     # remains is a pre-import copy of state that now lives elsewhere — the same category as `*.bak`.
     "*.imported-*",
     "*.migrated",
+    # The record that this home already settled what an earlier release left OUTSIDE it on this
+    # machine (`outside_home.settle_previous_locations`: skills copied home from ~/.agents/skills,
+    # a saved pointer to the old default workspace dropped). It describes THIS machine's leftovers,
+    # so it must not travel: a restore onto another machine settles that machine's own, once.
+    ".outside-home-settled.json",
+    # The incremental shard export's change cursor (`durability/shards.dirty_entries`).
+    # MACHINE-LOCAL like `sync` and `shards` above: a cursor restored from another export would make
+    # the next incremental export skip exactly what changed since.
+    ".shard-state.json",
+    # A replace-restore's copy of what it replaced (`snapshot.py`, `pre-restore-<timestamp>/`), kept
+    # beside the home so the restore can be undone. Backing it up would nest the previous home
+    # inside every later snapshot, and a snapshot is itself the way back.
+    "pre-restore-*",
 )
 
 

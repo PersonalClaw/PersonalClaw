@@ -700,20 +700,89 @@ def test_every_censused_location_is_classified():
     )
 
 
+#: Every place the home is joined with a segment that is WHOLLY a runtime value, keyed by the
+#: census's own spelling of it, with the modules it appears in and where the value comes from, each
+#: read at its call site. Pinned EXACTLY as a set, not as a count: a new spelling, or a known one in
+#: a new module, reds by name here, where a count would absorb it.
+#:
+#: Most of these are the durability machinery walking the inventory ITSELF, so the value is a path
+#: some entry already declares; #3647's one home resolver is what let the census follow the home
+#: into those modules and see them.
+_BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
+    "/candidate": (
+        frozenset({"personalclaw/evals/gate.py"}),
+        "the eval gate staging a caller-supplied artifact",
+    ),
+    "/key": (
+        frozenset({"personalclaw/evals/ablation.py"}),
+        "the ablation harness digesting the paths it was handed",
+    ),
+    "/lock.get('path', '')": (
+        frozenset({"personalclaw/packs/update.py", "personalclaw/packs/uninstall.py"}),
+        "a pack lockfile's recorded install path, re-read by update and removed by uninstall",
+    ),
+    "/rel": (
+        frozenset({"personalclaw/memory_vault.py", "personalclaw/snapshot.py"}),
+        "the memory vault's CONFIGURED path (its default is declared), and the snapshot's sweep "
+        "over `_everything_paths`, which are inventory entries",
+    ),
+    "/entry": (
+        frozenset({"personalclaw/portability.py"}),
+        "the export's sweep over `_remaining_export_paths`, derived from the inventory",
+    ),
+    "/entry.path": (
+        frozenset(
+            {
+                "personalclaw/durability/conflict_resolve.py",
+                "personalclaw/durability/db_merge.py",
+                "personalclaw/durability/footprint.py",
+                "personalclaw/durability/reconcile.py",
+                "personalclaw/durability/service.py",
+                "personalclaw/durability/shards.py",
+                "personalclaw/portability.py",
+                "personalclaw/snapshot.py",
+            }
+        ),
+        "an inventory entry's own declared path, joined by the code that walks the manifest",
+    ),
+    "/e.path": (frozenset({"personalclaw/snapshot.py"}), "an inventory entry's declared path"),
+    "/child.path": (
+        frozenset({"personalclaw/durability/footprint.py"}),
+        "a declared entry's nested entry (`inventory.nested_entries`)",
+    ),
+    "/_db": (
+        frozenset({"personalclaw/snapshot.py"}),
+        "a database from `_declared_db_paths`, the inventory's own database entries",
+    ),
+    "/db_name": (
+        frozenset({"personalclaw/portability.py"}),
+        "a database the export projects, from the same declared set",
+    ),
+    "/f": (frozenset({"personalclaw/snapshot.py"}), "a name from `CORE_FILES`, a fixed list"),
+    "/path": (
+        frozenset({"personalclaw/snapshot.py"}),
+        "a restore-plan row for a store the inventory's merge selectors name",
+    ),
+}
+
+
 def test_the_blind_spot_is_bounded():
-    """What this scan cannot see, recorded as a number rather than left implied.
+    """What this scan cannot see, recorded site by site rather than left implied.
 
     A segment that is wholly a runtime value at the top of the home (`config_dir() / name`) is
-    invisible to any static scan. Pinned EXACTLY, not with slack: slack in this bound is precisely
-    how many new dynamic home paths can arrive without anyone noticing. Each of the five was read
-    at its call site: the memory vault's CONFIGURED path (`memory_vault.py`, whose default is
-    declared), a pack lockfile's recorded path (`packs/update.py`), the eval gate staging a
-    caller-supplied artifact (`evals/gate.py`), the ablation harness digesting paths it was handed
-    (`evals/ablation.py`), and the denylist check over a computed set of secret names
-    (`security.py`) — a read, never a writer.
+    invisible to any static scan. This used to be a count pinned at five; since then seven more
+    spellings arrived, almost all of them the durability code joining the home with paths it read
+    from the inventory. Recording them as a set with a reason each keeps the scan honest about what
+    it covers, and a new one still has to be read and written down here.
     """
-    blind = _root_blind(_real())
-    assert len(blind) <= 5, (
-        "more home paths are now built from runtime values than when this was measured, so the "
-        f"census covers proportionally less: {blind}"
+    census = _real()
+    blind = {where: frozenset(census.blind[where]) for where in _root_blind(census)}
+    expected = {where: modules for where, (modules, _why) in _BLIND_BY_DESIGN.items()}
+    new = {where: sorted(mods - expected.get(where, frozenset())) for where, mods in blind.items()}
+    new = {where: mods for where, mods in new.items() if mods}
+    gone = sorted(where for where in expected if where not in blind)
+    assert not new, (
+        "a home path is now built from a runtime value the census cannot follow; read it at its "
+        f"call site and record where the value comes from in _BLIND_BY_DESIGN: {new}"
     )
+    assert not gone, f"recorded blind spots the census no longer finds; drop them: {gone}"
