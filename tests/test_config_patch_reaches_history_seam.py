@@ -166,7 +166,16 @@ async def test_a_rejected_patch_notifies_nothing(tmp_config, seen_writes) -> Non
     A validator rejection must write nothing at all — and therefore notify nothing. Without
     this, a handler that notified the seam unconditionally (even on a refusal) would look
     correct above while telling history a change happened that did not.
+
+    The refusal IS audited, and a running gateway's security log is open long before any PATCH
+    arrives, with its signing key already on disk. This test's home is fresh, so the log is opened
+    first: otherwise the refusal's audit row would be the first this home ever wrote, and the log
+    creating its key (`sel_hmac.key`, through `atomic_write`) would be counted as the handler's.
     """
+    from personalclaw.sel import sel
+
+    sel()
+    seen_writes.clear()
     async with TestClient(TestServer(_make_app())) as c:
         resp = await c.patch(
             "/api/config/personalclaw", json={"path": "nonexistent.field", "value": "x"}
