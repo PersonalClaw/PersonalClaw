@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type SemanticEntry } from '../lib/api'
 import { failureSentence } from './reportingWrite'
-import { chatFindPath } from '../pages/chat/searchDeepLink'
+import { chatFindPath, searchCoverage } from '../pages/chat/searchDeepLink'
 
 /** ⌘K's CONTENT half (F-52): what the palette finds inside chats, memory, knowledge and tasks.
  *
@@ -52,6 +52,9 @@ export interface ContentSearch {
   hits: ContentHit[]
   /** The sentence for each source whose search failed. */
   failures: Partial<Record<ContentSource, string>>
+  /** The sentence for each source whose search looked in only part of what it holds — chats,
+   *  while the search index is still being built — so a short list does not read as all there is. */
+  notes: Partial<Record<ContentSource, string>>
 }
 
 /** Below this, a query names a page more often than it names content. */
@@ -60,7 +63,7 @@ export const MIN_CONTENT_QUERY = 2
 export const HITS_PER_SOURCE = 5
 const DEBOUNCE_MS = 250
 
-const IDLE: ContentSearch = { query: '', searching: false, hits: [], failures: {} }
+const IDLE: ContentSearch = { query: '', searching: false, hits: [], failures: {}, notes: {} }
 
 /** A chat key as the chat routes spell it (the search answers `dashboard_`-prefixed keys). */
 const chatKey = (key: string) => key.replace(/^dashboard[_:]/, '')
@@ -79,8 +82,13 @@ const factValue = (json?: string) => {
 }
 const memoryPath = (uid: string) => `settings/memory?tab=studio&sel=${encodeURIComponent(uid)}`
 
-async function searchChats(q: string): Promise<ContentHit[]> {
-  const { sessions } = await api.sessionsSearch(q)
+/** A source's hits, and the sentence it owes when they come from only part of what it holds. */
+interface SourceAnswer { hits: ContentHit[]; note?: string }
+
+async function searchChats(q: string): Promise<SourceAnswer> {
+  const answer = await api.sessionsSearch(q)
+  const { sessions } = answer
+  const reach = searchCoverage(answer)
   // One chat can answer under both spellings of its history key (`dashboard:` and `dashboard_`),
   // the way the chat list dedupes it: by the key the chat routes use.
   const seen = new Set<string>()
@@ -95,7 +103,12 @@ async function searchChats(q: string): Promise<ContentHit[]> {
       path: chatFindPath(key, q),
     })
   }
-  return hits.slice(0, HITS_PER_SOURCE)
+  return {
+    hits: hits.slice(0, HITS_PER_SOURCE),
+    note: reach
+      ? `Searched ${reach.shown.toLocaleString()} of ${reach.total.toLocaleString()} chats — ${reach.detail}`
+      : undefined,
+  }
 }
 
 async function searchMemory(q: string, facts: () => Promise<SemanticEntry[]>): Promise<ContentHit[]> {
@@ -147,24 +160,28 @@ export function useContentSearch(q: string, open: boolean): ContentSearch {
       // The previous query's hits stay up while this one is searched, rather than the list
       // emptying on every pause in typing.
       setState((s) => ({ ...s, searching: true }))
-      const searches: Record<ContentSource, Promise<ContentHit[]>> = {
+      const whole = (hits: Promise<ContentHit[]>): Promise<SourceAnswer> => hits.then((h) => ({ hits: h }))
+      const searches: Record<ContentSource, Promise<SourceAnswer>> = {
         chats: searchChats(query),
-        memory: searchMemory(query, readFacts),
-        knowledge: searchKnowledge(query),
-        tasks: searchTasks(query),
+        memory: whole(searchMemory(query, readFacts)),
+        knowledge: whole(searchKnowledge(query)),
+        tasks: whole(searchTasks(query)),
       }
       void Promise.allSettled(CONTENT_SOURCES.map((s) => searches[s])).then((settled) => {
         if (run !== latest.current) return
         const hits: ContentHit[] = []
         const failures: Partial<Record<ContentSource, string>> = {}
+        const notes: Partial<Record<ContentSource, string>> = {}
         settled.forEach((r, i) => {
           const source = CONTENT_SOURCES[i]
-          if (r.status === 'fulfilled') hits.push(...r.value)
-          else failures[source] = failureSentence(SOURCE_WHAT[source], r.reason)
+          if (r.status === 'fulfilled') {
+            hits.push(...r.value.hits)
+            if (r.value.note) notes[source] = r.value.note
+          } else failures[source] = failureSentence(SOURCE_WHAT[source], r.reason)
         })
         // A failed memory search does not keep its fact read: the next query reads again.
         if (failures.memory) facts.current = null
-        setState({ query, searching: false, hits, failures })
+        setState({ query, searching: false, hits, failures, notes })
       })
     }, DEBOUNCE_MS)
     return () => window.clearTimeout(timer)

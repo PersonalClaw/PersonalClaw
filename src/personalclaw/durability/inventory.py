@@ -707,6 +707,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         derived=True,
         help="FTS index over transcripts (rebuilt by reindex_session)",
     ),
+    # The chat list's record of each transcript's metadata line, so a gateway that has just
+    # started lists without opening every transcript. Derived: each entry counts only while its
+    # transcript is unchanged, and a missing file is rebuilt by the next listing.
+    StateEntry(
+        id="session_listing",
+        kind=KIND_JSON_FILE,
+        path="session_listing.json",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="the chat list's record of each transcript's metadata line (rebuilt on listing)",
+    ),
     # A DIRECTORY of per-workspace databases (`codegraph/<workspace-key>.db`), not one file — so
     # `kind` is a tree and the DB check needs the glob below rather than an exact path. Derived: the
     # index re-parses on mtime, and a real home had 5478 of these.

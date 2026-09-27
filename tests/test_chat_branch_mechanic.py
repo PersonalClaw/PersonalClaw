@@ -253,7 +253,7 @@ class TestBreadcrumbSurvivesAReload:
                 path = state.conversation_log._path("dashboard:src")
                 if path.exists():
                     path.unlink()
-                state.conversation_log._meta_cache.pop("dashboard:src", None)
+                state.conversation_log._invalidate_cache("dashboard:src")
             detail = await (await client.get(f"/api/chat/sessions/{child['key']}")).json()
 
         assert detail["forked_from"] == "dashboard:src"

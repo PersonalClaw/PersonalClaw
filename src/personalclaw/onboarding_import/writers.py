@@ -705,7 +705,7 @@ def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
         from personalclaw import session_search
 
         session_search.reindex_session(key)
-    except Exception:  # noqa: BLE001 — the index is derived; the heartbeat's pass catches up
+    except Exception:  # noqa: BLE001 — the index is derived; its indexer catches up
         logger.debug("could not index imported conversation %s", key, exc_info=True)
     return _result(item, WriteOutcome.IMPORTED, dest, redactions=redactions)
 

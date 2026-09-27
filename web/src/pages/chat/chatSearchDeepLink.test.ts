@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { chatFindPath, searchSourceLabel } from './searchDeepLink'
+import { chatFindPath, searchCoverage, searchSourceLabel } from './searchDeepLink'
 import { api } from '../../lib/api'
 
 // ── SM-2: open a search result SCROLLED TO ITS MATCH + surface which path answered ──────
@@ -31,10 +31,37 @@ describe('chatFindPath (the ?find deep-link the "Open" action navigates to)', ()
   })
 })
 
+describe('searchCoverage (a partial answer is never shown as a complete one)', () => {
+  it('says nothing of an answer that looked in every chat, or of no search at all', () => {
+    expect(searchCoverage({ complete: true, searched: { chats: 12005, of: 12005 }, index: { indexed: 12005, of: 12005, building: false, long: 0 } })).toBeNull()
+    expect(searchCoverage({})).toBeNull()
+  })
+
+  it('names the index still being built, and how many a direct read would add', () => {
+    expect(searchCoverage({ complete: false, searched: { chats: 3210, of: 12005 }, index: { indexed: 3210, of: 12005, building: true, long: 0 } })).toEqual({
+      shown: 3210, total: 12005, rest: 8795,
+      detail: 'the search index is still being built, so matches in the other 8,795 are not listed yet.',
+    })
+  })
+
+  it('names the chats longer than the index keeps once it has caught up', () => {
+    expect(searchCoverage({ complete: false, searched: { chats: 11739, of: 12005 }, index: { indexed: 12005, of: 12005, building: false, long: 266 } })).toEqual({
+      shown: 11739, total: 12005, rest: 266,
+      detail: 'the other 266 are longer than the search index keeps, so only their beginnings were searched.',
+    })
+  })
+
+  it('names the missing index when only the newest chats were read', () => {
+    expect(searchCoverage({ complete: false, searched: { chats: 500, of: 12005 }, index: null })?.detail)
+      .toBe('there is no search index, so only the most recent were read.')
+  })
+})
+
 describe('searchSourceLabel (the honest index/scan indicator)', () => {
   it('names each path the endpoint can report', () => {
     expect(searchSourceLabel('index')).toBe('matched via index')
     expect(searchSourceLabel('scan')).toBe('scanned transcripts')
+    expect(searchSourceLabel('index+scan')).toBe('matched via index and scanned transcripts')
   })
 
   it('renders nothing when no search ran or the source is unknown', () => {
@@ -109,8 +136,9 @@ describe('the search result Open/Expand threads the query into the chat', () => 
 describe('the client-kept source surfaces in the search UI', () => {
   it('captures the source from the response into state', () => {
     expect(src).toMatch(/setContentSource\(source \?\? null\)/)
-    // destructures the envelope rather than the old (rows) => that dropped source
-    expect(src).toMatch(/api\.sessionsSearch\(query\)\.then\(\(\{ sessions: rows, source \}\)/)
+    // destructures the envelope rather than the old (rows) => that dropped source — and keeps
+    // how far the answer reached, which the partial notice below the field says
+    expect(src).toMatch(/api\.sessionsSearch\(query, \{ rest, limit: SEARCH_LIMIT \}\)\.then\(\(\{ sessions: rows, source, searched, complete, index, matched \}\)/)
   })
 
   it('renders the index/scan label as a sanctioned caption (parsed text, not raw HTML)', () => {

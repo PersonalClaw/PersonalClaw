@@ -24,7 +24,7 @@
  *  Self-gating on `complete`, so a call site passes what its loader returned and cannot forget
  *  the `&&` — a disclosure that renders unconditionally is worse than none.
  */
-export function PartialNotice({ complete, shown, total, what, detail, className }: {
+export function PartialNotice({ complete, shown, total, what, detail, verb = 'Showing', action, className }: {
   /** Straight from the loader (e.g. `api.allTasks`). Renders nothing when true. */
   complete: boolean
   /** How many rows the caller actually holds. */
@@ -39,6 +39,11 @@ export function PartialNotice({ complete, shown, total, what, detail, className 
    *  has nothing further to disclose, and inventing a consequence would be worse than omitting
    *  one. */
   detail?: string
+  /** What the surface did with the part it holds: "Showing" rows, "Searched" chats. */
+  verb?: string
+  /** The way to the rest, when the surface can fetch it on request — a search that reads the
+   *  chats its index has not caught up with. */
+  action?: { label: string; onClick: () => void; busy?: boolean }
   className?: string
 }) {
   if (complete) return null
@@ -52,8 +57,17 @@ export function PartialNotice({ complete, shown, total, what, detail, className 
       data-type="body-s"
       className={`text-on-surface-low ${className ?? ''}`}
     >
-      Showing {shown.toLocaleString()} of {total.toLocaleString()} {what}
+      {verb} {shown.toLocaleString()} of {total.toLocaleString()} {what}
       {detail ? ` — ${detail}` : ''}
+      {action && (
+        <>
+          {' '}
+          <button type="button" onClick={action.onClick} disabled={action.busy} aria-busy={action.busy || undefined}
+            className="text-primary underline underline-offset-2 disabled:opacity-60">
+            {action.label}
+          </button>
+        </>
+      )}
     </div>
   )
 }

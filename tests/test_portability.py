@@ -962,6 +962,12 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # fix (nothing claimed them); backing them up would ship a cache in every snapshot.
         "session_search_db",
         "codegraph",
+        # work: the chat list's record of each transcript's metadata line, kept beside
+        # `sessions/` rather than in it so the transcripts' tree copy does not carry it. Each
+        # entry counts only while its transcript is the same file (inode, size, mtime), and a
+        # restored transcript is a new file, so a carried copy would be read and never used;
+        # the first listing after a restore writes it again.
+        "session_listing",
         # platform: the best-of-N outcome ledger (HC-3). `derived=True` telemetry-of-self —
         # one bounded line per sampling call ({ts,n,criteria_digest,winner_idx,score_spread,
         # tokens_total}, no prompt or candidate text) feeding the learning/eval question "did

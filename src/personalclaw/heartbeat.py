@@ -73,19 +73,13 @@ _DEFAULT_INTERVAL = 60
 # touches sessions idle for days, so an hourly cadence is plenty; the per-pass cap
 # bounds LLM spend regardless.
 _BG_COMPRESS_TICKS = 60
-# Cross-session search reindex (SESSION-MANAGEMENT §C1) — every 5 minutes. The
-# per-turn hook keeps dashboard chats current, so this exists to catch what that
-# hook can't see: channel appends, transcripts rewritten by compaction, sessions
-# deleted outside the app, and a first run over pre-existing history. Incremental
-# by mtime, so an up-to-date index costs one listing.
-_SESSION_INDEX_TICKS = 5
+# The cross-session search index is NOT kept here: it indexed 200 chats every 5 minutes from
+# this loop, 5 hours for a 12,005-chat history, so it keeps itself caught up on its own thread
+# (`session_search.INDEXER`, started by the gateway).
 # Session auto-archive (SESSION-MANAGEMENT S2 T2.3) — hourly. The rule's unit is DAYS,
 # so a tighter cadence buys nothing; hourly means a session that crosses the threshold
 # is out of the list within the hour rather than at the next restart.
 _SESSION_ARCHIVE_TICKS = 60
-# Ceiling per pass so the very first sweep over a large history can't monopolize a
-# tick; the remainder lands on subsequent passes.
-_SESSION_INDEX_MAX_PER_PASS = 200
 HEARTBEAT_FILE = "HEARTBEAT.md"
 _HEADER = (
     "# Heartbeat Tasks\n\n<!-- Add tasks below (one per line). "
@@ -315,26 +309,6 @@ class HeartbeatService:
                 await self._run_bg_compression()
             except Exception:
                 logger.debug("background compression pass failed", exc_info=True)
-
-        # Cross-session search reindex (SESSION-MANAGEMENT §C1). Off the loop — it
-        # reads transcripts — and incremental, so a current index costs a directory
-        # listing. Never fatal: search degrading is not worth a dead heartbeat.
-        # `_tick` starts at 1, so a plain modulo would leave a fresh install with no
-        # index for the first five minutes — including the initial sweep over
-        # pre-existing history, which is exactly when search feels broken. Run on the
-        # first tick too, then settle into the cadence.
-        if self._tick == 1 or self._tick % _SESSION_INDEX_TICKS == 0:
-            try:
-                from personalclaw import session_search
-
-                indexed = await asyncio.get_running_loop().run_in_executor(
-                    None,
-                    lambda: session_search.reindex_all(limit=_SESSION_INDEX_MAX_PER_PASS),
-                )
-                if indexed:
-                    logger.debug("session search: indexed %d session(s)", indexed)
-            except Exception:
-                logger.debug("session search reindex failed", exc_info=True)
 
         # Session auto-archive (SESSION-MANAGEMENT S2 T2.3). Hourly; the rule's unit is
         # days so nothing tighter is useful. Guarded — decluttering the chat list is

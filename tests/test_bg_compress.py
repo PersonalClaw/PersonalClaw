@@ -113,7 +113,6 @@ async def test_pass_skips_incognito_and_active(tmp_path):
     # Age the two we want eligible/skipped-for-idle far into the past; leave "active" fresh.
     for k in ("keep", "secret"):
         _age(log, k)
-    log._meta_cache.clear()
 
     stats = await bg_compress.run_bg_compression_pass(log, embed_fn=None, max_sessions=10)
     touched = {s["key"] for s in stats}
@@ -181,7 +180,6 @@ async def test_kill_switch_stops_pass(tmp_path, monkeypatch):
     log = _make_log(tmp_path)
     _big_session(log, "s1")
     _age(log, "s1")
-    log._meta_cache.clear()
 
     class _Tools:
         bg_compress_enabled = False

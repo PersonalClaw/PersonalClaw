@@ -5,8 +5,8 @@
  * a dependency graph from them, dropping every edge to an id it did not hold — so a blocked task
  * drew as a clean unblocked node with nothing on screen saying the view was a fragment.
  */
-import { describe, it, expect } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { PartialNotice } from './PartialNotice'
 
 describe('PartialNotice', () => {
@@ -51,5 +51,22 @@ describe('PartialNotice', () => {
     cleanup()
     render(<PartialNotice complete={false} shown={1} total={2} what="notes" />)
     expect(screen.getByRole('status').textContent).toBe('Showing 1 of 2 notes')
+  })
+
+  it('leads with what the surface did, and offers the rest when it can fetch it', () => {
+    // A search is not a list of rows: it SEARCHED part of the chats, and can read the others
+    // directly on request — the one way its answer becomes complete while its index is built.
+    cleanup()
+    const onClick = vi.fn()
+    render(
+      <PartialNotice complete={false} shown={3210} total={12005} what="chats" verb="Searched"
+        detail="the index is still being built."
+        action={{ label: 'Search the other 8,795 directly', onClick }} />
+    )
+    expect(screen.getByRole('status').textContent).toBe(
+      'Searched 3,210 of 12,005 chats — the index is still being built. Search the other 8,795 directly',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Search the other 8,795 directly' }))
+    expect(onClick).toHaveBeenCalledTimes(1)
   })
 })
