@@ -141,7 +141,11 @@ output is not searched. It never reformats your messages to highlight them — c
 a reply still streaming in, stay exactly as they were.
 
 This searches the conversation you are in. To search *across* conversations, use **Search chats**
-in the sessions list, which looks at titles and everything said in every session.
+in the sessions list, which looks at titles and everything said in every session, or press `⌘K`
+(`Ctrl+K`) anywhere. Past two characters the palette also searches inside your chats, memory,
+knowledge and tasks, grouped under those headings below the pages and actions. A chat opens with
+this find bar already holding what you typed. A source that could not be searched says so in the
+palette instead of showing nothing.
 
 On a phone-width screen the bar spans the column instead of sitting as a pill in the corner, so
 it shrinks with the page rather than hanging off the edge of a narrow one.

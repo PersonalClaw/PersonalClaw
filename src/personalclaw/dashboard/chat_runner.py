@@ -3025,7 +3025,7 @@ async def run_chat(
                         _mirror_msg, _ = redact_exfiltration_urls(_mirror_msg)
                         _mirror_msg, _ = redact_credentials(_mirror_msg)
                         await _mirror_delivery.deliver_text(
-                            _mirror_chan, f"💬 _{_mirror_msg}_", _mirror_thread
+                            _mirror_chan, f"From the dashboard: _{_mirror_msg}_", _mirror_thread
                         )
                     # Start a stream for real-time tool animations
                     _mirror_stream_ts = (
@@ -4524,29 +4524,60 @@ async def run_chat(
         # the live "Turn complete" line further down. Read twice, the persisted number
         # and the rendered number could disagree about the same turn.
         pct = client.context_usage_pct()
+        # The "Turn complete" sentence, composed ONCE from the turn's numbers: the live
+        # activity line below shows it, and the durable record carries it, so the turn's
+        # details still say it after a reload. PCS-7: both derived cache numbers come from
+        # the shared primitives, and both helpers answer None rather than guessing: an
+        # unpriced model has no saving to state, and a turn with no denominator has no hit
+        # rate. The renderer keeps those Nones honest.
+        from personalclaw.pricing import cache_savings_usd
+        from personalclaw.stats import cache_hit_pct
+
+        _turn_line = _turn_complete_line(
+            events=_turn_event_count,
+            tool_calls=_turn_tool_call_count,
+            context_pct=pct,
+            input_tokens=_turn_input_tokens,
+            output_tokens=_turn_output_tokens,
+            cost_usd=_turn_cost_usd,
+            priced=_turn_priced,
+            cache_read_tokens=_turn_cache_read_tokens,
+            cache_creation_tokens=_turn_cache_creation_tokens,
+            cache_hit_pct=cache_hit_pct(
+                cache_read_tokens=_turn_cache_read_tokens,
+                cache_creation_tokens=_turn_cache_creation_tokens,
+                input_tokens=_turn_input_tokens,
+            ),
+            cache_saved_usd=cache_savings_usd(
+                _turn_model,
+                cache_read_tokens=_turn_cache_read_tokens,
+                cache_creation_tokens=_turn_cache_creation_tokens,
+                input_tokens=_turn_input_tokens,
+                output_tokens=_turn_output_tokens,
+            ),
+        )
         # Durable per-turn telemetry (SSM-2). Stamped on the turn's last assistant
         # message BEFORE the save, because `save_session_to_history` rewrites the whole
         # transcript file from this buffer — a key added after it would be in-memory only
-        # and would vanish on the next reload, which is exactly the gap this closes. The
-        # live stats line below still renders the same numbers; this makes them survive.
-        stamp_turn_telemetry(
-            session,
-            build_turn_telemetry(
-                input_tokens=_turn_input_tokens,
-                output_tokens=_turn_output_tokens,
-                cache_read_tokens=_turn_cache_read_tokens,
-                cache_creation_tokens=_turn_cache_creation_tokens,
-                cost_usd=_turn_cost_usd,
-                priced=_turn_priced,
-                duration_ms=(
-                    _turn_reported_duration_ms or int((time.monotonic() - _turn_started_at) * 1000)
-                ),
-                context_pct=pct,
-                events=_turn_event_count,
-                tool_calls=_turn_tool_call_count,
-                model=_turn_model,
+        # and would vanish on the next reload, which is exactly the gap this closes.
+        # ``None`` when the turn reported no activity, which is also when no live line goes out.
+        _turn_telemetry = build_turn_telemetry(
+            input_tokens=_turn_input_tokens,
+            output_tokens=_turn_output_tokens,
+            cache_read_tokens=_turn_cache_read_tokens,
+            cache_creation_tokens=_turn_cache_creation_tokens,
+            cost_usd=_turn_cost_usd,
+            priced=_turn_priced,
+            duration_ms=(
+                _turn_reported_duration_ms or int((time.monotonic() - _turn_started_at) * 1000)
             ),
+            context_pct=pct,
+            events=_turn_event_count,
+            tool_calls=_turn_tool_call_count,
+            model=_turn_model,
+            line=_turn_line,
         )
+        stamp_turn_telemetry(session, _turn_telemetry)
         # Durable per-turn summary LABEL (SSM-3), stamped in the same window and under the
         # same before-the-save constraint. Derived from the session buffer, which already
         # holds the whole turn at this point — the user row, every tool row and every
@@ -4611,48 +4642,14 @@ async def run_chat(
         )
         if not is_cancelled_stop(_stop_reason):
             state.sessions.record_success(session_key)
-        # Broadcast prompt stats for the activity viewer (the live-only "Turn
-        # complete" line). Reads the provider-neutral counts carried on the
-        # terminal complete event — populated identically by the native loop and
-        # the ACP client — so both agent paths render the same chip.
-        if _turn_event_count or _turn_tool_call_count or _turn_input_tokens or _turn_output_tokens:
-            # PCS-7: both derived cache numbers come from the shared primitives — no
-            # second counter store here. Local imports match the `has_pricing` idiom
-            # above, and both helpers answer None rather than guessing: an unpriced
-            # model has no saving to state, and a turn with no denominator has no
-            # hit rate. The renderer keeps those Nones honest.
-            from personalclaw.pricing import cache_savings_usd
-            from personalclaw.stats import cache_hit_pct
-
+        # Broadcast prompt stats for the activity viewer (the "Turn complete" line). Reads
+        # the provider-neutral counts carried on the terminal complete event — populated
+        # identically by the native loop and the ACP client — so both agent paths render
+        # the same chip. The same sentence the durable record above carries.
+        if _turn_telemetry is not None:
             state.broadcast_ws(
                 "activity_event",
-                {
-                    "session": session.key,
-                    "kind": "stats",
-                    "text": _turn_complete_line(
-                        events=_turn_event_count,
-                        tool_calls=_turn_tool_call_count,
-                        context_pct=pct,
-                        input_tokens=_turn_input_tokens,
-                        output_tokens=_turn_output_tokens,
-                        cost_usd=_turn_cost_usd,
-                        priced=_turn_priced,
-                        cache_read_tokens=_turn_cache_read_tokens,
-                        cache_creation_tokens=_turn_cache_creation_tokens,
-                        cache_hit_pct=cache_hit_pct(
-                            cache_read_tokens=_turn_cache_read_tokens,
-                            cache_creation_tokens=_turn_cache_creation_tokens,
-                            input_tokens=_turn_input_tokens,
-                        ),
-                        cache_saved_usd=cache_savings_usd(
-                            _turn_model,
-                            cache_read_tokens=_turn_cache_read_tokens,
-                            cache_creation_tokens=_turn_cache_creation_tokens,
-                            input_tokens=_turn_input_tokens,
-                            output_tokens=_turn_output_tokens,
-                        ),
-                    ),
-                },
+                {"session": session.key, "kind": "stats", "text": _turn_line},
             )
         _stop_text = redact_exfiltration_urls(assistant_text[:500])[0]
         _stop_text = redact_credentials(_stop_text)[0]

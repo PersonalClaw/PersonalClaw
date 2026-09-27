@@ -40,7 +40,7 @@ function Harness({ onExit, withLayer }: { onExit: () => void; withLayer: boolean
   return (
     <>
       <div data-tour="a-one">anchor one</div>
-      {withLayer && <input aria-label="Search pages and actions" defaultValue="" />}
+      {withLayer && <input aria-label="Search pages, actions and content" defaultValue="" />}
       <SpotlightTour steps={STEPS} index={index} label="PersonalClaw tour"
         onIndex={setIndex} onExit={onExit} />
     </>
@@ -74,7 +74,7 @@ describe('Escape goes to the focused layer', () => {
     const user = userEvent.setup()
     render(<Harness onExit={onExit} withLayer />)
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
-    const above = screen.getByLabelText('Search pages and actions')
+    const above = screen.getByLabelText('Search pages, actions and content')
     above.focus()
     expect(document.activeElement).toBe(above)
     await user.keyboard('{Escape}')
@@ -87,7 +87,7 @@ describe('Escape goes to the focused layer', () => {
     const user = userEvent.setup()
     render(<Harness onExit={onExit} withLayer />)
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
-    const above = screen.getByLabelText('Search pages and actions')
+    const above = screen.getByLabelText('Search pages, actions and content')
     above.focus()
     await user.keyboard('{Escape}')
     expect(onExit).not.toHaveBeenCalled()
@@ -102,7 +102,7 @@ describe('Escape goes to the focused layer', () => {
     const user = userEvent.setup()
     render(<Harness onExit={onExit} withLayer />)
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
-    screen.getByLabelText('Search pages and actions').focus()
+    screen.getByLabelText('Search pages, actions and content').focus()
     // The guard is scoped to the KEY. Every pointer route out is untouched.
     await user.click(screen.getByRole('button', { name: 'End the tour' }))
     expect(onExit).toHaveBeenCalledTimes(1)

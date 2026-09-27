@@ -2,10 +2,11 @@ import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState, useId } from 'react'
 import { useFocusTrap } from '../ui/useFocusTrap'
 import { AnimatePresence, motion } from 'framer-motion'
-import { CornerDownLeft, ArrowRight } from 'lucide-react'
+import { CornerDownLeft, ArrowRight, MessageSquare, Brain, BookOpen, ListChecks } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { spring } from '../design/motion'
 import { SearchField } from '../ui/SearchField'
+import { CONTENT_SOURCES, MIN_CONTENT_QUERY, SOURCE_LABEL, useContentSearch, type ContentHit, type ContentSource } from './paletteSearch'
 
 export interface Command {
   id: string
@@ -16,11 +17,19 @@ export interface Command {
   run: () => void
 }
 
-/** ⌘K / Ctrl+K command palette — search + run navigation and actions. The single
- *  keyboard entry point (designed for THIS featureset: 16 destinations + global
- *  actions, no per-page chord soup). Opens on ⌘K, closes on Esc, arrows to move,
- *  Enter to run. Mounted once at the app shell. */
-export function CommandPalette({ commands }: { commands: Command[] }) {
+const SOURCE_ICON: Record<ContentSource, LucideIcon> = {
+  chats: MessageSquare, memory: Brain, knowledge: BookOpen, tasks: ListChecks,
+}
+
+/** One row of the listbox: a command, or something found inside the user's content. */
+type Row = { id: string; label: string; hint?: string; detail?: string; icon: LucideIcon; run: () => void }
+
+/** ⌘K / Ctrl+K command palette — search + run navigation and actions, and search what is IN the
+ *  app: chats, memory, knowledge and tasks (`paletteSearch.ts`). The single keyboard entry point
+ *  (designed for THIS featureset: 16 destinations + global actions, no per-page chord soup). Opens
+ *  on ⌘K, closes on Esc, arrows to move, Enter to run. Mounted once at the app shell; `navigate`
+ *  is the shell's, and a content hit opens through it. */
+export function CommandPalette({ commands, navigate }: { commands: Command[]; navigate: (path: string) => void }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
@@ -39,6 +48,8 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
 
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0) }, [open])
 
+  const content = useContentSearch(q, open)
+
   const results = useMemo(() => {
     const n = q.trim().toLowerCase()
     if (!n) return commands
@@ -55,6 +66,21 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
       .map((x) => x.c)
   }, [q, commands])
 
+  // Commands first, then the content hits grouped by source: ONE list for the cursor, so the arrows
+  // and Enter work the same across both halves and `aria-activedescendant` can name any row.
+  const contentHits = content.query === q.trim() ? content.hits : []
+  const groups = CONTENT_SOURCES
+    .map((source) => ({ source, hits: contentHits.filter((h) => h.source === source) }))
+    .filter((g) => g.hits.length)
+  const rows: Row[] = [
+    ...results.map((c) => ({ id: c.id, label: c.label, hint: c.hint, icon: c.icon, run: c.run })),
+    ...groups.flatMap((g) => g.hits.map((h: ContentHit) => ({
+      id: h.id, label: h.label, detail: h.detail, icon: SOURCE_ICON[h.source], run: () => navigate(h.path),
+    }))),
+  ]
+  const searchingContent = q.trim().length >= MIN_CONTENT_QUERY && (content.searching || content.query !== q.trim())
+  const failures = CONTENT_SOURCES.flatMap((s) => (content.query === q.trim() && content.failures[s] ? [content.failures[s]!] : []))
+
   // A new query puts the cursor back on the first match, IN the handler that changes the query —
   // the same place ⌘K already resets it. This was `useEffect(() => { setActive(0) }, [q])`, which
   // scheduled a render from inside every keystroke's own commit; typed fast, ~50 keys threw React's
@@ -68,12 +94,17 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
     el?.scrollIntoView({ block: 'nearest' })
   }, [active])
 
-  const run = (c?: Command) => { if (!c) return; setOpen(false); c.run() }
+  const run = (c?: Row) => { if (!c) return; setOpen(false); c.run() }
+
+  const option = (row: Row, i: number) => (
+    <PaletteOption key={row.id} row={row} id={`${cpId}-opt-${i}`} index={i} on={i === active}
+      onHover={() => setActive(i)} onRun={() => run(row)} />
+  )
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, results.length - 1)) }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, rows.length - 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)) }
-    else if (e.key === 'Enter') { e.preventDefault(); run(results[active]) }
+    else if (e.key === 'Enter') { e.preventDefault(); run(rows[Math.min(active, rows.length - 1)]) }
   }
 
   return (
@@ -103,44 +134,40 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
             <div className="flex items-center gap-s border-b border-outline-variant/40 px-l h-14">
               <SearchField variant="inline" inlineIconSize={17} clearable={false}
                 inputRef={inputRef} value={q} onChange={search} onKeyDown={onKeyDown}
-                placeholder="Search pages and actions…" ariaLabel="Search pages and actions"
+                placeholder="Search pages, actions and content…" ariaLabel="Search pages, actions and content"
                 ariaHasPopup="listbox" ariaControls={`${cpId}-list`}
-                ariaActiveDescendant={results.length ? `${cpId}-opt-${active}` : undefined}
+                ariaActiveDescendant={rows.length ? `${cpId}-opt-${Math.min(active, rows.length - 1)}` : undefined}
                 trailingSlot={<kbd className="rounded-md bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-low text-[0.75rem]">esc</kbd>} />
             </div>
             {/* results */}
-            <div ref={listRef} role="listbox" aria-label="Commands" id={`${cpId}-list`}
+            <div ref={listRef} role="listbox" aria-label="Commands and results" id={`${cpId}-list`}
               className="max-h-[50vh] overflow-y-auto py-1.5">
-              {results.length === 0 ? (
-                <div className="px-l py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</div>
-              ) : results.map((c, i) => {
-                const on = i === active
-                const Icon = c.icon
+              {rows.slice(0, results.length).map((row, i) => option(row, i))}
+              {groups.map((g) => {
+                const headingId = `${cpId}-group-${g.source}`
+                const first = results.length + groups.slice(0, groups.indexOf(g)).reduce((n, x) => n + x.hits.length, 0)
                 return (
-                  <button key={c.id} type="button" role="option" aria-selected={on}
-                    id={`${cpId}-opt-${i}`}
-                    data-cmd-idx={i} onMouseEnter={() => setActive(i)} onClick={() => run(c)}
-                    // 🔴 INSET RING. These rows are full-width inside the palette card, which is
-                    // `overflow-hidden rounded-2xl` (line 95), so an outward-drawn outline is clipped
-                    // LEFT AND RIGHT and the ring renders as two bars instead of a rectangle.
-                    // Measured on the opened palette: ring 2px + offset 2px = 4px of reach, 3px of it
-                    // clipped on each side.
-                    // 🪤 IT IS NOT THE SCROLL CONTAINER, which is the thing that looks guilty. The
-                    // results list is `overflow-y-auto`, and CSS computes the other axis to `auto`
-                    // too — but `scrollWidth === clientWidth` there, so nothing can be scrolled into
-                    // view horizontally. The clipper is the CARD, and its clip is permanent.
-                    // This is the app's primary keyboard surface, which is where a focus indicator
-                    // matters most.
-                    className="flex w-full items-center gap-3 px-l py-2.5 text-left focus-visible:-outline-offset-2"
-                    style={{ background: on ? 'var(--color-surface-high)' : undefined }}>
-                    <Icon size={16} className="shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
-                    <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{c.label}</span>
-                    {c.hint && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{c.hint}</span>}
-                    {on && <CornerDownLeft size={13} className="shrink-0 text-on-surface-low" />}
-                  </button>
+                  <div key={g.source} role="group" aria-labelledby={headingId} className="pt-1.5">
+                    <div id={headingId} data-type="caption" className="px-l pb-1 pt-1.5 text-on-surface-low uppercase tracking-wide">
+                      {SOURCE_LABEL[g.source]}
+                    </div>
+                    {g.hits.map((_, j) => option(rows[first + j], first + j))}
+                  </div>
                 )
               })}
+              {rows.length === 0 && !searchingContent && failures.length === 0 && (
+                <div className="px-l py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</div>
+              )}
             </div>
+            {/* The content half's progress and failures. Outside the listbox, because neither is an
+                option; a failed source is said in words so it never reads as a source with nothing
+                in it. */}
+            {(searchingContent || failures.length > 0) && (
+              <div role="status" data-type="caption" className="flex flex-col gap-0.5 border-t border-outline-variant/40 px-l py-2">
+                {searchingContent && <span className="text-on-surface-low">Searching chats, memory, knowledge and tasks…</span>}
+                {failures.map((f) => <span key={f} className="text-danger">{f}</span>)}
+              </div>
+            )}
             {/* footer hint */}
             <div className="flex items-center gap-3 border-t border-outline-variant/40 px-l py-2 text-on-surface-low text-[0.75rem]">
               <span className="inline-flex items-center gap-xs"><ArrowRight size={11} className="rotate-90" /> navigate</span>
@@ -151,6 +178,38 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
         </motion.div>
       )}
     </AnimatePresence>
+  )
+}
+
+/** One row of the palette's listbox. */
+function PaletteOption({ row, id, index, on, onHover, onRun }: {
+  row: Row; id: string; index: number; on: boolean; onHover: () => void; onRun: () => void
+}) {
+  const Icon = row.icon
+  return (
+    <button type="button" role="option" aria-selected={on} id={id}
+      data-cmd-idx={index} onMouseEnter={onHover} onClick={onRun}
+      // 🔴 INSET RING. These rows are full-width inside the palette card, which is
+      // `overflow-hidden rounded-2xl`, so an outward-drawn outline is clipped
+      // LEFT AND RIGHT and the ring renders as two bars instead of a rectangle.
+      // Measured on the opened palette: ring 2px + offset 2px = 4px of reach, 3px of it
+      // clipped on each side.
+      // 🪤 IT IS NOT THE SCROLL CONTAINER, which is the thing that looks guilty. The
+      // results list is `overflow-y-auto`, and CSS computes the other axis to `auto`
+      // too — but `scrollWidth === clientWidth` there, so nothing can be scrolled into
+      // view horizontally. The clipper is the CARD, and its clip is permanent.
+      // This is the app's primary keyboard surface, which is where a focus indicator
+      // matters most.
+      className="flex w-full items-center gap-3 px-l py-2.5 text-left focus-visible:-outline-offset-2"
+      style={{ background: on ? 'var(--color-surface-high)' : undefined }}>
+      <Icon size={16} className="shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-on-surface text-[0.8125rem]">{row.label}</span>
+        {row.detail && <span className="truncate text-on-surface-low text-[0.75rem]">{row.detail}</span>}
+      </span>
+      {row.hint && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{row.hint}</span>}
+      {on && <CornerDownLeft size={13} className="shrink-0 text-on-surface-low" />}
+    </button>
   )
 }
 

@@ -76,10 +76,10 @@ async def _send_and_print(provider: ModelProvider, message: str) -> None:
     except AcpTimeoutError as e:
         if e.partial_output:
             print(e.partial_output)
-        print("\n⏱️  Response timed out.", file=sys.stderr)
+        print("\nResponse timed out.", file=sys.stderr)
         sys.exit(1)
     except AcpError as e:
-        print(f"\n❌ {e}", file=sys.stderr)
+        print(f"\nError: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -112,7 +112,7 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
 
         if pct is not None and pct >= cfg.session.autocompact_pct:
             reason = f"context at {pct:.0f}%"
-            print(f"\n🔄 Compacting — {reason}", file=sys.stderr)
+            print(f"\nCompacting the conversation: {reason}.", file=sys.stderr)
             try:
                 await provider.compact()
             except Exception:
@@ -120,7 +120,7 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
             await provider.shutdown()
             await provider.start()
         elif pct is not None and pct >= 75.0:
-            print(f"\n⚠️  Context at {pct:.0f}%", file=sys.stderr)
+            print(f"\nContext at {pct:.0f}%.", file=sys.stderr)
 
         print()
 

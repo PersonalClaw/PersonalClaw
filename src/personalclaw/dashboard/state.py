@@ -147,7 +147,7 @@ _DEFAULT_PORT = DASHBOARD_PORT
 _SSE_INTERVAL_SECS = 5
 _NOTIFICATIONS_FILE = "notifications.jsonl"
 _MAX_PERSISTED_NOTIFICATIONS = 200
-_AUTO_COMPACT_NOTICE = "🔄 Auto-compacted at {pct:.0f}%."
+_AUTO_COMPACT_NOTICE = "Auto-compacted at {pct:.0f}% of the context window."
 
 # Bare chat-N label matcher used by DashboardState.resolve_session() for prefix fallback.
 # Gates the prefix lookup to prevent broad matches (e.g. bare "chat" binding to any session).

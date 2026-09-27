@@ -387,7 +387,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string } } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -513,6 +513,12 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // Re-decided per message for the same reason: it describes the turn that message ends.
       if (m.meta?.model_substitution) at.modelSubstitution = m.meta.model_substitution
       else delete at.modelSubstitution
+      // The turn's "Turn complete" sentence (SSM-2), on the same last message. Live, it arrives
+      // as an `activity_event`; this is the same sentence persisted with the turn's telemetry,
+      // so the turn's details still show it after a reload (F-38). A record written before the
+      // sentence was persisted has none, and the turn shows no telemetry row, as before.
+      const statsLine = m.meta?.turn_telemetry?.line
+      if (typeof statsLine === 'string' && statsLine) at.segments.push({ kind: 'activity', text: statsLine, activityKind: 'stats' })
       // Regenerated answers persist as ONE assistant message carrying every version
       // in `variants` (the active one's content == m.content). Carry the count + index
       // onto the turn so the ‹n/N› switcher rehydrates on reload.
