@@ -278,12 +278,18 @@ async def test_saving_the_fix_retries_a_provider_its_settings_had_failed(monkeyp
     """The refusal says: store the key under the app. Doing that must make the app work at once.
     Its provider's enable FAILED on the foreign reference, and a save that only rebuilt enabled
     providers left it failed — still showing the old error — until a restart. A provider the
-    owner switched off (no error) and a disabled app are left alone."""
+    owner switched off (no error), a disabled app and an app this core cannot host (startup lists
+    it off with that reason, still enabled) are left alone."""
+    from types import SimpleNamespace
+
     from personalclaw.providers import routes
 
     class _Ext:
-        def __init__(self, *, enabled: bool, error: str):
+        def __init__(self, *, enabled: bool, error: str, hostable: bool = True):
             self.enabled, self.error = enabled, error
+            self.manifest = SimpleNamespace(
+                core_compatibility=lambda: SimpleNamespace(admits=hostable)
+            )
 
     class _Registry:
         def __init__(self, ext: _Ext):
@@ -307,6 +313,8 @@ async def test_saving_the_fix_retries_a_provider_its_settings_had_failed(monkeyp
     assert await saved(_Ext(enabled=False, error="API Key refers to …")) == [APP]
     assert await saved(_Ext(enabled=False, error="")) == [], "a switched-off provider was enabled"
     assert await saved(_Ext(enabled=False, error="…"), denial="app is disabled") == []
+    refused = _Ext(enabled=False, error="requires PersonalClaw 99.0.0 or newer", hostable=False)
+    assert await saved(refused) == [], "an app this core cannot host was started"
 
 
 # ── MCP: an app's server resolves only its app's keys ──────────────────────────────────────

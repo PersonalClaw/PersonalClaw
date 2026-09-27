@@ -420,20 +420,29 @@ class TestYourOwnReadsAreYours:
         assert owner_status == 200 and owner_reached == [path]
 
     def test_every_read_in_a_conversation_family_is_driven_here(self) -> None:
-        """A read added to one of the families must be given a case in this file."""
+        """A read added to one of the families must be given a case in this file. The provider
+        family's reads are driven in ``test_apps_cannot_reconfigure_other_providers.py``."""
         from test_security_posture_rail import _family_read_routes
 
+        from personalclaw.apps.permissions import security_family
+
         driven = {f"{m} {t}" for m, t in SESSION_READS + OWNER_ONLY_READS + LIST_READS}
-        census = {f"{m} {r}" for m, r in _family_read_routes()}
+        census = {
+            f"{m} {r}" for m, r in _family_read_routes() if security_family(r) != "/api/providers"
+        }
         assert census - driven == set(), "reads in a conversation family with no case here"
 
     def test_every_read_that_names_a_conversation_is_held_to_the_apps_own(self) -> None:
         from personalclaw.apps.permissions import READ_METHODS, ROUTE_AUTHZ, AppMay
 
+        # A read row whose `owns` names an app (a provider, an app's settings) is held to the
+        # calling app itself; that half is railed with the provider family.
         owned_reads = {
             key
             for key, authz in ROUTE_AUTHZ.items()
-            if key.split(" ", 1)[0] in READ_METHODS and isinstance(authz, AppMay) and authz.owns
+            if key.split(" ", 1)[0] in READ_METHODS
+            and isinstance(authz, AppMay)
+            and any(not target.app for target in authz.owns)
         }
         listed = {f"{m} {t}" for m, t in SESSION_READS if m == "GET"}
         assert owned_reads == listed

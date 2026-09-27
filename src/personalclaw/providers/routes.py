@@ -9,6 +9,10 @@ Provides endpoints for:
 A provider has no on/off of its own. It is its app's, so the Settings → Providers switch is the
 app's enable and disable (``POST /api/apps/{name}/enable|disable``): the one load and unload
 every lifecycle step goes through, on routes only the owner may call.
+
+A provider is its app's to reach, too. An app-scoped request reaches only the provider registered
+under its own name: the gateway refuses one naming another before these handlers run
+(``apps/permissions.ROUTE_AUTHZ``), and the list answers an app with its own providers only.
 """
 
 import logging
@@ -38,8 +42,13 @@ def register_routes(app: web.Application) -> None:
 async def handle_list_extensions(request: web.Request) -> web.Response:
     registry = get_provider_registry()
     type_filter = request.query.get("type")
+    # An app lists its own providers and no other: the rest are other apps' and the platform's, and
+    # a card says what is installed, whether it runs and why not.
+    request_app = request.get("app", "")
 
     extensions = registry.list_extensions()
+    if request_app:
+        extensions = [e for e in extensions if e.name == request_app]
     if type_filter:
         extensions = [e for e in extensions if e.provider_config.type == type_filter]
 
@@ -86,8 +95,9 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
     # extension (it's built per-session in the runtime, being cwd-coupled), so it
     # would otherwise be the one tool provider missing from this list while
     # appearing on the Tools page. Synthesized here as an always-on, non-managed,
-    # non-removable card (mirrors how the Tools page marks it 'platform/required').
-    if not type_filter or type_filter == "tool":
+    # non-removable card (mirrors how the Tools page marks it 'platform/required'). It is no app's,
+    # so an app's list leaves it out with the rest.
+    if not request_app and (not type_filter or type_filter == "tool"):
         result.append(
             {
                 "name": "personalclaw-filesystem",
@@ -251,13 +261,19 @@ async def apply_saved_settings(name: str) -> None:
     drops the typed media registries' transient adapters so the next resolution rebuilds from
     current config.
 
-    ONE definition for both settings routes: ``PATCH /api/providers/{name}/config`` did this,
-    and ``PUT /api/apps/{name}/config`` — the Apps page's Configure → Save, writing the same
-    file — did none of it, so a token saved there read "No bot token configured" until restart.
+    ONE definition for every write of an app's settings: ``PATCH /api/providers/{name}/config``
+    did this, and ``PUT /api/apps/{name}/config`` — the Apps page's Configure → Save, writing the
+    same file — did none of it, so a token saved there read "No bot token configured" until
+    restart. A multi-instance provider's instances are its settings too, one record each
+    (``instance_routes``).
 
     A provider whose enable FAILED is retried too: its settings are what failed it (one naming a
     credential another owner holds, say), and a fix that waits for a restart reads as a fix that
-    did not work. A provider switched off is its app disabled, and a disabled app is not retried.
+    did not work. Nothing else is switched on here. A provider switched off is its app disabled,
+    and a disabled app is not retried: its change is saved, and loads when the app is switched on.
+    Neither is an app this core cannot host, which startup lists off with that reason and leaves
+    enabled (``app_runtime._refuse``): the core refused it, not its settings, and enabling it is
+    ``app_manager.enable``'s decision, which asks the same question first.
     """
     from personalclaw.apps.permissions import app_lifecycle_denial
     from personalclaw.channel_transports import settled
@@ -266,7 +282,12 @@ async def apply_saved_settings(name: str) -> None:
     ext = registry.get(name)
     if ext is not None and ext.enabled:
         registry.rebuild(name)
-    elif ext is not None and ext.error and not app_lifecycle_denial(name):
+    elif (
+        ext is not None
+        and ext.error
+        and not app_lifecycle_denial(name)
+        and ext.manifest.core_compatibility().admits
+    ):
         registry.enable(name)
     # A rebuilt tool provider offers what its new settings make it offer (a different endpoint
     # answers a different tool list), so its names are read again before this answers.

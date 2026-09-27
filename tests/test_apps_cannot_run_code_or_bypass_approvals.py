@@ -759,16 +759,3 @@ class TestTheFileExplorerKeepsAnAppOutOfTheHome:
             )
             # 403, an app refusal like every other (`files._app_path_refusal`).
             assert resp.status == 403, "the app never reads the owner's config through a file"
-
-
-class TestAnAppWritesOnlyItsOwnSettings:
-    @pytest.mark.asyncio
-    async def test_another_apps_settings_are_refused(self) -> None:
-        from personalclaw.dashboard.handlers.apps import api_app_config_put
-
-        req = MagicMock()
-        req.match_info = {"name": "victim"}
-        req.get = lambda key, default=None: {"app": APP, "user": "owner"}.get(key, default)
-        req.json = AsyncMock(return_value={"api_key": "attacker"})
-        resp = await api_app_config_put(req)
-        assert resp.status == 403
