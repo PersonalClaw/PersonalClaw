@@ -312,6 +312,44 @@ async def test_you_confirm_a_bridge_action_and_nobody_else_can(tmp_path, monkeyp
     bridge._pending.clear()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["true", 1, None, {}])
+async def test_a_bridge_answer_that_is_not_true_or_false_is_refused_and_spends_nothing(
+    tmp_path, monkeypatch, answer
+):
+    """``confirm`` is the answer itself here, and ``false`` is one: it drops the action. So a
+    malformed answer is refused rather than read as either (``safety_flags.confirm_answer``)."""
+    from personalclaw.dashboard.handlers.external_access import api_bridge_confirmation
+    from personalclaw.inbound import bridge
+
+    monkeypatch.setattr("personalclaw.inbox.resolve_attention_items", lambda s, refs, **_k: 1)
+    bridge._pending.clear()
+    action = next(a for a in bridge.actions() if a.name == "create_task")
+    token = bridge._mint_confirmation(action, {"title": "t"}, asked_by="bridge:surface")
+    route = (
+        "POST",
+        "/api/external-access/bridge/confirmations/{id}",
+        api_bridge_confirmation,
+    )
+    state = _make_state(tmp_path)
+    body = {} if answer == {} else {"confirm": answer}
+    with _home(tmp_path):
+        gw = _gateway(state, "", [route])
+        async with TestClient(TestServer(gw)) as client:
+            resp = await client.post(
+                f"/api/external-access/bridge/confirmations/{token}", json=body
+            )
+            reply = await resp.json()
+            assert resp.status == 400 and reply["error"]["code"] == "invalid_body", reply
+            assert bridge.pending_count() == 1, "a malformed answer spent your confirmation"
+            declined = await client.post(
+                f"/api/external-access/bridge/confirmations/{token}", json={"confirm": False}
+            )
+            assert declined.status == 200, await declined.text()
+    assert bridge.pending_count() == 0, "the floor: false is an answer, and it drops the action"
+    bridge._pending.clear()
+
+
 # ── the digest's proposals ──────────────────────────────────────────────────────────────────
 
 

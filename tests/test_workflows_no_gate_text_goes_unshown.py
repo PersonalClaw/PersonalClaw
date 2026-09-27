@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import store
@@ -297,7 +298,7 @@ async def test_produce_and_audit_asks_you_about_an_artifact_the_audit_did_not_pa
     assert prompt.endswith(
         "Approve to accept the plan as it is. Deny ends the run without accepting it."
     )
-    assert c.resume(ask.token, True)["ok"] is True
+    assert c.resume(ask.token, True, by=YOU)["ok"] is True
     await _until(lambda: c.run.is_terminal, what="the approved run to end")
     assert c.run.status == RunStatus.COMPLETE
 
@@ -306,7 +307,7 @@ async def test_produce_and_audit_ends_declined_when_you_do_not_accept() -> None:
     c = await _start(_produce("revise"), inputs=PRODUCE_INPUTS)
     await _until(lambda: bool(HI.list_continuations(c.run.id)), what="the run to ask")
     (ask,) = HI.list_continuations(c.run.id)
-    assert c.resume(ask.token, False)["ok"] is True
+    assert c.resume(ask.token, False, by=YOU)["ok"] is True
     await _until(lambda: c.run.is_terminal, what="the declined run to end")
     assert c.run.status == RunStatus.DECLINED
 

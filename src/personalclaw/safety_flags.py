@@ -137,6 +137,20 @@ def confirm_granted(payload: Any, field: str = "confirm") -> bool:
     return isinstance(payload, Mapping) and payload.get(field) is True
 
 
+def confirm_answer(payload: Any, field: str = "confirm") -> bool | None:
+    """The yes or no ``payload[field]`` gives, or ``None`` when it gives neither.
+
+    For a door where ``false`` is an answer too, a confirmation you decline, rather than a
+    refusal to go on. Only the JSON literals count, as in :func:`confirm_granted`: ``"true"``,
+    ``1``, a non-mapping and an absent field are all ``None``, so the door can refuse the body
+    instead of reading a malformed answer as either one.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    value = payload.get(field)
+    return value if isinstance(value, bool) else None
+
+
 def confirm_granted_query(query: Any, field: str = "confirm") -> bool:
     """True only when the ``?{field}=`` query value spells ``true`` (any case).
 

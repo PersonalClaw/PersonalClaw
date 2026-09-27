@@ -29,6 +29,7 @@ import pytest
 import personalclaw
 from personalclaw.safety_flags import (
     CONFIRM_FIELDS,
+    confirm_answer,
     confirm_granted,
     confirm_granted_query,
 )
@@ -92,6 +93,22 @@ class TestTheBodyPredicate:
         assert confirm_granted({"confirm_cascade": True}, "confirm_cascade") is True
         assert confirm_granted({"confirm_cascade": "true"}, "confirm_cascade") is False
         assert confirm_granted({"confirm": True}, "confirm_cascade") is False
+
+
+class TestTheAnswerPredicate:
+    """For a door where `false` is an answer too: the literal bools, and `None` for the rest."""
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_a_literal_bool_is_the_answer(self, value):
+        assert confirm_answer({"confirm": value}) is value
+
+    @pytest.mark.parametrize("value", ["true", "false", 1, 0, None, [], {"a": 1}])
+    def test_anything_else_is_no_answer(self, value):
+        assert confirm_answer({"confirm": value}) is None
+
+    @pytest.mark.parametrize("payload", [{}, [], "confirm", None])
+    def test_an_absent_field_or_a_non_mapping_is_no_answer(self, payload):
+        assert confirm_answer(payload) is None
 
 
 class TestTheQueryPredicate:

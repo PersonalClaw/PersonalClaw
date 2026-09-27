@@ -27,6 +27,7 @@ from aiohttp import web
 
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
+from personalclaw.safety_flags import confirm_answer
 
 logger = logging.getLogger(__name__)
 
@@ -294,12 +295,12 @@ async def api_bridge_confirmation(request: web.Request) -> web.Response:
     from personalclaw import approval_answer
     from personalclaw.inbound import bridge
 
-    body = await json_object_body(request)
-    if not isinstance(body, dict) or not isinstance(body.get("confirm"), bool):
+    approved = confirm_answer(await json_object_body(request))
+    if approved is None:
         return json_error("invalid_body", message="body must be {confirm: bool}", status=400)
     return await bridge.answer_confirmation(
         request.app["state"],
         str(request.match_info.get("id", "") or ""),
-        approved=bool(body["confirm"]),
+        approved=approved,
         by=approval_answer.of_request(request),
     )

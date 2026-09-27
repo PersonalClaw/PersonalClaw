@@ -389,6 +389,24 @@ class TestConfirmationIsServerSide:
         assert refused["resources"].endswith("asked_by=bridge:surface")
 
     @pytest.mark.asyncio
+    async def test_a_confirm_whose_body_does_not_parse_gets_the_same_refusal(
+        self, admitted, monkeypatch
+    ):
+        """The door refuses whatever it is sent, so a body that does not parse is refused the
+        same way, and its attempt is on record the same way."""
+        audited: list[dict] = []
+        monkeypatch.setattr(bridge, "audit", lambda surface, **kw: audited.append(kw))
+        monkeypatch.setattr(
+            "personalclaw.sel.sel", lambda: SimpleNamespace(log_api_access=lambda **kw: None)
+        )
+        resp = await bridge.handle_confirm(
+            _request(_State(), headers={"Authorization": "Bearer x"}, body=None)
+        )
+        assert resp.status == 403, resp.body
+        assert _payload(resp)["error"]["code"] == "approval_owner_only"
+        assert audited[-1]["route"] == "/confirm" and audited[-1]["status"] == 403
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("who", ["app", "agent", "bridge"])
     async def test_only_you_answer_it(self, admitted, monkeypatch, who):
         """The answer path itself holds the rule, whichever door calls it."""
