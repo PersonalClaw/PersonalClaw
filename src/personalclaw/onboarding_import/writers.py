@@ -19,7 +19,9 @@ reached when the planner found the destination free. Every category obeys the sa
   a skill dir we installed (``existing``) is told apart from a skill of the same
   name the user wrote themselves (``conflict``). Deriving presence from the ledger
   instead of the destination would report ``existing`` for something a user had
-  since deleted.
+  since deleted. A conversation has no entry: its transcript's metadata names the
+  tool and session it came from, so it answers "ours or theirs" itself — and a
+  history of thousands of them stays out of a file rewritten whole on every write.
 
 Destinations
 ============
@@ -165,12 +167,18 @@ def _result(
     outcome: WriteOutcome,
     destination: str = "",
     detail: str = "",
+    *,
+    redactions: int | None = None,
 ) -> WriteResult:
+    """One item's outcome, audited. ``redactions`` is what the text that landed had redacted: the
+    item's own count unless the writer read the text itself (a conversation), and 0 for anything
+    that did not land."""
     _audit(
         f"import.{item.category.value}",
         outcome.value,
         resources=f"{item.source}:{item.category.value}:{item.key}",
     )
+    landed = outcome is WriteOutcome.IMPORTED
     return WriteResult(
         fingerprint=item.fingerprint,
         source=item.source,
@@ -179,6 +187,7 @@ def _result(
         outcome=outcome,
         destination=destination,
         detail=detail,
+        redactions=(item.redactions if redactions is None else redactions) if landed else 0,
     )
 
 
@@ -572,18 +581,49 @@ def conversation_key(item: ImportItem) -> str:
     return f"dashboard_{_slug(item.source).replace('_', '-')}-{_slug(item.target)}"
 
 
+def _imported_from(path: Path) -> dict[str, Any] | None:
+    """Where the transcript at ``path`` says it was brought over from — its metadata line's
+    ``imported_from`` — or ``None`` when there is no such file. ``{}`` for a transcript that
+    names no other tool. Reads the first line only: a transcript can run to megabytes."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            first = handle.readline()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return {}
+    try:
+        meta = json.loads(first)
+    except ValueError:
+        return {}
+    held = meta.get("imported_from") if isinstance(meta, dict) else None
+    return held if isinstance(held, dict) else {}
+
+
 def _plan_conversation(item: ImportItem) -> Plan:
+    """Whose conversation is at the destination is read off the TRANSCRIPT, not the ledger.
+
+    Every imported transcript is written whole, in one atomic write, with its metadata saying which
+    tool and session it came from — so it answers "ours or theirs" itself, at every instant: a
+    stop, a crash or a restart part-way through an import cannot leave one of ours reading as
+    someone else's, which a ledger written beside it could. It also keeps a months-long history
+    out of the ledger, which is rewritten whole on every write (measured: 8 s of 30 for 3,000
+    conversations, growing with each one).
+    """
     from personalclaw.history import session_path
 
     path = session_path(conversation_key(item))
-    dest = _rel_to_home(path)
-    if path.exists():
-        if _ours(item.fingerprint):
-            return Plan(ItemState.EXISTING, dest, "already imported")
-        return Plan(
-            ItemState.CONFLICT, dest, "a conversation with this id is already here, and it is kept"
-        )
-    return Plan(ItemState.NEW, dest)
+    # `sessions/<file>`: a transcript sits directly in the home's sessions folder, and resolving
+    # the home a second time for each of a history's thousands of items is what this saves.
+    dest = f"{path.parent.name}/{path.name}"
+    held = _imported_from(path)
+    if held is None:
+        return Plan(ItemState.NEW, dest)
+    if held.get("source") == item.source and held.get("session") == item.target:
+        return Plan(ItemState.EXISTING, dest, "already imported")
+    return Plan(
+        ItemState.CONFLICT, dest, "a conversation with this id is already here, and it is kept"
+    )
 
 
 def _epoch(stamp: str) -> float | None:
@@ -598,17 +638,35 @@ _CONVERSATION_CLS = {"user": "msg msg-u", "assistant": "msg msg-a", "tool": "msg
 
 
 def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
-    """Write the conversation as a chat transcript, dated as it was held.
+    """Read the conversation in full, and write it as a chat transcript dated as it was held.
+
+    The transcript is read HERE, when it is imported, and not by the scan: a months-long history
+    is gigabytes of transcripts, which a scan that held them would hold all at once. So this is
+    also where a file that turns out unreadable is refused, with the reason.
 
     The file's modified time is the conversation's last message, so the history lists it where
     it happened rather than at the top as "just now". It is marked consolidated through its last
     message: bringing old conversations over is not new material for the memory consolidator,
     which reads a chat only from where it last stopped — so a chat continued here is read from
-    the first new turn on.
+    the first new turn on. No ledger entry is written: the transcript's own ``imported_from``
+    says it is ours (:func:`_plan_conversation`).
     """
     from personalclaw.history import import_conversation
+    from personalclaw.onboarding_import.registry import get_source
+    from personalclaw.onboarding_import.sources.common import SessionUnreadable
 
-    payload = item.payload
+    try:
+        read = get_source(item.source).read_for_import(item)
+    except SessionUnreadable as exc:
+        return _result(item, WriteOutcome.REJECTED, dest, f"it {exc.reason}")
+    if read is None:
+        return _result(
+            item,
+            WriteOutcome.REJECTED,
+            dest,
+            "it holds no prompt, so there is no conversation in it to bring over",
+        )
+    conversation, redactions = read
     messages = [
         {
             "role": m["role"],
@@ -616,7 +674,7 @@ def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
             "ts": m.get("ts") or "",
             "cls": _CONVERSATION_CLS.get(m["role"], "msg msg-a"),
         }
-        for m in payload.get("messages") or []
+        for m in conversation["messages"]
         if isinstance(m, dict) and m.get("role") in _CONVERSATION_CLS
     ]
     key = conversation_key(item)
@@ -624,17 +682,17 @@ def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
         import_conversation(
             key,
             metadata={
-                "created_at": payload.get("created_at") or "",
-                "title": item.title,
+                "created_at": conversation.get("created_at") or "",
+                "title": conversation["title"],
                 "last_consolidated": len(messages),
                 "imported_from": {
                     "source": item.source,
                     "session": item.target,
-                    "cwd": payload.get("cwd") or "",
+                    "cwd": conversation.get("cwd") or "",
                 },
             },
             messages=messages,
-            modified=_epoch(str(payload.get("updated_at") or "")),
+            modified=_epoch(str(conversation.get("updated_at") or "")),
         )
     except FileExistsError:
         return _result(
@@ -643,14 +701,13 @@ def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
             dest,
             "a conversation with this id is already here, and it is kept",
         )
-    _record(item, dest)
     try:
         from personalclaw import session_search
 
         session_search.reindex_session(key)
     except Exception:  # noqa: BLE001 — the index is derived; the heartbeat's pass catches up
         logger.debug("could not index imported conversation %s", key, exc_info=True)
-    return _result(item, WriteOutcome.IMPORTED, dest)
+    return _result(item, WriteOutcome.IMPORTED, dest, redactions=redactions)
 
 
 # ── denied_commands → config.json security.denied_commands (the shell denylist) ──
@@ -749,15 +806,36 @@ def write_item(item: ImportItem) -> WriteResult:
     return _WRITERS[item.category](item, plan.destination)
 
 
-def write_items(items: list[ImportItem]) -> list[WriteResult]:
-    return [write_item(item) for item in items]
+def import_report(
+    items: list[ImportItem],
+    *,
+    secrets_skipped: int = 0,
+    on_result: Callable[[ImportItem, WriteResult], None] | None = None,
+    stop_before: Callable[[ImportItem], bool] | None = None,
+) -> ImportReport:
+    """Write the items one at a time and report outcomes plus what was withheld.
 
-
-def import_report(items: list[ImportItem], *, secrets_skipped: int = 0) -> ImportReport:
-    """Write every item and report outcomes plus what was withheld."""
-    results = write_items(items)
-    redactions = sum(item.redactions for item in items)
-    report = ImportReport(results=results, secrets_skipped=secrets_skipped, redactions=redactions)
+    ``stop_before(item)`` is asked with each item before it is written; once it answers true
+    nothing more is written and the rest are ``not_reached``. ``on_result`` hears each outcome as
+    it lands. The redactions reported are those in text that landed.
+    """
+    results: list[WriteResult] = []
+    not_reached: list[str] = []
+    for index, item in enumerate(items):
+        if stop_before is not None and stop_before(item):
+            not_reached = [rest.fingerprint for rest in items[index:]]
+            break
+        result = write_item(item)
+        results.append(result)
+        if on_result is not None:
+            on_result(item, result)
+    redactions = sum(result.redactions for result in results)
+    report = ImportReport(
+        results=results,
+        secrets_skipped=secrets_skipped,
+        redactions=redactions,
+        not_reached=not_reached,
+    )
     # 🔑 The SECOND producer of these two sentences used to live here, word for word. `ImportReport`
     # and `ScanResult` carry the same three fields, so both now read one composer — see
     # `model.withheld_notes` for why the plurals and the verb both have to agree.

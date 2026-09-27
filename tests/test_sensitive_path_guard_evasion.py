@@ -419,3 +419,52 @@ def test_the_guard_creates_nothing(tmp_path, monkeypatch):
     assert not (fake_home / "pclaw").exists(), "the guard created the home it was checking"
     # ...and it still blocks, i.e. the fix is not "stop resolving the home".
     assert is_sensitive_path(str(fake_home / "pclaw" / ".env"))
+
+
+# ── 5. one walk, one resolution: the same answers ──────────────────────────
+
+
+def test_a_walks_checker_answers_every_path_as_the_one_shot_guard_does(tmp_path, monkeypatch):
+    """``SensitivePaths`` resolves the protected locations once for a walk over thousands of files
+    (an import scan: 0.2 ms a file saved, 2.4 s of a 12,000-file history). It must refuse exactly
+    what ``is_sensitive_path`` refuses — every evasion above included: a link INTO a protected
+    folder, a protected folder that is itself a link (a dotfile manager's), case, a NUL, our own
+    secret names, and the active PersonalClaw home's secret entries."""
+    from personalclaw.security import SensitivePaths
+
+    home = tmp_path / "home"
+    dotfiles = tmp_path / "dotfiles"
+    (dotfiles / "ssh").mkdir(parents=True)
+    (dotfiles / "ssh" / "id_ed25519").write_text("key")
+    home.mkdir()
+    (home / ".ssh").symlink_to(dotfiles / "ssh")  # a protected folder that is a link
+    (home / ".aws").mkdir()
+    (home / ".aws" / "credentials").write_text("[default]")
+    (home / "src").mkdir()
+    (home / "src" / "notes.md").write_text("notes")
+    (home / "src" / "sneaky").symlink_to(home / ".aws" / "credentials")  # a link into one
+    pclaw = tmp_path / "pclaw"
+    (pclaw / "credentials").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(pclaw))
+
+    paths = [
+        str(home / ".ssh" / "id_ed25519"),
+        str(dotfiles / "ssh" / "id_ed25519"),
+        str(home / ".SSH" / "id_ed25519"),
+        str(home / ".aws" / "credentials"),
+        str(home / "src" / "sneaky"),
+        str(home / "src" / "notes.md"),
+        "~/.aws/config",
+        "$HOME/src/notes.md",
+        str(tmp_path / "a\x00b"),
+        str(tmp_path / "copy" / "sel_hmac.key"),
+        str(pclaw / "credentials" / "store.json"),
+        str(pclaw / "sessions" / "chat.jsonl"),
+        "/tmp/ordinary/file.jsonl",
+    ]
+    walk = SensitivePaths()
+    one_shot = [is_sensitive_path(p) for p in paths]
+    assert [walk(p) for p in paths] == one_shot
+    # Vacuity: the set holds both answers, so agreeing is not agreeing on all-False.
+    assert any(one_shot) and not all(one_shot)

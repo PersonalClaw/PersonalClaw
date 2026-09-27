@@ -544,21 +544,27 @@ def test_a_codex_session_is_a_conversation_with_its_tool_calls_by_name(noor: Pat
         "Verify eta_confidence backfill SQL",
         "Why feedsmith fetch takes 14 seconds",
     ]
+    from personalclaw.onboarding_import.sources.codex import read_for_import
+
     review = conversations[_REVIEW]
-    messages = review.payload["messages"]
+    # The scan names the conversation and counts it; the import reads the messages themselves.
+    assert review.payload == {"listed_as": "Review async fetcher diff"}
+    read, _redactions = read_for_import(review)
+    messages = read["messages"]
     assert [m["role"] for m in messages] == ["user", "tool", "tool", "assistant"]
     assert messages[1]["content"] == "exec_command: git diff main...feat/async-fetch --stat"
     assert messages[0]["content"].startswith("Review the diff on feat/async-fetch against main.")
+    assert read["title"] == review.title == "Review async fetcher diff"
     assert review.origin == "Project · ~/src/feedsmith"
     assert review.target == "019f89e2-360a-74b5-a65d-4df5c169496e"
-    assert (review.payload["created_at"], review.payload["updated_at"]) == (
+    assert (read["created_at"], read["updated_at"]) == (
         "2026-07-22T12:52:11.402Z",
         "2026-07-22T12:52:41.634Z",
     )
     assert review.note == "2 messages. Tool calls come over by name; their output does not."
-    locust = [m["content"] for m in conversations[_LOCUST].payload["messages"]]
+    locust = [m["content"] for m in read_for_import(conversations[_LOCUST])[0]["messages"]]
     assert "apply_patch: Add File: loadtest/locustfile.py" in locust
-    body = json.dumps([c.payload for c in conversations.values()])
+    body = json.dumps([read_for_import(c)[0] for c in conversations.values()])
     for absent in (
         "Chunk ID",
         "Process exited with code",
@@ -678,6 +684,8 @@ def test_the_compressed_fixture_is_a_real_zstd_frame_of_its_plain_twin() -> None
 def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: Path) -> None:
     """Scanned compressed, and scanned again with the plain twin in its place: one item, the same
     in every field, keyed by the plain name either way."""
+    from personalclaw.onboarding_import.sources.codex import read_for_import
+
     first = scan_source("codex")
     assert [entry.what for entry in first.not_imported] == [
         "Command rules that ask first",
@@ -685,6 +693,7 @@ def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: P
         "Prompt history",
     ], "nothing about the compressed session is left behind"
     compressed = _items(first, ImportCategory.CONVERSATIONS)[_FETCH_TIMING]
+    compressed_read = read_for_import(compressed)
     (noor / ".codex" / _COMPRESSED).unlink()
     shutil.copyfile(_PLAIN_TWIN, noor / ".codex" / _FETCH_TIMING)
     plain = _items(scan_source("codex"), ImportCategory.CONVERSATIONS)[_FETCH_TIMING]
@@ -696,11 +705,12 @@ def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: P
         plain.origin,
         plain.note,
     )
-    assert compressed.payload == plain.payload
+    assert compressed_read == read_for_import(plain)
     assert compressed.title == _FETCH_TITLE
     assert compressed.target == "019f4ed2-51f2-73c2-9a41-5e0b7d2f81c6"
     assert compressed.origin == "Project · ~/src/feedsmith"
-    messages = compressed.payload["messages"]
+    conversation, _redactions = compressed_read
+    messages = conversation["messages"]
     assert [m["role"] for m in messages] == ["user", "tool", "tool", "tool", "assistant"]
     assert messages[0]["content"].startswith("feedsmith fetch takes about 14 seconds")
     assert messages[1]["content"] == (
@@ -708,12 +718,12 @@ def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: P
         "--db /tmp/fs-timing.db"
     )
     assert messages[-1]["content"].startswith("It's one slow feed that starts late")
-    assert (compressed.payload["created_at"], compressed.payload["updated_at"]) == (
+    assert (conversation["created_at"], conversation["updated_at"]) == (
         "2026-07-11T01:37:14.226Z",
         "2026-07-11T01:38:43.130Z",
     )
     for absent in ("Chunk ID", "hnrss.org/frontpage", "gAAAAAB", "Timing each feed"):
-        assert absent not in json.dumps(compressed.payload), absent
+        assert absent not in json.dumps(conversation), absent
 
 
 def test_a_compressed_session_comes_over_into_chat_history(noor: Path) -> None:

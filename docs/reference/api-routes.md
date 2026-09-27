@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **871 registrations** over **704 distinct paths** — 864 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **874 registrations** over **706 distinct paths** — 867 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -47,6 +47,7 @@ The 127 families the surface divides into, largest first.
 | `/api/providers` | 12 | 8 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
+| `/api/onboarding` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
 | `/api/lexicon` | 10 | 6 |
 | `/api/notifications` | 10 | 7 |
@@ -56,7 +57,6 @@ The 127 families the surface divides into, largest first.
 | `/api/learning` | 9 | 7 |
 | `/api/security` | 9 | 9 |
 | `/api/agent-marketplace` | 8 | 5 |
-| `/api/onboarding` | 8 | 7 |
 | `/api/auth` | 7 | 7 |
 | `/api/browse` | 7 | 5 |
 | `/api/config` | 6 | 3 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 864 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -738,7 +738,10 @@ The 864 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/notifications/unack` | mark a single notification as unread. |
 | `GET` | `/api/onboarding` | First-run onboarding signal — model readiness plus persisted flow progress. |
 | `GET` | `/api/onboarding/import` | what each source holds, and what importing each item does. |
-| `POST` | `/api/onboarding/import` | import the picked items and report outcomes. |
+| `POST` | `/api/onboarding/import` | start importing the picked items. |
+| `DELETE` | `/api/onboarding/import/job` | stop the running import after the item it is on. |
+| `GET` | `/api/onboarding/import/job` | the running or last import, and its report once finished. |
+| `GET` | `/api/onboarding/import/stream` | ``status`` frames: the reading pass and the import. |
 | `GET` | `/api/onboarding/local-model` | is a local Ollama reachable on localhost? |
 | `POST` | `/api/onboarding/local-model/bind` | credential-free bind of an endpoint. |
 | `POST` | `/api/onboarding/local-model/scan` | opt-in LAN sweep for an Ollama. |

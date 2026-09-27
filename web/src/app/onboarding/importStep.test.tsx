@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 
 // ── PEP-5: the onboarding step that brings another local agent tool's setup over ──────────────
@@ -24,18 +24,41 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 
 const onboardingImportScan = vi.fn()
 const runOnboardingImport = vi.fn()
+const onboardingImportJob = vi.fn()
+const stopOnboardingImport = vi.fn()
 
 vi.mock('../../lib/api', () => ({
   api: {
     onboardingImportScan: () => onboardingImportScan(),
     runOnboardingImport: (...a: unknown[]) => runOnboardingImport(...a),
+    onboardingImportJob: () => onboardingImportJob(),
+    stopOnboardingImport: () => stopOnboardingImport(),
+    onboardingImportStreamUrl: () => '/api/onboarding/import/stream',
   },
+  hasApiCode: (e: unknown, code: string) => (e as { code?: string } | null)?.code === code,
 }))
 
 import { ImportStep, summaryOfReport } from './ImportStep'
 import type {
-  OnboardingImportItem, OnboardingImportReport, OnboardingImportScan,
+  OnboardingImportItem, OnboardingImportJob, OnboardingImportReport, OnboardingImportScan,
 } from '../../lib/api'
+
+/** A stand-in for the browser's EventSource that a test can push the import stream's frames
+ *  through. */
+class FakeEventSource {
+  static all: FakeEventSource[] = []
+  listeners: Record<string, ((e: MessageEvent) => void)[]> = {}
+  onerror: (() => void) | null = null
+  closed = false
+  constructor(public url: string) { FakeEventSource.all.push(this) }
+  addEventListener(ev: string, fn: (e: MessageEvent) => void) { (this.listeners[ev] ||= []).push(fn) }
+  close() { this.closed = true }
+  emit(ev: string, data: unknown) {
+    for (const fn of this.listeners[ev] ?? []) fn({ data: JSON.stringify(data) } as MessageEvent)
+  }
+}
+/** The stream this step has open now. */
+const stream = () => FakeEventSource.all.filter((es) => !es.closed).at(-1)!
 
 const onDone = vi.fn()
 const onSkip = vi.fn()
@@ -96,11 +119,28 @@ const IMPORTED_ROW = {
   outcome: 'imported' as const, destination: 'mcp.json', detail: '',
 }
 
+/** An import job as the gateway reports it — running unless told otherwise. */
+function job(extra: Partial<OnboardingImportJob> = {}): OnboardingImportJob {
+  return {
+    id: 'import-1', status: 'running', phase: 'importing', stopping: false,
+    total: 4, done: 0, counts: { imported: 0, existing: 0, conflict: 0, rejected: 0 }, current: '',
+    started_at: 1, finished_at: null, error: '', ...extra,
+  }
+}
+/** A job that had already finished when the POST answered, carrying its report. */
+const finished = (r: OnboardingImportReport) => job({ status: 'done', phase: 'finished', report: r })
+
 beforeEach(() => {
   vi.clearAllMocks()
   onboardingImportScan.mockResolvedValue(scan())
-  runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW]))
+  runOnboardingImport.mockResolvedValue(finished(report([IMPORTED_ROW])))
+  // No import has run in this gateway.
+  onboardingImportJob.mockResolvedValue(null)
+  stopOnboardingImport.mockResolvedValue(undefined)
+  FakeEventSource.all = []
+  vi.stubGlobal('EventSource', FakeEventSource)
 })
+afterEach(() => { vi.unstubAllGlobals() })
 
 function mount() {
   render(<ImportStep onDone={onDone} onSkip={onSkip} />)
@@ -452,9 +492,9 @@ describe('the report says what came over, what was left out, and what conflicted
 
   it('what needs attention comes BEFORE what landed', async () => {
     // Driven with a 76-item import, the conflicts and the Continue button sat below 76 rows of success.
-    runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW], {
+    runOnboardingImport.mockResolvedValue(finished(report([IMPORTED_ROW], {
       unselected: [item('f9', 'skills', 'mine', { state: 'conflict', detail: 'kept' }), item('f4', 'skills', 'tidy-notes')],
-    }))
+    })))
     await mounted()
     importNow()
     const landed = await screen.findByRole('group', { name: 'Brought over' })
@@ -465,9 +505,9 @@ describe('the report says what came over, what was left out, and what conflicted
   })
 
   it('lists what the user LEFT OUT, and the collapsed row carries it', async () => {
-    runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW], {
+    runOnboardingImport.mockResolvedValue(finished(report([IMPORTED_ROW], {
       unselected: [item('f4', 'skills', 'tidy-notes'), item('f1', 'instructions', 'CLAUDE.md')],
-    }))
+    })))
     await mounted()
     importNow()
     const left = await screen.findByRole('group', { name: 'Left out, as you chose' })
@@ -478,7 +518,7 @@ describe('the report says what came over, what was left out, and what conflicted
   })
 
   it('a CONFLICT is listed with the writer\'s reason — whether it was picked or not', async () => {
-    runOnboardingImport.mockResolvedValue(report([
+    runOnboardingImport.mockResolvedValue(finished(report([
       IMPORTED_ROW,
       {
         fingerprint: 'f3', source: 'claude_code', category: 'mcp_servers', key: 'github',
@@ -487,7 +527,7 @@ describe('the report says what came over, what was left out, and what conflicted
       },
     ], {
       unselected: [item('f9', 'skills', 'mine', { state: 'conflict', detail: 'a skill of this name that no import wrote is already here, and it is kept' })],
-    }))
+    })))
     await mounted()
     importNow()
     const kept = await screen.findByRole('group', { name: 'Kept what you already had' })
@@ -499,12 +539,12 @@ describe('the report says what came over, what was left out, and what conflicted
   })
 
   it('a REJECTED item is listed too — a security refusal is not a silent skip', async () => {
-    runOnboardingImport.mockResolvedValue(report([
+    runOnboardingImport.mockResolvedValue(finished(report([
       {
         fingerprint: 'f4', source: 'claude_code', category: 'skills', key: 'tidy-notes',
         outcome: 'rejected', destination: '', detail: 'the skill install scan refused it',
       },
-    ]))
+    ])))
     await mounted()
     importNow()
     expect(await screen.findByRole('group', { name: 'Refused for safety' })).toBeTruthy()
@@ -512,7 +552,7 @@ describe('the report says what came over, what was left out, and what conflicted
   })
 
   it('a pick that was gone by the time the import ran is named, not dropped', async () => {
-    runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW], { missing: ['f1'] }))
+    runOnboardingImport.mockResolvedValue(finished(report([IMPORTED_ROW], { missing: ['f1'] })))
     await mounted()
     importNow()
     const gone = await screen.findByRole('group', { name: 'No longer there' })
@@ -532,9 +572,9 @@ describe('the report says what came over, what was left out, and what conflicted
   })
 
   it('repeats the withheld-credential count from the report', async () => {
-    runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW], {
+    runOnboardingImport.mockResolvedValue(finished(report([IMPORTED_ROW], {
       secrets_skipped: 2, notes: ['2 credential values or files were skipped and not imported.'],
-    }))
+    })))
     await mounted()
     importNow()
     expect(await screen.findByText(/2 credential values or files were skipped/)).toBeTruthy()
@@ -542,9 +582,9 @@ describe('the report says what came over, what was left out, and what conflicted
   })
 
   it('and the backend note reads SINGULAR at exactly one withheld credential', async () => {
-    runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW], {
+    runOnboardingImport.mockResolvedValue(finished(report([IMPORTED_ROW], {
       secrets_skipped: 1, notes: ['1 credential value or file was skipped and not imported.'],
-    }))
+    })))
     await mounted()
     importNow()
     expect(await screen.findByText(/1 credential value or file was skipped/)).toBeTruthy()
@@ -693,11 +733,11 @@ describe('everything Claude Code keeps is shown, with where it came from', () =>
 
   it('names a report row the way the list did — its title and scope, not its key', async () => {
     onboardingImportScan.mockResolvedValue(SCOPED_SCAN())
-    runOnboardingImport.mockResolvedValue(report([{
+    runOnboardingImport.mockResolvedValue(finished(report([{
       fingerprint: 'm2', source: 'claude_code', category: 'mcp_servers', key: 'local:/Users/noor/work/api:grafana',
       outcome: 'conflict', destination: 'mcp.json#mcpServers.grafana',
       detail: 'an MCP server of this name is already configured differently, and it is kept',
-    }]))
+    }])))
     await mounted()
     importNow()
     const kept = await screen.findByRole('group', { name: 'Kept what you already had' })
@@ -821,5 +861,161 @@ describe("a skill's security scan is shown before anything is imported", () => {
     importNow()
     await waitFor(() => expect(runOnboardingImport).toHaveBeenCalled())
     expect(runOnboardingImport.mock.calls[0][0]).toEqual({ fingerprints: ['f1', 'f2', 'f3', 'f4'] })
+  })
+})
+
+// ── a months-long history: the listing arrives before every file is read ──────────────────────
+//
+// Measured on a synthetic power-user history (12,005 conversation files, 5.3 GB): the step sat on
+// a spinner for 41 s because the scan read every transcript before answering, and "Import 12161
+// items" was refused outright. The scan now LOOKS — it lists each conversation from the start of
+// its file — and the import is a job the step watches. These tests are what a user sees of that.
+
+/** Conversations still being read: two listed from the start of their files, 2 of 12 read. */
+function readingScan(reading = { running: true, read: 2, of: 12 }): OnboardingImportScan {
+  const s = scan([
+    ...ITEMS(),
+    item('c1', 'conversations', 'projects/a/1.jsonl', { title: 'Why is CI red', provisional: true, note: 'Not read in full yet. Tool calls come over by name; their output does not.' }),
+    item('c2', 'conversations', 'projects/a/2.jsonl', { title: 'Fix the flaky test', provisional: true, note: 'Not read in full yet. Tool calls come over by name; their output does not.' }),
+  ])
+  return { ...s, categories: [...CATEGORIES, 'conversations'], reading }
+}
+
+describe('while conversations are still being read in full', () => {
+  it('says how far the reading has got and that counts can still change, instead of a bare number', async () => {
+    onboardingImportScan.mockResolvedValue(readingScan())
+    await mounted()
+    const line = await screen.findByText('Still reading your conversations in full: 2 of 12.')
+    expect(line).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: 'Conversations read in full' }).getAttribute('aria-valuenow')).toBe('17')
+    expect(screen.getByText(/Until this finishes, a conversation shows no message count, and the counts here can still change\./)).toBeTruthy()
+    // Nothing waits for it: the import is offered now.
+    expect(screen.getByRole('button', { name: 'Import 6 items' })).toBeTruthy()
+  })
+
+  it('fetches the listing again when the reading finishes — keeping what was chosen, ticking what is new', async () => {
+    onboardingImportScan.mockResolvedValueOnce(readingScan())
+    await mounted()
+    fireEvent.click(groupBox('Instructions'))  // the user leaves CLAUDE.md out
+    const final = scan([
+      ...ITEMS(),
+      item('c1', 'conversations', 'projects/a/1.jsonl', { title: 'Why is CI red', note: '4 messages. Tool calls come over by name; their output does not.' }),
+      item('c2', 'conversations', 'projects/a/2.jsonl', { title: 'Fix the flaky test', note: '2 messages. Tool calls come over by name; their output does not.' }),
+      // A file whose first megabyte held no prompt: a conversation after all, found by the pass.
+      item('c3', 'conversations', 'projects/a/3.jsonl', { title: 'Long paste first' }),
+    ])
+    onboardingImportScan.mockResolvedValueOnce({ ...final, categories: [...CATEGORIES, 'conversations'], reading: { running: false, read: 12, of: 12 } })
+    stream().emit('status', { reading: { running: false, read: 12, of: 12 }, job: null })
+    await waitFor(() => expect(onboardingImportScan).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByText(/Still reading your conversations/)).toBeNull())
+    importNow()
+    await waitFor(() => expect(runOnboardingImport).toHaveBeenCalled())
+    expect(runOnboardingImport.mock.calls[0][0].fingerprints).toEqual(['f2', 'f3', 'f4', 'c1', 'c2', 'c3'])
+  })
+
+  it('opens no stream when there is nothing to wait for', async () => {
+    await mounted()
+    expect(FakeEventSource.all).toEqual([])
+  })
+})
+
+describe('the import runs as a job the step watches', () => {
+  it('shows how many have landed, what they came to, and the one it is on — then the report', async () => {
+    runOnboardingImport.mockResolvedValue(job())
+    await mounted()
+    importNow()
+    await screen.findByRole('button', { name: 'Stop importing' })
+    stream().emit('status', {
+      reading: { running: false, read: 0, of: 0 },
+      job: job({ done: 2, counts: { imported: 1, existing: 1, conflict: 0, rejected: 0 }, current: 'weather' }),
+    })
+    expect(await screen.findByText('Importing 2 of 4')).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: 'Items imported' }).getAttribute('aria-valuenow')).toBe('50')
+    expect(screen.getByText('1 imported · 1 already here')).toBeTruthy()
+    expect(screen.getByText('Now: weather')).toBeTruthy()
+    onboardingImportJob.mockResolvedValue(finished(report([IMPORTED_ROW])))
+    stream().emit('status', { reading: { running: false, read: 0, of: 0 }, job: job({ status: 'done', phase: 'finished', done: 4 }) })
+    expect(await screen.findByRole('group', { name: 'Brought over' })).toBeTruthy()
+    expect(FakeEventSource.all.every((es) => es.closed)).toBe(true)
+  })
+
+  it('a stop asks the gateway, says it is stopping, and the report names what was not reached', async () => {
+    runOnboardingImport.mockResolvedValue(job())
+    await mounted()
+    importNow()
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop importing' }))
+    await waitFor(() => expect(stopOnboardingImport).toHaveBeenCalled())
+    expect(await screen.findByText('Stopping after the item it is on. Everything that has landed is kept.')).toBeTruthy()
+    onboardingImportJob.mockResolvedValue(job({
+      status: 'stopped', phase: 'finished', done: 1,
+      report: report([IMPORTED_ROW], { not_reached: ['f3', 'f4'] }),
+    }))
+    stream().emit('status', { reading: { running: false, read: 0, of: 0 }, job: job({ status: 'stopped', phase: 'finished' }) })
+    const section = await screen.findByRole('group', { name: 'Not reached, because you stopped' })
+    expect(section.textContent).toContain('The import stopped before 2 items you picked, so nothing was written for them. Importing again brings them over.')
+    expect(section.textContent).toContain('MCP servers · github')
+    expect(section.textContent).toContain('Skills · tidy-notes')
+    expect(summaryOfReport(report([IMPORTED_ROW], { not_reached: ['f3', 'f4'] }))).toBe('1 imported · 2 left when you stopped')
+  })
+
+  it('a gateway restart under the import is said as such, with a way to scan again', async () => {
+    runOnboardingImport.mockResolvedValue(job())
+    await mounted()
+    importNow()
+    await screen.findByRole('button', { name: 'Stop importing' })
+    // After the restart the stream reconnects to a gateway that has run no import.
+    stream().emit('status', { reading: { running: false, read: 0, of: 0 }, job: null })
+    expect(await screen.findByText('The import stopped when PersonalClaw restarted.')).toBeTruthy()
+    expect(screen.getByText(/Everything that landed before it stopped is kept, and nothing is half written\./)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Scan again' }))
+    await waitFor(() => expect(onboardingImportScan).toHaveBeenCalledTimes(2))
+  })
+
+  it('coming back to the step while an import runs shows that import, not a fresh listing', async () => {
+    onboardingImportJob.mockResolvedValue(job({ done: 3, total: 9 }))
+    mount()
+    expect(await screen.findByText('Importing 3 of 9')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Import \d/ })).toBeNull()
+  })
+
+  it('a job that failed shows the gateway\'s sentence and offers the import again', async () => {
+    runOnboardingImport.mockResolvedValue(job())
+    await mounted()
+    importNow()
+    await screen.findByRole('button', { name: 'Stop importing' })
+    stream().emit('status', {
+      reading: { running: false, read: 0, of: 0 },
+      job: job({ status: 'failed', phase: 'finished', error: 'The import stopped after a write failed: disk full.' }),
+    })
+    expect(await screen.findByText('The import stopped after a write failed: disk full.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
+  })
+
+  it('an import another tab already started is watched, not started twice', async () => {
+    runOnboardingImport.mockRejectedValue(Object.assign(new Error('An import is already running.'), { code: 'import_running' }))
+    await mounted()
+    onboardingImportJob.mockResolvedValue(job({ done: 1, total: 7 }))
+    importNow()
+    expect(await screen.findByText('Importing 1 of 7')).toBeTruthy()
+  })
+})
+
+describe('the first scan of a long history is never a bare spinner', () => {
+  it('says what it is doing while it looks', async () => {
+    onboardingImportScan.mockReturnValue(new Promise(() => {}))
+    mount()
+    expect(await screen.findByText('Looking for other agent tools on this machine…')).toBeTruthy()
+  })
+})
+
+describe('the counts of a long history read as numbers', () => {
+  it('writes a four-digit count with its separator, on the button and on the group', async () => {
+    const many = Array.from({ length: 1234 }, (_, n) =>
+      item(`c${n}`, 'conversations', `projects/a/${n}.jsonl`, { title: `Conversation ${n}` }))
+    onboardingImportScan.mockResolvedValue({ ...scan(many), categories: [...CATEGORIES, 'conversations'] })
+    await mounted()
+    expect(screen.getByRole('button', { name: 'Import 1,234 items' })).toBeTruthy()
+    expect(screen.getByText('1,234 things found')).toBeTruthy()
+    expect(rowText('Conversations')).toContain('1,234')
   })
 })

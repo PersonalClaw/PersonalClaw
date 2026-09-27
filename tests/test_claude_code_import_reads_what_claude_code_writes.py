@@ -304,18 +304,25 @@ def test_a_transcript_brings_the_conversation_and_leaves_tool_output_behind(noor
     item = _items(scan_source("claude_code"), ImportCategory.CONVERSATIONS)[
         "projects/-Users-noor/80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl"
     ]
-    body = json.dumps(item.payload["messages"])
+    # The scan names the conversation and counts it; the import reads the messages themselves.
+    assert item.payload == {}, "a scan holds no conversation's messages"
+    assert item.note == "4 messages. Tool calls come over by name; their output does not."
+    from personalclaw.onboarding_import.sources.claude_code import read_for_import
+
+    conversation, _redactions = read_for_import(item)
+    body = json.dumps(conversation["messages"])
     for absent in ("SUMMARY-TEXT", "SIDECHAIN-TEXT", "META-TEXT", "TOOL-OUTPUT"):
         assert absent not in body
-    roles = [m["role"] for m in item.payload["messages"]]
+    roles = [m["role"] for m in conversation["messages"]]
     assert roles == ["user", "tool", "assistant", "user", "tool", "tool", "tool", "assistant"]
-    assert item.payload["messages"][1]["content"] == "Bash: Find the process listening on 5432"
+    assert conversation["messages"][1]["content"] == "Bash: Find the process listening on 5432"
     assert (
         item.title
+        == conversation["title"]
         == "Postgres.app won't start, says port 5432 is already in use. What's holding it?"
     )
     assert item.origin == "Project · ~"
-    assert item.payload["created_at"] == "2026-08-11T12:52:40.085Z"
+    assert conversation["created_at"] == "2026-08-11T12:52:40.085Z"
 
 
 def test_a_transcript_line_nested_past_the_recursion_limit_does_not_end_the_scan(

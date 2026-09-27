@@ -5375,6 +5375,10 @@ export interface OnboardingImportItem {
   secrets_skipped: number; redactions: number
   /** A skill's supply-chain scan, `null` for anything else. */
   scan: OnboardingImportSkillScan | null
+  /** True for a conversation the scan has only LOOKED into — read as far as its first prompt,
+   *  which names it — and not yet read in full: its `note` says so instead of counting its
+   *  messages, and `redactions` is not a count yet. The reading pass makes it final. */
+  provisional?: boolean
 }
 /** The supply-chain scan a skill's install will make, made when the tool was scanned, so the
  *  step shows it before anything is chosen. A `dangerous` verdict is `rejected` in the plan. A
@@ -5397,12 +5401,20 @@ export interface OnboardingImportSource {
   secrets_skipped: number; redactions: number
   notes: string[]
   not_imported: OnboardingImportNotImported[]
+  /** Of this tool's conversation files, how many the scan has read in full. Short of `of`, a
+   *  conversation count can still change and an unreadable one is not named yet. */
+  reading?: { read: number; of: number }
 }
+/** The background reading of the conversations a scan only looked into: files read in full so
+ *  far, of every conversation file the scan found. `running` false with `read < of` is a pass
+ *  that stopped (an import started): the next scan starts it again. */
+export interface OnboardingImportReading { running: boolean; read: number; of: number }
 /** `GET /api/onboarding/import` — every registered source (found or not) plus the
  *  closed category vocabulary, in the writers' declaration order. */
 export interface OnboardingImportScan {
   sources: OnboardingImportSource[]
   categories: string[]
+  reading?: OnboardingImportReading
 }
 /** What happened to ONE item at its destination. The four-value vocabulary is
  *  closed: `conflict` means something different was already there and was KEPT,
@@ -5422,9 +5434,33 @@ export interface OnboardingImportReport {
   results: OnboardingImportOutcome[]
   unselected: OnboardingImportItem[]
   missing: string[]
+  /** Picked items a stop left unreached: nothing was written for them, so importing again
+   *  brings them over. */
+  not_reached?: string[]
   secrets_skipped: number; redactions: number
   notes: string[]
 }
+/** One import, running or finished (`POST /api/onboarding/import` answers it `202`). It writes
+ *  the picks one at a time, every kind before conversations; `done` of `total` have landed or
+ *  been reported, `counts` tallies their outcomes and `current` names the one it is on.
+ *  `stopped` is a stop taking effect between two items (the report's `not_reached` lists the
+ *  rest); `failed` is a write that raised, `error` its sentence. `report` is present once
+ *  finished — on `GET …/job`, never on the stream's frames. */
+export interface OnboardingImportJob {
+  id: string
+  status: 'running' | 'done' | 'stopped' | 'failed'
+  phase: 'scanning' | 'importing' | 'finished'
+  stopping: boolean
+  total: number; done: number
+  counts: Record<string, number>
+  current: string
+  started_at: number; finished_at: number | null
+  error: string
+  report?: OnboardingImportReport | null
+}
+/** A frame of `GET /api/onboarding/import/stream`: the reading pass and the import job, as the
+ *  gateway has them now. `job` is null when this gateway has run none — after a restart too. */
+export interface OnboardingImportStatus { reading: OnboardingImportReading; job: OnboardingImportJob | null }
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
@@ -7288,12 +7324,20 @@ export const api = {
   /** What other local agent tools on this machine hold (PEP-5). Read-only in both
    *  directions — it writes neither their config nor our home. */
   onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
-  /** Import the picked items. The server RE-SCANS and keeps only the fingerprints its own
-   *  scan found: ids travel, never items, so a caller can never name a directory to copy in.
-   *  `accepted` carries, for each picked skill whose scan has warnings, the `consent` its scan
-   *  showed: the warnings the user accepted, which its install checks against what it installs. */
+  /** Start importing the picked items: the job, which runs on in the gateway. The server
+   *  RE-SCANS and keeps only the fingerprints its own scan found: ids travel, never items, so a
+   *  caller can never name a directory to copy in. `accepted` carries, for each picked skill
+   *  whose scan has warnings, the `consent` its scan showed: the warnings the user accepted,
+   *  which its install checks against what it installs. */
   runOnboardingImport: (body: { fingerprints: string[]; accepted?: Record<string, string> }) =>
-    post<OnboardingImportReport>('/api/onboarding/import', body),
+    post<OnboardingImportJob>('/api/onboarding/import', body),
+  /** The running or last import, with its report once finished — `null` when this gateway has
+   *  run none (a first visit, or after a restart). */
+  onboardingImportJob: () => get<{ job: OnboardingImportJob | null }>('/api/onboarding/import/job').then((r) => r.job),
+  /** Stop the running import after the item it is on. */
+  stopOnboardingImport: () => del('/api/onboarding/import/job'),
+  /** Bare URL for EventSource — `status` frames (`OnboardingImportStatus`) twice a second. */
+  onboardingImportStreamUrl: () => '/api/onboarding/import/stream',
   /** The model step's VERIFICATION — build what chat would build, and report the verdict.
    *  Always 200: a refusal is a body, not a throw, because the three envelope lines are
    *  the product here and an exception would flatten them into one string. */

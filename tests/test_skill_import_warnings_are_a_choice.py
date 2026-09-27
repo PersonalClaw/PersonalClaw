@@ -18,6 +18,7 @@ with customer impact".
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -283,8 +284,15 @@ async def test_the_route_carries_the_acceptance_and_refuses_a_malformed_one(noor
                 "accepted": {release["fingerprint"]: release["scan"]["consent"]},
             },
         )
-        assert good.status == 200
-        rows = (await good.json())["results"]
+        assert good.status == 202
+        # The import runs as a job: its report is the finished job's.
+        for _ in range(500):
+            job = (await (await client.get("/api/onboarding/import/job")).json())["job"]
+            if job["status"] != "running":
+                break
+            await asyncio.sleep(0.02)
+        assert job["status"] == "done"
+        rows = job["report"]["results"]
         assert [(r["key"], r["outcome"]) for r in rows] == [("feedsmith-release", "imported")]
 
 

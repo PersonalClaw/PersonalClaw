@@ -24,9 +24,17 @@ This module never writes: the foreign root is strictly read-only.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
-from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    SensitivePaths,
+    is_sensitive_path,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
 
 #: Filenames that are credential stores by convention. Checked in addition to
 #: ``is_sensitive_path`` because that predicate anchors on the real ``$HOME`` and a
@@ -38,13 +46,34 @@ _SECRET_FILE_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: The protected locations of the walk under way (:func:`one_walk`), or ``None`` outside one.
+_WALK: ContextVar[SensitivePaths | None] = ContextVar("onboarding_import_walk", default=None)
+
+
+@contextmanager
+def one_walk() -> Iterator[None]:
+    """Resolve the platform's protected locations once for every path :func:`refuses` is asked
+    about inside this block: a scan of another tool, which asks about each file it lists.
+
+    A months-long history is thousands of files, and resolving the same protected locations for
+    each of them was most of what listing them cost. Inside a walk they are resolved when it
+    starts; every path asked about is still resolved on its own
+    (:class:`~personalclaw.security.SensitivePaths`). Outside one, each call resolves them afresh.
+    """
+    token = _WALK.set(SensitivePaths())
+    try:
+        yield
+    finally:
+        _WALK.reset(token)
+
 
 def refuses(path: Path | str) -> bool:
     """True when this path must not be opened at all (floor 1)."""
     p = Path(path)
     if _SECRET_FILE_RE.search(p.name):
         return True
-    return is_sensitive_path(str(p))
+    walk = _WALK.get()
+    return walk(str(p)) if walk is not None else is_sensitive_path(str(p))
 
 
 def safe_text(text: str) -> tuple[str, int]:
@@ -56,6 +85,18 @@ def safe_text(text: str) -> tuple[str, int]:
     cleaned, creds = redact_credentials(text)
     cleaned, urls = redact_exfiltration_urls(cleaned)
     return cleaned, len(creds) + len(urls)
+
+
+def screened_failure(exc: BaseException, *, limit: int = 200) -> str:
+    """An exception's own words, screened once and clamped to a line.
+
+    Screened HERE, at the one boundary where an exception becomes a user-visible string: a
+    writer's ``OSError`` names a path, and a path from a foreign root can itself look like a
+    credential. Screening at entry (rather than composing a sentence first and screening that) is
+    what keeps the redactor from eating a field name it was never shown.
+    """
+    cleaned, _ = safe_text(str(exc) or exc.__class__.__name__)
+    return cleaned[:limit]
 
 
 def read_text_safely(path: Path) -> tuple[str, int, int]:
