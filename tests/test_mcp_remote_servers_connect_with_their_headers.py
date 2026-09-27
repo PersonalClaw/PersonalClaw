@@ -36,6 +36,7 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
+from mcp_owner_allowed import allow_configured, confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
@@ -187,6 +188,8 @@ def _call(method: str, body: dict | None = None):
         read = _call("GET")
         if read.status == 200:
             headers["If-Match"] = f'"{json.loads(read.text)["revision"]}"'
+        # And resent once the owner agreed to what the server runs (`mcp_grants`).
+        body = confirmed(body or {})
     req = make_mocked_request(
         method, f"/api/mcp/servers/{NAME}", headers=headers, match_info={"name": NAME}
     )
@@ -204,6 +207,7 @@ def _say_hello() -> tuple[bool, str]:
     async def run() -> tuple[bool, str]:
         reg = McpClientRegistry()
         try:
+            allow_configured(NAME)  # the owner's yes (`mcp_grants`): the subject is the connection
             reg.load_from_specs(_personalclaw_mcp_specs())
             conn = reg.get(NAME)
             assert conn is not None, "the native client has no connection for the server"
@@ -217,6 +221,7 @@ def _say_hello() -> tuple[bool, str]:
 def _probe():
     from personalclaw.mcp_discovery import probe_one
 
+    allow_configured(NAME)  # the owner's yes (`mcp_grants`): the subject is the probe
     return asyncio.run(probe_one(NAME))
 
 
@@ -465,13 +470,23 @@ _IMPORT_DRIVER = textwrap.dedent("""
         app.router.add_get("/api/mcp", h.api_mcp_servers)
         app.router.add_get("/api/mcp/importable", h.api_mcp_importable)
         app.router.add_post("/api/mcp/apply", h.api_mcp_apply)
+        app.router.add_post("/api/mcp/servers/{name}/allow", h.api_mcp_server_allow)
         out = {}
         async with TestClient(TestServer(app)) as c:
             out["importable"] = await (await c.get("/api/mcp/importable")).text()
             change = {"name": NAME, "personalclaw": True, "ccGlobal": True}
             resp = await c.post("/api/mcp/apply", json={"changes": [change]})
             out["apply"] = await resp.json()
-            out["listed"] = await (await c.get("/api/mcp")).text()
+            listed = await (await c.get("/api/mcp")).json()
+            out["listed"] = json.dumps(listed)
+            # An imported server waits for its owner's Allow, which shows what it connects to.
+            row = next(r for r in listed if r["name"] == NAME)
+            out["waiting"] = row["status"]
+            allow = {"revision": row.get("allowRevision")}
+            asked = await c.post(f"/api/mcp/servers/{NAME}/allow", json=allow)
+            out["asked"] = (await asked.json())["error"]["code"]
+            yes = await c.post(f"/api/mcp/servers/{NAME}/allow", json={**allow, "confirm": True})
+            out["allowed"] = yes.status
             await asyncio.gather(*app["state"]._background_tasks, return_exceptions=True)
 
         reg = McpClientRegistry()
@@ -546,6 +561,11 @@ def test_a_server_imported_from_claude_code_connects_with_its_headers(tmp_path, 
     assert spec["type"] == remote.transport and spec["url"] == remote.url
     assert AUTH not in (pclaw_home / "mcp.json").read_text(encoding="utf-8")
     assert claude.read_bytes() == claude_before, "importing modified Claude Code's file"
+    assert (out["waiting"], out["asked"], out["allowed"]) == (
+        "waiting",
+        "confirmation_required",
+        200,
+    ), out
 
     assert out["call"] == [True, "hello claw"], f"the imported server did not answer: {out}"
     assert out["probe"] == {"status": "ok", "error": "", "tools": ["hello"]}, out["probe"]

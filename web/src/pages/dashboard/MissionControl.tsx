@@ -346,6 +346,7 @@ export function MissionControl() {
     // heading read "Mi▢sion Control"), and the body is the centered content column.
     <WorkbenchLayout topBar={<TopBar keepCornerPadding left={<PageTitle>Mission Control</PageTitle>} />}>
       <section
+        role="region"
         aria-label="Mission Control"
         className="mx-auto flex min-w-0 flex-col gap-l px-l py-l"
         style={{ maxWidth: 'var(--content-width)' }}

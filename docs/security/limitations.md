@@ -489,8 +489,9 @@ run under your own account:
   **Install engine** puts in that child's own Python environment, `apps/<app>/venv`
   (`local_models/sidecar.py::SidecarInstall`);
 - a backend, started as a process on this machine (`apps/backend_runtime.py`);
-- the MCP servers in its manifest's `mcpServers`, each a command the gateway launches with
-  the child allowlist and the `env` the manifest declares for it, whose secret references
+- the MCP servers in its manifest's `mcpServers`, each a command the gateway launches, once you
+  allow it on the Tools page, with the child allowlist and the `env` the manifest declares for it,
+  whose secret references
   resolve only the app's own secrets (`apps/mcp_bridge.py`, `mcp_discovery.py::stdio_spawn_env`,
   `config/secret_refs.py`);
 - setup hooks (`setup.onInstall` and the rest), shell commands run at install, update,
@@ -577,6 +578,26 @@ opened from another machine over plain `http://` is refused with a sentence that
   client ID of an app you registered there yourself.
 - **A sign-in in progress lives in the gateway's memory.** A restart while you are on the
   authorization server's page drops it, and you start again from the Tools page.
+
+## 9. Your Allow for an MCP server covers what it runs, not what that loads
+
+A server runs only once you allowed its definition (`mcp_grants.py`): how it is reached, its
+command, arguments and folder, the names of the variables it sets, and a remote server's address
+and header names. That is what you are shown, so that is what a yes is to.
+
+- **The code behind the command is not in it.** A command that fetches code when it starts runs
+  whatever that fetch returns: `npx some-package` downloads the package's latest version each
+  time, so your yes to the command is not a yes to one version of the code. Pin a version, or point
+  the command at a program on your disk. An app update keeps the yes for a server whose definition
+  it leaves unchanged, since the Store's update consent is where you are asked about the new code.
+- **Values are not in it.** Replacing a secret under the same name asks nothing: nobody is shown
+  a secret, so no yes could be to one.
+- **Another tool's own servers are its business.** PersonalClaw never hands Claude Code a server
+  that waits (`/api/mcp/apply`'s `ccGlobal`), but a server you configure in Claude Code or Codex
+  runs there under that tool's rules, whatever PersonalClaw's list says.
+- **On Linux, a missing `mcp.json` can be created by the agent's shell.** The read-only bind needs
+  a file to bind, so a home with no `mcp.json` yet leaves the path writable to the agent's shell,
+  as it does for `config.json`. A definition written there waits for your Allow like any other.
 
 ## Why these are listed, not fixed
 

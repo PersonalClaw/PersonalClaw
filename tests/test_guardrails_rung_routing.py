@@ -643,7 +643,7 @@ def test_the_store_trigger_seam_records_the_reversal_handle(_isolated_home):
 
 #: Every module that resolves an action provider and RUNS it, mirroring
 #: `test_action_provider_chokepoints.EXECUTION_SITES`. The manual Run path
-#: (`dashboard/handlers/triggers`) is excluded: a user pressing Run IS the approval a rung
+#: (`dashboard/handlers/trigger_runs`) is excluded: a user pressing Run IS the approval a rung
 #: withholds for, and routing it would refuse the click that authorised the action.
 ROUTED_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "the lifecycle-hook fire path"),

@@ -16,6 +16,7 @@ import { setActivation } from '../../app/appActivation'
 import { HELD_CHANGE_REASON, presentSecrets, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { ConsentDeclined } from '../../lib/securityConsent'
 
 /** A multiInstance=true provider rendered as a frame for N named instances.
  *  Each instance has its own schema-driven config (test / edit / delete); an
@@ -169,7 +170,11 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
       // Only a failure is reported here: a landed save closes the editor (`onSaved`), and a stale
       // copy keeps it open with the notice below holding the edit.
       const base = editableInstance(inst)
-      await reportingWrite('save this instance', () => guard.save(base, config, rebaseRecord(base.value, config)))
+      await reportingWrite('save this instance', async () => {
+        try { await guard.save(base, config, rebaseRecord(base.value, config)) }
+        // Declined in the dialog that said what it would run: nothing was saved, the editor stays open.
+        catch (e) { if (!(e instanceof ConsentDeclined)) throw e }
+      })
     } finally { setSaving(false) }
   }
   const remove = async () => {
@@ -241,6 +246,8 @@ function AddInstanceForm({ ext, schema, onDone }: {
     setSaving(true); setError('')
     try { await api.createProviderInstance(ext.name, { display_name: name.trim(), config: { ...schemaDefaults(schema), ...config } }); onDone(true) }
     catch (e) {
+      // Declined in the dialog that said what it would run: nothing was created, the form stays as typed.
+      if (e instanceof ConsentDeclined) { setSaving(false); return }
       let msg = e instanceof Error ? e.message : 'Failed to create instance'
       try { const p = JSON.parse(msg); msg = (p.error || msg) + (Array.isArray(p.details) && p.details.length ? `: ${p.details.join('; ')}` : '') } catch { /* raw */ }
       setError(msg); setSaving(false)

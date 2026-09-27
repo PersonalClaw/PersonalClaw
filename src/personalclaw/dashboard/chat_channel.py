@@ -6,7 +6,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.dashboard.chat_persistence import save_session_to_history
-from personalclaw.dashboard.chat_utils import _history_key_for
+from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.request_validation import json_object_body
 from personalclaw.security import redact_and_truncate
@@ -185,7 +185,9 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    history_key = _history_key_for(session.key)
+    # Where this chat's transcript IS on disk: a chat that started on a channel keeps its bare
+    # key, a dashboard chat its `dashboard:` form. Prefixing it would read an empty file.
+    history_key = persisted_history_key(conversation_log, session.key)
     if not conversation_log.read_messages(history_key):
         return web.json_response(
             {"error": "This conversation has no messages to hand off yet."}, status=400

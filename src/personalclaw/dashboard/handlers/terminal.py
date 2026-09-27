@@ -116,15 +116,15 @@ def _get_config(request: web.Request) -> dict:
 
 
 # P25 — tmux-backed persistence. Opt-in (config `dashboard.terminal.persist`) AND requires
-# the `tmux` binary; both gates default to the in-process PTY (today's behavior). A dedicated
-# socket (`-L personalclaw`) isolates our sessions from the user's own tmux.
+# the `tmux` binary; both gates default to the in-process PTY (today's behavior). The home's own
+# tmux server (`tmux_substrate.server_flags`) isolates our sessions from the user's own tmux and
+# from every other PersonalClaw home.
 #
-# The socket and the name mapping come from `tmux_substrate`, not from local literals: EI-6's
-# boot recovery sweep interrogates this same server to decide whether a run's worker outlived
-# the gateway. Two copies of "which socket" is how a reaper and a sweep end up talking to
-# different daemons, and that disagreement is not symmetric — a sweep that cannot see a live
-# session concludes the work is dead.
-_TMUX_SOCKET = tmux_substrate.TMUX_SOCKET
+# Every tmux command, and the name mapping, comes from `tmux_substrate`, not from local
+# literals: the boot recovery sweep interrogates this same server to decide whether a run's
+# worker outlived the gateway. Two copies of "which socket" is how a reaper and a sweep end up
+# talking to different daemons, and that disagreement is not symmetric — a sweep that cannot
+# see a live session concludes the work is dead.
 
 
 def _persist_enabled(request: web.Request) -> bool:
@@ -382,23 +382,14 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             # interactive terminal (like SSH), not agent-executed code.
             # Auth is enforced at WS handshake via token_auth_middleware.
             # See CLI_PANEL_DESIGN.md §8 "Security Considerations".
-            persistent = _persist_enabled(request)
-            if persistent:
-                # P25: the PTY runs a tmux CLIENT attached to a detached session (created
-                # if absent, re-attached if it survived a restart). `new-session -A -s`
-                # is attach-or-create; the daemon (not this client) owns the shell, so a
-                # gateway restart kills only the client — the shell + scrollback live on.
-                tname = _tmux_session_name(session_id)
-                argv = ["tmux", "-L", _TMUX_SOCKET, "new-session", "-A", "-s", tname, shell, "-l"]
-            else:
-                argv = [shell, "-l"]
-            # EI-4 §1.3(3): if this session picked a sandbox tier, open the shell INSIDE it —
-            # replace argv with the provider-wrapped launch (the SAME create_subprocess_limited
-            # below runs it, so the audited spawn site is unchanged). An interactive request is
-            # not an unattended run: when the chosen tier is unavailable we fall back to the host
-            # shell (path-guard-only) rather than hard-parking — the greyed-with-reason picker
-            # already warned the user pre-hoc. ``env={}`` so the guest/container uses its own base
-            # environment rather than the host terminal's.
+            # EI-4 §1.3(3): if this session picked a sandbox tier, open the shell INSIDE it — the
+            # provider-wrapped launch (the SAME create_subprocess_limited below runs it, so the
+            # audited spawn site is unchanged). An interactive request is not an unattended run:
+            # when the chosen tier is unavailable we fall back to the host shell (path-guard-only)
+            # rather than hard-parking — the greyed-with-reason picker already warned the user
+            # pre-hoc. ``env={}`` so the guest/container uses its own base environment rather than
+            # the host terminal's.
+            argv: list[str] | None = None
             _req_sandbox = _pending_sandbox.pop(session_id, "")
             if _req_sandbox:
                 from personalclaw.sandbox_providers import (
@@ -411,7 +402,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 if _provider is not None:
                     try:
                         argv = _provider.wrap(
-                            SandboxSpec(workspace_dir=cwd, egress_tier="all", env={}), argv
+                            SandboxSpec(workspace_dir=cwd, egress_tier="all", env={}),
+                            [shell, "-l"],
                         ).argv
                     except SandboxUnavailableError as _exc:
                         logger.info(
@@ -420,6 +412,20 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                             _req_sandbox,
                             _exc,
                         )
+            # A shell inside a tier is never a tmux client: a tier that mounts the home (a terminal
+            # opened at `~`) would hand the client the home's own server socket, and the shell
+            # would then run on the host, outside the sandbox it asked for.
+            persistent = argv is None and _persist_enabled(request)
+            if argv is None:
+                # P25: a persistent PTY runs a tmux CLIENT attached to a detached session
+                # (created if absent, re-attached if it survived a restart). `new-session -A -s`
+                # is attach-or-create; the daemon (not this client) owns the shell, so a
+                # gateway restart kills only the client — the shell + scrollback live on.
+                argv = (
+                    tmux_substrate.attach_argv(_tmux_session_name(session_id), shell)
+                    if persistent
+                    else [shell, "-l"]
+                )
             # Resource ceiling: the interactive terminal gets the ``none`` profile
             # explicitly — it is the user's own shell, not agent-executed code, so it must
             # carry no limits and no OOM bias. The ``none`` profile makes the helper a
@@ -752,7 +758,7 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
     # also covers a detached session that survived a restart (no in-memory entry).
     persistent = sess.persistent if sess else _persist_enabled(request)
     if persistent:
-        await _kill_tmux_session(session_id)
+        await tmux_substrate.kill_session(_tmux_session_name(session_id))
 
     if sess is None:
         # Not in-process. If it was a live tmux session we just killed it → ok; else 404.
@@ -782,24 +788,6 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
         resources=f"session={session_id}",
     )
     return web.json_response({"deleted": session_id})
-
-
-async def _kill_tmux_session(session_id: str) -> None:
-    """`tmux kill-session` for a PClaw terminal id on our socket. Best-effort/never-raises."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "tmux",
-            "-L",
-            _TMUX_SOCKET,
-            "kill-session",
-            "-t",
-            _tmux_session_name(session_id),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(proc.wait(), timeout=5)
-    except (FileNotFoundError, asyncio.TimeoutError, OSError):
-        pass
 
 
 async def api_terminal_list(request: web.Request) -> web.Response:
@@ -863,7 +851,7 @@ async def api_terminal_list(request: web.Request) -> web.Response:
     # re-attach after a restart, not just a page reload. Reconnecting maps session_id →
     # its tmux session (new-session -A re-attaches). Only when persistence is enabled.
     if _persist_enabled(request):
-        for tname in await _list_tmux_sessions():
+        for tname in await tmux_substrate.list_sessions():
             if not tname.startswith("pclaw-"):
                 continue
             sid = tname[len("pclaw-") :]
@@ -903,25 +891,6 @@ async def api_terminal_list(request: web.Request) -> web.Response:
             "sessions": sessions,
         }
     )
-
-
-async def _list_tmux_sessions() -> list[str]:
-    """Live tmux session names on our dedicated socket, or [] if tmux/none. Never raises."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "tmux",
-            "-L",
-            _TMUX_SOCKET,
-            "list-sessions",
-            "-F",
-            "#{session_name}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-        return [ln.strip() for ln in out.decode("utf-8", "replace").splitlines() if ln.strip()]
-    except (FileNotFoundError, asyncio.TimeoutError, OSError):
-        return []
 
 
 async def reap_orphaned_terminals(app: web.Application) -> None:

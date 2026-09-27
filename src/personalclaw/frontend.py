@@ -270,6 +270,8 @@ def build_frontend_sync(
         log("  Node.js not found — skipping frontend build")
         return
 
+    from personalclaw._installer import installer_env
+
     log(f"  Building {_DIR_NAME} (npm ci && npm run build)...")
     try:
         r = subprocess.run(
@@ -277,6 +279,7 @@ def build_frontend_sync(
             cwd=website_dir,
             capture_output=True,
             timeout=180,
+            env=installer_env(),
         )
         if r.returncode == 0:
             r = subprocess.run(
@@ -284,6 +287,7 @@ def build_frontend_sync(
                 cwd=website_dir,
                 capture_output=True,
                 timeout=120,
+                env=installer_env(),
             )
             if r.returncode == 0:
                 _propagate_dist(website_dir / "dist", proj_path, log)
@@ -319,6 +323,8 @@ async def build_frontend_async(
     # build` the bundler itself (vite/esbuild and its workers) — so `npm_x.kill()`
     # reached the npm wrapper and left the tree that was actually burning the deadline
     # running. Only a GROUP signal reaches it. See kill_timed_out.
+    from personalclaw._installer import installer_env
+
     npm_i = await asyncio.create_subprocess_exec(
         "npm",
         "ci",
@@ -327,6 +333,7 @@ async def build_frontend_async(
         cwd=str(website_dir),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
+        env=installer_env(),
         start_new_session=True,
     )
     try:
@@ -341,6 +348,7 @@ async def build_frontend_async(
             cwd=str(website_dir),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
+            env=installer_env(),
             start_new_session=True,
         )
         try:

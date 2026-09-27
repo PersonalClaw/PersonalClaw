@@ -120,6 +120,20 @@ says what that means.
   MCP servers and its scheduled jobs in its manifest, where install consent lists them.
   Subtrees are rows in `OWNER_ONLY_API_PATHS`; routes that share a family with an app's
   legitimate business are declared one by one in `apps/permissions.py::ROUTE_AUTHZ`.
+- **An MCP server runs only once you allowed what it runs.** A server started with a command
+  is a program run as you, and one at a URL gets whatever your agents send its tools, so the
+  gateway starts and connects to none until you allowed its definition (`mcp_grants.py`): how
+  it is reached, its command, arguments and folder, the names of the variables it sets, and a
+  remote server's address and header names. Values are not in the seal; nobody is shown them.
+  The Tools page's Add and Edit and the MCP Tool Servers card say exactly what will run and
+  save nothing until you agree (`400 confirmation_required`). Every other way a definition
+  arrives (Import from Claude Code or Codex, bringing a setup over, a pack's connector, an
+  app's manifest, a restore, a hand edit of `mcp.json`) writes one that waits for Allow on the
+  Tools page, which asks the same question first, and a change to anything in the seal waits
+  again. `mcp.json` is an owner-only path (`owner_only.py`), so an agent's shell and write
+  tools cannot change it, and the loopback internal secret reaches no `/api/mcp` route. Nor is
+  a server that waits handed to Claude Code, which would start it (`/api/mcp/apply`'s
+  `ccGlobal`).
 - **What your agents are told is yours.** An agent carries out its instructions with your
   tools under your approval settings, so an app token cannot write them: creating,
   editing, syncing or deleting an agent (its system prompt, tools, skills, model and approval
@@ -240,6 +254,14 @@ Content and requests arriving from outside the owner's trust boundary:
 - **Egress chokepoint** (`net/client.py` + `net/guard.py` + `net/policy.py`): the
   single outbound-HTTP seam with named policies, layered by
   `net/policy.py::egress_policy_for`.
+- **What a channel is handed is masked, once, by core** (`channel_delivery.py::MaskedDelivery`).
+  A channel app sends what it is handed to a service outside the machine, so every channel's
+  delivery handle is registered behind the mask, and every path to a channel (a reply, an owner
+  notification, a rich payload's strings, an automation's result, an approval's title, purpose and
+  input, a chat mirror, a stream's progress) hands it text masked with `redact_for_display`. A new
+  sending method in the `ChannelDelivery` protocol is masked or listed as sending no text, or
+  `tests/test_channels_are_handed_masked_text.py` fails. What an app sends on its own paths, text it
+  builds or relays without core, is the app's to mask.
 
 *Inbound MCP and external remote access (fail-closed inbound, fencing at
 ingestion) are owned — not yet
@@ -383,12 +405,15 @@ Data leaving the running system:
   user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
   (the service installer, the Claude Code importer, the terminal, the folder picker).
 - **A file-backed artifact points only where those surfaces reach** (`artifacts/source_files.py`).
-  Its `source_path` is a live pointer: every read of the artifact reads the file, and every save,
-  snapshot and revert writes it. So the pointer must pass the file explorer's own check
-  (`file_roots.admit`: symlinks and `..` resolved, no credential or secret file) against the
-  explorer's roots, or, for the owner, a loop's own folder, where an unbound loop keeps the
-  deliverable its completion graduates. Anything else is refused when it is set (`400`, or `403`
-  for an app), before the file is opened, so the answer says nothing about what the file holds.
+  Its `source_path` is a live pointer: every read of the artifact reads the file, and a save that
+  carries a body, or a revert, writes it. A create with no body starts as the file and never writes
+  it, and like a save it names the revision of the copy it read (`If-Match`), so a pointer at an
+  existing file is taken only by a caller who has read it. The pointer must pass the file
+  explorer's own check (`file_roots.admit`: symlinks and `..` resolved, no credential or secret
+  file) against the explorer's roots, or, for the owner, a loop's own folder, where an unbound
+  loop keeps the deliverable its completion graduates. Anything else is refused when it is set
+  (`400`, or `403` for an app), before the file is opened, so the answer says nothing about what
+  the file holds.
   Every read and write checks it again, so a pointer recorded earlier, or one whose file was later
   swapped for a symlink out, touches nothing.
 - **A loop's own folder is the owner's** (`file_roots.all_dashboard_roots`). Files shows it when the

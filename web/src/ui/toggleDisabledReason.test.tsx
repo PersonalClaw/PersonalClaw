@@ -115,7 +115,7 @@ describe('the triage, pinned per site', () => {
   })
 
   it('an in-flight toggle keeps the native attribute', () => {
-    // Five sites gate on `busy`. Re-clicking an in-flight switch is the failure this prevents, so a
+    // Six sites gate on `busy`. Re-clicking an in-flight switch is the failure this prevents, so a
     // reason here would be a regression, not an improvement.
     for (const rel of [
       'pages/schedule/ScheduleDetail.tsx',
@@ -127,6 +127,9 @@ describe('the triage, pinned per site', () => {
       // The pause switch on a scheduled report: same shape as the watched-source one
       // above — the only thing that ever disables it is its own in-flight PUT.
       'pages/knowledge/ReportsPage.tsx',
+      // #3725's allow switch on an agent-registered callback: disabled only while its own toggle
+      // POST is in flight.
+      'pages/triggers/CallbackDetail.tsx',
     ]) {
       const src = readFileSync(join(SRC, rel), 'utf8')
       const tag = src.match(/<Toggle\b[\s\S]{0,300}?\/>/)?.[0] ?? ''
@@ -135,7 +138,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 16 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 27 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] =>
@@ -186,7 +189,10 @@ describe('the triage, pinned per site', () => {
     // again: a reason only for the caller's precondition (the speech tile's switch is held while a
     // refused save waits on the user, `HELD_CHANGE_REASON`) and native while its own write is in
     // flight.
-    expect(sites.length).toBe(26)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'nine carry a reason; seventeen stay native').toBe(9)
+    // 🔺 26 → 27 (#3725): a callback an agent registers gained an allow switch on its Triggers
+    // detail page. It is disabled only while its own toggle POST is in flight, so it is the
+    // IN-FLIGHT class, stays native and is listed with the others above. Reasoned count holds at 9.
+    expect(sites.length).toBe(27)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'nine carry a reason; eighteen stay native').toBe(9)
   })
 })

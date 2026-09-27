@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from mcp_owner_allowed import allow_configured
 
 from personalclaw import mcp_client, mcp_discovery
 from personalclaw.config import loader as config_loader
@@ -93,6 +94,7 @@ async def _tools_page(spec: dict[str, Any], monkeypatch) -> AsyncIterator[TestCl
     """A home with *spec* as the one server in ``mcp.json`` and the routes the Tools page reads."""
     monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     write_mcp_document(config_loader.config_dir() / "mcp.json", {"mcpServers": {SERVER: spec}})
+    allow_configured(SERVER)
     monkeypatch.setattr(mcp_client, "_registry", None)
     monkeypatch.setattr(mcp_discovery, "_probe_cache", {})
     monkeypatch.setattr(mcp_handlers, "_mcp_probe_cache", [])

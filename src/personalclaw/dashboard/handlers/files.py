@@ -1511,8 +1511,9 @@ async def api_file_write(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON body"}, status=400)
 
     try:
+        # `content` as sent: an absent one is refused as absent, never read as "" first.
         validate_tool_args(
-            {"path": body.get("path", ""), "content": body.get("content", "")}, FILE_WRITE_SCHEMA
+            {"path": body.get("path", ""), "content": body.get("content")}, FILE_WRITE_SCHEMA
         )
     except ValidationError as exc:
         _sel().log_tool_invocation(
@@ -1558,9 +1559,7 @@ async def api_file_write(request: web.Request) -> web.Response:
         # That copy is the file as `file_as_read` shows it, with a marker for every value it masks.
         # Each marker is put back from the file itself, so saving an edit never writes one over
         # the key it hides.
-        content = keep_masked_spans(
-            str(body.get("content", "")), head.decode("utf-8", errors="replace")
-        )
+        content = keep_masked_spans(str(body["content"]), head.decode("utf-8", errors="replace"))
         tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
         try:
             try:

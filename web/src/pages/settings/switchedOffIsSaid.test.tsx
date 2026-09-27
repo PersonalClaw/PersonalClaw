@@ -105,6 +105,10 @@ describe('the Doctor, switched off', () => {
     expect(requested.filter((u) => u !== '/api/doctor'), 'a request whose answer the page already knows').toEqual([])
 
     routes['/api/doctor?fresh=1'] = { ok: true, core_ok: true, worst: '', capabilities: {}, skipped_capabilities: [], checked_at: 0 }
+    // Switched on, the page reads maintenance too. Answer it the way the gateway does (every key of
+    // `remediation_snapshot`), not with this stub's catch-all `{}`, which is no shape the server sends
+    // and crashed the section on `plan.length` after this test had already passed.
+    routes['/api/doctor/remediation'] = { score: 100, target_score: 90, deficits: [], plan: [], recent_runs: [] }
     fireEvent.click(screen.getByRole('button', { name: 'Turn the Doctor on' }))
     await waitFor(() => expect(writes).toContainEqual(expect.objectContaining({
       url: '/api/config/personalclaw', body: { path: 'resilience.doctor_enabled', value: true },

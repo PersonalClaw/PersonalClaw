@@ -458,19 +458,13 @@ _NOT_ROUTED_TO_THE_OWNER: dict[str, str] = {
         "lifecycle also tears down in a `finally`, so this needs its own read"
     ),
     # ── still outstanding: NO teardown at all, but every one is a leaf tmux client ──
-    # `tmux -L personalclaw <verb>` against our OWN server. A hung client is a leaked
-    # client, not a leaked tree, and `new_session` has 30 dependent test files — a
+    # `tmux -S <home>/tmux.sock <verb>` against the home's OWN server. A hung client is a
+    # leaked client, not a leaked tree, and `new_session` has 30 dependent test files — a
     # separable change, deliberately not swept in with this one.
     "tmux_substrate.py::new_session::proc": "outstanding: leaf tmux client, no teardown",
     "tmux_substrate.py::has_session::proc": "outstanding: leaf tmux client, no teardown",
     "tmux_substrate.py::list_sessions::proc": "outstanding: leaf tmux client, no teardown",
     "tmux_substrate.py::kill_session::proc": "outstanding: leaf tmux client, no teardown",
-    "dashboard/handlers/terminal.py::_kill_tmux_session::proc": (
-        "outstanding: leaf tmux client, no teardown"
-    ),
-    "dashboard/handlers/terminal.py::_list_tmux_sessions::proc": (
-        "outstanding: leaf tmux client, no teardown"
-    ),
 }
 
 #: Async spawn sites with NO ``TimeoutError`` handler in their function at all. Listed so

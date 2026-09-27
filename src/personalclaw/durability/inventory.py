@@ -1062,6 +1062,33 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,
         help="gateway auth store: login hash, 2FA enrolment, device pairing codes",
     ),
+    # The owner's yes to what runs as them (`owner_grants`): each MCP server's definition, each
+    # agent hook script, each heartbeat task, each callback. Machine-local: a yes is given where
+    # the owner was shown what runs, so what a restore or a sync brings from another machine waits
+    # for a yes here. One book per kind, and each book's lock file, in the one tree.
+    StateEntry(
+        id="owner_grants",
+        kind=KIND_TREE,
+        path="grants",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="what you allowed to run as you: MCP servers, hooks, heartbeat tasks, callbacks",
+    ),
+    # The callbacks an agent registered for an outside system to post results to
+    # (`webhook_callbacks.py`, #3725): each one's id and the context its unattended turn starts
+    # from. The owner's yes to each lives in `grants/` above, so a restore brings the registrations
+    # back registered-and-waiting until that store says otherwise. Replace-only for the same reason
+    # as the grants: one small document, and a callback merged in from another machine without its
+    # grant would only be a registration nobody answered there.
+    StateEntry(
+        id="webhook_callbacks",
+        kind=KIND_JSON_FILE,
+        path="webhook_callbacks.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_REPLACE_ONLY,
+        help="callbacks an agent registered so an outside system can hand it results later",
+    ),
     # 🔴 #2217 — the credential DESCRIPTORS an older release kept (`llm/credentials.py`
     # `CREDENTIALS_FILE`). Nothing writes it any more: the gateway moves it into the credential
     # store at boot and deletes it (`move_credentials_file`), and it stays on a home only while
@@ -1616,6 +1643,17 @@ IGNORED: tuple[str, ...] = (
     # GB), and a dependency may ship a `.db` file that is data, not a store this gateway holds
     # open — which the undeclared-database audit would otherwise report.
     "app-python",
+    # What the installers PersonalClaw runs keep (`_installer.installer_cache_env`): npm's cache,
+    # which npm cannot run without, and the temp folder pip, uv and npm run with. Kept in the home
+    # so none of it lands in the user's own `~/.npm` or temp folder, and ignored because it is a
+    # cache: a missing one is refilled on the next run, and restoring one is pointless. A specific
+    # name, not `cache`, because an ignored name is ignored at every depth and would hide a
+    # database in any folder called `cache`.
+    "installer-cache",
+    # The home's own tmux server socket (`tmux_substrate.server_flags`), which the home's
+    # persistent terminals and durable workers run in. MACHINE-LOCAL and process-scoped: a
+    # snapshot cannot carry a socket, and a restored home starts its own server on first use.
+    "tmux.sock",
     "update_check.json",  # last update check — regenerated on the next poll
     # The releases-LIST cache, the direct twin of update_check.json above: the
     # ETag-cached, offline-tolerant releases view the channel/pin resolver reads,
@@ -1764,6 +1802,19 @@ IGNORED: tuple[str, ...] = (
     # remains is a pre-import copy of state that now lives elsewhere — the same category as `*.bak`.
     "*.imported-*",
     "*.migrated",
+    # The record that this home already settled what an earlier release left OUTSIDE it on this
+    # machine (`outside_home.settle_previous_locations`: skills copied home from ~/.agents/skills,
+    # a saved pointer to the old default workspace dropped). It describes THIS machine's leftovers,
+    # so it must not travel: a restore onto another machine settles that machine's own, once.
+    ".outside-home-settled.json",
+    # The incremental shard export's change cursor (`durability/shards.dirty_entries`).
+    # MACHINE-LOCAL like `sync` and `shards` above: a cursor restored from another export would make
+    # the next incremental export skip exactly what changed since.
+    ".shard-state.json",
+    # A replace-restore's copy of what it replaced (`snapshot.py`, `pre-restore-<timestamp>/`), kept
+    # beside the home so the restore can be undone. Backing it up would nest the previous home
+    # inside every later snapshot, and a snapshot is itself the way back.
+    "pre-restore-*",
 )
 
 

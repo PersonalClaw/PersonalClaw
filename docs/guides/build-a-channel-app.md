@@ -110,6 +110,14 @@ delivery object at all; once you do, the kit asserts the MUST and SHOULD rows.
 `open_dm`, `resolve_user_name`, `is_tracked_channel` and `channel_info` are in none of the
 three tuples either — same caveat as above: doctrine, not an assertion.
 
+**Core masks what it hands you.** Every text core passes these methods has already been masked
+with the display mask, keys and exfiltration URLs replaced by `[REDACTED: …]`: a reply, a
+notification's title, every string of a rich payload, an automation's name, an approval's title,
+purpose and input, a stream's progress. It holds your handle behind the mask
+(`channel_delivery.MaskedDelivery`), so this is true whichever path the text came by, and your
+delivery methods need not mask it again. What your app sends on its own paths, text it builds or
+relays without core, is yours to mask (`personalclaw.sdk.channel.redact`).
+
 ### Declare capabilities honestly
 
 `ChannelCapabilities` is the routing input, so a field you set to `True` is a promise:

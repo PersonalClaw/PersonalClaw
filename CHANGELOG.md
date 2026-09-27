@@ -46,15 +46,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A chat that started on a channel can be continued on another one.**
 - **A check gate that fails ends what follows it, a revise closes the question it answered, every queued edit applies, and four surfaces say what happened.**
 - **A workflow's approval gate waits your approval window, a retry a grant ran settles its note, and a lifecycle hook's agent knows its trigger.**
 - **An Embedding rebind or clear reaches every memory store at its next use, and memory never compares one embedding model's vectors with another's.**
 - **The status chip says "Choose a model" when no model is chosen, not "12 degraded".**
+- **A media call names its model, like chat, and so does every binding.**
+- **A memory no model embedded joins semantic search once one is bound, a keyword hit ranks by its score, and the knowledge re-index re-embeds only what the model has not.**
+- **A notice about a surface going down says what is wrong, in the chip's words.**
 - **The chat list answers at once on a 12,005-chat history, the search index catches up in two minutes instead of five hours, and a search says when it has not looked in every chat.**
+
+- **A file-backed artifact never writes its file unless the request carries the text to write.**
+
 - **Only an approval lets what follows an approval gate run, a trigger that stops for you asks you, and every question a run asks is its own.**
 - **Signing in on one more device no longer signs another one out without a word; a device that is signed out is told why; and Settings → Devices lists every sign-in.**
 - **Nothing signs in for longer than 90 days, and asking for longer says so; and every refusal of a sign-in says why and how to sign in, in the desktop app too.**
 - **Installing an app's packages, speaking a reply, the Doctor's speech probe and uninstalling the service no longer leave anything outside PersonalClaw's home.**
+
+- **A first loop from onboarding stops after one cycle, each home has a tmux server of its own, and the last files PersonalClaw left outside its home are gone.**
 
 - **A CLI command that refuses exits 1 and says why on stderr, so a script can tell it did nothing.**
 - **A Repair on Settings → Models shows its download where you pressed it, and is checked for free space first.**
@@ -223,10 +232,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An MCP server runs only once you allow what it runs, and an agent cannot add one.**
+
 - **The operator ceiling bounds every approval grant: under `"approval": "ask"` nothing runs without a person, whatever an automation, an agent or a switch says.**
 - **A read-only run's write tools stay refused while a grant approves its calls.**
 - **An approval follows your setting as it is now: a change in Settings reaches the next call, even in a run already going, with no restart.**
 - **A tool call's audit row says what was decided, and by whom, in every runtime.**
+- **A channel is never handed a key: core masks every text it gives Slack, Telegram, Discord or email, once, before the app sends it.**
 - **The hourly backup exports your prompt override alone, not every file in your home with it.**
 - **What an agent writes no longer runs as you until you allow it: its webhook callbacks, its heartbeat tasks and the agent CLI's hooks.**
 

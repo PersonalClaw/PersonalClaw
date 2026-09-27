@@ -31,6 +31,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
+from mcp_owner_allowed import confirmed
 
 # A credential-shaped literal the redactor recognises. Not a real key.
 SECRET = "sk-ant-api03-" + ("A" * 20) + ("B" * 20) + ("C" * 15)
@@ -358,6 +359,9 @@ def test_renaming_an_agent_schedule_keeps_the_key_in_its_prompt(schedules):
                     "name": "Nightly digest",
                     "cron": "0 9 * * *",
                     "action": _agent_action(prompt),
+                    # A schedule that runs an agent needs the owner's yes to the grant (#3712),
+                    # which the create dialog sends with the rest.
+                    "confirm": True,
                 },
             )
         )
@@ -590,7 +594,7 @@ def test_an_mcp_edit_that_sends_the_mask_as_a_value_keeps_the_token(mcp_home):
     from personalclaw.config.credentials import get_credential
     from personalclaw.config.secret_refs import ref_key
 
-    added = _mcp("PUT", "gh", {"command": "echo", "env": {"GITHUB_TOKEN": TOKEN}})
+    added = _mcp("PUT", "gh", confirmed({"command": "echo", "env": {"GITHUB_TOKEN": TOKEN}}))
     assert added.status == 200, added.text
     spec = json.loads((mcp_home / "mcp.json").read_text())["mcpServers"]["gh"]
     key = ref_key(spec["env"]["GITHUB_TOKEN"])
@@ -600,7 +604,7 @@ def test_an_mcp_edit_that_sends_the_mask_as_a_value_keeps_the_token(mcp_home):
     resp = _mcp(
         "PUT",
         "gh",
-        {"command": "echo", "args": ["-v"], "env": {"GITHUB_TOKEN": SECRET_MASK}},
+        confirmed({"command": "echo", "args": ["-v"], "env": {"GITHUB_TOKEN": SECRET_MASK}}),
         headers={"If-Match": read["revision"]},
     )
     assert resp.status == 200, resp.text

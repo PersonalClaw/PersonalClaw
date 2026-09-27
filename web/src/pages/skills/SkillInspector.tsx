@@ -231,7 +231,7 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
       <div className="font-mono text-on-surface text-[0.8125rem]">{name} · SKILL.md</div>
       {content === null
         ? (fetchErr
-          ? <LoadError what="SKILL.md" error={fetchErr} onRetry={refresh} />
+          ? <LoadError what="skill file" error={fetchErr} onRetry={refresh} />
           : <Skeleton className="h-72 w-full" />)
         : <TextArea value={content} onChange={setContent} rows={18} mono disabled={held}
             disabledReason={held ? HELD_CHANGE_REASON : undefined} />}

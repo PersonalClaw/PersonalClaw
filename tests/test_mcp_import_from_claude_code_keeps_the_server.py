@@ -84,6 +84,7 @@ _DRIVER = textwrap.dedent("""
         app.router.add_get("/api/mcp", h.api_mcp_servers)
         app.router.add_get("/api/mcp/importable", h.api_mcp_importable)
         app.router.add_post("/api/mcp/apply", h.api_mcp_apply)
+        app.router.add_post("/api/mcp/servers/{name}/allow", h.api_mcp_server_allow)
         out = {}
         async with TestClient(TestServer(app)) as c:
             out["importable_body"] = await (await c.get("/api/mcp/importable")).text()
@@ -92,7 +93,15 @@ _DRIVER = textwrap.dedent("""
                 resp = await c.post("/api/mcp/apply", json={"changes": [change]})
                 out["apply_status"] = resp.status
                 out["apply"] = await resp.json()
-            out["listed"] = [s["name"] for s in await (await c.get("/api/mcp")).json()]
+            listed = await (await c.get("/api/mcp")).json()
+            out["listed"] = [s["name"] for s in listed]
+            if STEP == "import":
+                # Imported, it waits for the owner's Allow, which the Tools page sends.
+                row = next(s for s in listed if s["name"] == NAME)
+                out["waiting"] = [row["status"], row["allowed"]]
+                allow = {"revision": row.get("allowRevision"), "confirm": True}
+                resp = await c.post(f"/api/mcp/servers/{NAME}/allow", json=allow)
+                out["allow_status"] = resp.status
             after = await (await c.get("/api/mcp/importable")).json()
             out["importable_after"] = [s["name"] for s in after["servers"]]
             await asyncio.gather(*app["state"]._background_tasks, return_exceptions=True)
@@ -194,6 +203,8 @@ def test_an_imported_server_is_kept_and_still_runs_after_a_restart(world) -> Non
     assert first["apply_status"] == 200, first
     assert NAME in first["listed"], f"the import did not keep the server: {first['apply']}"
     assert NAME not in first["importable_after"], "an imported server is still offered for import"
+    assert first["waiting"] == ["waiting", False], "an imported server ran before the owner's yes"
+    assert first["allow_status"] == 200, first
 
     mcp_json = world["home"] / "mcp.json"
     spec = _servers(mcp_json).get(NAME)

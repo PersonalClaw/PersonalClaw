@@ -258,7 +258,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
               Have them send this code to your bot in a direct message on {label}:
             </div>
             <div className="flex items-center gap-s">
-              <span data-type="headline-s" className="font-mono tracking-[0.2em] text-on-surface" aria-label={`Pairing code ${code.code.split('').join(' ')}`}>{code.code}</span>
+              <span role="img" data-type="headline-s" className="font-mono tracking-[0.2em] text-on-surface" aria-label={`Pairing code ${code.code.split('').join(' ')}`}>{code.code}</span>
               <Button size="xs" variant="ghost" onClick={() => void copyText(code.code, 'the pairing code')} ariaLabel="Copy the pairing code">
                 <Copy size={12} /> Copy
               </Button>

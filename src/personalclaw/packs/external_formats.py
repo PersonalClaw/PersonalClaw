@@ -445,7 +445,6 @@ def export_entities(
     root = Path(dest_dir).expanduser()
     if root.exists() and not root.is_dir():
         raise ExportPathRefused(f"destination is not a directory: {root}")
-    root.mkdir(parents=True, exist_ok=True)
 
     files = fmt.render(entities)
     targets = [(_resolve_target(root, rf.relpath), rf) for rf in files]
@@ -459,6 +458,9 @@ def export_entities(
             hint = "not written by personalclaw" if not _is_ours(target) else "pass overwrite=True"
             raise ExportClobberRefused(f"refusing to overwrite {target} ({hint})")
 
+    # Only now, with every check passed: the destination is another tool's folder, and a
+    # refused export must not leave one there it created.
+    root.mkdir(parents=True, exist_ok=True)
     result = ExportResult(fmt.name, root)
     for target, rf in targets:
         target.parent.mkdir(parents=True, exist_ok=True)

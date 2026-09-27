@@ -425,6 +425,9 @@ class TestControllerDispatch:
                 "personalclaw.service.controller.current_platform",
                 return_value=Platform.SYSTEMD,
             ),
+            # Never the installed file of this machine: its home is a real one, and uninstalling
+            # stops that home's tmux server.
+            patch.object(svc_linux, "installed_environment", return_value={}),
             patch.object(svc_linux, "uninstall") as mock_un,
         ):
             rc = controller.uninstall_service()
@@ -440,11 +443,66 @@ class TestControllerDispatch:
                 "personalclaw.service.controller.current_platform",
                 return_value=Platform.LAUNCHD,
             ),
+            # Never the installed file of this machine: its home is a real one, and uninstalling
+            # stops that home's tmux server.
+            patch.object(svc_macos, "installed_environment", return_value={}),
             patch.object(svc_macos, "uninstall") as mock_un,
         ):
             rc = controller.uninstall_service()
         assert rc == 0
         mock_un.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "plat, module, env, home",
+        [
+            (
+                Platform.LAUNCHD,
+                "macos",
+                {"HOME": "/Users/x", "PERSONALCLAW_HOME": "/Users/x/pc-home"},
+                "/Users/x/pc-home",
+            ),
+            (Platform.SYSTEMD, "linux", {"HOME": "/home/x"}, "/home/x/.personalclaw"),
+        ],
+    )
+    def test_uninstall_stops_the_services_own_tmux_server(
+        self, monkeypatch, plat, module, env, home
+    ):
+        """The gateway's persistent terminals and durable workers run on its home's own tmux
+        server, which outlives the gateway by design: launchd stops only the job's own process
+        group, and tmux leaves it. An uninstalled service must not leave that server running,
+        nor its socket in the home."""
+        from personalclaw import tmux_substrate
+        from personalclaw.service import controller
+
+        platform_module = getattr(controller, module)
+        order: list[object] = []
+        monkeypatch.setattr(platform_module, "installed_environment", lambda: dict(env))
+        monkeypatch.setattr(platform_module, "uninstall", lambda: order.append("uninstall"))
+        monkeypatch.setattr(
+            tmux_substrate,
+            "kill_server",
+            lambda home=None: order.append(("kill", str(home))),
+            raising=False,
+        )
+        with patch("personalclaw.service.controller.current_platform", return_value=plat):
+            assert controller.uninstall_service() == 0
+        assert order == ["uninstall", ("kill", home)]
+
+    def test_uninstall_with_no_service_installed_stops_nothing(self, monkeypatch):
+        from personalclaw import tmux_substrate
+        from personalclaw.service import controller
+
+        killed: list[object] = []
+        monkeypatch.setattr(controller.macos, "installed_environment", lambda: {})
+        monkeypatch.setattr(controller.macos, "uninstall", lambda: None)
+        monkeypatch.setattr(
+            tmux_substrate, "kill_server", lambda home=None: killed.append(home), raising=False
+        )
+        with patch(
+            "personalclaw.service.controller.current_platform", return_value=Platform.LAUNCHD
+        ):
+            assert controller.uninstall_service() == 0
+        assert killed == []
 
     def test_status_routes_to_systemd_active(self, capsys):
         """status() returns 0 when active, prints the systemctl output."""

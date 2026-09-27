@@ -185,11 +185,12 @@ summary, not a substitute for them.
 
 ### What runs as the owner is owner-only (`owner_only.py`)
 
-Four places in the home hold what runs as the owner and what they allowed: `config.json` (among
-much else, the agent CLI's own hooks, `agent.agent_hooks`), `hooks/` (the scripts those hooks
-import), `agents/` (the agent CLI's config and every agent definition) and `grants/` (the owner's
-yes to what an agent wrote, `owner_grants.py`). An agent writes none of them, at three layers that
-each read `owner_only`:
+Five places in the home hold what runs as the owner and what they allowed: `config.json` (among
+much else, the agent CLI's own hooks, `agent.agent_hooks`), `mcp.json` (the MCP servers PersonalClaw
+starts, each a command it runs as the owner), `hooks/` (the scripts those hooks import), `agents/`
+(the agent CLI's config and every agent definition) and `grants/` (the owner's yes to what an agent
+wrote, `owner_grants.py`). An agent writes none of them, at three layers that each read
+`owner_only`:
 
 - **The fence**: the sandbox around the agent's shell denies the write — a Seatbelt
   `deny file-write*` at every level; on Linux each is bind-mounted onto itself read-only (a missing
@@ -209,6 +210,17 @@ because a fence is not consent, the agent CLI's hooks also run only once the own
 out of the agent CLI's config and listed on the Agents page with Allow. What the CLI runs is a copy
 of the file as the owner allowed it (`<home>/hooks/.allowed/<seal>`), not the file, so an edit to
 it — a script outside the home is no owner-only path — never runs on the old yes.
+
+An MCP server runs only once the owner allowed what it runs, too (`mcp_grants.py`), sealed to its
+definition: how it is reached, its command, arguments and folder, the names of the variables it
+sets, and a remote server's address and header names. Values are not in the seal, since nobody is
+shown them. The Tools page's Add and Edit and the MCP Tool Servers card ask before they save, with
+exactly what will run; every other way a definition arrives (Import from another tool, bringing a
+setup over, a pack's connector, an app's manifest, a restore, a hand edit) writes one that waits,
+listed on the Tools page with Allow, which asks the same question first. The probe
+(`mcp_discovery.probe_server`) and the agents' connections (`mcp_client._personalclaw_mcp_specs`)
+both ask before they start anything. PersonalClaw's own server is defined by its code
+(`agent._MANAGED_MCP_SERVERS`), never read from `mcp.json`.
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 

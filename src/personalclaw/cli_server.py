@@ -720,7 +720,12 @@ def _is_current(latest: str) -> bool:
 
 def _install(args: list[str], *, cwd: str, label: str) -> None:
     """Run the resolved installer with *args*, or exit 1 with a readable reason."""
-    from personalclaw._installer import NoInstallerError, install_argv, installer_name
+    from personalclaw._installer import (
+        NoInstallerError,
+        install_argv,
+        installer_env,
+        installer_name,
+    )
 
     try:
         argv = install_argv(args)
@@ -729,7 +734,9 @@ def _install(args: list[str], *, cwd: str, label: str) -> None:
         sys.exit(1)
 
     print(f"  🔨 {installer_name()} {label}")
-    result = subprocess.run(argv, cwd=cwd or None, capture_output=True, text=True)
+    result = subprocess.run(
+        argv, cwd=cwd or None, capture_output=True, text=True, env=installer_env()
+    )
     if result.returncode != 0:
         # Same one-line summary the dashboard shows: uv's stderr is ANSI-colored and
         # leads with the headline, so raw stderr reads as corrupted or as a fragment.

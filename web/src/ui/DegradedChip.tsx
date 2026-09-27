@@ -283,7 +283,13 @@ export function DegradedChip() {
                       the key entirely (the chip's own pre-existing test fixture does), and a chip
                       that crashes the shell corner because a field is absent is a worse failure
                       than the one being fixed. */}
-                  {(s.use_cases ?? []).length > 0 && (
+                  {/* `problem` is the gateway's sentence for what the surface waits on — the one its
+                      notice says too: that no model is chosen, or why the chosen one cannot serve
+                      (a missing credential, a model not downloaded). "No model for Chat" was false
+                      about a model that is chosen. */}
+                  {s.problem ? (
+                    <div data-type="caption" className="mt-0.5 text-on-surface-var">{s.problem}</div>
+                  ) : (s.use_cases ?? []).length > 0 && (
                     <div data-type="caption" className="mt-0.5 text-on-surface-var">
                       {s.model_chosen === false ? 'No model chosen for' : 'No model for'} {(s.use_cases ?? []).map(useCaseLabel).join(', ')}
                     </div>

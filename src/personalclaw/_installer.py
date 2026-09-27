@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -42,15 +43,50 @@ from types import MappingProxyType
 
 logger = logging.getLogger(__name__)
 
-#: The environment every pip that installs INTO the PersonalClaw home runs with (app packages in
-#: ``<home>/app-python``, a sidecar app's engine in its own folder). pip keeps what it downloads
-#: in the user's own cache (``~/Library/Caches/pip``, ``~/.cache/pip``), and an install whose
-#: target is the home must leave nothing outside it: installing one app that declares a Python
-#: package was measured filling that cache. The variable, not ``--no-cache-dir``:
-#: pip hands its environment, and not its flags, to the pip it runs for an sdist's build
-#: requirements. What the cache would have held is installed in the home; a reinstall downloads
-#: it again.
-HOME_INSTALL_PIP_ENV = MappingProxyType({"PIP_NO_CACHE_DIR": "1"})
+#: What every pip, uv and npm run PersonalClaw starts carries in its environment: no cache. pip
+#: and uv keep what they download in the user's own cache (``~/Library/Caches/pip``,
+#: ``~/.cache/pip``, ``~/.cache/uv``), and PersonalClaw leaves nothing outside its home:
+#: installing one app that declares a Python package was measured filling pip's. What a cache
+#: would hold is installed anyway (an app's packages in the home, PersonalClaw's own in its
+#: installation), so a reinstall downloads it again. The variables, not ``--no-cache-dir``: pip
+#: hands its environment, and not its flags, to the pip it runs for an sdist's build
+#: requirements. Node keeps the code it compiles in the temp folder
+#: (``node-compile-cache``, which npm turns on at every start) unless told not to.
+_NO_CACHE_ENV = MappingProxyType(
+    {"PIP_NO_CACHE_DIR": "1", "UV_NO_CACHE": "1", "NODE_DISABLE_COMPILE_CACHE": "1"}
+)
+
+#: The folder in the home for what those runs keep. npm cannot run without a cache, so its cache
+#: (and the logs it keeps there) is ``npm``. ``tmp`` is the temp folder they run with: what one of
+#: them leaves in its temp folder stays in the home (uv never removes the lock it takes to build
+#: a setuptools project, ``uv-setuptools-<digest>.lock``). The durability inventory ignores the
+#: folder as a cache.
+INSTALLER_CACHE_DIRNAME = "installer-cache"
+
+
+def installer_cache_env() -> dict[str, str]:
+    """The settings every pip, uv and npm run PersonalClaw starts carries, over whatever else its
+    environment holds: no pip, uv or node cache, npm's cache in the home, and a temp folder in
+    the home, made here because a ``TMPDIR`` that does not exist is passed over for ``/tmp``.
+
+    A child that runs code PersonalClaw did not write gets them on top of the child allowlist
+    (``sandbox.build_child_env(..., extra=installer_cache_env())``); PersonalClaw's own installs
+    through :func:`installer_env`. ``tests/test_installer_resolution.py`` holds every spawn of
+    pip, uv or npm to one of the two.
+    """
+    from personalclaw.config.loader import config_dir
+
+    root = config_dir() / INSTALLER_CACHE_DIRNAME
+    tmp = root / "tmp"
+    tmp.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return {**_NO_CACHE_ENV, "npm_config_cache": str(root / "npm"), "TMPDIR": str(tmp)}
+
+
+def installer_env() -> dict[str, str]:
+    """This process's environment with :func:`installer_cache_env` over it, for an install or
+    build of PersonalClaw itself (a self-update, the startup dependency repair, a frontend
+    rebuild)."""
+    return {**os.environ, **installer_cache_env()}
 
 
 class NoInstallerError(RuntimeError):

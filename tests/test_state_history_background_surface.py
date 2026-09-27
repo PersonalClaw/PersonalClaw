@@ -273,11 +273,11 @@ def test_the_surface_still_holds_when_the_OUTCOME_is_recorded(probe, monkeypatch
 def test_the_ATTENDED_dispatch_is_NOT_background(probe):
     """🔴 The other direction, which is what makes the positive test mean anything.
 
-    A hand-driven "Run now" goes through `dashboard.handlers.triggers._dispatch_store_action`, a
+    A hand-driven "Run now" goes through `dashboard.handlers.trigger_runs._dispatch_store_action`, a
     human-watched path. Labelling it `background` would put the user's own click into "what changed
     while I slept" — so the default `interactive` surface must survive here.
     """
-    from personalclaw.dashboard.handlers.triggers import _dispatch_store_action
+    from personalclaw.dashboard.handlers.trigger_runs import _dispatch_store_action
 
     ran, note = asyncio.run(_dispatch_store_action(_trigger(), {"trigger_id": "clock:surface"}))
     assert ran, f"the attended path did not dispatch, so nothing was measured: {note}"

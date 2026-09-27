@@ -518,7 +518,7 @@ def action_timeout(provider_name: str) -> int:
     The legacy dispatcher's mode default: 300s for a `bash` command, whose budget 30s is not, and
     30s for every other action. The config's own `timeout` still wins, inside the provider. ONE
     answer for a scheduled fire (`gateway._fire_store_trigger`) and a hand-run (the Run button and
-    the restart review's Run now, `dashboard/handlers/triggers._dispatch_store_action`), which
+    the restart review's Run now, `dashboard/handlers/trigger_runs._dispatch_store_action`), which
     passed none and so cut a `bash` run off at the providers' 30s signature default: running an
     interrupted 90-second job again from the review timed out where its scheduled fire had not.
     """

@@ -394,16 +394,20 @@ def test_a_bad_health_days_value_is_400(health_home, store):
 # ── the kill switch and route registration ──
 
 
-def test_every_route_404s_when_learning_is_disabled(monkeypatch, store):
-    """404 rather than 403: with learning off there is no inbox, and "forbidden" implies one exists
-    behind a permission wall."""
+def test_every_route_answers_learning_being_off(monkeypatch, store):
+    """With learning off, the reads the Learning page loads to render answer the decided
+    ``200 {"enabled": false}`` (#3641: a switched-off feature says so, instead of a failed request
+    in the console). The doors that address one proposal still 404, rather than 403: with learning
+    off there is no inbox, and "forbidden" implies one exists behind a permission wall."""
     monkeypatch.setattr(L, "_enabled", lambda: False)
+    for handler in (L.api_learning_proposals, L.api_learning_staging_week):
+        resp = _run(handler(_req("GET", "/api/learning/x", user="me")))
+        assert resp.status == 200
+        assert _body(resp) == {"enabled": False}
     for handler, method, match in (
-        (L.api_learning_proposals, "GET", None),
         (L.api_learning_proposal, "GET", {"id": "p1"}),
         (L.api_learning_proposal_accept, "POST", {"id": "p1"}),
         (L.api_learning_proposal_reject, "DELETE", {"id": "p1"}),
-        (L.api_learning_staging_week, "GET", None),
     ):
         resp = _run(handler(_req(method, "/api/learning/x", match=match, user="me")))
         assert resp.status == 404

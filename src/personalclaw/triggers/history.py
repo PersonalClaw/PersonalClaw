@@ -72,8 +72,8 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # which is `FAILED`'s meaning in this vocabulary; the row's own status and `error` say it was
     # the restart, and it waits on the review for the user to run it again or dismiss it.
     "interrupted": Outcome.FAILED.value,
-    # The review's Run now (`dashboard/handlers/triggers._record_manual_run`): a run standing in for
-    # a slot that did not run, which `missed.resolve_missed` records as late.
+    # The review's Run now (`dashboard/handlers/trigger_runs._record_manual_run`): a run standing
+    # in for a slot that did not run, which `missed.resolve_missed` records as late.
     "ran_late": Outcome.RAN_LATE.value,
     # See the module docstring: started ≠ succeeded.
     "launched": Outcome.DEFERRED.value,

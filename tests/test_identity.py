@@ -337,10 +337,21 @@ class TestDashboardConfigEndpoint:
             "or the endpoint 400s with 'Unknown fields'"
         )
 
-    def test_username_is_returned_by_the_get(self):
-        from pathlib import Path
+    @pytest.mark.asyncio
+    async def test_username_is_returned_by_the_get(self):
+        """Driven, not grepped: a PUT stores the slug, and the GET answers it. (A source check for
+        `"username": cfg.dashboard.username` went red when #3641 read the section into a local,
+        with the GET still returning the field.)"""
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
 
-        import personalclaw.dashboard.handlers.files as files_mod
+        from personalclaw.dashboard.handlers.files import api_dashboard_config
 
-        src = Path(files_mod.__file__).read_text(encoding="utf-8")
-        assert '"username": cfg.dashboard.username' in src
+        app = web.Application()
+        app.router.add_get("/api/dashboard/config", api_dashboard_config)
+        app.router.add_put("/api/dashboard/config", api_dashboard_config)
+        async with TestClient(TestServer(app)) as client:
+            put = await client.put("/api/dashboard/config", json={"username": "Ada Lovelace"})
+            assert put.status == 200, await put.text()
+            got = await (await client.get("/api/dashboard/config")).json()
+        assert got["username"] == slugify_username("Ada Lovelace")

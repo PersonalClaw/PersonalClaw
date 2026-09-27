@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+from mcp_owner_allowed import allow_configured
 
 from personalclaw.apps import manager
 from personalclaw.providers import registry as registry_module
@@ -217,6 +218,7 @@ async def test_what_the_unload_stops_itself_is_not_a_restart_reason(home):
     from personalclaw.mcp_client import get_mcp_client_registry
 
     _install(home, processes=True)
+    allow_configured(f"{APP}:version")  # the owner's Allow on the Tools page
     registry = get_mcp_client_registry()
     assert registry is not None
     conn = registry.get(f"{APP}:version")

@@ -39,6 +39,7 @@ from aiohttp.test_utils import make_mocked_request
 import personalclaw.action_providers as AP
 import personalclaw.config.loader as loader
 from personalclaw.action_providers.base import ActionResult
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.schedule_history import ScheduleRunStore
@@ -132,7 +133,7 @@ def _req(path: str, *, body: dict, match_info: dict):
 
 def _run() -> dict:
     resp = asyncio.run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(f"/api/triggers/schedule:{TID}/run", body={}, match_info={"id": f"schedule:{TID}"})
         )
     )
@@ -142,7 +143,7 @@ def _run() -> dict:
 def _answer(token: str, answer: bool) -> web.Response:
     """The Inbox card's answer, addressed as the web client addresses it (`store:<id>`)."""
     return asyncio.run(
-        T.api_trigger_answer(
+        trigger_runs.api_trigger_answer(
             _req(
                 f"/api/triggers/store:{TID}/answer",
                 body={"resume_token": token, "answer": answer},
@@ -322,7 +323,7 @@ def test_an_answer_that_is_not_a_yes_or_no_is_refused(home, browse):
     _run()
 
     resp = asyncio.run(
-        T.api_trigger_answer(
+        trigger_runs.api_trigger_answer(
             _req(
                 f"/api/triggers/store:{TID}/answer",
                 body={"resume_token": _token(), "answer": "I have signed in"},

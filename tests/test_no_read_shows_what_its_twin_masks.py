@@ -31,10 +31,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from mcp_owner_allowed import confirmed
 
 # A credential-shaped literal the redactor recognises. Not a real key.
 SECRET = "sk-ant-api03-" + ("A" * 20) + ("B" * 20) + ("C" * 15)
 MASK = "[REDACTED: credential]"
+#: An MCP server's command that cannot resolve: nothing a fixture names is ever started.
+UNRESOLVABLE = "/nonexistent/pc-fixture-mcp"
 # A URL carrying data out in its query, which the display mask replaces as a whole.
 EXFIL = "https://collect.example.net/p?d=" + ("Q" * 60)
 
@@ -283,10 +286,12 @@ def test_a_save_keeps_a_hidden_value_another_save_changed_while_it_was_checked(h
 
 
 def test_a_dry_run_shows_what_it_would_run_masked(home):
-    T, state, home_dir, _ = home
+    from personalclaw.dashboard.handlers import trigger_runs
+
+    _T, state, home_dir, _ = home
     _prompt_schedule(home_dir)
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 "/api/triggers/schedule:digest/run",
@@ -708,7 +713,9 @@ def _mcp(method: str, name: str, body: dict | None = None, headers: dict | None 
 
 
 def test_a_servers_edit_form_shows_its_arguments_masked_and_a_save_keeps_them(mcp_home):
-    added = _mcp("PUT", "search", {"command": "npx", "args": ["search-mcp", "--api-key", SECRET]})
+    added = _mcp(
+        "PUT", "search", confirmed({"command": UNRESOLVABLE, "args": ["--api-key", SECRET]})
+    )
     assert added.status == 200, added.text
     read = json.loads(_mcp("GET", "search").text)
     assert MASK in read["args"] and SECRET not in json.dumps(read)
@@ -716,12 +723,12 @@ def test_a_servers_edit_form_shows_its_arguments_masked_and_a_save_keeps_them(mc
     resp = _mcp(
         "PUT",
         "search",
-        {"command": read["command"], "args": [*read["args"], "--verbose"]},
+        confirmed({"command": read["command"], "args": [*read["args"], "--verbose"]}),
         headers={"If-Match": read["revision"]},
     )
     assert resp.status == 200, resp.text
     spec = json.loads((mcp_home / "mcp.json").read_text())["mcpServers"]["search"]
-    assert spec["args"] == ["search-mcp", "--api-key", SECRET, "--verbose"]
+    assert spec["args"] == ["--api-key", SECRET, "--verbose"]
 
 
 def test_a_servers_save_keeps_an_argument_another_save_changed_while_it_waited(
@@ -730,7 +737,9 @@ def test_a_servers_save_keeps_an_argument_another_save_changed_while_it_waited(
     """The marker stands for the value saved when this save writes, read under the file lock."""
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    added = _mcp("PUT", "search", {"command": "npx", "args": ["search-mcp", "--api-key", SECRET]})
+    added = _mcp(
+        "PUT", "search", confirmed({"command": UNRESOLVABLE, "args": ["--api-key", SECRET]})
+    )
     assert added.status == 200, added.text
     read = json.loads(_mcp("GET", "search").text)
     rotated = SECRET.replace("A", "D")
@@ -742,7 +751,7 @@ def test_a_servers_save_keeps_an_argument_another_save_changed_while_it_waited(
         async def __aenter__(self):
             path = mcp_home / "mcp.json"
             data = json.loads(path.read_text())
-            data["mcpServers"]["search"]["args"] = ["search-mcp", "--api-key", rotated]
+            data["mcpServers"]["search"]["args"] = ["--api-key", rotated]
             path.write_text(json.dumps(data))
             self._lock = lock()
             return await self._lock.__aenter__()
@@ -754,12 +763,12 @@ def test_a_servers_save_keeps_an_argument_another_save_changed_while_it_waited(
     resp = _mcp(
         "PUT",
         "search",
-        {"command": read["command"], "args": [*read["args"], "--verbose"]},
+        confirmed({"command": read["command"], "args": [*read["args"], "--verbose"]}),
         headers={"If-Match": read["revision"]},
     )
     assert resp.status == 200, resp.text
     spec = json.loads((mcp_home / "mcp.json").read_text())["mcpServers"]["search"]
-    assert spec["args"] == ["search-mcp", "--api-key", rotated, "--verbose"]
+    assert spec["args"] == ["--api-key", rotated, "--verbose"]
 
 
 def test_a_servers_connection_error_is_masked_on_every_read():

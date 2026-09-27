@@ -1575,7 +1575,12 @@ class MemoryService:
 
         Heat boost is multiplicative + bounded so it nudges ordering without
         letting a frequently-recalled-but-irrelevant record outrank a strong
-        semantic match — relevance still dominates."""
+        semantic match — relevance still dominates.
+
+        A memory read by keyword (one the model bound now has not embedded) carries a
+        ``score`` on the similarity's scale (``VectorMemoryStore._fts5_episodic_search``),
+        so it ranks among the semantic hits by it; with none, every keyword hit ranked
+        after every semantic one, and mid re-index the exact match came last."""
         # over-fetch so the boost can reorder a wider candidate set
         hits = self.search_episodic(query_text=query_text, limit=max(limit * 2, limit))
         if not hits:

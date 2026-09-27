@@ -414,7 +414,7 @@ class SubagentInfo:
     _outcome_noted: bool = False  # guards double-counting in the breaker/meter
     # The store id of the trigger whose fire started this agent (its `invoke-agent` or
     # `run-prompt` action), or "". An approval it asks for is listed under the trigger, and a call
-    # it is denied leaves a note that can run the trigger again (`dashboard/auto_denials.py`).
+    # it is denied leaves a note that can run the trigger again (`auto_denials.py`).
     # Last, so no field an app passes by position moves (`sdk.channel` exports this class).
     trigger_id: str = ""
 

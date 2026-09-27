@@ -47,15 +47,20 @@ with ``model_instances_elsewhere``.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 from personalclaw.apps.secret_fields import mask_instance, preserve_unchanged_secrets
 from personalclaw.config.secret_refs import ForeignSecretReference
-from personalclaw.http_errors import json_error
+from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers import mcp_instances as _mcp
 from personalclaw.providers.failure_copy import connectivity_guidance
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.stale_write import revision_of, stale_write_refusal
+
+if TYPE_CHECKING:
+    from personalclaw.mcp_discovery import McpServerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +74,16 @@ def _rebuild_agent_config_safe() -> None:
         rebuild_agent_config()
     except Exception:
         logger.warning("rebuild_agent_config failed after instance change", exc_info=True)
+
+
+def _allow_as_saved(planned: "McpServerInfo") -> None:
+    """The owner's yes to an MCP server the card just wrote, given to the server as ``mcp.json``
+    holds it, and only when that is what they were asked about (`mcp_grants`)."""
+    from personalclaw import mcp_grants
+
+    stored = _mcp.saved(planned.name)
+    if stored is not None and mcp_grants.definition(stored) == mcp_grants.definition(planned):
+        mcp_grants.give(stored)
 
 
 async def _refresh_multi_instance_provider_safe(name: str) -> None:
@@ -244,10 +259,25 @@ async def handle_create_instance(request: web.Request) -> web.Response:
         )
 
     if name == _mcp.MCP_TOOLS_EXTENSION:
+        from personalclaw import mcp_grants
+
+        # The owner sees what the server runs before it first runs, and says yes: asked before
+        # anything is written, like the Tools page's Add (`mcp_grants`).
+        try:
+            server = _mcp.planned(display_name, config, create=True)
+        except ValueError as exc:
+            return json_error("bad_request", message=str(exc), status=400)
+        if not mcp_grants.allowed(server) and not confirm_granted(body):
+            return consent_required(
+                f"mcp.servers.{server.name}",
+                mcp_grants.consent(server, saving=True),
+                title=mcp_grants.title(server),
+            )
         try:
             inst = _mcp.create_instance(display_name, config)
         except ValueError as exc:
             return json_error("bad_request", message=str(exc), status=400)
+        _allow_as_saved(server)
         _rebuild_agent_config_safe()
         return web.json_response({"instance": _revisioned(mask_instance(inst, schema))}, status=201)
 
@@ -376,9 +406,29 @@ async def handle_update_instance(request: web.Request) -> web.Response:
             return stale
 
     if is_mcp:
+        from personalclaw import mcp_grants
+
+        # An edit that changes what the server runs is asked about first, like the Tools page's
+        # Edit (`mcp_grants`); switching it on or off is not.
+        server = None
+        if config is not None:
+            try:
+                server = _mcp.planned(instance_id, config, create=False)
+            except LookupError:
+                return json_error(
+                    "not_found", message="No instance exists with that id.", status=404
+                )
+            if not mcp_grants.allowed(server) and not confirm_granted(body):
+                return consent_required(
+                    f"mcp.servers.{instance_id}",
+                    mcp_grants.consent(server, saving=True),
+                    title=mcp_grants.title(server),
+                )
         inst = _mcp.update_instance(instance_id, config=config, enabled=body.get("enabled"))
         if not inst:
             return json_error("not_found", message="No instance exists with that id.", status=404)
+        if server is not None:
+            _allow_as_saved(server)
         _rebuild_agent_config_safe()
         return web.json_response({"instance": _revisioned(mask_instance(inst, schema))})
 

@@ -361,7 +361,6 @@ def _openai_image_catalog(monkeypatch):
                 MediaModel(name="dall-e-3", extra={"sizes": ["1024x1024"], "supports_edit": False}),
                 MediaModel(name="dall-e-2", extra={"sizes": ["256x256"], "supports_edit": True}),
             ),
-            default_model="gpt-image-1",
         ),
     )
 
@@ -370,9 +369,10 @@ class TestOpenAIImageCatalogByType:
     """The image adapter serves a vendor's curated catalog by PROVIDER TYPE, from the
     catalog that vendor's app contributed (personalclaw.media_catalogs) — no
     api.openai.com host-sniff, no OpenAI model ids hard-coded in core. A provider type
-    with a contributed catalog (``openai``) surfaces + defaults to it; a type with no
-    contribution (``openai_compatible`` = a bring-your-own/other-vendor endpoint like
-    Alibaba) advertises nothing and refuses an unpinned default."""
+    with a contributed catalog (``openai``) surfaces it; a type with no contribution
+    (``openai_compatible`` = a bring-your-own/other-vendor endpoint like Alibaba)
+    advertises nothing. A call that names no model is refused on either
+    (``test_a_media_call_names_its_model``)."""
 
     @pytest.mark.asyncio
     async def test_openai_type_lists_curated_models(self, _openai_image_catalog):
@@ -423,16 +423,10 @@ class TestOpenAIImageCatalogByType:
         )
         with pytest.raises(ImageGenError) as exc:
             await prov.generate("a cat")  # no model= → must NOT fall back to a bogus id
-        assert "no contributed default" in str(exc.value)
+        assert "No model is chosen for this call" in str(exc.value)
 
     def test_pinned_model_wins_on_any_type(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
 
-        prov = OpenAIImageProvider(
-            provider_name="Alibaba",
-            provider_type="openai_compatible",
-            endpoint="https://dashscope-intl.aliyuncs.com/v1",
-            api_key="k",
-        )
         # An explicit model is honored even for an uncontributed type.
-        assert prov._default_model("wan2.7-image") == "wan2.7-image"
+        assert OpenAIImageProvider._named("wan2.7-image") == "wan2.7-image"

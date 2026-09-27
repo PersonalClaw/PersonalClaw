@@ -35,11 +35,13 @@ class _Bell:
 
 @pytest.fixture
 def models(monkeypatch):
-    """Whether a model resolves, for every use case at once: the first-bind shape."""
+    """Whether a model resolves, for every use case at once: the first-bind shape. A model is
+    chosen throughout, so a surface that stops resolving is one whose model stopped serving."""
     bound = {"value": False}
     monkeypatch.setattr(
         "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda uc: bound["value"]
     )
+    monkeypatch.setattr("personalclaw.providers.provider_bridge.model_chosen", lambda uc: True)
     return bound
 
 

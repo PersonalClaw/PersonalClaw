@@ -88,7 +88,12 @@ async def test_the_owner_is_addressed_with_the_id_of_the_channel_that_reaches_th
     channel_delivery.register(telegram, provider="telegram")
     save_credential(owner_id_credential("telegram"), "4242")
     reached = await channel_delivery.reach_owner(lambda d, dm: d.deliver_text(dm, "hi"))
-    assert (reached.provider, reached.delivery, reached.channel) == ("telegram", telegram, "T-DM")
+    assert reached.delivery is not None
+    assert (reached.provider, reached.delivery.inner, reached.channel) == (
+        "telegram",
+        telegram,
+        "T-DM",
+    )
     telegram.open_dm.assert_awaited_once_with("4242")
     discord.open_dm.assert_not_awaited()
 

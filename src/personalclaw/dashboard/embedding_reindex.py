@@ -5,8 +5,10 @@ from a different model and live in a different space (often a different
 dimension). This module re-indexes both embedding stores as a background job
 with SSE progress, mirroring :mod:`personalclaw.dashboard.model_downloads`:
 
-  * **Knowledge items** — ``KnowledgeStore`` items (clear ``embedding`` → re-embed
-    each from preserved title/summary/content).
+  * **Knowledge items** — the ``KnowledgeStore`` items the new model has not embedded (each
+    item records the model that wrote its vector, as a chunk does): their vectors are cleared,
+    then re-embedded from the preserved title/summary/content. The items it has embedded are
+    left alone; the job used to clear and re-embed every item on every run.
   * **Knowledge passages** — the ``chunks`` layer, re-embedded in place and
     re-stamped with the new model's fingerprint. This half used to be
     missing entirely: the item pass never touched ``chunks``, so after a
@@ -228,13 +230,17 @@ class ReindexRegistry:
         if knowledge_store and embedder is not None:
             job.phase = "reindexing knowledge"
             self._publish(job, "progress")
-            knowledge_store.clear_embeddings()
-            res = knowledge_store.reembed_all(embedder, on_progress=lambda d, _t: _progress(d, 0))
+            # The items the model has not embedded, and no others: their vectors are cleared
+            # first, so nothing compares one with this model's meanwhile.
+            knowledge_store.clear_stale_embeddings()
+            res = knowledge_store.reembed_all(
+                embedder, only_missing=True, on_progress=lambda d, _t: _progress(d, 0)
+            )
             job.knowledge = res.get("reembedded", 0)
             k_done = res.get("total", 0)
 
             # ── Chunk vectors ──
-            # `clear_embeddings` + `reembed_all` above rewrite only the ITEM vectors. The
+            # `clear_stale_embeddings` + `reembed_all` above rewrite only the ITEM vectors. The
             # passage layer is where deep-document recall lives, and before this it survived
             # a model switch untouched: same dimension, same row count, so neither the
             # dimension guard nor the ANN index's row-count reconciliation could tell that

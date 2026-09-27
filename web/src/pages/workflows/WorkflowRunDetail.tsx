@@ -237,16 +237,16 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   //
   // The run is read again first. A provider's circuit breaker can open after this page loaded,
   // because every call to that provider counts toward it, and a Retry inside the window started a
-  // run that failed in microseconds without a call. The fresh read shows when it can run instead.
+  // run that failed in microseconds without a call. The fresh read shows when it can run instead,
+  // so a read that FAILS stops the Retry and says so: treating it as "no window" started the very
+  // run the read exists to hold back.
   const retry = useCallback(async () => {
     setBusy(true)
     let child = ''
     try {
-      const fresh = await api.workflowRun(runId).catch(() => null)
-      if (fresh) {
-        setRun(fresh)
-        if ((retryWindow(fresh)?.retryAt ?? 0) > Date.now() / 1000) return
-      }
+      const fresh = await api.workflowRun(runId)
+      setRun(fresh)
+      if ((retryWindow(fresh)?.retryAt ?? 0) > Date.now() / 1000) return
       child = (await api.forkWorkflowRun(runId, { note: 'retry after a transient failure' })).child_run_id
       await api.startDraftWorkflowRun(child)
     } catch (e) {

@@ -83,7 +83,7 @@ function WorkflowInputs({ workflow, def, error, value, onChange, onRetry }: {
     if (Object.keys(missing).length > 0) onChange({ ...values, ...missing })
   }, [def])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!workflow) return <p className="text-on-surface-low text-[0.8125rem]">Pick a workflow to set its inputs.</p>
+  if (!workflow) return <p data-type="body-s" className="text-on-surface-low">Pick a workflow to set its inputs.</p>
   if (error) {
     return (
       <InlineError icon onRetry={onRetry}>
@@ -91,10 +91,10 @@ function WorkflowInputs({ workflow, def, error, value, onChange, onRetry }: {
       </InlineError>
     )
   }
-  if (!def) return <p className="text-on-surface-low text-[0.8125rem]">Loading {workflow}&rsquo;s inputs…</p>
-  if (props.length === 0) return <p className="text-on-surface-low text-[0.8125rem]">{workflow} takes no inputs.</p>
+  if (!def) return <p data-type="body-s" className="text-on-surface-low">Loading {workflow}&rsquo;s inputs…</p>
+  if (props.length === 0) return <p data-type="body-s" className="text-on-surface-low">{workflow} takes no inputs.</p>
   return (
-    <div className="rounded-md border border-outline-variant/40 bg-surface-container/40 px-m py-3 flex flex-col gap-m">
+    <div className="rounded-md border border-outline-variant/40 bg-surface-container/40 px-m py-m flex flex-col gap-m">
       <SchemaFields
         fields={props}
         required={required}

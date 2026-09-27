@@ -17,7 +17,7 @@ that had expired, a site-level row that resumed nothing. This is that seam for a
 * :func:`claim` — the answer's single-use consume, so a double click cannot run the action twice.
   Approve then runs the trigger's action once, with the answer on that one dispatch
   (`ActionContext.answer`), the way an approved in-run park runs its step again
-  (`dashboard/handlers/triggers.api_trigger_answer`). Deny closes the question until the trigger
+  (`dashboard/handlers/trigger_runs.api_trigger_answer`). Deny closes the question until the trigger
   next runs.
 
 The run's history row says it is waiting, and on what (:func:`waiting_line`): the run did not do

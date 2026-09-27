@@ -90,6 +90,16 @@ wrote no vector and no chunk, so it is recorded `unsearchable` rather than
 `done` (see [Searchability](#searchability)). Any provider works: the native
 `apps/sentence-transformers` app or any bound remote model.
 
+Every vector records the model that wrote it — a chunk's and an item's alike
+(`embedding_model_id` / `embedding_provider`, `knowledge/embedding_fingerprint.py`) —
+so the re-index Settings → Models starts after an embedding change re-embeds only
+what the model bound now has not: it clears the other items' vectors first (so no
+search or dedup compares one with the new model's meanwhile), then embeds those
+and the ones never embedded (`KnowledgeStore.clear_stale_embeddings` +
+`reembed_all(only_missing=True)`), and re-embeds the stale chunks. An item
+embedded before items recorded their model names none and is stale, so the first
+start after that update re-embeds each once.
+
 ### Search
 
 `knowledge/retrieval.py` — `HybridRetriever`: FTS5 keyword + graph traversal +
@@ -157,20 +167,26 @@ item vector).
     model that wrote it (`embedding_model`). Search, dedup, lesson dedup and
     consolidation compare only vectors of the model bound now, because two models'
     vectors are unrelated spaces and at one width they would score numbers that mean
-    nothing. The rest are **stale**: read by keyword beside the vector results
-    (`search_episodic` interleaves the two, so a memory the re-index has not reached
-    yet stays findable), counted (`embedded_stale` in `/api/memory/stats`, the
-    Doctor's `memory.store` row, the recall disclosure below), and re-embedded by the
-    re-index Settings → Models starts after an embedding save
-    (`dashboard/embedding_reindex.py`), which visits every memory store, open or
-    not, and by the one the gateway resumes at its start when any store holds
-    vectors the bound model did not write
-    (`dashboard/handlers/embedding_reindex.py::resume_interrupted_reindex`). A vector
-    written before models were recorded names none and is stale once a model is
+    nothing. The rest are **stale**, and a memory no model embedded (written while none
+    was bound, or when it failed) is **unembedded**: both are read by keyword beside
+    the vector results (`search_episodic` merges the two by score — a keyword hit
+    scores the share of the query's words it holds, weighted as a similarity is — so a
+    memory the re-index has not reached yet stays findable, and Recall's ranking does
+    not put it last), counted (`embedded_stale` and `unembedded` in
+    `/api/memory/stats`; the Doctor's `memory.store` row and the recall disclosure below
+    count the stale ones), and embedded by the re-index (`dashboard/embedding_reindex.py`), which visits every
+    memory store, open or not. Binding Embedding starts it
+    (`PUT /api/models/active/embedding` → `reindex_after_binding`, whoever calls it),
+    and so does the gateway's start when any store holds what the bound model has not
+    embedded (`dashboard/handlers/embedding_reindex.py::resume_interrupted_reindex`). A
+    vector written before models were recorded names none and is stale once a model is
     bound, by the same rule as the knowledge chunks' fingerprint, so the first start
-    after that update re-embeds every memory once, in the background. The index
-    follows a running re-index: each vector it writes marks the index behind, and the
-    next search rebuilds it (off to the side, then swapped in).
+    after that update re-embeds every memory once, in the background. The index is one
+    value (`_Index`: the FAISS index, its ids, their width and model), published by one
+    assignment, and a search reads it once: a rebuild on the re-index's thread can
+    never hand a search its ids with another build's index. It follows a running
+    re-index: each vector it writes marks the index behind, and the next search
+    rebuilds it (off to the side, then published).
 - **`memory_ranking.py`** — the ONE owner of "how did this recall actually rank".
   Derives a `RecallRanking` from the provider's declared `MemoryCapabilities`
   (`vector` / `full_text_search` / `entity_graph`) and composes the user-facing

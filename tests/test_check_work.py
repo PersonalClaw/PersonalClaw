@@ -417,7 +417,28 @@ class TestConfigRoundTrip:
                 / "src/personalclaw/dashboard/handlers/files.py"
             ).read_text(encoding="utf-8")
             assert src.count(f'"{field_name}"') >= 2  # allowlist + bool coercion loop
-            assert f'"{field_name}": cfg.dashboard.{field_name}' in src
+            # And the round trip, driven: the value a PUT stores is the value the GET answers.
+            # (A source check for `"{field}": cfg.dashboard.{field}` went red when #3641 read the
+            # section into a local, with the GET still returning the field.)
+            assert asyncio.run(_dashboard_config_round_trip(field_name, not default)) is (
+                not default
+            )
+
+
+async def _dashboard_config_round_trip(field_name: str, value: bool) -> object:
+    """PUT ``{field_name: value}`` to /api/dashboard/config, then answer what the GET reads back."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.handlers.files import api_dashboard_config
+
+    app = web.Application()
+    app.router.add_get("/api/dashboard/config", api_dashboard_config)
+    app.router.add_put("/api/dashboard/config", api_dashboard_config)
+    async with TestClient(TestServer(app)) as client:
+        put = await client.put("/api/dashboard/config", json={field_name: value})
+        assert put.status == 200, await put.text()
+        return (await (await client.get("/api/dashboard/config")).json())[field_name]
 
 
 def test_offer_check_work_has_a_frontend_control():

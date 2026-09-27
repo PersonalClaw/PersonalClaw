@@ -42,6 +42,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from mcp_owner_allowed import allow_configured
 
 # Imported before any test patches `config_dir` (see test_saved_app_settings_apply): the probe
 # imports the SDK, and a module first imported under a patch keeps the mock bound.
@@ -120,6 +121,7 @@ from personalclaw.sdk.channel import trust_mode
 from personalclaw.sdk.model import (
     Capability,
     MediaCatalog,
+    MediaModel,
     ProviderCapability,
     ProviderResolutionError,
     get_default_registry,
@@ -216,7 +218,9 @@ try:
 except ProviderResolutionError:
     pass  # already registered (idempotent against reload)
 
-register_media_catalog("tts", MODEL_TYPE, MediaCatalog(default_model="voice-" + VERSION))
+register_media_catalog(
+    "tts", MODEL_TYPE, MediaCatalog(models=(MediaModel(name="voice-" + VERSION),))
+)
 
 
 def _on_yolo_off(reason):
@@ -512,10 +516,18 @@ class _Gateway:
     def __init__(self, client: TestClient, orch: Any) -> None:
         self.client, self.orch = client, orch
 
-    async def call(self, method: str, path: str, body: Any = None) -> Any:
-        resp = await self.client.request(method, path, json=body)
+    async def call(self, method: str, path: str, body: Any = None, **kw: Any) -> Any:
+        resp = await self.client.request(method, path, json=body, **kw)
         assert resp.status < 300, f"{method} {path} → {resp.status}: {await resp.text()}"
         return await resp.json()
+
+    async def save_config(self, values: dict[str, Any]) -> Any:
+        """Save the app's settings the way Configure does: over the revision of the copy it read.
+        The PUT replaces the whole file, so it names the copy it replaces (#3690)."""
+        revision = (await self.call("GET", f"/api/apps/{APP}/config"))["revision"]
+        return await self.call(
+            "PUT", f"/api/apps/{APP}/config", values, headers={"If-Match": f'"{revision}"'}
+        )
 
     async def install(self, source: Path) -> dict[str, Any]:
         review = await self.call("POST", "/api/apps/preview", {"source": str(source)})
@@ -635,8 +647,11 @@ async def test_an_mcp_server_the_app_ships_is_the_new_version_after_an_update(ho
 
     async with _gateway() as gw:
         await gw.install(_probe(home, "v1", parts=("mcp",)))
+        # The owner's Allow on the Tools page: an app's server runs only once it is given.
+        allow_configured(f"{APP}:version")
         assert await answer() == "v1"
 
+        # An update that runs the same command keeps the yes: the Store asked about the update.
         await gw.update(_probe(home, "v2", parts=("mcp",)))
         assert await answer() == "v2", "the old MCP server process still answers"
 
@@ -793,7 +808,7 @@ async def test_what_the_old_version_registered_is_taken_back(home, wire):
         assert wire.runner_stopped == ["v1"], "the old version's sidecar runner was not stopped"
         assert await _tool_output() == "v2"
         assert get_runner(APP).version == "v2"
-        assert media_catalogs.get_media_catalog("tts", MODEL_TYPE).default_model == "voice-v2"
+        assert media_catalogs.get_media_catalog("tts", MODEL_TYPE).models[0].name == "voice-v2"
         trust_mode._TRUST._fire_disable("manual")
         assert wire.yolo_off == ["v2"], "the old version's callback still runs"
 
@@ -862,7 +877,7 @@ async def test_a_reinstall_runs_only_the_new_version(home, rung):
 async def test_an_update_that_leaves_old_code_running_says_a_restart_is_needed(home, wire):
     async with _gateway() as gw:
         await gw.install(_probe(home, "v1", parts=("tool",)))
-        await gw.call("PUT", f"/api/apps/{APP}/config", {"linger": True})
+        await gw.save_config({"linger": True})
         assert await _eventually(
             lambda: any(t.name == "reload-probe-linger" for t in threading.enumerate()), timeout=5
         )

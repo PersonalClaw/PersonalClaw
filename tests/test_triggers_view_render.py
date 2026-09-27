@@ -23,6 +23,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
@@ -108,9 +109,11 @@ def test_a_bound_view_trigger_past_TTL_is_REFRESHED_and_dispatched(home, state, 
         seen.append((trigger.id, event))
         return True, "ran"
 
-    monkeypatch.setattr(T, "_dispatch_store_action", _spy)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _spy)
 
-    resp = _run(T.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"})))
+    resp = _run(
+        trigger_runs.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"}))
+    )
     data = _body(resp)
     assert data["refreshed"] == ["view:tile"]
     assert data["served_cache"] == []
@@ -142,12 +145,16 @@ def test_two_renders_inside_the_TTL_serve_CACHE_with_no_second_dispatch(home, st
         calls["n"] += 1
         return True, "ran"
 
-    monkeypatch.setattr(T, "_dispatch_store_action", _spy)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _spy)
 
-    first = _body(_run(T.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"}))))
+    first = _body(
+        _run(trigger_runs.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"})))
+    )
     assert first["refreshed"] == ["view:tile"]
 
-    second = _body(_run(T.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"}))))
+    second = _body(
+        _run(trigger_runs.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"})))
+    )
     assert second["refreshed"] == []
     assert len(second["served_cache"]) == 1
     assert second["served_cache"][0]["trigger_id"] == "view:tile"
@@ -165,7 +172,9 @@ def test_an_UNBOUND_surface_is_200_with_empty_lists(home, state):
     """Most renders bind no `view` trigger at all, so an unbound surface is not an error — a 4xx
     here would make every artifact-open log a failure."""
     _view(home, surface="artifact.other")  # bound to a DIFFERENT surface
-    resp = _run(T.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"})))
+    resp = _run(
+        trigger_runs.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"}))
+    )
     assert resp.status == 200
     data = _body(resp)
     assert data == {"refreshed": [], "served_cache": []}
@@ -175,7 +184,7 @@ def test_a_MISSING_surface_is_200_with_empty_lists(home, state):
     """A render that pings with no surface (or an empty one) matches nothing rather than 400: a
     blank binding must never fan out across the product."""
     _view(home)
-    resp = _run(T.api_trigger_view_render(_req(state, body={})))
+    resp = _run(trigger_runs.api_trigger_view_render(_req(state, body={})))
     assert resp.status == 200
     assert _body(resp) == {"refreshed": [], "served_cache": []}
 
@@ -196,11 +205,13 @@ def test_the_render_returns_WITHOUT_awaiting_the_dispatch(home, state, monkeypat
         await asyncio.Event().wait()  # blocks forever — an LLM turn the request must not await
         return True, "ran"
 
-    monkeypatch.setattr(T, "_dispatch_store_action", _never_finishes)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _never_finishes)
 
     async def _drive():
         # The endpoint returns even though the dispatch never completes.
-        resp = await T.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"}))
+        resp = await trigger_runs.api_trigger_view_render(
+            _req(state, body={"surface": "artifact.notes"})
+        )
         data = _body(resp)
         assert data["refreshed"] == ["view:tile"]
         # The task WAS scheduled (it started running), it is simply not awaited.

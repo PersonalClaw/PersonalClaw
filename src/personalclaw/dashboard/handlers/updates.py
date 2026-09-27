@@ -390,7 +390,7 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
             # Resolve the installer instead of assuming stdlib pip — a uv venv has
             # none, which made self-update impossible on the uv install path while
             # the UI already labelled this kind "pip / uv install" (issue #51).
-            from personalclaw._installer import NoInstallerError, install_argv
+            from personalclaw._installer import NoInstallerError, install_argv, installer_env
 
             try:
                 argv = install_argv(["-U", spec, "--quiet"])
@@ -404,6 +404,7 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=installer_env(),
                 # Own group: pip forks build backends / compilers / `git clone` for VCS
                 # specs, all inheriting these pipes. See kill_timed_out.
                 start_new_session=True,
@@ -647,6 +648,8 @@ async def api_update_apply(request: web.Request) -> web.Response:
             # pip + the frontend build run at the package root (may be nested).
             pkg_root = self_update.package_root(proj)
             state.push_update_progress("installing", "Installing package…")
+            from personalclaw._installer import installer_env
+
             pip_install = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
@@ -658,6 +661,7 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 cwd=pkg_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=installer_env(),
                 # Own group: pip forks build backends / compilers, all inheriting these
                 # pipes. See kill_timed_out.
                 start_new_session=True,

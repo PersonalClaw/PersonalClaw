@@ -55,6 +55,7 @@ from personalclaw.request_validation import (
 from personalclaw.security import MaskConflict, is_sensitive_path
 from personalclaw.sel import sel
 from personalclaw.stale_write import (
+    REVISION_HEADER,
     claimed_revision,
     refusal_outcome,
     revision_of,
@@ -130,16 +131,24 @@ def _project_for_source_path(source_path: str) -> str:
     return project.id if project else ""
 
 
-def _source_file_refusal(request: web.Request, source_path: str) -> web.Response | None:
-    """The refusal a file-backed save gets when its copy of the file is stale, else ``None``.
+def _source_file_refusal(
+    request: web.Request, source_path: str, *, writes: bool
+) -> web.Response | None:
+    """The refusal a file-backed save gets when it names no copy of the file, or a stale one,
+    else ``None``.
 
-    Saving an artifact that points at a file writes the body THROUGH to that file
-    (``native._try_write_source_path``), and the dashboard's three "Save as artifact" doors send
-    the file viewer's draft — a copy of the file as the explorer read it. So when *source_path*
-    is a file the save overwrites, the request names the revision that copy was read at (the
-    ``file-read`` ETag) and is checked exactly as ``POST /api/file-write`` checks it, against the
-    file as the explorer reads it now. A path no save writes through to — relative, missing,
-    sensitive, unreadable — replaces no file, so it needs no base.
+    Saving an artifact that points at a file with a body (*writes*) writes that body THROUGH to
+    the file (``native._try_write_source_path``), and the dashboard's three "Save as artifact"
+    doors send the file viewer's draft — a copy of the file as the explorer read it. So when
+    *source_path* is a file the save overwrites, the request names the revision that copy was read
+    at (the ``file-read`` ETag) and is checked exactly as ``POST /api/file-write`` checks it,
+    against the file as the explorer reads it now.
+
+    A save with no text of its own writes nothing to the file: the artifact starts as the file.
+    It names the copy it read all the same, because that copy is what the artifact starts as, and
+    because a pointer at an existing file is taken only by a caller who has read it. Its refusals
+    say so, since nothing of the file is replaced or could be undone. A path no save reads or
+    writes through — relative, missing, sensitive, unreadable — needs no base.
     """
     try:
         path = Path(source_path)
@@ -152,7 +161,31 @@ def _source_file_refusal(request: web.Request, source_path: str) -> web.Response
         head = read_head(str(resolved))
     except OSError:
         return None  # the write-through opens the same file, and fails the same way
-    return stale_write_refusal(request, whole_text(head), what=f"the file {source_path!r}")
+    current = whole_text(head)
+    if writes:
+        return stale_write_refusal(request, current, what=f"the file {source_path!r}")
+    claimed = claimed_revision(request)
+    if not claimed:
+        return json_error(
+            "revision_required",
+            message=(
+                f"An artifact made from the file {source_path!r} starts as the copy of it you "
+                f"read, so the request must name that copy: read the file and send its revision "
+                f"in {REVISION_HEADER}."
+            ),
+            status=428,
+        )
+    if claimed != revision_of(current):
+        return json_error(
+            "stale_write",
+            message=(
+                f"The file {source_path!r} changed after the copy this request names was read, "
+                "so an artifact made from it now would not start as what you read. Nothing was "
+                "saved, and the file is unchanged: read it again and save."
+            ),
+            status=409,
+        )
+    return None
 
 
 def _audit(request: web.Request, operation: str, outcome: str, resources: str = "") -> None:
@@ -204,6 +237,10 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     it names the revision of the copy it was built from in ``If-Match`` — the file-read ETag —
     and a stale one is refused before anything is written (:func:`_source_file_refusal`).
 
+    No ``content`` (absent, or ``null``) is no text of its own, not an empty body: the artifact
+    starts as the file and the file is never written. It names the copy it read the same way, and
+    an artifact that already points at the file is answered as it is.
+
     A ``source_path`` outside the places an artifact may point (``source_files``) is refused
     with the sentence saying where it may point: ``400`` for the owner, ``403`` for an app.
     """
@@ -228,9 +265,14 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     # two shapes. Only the wrapper is local; the type rule is the shared one.
     try:
         name = require_string(body, "name")
+        # 🔴 ABSENT (or null) IS NO TEXT, NOT AN EMPTY BODY. Read as "" it was written through to
+        # the file a file-backed artifact points at, and wiped it; "" itself is a body the caller
+        # chose, and is written like any other.
+        content = (
+            None if body.get("content") is None else string_field(body, "content", strip=False)
+        )
     except RequestValidationError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
-    content = str(body.get("content", ""))
     source_path = str(body.get("source_path", "")).strip()
     session_id = _session_key(request)
     if source_path:
@@ -247,7 +289,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             return web.json_response({"error": str(exc)}, status=403 if request_app() else 400)
         # Checked with no await between it and the provider write below (create or bump), so
         # nothing in this process lands on the file in between.
-        stale = _source_file_refusal(request, source_path)
+        stale = _source_file_refusal(request, source_path, writes=content is not None)
         if stale is not None:
             _audit(request, "artifact.create", refusal_outcome(stale), f"source_path={source_path}")
             return stale
@@ -257,17 +299,23 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     if source_path:
         existing = prov.find_by_source_path(source_path)
         if existing is not None:
-            try:
-                updated = prov.update(
-                    existing.slug,
-                    content=content,
-                    snapshot=False,
-                    actor="user",
-                    session_id=session_id,
-                )
-            except MaskConflict as exc:
-                return web.json_response({"error": str(exc)}, status=409)
-            _audit(request, "artifact.update", "ok", f"slug={existing.slug}")
+            if content is None:
+                # No text to bump it with: the artifact that already points at this file is the
+                # answer, as it is, and neither it nor the file is written.
+                updated = prov.get(existing.slug)
+                _audit(request, "artifact.create", "deduped", f"slug={existing.slug}")
+            else:
+                try:
+                    updated = prov.update(
+                        existing.slug,
+                        content=content,
+                        snapshot=False,
+                        actor="user",
+                        session_id=session_id,
+                    )
+                except MaskConflict as exc:
+                    return web.json_response({"error": str(exc)}, status=409)
+                _audit(request, "artifact.update", "ok", f"slug={existing.slug}")
             return web.json_response(
                 _serialize(updated, include_content=True) if updated else {}, status=200
             )

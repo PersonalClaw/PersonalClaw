@@ -84,7 +84,7 @@ def _make_gateway():
     gateway.sessions = MagicMock()
     gateway.sessions.get_pid = MagicMock(return_value=None)
     gateway._channel_delivery = MagicMock()
-    gateway._channel_delivery.request_approval = AsyncMock(return_value=True)
+    gateway._channel_delivery.inner.request_approval = AsyncMock(return_value=True)
     gateway.dashboard_state = MagicMock()
     gateway.dashboard_state.is_yolo_active.return_value = False
     gateway.dashboard_state._sessions = {}
@@ -125,8 +125,8 @@ class TestCallSiteCarriesTheBrief:
         gateway = _make_gateway()
         assert await _drive(gateway, _event("web_fetch")) is True
 
-        gateway._channel_delivery.request_approval.assert_awaited_once()
-        delivered = gateway._channel_delivery.request_approval.call_args.args[0]
+        gateway._channel_delivery.inner.request_approval.assert_awaited_once()
+        delivered = gateway._channel_delivery.inner.request_approval.call_args.args[0]
         brief = delivered.tool_meta[APPROVAL_BRIEF_META_KEY]
 
         assert brief["tool"] == "web_fetch"
@@ -149,7 +149,7 @@ class TestCallSiteCarriesTheBrief:
         )
         assert await _drive(gateway, event) is True
 
-        delivered = gateway._channel_delivery.request_approval.call_args.args[0]
+        delivered = gateway._channel_delivery.inner.request_approval.call_args.args[0]
         brief = delivered.tool_meta[APPROVAL_BRIEF_META_KEY]
         assert event.risk_level == "destructive"  # the declaration is untouched
         assert brief["risk"] == "safe"  # …and the brief carries the resolution
@@ -173,7 +173,7 @@ class TestCallSiteCarriesTheBrief:
         )
         assert await _drive(gateway, event) is True
 
-        delivered = gateway._channel_delivery.request_approval.call_args.args[0]
+        delivered = gateway._channel_delivery.inner.request_approval.call_args.args[0]
         brief = delivered.tool_meta[APPROVAL_BRIEF_META_KEY]
         assert brief["blastRadius"]["readOnly"] is False
         assert brief["risk"] == "destructive"
@@ -188,7 +188,7 @@ class TestCallSiteCarriesTheBrief:
         gateway = _make_gateway()
         assert await _drive(gateway, _event("frobnicate_xyzzy")) is True
 
-        delivered = gateway._channel_delivery.request_approval.call_args.args[0]
+        delivered = gateway._channel_delivery.inner.request_approval.call_args.args[0]
         brief = delivered.tool_meta[APPROVAL_BRIEF_META_KEY]
         assert brief["tool"] == "frobnicate_xyzzy"
         assert "blastRadius" not in brief
@@ -279,7 +279,7 @@ class TestAdditiveOnly:
         event = _event("web_fetch", tool_meta={"ok": False, "content_type": "text/plain"})
         assert await _drive(gateway, event) is True
 
-        delivered = gateway._channel_delivery.request_approval.call_args.args[0]
+        delivered = gateway._channel_delivery.inner.request_approval.call_args.args[0]
         assert delivered.tool_meta["ok"] is False
         assert delivered.tool_meta["content_type"] == "text/plain"
         assert APPROVAL_BRIEF_META_KEY in delivered.tool_meta

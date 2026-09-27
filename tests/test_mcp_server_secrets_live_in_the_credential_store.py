@@ -23,6 +23,7 @@ import zipfile
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
+from mcp_owner_allowed import allow, allow_configured, confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
@@ -91,7 +92,8 @@ def _put(name: str, body: dict):
     )
 
     async def _json():
-        return body
+        # Resent once the owner agreed to what the server runs (`mcp_grants`).
+        return confirmed(body)
 
     req.json = _json
     return asyncio.run(mcp_mod.api_mcp_server_detail(req))
@@ -219,6 +221,7 @@ def test_the_spawned_server_receives_the_value_behind_the_reference(home, echo_s
             }
         )
     )
+    allow_configured("echo")
     assert asyncio.run(_call_read_env("echo", "GITHUB_TOKEN")) == TOKEN
 
 
@@ -262,6 +265,7 @@ def test_the_discovery_probe_spawns_with_the_resolved_value(home, echo_server):
             "PERSONALCLAW_HOME": str(home),
         },
     )
+    allow(server)
     probed = asyncio.run(probe_server(server))
     assert probed.status == "ok", probed.error
     [tool] = probed.tools
@@ -361,6 +365,7 @@ def test_a_server_moved_at_boot_still_starts_with_its_token(home, echo_server):
     )
     migrate_plaintext_secrets()
     assert TOKEN not in (home / "mcp.json").read_text()
+    allow_configured("echo")
     assert asyncio.run(_call_read_env("echo", "GITHUB_TOKEN")) == TOKEN
 
 
@@ -424,7 +429,9 @@ def test_a_pack_connector_references_its_credential_and_the_spawn_resolves_it(
     )
     spec = _read(home / "mcp.json")["mcpServers"]["web-search"]
     assert spec["env"]["SEARCH_API_KEY"] == make_ref("SEARCH_API_KEY")
-    # It was the literal "${SEARCH_API_KEY}", which no spawn expanded.
+    # It was the literal "${SEARCH_API_KEY}", which no spawn expanded. A connector waits for the
+    # owner's Allow like any server PersonalClaw did not get from them (`mcp_grants`).
+    allow_configured("web-search")
     assert _personalclaw_mcp_specs()["web-search"]["env"]["SEARCH_API_KEY"] == TOKEN
 
 

@@ -29,6 +29,7 @@ import { STORED_VALUE_MASK, buildMcpEnv, buildMcpHeaders, definitionForm, formSa
 import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { ConsentDeclined } from '../../lib/securityConsent'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
 import { PageTitle } from '../../ui/PageTitle'
@@ -66,6 +67,8 @@ const MCP_TOOLS_APP_HREF = `#/apps?view=store&open=${MCP_TOOLS_APP.name}`
 
 /** Exported for test: which words a server's state comes out as is only observable by rendering. */
 export function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
+  // Before `enabled`: a server that waits is off until its Allow, which also switches it on.
+  if (s.status === 'waiting') return { state: 'waiting for your Allow', tone: 'var(--color-warn)', detail: s.error }
   if (!s.enabled) return { state: 'disabled', tone: 'var(--color-on-surface-low)' }
   if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
   if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
@@ -168,9 +171,36 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // can skip the refetch when the write never landed. It moved to `app/reportingWrite` when
   // `knowledge/KnowledgeListPage` became its second adopter — one implementation, not two copies.
   async function toggleServer(s: McpServer) {
+    // A server that waits reads off, and switching it on is its Allow: the switch alone would leave
+    // it waiting, with nothing said.
+    if (s.allowed === false) { await allowServer(s); return }
     const ok = await reportingWrite(`${s.enabled ? 'disable' : 'enable'} "${s.name}"`,
       () => api.toggleMcpServer(s.name, !s.enabled))
     if (ok) setTimeout(load, 400)
+  }
+
+  // The owner's yes to a server that waits (`mcp_grants`): one imported, brought over, set up by a
+  // pack or an app, or changed since it was allowed. The gateway asks first, with exactly what the
+  // server runs, and starts it only once they agree. Declining leaves it waiting, which is what the
+  // owner chose, so nothing is reported.
+  const [allowing, setAllowing] = useState<string | null>(null)
+  async function allowServer(s: McpServer) {
+    const revision = s.allowRevision
+    if (!revision) return
+    setAllowing(s.name)
+    let declined = false
+    try {
+      const ok = await reportingWrite(`allow "${s.name}"`, () => api.allowMcpServer(s.name, revision).catch((e) => {
+        if (e instanceof ConsentDeclined) { declined = true; return }
+        // What it runs changed after this page read it: the row is read again, with the new definition.
+        if (hasApiCode(e, 'stale_write')) load()
+        throw e
+      }))
+      if (ok && !declined) {
+        notify(`Allowed “${s.name}”. It starts now.`, 'success')
+        setTimeout(load, 400)
+      }
+    } finally { setAllowing(null) }
   }
 
   // Grant or revoke ONE server's right to ask the user a question mid-tool-call.
@@ -439,7 +469,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
-              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} />)}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
               {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
             </div>
           )}
@@ -535,8 +565,11 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
   return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
 }
 
-function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, onSignIn, onSignOut, pendingSignIn }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null }) {
+function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, onSignIn, onSignOut, pendingSignIn, onAllow, allowing }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null; onAllow: (s: McpServer) => void; allowing: string | null }) {
   const health = g.server ? serverHealth(g.server) : null
+  const waiting = g.server?.status === 'waiting'
+  // A server that waits is off: nothing runs it until its Allow, which switches it on too.
+  const serverOn = !!g.server?.enabled && !waiting
   const signInState = g.server?.auth?.state
   // A native provider (not the locked platform one) gets a whole-provider toggle.
   const nativeToggleable = g.kind === 'native' && !g.providerLocked
@@ -607,9 +640,10 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
               loading={reconnecting === g.server.name} iconSize={13} onClick={() => onReconnect(g.server!)}>
               <RefreshCw size={13} />
             </SquareIconButton>
-            <button onClick={() => onToggleServer(g.server!)} title={g.server.enabled ? 'Disable server' : 'Enable server'}
-              aria-label={`${g.server.enabled ? 'Disable' : 'Enable'} server ${g.server.name}`}>
-              <Toggle on={!!g.server.enabled} />
+            <button onClick={() => onToggleServer(g.server!)}
+              title={waiting ? 'Allow and switch on: first shows you what it runs' : serverOn ? 'Disable server' : 'Enable server'}
+              aria-label={`${serverOn ? 'Disable' : 'Enable'} server ${g.server.name}`}>
+              <Toggle on={serverOn} />
             </button>
             {/* An app-contributed MCP server is namespaced "{app}:{server}" and owned
                 by its app — it re-registers on app enable, so it's not standalone-
@@ -647,6 +681,18 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
           action that answers it — the same reason the "no agent can call it" line below is not a
           caption `title`. While a sign-in is finishing in the other tab, the line says that instead,
           with the page to open again in case the browser blocked the tab. */}
+      {/* A server that waits for the owner's yes says so in the page, with the one action that
+          answers it. Allow first shows exactly what the server runs, in the gateway's words. */}
+      {waiting && g.server && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-m text-on-surface-low flex flex-wrap items-center gap-s">
+          <ShieldAlert size={14} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="text-on-surface">{g.server.name}</span> has not run. PersonalClaw starts it only once you allow what it runs.
+          </span>
+          <Button size="sm" onClick={() => onAllow(g.server!)} loading={allowing === g.server.name}
+            ariaLabel={`Allow ${g.server.name}`}>Allow</Button>
+        </div>
+      )}
       {g.server?.enabled && (signInState === 'required' || signInState === 'signed_out') && (
         <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex flex-wrap items-center gap-s">
           <KeyRound size={14} className="shrink-0" />
@@ -686,7 +732,8 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
           AuditPanel, PresetEmptyState, DesignCockpitPage ×2).
           🪤 This comment sits ABOVE the conditional on purpose: a `{…}` comment as the first child of a
           ternary branch is a second child where one expression is allowed, and it does not compile. */}
-      {g.kind === 'mcp' && g.tools.length === 0 ? (
+      {/* A server that waits has no tools to show, and its line above already says why. */}
+      {waiting ? null : g.kind === 'mcp' && g.tools.length === 0 ? (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
           <Plug size={14} />
           {!g.server?.enabled ? 'Server disabled.' : health?.state === 'error' ? `Not responding — ${g.server?.error || 'no tools available'}.` : signInState && signInState !== 'signed_in' ? 'Its tools show here once you sign in.' : 'No tools exposed yet.'}
@@ -864,7 +911,10 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
     // Reported, not swallowed: an import that did not land (a refusal, or a 200 whose change carries
     // an `error`, which `importMcpServer` throws) used to leave the row sitting here with no word.
     try {
-      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s))) onImported()
+      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s))) {
+        notify(`Imported “${s.name}”. It runs once you allow it on its row.`, 'success')
+        onImported()
+      }
     } finally { setBusy(null) }
   }
 
@@ -879,8 +929,8 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
         <>
           <p data-type="caption" className="mb-2 text-on-surface-low leading-snug">
             These MCP servers are configured in another backend but not in PersonalClaw. Import one to copy its
-            configuration here so your agents can use it. The values it sets go to your credential store, and the
-            other backend's own configuration is left as it is.
+            configuration here. It does not run until you allow it on its row, which shows exactly what it runs.
+            The values it sets go to your credential store, and the other backend's own configuration is left as it is.
           </p>
           <div className="flex flex-col gap-2">
             {servers.map((s) => (
@@ -980,6 +1030,8 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
       }
       onAdded()
     } catch (e) {
+      // The owner said no to what it would run: nothing was saved, and the form stays as typed.
+      if (e instanceof ConsentDeclined) { setSaving(false); return }
       // The name is taken: adding replaces nothing, so the gateway will not let it replace the server
       // already configured under that name. It used to, silently.
       setErr((e as { code?: unknown }).code === 'revision_required'
@@ -1134,7 +1186,10 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
     setSaving(true); setErr('')
     // A refusal keeps the form as typed, with the notice below offering the way back.
     try { await guard.save(base, form, rebaseRecord(base.value, form)) }
-    catch (e) { setErr(readableErrText(e) || "Couldn't save the server.") }
+    catch (e) {
+      // Declined in the dialog that says what it would run: nothing was saved, the form stays as typed.
+      if (!(e instanceof ConsentDeclined)) setErr(readableErrText(e) || "Couldn't save the server.")
+    }
     finally { setSaving(false) }
   }
 
@@ -1143,9 +1198,9 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
     <Modal title={`Edit ${name}`} icon={<Pencil size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-3">
         {!def && loadErr ? (
-          <LoadError what="this server's settings" error={loadErr} onRetry={refresh} />
+          <LoadError what="server settings" error={loadErr} onRetry={refresh} />
         ) : !def || (def.editable && !form) ? (
-          <ListSkeleton rows={3} what="this server's settings" />
+          <ListSkeleton rows={3} what="server settings" />
         ) : !def.editable ? (
           <p data-type="body-s" className="text-on-surface-low">{def.reason}</p>
         ) : form && (<>

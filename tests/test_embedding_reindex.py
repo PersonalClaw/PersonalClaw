@@ -1,14 +1,16 @@
 """Embedding re-index on model change (#51).
 
-Switching the active embedding model clears the now-incompatible vectors and
-re-embeds both stores. Pins the store-level re-embed primitives and the readiness
-gate (the change is refused when the new model can't produce vectors).
+Switching the active embedding model re-embeds, in both stores, what the new model has not
+embedded (clearing a knowledge item's incompatible vector first). Pins the store-level re-embed
+primitives and the readiness gate (the change is refused when the new model can't produce
+vectors).
 """
 
 from __future__ import annotations
 
 import pytest
 
+from personalclaw.knowledge.embedding_fingerprint import EmbeddingFingerprint
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.vector_memory import VectorMemoryStore
 
@@ -19,26 +21,51 @@ def _kstore(tmp_path) -> KnowledgeStore:
     return KnowledgeStore(str(tmp_path / "k.db"))
 
 
-def _add(store, title, content, summary="", embedding=None):
-    """Create one logical-doc item, optionally with a raw embedding blob."""
+BOUND = EmbeddingFingerprint(model_id="emb-new", provider="rec")
+
+
+@pytest.fixture
+def bound(monkeypatch):
+    """Embedding bound to ``rec:emb-new``, as the knowledge store reads the binding."""
+    monkeypatch.setattr("personalclaw.knowledge.store.active_fingerprint", lambda: BOUND)
+    return BOUND
+
+
+def _add(store, title, content, summary="", embedding=None, model=None):
+    """Create one logical-doc item, optionally with a raw embedding blob and the model that
+    wrote it (``(model_id, provider)``; None records none, as before items recorded one)."""
     iid = store.create_typed_item(item_type="note", title=title, content=content, summary=summary)
     if embedding is not None:
-        store.db.execute("UPDATE items SET embedding = ? WHERE id = ?", (embedding, iid))
+        store.db.execute(
+            "UPDATE items SET embedding = ?, embedding_model_id = ?, embedding_provider = ? "
+            "WHERE id = ?",
+            (embedding, *(model or (None, None)), iid),
+        )
         store.db.commit()
     return iid
 
 
-def test_knowledge_clear_and_reembed(tmp_path):
-    store = _kstore(tmp_path)
-    _add(store, "Title A", "content a", summary="sum a", embedding=b"\x00\x00")
-    _add(store, "Title B", "content b", summary="sum b", embedding=b"\x11\x11")
+def _vectors(store) -> dict[str, tuple]:
+    rows = store.db.execute(
+        "SELECT title, embedding, embedding_model_id, embedding_provider FROM items"
+    ).fetchall()
+    return {
+        r["title"]: (r["embedding"], r["embedding_model_id"], r["embedding_provider"]) for r in rows
+    }
 
-    assert store.count_items_to_reembed() == 2
-    cleared = store.clear_embeddings()
-    assert cleared == 2
-    # All embeddings now NULL.
-    rows = store.db.execute("SELECT embedding FROM items").fetchall()
-    assert all(r["embedding"] is None for r in rows)
+
+def test_knowledge_reembeds_what_the_bound_model_has_not(tmp_path, bound):
+    """🔴 Red on main: the re-index cleared and re-embedded every item, the ones the bound model
+    had embedded included, where memory re-embeds only what the model has not."""
+    store = _kstore(tmp_path)
+    _add(store, "Kept", "content a", summary="sum a", embedding=b"\x00" * 12, model=bound.params)
+    _add(store, "Another model's", "content b", embedding=b"\x11" * 12, model=("emb-old", "rec"))
+    _add(store, "Unrecorded", "content c", embedding=b"\x22" * 12)
+    _add(store, "Never embedded", "content d")
+
+    assert store.count_items_to_reembed() == 3
+    assert store.clear_stale_embeddings() == 2, "the two vectors the bound model did not write"
+    assert _vectors(store)["Kept"][0] == b"\x00" * 12, "the bound model's vector is kept"
 
     # A fake embedder that returns a vector per item. embed_for_item takes the same
     # (title, summary, content) shape the real embedder + reembed_all use.
@@ -46,10 +73,20 @@ def test_knowledge_clear_and_reembed(tmp_path):
         def embed_for_item(self, title, summary, content=None):
             return [0.1, 0.2, 0.3]
 
-    res = store.reembed_all(_Emb())
-    assert res == {"reembedded": 2, "failed": 2 - 2, "total": 2}
-    rows = store.db.execute("SELECT embedding FROM items").fetchall()
-    assert all(r["embedding"] is not None for r in rows)
+    res = store.reembed_all(_Emb(), only_missing=True)
+    assert res == {"reembedded": 3, "failed": 0, "total": 3}
+    after = _vectors(store)
+    assert after["Kept"][0] == b"\x00" * 12, "and never re-embedded"
+    assert {title: v[1:] for title, v in after.items()} == dict.fromkeys(after, bound.params)
+    assert store.count_items_to_reembed() == 0, "a second pass has nothing left to do"
+
+
+def test_nothing_is_stale_while_no_model_is_bound(tmp_path, monkeypatch):
+    monkeypatch.setattr("personalclaw.knowledge.store.active_fingerprint", lambda: None)
+    store = _kstore(tmp_path)
+    _add(store, "Unrecorded", "content c", embedding=b"\x22" * 12)
+    assert store.count_items_to_reembed() == 0
+    assert store.clear_stale_embeddings() == 0
 
 
 def test_reembed_all_cannot_use_a_bare_callable(tmp_path):
@@ -87,16 +124,16 @@ def test_reembed_all_cannot_use_a_bare_callable(tmp_path):
     assert store.count_items_missing_embedding() == 0
 
 
-def test_count_items_missing_embedding_detects_interrupted_reindex(tmp_path):
-    """The boot-time auto-resume signal: after clear_embeddings() (start of a re-index)
-    but before reembed_all() finishes, text-bearing items report as missing so the
-    gateway can auto-resume. A whole store reports 0; a text-less item never counts."""
+def test_count_items_missing_embedding_detects_interrupted_reindex(tmp_path, bound):
+    """The backlog signal: after clear_stale_embeddings() (start of a re-index) but before
+    reembed_all() finishes, text-bearing items report as missing. A whole store reports 0; a
+    text-less item never counts."""
     store = _kstore(tmp_path)
     _add(store, "Has text A", "content a", embedding=b"\x00\x00")
     _add(store, "Has text B", "content b", embedding=b"\x11\x11")
     assert store.count_items_missing_embedding() == 0  # whole store → nothing to resume
 
-    store.clear_embeddings()  # re-index begins → vectors nulled
+    store.clear_stale_embeddings()  # re-index begins → the unrecorded vectors are nulled
     assert store.count_items_missing_embedding() == 2  # interrupted signature
 
     # A text-less item must NOT trigger a phantom resume.
@@ -104,27 +141,27 @@ def test_count_items_missing_embedding_detects_interrupted_reindex(tmp_path):
     assert store.count_items_missing_embedding() == 2  # still just the 2 text-bearing
 
 
-def test_count_items_needing_reembed_detects_stale_dim(tmp_path):
-    """Boot auto-resume must also recover from a model SWAP that was orphaned mid-flight:
-    items keep an OLD wrong-dimension vector (so missing-count is 0) yet are vector-dead
-    against the new model. count_items_needing_reembed(active_dim) catches missing OR
-    stale-dim; the missing-only signal would leave the store silently unsearchable."""
+def test_count_items_to_reembed_detects_stale_dim(tmp_path, bound):
+    """Boot auto-resume must also recover from a model whose output width changed: items keep a
+    vector of the bound model at the old width (so missing-count is 0) yet are vector-dead
+    against the new query width. count_items_to_reembed(active_dim) catches missing, another
+    model's, or stale-dim; the missing-only signal would leave the store silently unsearchable."""
     store = _kstore(tmp_path)
-    # 384-dim vectors (384 floats * 4 bytes = 1536 bytes) from a previous model.
+    # 384-dim vectors (384 floats * 4 bytes = 1536 bytes).
     v384 = b"\x00" * (384 * 4)
-    _add(store, "Item A", "content a", embedding=v384)
-    _add(store, "Item B", "content b", embedding=v384)
+    _add(store, "Item A", "content a", embedding=v384, model=bound.params)
+    _add(store, "Item B", "content b", embedding=v384, model=bound.params)
     # missing-only sees a "whole" store (vectors present) — the gap the old hook had.
     assert store.count_items_missing_embedding() == 0
     # But against the ACTIVE model's 768 dim, both are stale → need re-embed.
-    assert store.count_items_needing_reembed(768) == 2
+    assert store.count_items_to_reembed(768) == 2
     # Same dim → nothing needs re-embedding.
-    assert store.count_items_needing_reembed(384) == 0
-    # Unknown active dim (embedder not ready) → falls back to missing-only (0 here).
-    assert store.count_items_needing_reembed(None) == 0
+    assert store.count_items_to_reembed(384) == 0
+    # Unknown active dim (embedder not ready) → the model alone decides (0 here).
+    assert store.count_items_to_reembed(None) == 0
     # A NULL vector counts as needing re-embed regardless of dim.
-    store.clear_embeddings()
-    assert store.count_items_needing_reembed(768) == 2
+    store.clear_stale_embeddings(768)
+    assert store.count_items_to_reembed(768) == 2
 
 
 def test_knowledge_reembed_tolerates_failure(tmp_path):

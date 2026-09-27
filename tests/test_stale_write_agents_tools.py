@@ -25,6 +25,7 @@ from types import SimpleNamespace
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from mcp_owner_allowed import confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AgentProfile, AppConfig
@@ -474,7 +475,9 @@ def _mcp_app() -> web.Application:
 async def _add_server(c: TestClient) -> None:
     resp = await c.put(
         f"/api/mcp/servers/{SERVER}",
-        json={"transport": "stdio", "command": "npx", "args": ["-y", "server-files", "/data"]},
+        json=confirmed(
+            {"transport": "stdio", "command": "npx", "args": ["-y", "server-files", "/data"]}
+        ),
     )
     assert resp.status == 200, await resp.text()
 
@@ -504,17 +507,19 @@ class TestMcpServerEdit:
             base = view.get("revision")
             first = await c.put(
                 f"/api/mcp/servers/{SERVER}",
-                json={
-                    "transport": "stdio",
-                    "command": "npx",
-                    "args": ["-y", "server-files", "/srv"],
-                },
+                json=confirmed(
+                    {
+                        "transport": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "server-files", "/srv"],
+                    }
+                ),
                 headers=_based_on(base),
             )
             assert first.status == 200, await first.text()
             second = await c.put(
                 f"/api/mcp/servers/{SERVER}",
-                json={"transport": "stdio", "command": "node", "args": view["args"]},
+                json=confirmed({"transport": "stdio", "command": "node", "args": view["args"]}),
                 headers=_based_on(base),
             )
             assert second.status == 409, await second.text()
@@ -529,7 +534,8 @@ class TestMcpServerEdit:
         async with TestClient(TestServer(_mcp_app())) as c:
             await _add_server(c)
             resp = await c.put(
-                f"/api/mcp/servers/{SERVER}", json={"transport": "stdio", "command": "rm"}
+                f"/api/mcp/servers/{SERVER}",
+                json=confirmed({"transport": "stdio", "command": "rm"}),
             )
             assert resp.status == 428, await resp.text()
             assert await _refusal(resp) == "revision_required"
@@ -553,7 +559,7 @@ class TestMcpServerEdit:
 
             resp = await c.put(
                 f"/api/mcp/servers/{SERVER}",
-                json={"transport": "stdio", "command": "uvx", "args": view["args"]},
+                json=confirmed({"transport": "stdio", "command": "uvx", "args": view["args"]}),
                 headers=_based_on(view.get("revision")),
             )
             assert resp.status == 409, await resp.text()
@@ -572,7 +578,7 @@ class TestMcpServerEdit:
             remove_mcp_servers([SERVER])  # removed in another tab while the form was open
             resp = await c.put(
                 f"/api/mcp/servers/{SERVER}",
-                json={"transport": "stdio", "command": "npx", "args": view["args"]},
+                json=confirmed({"transport": "stdio", "command": "npx", "args": view["args"]}),
                 headers=_based_on(view.get("revision")),
             )
             assert resp.status == 409, await resp.text()
@@ -586,7 +592,7 @@ class TestMcpServerEdit:
             view = await _read_server(c)
             resp = await c.put(
                 f"/api/mcp/servers/{SERVER}",
-                json={"transport": "stdio", "command": "npx", "args": ["server-files"]},
+                json=confirmed({"transport": "stdio", "command": "npx", "args": ["server-files"]}),
                 headers=_based_on(view.get("revision")),
             )
             assert resp.status == 200, await resp.text()

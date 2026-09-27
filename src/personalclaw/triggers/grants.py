@@ -8,8 +8,9 @@ grant the same way.
 🔴 THE RULE. Nothing runs an action without the grant it needs; a grant is the owner's yes to the
 action as it stood when they gave it; and nothing but that yes gives one.
 
-* **Both dispatches check.** The attended one (`dashboard.handlers.triggers._dispatch_store_action`
-  — Run now, the restart review's Run now, a view refresh, a webhook fire) and the unattended one
+* **Both dispatches check.** The attended one
+  (`dashboard.handlers.trigger_runs._dispatch_store_action` — Run now, the restart review's Run
+  now, a view refresh, a webhook fire) and the unattended one
   (`gateway._fire_store_trigger` — clock, event, file, web_watch, chained). Clock and event fires
   also meet the fence in `service.admit_fire`; file, web_watch and chained fires reach the dispatch
   without it, and before this ran whatever they held. A lifecycle trigger's fire checks it too

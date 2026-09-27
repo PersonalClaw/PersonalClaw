@@ -26,6 +26,7 @@ const runSchedule = vi.fn()
 const notifications = vi.fn()
 const createULoop = vi.fn()
 const uLoopAction = vi.fn()
+const uLoop = vi.fn()
 
 // Spread the real module: `isCreatedLoopRun` is the predicate the loop flow narrows its create
 // response with, and stubbing it here would make these tests agree with a test double about
@@ -40,6 +41,7 @@ vi.mock('../../lib/api', async (orig) => ({
     notifications: () => notifications(),
     createULoop: (...a: unknown[]) => createULoop(...a),
     uLoopAction: (...a: unknown[]) => uLoopAction(...a),
+    uLoop: (...a: unknown[]) => uLoop(...a),
   },
 }))
 
@@ -90,6 +92,8 @@ function happy() {
   // the tests below can assert it is NOT reached.
   createULoop.mockResolvedValue({ run_id: 'run-1', status: 'running', blocking: false, kind: 'general' })
   uLoopAction.mockResolvedValue({ id: 'lp-1', status: 'running', task: LOOP_SEED.task, max_cycles: 1 })
+  // What `GET /api/loops/<run_id>` answers for the run: the budget the run really has.
+  uLoop.mockResolvedValue({ id: 'run-1', run_id: 'run-1', status: 'running', max_cycles: 1 })
 }
 
 beforeEach(() => {
@@ -200,27 +204,41 @@ describe('reminder card — creates it, fires it, and reads the notification bac
 })
 
 describe('loop card — creates a general loop, which STARTS A RUN', () => {
-  it('creates the loop and does NOT try to start it a second time', async () => {
+  it('creates the loop for ONE cycle and does NOT try to start it a second time', async () => {
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     await waitFor(() => expect(createULoop).toHaveBeenCalled())
-    // No `max_cycles`: the field had no home on the run path, so sending it would have been a
-    // budget the card asked for and the engine ignored.
-    expect(createULoop).toHaveBeenCalledWith({ kind: 'general', task: LOOP_SEED.task })
+    // The card promises one cycle, and the run path honours `max_cycles` (#3613). Without it the
+    // run took the template's own cap of 6, and a first-run demo became a six-cycle loop.
+    expect(createULoop).toHaveBeenCalledWith({
+      kind: 'general',
+      task: LOOP_SEED.task,
+      max_cycles: 1,
+    })
     // The load-bearing half. `general` is PORTED: the create already STARTED the run, so
     // the old `PATCH /api/loops/<id> {action:"start"}` would fire against an id the loop store
     // has never seen — a guaranteed failure the user would read as "my first loop broke".
     expect(uLoopAction).not.toHaveBeenCalled()
   })
 
-  it('renders the status the CREATE response reported', async () => {
+  it('renders the status the create reported and the budget the run reports', async () => {
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     expect(await screen.findByText('running')).toBeTruthy()
-    // "It stops on its own" is in the headline now, not in a fact row: a run create reports no
-    // budget, and the row used to print `max_cycles` read off a loop view.
-    expect(screen.getByText(/it stops on its own/)).toBeTruthy()
-    expect(screen.queryByText(/1 cycle/)).toBeNull()
+    // The budget is read back from the run (`GET /api/loops/<run_id>`), never echoed from the
+    // request: a request proves the ask was built, the run proves it was kept.
+    expect(uLoop).toHaveBeenCalledWith('run-1')
+    const budget = screen.getByText('Cycles').nextElementSibling
+    expect(budget?.textContent).toBe('1')
+    expect(screen.getByText(/stops on its own/)).toBeTruthy()
+  })
+
+  it('a run that kept a different budget is reported, not rendered as one cycle', async () => {
+    uLoop.mockResolvedValue({ id: 'run-1', run_id: 'run-1', status: 'running', max_cycles: 6 })
+    mount()
+    fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByText(/budget of 6 cycles, not 1/)).toBeTruthy()
   })
 
   it('a run that is created but never reaches `running` is a failure', async () => {

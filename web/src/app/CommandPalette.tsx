@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { CornerDownLeft, ArrowRight, MessageSquare, Brain, BookOpen, ListChecks } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { spring } from '../design/motion'
+import { Eyebrow } from '../ui/Eyebrow'
 import { SearchField } from '../ui/SearchField'
 import { CONTENT_SOURCES, MIN_CONTENT_QUERY, SOURCE_LABEL, useContentSearch, type ContentHit, type ContentSource } from './paletteSearch'
 
@@ -149,15 +150,15 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
                 const first = results.length + groups.slice(0, groups.indexOf(g)).reduce((n, x) => n + x.hits.length, 0)
                 return (
                   <div key={g.source} role="group" aria-labelledby={headingId} className="pt-1.5">
-                    <div id={headingId} data-type="caption" className="px-l pb-1 pt-1.5 text-on-surface-low uppercase tracking-wide">
+                    <Eyebrow id={headingId} className="px-l pb-1 pt-1.5">
                       {SOURCE_LABEL[g.source]}
-                    </div>
+                    </Eyebrow>
                     {g.hits.map((_, j) => option(rows[first + j], first + j))}
                   </div>
                 )
               })}
               {rows.length === 0 && !searchingContent && failures.length === 0 && (
-                <div className="px-l py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</div>
+                <div data-type="body-s" className="px-l py-2xl text-center text-on-surface-low">No matches for “{q}”.</div>
               )}
             </div>
             {/* The content half's progress, failures and partial answers. Outside the listbox,
@@ -172,7 +173,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
               </div>
             )}
             {/* footer hint */}
-            <div className="flex items-center gap-3 border-t border-outline-variant/40 px-l py-2 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="flex items-center gap-m border-t border-outline-variant/40 px-l py-s text-on-surface-low">
               <span className="inline-flex items-center gap-xs"><ArrowRight size={11} className="rotate-90" /> navigate</span>
               <span className="inline-flex items-center gap-xs"><CornerDownLeft size={11} /> select</span>
               <span className="ml-auto inline-flex items-center gap-xs"><kbd className="rounded bg-surface-high px-1 font-mono">⌘K</kbd> toggle</span>

@@ -59,7 +59,7 @@ TOOL_META_APPROVAL_WAIVED = "approval_waived"
 #: The ``tool_meta`` key a TOOL_RESULT carries when the call needed an approval and the run was
 #: unattended, so the runtime declined it without asking anyone. The runtime cannot reach
 #: the Inbox; whoever consumes its stream — the chat runner, the subagent manager — records the
-#: denial there (``dashboard/auto_denials.py``) so the morning can see what did not run.
+#: denial there (``auto_denials.py``) so the morning can see what did not run.
 TOOL_META_AUTO_DENIED = "auto_denied"
 
 #: The ``tool_meta`` key a TOOL_RESULT carries when the runtime's OWN gate refused the call before

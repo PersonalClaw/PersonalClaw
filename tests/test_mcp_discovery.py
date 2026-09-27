@@ -6,6 +6,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp_owner_allowed import allow
 
 from personalclaw.mcp_discovery import (
     McpServerInfo,
@@ -172,7 +173,9 @@ class TestListServers:
         assert ext.source == "mcp.json"
 
     def test_mcp_json_no_duplicate(self, tmp_path, monkeypatch) -> None:
-        """mcp.json server with same name as agent config is NOT duplicated."""
+        """A server both files name is listed once, as ``mcp.json`` defines it: the agent config
+        holds a copy of it with the command resolved to a path, and what the owner allowed is
+        the definition in ``mcp.json`` (`mcp_grants`)."""
         agent_dir = tmp_path / "agents"
         agent_dir.mkdir()
         cfg = {"mcpServers": {"shared": {"command": "agent-cmd"}}}
@@ -184,7 +187,7 @@ class TestListServers:
         servers = list_servers()
         shared = [s for s in servers if s.name == "shared"]
         assert len(shared) == 1
-        assert shared[0].command == "agent-cmd"
+        assert (shared[0].command, shared[0].source) == ("mcp-cmd", "mcp.json")
 
     def test_list_skips_disabled_servers(self, tmp_path, monkeypatch) -> None:
         """Servers with disabled=true are excluded from listing."""
@@ -234,8 +237,9 @@ class TestListServers:
         assert "active" in names
         assert "inactive" not in names
 
-    def test_disabled_in_agent_blocks_mcp_json(self, tmp_path, monkeypatch) -> None:
-        """Server disabled in agent config is not re-added from mcp.json."""
+    def test_mcp_json_holds_the_switch_of_a_server_it_defines(self, tmp_path, monkeypatch) -> None:
+        """A server ``mcp.json`` defines is on or off as ``mcp.json`` says. The agent config's copy
+        is rebuilt to match, and a stale ``disabled`` in it read the owner's switch-on as off."""
         agent_dir = tmp_path / "agents"
         agent_dir.mkdir()
         (agent_dir / "defaults.json").write_text(
@@ -250,10 +254,13 @@ class TestListServers:
         # home has to be redirected the way the product does it — patching Path.home
         # alone pinned the hardcode this test was written against (issue 287).
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
-        assert not any(s.name == "srv" for s in list_servers())
+        [srv] = [s for s in list_servers() if s.name == "srv"]
+        assert (srv.command, srv.disabled) == ("b", False)
 
     def test_disabled_mcp_json_still_carries_disabled_tools(self, tmp_path, monkeypatch) -> None:
-        """disabledTools from a disabled mcp.json entry are applied to an existing agent server."""
+        """An entry in ``mcp.json`` that defines nothing holds the owner's state for a server the
+        agent config defines: switched off there, it is not listed for a probe, and the list the
+        pages draw shows it switched off with its disabledTools."""
         agent_dir = tmp_path / "agents"
         agent_dir.mkdir()
         (agent_dir / "defaults.json").write_text(
@@ -270,9 +277,9 @@ class TestListServers:
         # home has to be redirected the way the product does it — patching Path.home
         # alone pinned the hardcode this test was written against (issue 287).
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
-        servers = list_servers()
-        assert len(servers) == 1
-        assert servers[0].disabled_tools == ["t1"]
+        assert list_servers() == []
+        [srv] = list_servers(include_disabled=True)
+        assert (srv.name, srv.disabled, srv.disabled_tools) == ("srv", True, ["t1"])
 
     def test_list_remote_server(self, tmp_path, monkeypatch) -> None:
         """Remote (url-based) servers are listed with url and headers."""
@@ -840,6 +847,7 @@ class TestProbeRemote:
     async def test_probe_dispatches_to_remote(self) -> None:
         """probe_server dispatches to _probe_remote for url-based servers."""
         server = McpServerInfo(name="remote", url="https://example.com/mcp")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         with patch(
             "personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock
@@ -854,6 +862,7 @@ class TestProbeRemote:
     async def test_probe_local_not_dispatched_to_remote(self) -> None:
         """probe_server does NOT dispatch to _probe_remote for command-based servers."""
         server = McpServerInfo(name="local", command="nonexistent-cmd-xyz")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         with patch(
             "personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock
@@ -884,6 +893,7 @@ class TestProbeServerProcessCleanup:
         """Closing stdin causes process to exit within timeout."""
         proc = self._make_mock_proc()
         server = McpServerInfo(name="test", command="echo")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         with (
             patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
@@ -903,6 +913,7 @@ class TestProbeServerProcessCleanup:
             wait_side_effect=[asyncio.TimeoutError(), AsyncMock(return_value=0)()]
         )
         server = McpServerInfo(name="test", command="echo")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         with (
             patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
@@ -922,6 +933,7 @@ class TestProbeServerProcessCleanup:
             wait_side_effect=[asyncio.TimeoutError(), OSError("kill failed")]
         )
         server = McpServerInfo(name="test", command="echo")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         with (
             patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
@@ -941,6 +953,7 @@ class TestProbeServerProcessCleanup:
         proc = self._make_mock_proc()
         proc.stdin = None
         server = McpServerInfo(name="test", command="echo")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         with (
             patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
@@ -1059,6 +1072,7 @@ class TestProbeServerTimeout:
     async def test_probe_server_timeout_on_tools_list(self) -> None:
         """probe_server times out on tools/list (second readline), covering L456."""
         server = McpServerInfo(name="slow-server", command="sleep", args=["999"])
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}).encode() + b"\n"
 
@@ -1089,6 +1103,7 @@ class TestProbeServerTimeout:
     async def test_probe_server_config_fallback_on_error(self) -> None:
         """probe_server falls back to 15s when config loading fails."""
         server = McpServerInfo(name="test", command="echo")
+        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
 
         mock_proc = AsyncMock()
         mock_proc.stdin = AsyncMock()

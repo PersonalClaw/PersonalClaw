@@ -31,7 +31,7 @@ process everything else talks to.
 | `--approval {reads,yolo,interactive}` | Default tool-approval mode. `reads` auto-approves read-only tools; `yolo` auto-approves everything (refused unless `PERSONALCLAW_HOME` is explicitly non-default); `interactive` uses the prompt flow. |
 | `--test-mode` | Convenience bundle: `--port auto --no-open --json-ready --approval reads` (explicit `--port`/`--approval` win). |
 | `--seed FIXTURE` | Dev tool: populate `$PERSONALCLAW_HOME` from a named fixture (under `tests_fixtures/`) before starting. Refuses the main gateway home (`~/.personalclaw`) and non-empty targets. |
-| `--seed-replace` | With `--seed`, wipe `$PERSONALCLAW_HOME` before copying. Never overrides the main-home rail. |
+| `--seed-replace` | With `--seed`, stop the home's tmux server and wipe `$PERSONALCLAW_HOME` before copying. Never overrides the main-home rail. |
 | `--seed-local-model` | Bind a local Ollama provider into `$PERSONALCLAW_HOME` after seeding, so the home can run a real chat turn. Conditional and never fatal — see below. |
 | `--local-model-endpoint URL` | Endpoint for `--seed-local-model` (default `http://localhost:11434`, or `$PERSONALCLAW_LOCAL_MODEL_ENDPOINT`). |
 | `--local-model MODEL_ID` | Model to bind (default: the endpoint's most recently modified chat-capable model, or `$PERSONALCLAW_LOCAL_MODEL`). |
@@ -188,7 +188,7 @@ crash, auto-starts on boot.
 | Subcommand | What it does |
 |---|---|
 | `service install [--env NAME]… [--no-env NAME]…` | Install and start the gateway service, carrying the variables below from this shell. `--env NAME` carries one more, `--no-env NAME` leaves one out. |
-| `service uninstall` | Stop and remove the gateway service. |
+| `service uninstall` | Stop and remove the gateway service, and stop the tmux server its home's persistent terminals and durable workers run in. |
 | `service status` | Show service status (systemctl/launchctl) and the environment the installed service starts the gateway in. |
 
 ### The service's environment

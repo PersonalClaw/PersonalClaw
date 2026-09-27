@@ -67,9 +67,10 @@ SPEC = {
 #: are exercised unchanged — the substitution is one level below the code under test.
 _SHIM = '''#!{python}
 import os, sys
-# argv shape produced by tmux_substrate._argv: ["-L", <socket>, <subcommand>, ...]
+# argv shape produced by tmux_substrate._argv: ["-S", <socket path>, <subcommand>, ...], or
+# ["-L", <socket name>, ...] for a home whose path is too long for a socket
 argv = sys.argv[1:]
-if argv[:1] == ["-L"]:
+if argv[:1] in (["-S"], ["-L"]):
     argv = argv[2:]
 sub = argv[0] if argv else ""
 root = os.environ["PCLAW_SHIM_SESSIONS"]

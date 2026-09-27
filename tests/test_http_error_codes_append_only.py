@@ -138,7 +138,17 @@ _CODE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 #: any that does not) and asserts each literal is in ``HTTP_ERROR_CODES``. Deliberately
 #: enumerated from the source rather than from a list, so a fifth code cannot be added
 #: unregistered. Raising this number for a genuinely computed code would still be wrong.
-_DYNAMIC_CODE_SITE_CEILING = 18
+#:
+#: 19th: ``dashboard/handlers/packs.api_pack_uninstall`` (#3634) answers
+#: ``json_error(exc.code, ...)`` for a ``packs.uninstall.PackUninstallError``. Admitted on the
+#: 18th's reasoning: every ``raise PackUninstallError(...)`` passes a bare literal, so the set is
+#: closed. It is also the case this ceiling exists for, because it shipped with two of its three
+#: codes (``pack_in_use``, ``pack_uninstall_incomplete``) missing from the registry, invisible to
+#: the check above. They are registered in the change that admits the site, and the site is
+#: closed one level up by
+#: ``tests/test_packs_uninstall.py::test_every_code_an_uninstall_raises_is_a_registered_literal``,
+#: enumerated from the source the same way.
+_DYNAMIC_CODE_SITE_CEILING = 19
 
 
 def test_every_released_code_is_still_present():
@@ -212,8 +222,9 @@ def test_dynamic_code_sites_do_not_grow():
     """An expression in the code slot is the one hole in the check above.
 
     A ``f"pack_refused_{exc.reason}"`` mints a wire code the static check cannot see.
-    Sixteen such sites exist and are accounted for; a seventeenth is a new code
-    entering unregistered, so the ceiling is the rail.
+    Every such site that exists is accounted for, one by one, in the notes on
+    ``_DYNAMIC_CODE_SITE_CEILING``; one more is a new code entering unregistered, so the
+    ceiling is the rail.
     """
     census = scan()
     assert len(census.emitter_sites) >= EMITTER_SITE_FLOOR, (

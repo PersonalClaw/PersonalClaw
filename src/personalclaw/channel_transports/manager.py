@@ -6,8 +6,8 @@ inbound messages — a channel app's inbound receiver lives in its own bundle
 runner — and it does not start or stop receivers either: that is
 :func:`~personalclaw.channel_transports.reconcile_inbound`, run on every registry change. Its job
 is the management surface the Channels page drives: list transports with health,
-connect/disconnect, and run a "test" probe. Outbound ``send`` is delegated straight to the named
-transport.
+connect/disconnect, and run a "test" probe. It sends nothing: text reaches a channel through the
+delivery handle the channel registers (:mod:`personalclaw.channel_delivery`), which masks it.
 
 It reads the live transport registry (``channel_transports`` module dict), which
 is populated by the extension system (``ChannelTypeHandler`` registers Slack on
@@ -30,7 +30,6 @@ from personalclaw.channel_transports import (
     list_transports,
     settled,
 )
-from personalclaw.channel_transports.base import OutboundMessage
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState
@@ -127,9 +126,3 @@ class ChannelManager:
             status = str(health.get("detail") or health.get("state") or "")
             return {"ok": False, "detail": f"{probe}, but {status}" if probe else status}
         return result
-
-    async def send(self, name: str, message: OutboundMessage) -> bool:
-        t = self._resolve(name)
-        if t is None:
-            return False
-        return await t.send(message)

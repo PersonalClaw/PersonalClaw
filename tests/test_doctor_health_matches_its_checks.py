@@ -34,7 +34,7 @@ import pytest
 
 from personalclaw.resilience import doctor, fixes, remediation
 from personalclaw.resilience.doctor import DoctorContext
-from personalclaw.vector_memory import VectorMemoryStore
+from personalclaw.vector_memory import VectorMemoryStore, _Index
 
 _DOCTOR_SRC = Path(doctor.__file__)
 #: The wire id of the index Fix and its maintenance job — pinned as the string a client sees.
@@ -240,7 +240,7 @@ def test_a_store_opened_at_the_default_width_indexes_the_bound_models_vectors(tm
     store.write_episodic("The collector keeps its queue in SQLite with WAL", embedding=_vec(0))
     store.write_episodic("Release notes go out on Thursdays after the freeze", embedding=_vec(1))
 
-    assert store._faiss_index is not None and store._faiss_index.ntotal == 2
+    assert store._index.faiss is not None and store._index.faiss.ntotal == 2
     hits = store.search_episodic(query_embedding=_vec(0), query_text="collector queue")
     assert hits and "collector" in hits[0]["text"], hits
 
@@ -270,11 +270,11 @@ def test_a_stale_index_file_is_reconciled_when_the_store_opens(tmp_path):
     first.save_faiss_index()
     first.write_episodic("Release notes go out on Thursdays after the freeze", embedding=_vec(1))
     # The process stops here without closing: the file holds one of the two.
-    assert json.loads((tmp_path / "memory.ids.json").read_text()) != first._faiss_id_map
+    assert json.loads((tmp_path / "memory.ids.json").read_text()) != first._index.ids
 
     reopened = VectorMemoryStore(db_path=tmp_path / "memory.db")
     reopened.init()
-    assert reopened._faiss_index.ntotal == 2
+    assert reopened._index.faiss.ntotal == 2
     assert (
         len(json.loads((tmp_path / "memory.ids.json").read_text())) == 2
     ), "the reconciled index must be saved, so the next open — and the Doctor — read it"
@@ -291,8 +291,7 @@ def test_the_doctor_fix_rebuilds_the_index_recall_reads(home):
     store.write_episodic("The collector keeps its queue in SQLite with WAL", embedding=_vec(0))
     store.write_episodic("Release notes go out on Thursdays after the freeze", embedding=_vec(1))
     # What the validator's gateway held: an index with none of the embedded rows in it.
-    store._faiss_index = faiss.IndexFlatIP(8)
-    store._faiss_id_map = []
+    store._index = _Index(faiss=faiss.IndexFlatIP(8), ids=[], dim=8, ref=store._index.ref)
 
     before = asyncio.run(doctor._probe_memory(DoctorContext(home=home)))
     assert before.ok is False and before.fix_id == MEMORY_INDEX_FIX, before
@@ -353,7 +352,7 @@ def test_the_fix_reembeds_memories_another_model_wrote(home, monkeypatch):
     # One probe embedding for the width, then one per stale row — never one per memory.
     assert len(calls) == 3, calls
     assert asyncio.run(doctor._probe_memory(DoctorContext(home=home))).ok is True
-    assert store._faiss_index.ntotal == 3
+    assert store._index.faiss.ntotal == 3
     store.close()
 
 
@@ -381,8 +380,7 @@ def test_the_maintenance_job_rebuilds_without_spending_an_embedding(home, monkey
 
     calls: list[str] = []
     store = _mixed_width_store(home, calls)
-    store._faiss_index = faiss.IndexFlatIP(8)
-    store._faiss_id_map = []
+    store._index = _Index(faiss=faiss.IndexFlatIP(8), ids=[], dim=8, ref=store._index.ref)
 
     message = remediation._JOBS[MEMORY_INDEX_FIX].run()
     assert calls == [], "an unattended pass called the embedding model"

@@ -389,7 +389,7 @@ def _background_write_surface(fn: Callable[..., Any]) -> Callable[..., Any]:
     chat session by definition, which is exactly why the denylist and the rung ladder below already
     judge it under the HEADLESS posture. Branching on that key here would add a second, parallel
     notion of "unattended" whose else-arm is unreachable. The ATTENDED counterpart is a different
-    function — `dashboard.handlers.triggers._dispatch_store_action`, the hand-driven "run now" —
+    function — `dashboard.handlers.trigger_runs._dispatch_store_action`, the hand-driven "run now" —
     which keeps the default `interactive` surface and is untouched by this.
 
     The surface travels on a ContextVar, so it survives the `await`s inside the dispatch. It does
@@ -939,7 +939,7 @@ class GatewayOrchestrator:
         # Same installer resolution as the app installer and self-updater: a uv
         # venv has no pip module, and startup dep-repair silently failing there
         # left the gateway running without deps it had just decided it needed.
-        from personalclaw._installer import NoInstallerError, install_argv
+        from personalclaw._installer import NoInstallerError, install_argv, installer_env
 
         try:
             argv = install_argv(["--quiet", *missing])
@@ -953,6 +953,7 @@ class GatewayOrchestrator:
             cwd=proj,
             capture_output=True,
             timeout=300,
+            env=installer_env(),
         )
         if result.returncode == 0:
             # Invalidate import caches so the new packages are found
@@ -4340,7 +4341,7 @@ class GatewayOrchestrator:
                 # A call the subagent's runtime declined because nobody could approve it.
                 # Recorded against the PARENT, which is where a person can see it and act: the
                 # chat that spawned the helper, or the workflow step it ran for.
-                from personalclaw.dashboard import auto_denials
+                from personalclaw import auto_denials
 
                 parent = self.dashboard_state.get_session(session_name) if session_name else None
                 title = getattr(parent, "title", "") if parent is not None else ""
@@ -4826,6 +4827,8 @@ class GatewayOrchestrator:
             pkg_root = self_update.package_root(proj)
             if self.dashboard_state:
                 self.dashboard_state.push_update_progress("installing", "Installing package…")
+            from personalclaw._installer import installer_env
+
             pip_install = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
@@ -4837,6 +4840,7 @@ class GatewayOrchestrator:
                 cwd=pkg_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=installer_env(),
                 # Own group: pip forks build backends / compilers, all inheriting these
                 # pipes. Without it kill_timed_out CORRECTLY refuses to signal a group —
                 # this child would share the gateway's — and falls back to a single-pid

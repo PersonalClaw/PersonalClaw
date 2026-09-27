@@ -197,11 +197,13 @@ def test_first_evaluation_is_silent_baseline(monkeypatch):
 
 
 def test_down_then_recovery_emits_warning_then_info(monkeypatch):
+    """A chosen model that stops serving: the decline and the recovery from it."""
     available = {"value": True}
     monkeypatch.setattr(
         "personalclaw.providers.provider_bridge.can_resolve_use_case",
         lambda uc: available["value"],
     )
+    monkeypatch.setattr("personalclaw.providers.provider_bridge.model_chosen", lambda uc: True)
     degraded.register_contract(
         DegradedContract(surface="t_flap", label="T flap", use_cases=("chat",), floor="the floor")
     )
@@ -367,9 +369,11 @@ def _recovered_body(state, label: str) -> str:
 
 
 def _recover(monkeypatch, contract) -> "_RecordingState":
-    """A real outage: up (the silent baseline), down (announced), then back up."""
+    """A real outage: up (the silent baseline), down (announced), then back up — of a model that
+    is chosen, so it declined and recovered."""
     available = {"value": True}
     _flip(monkeypatch, available)
+    monkeypatch.setattr("personalclaw.providers.provider_bridge.model_chosen", lambda uc: True)
     degraded.register_contract(contract)
     state = _RecordingState()
     degraded.evaluate(notify=True, state=state)  # baseline: up

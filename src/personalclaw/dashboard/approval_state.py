@@ -111,7 +111,7 @@ def _who_asked(entry: dict[str, Any]) -> str:
     if entry.get("trigger"):
         # Work a trigger started (its action's agent): the trigger is what the owner knows it by,
         # and what the Inbox offers to run again.
-        from personalclaw.dashboard.auto_denials import trigger_asker
+        from personalclaw.auto_denials import trigger_asker
 
         return trigger_asker(str(entry.get("trigger_name") or ""))
     from personalclaw.workflows.ownership import parse_owned
@@ -175,7 +175,7 @@ class DashboardApprovalState:
         source is ``subagent`` or ``mcp:<server>``. It governed nothing, while reading as the rule
         for night-time work. What an unattended run really does is decline at once, without an
         approval at all (``chat_runner``'s fail-fast and the native runtime's own), because nobody
-        is there to ask — and ``dashboard/auto_denials.py`` now says so in the Inbox.
+        is there to ask — and ``auto_denials.py`` now says so in the Inbox.
 
         Read per approval, so a change in Settings applies to the next one asked. An unreadable
         config falls back to the default window rather than failing the approval
@@ -499,8 +499,8 @@ class DashboardApprovalState:
         except Exception:
             self._log.debug("could not close the inbox row for %s", approval_id, exc_info=True)
         if entry and outcome not in UNANSWERED_OUTCOMES:
+            from personalclaw import auto_denials
             from personalclaw.approval_grants import YOU
-            from personalclaw.dashboard import auto_denials
 
             auto_denials.settle_retried(self, entry, answer=outcome, by=YOU)
         try:
@@ -551,7 +551,7 @@ class DashboardApprovalState:
         (``refs.retry_by``). The call is described exactly as :meth:`_approval_entry` describes an
         asked one, so the two are compared on the same redacted strings.
         """
-        from personalclaw.dashboard import auto_denials
+        from personalclaw import auto_denials
 
         entry = {
             "tool": redact_field(tool),
@@ -583,7 +583,7 @@ class DashboardApprovalState:
         if outcome == "cancelled":
             self._audit_cancelled(approval_id, self._why_cancelled(entry), entry=entry)
         else:
-            from personalclaw.dashboard import auto_denials
+            from personalclaw import auto_denials
 
             auto_denials.note_expired(
                 self,

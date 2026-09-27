@@ -493,7 +493,9 @@ def _read_artifact_content(args: dict[str, Any]) -> tuple[str | None, str | None
 
     Returns ``(content, error)``. A ``content_file`` is gated by
     ``is_sensitive_path`` before reading (mirrors notify_attachment). ``content`` is None
-    when neither was supplied (a metadata-only update).
+    when neither was supplied (a metadata-only update). A ``content: null`` is not supplied
+    either: read as ``str(None)`` it saved the four characters ``None`` as the body, and wrote
+    them into the file a file-backed artifact points at.
     """
     from pathlib import Path
 
@@ -514,7 +516,7 @@ def _read_artifact_content(args: dict[str, Any]) -> tuple[str | None, str | None
             return raw.decode("utf-8"), None
         except UnicodeDecodeError:
             return None, "content_file must be UTF-8 text"
-    if "content" in args:
+    if args.get("content") is not None:
         return str(args["content"]), None
     return None, None
 

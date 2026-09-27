@@ -729,6 +729,10 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
     A server whose spec names a credential its owner does not hold is left out — never spawned,
     and no value read for it. The refusal is logged and in the security log, and the server's
     probe (the Tools page) reports it as that server's error.
+
+    So is a server the owner has not allowed as it is defined now (`mcp_grants`): it waits, and
+    the Tools page says so with Allow. And a server named as PersonalClaw's own is never read
+    from here: PersonalClaw defines that one itself (`agent._MANAGED_MCP_SERVERS`).
     """
     import json
 
@@ -747,17 +751,21 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to read %s: %s", path, exc)
         return {}
-    from personalclaw.mcp_discovery import server_name_problem
+    from personalclaw import mcp_grants
+    from personalclaw.mcp_discovery import _MANAGED_SERVER_NAMES, server_name_problem
 
     servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
     specs: dict[str, dict[str, Any]] = {}
     for name, spec in servers.items() if isinstance(servers, dict) else ():
-        if not isinstance(spec, dict):
+        if not isinstance(spec, dict) or name in _MANAGED_SERVER_NAMES:
             continue
         problem = server_name_problem(str(name))
         if problem is not None:
             # Its tools would be named as another server's (the probe reports it as its error).
             logger.warning("MCP server %r not started: %s", name, problem)
+            continue
+        if not mcp_grants.allowed(mcp_grants.server_of(str(name), spec)):
+            logger.info("MCP server %r not started: waiting for the owner's Allow", name)
             continue
         try:
             specs[name] = resolve_mcp_spec(name, spec)

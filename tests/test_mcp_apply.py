@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from aiohttp import web
+from mcp_owner_allowed import allow
 
 
 def _make_request(body: dict) -> MagicMock:
@@ -75,9 +76,12 @@ class TestSetPersonalclawEntry:
 
 class TestSetScopeEntry:
     def test_adds_when_enabling_absent(self, tmp_path, monkeypatch):
+        from personalclaw import mcp_grants
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         cfg_path = tmp_path / "claude.json"
+        # Claude Code starts what its file names: only a server the owner allowed is handed over.
+        allow(mcp_grants.server_of("srv", {"command": "c"}))
         action = mcp_mod._set_scope_entry(cfg_path, "srv", enabled=True, spec={"command": "c"})
         assert action == "added"
         assert json.loads(cfg_path.read_text())["mcpServers"]["srv"] == {"command": "c"}

@@ -933,7 +933,11 @@ def test_the_real_spawn_reaches_the_real_driver_and_its_code_survives(tmp_path, 
     that reaches the model is the operator-fixable one, which is exactly what regresses if the
     driver's code is dropped from ``_run_driver``'s allowlist. With the grant it asserts a real
     indexed tree came back over the process boundary.
+
+    The driver child inherits this environment and conftest isolates the home only in process,
+    so both end-to-end tests hand the child a scratch ``PERSONALCLAW_HOME``.
     """
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     monkeypatch.setenv(enable_state.ENABLE_PATH_ENV, str(tmp_path / "enable.json"))
     (tmp_path / "enable.json").write_text(
         json.dumps({"version": 1, "enabled": True, "apps": ["Finder"]}), encoding="utf-8"
@@ -958,6 +962,7 @@ def test_the_real_spawn_reaches_the_real_driver_and_its_code_survives(tmp_path, 
 def test_list_apps_end_to_end_is_narrowed_to_the_allowlist(tmp_path, monkeypatch):
     """Real spawn, real driver, real narrowing: the driver reports every running app and the
     dispatch's step 7 hands the model only the allowlisted one, with an honest withheld count."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     monkeypatch.setenv(enable_state.ENABLE_PATH_ENV, str(tmp_path / "enable.json"))
     (tmp_path / "enable.json").write_text(
         json.dumps({"version": 1, "enabled": True, "apps": ["Finder"]}), encoding="utf-8"

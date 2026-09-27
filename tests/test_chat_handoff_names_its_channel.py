@@ -256,3 +256,26 @@ async def test_a_reply_in_the_thread_continues_it_where_dms_have_threads(real_st
     os.environ.pop(owner_id_credential("slackish"), None)
     channel_transports.unregister_transport("slackish")
     channel_delivery.register(None, provider="slackish")
+
+
+@pytest.mark.asyncio
+async def test_a_channel_thread_hands_off_the_transcript_it_keeps_under_its_own_key():
+    """A chat that started on a channel keeps its transcript under its BARE key, as the channel
+    wrote it. The handoff read the `dashboard:`-prefixed form instead, found nothing there, and
+    refused a thread holding a whole conversation as having "no messages to hand off yet"."""
+    discord = _connect("discord", "Discord", owner="99887766")
+    thread = "telegram:4242:9001"
+    transcript = {thread: [{"role": "user", "content": "the deploy is stuck again"}]}
+    state = MagicMock()
+    state.get_session.return_value = MagicMock(key=thread, title="Deploy", _titled=True)
+    state.conversation_log.read_messages.side_effect = lambda key: transcript.get(key, [])
+    state.conversation_log.get_metadata.side_effect = lambda key: (
+        {"title": "Deploy"} if key in transcript else {}
+    )
+
+    status, body = await _handoff(state, {"provider": "discord"}, session=thread)
+
+    assert status == 200, body
+    assert discord.deliver_text.await_count == 1
+    read = {c.args[0] for c in state.conversation_log.read_messages.call_args_list}
+    assert read == {thread}, f"the handoff read {read}, not the thread's own file"

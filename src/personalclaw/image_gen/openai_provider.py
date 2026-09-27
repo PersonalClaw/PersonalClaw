@@ -58,7 +58,7 @@ class OpenAIImageProvider(ImageGenProvider):
         provider, but only the vendor whose app contributed a catalog (OpenAI:
         gpt-image-1/dall-e-*) advertises curated models — a bring-your-own or
         different-vendor endpoint (e.g. Alibaba wan2.7-image) contributes none, so it
-        advertises nothing here and the user pins a real model id that generate()
+        advertises nothing here and the user binds a real model id that generate()
         forwards. No vendor id or host is hard-coded in core."""
         from personalclaw.media_catalogs import get_media_catalog
 
@@ -74,12 +74,6 @@ class OpenAIImageProvider(ImageGenProvider):
             )
             for m in cat.models
         ]
-
-    def _catalog_default(self) -> str:
-        from personalclaw.media_catalogs import get_media_catalog
-
-        cat = get_media_catalog("image_gen", self._provider_type)
-        return cat.default_model if cat else ""
 
     async def is_available(self) -> bool:
         """Usable when a credential resolves and the openai SDK is importable."""
@@ -109,20 +103,20 @@ class OpenAIImageProvider(ImageGenProvider):
             m.active = m.name == active_model
         return models
 
-    def _default_model(self, model: str) -> str:
-        """Resolve the model id for a call. A pinned ``model`` always wins. Unpinned
-        falls back to the vendor's contributed catalog default (OpenAI's gpt-image-1,
-        from the openai-models app); a provider type with no contributed catalog has
-        no default → raise a clear error rather than send a bogus id to the endpoint."""
-        if model:
-            return model
-        default = self._catalog_default()
-        if default:
-            return default
-        raise ImageGenError(
-            f"No image model selected for {self._provider_name!r}, and this endpoint "
-            f"has no contributed default — pin one in Settings → Models (Image · Generation)."
-        )
+    @staticmethod
+    def _named(model: str) -> str:
+        """The model a call names, or the SDK's refusal as an ``ImageGenError`` when it names none.
+
+        Like chat, a call names its model: the Image · Generation binding in Settings → Models.
+        The vendor's catalog lists the models to bind and is no default; the adapter used to send
+        its default (OpenAI's gpt-image-1) for a call that named none.
+        """
+        from personalclaw.llm.registry import ProviderResolutionError, require_model
+
+        try:
+            return require_model(model)
+        except ProviderResolutionError as exc:
+            raise ImageGenError(str(exc)) from exc
 
     async def generate(
         self,
@@ -133,12 +127,11 @@ class OpenAIImageProvider(ImageGenProvider):
         n: int = 1,
         **opts: Any,
     ) -> list[ImageResult]:
-        # Resolve/validate the model BEFORE building the client: a missing contributed
-        # default is a request error independent of SDK availability, so it must raise
-        # regardless of whether the openai SDK is installed (it is now an optional
-        # extra — DISTRIBUTION T1.4). Constructing the client first would mask this
+        # The model BEFORE the client: a call that names none is a request error independent of
+        # SDK availability, so it must raise whether or not the openai SDK is installed (it is
+        # an optional extra — DISTRIBUTION T1.4). Constructing the client first would mask it
         # behind "SDK not installed" in a stripped install.
-        model_id = self._default_model(model)
+        model_id = self._named(model)
         client = self._client()
         kwargs: dict[str, Any] = {"model": model_id, "prompt": prompt, "n": max(1, n)}
         if size:
@@ -164,9 +157,9 @@ class OpenAIImageProvider(ImageGenProvider):
         n: int = 1,
         **opts: Any,
     ) -> list[ImageResult]:
-        # Validate the model before building the client (see generate()): a missing
-        # contributed default raises regardless of SDK availability.
-        model_id = self._default_model(model)
+        # The model before the client (see generate()): a call that names none raises whether
+        # or not the SDK is installed.
+        model_id = self._named(model)
         client = self._client()
         kwargs: dict[str, Any] = {"model": model_id, "prompt": prompt, "n": max(1, n)}
         if size:

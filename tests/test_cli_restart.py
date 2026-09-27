@@ -52,8 +52,12 @@ def test_restart_swallows_stop_systemexit_and_still_spawns():
 
 
 def test_spawn_detached_gateway_launches_personalclaw_gateway():
-    """The detached spawn invokes `python -m personalclaw gateway --port` in a new session."""
-    with patch.object(cli_server.subprocess, "Popen") as popen, patch("builtins.open"):
+    """The detached spawn invokes `python -m personalclaw gateway --port` in a new session.
+
+    Only the spawn is patched. The restart log and the audit row land in the per-test home
+    conftest gives every test; patching `builtins.open` for the whole process also handed the
+    security log a mock file to append its row to."""
+    with patch.object(cli_server.subprocess, "Popen") as popen:
         cli_server._spawn_detached_gateway(7777)
     popen.assert_called_once()
     argv = popen.call_args.args[0]

@@ -103,14 +103,15 @@ def get_contract(surface: str) -> Optional[DegradedContract]:
 # storm). Process-global by design (one gateway); reset helper for tests.
 _last_available: dict[str, bool] = {}
 
-#: The surfaces the user was TOLD went down. A recovery is announced only for one of these.
+#: The surfaces the user was TOLD went down, each with whether a model was chosen for it then.
+#: A recovery is announced only for one of these, in the words of the notice before it.
 #:
 #: 🔴 Measured on day 8: a fresh home has no model, so every surface's silent first sight is
 #: "down", and binding the first model flipped all eleven model-backed surfaces at once, posting
 #: eleven "<slug> recovered — Model available again" notifications about things that had never
 #: been up. Setting up is not a recovery. Pairing each recovery with the degradation notice
 #: before it is what makes "recovered" mean "it was down, you were told, and it is back".
-_announced_down: set[str] = set()
+_announced_down: dict[str, bool] = {}
 
 #: What the Models page calls each use case a contract here needs (`ModelsPanel`'s
 #: `USE_CASE_META`), so "no Speech-to-text model" and the row the user binds one in agree.
@@ -167,24 +168,65 @@ def _model_chosen(contract: DegradedContract) -> bool:
         return True
 
 
+def _sentence(text: str) -> str:
+    """A diagnosis clause (``provider_bridge``'s ``why``/``fix``) as a sentence of its own."""
+    text = text.strip()
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _problem(
+    contract: DegradedContract, chosen: bool, known: dict[str, Optional[tuple[str, str]]]
+) -> str:
+    """What an unavailable surface is waiting on, in one sentence: the chip's row and the notice
+    say it alike.
+
+    With no model chosen, that no model is chosen — the chip's words for that state. With one
+    chosen, why it cannot serve, as resolution would refuse it
+    (``provider_bridge.use_case_problem``): "No Chat model", which the notice said for both, was
+    false about a model that is chosen.
+    ``known`` holds each use case's diagnosis once per evaluation: eleven surfaces need chat.
+    """
+    needs = " and ".join(use_case_names(contract))
+    if not chosen:
+        return f"No model chosen for {needs}."
+    from personalclaw.providers.provider_bridge import use_case_problem
+
+    for use_case in contract.use_cases:
+        if use_case not in known:
+            known[use_case] = use_case_problem(use_case)
+        found = known[use_case]
+        if found is not None:
+            why, fix = found
+            return " ".join(part for part in (_sentence(why), _sentence(fix)) if part)
+    return f"The {needs} model chosen cannot answer now."
+
+
 def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
     """Evaluate every contract → a list of ``{surface, label, available, floor, backlog,
-    use_cases, model_chosen}`` rows (the ``GET /api/resilience/degraded`` payload).
+    use_cases, model_chosen, problem}`` rows (the ``GET /api/resilience/degraded`` payload).
 
     ``model_chosen`` is False on an unavailable surface when no model is chosen for a use case
     it needs (``provider_bridge.model_chosen``): it is waiting on a choice, not degraded, and the
-    shell chip words it that way.
+    shell chip words it that way. ``problem`` says what an unavailable surface is waiting on
+    (:func:`_problem`); ``None`` on one that is available.
 
     When ``notify`` is set and a ``state`` with a ``.notify`` method is given, a
-    surface CHANGING availability emits one notification: ``warning`` on going down,
-    ``info`` (with the drained/backlog summary) on recovery, and a recovery only after a
-    degradation the user was told about. The first evaluation of a surface only seeds the
-    baseline — it never notifies (no boot storm).
+    surface CHANGING availability emits one notification: on going down, ``warning`` "<surface>
+    degraded" when its chosen model cannot serve and ``info`` "Choose a model for <surface>" when
+    none is chosen, each saying the row's ``problem``; ``info`` (with the drained/backlog
+    summary) on recovery, and a recovery only after a notice the user was given. The first
+    evaluation of a surface only seeds the baseline — it never notifies (no boot storm).
     """
     rows: list[dict] = []
+    known: dict[str, Optional[tuple[str, str]]] = {}
     for contract in _CONTRACTS.values():
         available = _available(contract)
         backlog = _backlog(contract)
+        chosen = True if available else _model_chosen(contract)
+        problem = None if available else _problem(contract, chosen, known)
         rows.append(
             {
                 "surface": contract.surface,
@@ -193,15 +235,24 @@ def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
                 "floor": contract.floor,
                 "backlog": backlog,
                 "use_cases": list(contract.use_cases),
-                "model_chosen": True if available else _model_chosen(contract),
+                "model_chosen": chosen,
+                "problem": problem,
             }
         )
         if notify:
-            _maybe_notify(contract, available, backlog, state)
+            _maybe_notify(contract, available, backlog, state, chosen=chosen, problem=problem)
     return rows
 
 
-def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, state: object) -> None:
+def _maybe_notify(
+    contract: DegradedContract,
+    available: bool,
+    backlog: int,
+    state: object,
+    *,
+    chosen: bool,
+    problem: Optional[str],
+) -> None:
     prev = _last_available.get(contract.surface)
     _last_available[contract.surface] = available
     if prev is None or prev == available:
@@ -218,14 +269,17 @@ def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, sta
     needs = " and ".join(use_case_names(contract))
     try:
         if not available:  # went down
-            notify_fn(
-                "warning",
-                f"{contract.label} degraded",
-                f"No {needs} model — {contract.floor}",
-            )
-            _announced_down.add(contract.surface)
-        elif contract.surface in _announced_down:  # recovered, from a degradation we announced
-            _announced_down.discard(contract.surface)
+            # The chip's two states, in its words: a chosen model that cannot serve is a
+            # decline; no model chosen is a choice to make, and "degraded" would claim a decline.
+            if chosen:
+                notify_fn("warning", f"{contract.label} degraded", f"{problem} {contract.floor}")
+            else:
+                notify_fn(
+                    "info", f"Choose a model for {contract.label}", f"{problem} {contract.floor}"
+                )
+            _announced_down[contract.surface] = chosen
+        elif contract.surface in _announced_down:  # back, from a notice we gave
+            was_chosen = _announced_down.pop(contract.surface)
             # §5.2 criterion #3 wants the recovery to summarize what was RE-ENRICHED, and
             # `backlog` was measured BEFORE the drain ran — reporting it after a drain that
             # just cleared it would announce a queue that no longer exists. So: the drained
@@ -237,11 +291,14 @@ def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, sta
                 tail = f" · {backlog} item(s) awaiting re-enrichment"
             else:
                 tail = ""
-            notify_fn(
-                "info",
-                f"{contract.label} recovered",
-                f"A {needs} model is available again{tail}.",
-            )
+            if was_chosen:
+                notify_fn(
+                    "info",
+                    f"{contract.label} recovered",
+                    f"A {needs} model is available again{tail}.",
+                )
+            else:  # nothing declined, so nothing recovered: a model was chosen
+                notify_fn("info", f"{contract.label} is ready", f"A {needs} model is chosen{tail}.")
     except Exception:
         logger.debug("degraded: notify failed for %s", contract.surface, exc_info=True)
 

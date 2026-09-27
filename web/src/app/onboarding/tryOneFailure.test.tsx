@@ -31,6 +31,7 @@ const runSchedule = vi.fn()
 const notifications = vi.fn()
 const createULoop = vi.fn()
 const uLoopAction = vi.fn()
+const uLoop = vi.fn()
 
 vi.mock('../../lib/api', async (orig) => ({
   // Keep the real `ApiError` — the classification reads `.status`, so a stubbed error class
@@ -44,6 +45,7 @@ vi.mock('../../lib/api', async (orig) => ({
     notifications: () => notifications(),
     createULoop: (...a: unknown[]) => createULoop(...a),
     uLoopAction: (...a: unknown[]) => uLoopAction(...a),
+    uLoop: (...a: unknown[]) => uLoop(...a),
   },
 }))
 
@@ -63,6 +65,8 @@ beforeEach(() => {
   // `general` is a PORTED kind, so `POST /api/loops` answers a STARTED RUN and never a
   // `ready` loop row. `uLoopAction` stays wired so a test can assert it is NOT called.
   createULoop.mockResolvedValue({ run_id: 'run-1', status: 'running', blocking: false, kind: 'general' })
+  // The run's own view, which the loop card reads its one-cycle budget back from.
+  uLoop.mockImplementation(async (id: string) => ({ id, run_id: id, status: 'running', max_cycles: 1 }))
   uLoopAction.mockResolvedValue({ id: 'lp-1', status: 'running', task: LOOP_SEED.task, max_cycles: 1 })
 })
 

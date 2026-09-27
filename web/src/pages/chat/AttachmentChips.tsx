@@ -3,6 +3,7 @@ import { ExternalLink, FileText, Image as ImageIcon, Loader2, Paperclip, X } fro
 import { api, type ChatImageInput } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { Button } from '../../ui/Button'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { IconButton } from '../../ui/IconButton'
 import { Modal } from '../../ui/Modal'
 import { TextLink } from '../../ui/TextLink'
@@ -69,7 +70,7 @@ function ImagesAsTextNote({ input, images }: { input: ChatImageInput; images: st
   const note = imagesAsTextNote(input, images.length, got)
   if (!note) return null
   return (
-    <p role="note" className="-mt-1 mb-2 text-[0.75rem] text-on-surface-var">
+    <p role="note" data-type="caption" className="-mt-1 mb-2 text-on-surface-var">
       {note}{got?.noImageModel && <> <SetUpAnImageModel /></>}
     </p>
   )
@@ -92,12 +93,11 @@ function MentionChips({ paths, images = [], asText = [], onRemove, onOpen }: { p
   const [expanded, setExpanded] = useState<string | null>(null)
   if (!paths.length) return null
   return (
-    <div className="mb-2 flex flex-wrap gap-2">
+    <div className="mb-s flex flex-wrap gap-s">
       {paths.map((p) => {
         const open = expanded === p
         return (
-          <div key={p} className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.8125rem]"
-            style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
+          <div key={p} data-type="body-s" className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5">
             {images.includes(p) ? <ImageIcon size={13} className="shrink-0 text-primary" /> : <FileText size={13} className="shrink-0 text-primary" />}
             {/* An accordion, so `aria-expanded` — the chip swaps a basename for the full path AND
                 reveals an Open button, both gated on the same flag. */}
@@ -106,9 +106,9 @@ function MentionChips({ paths, images = [], asText = [], onRemove, onOpen }: { p
               className="min-w-0 text-left font-mono text-on-surface">
               {open ? <span className="break-all">{p}</span> : attachedName(p)}
             </button>
-            {asText.includes(p) && <span className="shrink-0 text-[0.75rem] text-on-surface-var">as text</span>}
+            {asText.includes(p) && <span data-type="caption" className="shrink-0 text-on-surface-var">as text</span>}
             {open && (
-              <Button variant="ghost-accent" size="xs" title="Open file" onClick={() => onOpen(p)}
+              <Button variant="ghost-accent" size="xs" title="Open file" onClick={() => onOpen(p)} ariaLabel={`Open ${attachedName(p)}`}
                 className="shrink-0 h-6 px-1.5 text-[0.75rem]">Open</Button>
             )}
             <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}
@@ -134,7 +134,7 @@ export function TurnAttachments({ paths, delivery, onOpenFile }: { paths: string
         return (
           <button key={p} type="button" onClick={() => setPeek(p)}
             title={how === 'text' ? `Preview ${attachedName(p)} — sent as text${delivery?.reason ? `: ${delivery.reason}` : ''}` : `Preview ${attachedName(p)}`}
-            className="inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 bg-surface-container px-2.5 py-1 text-[0.75rem] text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface">
+            data-type="caption" className="inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 bg-surface-container px-2.5 py-1 text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface">
             {how ? <ImageIcon size={11} className="shrink-0 text-on-surface-low" /> : <Paperclip size={11} className="shrink-0 text-on-surface-low" />}
             <span className="max-w-[200px] truncate">{attachedName(p)}</span>
             {how === 'text' && <span className="shrink-0 text-on-surface-low">· sent as text</span>}
@@ -170,32 +170,32 @@ function AttachmentPeekModal({ path, name, delivery, reason, onOpenFile, onClose
   }, [path, delivery])
   return (
     <Modal title={name} icon={<Paperclip size={18} className="text-primary" />} onClose={onClose}>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-m">
         <Button variant="ghost-accent" size="sm" onClick={() => { onOpenFile(path); onClose() }}
           className="self-start border border-outline-variant/50">
           <ExternalLink size={14} /> Open original file
         </Button>
         {delivery === 'image' ? (
-          <p className="text-on-surface-var text-[0.8125rem]">The model was shown this image itself.</p>
+          <p data-type="body-s" className="text-on-surface-var">The model was shown this image itself.</p>
         ) : (
         <div>
           {delivery === 'text' && !loading && !readErr && (
-            <p className="mb-2 text-on-surface-var text-[0.8125rem]">
+            <p data-type="body-s" className="mb-s text-on-surface-var">
               {reason ? `${reason} ` : ''}
               {read ? 'The text read from the image was sent instead.'
                 : unread === UNREAD_NO_IMAGE_MODEL ? <>No image model is set up, so only its size and format were sent. <SetUpAnImageModel /></>
                   : 'Nothing could read the image, so only its size and format were sent.'}
             </p>
           )}
-          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Extracted content (what the agent saw)</div>
+          <Eyebrow className="mb-xs">Extracted content (what the agent saw)</Eyebrow>
           {readErr ? (
             <FieldError>Couldn't read this file's text — {(readErr as Error)?.message || 'the server did not respond'}</FieldError>
           ) : loading ? (
-            <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem] py-3"><Loader2 size={14} className="animate-spin" /> Extracting…</div>
+            <div data-type="body-s" className="flex items-center gap-s text-on-surface-low py-m"><Loader2 size={14} className="animate-spin" /> Extracting…</div>
           ) : text ? (
-            <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-m py-2 font-mono text-on-surface-var text-[0.75rem] leading-relaxed">{text}</pre>
+            <pre data-type="caption" className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-m py-s font-mono text-on-surface-var leading-relaxed">{text}</pre>
           ) : (
-            <p className="text-on-surface-low text-[0.8125rem]">No extractable text content (e.g. an image with no OCR configured).</p>
+            <p data-type="body-s" className="text-on-surface-low">No extractable text content (e.g. an image with no OCR configured).</p>
           )}
         </div>
         )}

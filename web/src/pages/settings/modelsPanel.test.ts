@@ -43,6 +43,14 @@ describe('capableModels', () => {
     expect(out[0].id).toBe('bare-model')
   })
 
+  it('offers no row that names no model, so a toggle can never bind "provider:"', () => {
+    // A listing row with an empty id, and a binding stored before the gateway refused one:
+    // either, toggled, would bind `Bedrock:`, which names a provider and no model.
+    const all = [M('Bedrock', '', ['image_gen']), M('Bedrock', '  ', ['image_gen']), M('Bedrock', 'amazon.nova-canvas-v1:0', ['image_gen'])]
+    const out = capableModels('image_gen', all, ['Bedrock:', ''])
+    expect(out.map((m) => `${m.provider}:${m.id}`)).toEqual(['Bedrock:amazon.nova-canvas-v1:0'])
+  })
+
   it('chat sub-categories draw from the chat-capable pool', () => {
     // Models never declare "code_tools"/"background"/… as capabilities — a
     // sub-category row must offer every CHAT-capable model.

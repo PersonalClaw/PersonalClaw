@@ -65,7 +65,6 @@ def _register_remote_providers() -> None:
         register_provider(
             OpenAISttProvider(
                 provider_name=p["name"],
-                provider_type=p.get("type", ""),
                 endpoint=p["endpoint"],
                 api_key=p["api_key"],
             )
