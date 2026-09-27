@@ -1780,34 +1780,29 @@ def _resolve_from_config_registry(
     if not entries:
         return None
 
-    # If model_override is provider-qualified, route to that provider and strip
-    # the prefix so the bare model id reaches the SDK. Two qualified shapes:
-    #   • "ProviderName/model"  (slash) — legacy composer form.
+    # A ``provider_hint`` means the caller already split the ref (the chain walk names the entry
+    # and passes the model id alone), so the override IS the model id, whole. Parsing it again
+    # split any id with a slash in it on the slash branch below: a chat bound to
+    # "groq:meta-llama/llama-4-scout-17b-16e-instruct" was sent to Groq as
+    # "llama-4-scout-17b-16e-instruct", and every OpenRouter, Together and NVIDIA id the same way.
+    #
+    # Only an override that names no provider is read for one, in two shapes:
     #   • "ProviderName:model"  (colon) — the active_models.json ref form a chat
     #     session stores (e.g. "Bedrock:global.anthropic.claude-opus-4-8").
+    #   • "ProviderName/model"  (slash) — legacy composer form.
     # Colons are ambiguous — Bedrock model ids themselves contain them
     # (…-v1:0) — so split on the FIRST colon ONLY when the prefix matches a
-    # known provider entry name. Otherwise leave the override untouched.
-    # Order matters: check the COLON form FIRST when its prefix names a known
-    # provider. A "Provider:model_id" ref can carry a model id that itself
-    # contains a slash (NVIDIA "nvidia:meta/llama-3.1-8b-instruct", OpenRouter
-    # "or:meta-llama/llama-3.3"), so splitting on "/" first would mis-parse the
-    # provider as "nvidia:meta" → unknown → wrong provider (fell back to Bedrock).
-    if (
-        model_override
-        and ":" in model_override
-        and any(e.name == model_override.split(":", 1)[0] for e in entries)
-    ):
-        _hint, model_override = model_override.split(":", 1)
-        provider_hint = provider_hint or _hint
-    elif model_override and "/" in model_override:
-        _hint, model_override = model_override.split("/", 1)
-        provider_hint = provider_hint or _hint
-    elif model_override and ":" in model_override:
-        _maybe_provider = model_override.split(":", 1)[0]
-        if any(e.name == _maybe_provider for e in entries):
-            _hint, model_override = model_override.split(":", 1)
-            provider_hint = provider_hint or _hint
+    # known provider entry name. The colon form goes FIRST because its model id
+    # can itself contain a slash (NVIDIA "nvidia:meta/llama-3.1-8b-instruct",
+    # OpenRouter "or:meta-llama/llama-3.3"), so splitting on "/" first would name
+    # the provider "nvidia:meta" → unknown → wrong provider.
+    if model_override and not provider_hint:
+        if ":" in model_override and any(
+            e.name == model_override.split(":", 1)[0] for e in entries
+        ):
+            provider_hint, model_override = model_override.split(":", 1)
+        elif "/" in model_override:
+            provider_hint, model_override = model_override.split("/", 1)
 
     candidate = None
     if provider_hint:
