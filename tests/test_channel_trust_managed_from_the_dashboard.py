@@ -277,6 +277,29 @@ def test_a_group_id_that_cannot_be_one_is_refused(channel_id):
     assert _listed()["tracked_channels"] == []
 
 
+@pytest.mark.parametrize("name", [["Standup"], {"label": "Standup"}, 7])
+def test_a_group_name_that_is_not_text_is_refused_and_tracks_nothing(name):
+    """``str()`` of a list used to be stored as the group's name, brackets and quotes and all."""
+    status, body, _ = _run(
+        h.api_channel_trust_track,
+        "POST",
+        f"/api/channels/trust/{PROVIDER}/channels",
+        match={"provider": PROVIDER},
+        body={"channel_id": "grp-1", "name": name},
+    )
+    assert status == 400 and body["error"]["code"] == "field_not_a_string", body
+    assert _listed()["tracked_channels"] == []
+    ok, _, _ = _run(
+        h.api_channel_trust_track,
+        "POST",
+        f"/api/channels/trust/{PROVIDER}/channels",
+        match={"provider": PROVIDER},
+        body={"channel_id": "grp-1", "name": " Standup "},
+    )
+    assert ok == 200, "the floor: a name that is text is kept"
+    assert [g["name"] for g in _listed()["tracked_channels"]] == ["Standup"]
+
+
 def test_the_seen_list_is_bounded_and_a_busy_group_is_not_rewritten_on_every_message(monkeypatch):
     for n in range(ct.SEEN_CHANNELS_MAX + 5):
         ct.note_untracked_channel(PROVIDER, f"grp-{n}", f"Group {n}")
