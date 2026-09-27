@@ -121,7 +121,9 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   // runtime too: enabling, disabling or saving a channel starts or stops its receiver, and
   // the row kept showing the status from before the click until the page was reloaded.
   const reload = () => {
-    invalidateKeys('settings:providers'); invalidateKeys('settings:models-available'); invalidateKeys('settings:channels')
+    // Prefix mode: `settings:channels-owners` (the chat's "Continue on" list and the Configure
+    // page's owner section) reads the same channels without this page's catch.
+    invalidateKeys('settings:providers'); invalidateKeys('settings:models-available'); invalidateKeys('settings:channels', true)
     refreshProviders(); refreshRuntimes(); refreshAvailable(); refreshChannels()
   }
 
@@ -214,7 +216,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
               ext.provider?.multiInstance
                 ? <MultiInstanceCard key={ext.name} ext={ext} onChanged={reload} />
                 : <ProviderCard key={ext.name} ext={ext} channel={type === 'channel' ? channelByApp.get(ext.name) : undefined}
-                    open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onChannelChanged={refreshChannels} />
+                    open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onChannelChanged={() => invalidateKeys('settings:channels', true)} />
             ))}
           </EntitySection>
         )

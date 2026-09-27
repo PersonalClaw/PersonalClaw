@@ -221,3 +221,27 @@ describe('the sharpest instance in the un-separable pair, fixed ahead of it', ()
     expect(seg).toMatch(/api\.personalclawConfig\(\)/)
   })
 })
+
+describe('the channel list is read under two keys, and every bust reaches both', () => {
+  // Settings → Providers reads `api.channels()` with a catch on purpose: a dead channel subsystem
+  // renders as an unready card there (`settingsReadPosture.test.tsx` pins it). The chat's
+  // "Continue on" list and an app's Configure page render a failure instead, so they read under
+  // their own key. Shared, the `[]` the tolerant read caches on a failure reached them as a success
+  // (`loadErrorState.test.tsx`, "no OTHER consumer of an adopter's cache key swallows"). Two keys
+  // over the same content hold only while every bust reaches both: a pairing on one page must not
+  // leave the other painting the channel without its owner.
+  it('the two readers that render a failure share a key of their own', () => {
+    expect(codeOf('pages/ChatPage.tsx')).toMatch(/useQuery\('settings:channels-owners', \(\) => api\.channels\(\)/)
+    expect(codeOf('pages/apps/AppsSection.tsx')).toMatch(/'settings:channels-owners', \(\) => api\.channels\(\),/)
+    expect(codeOf('pages/settings/ProvidersPanel.tsx'), 'the tolerant read keeps its key')
+      .toMatch(/'settings:channels', \(\) => api\.channels\(\)\.catch/)
+  })
+
+  it('every bust of the channel list is prefix mode', () => {
+    const busts = walk(SRC).flatMap((abs) => codeOf(abs.slice(SRC.length + 1))
+      .match(/invalidateKeys\('settings:channels[^']*'[^)]*\)/g) ?? [])
+    expect(busts.length, "the Providers page's reload and channel change, and the Configure page's pairing")
+      .toBeGreaterThanOrEqual(3)
+    for (const b of busts) expect(b, 'exact-key mode reaches one key of the two').toBe("invalidateKeys('settings:channels', true)")
+  })
+})

@@ -32,7 +32,7 @@ import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import {
-  api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog, type ChannelRuntime,
+  api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
 } from '../../lib/api'
 import { catalogApps } from '../../lib/appCatalog'
 import { ChannelOwnerSection } from '../settings/ChannelOwnerSection'
@@ -1882,16 +1882,18 @@ function ConfigModal({ name, displayName, onClose }: {
 }) {
   const cfg = useAppConfig(name)
   // A chat channel app's Configure page also carries its owner — who the channel reaches you as,
-  // and pairing it. The gateway names the app each channel came from.
-  const { data: channels, refresh: refreshChannels } = useQuery(
-    'settings:channels', () => api.channels().catch(() => [] as ChannelRuntime[]), { persist: true },
+  // and pairing it. The gateway names the app each channel came from. Same key as the chat's
+  // "Continue on" list, not Settings → Providers' tolerant `settings:channels`; a pairing here busts
+  // both keys. A failed read shows no owner section.
+  const { data: channels, error: channelsError } = useQuery(
+    'settings:channels-owners', () => api.channels(), { persist: true },
   )
-  const channel = (channels ?? []).find((c) => c.app === name && c.owner)
+  const channel = channelsError ? undefined : (channels ?? []).find((c) => c.app === name && c.owner)
 
   return (
     <Modal title={`Configure ${displayName}`} icon={<Settings2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 440 }}>
-        {channel && <ChannelOwnerSection channel={channel.name} onChanged={refreshChannels} />}
+        {channel && <ChannelOwnerSection channel={channel.name} onChanged={() => invalidateKeys('settings:channels', true)} />}
         {cfg.error ? (
           // A failed read used to leave "Loading…" on screen forever, with Save still live over an
           // empty form. Say what happened and offer the retry the hook now exposes.

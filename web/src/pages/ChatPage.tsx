@@ -1015,9 +1015,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const { data: showTimestamps } = useQuery('chat:show-timestamps', () => api.dashboardConfig().then((c) => c.show_timestamps), { persist: true })
   const stampOf = (turn: { ts?: string }) => (showTimestamps ? turn.ts : undefined)
   // The chat channels this chat can continue on — each connected channel with an owner to reach
-  // (the Web UI has none). Same cache key as Settings → Providers, so a pairing there shows here.
-  const { data: channelList } = useQuery('settings:channels', () => api.channels().catch(() => [] as ChannelRuntime[]), { persist: true })
-  const handoffChannels = (channelList ?? []).filter((c) => c.owner)
+  // (the Web UI has none). Not Settings → Providers' `settings:channels` key: that read keeps its
+  // catch, so the `[]` it caches on a failure would reach this one as a success. A pairing on either
+  // page busts both with `invalidateKeys('settings:channels', true)`. A failed read offers no channel.
+  const { data: channelList, error: channelListError } = useQuery('settings:channels-owners', () => api.channels(), { persist: true })
+  const handoffChannels = channelListError ? [] : (channelList ?? []).filter((c) => c.owner)
   const showThinkingRef = useRef(false)
   useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => patchLastAssistant(textRun.flush(revealed)),
