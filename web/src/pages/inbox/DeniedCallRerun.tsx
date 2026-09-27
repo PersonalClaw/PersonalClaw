@@ -52,7 +52,7 @@ export function settledSentence(retry: 'approved' | 'rejected', by: unknown, too
 
 const LIFECYCLE = 'lifecycle:'
 
-/** A call denied without an answer (`system/auto_denied`, `dashboard/auto_denials.py`), and the
+/** A call denied without an answer (`system/auto_denied`, `auto_denials.py`), and the
  *  one next step it really has, by where it was asked:
  *
  *  - a chat a person answers in (`refs.chat`): ask that chat to try again, so it asks for the

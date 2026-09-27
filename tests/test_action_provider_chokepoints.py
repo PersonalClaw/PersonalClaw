@@ -6,7 +6,7 @@ rather than to fix a defect:
 
     hooks._run_provider (lifecycle)                  incident_active   + enforce_action
     gateway._fire_store_trigger (clock/file/event)   incident_active   + enforce_action (AG-12)
-    handlers/triggers._dispatch_store_action (manual) manual_refusal
+    handlers/trigger_runs._dispatch_store_action (manual) manual_refusal
     handlers/hooks                                   -- reads metadata only, never executes
 
 (`event_triggers.execute_event_action` was a third unattended seam until a data-event trigger
@@ -47,7 +47,7 @@ import pytest
 EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "the lifecycle-hook fire path"),
     ("personalclaw.gateway", "the clock/file/event trigger fire path"),
-    ("personalclaw.dashboard.handlers.triggers", "the manual Run path"),
+    ("personalclaw.dashboard.handlers.trigger_runs", "the manual Run path"),
     # INU-7: approving an inbox proposal whose apply case is `action` dispatches a provider
     # directly (not through `triggers.tools.run`), so it is a real execution site. User-clicked,
     # so it carries `manual_refusal` — the manual Run path's gate — rather than the unattended
@@ -111,7 +111,7 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
 #: human just pressed Run, so it is attended by definition and is gated by `manual_refusal`
 #: instead. Asserted in `test_the_manual_run_path_is_the_documented_denylist_exemption` rather
 #: than merely stated.
-MANUAL_SEAM = "personalclaw.dashboard.handlers.triggers"
+MANUAL_SEAM = "personalclaw.dashboard.handlers.trigger_runs"
 
 #: The ONE site that resolves an action provider to UNDO an action rather than to run one
 #: (AUTONOMY-GUARDRAILS §6.1). Exempt from the execution invariant, and asserted separately by

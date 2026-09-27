@@ -34,6 +34,7 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 import personalclaw.config.loader as loader
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.inbox import InboxStore
@@ -495,7 +496,7 @@ def test_run_now_refuses_a_row_still_waiting_and_runs_it_once_the_owner_allows_i
         dispatched.append(trigger.id)
         return True, "ran"
 
-    monkeypatch.setattr(T, "_dispatch_store_action", _dispatch)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _dispatch)
     _plant_events(home, _BASH)
     _boot(home)
 
@@ -505,7 +506,7 @@ def test_run_now_refuses_a_row_still_waiting_and_runs_it_once_the_owner_allows_i
             body={},
             match_info={"id": "store:event:deploy-hook"},
         )
-        return _body(asyncio.run(T.api_trigger_run(request)))
+        return _body(asyncio.run(trigger_runs.api_trigger_run(request)))
 
     refused = _run()
     assert refused["ok"] is False

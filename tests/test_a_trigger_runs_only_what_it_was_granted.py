@@ -34,6 +34,7 @@ from aiohttp.test_utils import make_mocked_request
 import personalclaw.action_providers as AP
 import personalclaw.config.loader as loader
 from personalclaw.action_providers.base import ActionResult
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.schedule_history import ScheduleRunStore
@@ -149,7 +150,7 @@ def _body(resp: web.Response) -> dict:
 def _run(trigger_id: str) -> dict:
     return _body(
         asyncio.run(
-            T.api_trigger_run(
+            trigger_runs.api_trigger_run(
                 _req(
                     "POST",
                     f"/api/triggers/{trigger_id}/run",
@@ -308,7 +309,7 @@ def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
         dispatched.append(trigger.id)
         return True, "ran"
 
-    monkeypatch.setattr(T, "_dispatch_store_action", _spy)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _spy)
     _store(home).upsert(
         Trigger(
             id="view:tile",
@@ -331,7 +332,7 @@ def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
     request.json = _json  # type: ignore[assignment]
 
     async def _render():
-        answer = _body(await T.api_trigger_view_render(request))
+        answer = _body(await trigger_runs.api_trigger_view_render(request))
         await asyncio.gather(*state._background_tasks)
         return answer
 
@@ -351,7 +352,7 @@ def test_the_dispatch_itself_refuses_so_no_caller_can_forget(home, ran):
     _schedule(home)
 
     done, note = asyncio.run(
-        T._dispatch_store_action(_row(home, "nightly"), {"trigger_id": "nightly"})
+        trigger_runs._dispatch_store_action(_row(home, "nightly"), {"trigger_id": "nightly"})
     )
 
     assert done is False and "not allowed to use the “Bash Command” action" in note

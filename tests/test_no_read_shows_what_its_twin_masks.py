@@ -286,10 +286,12 @@ def test_a_save_keeps_a_hidden_value_another_save_changed_while_it_was_checked(h
 
 
 def test_a_dry_run_shows_what_it_would_run_masked(home):
-    T, state, home_dir, _ = home
+    from personalclaw.dashboard.handlers import trigger_runs
+
+    _T, state, home_dir, _ = home
     _prompt_schedule(home_dir)
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 "/api/triggers/schedule:digest/run",

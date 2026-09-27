@@ -702,7 +702,7 @@ async def test_running_it_again_gives_a_command_the_time_its_scheduled_fire_gets
     failed "Timed out after 30s". A hand-run passed no timeout, so the providers' 30s default
     applied where a scheduled fire of the same command gets 300s."""
     import personalclaw.action_providers as AP
-    import personalclaw.dashboard.handlers.triggers as h
+    import personalclaw.dashboard.handlers.trigger_runs as h
 
     seen: list[int] = []
 

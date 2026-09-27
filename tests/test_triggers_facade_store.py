@@ -19,6 +19,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.triggers import tools as Tools
 from personalclaw.triggers.store import TriggerStore
@@ -298,7 +299,7 @@ def test_a_dry_run_reports_the_gate_plan_and_executes_nothing(home, state):
     nothing."""
     _file_automation(home)
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 "/api/triggers/x/run",
@@ -356,7 +357,7 @@ def test_a_schedule_DRY_RUN_answers_with_what_WOULD_run_and_records_nothing(
         )
     )
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 "/api/triggers/x/run",
@@ -410,7 +411,7 @@ def test_a_real_run_dispatches_the_action(home, state, monkeypatch):
 
     monkeypatch.setattr(prov, "execute", spy)
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -462,7 +463,7 @@ def test_a_HAND_RUN_notify_links_its_note_back_to_the_trigger(home, state, monke
     monkeypatch.setattr(notify_mod, "get_action_services", lambda: NS(state=NS(notify=notify)))
     _upsert_nested(home, title="Standup: review Q4")
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -503,7 +504,7 @@ def test_a_NESTED_action_actually_REACHES_its_provider(home, state, monkeypatch)
     calls = _notify_spy(monkeypatch)
 
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -523,7 +524,7 @@ def test_a_nested_action_carries_its_OWN_config(home, state, monkeypatch):
     calls = _notify_spy(monkeypatch)
 
     _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -554,7 +555,7 @@ def test_BOTH_action_shapes_dispatch(home, state, monkeypatch):
 
     for tid in ("file:nested", "file:flat"):
         _run(
-            T.api_trigger_run(
+            trigger_runs.api_trigger_run(
                 _req(
                     "POST", "/api/triggers/x/run", state, body={}, match_info={"id": f"store:{tid}"}
                 )
@@ -586,7 +587,7 @@ def test_an_unresolvable_action_is_ok_FALSE_not_a_success_shaped_200(home, state
     )
 
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:ghost"}
             )
@@ -614,7 +615,7 @@ def test_an_actionless_trigger_is_ok_FALSE(home, state):
     )
 
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:empty"}
             )
@@ -681,7 +682,7 @@ def test_a_manual_run_APPENDS_a_history_row_tagged_manual_and_advances_last_run(
     assert not _store(home).get("file:notes").trigger.last_success_at
 
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -730,7 +731,7 @@ def test_a_manual_run_does_NOT_spend_the_max_fires_budget(home, state, monkeypat
     _result_spy(monkeypatch, result=ActionResult(success=True))
 
     _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -765,7 +766,7 @@ def test_a_FAILED_manual_run_is_recorded_as_a_failure_not_swallowed(home, state,
     _result_spy(monkeypatch, result=ActionResult(success=False, error="notify failed: no channel"))
 
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -800,7 +801,7 @@ def test_a_RAISING_provider_is_recorded_as_a_failure_not_a_500(home, state, monk
     _result_spy(monkeypatch, raises=RuntimeError("boom"))
 
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -838,7 +839,7 @@ def test_recording_a_manual_run_never_fails_the_request(home, state, monkeypatch
 
     monkeypatch.setattr(T, "_runs_store", boom)
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -858,7 +859,7 @@ def test_the_manual_path_reads_the_SAME_shapes_as_the_autonomous_one(home, state
     import inspect
 
     from personalclaw import gateway
-    from personalclaw.dashboard.handlers import triggers as handlers
+    from personalclaw.dashboard.handlers import trigger_runs as handlers
 
     manual = inspect.getsource(handlers._dispatch_store_action)
     autonomous = inspect.getsource(gateway.GatewayOrchestrator._fire_store_trigger)
@@ -891,7 +892,7 @@ def test_a_paused_store_trigger_still_runs_by_hand(home, state, monkeypatch):
         get_action_provider("notify"), "execute", lambda ac, ctx, timeout=30: _noop()
     )
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
             )
@@ -910,7 +911,7 @@ def test_running_a_broken_row_is_400(home, state):
         )
     )
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req("POST", "/api/triggers/x/run", state, match_info={"id": "store:web_watch:x"})
         )
     )
@@ -1553,7 +1554,7 @@ def test_a_schedule_run_goes_through_the_store_path(home, state):
     store-backed clock trigger routes through `_run_store` like every other store kind."""
     _create_schedule(state)
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 "/api/triggers/x/run",
@@ -1584,7 +1585,7 @@ def test_an_in_flight_claim_returns_409(home, state):
         Claim(trigger_id="clock:nightly", holder="tick", claimed_at=_time.time()), base_dir=home
     )
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req("POST", "/x/run", state, match_info={"id": "schedule:clock:nightly"})
         )
     )
@@ -1603,7 +1604,7 @@ def test_an_expired_claim_does_not_block_a_manual_run(home, state):
     )
     assert CLAIM_MAX_DURATION_SECS > 0  # the expiry window the read applies
     resp = _run(
-        T.api_trigger_run(
+        trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 "/x/run",
@@ -1619,7 +1620,9 @@ def test_an_expired_claim_does_not_block_a_manual_run(home, state):
 def test_running_an_unknown_schedule_still_404s(home, state):
     state.crons.list_jobs.return_value = []
     resp = _run(
-        T.api_trigger_run(_req("POST", "/x/run", state, match_info={"id": "schedule:ghost"}))
+        trigger_runs.api_trigger_run(
+            _req("POST", "/x/run", state, match_info={"id": "schedule:ghost"})
+        )
     )
     assert resp.status == 404
 
@@ -1924,15 +1927,16 @@ def test_the_run_store_is_held_directly_not_through_the_service(home, state):
 
 
 def test_the_helper_is_named_runs_store_to_avoid_shadowing():
-    """🔴 A REAL BUG this session hit: the module already has `async def _run_store(raw, request)`
-    (S94's manual-fire path), so defining a second `_run_store()` silently SHADOWED it — driven, the
-    history endpoint raised "missing 2 required positional arguments". Python reports a same-name
-    redefinition only at the call site, which in a 1400-line handler module is a real hazard."""
+    """🔴 A REAL BUG this session hit: the triggers module already had `async def _run_store(raw,
+    request)` (S94's manual-fire path, now `trigger_runs._run_store`), so defining a second
+    `_run_store()` silently SHADOWED it — driven, the history endpoint raised "missing 2 required
+    positional arguments". Python reports a same-name redefinition only at the call site, so the
+    store accessor keeps its distinct name."""
     import inspect
 
     assert callable(T._runs_store)
     # The S94 handler still takes its two arguments.
-    assert list(inspect.signature(T._run_store).parameters) == ["raw", "request"]
+    assert list(inspect.signature(trigger_runs._run_store).parameters) == ["raw", "request"]
 
 
 def test_the_last_run_status_is_read_from_the_store(home, state):

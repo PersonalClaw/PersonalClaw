@@ -226,7 +226,7 @@ def unattended_origin() -> str:
     ``state_history`` writing surface. ``gateway._background_write_surface`` wraps EVERY
     store-trigger dispatch in ``SURFACE_BACKGROUND`` — deliberately for the whole fire,
     including "the provider's own writes" — and the hand-driven "run now" path
-    (``dashboard.handlers.triggers._dispatch_store_action``) keeps the default
+    (``dashboard.handlers.trigger_runs._dispatch_store_action``) keeps the default
     ``interactive``. So a clock/cron/file/webhook fire reads unattended here without this
     module inventing a second notion of the word, and a person clicking Run reads attended.
 

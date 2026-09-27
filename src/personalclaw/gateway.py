@@ -389,7 +389,7 @@ def _background_write_surface(fn: Callable[..., Any]) -> Callable[..., Any]:
     chat session by definition, which is exactly why the denylist and the rung ladder below already
     judge it under the HEADLESS posture. Branching on that key here would add a second, parallel
     notion of "unattended" whose else-arm is unreachable. The ATTENDED counterpart is a different
-    function — `dashboard.handlers.triggers._dispatch_store_action`, the hand-driven "run now" —
+    function — `dashboard.handlers.trigger_runs._dispatch_store_action`, the hand-driven "run now" —
     which keeps the default `interactive` surface and is untouched by this.
 
     The surface travels on a ContextVar, so it survives the `await`s inside the dispatch. It does
@@ -4341,7 +4341,7 @@ class GatewayOrchestrator:
                 # A call the subagent's runtime declined because nobody could approve it (F-33).
                 # Recorded against the PARENT, which is where a person can see it and act: the
                 # chat that spawned the helper, or the workflow step it ran for.
-                from personalclaw.dashboard import auto_denials
+                from personalclaw import auto_denials
 
                 parent = self.dashboard_state.get_session(session_name) if session_name else None
                 title = getattr(parent, "title", "") if parent is not None else ""

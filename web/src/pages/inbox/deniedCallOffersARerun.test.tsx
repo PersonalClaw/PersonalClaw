@@ -1,6 +1,6 @@
 /** A call denied without an answer is in the Inbox, with a way to run it again (F-33).
  *
- *  The gateway leaves one `system` item per denial (`dashboard/auto_denials.py`): an approval
+ *  The gateway leaves one `system` item per denial (`auto_denials.py`): an approval
  *  nobody answered in time (`refs.auto_denied: 'expired'`), or a call an unattended run could not
  *  ask about (`'unattended'`). `refs.session` is where it happened and `refs.chat` is set only when
  *  that is a chat a person can answer in — which is when asking it to try again means anything:

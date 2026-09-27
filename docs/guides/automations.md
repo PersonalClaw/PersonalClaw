@@ -123,7 +123,7 @@ automation with catch-up enabled gets no card: it fires once, staggered, on its 
 - `src/personalclaw/triggers/review.py:191` — `cards_from_orphans`, the interrupted run's card, and
   `review.py:151` — `cards_from_boot`, the missed slots' card (`missed.review_at_boot` walks a cron's
   schedule as well as an interval's grid).
-- `src/personalclaw/dashboard/handlers/triggers.py:2639` — `api_trigger_review`, the cards and the
+- `src/personalclaw/dashboard/handlers/triggers.py:2227` — `api_trigger_review`, the cards and the
   decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:427`,
   `resolve_missed`.
 

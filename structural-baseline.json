@@ -115,12 +115,6 @@
           "verdict-type:OpVerdict"
         ]
       },
-      "src/personalclaw/mcp_core.py": {
-        "count": 1,
-        "sites": [
-          "durable-write:_call_tool_inner"
-        ]
-      },
       "src/personalclaw/net/guard.py": {
         "count": 1,
         "sites": [
@@ -198,12 +192,12 @@
     "totals": {
       "by_family": {
         "content-disposition-header": 0,
-        "durable-write": 4,
+        "durable-write": 3,
         "http-error-envelope-helper": 3,
         "verdict-type": 23
       },
-      "files": 27,
-      "sites": 30
+      "files": 26,
+      "sites": 29
     }
   },
   "structural-import-direction": {

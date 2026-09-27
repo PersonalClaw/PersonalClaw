@@ -124,8 +124,8 @@ WRITERS: tuple[Writer, ...] = (
         min_values=6,
     ),
     Writer(
-        label="dashboard/handlers/triggers.py records a manual run's ScheduleRun",
-        path="dashboard/handlers/triggers.py",
+        label="dashboard/handlers/trigger_runs.py records a manual run's ScheduleRun",
+        path="dashboard/handlers/trigger_runs.py",
         table=H.SCHEDULE_STATUS_TO_OUTCOME,
         table_name="SCHEDULE_STATUS_TO_OUTCOME",
         kind="kwarg",
@@ -478,7 +478,7 @@ def test_the_writer_file_census_is_pinned() -> None:
     assert call_files == {
         "gateway.py",
         "triggers/service.py",
-        "dashboard/handlers/triggers.py",
+        "dashboard/handlers/trigger_runs.py",
         # WF2AUT-16's boot sweep. Named here rather than added to `WRITERS` because it is the one
         # writer with nothing for the table floors to catch: it writes a single module-level
         # constant, `reaper.RESTART_INTERRUPTED_STATUS = "interrupted"`, which is a key of

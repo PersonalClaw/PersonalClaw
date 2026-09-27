@@ -31,6 +31,7 @@ import personalclaw.config.loader as loader
 from personalclaw.action_providers.base import ActionContext, ActionResult
 from personalclaw.action_providers.invoke_agent_provider import InvokeAgentActionProvider
 from personalclaw.action_providers.run_prompt_provider import RunPromptActionProvider
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.inbox import OPEN_STATUSES
@@ -84,7 +85,9 @@ def _nightly(**over) -> Trigger:
 
 
 def test_run_now_hands_its_action_the_trigger_that_dispatched_it(seen):
-    ran, _note = asyncio.run(T._dispatch_store_action(_nightly(), {"trigger_id": "nightly"}))
+    ran, _note = asyncio.run(
+        trigger_runs._dispatch_store_action(_nightly(), {"trigger_id": "nightly"})
+    )
     assert ran is True
     assert [c.trigger_id for c in seen.contexts] == ["nightly"]
 
@@ -191,7 +194,7 @@ async def test_the_approval_a_trigger_s_agent_asks_for_is_listed_under_the_trigg
 async def test_a_call_a_trigger_s_agent_declined_is_noted_under_the_trigger() -> None:
     info = SimpleNamespace(id="ab12", parent_session_key="", trigger_id="nightly")
     orch, hooks = _orchestrator(info)
-    with patch("personalclaw.dashboard.auto_denials.note_unattended") as note:
+    with patch("personalclaw.auto_denials.note_unattended") as note:
         await hooks["on_event"]("subagent_auto_denied", info, {"tool": "write_file"})
     note.assert_called_once()
     assert note.call_args.kwargs["trigger"] == "nightly"

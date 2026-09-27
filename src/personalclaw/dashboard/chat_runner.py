@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import approval_grants
+from personalclaw import approval_grants, auto_denials
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.acp.types import (
@@ -23,7 +23,6 @@ from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
-from personalclaw.dashboard import auto_denials
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
@@ -145,7 +144,7 @@ _SKILL_USED_STATES = (SkillLoadState.ADMITTED.value, SkillLoadState.REDUCED.valu
 #: How a tool call that needed approval and did not run is named in its transcript row, by how
 #: its approval ended. The chat's steps summary ("Worked through N steps · …") names each step by
 #: this row, so the words are product copy. `expired` says what the Inbox note for it says
-#: ("Denied, no answer: <tool>", `dashboard/auto_denials.py`): the window closed with nobody
+#: ("Denied, no answer: <tool>", `auto_denials.py`): the window closed with nobody
 #: there, which is not a Deny.
 _UNRUN_STEP_WORDS = {
     "rejected": "rejected",
