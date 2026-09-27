@@ -247,6 +247,19 @@ def _push_approval_policy(provider: Any, policy: str) -> None:
         setter(policy)
 
 
+def _resolution_moved(provider: Any) -> bool:
+    """Whether what a cached runtime's model was resolved from no longer holds.
+
+    A native runtime records it when it is built (``resolved_from``,
+    ``provider_bridge.ResolutionBasis``): the Settings → Models chains it read and the provider
+    entry it serves from. A rebind or an edit of that instance moves it, and the session is then
+    rebuilt at its next acquire. Any other runtime (an ACP CLI runs its own model) records none,
+    and never moves.
+    """
+    basis = getattr(provider, "resolved_from", None)
+    return basis is not None and not basis.holds()
+
+
 @dataclass
 class _Session:
     provider: ModelProvider
@@ -1097,16 +1110,27 @@ class SessionManager:
         if reuse is not None:
             provider, was_new, sess = reuse
             await sess.semaphore.acquire()
-            if not sess.definition_stale:
+            stale = (
+                "its agent was edited"
+                if sess.definition_stale
+                else (
+                    "what its model was resolved from changed"
+                    if _resolution_moved(provider)
+                    else ""
+                )
+            )
+            if not stale:
                 return provider, was_new, False
-            # The agent was edited while this runtime was cached. Checked AFTER the permit is
-            # held, so a turn that was running when the edit landed finished on the definition it
-            # started with, and this one — the first to start after — gets a runtime built from
-            # the definition as it now reads. The session map is kept, as for a dead provider,
-            # so an ACP runtime resumes its conversation; a native chat restores its own.
+            # The agent was edited while this runtime was cached, or what its model was resolved
+            # from moved (a rebind in Settings → Models, an edit or removal of the instance it
+            # serves from). Checked AFTER the permit is held, so a turn that was running when the
+            # change landed finished on what it started with, and this one — the first to start
+            # after — gets a runtime built from how things now read. The session map is kept, as
+            # for a dead provider, so an ACP runtime resumes its conversation; a native chat
+            # restores its own.
             sess.semaphore.release()
             await self._drop_session(key, sess)
-            logger.info("Session %s: its agent was edited — rebuilding its runtime", key)
+            logger.info("Session %s: %s — rebuilding its runtime", key, stale)
             return await self.get_or_create(
                 key,
                 agent=agent,

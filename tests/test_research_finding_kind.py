@@ -54,9 +54,9 @@ def store(tmp_path):
 
 
 class _NoEmbedder:
-    """A present-but-unavailable embedder, so ``_get_embedder`` takes its fast path instead
-    of loading a model inside a unit test. The retriever then runs FTS + graph only, which is
-    the path this file asserts about."""
+    """A present-but-unavailable embedder, standing in for ``get_knowledge_embedder()`` so no
+    model is loaded inside a unit test. The retriever then runs FTS + graph only, which is the
+    path this file asserts about."""
 
     @staticmethod
     def is_available() -> bool:
@@ -73,9 +73,12 @@ async def _list(store, query: dict) -> dict:
     class _Req:
         def __init__(self) -> None:
             self.query = query
-            self.app = {"state": _State(), "knowledge_embedder": _NoEmbedder()}
+            self.app = {"state": _State()}
 
-    resp = await list_items(_Req())
+    from unittest.mock import patch
+
+    with patch("personalclaw.knowledge.get_knowledge_embedder", return_value=_NoEmbedder()):
+        resp = await list_items(_Req())
     return json.loads(resp.body.decode())
 
 

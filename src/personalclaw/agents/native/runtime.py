@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from personalclaw.agents.native.failover import ModelFailover
     from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.llm.base import ModelProvider, ModelSubstitution
+    from personalclaw.providers.provider_bridge import ResolutionBasis
     from personalclaw.tool_providers.base import ToolProvider
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,11 @@ class NativeAgentRuntime(AgentProvider):
         # whose caller called :meth:`announce_failover`, since a caller that does not show
         # EVENT_MODEL_SUBSTITUTION would present the fallback's reply as the chosen model's.
         self.failover: ModelFailover | None = None
+        # What the builder resolved this runtime's model from (the Settings → Models chains it
+        # read, and the provider entry it serves from). ``SessionManager`` rebuilds a cached
+        # runtime whose basis no longer holds, so a rebind or an instance edit reaches the next
+        # turn of every open session instead of waiting for an idle hour or a restart.
+        self.resolved_from: ResolutionBasis | None = None
         self._failover_announced = False
         # Per turn: the models still to try, the (ref, why) of each one that failed, and the
         # sentence the fallback that answers says before its reply.

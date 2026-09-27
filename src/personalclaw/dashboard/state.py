@@ -62,8 +62,8 @@ logger = logging.getLogger(__name__)
 def _knowledge_embedder_factory():
     """Build a knowledge embedder from PClaw config (or None if disabled).
 
-    Used by the ingestion queue's terminal embed stage — same construction as the
-    knowledge handlers' ``_create_embedder``."""
+    Used by the ingestion queue's terminal embed stage — built per call, so it follows a
+    rebind in Settings → Models as ``knowledge.get_knowledge_embedder`` does."""
     try:
         from personalclaw.config.loader import config_path
         from personalclaw.knowledge.embedder import create_embedder_from_config
