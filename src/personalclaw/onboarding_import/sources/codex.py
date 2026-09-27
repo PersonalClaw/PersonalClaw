@@ -46,7 +46,7 @@ from typing import Any, BinaryIO, TextIO
 
 import zstandard
 
-from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
+from personalclaw.onboarding_import.floors import one_walk, read_text_safely, refuses, safe_text
 from personalclaw.onboarding_import.model import (
     ImportCategory,
     ImportItem,
@@ -54,17 +54,29 @@ from personalclaw.onboarding_import.model import (
     ScanResult,
 )
 from personalclaw.onboarding_import.sources.common import (
+    GIVE_WAY_LINES,
+    LOOK_BYTES,
+    READINGS,
     RULES_THAT_ALLOW,
     RULES_THAT_ASK,
     TITLE_CHARS,
+    UNDECIDED,
     UNPARSABLE,
     McpServer,
+    Reading,
+    SessionUnreadable,
+    Transcript,
+    Unreadable,
     and_list,
     conversation_note,
     denied_command_item,
     display_path,
+    file_signature,
+    give_way,
+    is_final,
     markdown_files,
     mcp_item,
+    message_count,
     not_imported_rows,
     one_line,
     prompt_history,
@@ -335,7 +347,9 @@ def mcp_servers(
 # ── the scan ──────────────────────────────────────────────────────────────────
 
 
-def scan(root: Path | str | None = None) -> ScanResult:
+def scan(root: Path | str | None = None, *, look: bool = False) -> ScanResult:
+    """What Codex holds. To ``look`` is to read each session not read before only as far as its
+    first typed prompt (:func:`_scan_conversations`); otherwise every one is read in full."""
     explicit = Path(root).expanduser() if root is not None else None
     base = explicit if explicit is not None else resolve_root()
     result = ScanResult(
@@ -344,21 +358,22 @@ def scan(root: Path | str | None = None) -> ScanResult:
     if not result.present:
         return result
 
-    config, config_name, withheld = _read_config(base)
-    _scan_instructions(base, result)
-    _scan_memories(base, result)
-    if config_name == _TOML_CONFIG:
-        _scan_mcp(_servers_from(config, os.environ), result)
-    scan_skills(NAME, _skill_roots(base, explicit), result)
-    _scan_agents(base, result)
-    _scan_prompts(base, result)
-    _scan_rules(base, result)
-    _scan_conversations(base, result)
-    _scan_settings(config, config_name, withheld, result)
-    history = prompt_history(base / _HISTORY_FILE)
-    if history is not None:
-        result.not_imported.append(history)
-    _count_withheld_files(base, result)
+    with one_walk():
+        config, config_name, withheld = _read_config(base)
+        _scan_instructions(base, result)
+        _scan_memories(base, result)
+        if config_name == _TOML_CONFIG:
+            _scan_mcp(_servers_from(config, os.environ), result)
+        scan_skills(NAME, _skill_roots(base, explicit), result)
+        _scan_agents(base, result)
+        _scan_prompts(base, result)
+        _scan_rules(base, result)
+        _scan_conversations(base, result, look=look)
+        _scan_settings(config, config_name, withheld, result)
+        history = prompt_history(base / _HISTORY_FILE)
+        if history is not None:
+            result.not_imported.append(history)
+        _count_withheld_files(base, result)
     result.note_withheld()
     return result
 
@@ -743,15 +758,6 @@ MAX_SESSION_BYTES = 500_000_000
 _COMPRESSED_STEP = 1024
 
 
-class SessionUnreadable(Exception):
-    """A session file this import cannot read. ``reason`` completes a sentence that starts with
-    the file's name, and is true before the import and after it."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
 _CUT_OFF = "is cut off before the end of its compressed data"
 _DAMAGED = "does not decompress: its data is damaged, or is not zstd"
 
@@ -940,6 +946,184 @@ def _session_lines(path: Path) -> Generator[str, None, None]:
         raise SessionUnreadable(_DAMAGED) from None
 
 
+class _Rollout:
+    """A Codex session file, line by line: the ONE reading of its lines, whether it is read in full
+    (:func:`read_rollout`) or only as far as its first typed prompt (:func:`_reading`).
+
+    The prompts are the ``user_message`` events — what the person typed. The model's input holds
+    each one too, with Codex's context around it, so it is read only from a file that has no such
+    events (:meth:`kept`).
+    """
+
+    def __init__(self) -> None:
+        self.meta: dict[str, Any] = {}
+        self.messages: list[dict[str, Any]] = []
+        self.typed = False
+        self.redactions = 0
+        #: The first prompt the person typed, once a ``user_message`` event has held one.
+        self.typed_prompt = ""
+
+    def feed(self, raw: str) -> None:
+        try:
+            line = json.loads(raw)
+        except UNPARSABLE:
+            return
+        if not isinstance(line, dict):
+            return
+        kind = line.get("type")
+        held = line.get("payload")
+        payload: dict[str, Any] = held if isinstance(held, dict) else {}
+        ts = str(line.get("timestamp") or "")
+        if kind == "session_meta":
+            self.meta = self.meta or payload
+            return
+        if kind == "event_msg":
+            if payload.get("type") == "user_message":
+                self.typed = True
+                text = str(payload.get("message") or "")
+                if text.strip():
+                    cleaned, n = safe_text(text)
+                    self.redactions += n
+                    self.messages.append({"role": "user", "content": cleaned, "ts": ts})
+                    self.typed_prompt = self.typed_prompt or cleaned
+            return
+        if kind != "response_item":
+            return
+        if payload.get("type") == "message":
+            role = payload.get("role")
+            text = _content_text(payload.get("content"))
+            if not text.strip():
+                return
+            cleaned, n = safe_text(text)
+            if role == "assistant":
+                self.redactions += n
+                last = self.messages[-1] if self.messages else None
+                if last is not None and last["role"] == "assistant":
+                    last["content"] = f"{last['content']}\n\n{cleaned}"
+                    last["ts"] = ts or last["ts"]
+                else:
+                    self.messages.append({"role": "assistant", "content": cleaned, "ts": ts})
+            elif role == "user" and not text.lstrip().startswith(_CONTEXT_PREFIXES):
+                self.messages.append(
+                    {"role": "user", "content": cleaned, "ts": ts, "input": True, "n": n}
+                )
+            return
+        call = _call_line(payload)
+        if call:
+            cleaned, n = safe_text(call)
+            self.redactions += n
+            self.messages.append({"role": "tool", "content": cleaned, "ts": ts})
+
+    def kept(self) -> tuple[list[dict[str, Any]], int]:
+        """``(messages, redactions)`` of what comes over: a prompt read from the model's input only
+        when the file holds none the person typed."""
+        kept: list[dict[str, Any]] = []
+        redactions = self.redactions
+        for message in self.messages:
+            if message.get("input"):
+                if self.typed:
+                    continue
+                redactions += message["n"]
+                message = {k: v for k, v in message.items() if k not in ("input", "n")}
+            kept.append(message)
+        return kept, redactions
+
+    def session(self, path: Path) -> str:
+        plain = Path(_plain_name(path.name))
+        found = _SESSION_ID_RE.search(plain.name)
+        return str(self.meta.get("id") or "") or (found.group(1) if found else plain.stem)
+
+    def conversation(
+        self, path: Path, titles: Mapping[str, str]
+    ) -> tuple[dict[str, Any], str, int] | None:
+        """The whole file's conversation, or ``None`` when it holds no prompt."""
+        kept, redactions = self.kept()
+        prompts = [m for m in kept if m["role"] == "user"]
+        if not prompts:
+            return None
+        session = self.session(path)
+        title, _n = safe_text(one_line(titles.get(session) or prompts[0]["content"], TITLE_CHARS))
+        stamps = [m["ts"] for m in kept if m["ts"]]
+        conversation = {
+            "messages": kept,
+            "title": title,
+            "created_at": str(self.meta.get("timestamp") or "") or (stamps[0] if stamps else ""),
+            "updated_at": stamps[-1] if stamps else "",
+            "cwd": str(self.meta.get("cwd") or ""),
+        }
+        return conversation, session, redactions
+
+    def transcript(self, path: Path, *, whole: bool) -> Transcript | None:
+        """What the step lists of the file — ``None`` when what was read holds no prompt."""
+        cwd = str(self.meta.get("cwd") or "")
+        if whole:
+            kept, redactions = self.kept()
+            prompts = [m for m in kept if m["role"] == "user"]
+            if not prompts:
+                return None
+            return Transcript(
+                title=one_line(prompts[0]["content"], TITLE_CHARS),
+                session=self.session(path),
+                cwd=cwd,
+                messages=message_count(kept),
+                redactions=redactions,
+            )
+        typed_or_input = self.typed_prompt or next(
+            (m["content"] for m in self.messages if m.get("input") and not self.typed), ""
+        )
+        if not typed_or_input:
+            return None
+        return Transcript(
+            title=one_line(typed_or_input, TITLE_CHARS), session=self.session(path), cwd=cwd
+        )
+
+
+def _read_rollout(path: Path, *, look: bool) -> tuple[_Rollout, bool]:
+    """``(lines, whole)``: ``path`` read in full — or, to ``look``, only until its first typed
+    prompt, and never past :data:`LOOK_BYTES` — and whether that reached the end of the file.
+    Raises :class:`SessionUnreadable` when the part it needs cannot be read."""
+    rollout = _Rollout()
+    with contextlib.closing(_session_lines(path)) as lines:
+        read = 0
+        for count, raw in enumerate(lines):
+            if not count % GIVE_WAY_LINES:
+                give_way()
+            rollout.feed(raw)
+            if look:
+                if rollout.typed_prompt:
+                    return rollout, False
+                read += len(raw)
+                if read >= LOOK_BYTES:
+                    return rollout, False
+    return rollout, True
+
+
+def _signature(path: Path) -> tuple | None:
+    """The file's :func:`file_signature`, and the size limit its reading was made under."""
+    signature = file_signature(path)
+    return None if signature is None else (*signature, MAX_SESSION_BYTES)
+
+
+def _reading(path: Path, *, look: bool) -> Reading:
+    """What ``path`` holds, as the step lists it: remembered while the file is unchanged, else
+    read — in full, or to ``look``, only as far as its first typed prompt."""
+    signature = _signature(path)
+    if signature is None:
+        return None
+    found, reading = READINGS.recall(path, signature, whole=not look)
+    if found:
+        return reading
+    try:
+        rollout, whole = _read_rollout(path, look=look)
+    except SessionUnreadable as exc:
+        reading = Unreadable(exc.reason)
+    else:
+        transcript = rollout.transcript(path, whole=whole)
+        reading = transcript if transcript is not None or whole else UNDECIDED
+    READINGS.keep(path, signature, reading)
+    return reading
+
+
 def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any], str, int] | None:
     """One Codex session file as a PersonalClaw conversation: ``(conversation, session id,
     redactions)``, or ``None`` for one with no prompt in it. ``path`` is the session as Codex
@@ -950,93 +1134,39 @@ def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any],
     where a session is largest and where a printed credential sits), and neither is the model's
     reasoning. Every text passes floor 2.
 
-    The prompts are the ``user_message`` events — what the person typed. The model's input holds
-    each one too, with Codex's context around it, so it is read only from a file that has no such
-    events.
-
     Raises :class:`SessionUnreadable` for a file this import cannot read: cut off, damaged, larger
-    than :data:`MAX_SESSION_BYTES`, or refused by the system. Nothing of it is kept.
+    than :data:`MAX_SESSION_BYTES`, or refused by the system. Nothing of it is kept. Read whole,
+    so what the step says of the file becomes final too.
     """
     if refuses(path):
         return None
-    meta: dict[str, Any] = {}
-    messages: list[dict[str, Any]] = []
-    typed = False
-    redactions = 0
-    with contextlib.closing(_session_lines(path)) as lines:
-        for raw in lines:
-            try:
-                line = json.loads(raw)
-            except UNPARSABLE:
-                continue
-            if not isinstance(line, dict):
-                continue
-            kind = line.get("type")
-            held = line.get("payload")
-            payload: dict[str, Any] = held if isinstance(held, dict) else {}
-            ts = str(line.get("timestamp") or "")
-            if kind == "session_meta":
-                meta = meta or payload
-                continue
-            if kind == "event_msg":
-                if payload.get("type") == "user_message":
-                    typed = True
-                    text = str(payload.get("message") or "")
-                    if text.strip():
-                        cleaned, n = safe_text(text)
-                        redactions += n
-                        messages.append({"role": "user", "content": cleaned, "ts": ts})
-                continue
-            if kind != "response_item":
-                continue
-            if payload.get("type") == "message":
-                role = payload.get("role")
-                text = _content_text(payload.get("content"))
-                if not text.strip():
-                    continue
-                cleaned, n = safe_text(text)
-                if role == "assistant":
-                    redactions += n
-                    last = messages[-1] if messages else None
-                    if last is not None and last["role"] == "assistant":
-                        last["content"] = f"{last['content']}\n\n{cleaned}"
-                        last["ts"] = ts or last["ts"]
-                    else:
-                        messages.append({"role": "assistant", "content": cleaned, "ts": ts})
-                elif role == "user" and not text.lstrip().startswith(_CONTEXT_PREFIXES):
-                    messages.append(
-                        {"role": "user", "content": cleaned, "ts": ts, "input": True, "n": n}
-                    )
-                continue
-            call = _call_line(payload)
-            if call:
-                cleaned, n = safe_text(call)
-                redactions += n
-                messages.append({"role": "tool", "content": cleaned, "ts": ts})
-    kept: list[dict[str, Any]] = []
-    for message in messages:
-        if message.pop("input", False):
-            n = message.pop("n")
-            if typed:
-                continue
-            redactions += n
-        kept.append(message)
-    prompts = [m for m in kept if m["role"] == "user"]
-    if not prompts:
+    signature = _signature(path)
+    try:
+        rollout, _whole = _read_rollout(path, look=False)
+    except SessionUnreadable as exc:
+        if signature is not None:
+            READINGS.keep(path, signature, Unreadable(exc.reason))
+        raise
+    if signature is not None:
+        READINGS.keep(path, signature, rollout.transcript(path, whole=True))
+    return rollout.conversation(path, titles)
+
+
+def read_for_import(item: ImportItem) -> tuple[dict[str, Any], int] | None:
+    """The conversation ``item`` names, read in full now (:func:`read_rollout`), titled as the scan
+    listed it. Raises :class:`SessionUnreadable` for a file that cannot be read to its end."""
+    listed = str(item.payload.get("listed_as") or "")
+    read = read_rollout(Path(item.path), {item.target: listed} if listed else {})
+    if read is None:
         return None
-    plain = Path(_plain_name(path.name))
-    found = _SESSION_ID_RE.search(plain.name)
-    session = str(meta.get("id") or "") or (found.group(1) if found else plain.stem)
-    title, _n = safe_text(one_line(titles.get(session) or prompts[0]["content"], TITLE_CHARS))
-    stamps = [m["ts"] for m in kept if m["ts"]]
-    conversation = {
-        "messages": kept,
-        "title": title,
-        "created_at": str(meta.get("timestamp") or "") or (stamps[0] if stamps else ""),
-        "updated_at": stamps[-1] if stamps else "",
-        "cwd": str(meta.get("cwd") or ""),
-    }
-    return conversation, session, redactions
+    conversation, _session, redactions = read
+    return conversation, redactions
+
+
+def read_in_full(path: Path) -> None:
+    """Read one session file in full, so what the step says of it is final."""
+    if not refuses(path):
+        _reading(path, look=False)
 
 
 def _session_files(root: Path) -> list[Path]:
@@ -1074,39 +1204,49 @@ def _session_label(path: Path, titles: Mapping[str, str]) -> str:
     return f"“{shown}” ({path.name})"
 
 
-def _scan_conversations(base: Path, result: ScanResult) -> None:
+def _scan_conversations(base: Path, result: ScanResult, *, look: bool) -> None:
     """Every session, ``sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`` — a conversation each,
     whether it is as Codex wrote it or compressed (``.jsonl.zst``). Either way it is keyed by its
     plain name, so a session Codex compresses after an import is still the one that import brought
     over.
 
     A session this import cannot read is named with the reason. One Codex archived (moved to
-    ``archived_sessions/``) is counted, not imported.
+    ``archived_sessions/``) is counted, not imported. To ``look`` is to read each file not read
+    before only as far as its first typed prompt: a provisional item, read in full later
+    (:attr:`ScanResult.unread`) — and a file that cannot be read to its end is named then.
     """
     titles = _session_titles(base)
     unreadable: list[str] = []
     for path in _session_files(base / _SESSIONS_DIR):
-        try:
-            read = read_rollout(path, titles)
-        except SessionUnreadable as exc:
-            unreadable.append(f"{_session_label(path, titles)} {exc.reason}.")
+        if refuses(path):
             continue
-        if read is None:
+        result.conversation_files += 1
+        reading = _reading(path, look=look)
+        if not is_final(reading):
+            result.unread.append(path)
+        if isinstance(reading, Unreadable):
+            unreadable.append(f"{_session_label(path, titles)} {reading.reason}.")
             continue
-        conversation, session, redactions = read
+        if not isinstance(reading, Transcript):
+            continue
+        listed = titles.get(reading.session, "")
+        title, _n = safe_text(one_line(listed or reading.title, TITLE_CHARS))
+        redactions = reading.redactions or 0
         result.redactions += redactions
-        cwd = conversation["cwd"]
+        cwd = reading.cwd
         result.items.append(
             ImportItem(
                 source=NAME,
                 category=ImportCategory.CONVERSATIONS,
                 key=path.with_name(_plain_name(path.name)).relative_to(base).as_posix(),
-                title=conversation["title"],
-                name=session,
-                payload=conversation,
+                title=title,
+                name=reading.session,
+                payload={"listed_as": listed} if listed else {},
+                path=str(path),
                 origin=f"Project · {recorded_label(cwd)}" if cwd else "",
-                note=conversation_note(conversation["messages"]),
+                note=conversation_note(reading.messages),
                 redactions=redactions,
+                provisional=not reading.whole,
             )
         )
     named = unreadable[:_UNREADABLE_NAMED]

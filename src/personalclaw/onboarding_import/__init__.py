@@ -22,7 +22,9 @@ never modify that tool's configuration.
 
 The scan phase is pure (a directory in, a :class:`~.model.ScanResult` out) so it is
 fixture-testable with no store, session or home involved; only :mod:`.writers`
-touches our home.
+touches our home. A scan can LOOK rather than read (:mod:`.engine`): a months-long
+history is gigabytes of transcripts, so the step lists them from the start of each file
+first, reads the rest in the background, and says which counts are not final yet.
 """
 
 from __future__ import annotations
@@ -30,10 +32,12 @@ from __future__ import annotations
 from personalclaw.onboarding_import.engine import (
     detected,
     plans,
+    read_unread,
     run_import,
     scan_all,
     scan_source,
     select_items,
+    unread,
 )
 from personalclaw.onboarding_import.model import (
     FINGERPRINT_RE,
@@ -67,8 +71,10 @@ __all__ = [
     "list_sources",
     "offer",
     "plans",
+    "read_unread",
     "run_import",
     "scan_all",
     "scan_source",
     "select_items",
+    "unread",
 ]

@@ -8,7 +8,10 @@
   with the supply-chain scan its install will make (:class:`ImportedSkillMarketplace`).
 - **Prompt history** (:func:`prompt_history`): counted and named, never imported.
 - **A document that does not parse** (:data:`UNPARSABLE`): read as unreadable, never a scan fault.
-- **A conversation's title and note** (:func:`one_line`, :func:`conversation_note`).
+- **A conversation file, as the step lists it** (:class:`Transcript`, :data:`READINGS`): read in
+  full, or — for the thousands of files a months-long history holds — only as far as its first
+  prompt, and remembered until the file changes. Its title and note (:func:`one_line`,
+  :func:`conversation_note`).
 - **An MCP server** (:class:`McpServer`, :func:`mcp_item`): what a tool has configured, values
   included, for the onboarding scan and the Tools page's Import — one definition, one writer.
 - **A command the tool refuses** (:func:`denied_command_item`), and the rest of its settings
@@ -19,8 +22,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -424,13 +433,181 @@ def one_line(text: str, limit: int) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
-def conversation_note(messages: list[dict[str, Any]]) -> str:
-    """What a person should know about an imported conversation before they pick it."""
-    count = sum(1 for m in messages if m["role"] != "tool")
-    return (
-        f"{count} message{'' if count == 1 else 's'}. Tool calls come over by name; their "
-        "output does not."
+def message_count(messages: list[dict[str, Any]]) -> int:
+    """How many of a conversation's messages a person reads as messages: tool calls are not."""
+    return sum(1 for m in messages if m["role"] != "tool")
+
+
+def conversation_note(messages: int | None) -> str:
+    """What a person should know about an imported conversation before they pick it.
+
+    ``messages`` is :func:`message_count`, or ``None`` for a conversation not read in full yet —
+    whose count is not known, so it is not given.
+    """
+    held = (
+        "Not read in full yet."
+        if messages is None
+        else f"{messages} message{'' if messages == 1 else 's'}."
     )
+    return f"{held} Tool calls come over by name; their output does not."
+
+
+#: The most of a conversation file a LOOK reads (:class:`Transcript`): far past the first prompt of
+#: any transcript either tool writes, which is what names a conversation. The rest of the file is
+#: read in full in the background, and by the import itself.
+LOOK_BYTES = 1_000_000
+
+#: How many lines a reader reads between two chances to step aside (:func:`give_way`).
+GIVE_WAY_LINES = 2048
+
+_GIVE_WAY: ContextVar[Callable[[], None] | None] = ContextVar(
+    "onboarding_import_give_way", default=None
+)
+
+
+@contextmanager
+def giving_way(wait: Callable[[], None]) -> Iterator[None]:
+    """Readers in this block call ``wait`` before a file's first line and every
+    :data:`GIVE_WAY_LINES` lines after it (:func:`give_way`).
+
+    For the reading pass, which reads in the background while a person may be asking for a scan:
+    two threads parsing at once share one interpreter, so the pass steps aside while a scan is
+    answered — mid-file, because one file can take seconds (a 450 MB transcript: 2.5 s).
+    """
+    token = _GIVE_WAY.set(wait)
+    try:
+        yield
+    finally:
+        _GIVE_WAY.reset(token)
+
+
+def give_way() -> None:
+    """A reader's chance to step aside: the wait of the :func:`giving_way` block it runs in."""
+    wait = _GIVE_WAY.get()
+    if wait is not None:
+        wait()
+
+
+@dataclass(frozen=True)
+class Transcript:
+    """One conversation file, as the step lists it.
+
+    READ IN FULL, every field is final and ``messages``/``redactions`` are counts. LOOKED INTO —
+    read only as far as its first prompt, which is what a scan can afford for each of the
+    thousands of files a months-long history holds — it names the conversation (its title, the
+    session it is, where it was held), and what it holds is not known yet: ``messages`` and
+    ``redactions`` are ``None`` until it is read in full.
+
+    ``title`` is the conversation's own, from its file, already through the credential detector:
+    Claude Code's summary or the first prompt, Codex's first prompt. Codex lists a conversation by
+    the name in its session index when it has one, which the scan puts first (a rename changes
+    the index, not the file).
+    """
+
+    title: str
+    session: str
+    cwd: str
+    messages: int | None = None
+    redactions: int | None = None
+
+    @property
+    def whole(self) -> bool:
+        return self.messages is not None
+
+
+class SessionUnreadable(Exception):
+    """A conversation file this import cannot read. ``reason`` completes a sentence that starts
+    with the file's name, and is true before the import and after it."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class Unreadable:
+    """A conversation file that could not be read, as a reading remembers it (the
+    :class:`SessionUnreadable` it raised)."""
+
+    reason: str
+
+
+class Undecided(Enum):
+    """A file LOOKED INTO as far as :data:`LOOK_BYTES` without reaching a prompt: whether it is a
+    conversation at all is known once it is read in full."""
+
+    UNDECIDED = "undecided"
+
+
+UNDECIDED = Undecided.UNDECIDED
+
+#: What reading one conversation file found: a conversation, a file that cannot be read, a file
+#: with no prompt in it (``None`` — nothing to bring over and nothing to say), or, for a file only
+#: looked into, not yet known.
+Reading = Transcript | Unreadable | Undecided | None
+
+
+def is_final(reading: Reading) -> bool:
+    """Whether ``reading`` is the whole file's answer — final until the file changes."""
+    if reading is UNDECIDED:
+        return False
+    return not isinstance(reading, Transcript) or reading.whole
+
+
+def file_signature(path: Path) -> tuple[int, int, int] | None:
+    """What changes when a file does: its inode, size and modification time (``None``: gone)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+class Readings:
+    """What each conversation file was found to hold, kept for as long as the file is unchanged.
+
+    The scan of a months-long history lists thousands of conversation files, and reading every one
+    of them again on every visit was most of what the step cost. So a reading is kept under the
+    file's path with the file's :func:`file_signature` and the reader's own settings; a file that
+    changes (Claude Code appends to the session in use) is read again. A reading that only LOOKED
+    INTO a file answers another look, never a question that needs the whole file.
+
+    Only what the listing shows is kept — a title, a session id, two counts — never a message. It
+    lives in this process and nowhere else: the scan writes nothing to the home.
+    """
+
+    #: A bound on what one process keeps, far past any real history: cleared whole when crossed.
+    LIMIT = 200_000
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._kept: dict[str, tuple[tuple, Reading]] = {}
+
+    def recall(self, path: Path, signature: tuple, *, whole: bool) -> tuple[bool, Reading]:
+        """``(found, reading)``: the reading kept for ``path`` at ``signature``, when there is one
+        that answers the question (``whole`` asks for one read in full)."""
+        with self._lock:
+            kept = self._kept.get(str(path))
+        if kept is None or kept[0] != signature:
+            return False, None
+        reading = kept[1]
+        if whole and not is_final(reading):
+            return False, None
+        return True, reading
+
+    def keep(self, path: Path, signature: tuple, reading: Reading) -> None:
+        with self._lock:
+            if len(self._kept) >= self.LIMIT:
+                self._kept.clear()
+            self._kept[str(path)] = (signature, reading)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._kept.clear()
+
+
+#: The one process-wide store of readings, shared by every source and by the import.
+READINGS = Readings()
 
 
 # ── MCP servers ───────────────────────────────────────────────────────────────

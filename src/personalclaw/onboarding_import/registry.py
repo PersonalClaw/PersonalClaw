@@ -1,9 +1,9 @@
 """The source registry — the one list of tools we can import from.
 
-A source is (name, display name, env var, default root, scan function). Adding a
-tool is adding one module under :mod:`~personalclaw.onboarding_import.sources` and
-one row here; nothing downstream changes, which is why broader source coverage was
-explicitly not a v1 bar.
+A source is (name, display name, env var, default root, scan function, and its two
+conversation readers). Adding a tool is adding one module under
+:mod:`~personalclaw.onboarding_import.sources` and one row here; nothing downstream
+changes, which is why broader source coverage was explicitly not a v1 bar.
 """
 
 from __future__ import annotations
@@ -11,8 +11,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from personalclaw.onboarding_import.model import ScanResult
+from personalclaw.onboarding_import.model import ImportItem, ScanResult
 from personalclaw.onboarding_import.sources import claude_code, codex
 
 
@@ -24,6 +25,11 @@ class ImportSource:
     default_root: str
     scan: Callable[..., ScanResult]
     resolve_root: Callable[[], Path]
+    #: A conversation item's transcript, read in full when it is imported:
+    #: ``(conversation, redactions)``, or ``None`` when the file holds no prompt.
+    read_for_import: Callable[[ImportItem], tuple[dict[str, Any], int] | None]
+    #: One conversation file read in full, so what the scan says of it is final.
+    read_in_full: Callable[[Path], None]
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +48,8 @@ def _source(module) -> ImportSource:
         default_root=module.DEFAULT_ROOT,
         scan=module.scan,
         resolve_root=module.resolve_root,
+        read_for_import=module.read_for_import,
+        read_in_full=module.read_in_full,
     )
 
 

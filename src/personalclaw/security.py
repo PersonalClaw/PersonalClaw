@@ -327,63 +327,85 @@ def is_sensitive_path(path_str: str) -> bool:
     """Return True if the path points to a sensitive location.
 
     Works for both absolute paths and ~/relative paths.
-    Used by hooks to block fs_read/ReadFile of credential files.
+    Used by hooks to block fs_read/ReadFile of credential files. A walk that asks about many
+    paths in one pass makes one :class:`SensitivePaths` and asks it instead.
     """
-    # 🔴 A path the OS cannot even name is SENSITIVE, not safe (issue 352). A NUL byte makes
-    # every `os.path`/`pathlib` call raise `ValueError: embedded null character`, and the
-    # `except` below deliberately continues with the UNRESOLVED string — which then matches no
-    # sensitive prefix, so this answered False for `/tmp/a\x00b`. Measured.
-    #
-    # That answer is the dangerous half of this issue. The visible symptom was a 500 out of
-    # `validate_file_path`, and the tempting fix there is to catch the exception and carry on —
-    # which would hand this function a path it cannot classify and take False for an answer. So
-    # the refusal belongs HERE as well, ahead of every caller.
-    #
-    # Fail CLOSED, the direction this function already argues for below: casefolding "can only
-    # over-block ... the safe direction for a credential guard and the error a user can see and
-    # report". A NUL is never part of a legitimate filename — POSIX and Windows both forbid it
-    # in a path component — so over-blocking costs nothing real.
-    if "\x00" in path_str:
-        return True
-    # Expand ~ and $HOME, then compare every form of the request with every form of each
-    # protected location (:func:`_path_forms`).
-    expanded = os.path.expanduser(os.path.expandvars(path_str))
-    requested = _path_forms(expanded)
-    # CASE-INSENSITIVE comparison, because the comparison is the control.
-    #
-    # 🔴 Measured on macOS: `~/.SSH/id_rsa` was ALLOWED while `~/.ssh/id_rsa` was blocked,
-    # and the default macOS filesystem (like Windows) is case-INSENSITIVE — a temp dir
-    # created as `.ssh` was read back through `.SSH` and returned the file's contents. So
-    # every one of the fourteen entries above, INCLUDING `~/.personalclaw/.env` and the
-    # governance ceiling, was one shifted key away from being readable, across the ~70 call
-    # sites that route through this function. `Path.resolve()` normalises `..`, `.`, `//`,
-    # `~` and `$HOME` (all verified blocked); it does not normalise case.
-    #
-    # Always casefold rather than probing the filesystem per call: a per-path probe is
-    # itself a control that fails when the probe fails, and on a case-SENSITIVE filesystem
-    # casefolding can only over-block — a directory literally named `~/.SSH` that holds no
-    # credentials would be refused, which is the safe direction for a credential guard and
-    # the error a user can see and report.
-    #
-    # PersonalClaw's own auth/audit material, by basename, wherever it sits. Casefolded for
-    # the same reason as everything else here: on macOS/Windows the filesystem is
-    # case-insensitive, so `.LOCAL_SECRET` resolves to the real bytes (#690's finding).
-    own = {n.casefold() for n in OWN_SECRET_BASENAMES}
-    if any(os.path.basename(form) in own for form in requested):
-        return True
-    home = str(Path.home())
-    protected: set[str] = set()
-    for sensitive_dir in _SENSITIVE_HOME_DIRS:
-        protected |= _protected_forms(os.path.join(home, sensitive_dir))
-    # The ACTIVE PersonalClaw home's secret entries — which the `$HOME`-relative tier above
-    # cannot reach when `PERSONALCLAW_HOME` points elsewhere.
-    for entry in _pclaw_home_sensitive_paths():
-        protected |= _protected_forms(entry)
-    return any(
-        form == entry or form.startswith(entry + os.sep)
-        for form in requested
-        for entry in protected
-    )
+    return SensitivePaths()(path_str)
+
+
+class SensitivePaths:
+    """:func:`is_sensitive_path`, with the protected locations resolved ONCE for a whole walk.
+
+    Resolving every protected location — its real path, and where each link inside it points —
+    was nearly all of one check's cost: 0.2 ms a path, 2.4 s of an import scan over the 11,700
+    transcript files a months-long Claude Code history holds (measured). An instance resolves
+    them when it is made and compares every path it is asked about with that one resolution.
+    Each REQUESTED path is still resolved on its own, on every call, so a link to a protected
+    file is refused exactly as :func:`is_sensitive_path` refuses it.
+
+    Make one per walk and drop it after: a protected location that becomes a link after the
+    instance was made is seen by the next one, not by this one.
+    """
+
+    def __init__(self) -> None:
+        home = str(Path.home())
+        protected: set[str] = set()
+        for sensitive_dir in _SENSITIVE_HOME_DIRS:
+            protected |= _protected_forms(os.path.join(home, sensitive_dir))
+        # The ACTIVE PersonalClaw home's secret entries — which the `$HOME`-relative tier above
+        # cannot reach when `PERSONALCLAW_HOME` points elsewhere.
+        for entry in _pclaw_home_sensitive_paths():
+            protected |= _protected_forms(entry)
+        self._protected = tuple(protected)
+        self._own = frozenset(n.casefold() for n in OWN_SECRET_BASENAMES)
+
+    def __call__(self, path_str: str) -> bool:
+        # 🔴 A path the OS cannot even name is SENSITIVE, not safe (issue 352). A NUL byte makes
+        # every `os.path`/`pathlib` call raise `ValueError: embedded null character`, and the
+        # `except` below deliberately continues with the UNRESOLVED string — which then matches
+        # no sensitive prefix, so this answered False for `/tmp/a\x00b`. Measured.
+        #
+        # That answer is the dangerous half of this issue. The visible symptom was a 500 out of
+        # `validate_file_path`, and the tempting fix there is to catch the exception and carry on
+        # — which would hand this function a path it cannot classify and take False for an
+        # answer. So the refusal belongs HERE as well, ahead of every caller.
+        #
+        # Fail CLOSED, the direction this function already argues for below: casefolding "can
+        # only over-block ... the safe direction for a credential guard and the error a user can
+        # see and report". A NUL is never part of a legitimate filename — POSIX and Windows both
+        # forbid it in a path component — so over-blocking costs nothing real.
+        if "\x00" in path_str:
+            return True
+        # Expand ~ and $HOME, then compare every form of the request with every form of each
+        # protected location (:func:`_path_forms`).
+        expanded = os.path.expanduser(os.path.expandvars(path_str))
+        requested = _path_forms(expanded)
+        # CASE-INSENSITIVE comparison, because the comparison is the control.
+        #
+        # 🔴 Measured on macOS: `~/.SSH/id_rsa` was ALLOWED while `~/.ssh/id_rsa` was blocked,
+        # and the default macOS filesystem (like Windows) is case-INSENSITIVE — a temp dir
+        # created as `.ssh` was read back through `.SSH` and returned the file's contents. So
+        # every one of the fourteen entries above, INCLUDING `~/.personalclaw/.env` and the
+        # governance ceiling, was one shifted key away from being readable, across the ~70 call
+        # sites that route through this function. `Path.resolve()` normalises `..`, `.`, `//`,
+        # `~` and `$HOME` (all verified blocked); it does not normalise case.
+        #
+        # Always casefold rather than probing the filesystem per call: a per-path probe is
+        # itself a control that fails when the probe fails, and on a case-SENSITIVE filesystem
+        # casefolding can only over-block — a directory literally named `~/.SSH` that holds no
+        # credentials would be refused, which is the safe direction for a credential guard and
+        # the error a user can see and report.
+        #
+        # PersonalClaw's own auth/audit material, by basename, wherever it sits. Casefolded for
+        # the same reason as everything else here: on macOS/Windows the filesystem is
+        # case-insensitive, so `.LOCAL_SECRET` resolves to the real bytes (#690's finding).
+        if any(os.path.basename(form) in self._own for form in requested):
+            return True
+        return any(
+            form == entry or form.startswith(entry + os.sep)
+            for form in requested
+            for entry in self._protected
+        )
 
 
 def _path_forms(path: str) -> set[str]:
