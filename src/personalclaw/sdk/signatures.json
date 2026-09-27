@@ -1277,7 +1277,8 @@
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "duration_ms"},
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "event_count"},
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "tool_call_count"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tool_meta"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tool_meta"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "served_model_ref"}
    ],
    "returns": "None"
   },

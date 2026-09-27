@@ -285,17 +285,25 @@ class NoModelAnswered(GuardError):
     """Every model a turn fell back to failed before replying, as the one it started on did.
 
     Raised by the native loop once a turn's model and each model it then tried have all failed
-    before any output (``agents/native/failover.py``). The chat shows its sentence verbatim: it
-    names every model tried and why each failed, which no single provider error can.
+    before any output (``agents/native/failover.py``). The chat and a room show its sentence
+    verbatim: it names every model tried and why each failed, which no single provider error can.
     """
 
     mode = FailureMode.PROVIDER_ERROR
 
     def __init__(self, failures: list[tuple[str, str]]) -> None:
         self.failures = list(failures)
-        first = failures[0][0]
-        super().__init__(
-            f"None of this chat's models answered: {first} "
-            f"{failed_before_replying(failures).removeprefix('it ')}. Try again in a moment, or "
-            "check them in Settings → Models."
+        super().__init__(self.sentence())
+
+    def sentence(self, *, room_member: str = "") -> str:
+        """The sentence for a chat, or for a room member, whose models are its agent's."""
+        tried = f"{self.failures[0][0]} {failed_before_replying(self.failures).removeprefix('it ')}"
+        if room_member:
+            return (
+                f"None of {room_member}'s models answered: {tried}. Try again in a moment, or "
+                f"give the {room_member} agent a different model on the Agents page."
+            )
+        return (
+            f"None of this chat's models answered: {tried}. Try again in a moment, or check them "
+            "in Settings → Models."
         )

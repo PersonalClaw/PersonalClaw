@@ -541,6 +541,11 @@ async def run_member_turn(
     waved through, and each refusal is written onto the transcript so the human can see which
     member wanted which tool and why it did not happen. `AR-8` builds the UI that binds one.
 
+    **A member whose model fails before it replies is answered by the next model of its chain**,
+    as a chat turn is (``agents/native/failover.py``), and the room says which model answered, in
+    the member's slot as it happens. When none answers, the turn fails and its note names each
+    model tried (``NoModelAnswered``).
+
     **The member reads what it has not read, and its cursor moves only on a completed turn.**
     The transcript and the cursor are read before the session is held, so an unreadable cursor
     refuses the turn without opening one (``room_cursor_unreadable``, which the arbiter writes in
@@ -604,7 +609,13 @@ async def run_member_turn(
                 room, member, feed, since_last_turn=since_last_turn, serving=provider
             )
             reply = await stream_and_collect(
-                provider, prompt, approval_policy=policy, on_tool_approval=gate
+                provider,
+                prompt,
+                approval_policy=policy,
+                on_tool_approval=gate,
+                # The member's model failed before it replied and the next of its chain answers:
+                # said as it happens, in the member's slot, for the same reason as the note above.
+                on_substitution=lambda sentence: _note(room_id, member_name, sentence),
             )
 
     cursors.advance(room_id, member_name, len(messages))

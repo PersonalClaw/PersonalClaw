@@ -2311,14 +2311,19 @@ class SubagentManager:
             elif event.kind == EVENT_COMPLETE:
                 # Capture the child's token/cost accounting before breaking — S2k
                 # discarded it here (COST-AND-TOKEN-OBSERVABILITY C2, subagent site).
+                from personalclaw.usage_ledger import answered_model
+
                 info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
                 info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
                 cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
-                if not cost and info.model:
+                # Priced by the model that answered, which a spawn with no model of its own
+                # never named: its child ran on the chain's head and was charged nothing.
+                priced_by = answered_model(event, info.model)
+                if not cost and priced_by:
                     from personalclaw.pricing import estimate_cost
 
                     cost = estimate_cost(
-                        info.model,
+                        priced_by,
                         input_tokens=info.input_tokens,
                         output_tokens=info.output_tokens,
                         cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),

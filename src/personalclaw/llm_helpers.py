@@ -21,6 +21,7 @@ from personalclaw.llm.base import (
     LLMEvent,
     ModelProvider,
 )
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
 from personalclaw.sel import sel as _sel
 
 _PROMPT_BUSY_RETRIES = 2
@@ -67,6 +68,7 @@ async def stream_and_collect(
     on_chunk: Callable[[str], None] | None = None,
     on_tool_approval: Callable[[LLMEvent], Awaitable[bool]] | None = None,
     on_complete: Callable[[LLMEvent], None] | None = None,
+    on_substitution: Callable[[str], None] | None = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
@@ -86,6 +88,12 @@ async def stream_and_collect(
             write-sites use (COST-AND-TOKEN-OBSERVABILITY C2). Default ``None``
             leaves the streamed text byte-identical for every other caller. Never
             raises into the turn: a callback fault is swallowed.
+        on_substitution: For a caller that shows it, the sentence a turn says when its
+            model failed before replying and the next model of its chain answers ("Ran on
+            Y instead of X: …"), before anything that model streams. Passing it is what
+            lets the turn fall back at all (``NativeAgentRuntime.announce_failover``): a
+            caller with nowhere to show the sentence keeps the failure, since another
+            model's reply would read as the chosen one's.
 
     Returns:
         The complete response text.
@@ -94,12 +102,19 @@ async def stream_and_collect(
 
     for attempt in range(_PROMPT_BUSY_RETRIES + 1):
         result_text = ""
+        if on_substitution is not None:
+            announce_failover = getattr(provider, "announce_failover", None)
+            if callable(announce_failover):
+                announce_failover()
         try:
             async for event in provider.stream(message):
                 if event.kind == EVENT_TEXT_CHUNK:
                     result_text += event.text
                     if on_chunk:
                         on_chunk(event.text)
+                elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                    if on_substitution is not None:
+                        on_substitution(event.text)
                 elif event.kind == EVENT_PERMISSION_REQUEST:
                     approved = await _resolve_permission(
                         provider, event, approval_policy, hooks, on_tool_approval
@@ -872,11 +887,12 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     them use the model, so the fix is access to that model, not a new key.
 
     **``room_member`` makes the remedies true on a room.** A sentence here is product copy on
-    whatever surface shows it, and four of them name a chat-only fix: the composer's model
-    selector, "start a new chat", "your message". A room member's model is its AGENT BINDING's,
-    chosen on the Agents page, and what outgrows a model there is the room's conversation — so
-    given the member's name those four say that instead. Every other sentence is surface-neutral
-    and is the same words either way; with no member, every word is exactly the chat's.
+    whatever surface shows it, and some of them name a chat-only fix: the composer's model
+    selector, "start a new chat", "your message", "this chat's models". A room member's model is
+    its AGENT BINDING's, chosen on the Agents page, and what outgrows a model there is the room's
+    conversation — so given the member's name those say that instead. Every other sentence is
+    surface-neutral and is the same words either way; with no member, every word is exactly the
+    chat's.
     """
     from personalclaw.guardrails.failure import (
         NoModelAnswered,
@@ -888,7 +904,9 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
 
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence(room=bool(room_member))
-    if isinstance(exc, (NoModelAnswered, ProviderResolutionError)) and str(exc).strip():
+    if isinstance(exc, NoModelAnswered):
+        return exc.sentence(room_member=room_member)
+    if isinstance(exc, ProviderResolutionError) and str(exc).strip():
         return str(exc).strip()
     if isinstance(exc, PromptExceedsWindow):
         if room_member:
