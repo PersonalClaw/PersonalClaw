@@ -308,6 +308,28 @@ LISTING = EgressPolicy(
     timeout_s=120.0,
 )
 
+# A remote MCP server's OAuth SIGN-IN (`mcp_oauth`): the challenge sent to the server, the metadata
+# it and its authorization server publish, the client registration and every token request, at
+# sign-in and at each refresh. Apart from the server itself, every URL here is one the server's
+# answers named: third-party data, like a registry listing. So this is STRICT's public-only stance:
+#
+#   * `max_redirects=0` — metadata is read where the spec says it lives, and a token request that
+#     followed a redirect would hand the authorization code, the PKCE verifier or the refresh token
+#     to whoever the redirect names.
+#   * `deny_hosts=METADATA_SERVICE_HOSTS` — refused by name before DNS, as for LISTING, so the
+#     server's own host (allowed below) can never be the metadata service's name.
+#
+# The server's own host is the owner's choice, the way a registry source they added is, so
+# :func:`mcp_sign_in_egress_policy` allows it private or not. HTTPS for the authorization server is
+# `mcp_oauth`'s rule, not this profile's: it depends on the server's own scheme.
+MCP_SIGN_IN = EgressPolicy(
+    name="mcp_sign_in",
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    max_redirects=0,
+    max_bytes=1_000_000,
+    timeout_s=20.0,
+)
+
 _PROFILES: dict[str, EgressPolicy] = {
     p.name: p
     for p in (
@@ -322,6 +344,7 @@ _PROFILES: dict[str, EgressPolicy] = {
         BROWSE,
         FETCH_ACTION,
         LISTING,
+        MCP_SIGN_IN,
     )
 }
 
@@ -476,6 +499,21 @@ def listing_egress_policy(source_host: str = "") -> EgressPolicy:
     """
     layered = egress_policy_for(LISTING)
     host = source_host.strip().lower()
+    if not host:
+        return layered
+    return layered.with_overrides(allow_hosts=tuple(dict.fromkeys([*layered.allow_hosts, host])))
+
+
+def mcp_sign_in_egress_policy(server_host: str) -> EgressPolicy:
+    """The posture of every request a remote MCP server's sign-in makes (:data:`MCP_SIGN_IN`).
+
+    :func:`egress_policy_for` layers the operator's ``security.egress`` config on. ``server_host``
+    is the host of the server's URL, which the owner configured: it stays reachable private or
+    not — a server on the owner's own machine or LAN signs in as well as a public one — and it
+    cannot be the metadata service, which the profile refuses by name and the guard by address.
+    """
+    layered = egress_policy_for(MCP_SIGN_IN)
+    host = server_host.strip().lower()
     if not host:
         return layered
     return layered.with_overrides(allow_hosts=tuple(dict.fromkeys([*layered.allow_hosts, host])))

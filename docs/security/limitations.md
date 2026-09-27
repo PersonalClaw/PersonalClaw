@@ -526,6 +526,26 @@ as yourself. The supply-chain scanner (quarantine → scan → consent → insta
 `dangerous` terminal) is the control that vets it, and the permissions describe what
 the app's token may do once it runs, not a box around it.
 
+## 8. Signing in to a remote MCP server needs a browser on this machine, or HTTPS
+
+A remote MCP server that signs in with OAuth sends your browser to its authorization server, which
+sends it back to PersonalClaw. The MCP spec allows only a loopback or an HTTPS address for that, so
+the sign-in works from a browser on the machine PersonalClaw runs on (it comes back to
+`http://127.0.0.1:<port>`), or from anywhere when the dashboard is served over HTTPS. A dashboard
+opened from another machine over plain `http://` is refused with a sentence that says so
+(`mcp_sign_in_needs_local_address`).
+
+- **Signing out does not revoke the grant.** Sign out deletes the tokens PersonalClaw holds for the
+  server. Your account at the authorization server may still list PersonalClaw as allowed until you
+  remove it there.
+- **An authorization server that does not advertise PKCE with S256 is refused.** The MCP spec
+  requires it, and PersonalClaw signs in no other way.
+- **No client ID metadata document.** PersonalClaw has no HTTPS address of its own to publish one
+  at, so an authorization server that offers neither dynamic registration nor another way needs the
+  client ID of an app you registered there yourself.
+- **A sign-in in progress lives in the gateway's memory.** A restart while you are on the
+  authorization server's page drops it, and you start again from the Tools page.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing

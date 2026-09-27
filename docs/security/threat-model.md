@@ -305,6 +305,23 @@ Data leaving the running system:
   `GET /api/mcp` sends no server's definition at all. A remote server's headers are resolved from
   the store when the native client connects, against the server's own owner (below), and sent on
   each request, never written anywhere.
+- **A remote MCP server's OAuth sign-in** (`mcp_oauth.py`). Its tokens and any client secret live in
+  the credential store under the server's own owner; its spec's `signIn` holds references and what
+  the grant is for, and never reaches another tool's copy. The connection reads the token from the
+  store at each request and renews it there, and never sends it to a URL outside the resource it was
+  issued for (RFC 8707 `resource`): an edit that changes the server's address drops the sign-in, and
+  a hand edit that does so makes the connection refuse to send it. A renewal the authorization server
+  refuses deletes the tokens, with a security-log row and a notification. The sign-in is the
+  authorization code flow with PKCE (S256 only) and a single-use 256-bit `state`, and an answer's
+  `iss` must name the authorization server the sign-in started with (RFC 9207). Its callback,
+  `GET /api/mcp/oauth/callback`, is reachable without a dashboard session (`token_auth._BYPASS_EXACT`),
+  because the browser comes back to `127.0.0.1` and a dashboard opened at `localhost` has no cookie
+  there. That opens nothing: a request is matched only to a sign-in the owner started from the Tools
+  page, by its `state`, within ten minutes, and its code is exchanged only with that sign-in's PKCE
+  verifier, which never leaves the gateway's memory. Every request a sign-in makes goes through the
+  egress guard (`net.policy.MCP_SIGN_IN`, no redirects): only the server's own host may be private,
+  and the authorization server must be on HTTPS unless the server itself is plain HTTP on this
+  machine.
 - **A reference resolves only against its own owner** (`SecretOwner.holds`): an app's settings,
   its instances and its `{app}:{server}` MCP servers resolve only that app's keys; core's
   settings resolve every key no app holds, the Secrets-panel vault included. A settings file is

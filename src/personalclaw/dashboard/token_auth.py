@@ -379,6 +379,15 @@ _BYPASS_EXACT.add("/api/devices/pair/complete")
 # browser, never interpolated server-side), and every grant still happens at
 # `/api/devices/pair/complete` behind that route's own guards. See handlers/devices.py.
 _BYPASS_EXACT.add("/pair")
+# The page an authorization server sends the browser back to when the owner signs in to a remote
+# MCP server (handlers/mcp.api_mcp_oauth_callback). Exempt because the browser coming back may carry
+# no session for this address: the redirect is to 127.0.0.1 (RFC 8252), and a dashboard opened at
+# `localhost` holds its cookie for that name only. Exempting it opens nothing: a request is matched
+# only to a sign-in the owner started, by its single-use 256-bit `state`, within ten minutes, and
+# its code is exchanged only with that sign-in's PKCE verifier, which never leaves the gateway's
+# memory.
+# Any other request gets a page saying the sign-in expired, and changes nothing. See mcp_oauth.py.
+_BYPASS_EXACT.add("/api/mcp/oauth/callback")
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.

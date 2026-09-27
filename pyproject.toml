@@ -179,8 +179,10 @@ dependencies = [
     # `mcp.client.streamable_http.streamablehttp_client`, which mcp_client.py imports, so an
     # unbounded spec makes a FRESH install resolve 2.0.0 and break the streamable-HTTP
     # transport. CI installs from the lockfile and cannot see that. Supporting 2.x is a
-    # migration, not a widened bound (tests/test_dependency_bounds.py).
-    "mcp>=1.2,<2",
+    # migration, not a widened bound (tests/test_dependency_bounds.py). The lower bound is
+    # load-bearing too: a remote server's OAuth sign-in reaches its connection as the `auth`
+    # of `streamablehttp_client` and `sse_client`, which both gained that parameter in 1.10.0.
+    "mcp>=1.10,<2",
 ]
 
 # Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.

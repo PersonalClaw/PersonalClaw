@@ -2491,7 +2491,19 @@ export type McpTransport = 'stdio' | 'http' | 'sse'
 export interface McpServer {
   name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean
+  /** A server at a URL's OAuth sign-in, when it has one or asked for one (`status: 'signin'`). */
+  auth?: McpSignInState
 }
+/** A server's OAuth sign-in as `GET /api/mcp` says it (`mcp_oauth.sign_in_state`, presence only — no
+ *  token reaches the page): `signed_in`; `signed_out` — it was signed in, and the sign-in ended or its
+ *  address changed; `required` — the server asked for a sign-in nobody has done. */
+export interface McpSignInState { method: 'oauth'; state: 'signed_in' | 'signed_out' | 'required' }
+/** `POST /api/mcp/servers/{name}/sign-in`: the page the browser opens to sign in, and the address the
+ *  authorization server sends it back to. */
+export interface McpSignInStart { authorizationUrl: string; redirectUri: string }
+/** The `detail` of `mcp_sign_in_needs_client_id`: the authorization server does not let PersonalClaw
+ *  register itself, so the owner registers an app at `issuer` with `redirectUri`, and types its ID. */
+export interface McpSignInClientNeeded { redirectUri: string; issuer: string }
 /** One variable (or header) of a server: its NAME and whether it has a value — never the value,
  *  which is that server's token. The import reads it server-side; the edit form keeps it by name. */
 export interface McpValuePresence { name: string; hasValue: boolean }
@@ -7778,6 +7790,13 @@ export const api = {
   // Removes the server from mcp.json AND the agent config, and deletes the values it owns in the
   // credential store. Never another tool's config.
   removeMcpServer: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}`),
+  // Start signing in to a server at a URL with OAuth: the gateway finds its authorization server,
+  // registers itself there (or uses the app the owner registered: `client`), and answers the page to
+  // open. The browser comes back to the gateway's own callback, which stores the tokens.
+  startMcpSignIn: (name: string, client?: { clientId: string; clientSecret?: string }) =>
+    post<McpSignInStart>(`/api/mcp/servers/${encodeURIComponent(name)}/sign-in`, client ?? {}),
+  // Sign out: the sign-in leaves mcp.json and the agent config, and its tokens the credential store.
+  signOutMcp: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}/sign-in`),
   // Servers configured in an external backend (Claude Code) not yet in PClaw.
   importableMcp: () => get<{ servers: ImportableMcpServer[] }>('/api/mcp/importable').then((r) => r.servers),
   // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from the other

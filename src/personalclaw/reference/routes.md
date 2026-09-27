@@ -459,6 +459,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/mcp/active` — return MCP servers for the current agent.
 - `POST /api/mcp/apply` — batched per-scope apply for MCP servers.
 - `GET /api/mcp/importable` — MCP servers configured in an external backend
+- `GET /api/mcp/oauth/callback` — where an authorization server sends the browser back to.
 - `GET /api/mcp/pool-stats` — the in-process MCP connection-pool observability tile
 - `GET /api/mcp/probe` — return cached probe results (non-blocking).
 - `POST /api/mcp/probe` — probe all MCP servers and return live status.
@@ -466,6 +467,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
 - `GET /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
 - `PUT /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
+- `DELETE /api/mcp/servers/{name}/sign-in` — sign in to a remote server, or sign out.
+- `POST /api/mcp/servers/{name}/sign-in` — sign in to a remote server, or sign out.
 - `POST /api/mcp/sync` — apply MCP config changes and restart sessions.
 - `POST /api/mcp/toggle` — enable or disable an MCP server globally.
 - `POST /api/mcp/toggle-all` — enable or disable all MCP servers.
