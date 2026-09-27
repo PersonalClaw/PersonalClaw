@@ -404,7 +404,10 @@ def test_a_process_with_no_gateway_spools_NOTHING_when_no_trigger_matches(home):
 def test_a_legacy_event_triggers_file_is_absorbed_into_the_store_at_boot(home):
     """🔴 Red on main: nothing imported `event_triggers.json`. A home that made data-event
     triggers before this change keeps them — same id, pattern, matcher, action, budget and count —
-    and the old file is renamed so the import happens once."""
+    and the old file is renamed so the import happens once. This row only notifies, so it keeps its
+    switch; what an import withholds from a row that runs more is `test_legacy_trigger_import`'s."""
+    import time
+
     from personalclaw.triggers.boot_migrate import migrate_and_arm
 
     legacy = [
@@ -438,6 +441,7 @@ def test_a_legacy_event_triggers_file_is_absorbed_into_the_store_at_boot(home):
     assert stored.name == "acme-note"
     assert stored.kind == "event"
     assert stored.enabled is True
+    assert stored.created_by == "import"
     assert stored.spec == {
         "source": "memory",
         "pattern": "MemoryKeyPattern",
@@ -450,7 +454,7 @@ def test_a_legacy_event_triggers_file_is_absorbed_into_the_store_at_boot(home):
     assert stored.run_count == 2
     assert stored.last_fired_at
     assert not (home / "event_triggers.json").exists()
-    assert (home / "event_triggers.json.migrated").exists()
+    assert (home / f"event_triggers.json.imported-{time.strftime('%Y-%m-%d')}").exists()
 
     # Idempotent: a second boot has nothing left to absorb and changes nothing.
     again = migrate_and_arm(home)

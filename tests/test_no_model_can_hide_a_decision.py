@@ -57,6 +57,8 @@ DECISIONS = {
     "loop/needs_input": True,
     # a room stopped at its round budget until you reply or archive it
     "agent/room_paused": True,
+    # triggers an upgrade brought over and left off until you switch each on
+    "cron/trigger_import": True,
     # the push that wakes a phone for a pending approval
     "approval/requested": False,
 }

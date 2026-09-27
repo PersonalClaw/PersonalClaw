@@ -312,17 +312,19 @@ def _cron_job(jid, kind, **sched):
     }
 
 
-def test_the_migration_imports_and_KEEPS_the_old_file(store):
-    """§6: "old file read-only one release". `personalclaw automation verify-migration` needs both
-    sides to diff, and deleting the source makes that command impossible at the one moment anyone
-    would run it."""
+def test_the_migration_imports_and_RENAMES_the_old_file(store):
+    """Imported once, then renamed `crons.json.imported-<date>` with its bytes intact: never
+    deleted, because `personalclaw automation verify-migration` diffs against that copy, and never
+    left under its own name, because a file under that name is re-read (`legacy_import`)."""
     (store.path.parent).mkdir(parents=True, exist_ok=True)
     source = store.path.parent / "crons.json"
     source.write_text(json.dumps(_crons(_cron_job("j1", "cron", cron_expr="0 9 * * *"))))
+    original = source.read_text()
     report = store.migrate_from_crons()
     assert report["written"] == 1
-    assert report["source_kept"] is True
-    assert source.exists()
+    assert report["retired_to"].startswith("crons.json.imported-")
+    assert not source.exists()
+    assert (source.parent / report["retired_to"]).read_text() == original
 
 
 def test_an_INTERVAL_cron_survives_the_migration(store):

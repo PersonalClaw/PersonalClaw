@@ -394,6 +394,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": errors,
         "warnings": warnings,
+        "needs_review": _needs_review(trigger),
         **_attribution(trigger, owner=owner),
     }
 
@@ -444,8 +445,17 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
             projected[key] = _redact(str(projected[key]))
     projected["broken"] = errors
     projected["warnings"] = warnings
+    projected["needs_review"] = _needs_review(trigger)
     projected.update(_attribution(trigger, owner=owner))
     return projected
+
+
+def _needs_review(trigger: Any) -> bool:
+    """Whether the row is one a legacy import brought over and the owner has not switched on — the
+    page badges it and says what switching it on will ask (`triggers.legacy_import`)."""
+    from personalclaw.triggers.legacy_import import needs_review
+
+    return needs_review(trigger)
 
 
 def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
@@ -1395,8 +1405,82 @@ def _carried(spec: dict[str, Any]) -> dict[str, Any]:
 # ── toggle / run / test ──
 
 
+def _switch_on_grant(request: web.Request, body: Any, store: Any, row: Any) -> web.Response | None:
+    """Give a trigger what switching it on needs, asking the owner first. None when it may go on.
+
+    A trigger whose action runs a write-capable provider its frozen block does not permit — a row a
+    legacy import brought over (`triggers.legacy_import`), or one whose block was never frozen —
+    would be refused by the fence on every fire. Switching it on is the moment to ask: without
+    ``confirm: true`` this answers ``400 confirmation_required`` in the gateway's own words, which
+    the page's ``withSecurityConsent`` turns into the consent dialog; with it, the providers are
+    granted, an imported row becomes the owner's (`legacy_import.adopt`), and both the refusal and
+    the grant are written to the security audit. An imported nudge needs no grant, only the owner's
+    switch, so it is adopted without a question. A row with parse errors is left to `set_paused`,
+    which refuses it with the reason rather than asking about a trigger that cannot run anyway.
+    """
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers import legacy_import, screen
+
+    trigger = row.trigger
+    if row.errors:
+        return None
+    missing = screen.ungranted_providers(trigger)
+    if not missing and not legacy_import.needs_review(trigger):
+        return None
+    field = f"triggers.{request.match_info['id']}.capabilities"
+    caller = request.get("user", "dashboard")
+    if missing and not confirm_granted(body):
+        _sel().log_api_access(
+            caller=caller,
+            operation="trigger.grant",
+            outcome="denied",
+            source="dashboard",
+            resources=f"{field}: switching on without confirm",
+        )
+        return consent_required(field, _grant_consent(trigger, missing))
+    granted = screen.grant_action(trigger)
+    legacy_import.adopt(trigger)
+    store.upsert(trigger)
+    if granted:
+        _sel().log_api_access(
+            caller=caller,
+            operation="trigger.grant",
+            outcome="success",
+            source="dashboard",
+            resources=f"trigger:{trigger.id}: {', '.join(granted)}",
+        )
+    return None
+
+
+def _grant_consent(trigger: Any, providers: list[str]) -> str:
+    """The sentence the owner agrees to when switching on `trigger` grants `providers`.
+
+    Product copy, so it says only what the grant does: the fence stops refusing the action. The
+    other controls on a fire (the autonomy ladder, the denylist, the injection screen) still apply.
+    """
+    from personalclaw.triggers.legacy_import import IMPORTED_BY, provider_label
+
+    actions = " and ".join(f"“{provider_label(p)}”" for p in providers)
+    noun = "action" if len(providers) == 1 else "actions"
+    name = trigger.name or trigger.id
+    if trigger.created_by == IMPORTED_BY:
+        return (
+            f"“{name}” was brought over from an older version of PersonalClaw and has not been "
+            f"allowed to run here. Switching it on allows it to use the {actions} {noun} when it "
+            "fires."
+        )
+    return (
+        f"Switching “{name}” on allows it to use the {actions} {noun} when it fires. It has not "
+        "been allowed to until now."
+    )
+
+
 async def api_trigger_toggle(request: web.Request) -> web.Response:
-    """POST /api/triggers/{id}/toggle — enable/disable."""
+    """POST /api/triggers/{id}/toggle — enable/disable.
+
+    Switching a store-backed trigger ON first gives it what its action needs, with the owner's
+    consent (`_switch_on_grant`); switching one off never asks.
+    """
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
     if kind == _STORE:
@@ -1411,6 +1495,10 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         body = await json_object_body(request)
         want = body.get("enabled") if isinstance(body, dict) else None
         paused = row.trigger.enabled if want is None else (not bool(want))
+        if not paused:
+            asked = _switch_on_grant(request, body, store, row)
+            if asked is not None:
+                return asked
         result = T.set_paused(store, trigger_id=raw, paused=paused)
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
@@ -1434,6 +1522,10 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         from personalclaw.triggers import tools as _tools
 
         want = (not row.trigger.enabled) if enabled is None else bool(enabled)
+        if want:
+            asked = _switch_on_grant(request, body, store, row)
+            if asked is not None:
+                return asked
         result = _tools.set_paused(store, trigger_id=raw, paused=not want)
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
@@ -1682,6 +1774,13 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
     )
 
 
+#: Why a manual run of a trigger brought over from an older version is refused until it is on.
+_NOT_ALLOWED_YET = (
+    "It was brought over from an older version and has not been allowed to run here. Switch it on "
+    "first: PersonalClaw asks you to allow what it runs."
+)
+
+
 async def _run_store(raw: str, request: web.Request) -> web.Response:
     """Fire one store-backed trigger (file/web_watch/idle/…) by hand.
 
@@ -1743,6 +1842,17 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     refusal = T.manual_refusal()
     if refusal:
         return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
+    # 🔴 A trigger a legacy import brought over has been allowed nothing until the owner switches it
+    # on (`triggers.legacy_import`), and this route is not only the owner's Run button: the chat's
+    # `automation_run` and `schedule_trigger` post here too, and the dispatch below does not read
+    # the capability block. Measured on a dev gateway: `POST /run` on an imported `bash` cron, its
+    # block empty and the owner not yet asked, ran the command.
+    from personalclaw.triggers.legacy_import import needs_review
+
+    if needs_review(row.trigger):
+        return web.json_response(
+            {"ok": False, "name": row.trigger.name, "refused": _NOT_ALLOWED_YET}
+        )
     # 🔴 `ok` REPORTS WHETHER THE ACTION RAN (#395). This answered `ok: True` unconditionally, with
     # the failure carried as prose in `result` — so "no action provider configured" arrived as an
     # HTTP 200 success and every caller that checks a status code or an `ok` flag (the two Run

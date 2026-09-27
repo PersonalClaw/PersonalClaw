@@ -977,7 +977,9 @@ def test_the_schedule_list_is_read_from_the_store(home, state, monkeypatch):
                         "name": "Nightly",
                         "enabled": True,
                         "schedule": {"kind": "cron", "cron_expr": "0 9 * * *"},
-                        "action": {"provider": "bash", "config": {"command": "x"}},
+                        # Read-only, so the import carries it switched on and arms it; a job that
+                        # would run `bash` arrives off to wait for review (legacy_import).
+                        "action": {"provider": "notify", "config": {"title_template": "x"}},
                     }
                 ],
             }

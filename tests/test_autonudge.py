@@ -14,6 +14,7 @@ lossless `autonudge.json` migration, and the end-to-end tick (`loop.tick_once` â
 """
 
 import json
+import time
 from dataclasses import asdict
 
 import pytest
@@ -386,6 +387,8 @@ async def test_legacy_autonudge_json_migrates_losslessly(tmp_path):
         ],
     }
     (tmp_path / "autonudge.json").write_text(json.dumps(legacy), encoding="utf-8")
+    # The boot pass imports it (`boot_migrate.migrate_and_arm`), before the service starts.
+    assert N.import_legacy(tmp_path) == 2
     svc = AutoNudgeService(base_dir=tmp_path)
     await svc.start()
 
@@ -398,12 +401,19 @@ async def test_legacy_autonudge_json_migrates_losslessly(tmp_path):
     assert lp.created_ts == NOW - 5000
     assert lp.stop_sentinel_path == "/tmp/x/STOP"
     assert lp.first_idle_secs == 0, "cycle_count > 0 means the one-shot was already spent"
+    # Everything but the switch: a nudge types into one of the owner's chats, and the file records
+    # no consent for that, so every imported loop waits off until the owner switches it on
+    # (`test_legacy_trigger_import`).
+    assert lp.active is False
 
     inactive = svc.get_by_session("chat-2")
     assert inactive is not None and inactive.active is False
 
     assert not (tmp_path / "autonudge.json").exists()
-    assert (tmp_path / "autonudge.json.migrated").exists(), "kept for rollback, renamed not deleted"
+    day = time.strftime("%Y-%m-%d")
+    assert (
+        tmp_path / f"autonudge.json.imported-{day}"
+    ).exists(), "kept for rollback, renamed not deleted"
     svc.stop()
 
 

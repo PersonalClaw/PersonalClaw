@@ -86,7 +86,10 @@ def test_a_migrated_cron_is_armed_by_boot(tmp_path):
                         "name": "Nightly",
                         "enabled": True,
                         "schedule": {"kind": "cron", "cron_expr": "0 9 * * *"},
-                        "action": {"provider": "run-prompt", "config": {}},
+                        # Read-only, so the import carries its switch: a job that would run
+                        # anything needing a grant arrives off and waits for the owner's review
+                        # (`test_legacy_trigger_import`), and an off row is not armed.
+                        "action": {"provider": "notify", "config": {"title_template": "Nightly"}},
                     }
                 ],
             }

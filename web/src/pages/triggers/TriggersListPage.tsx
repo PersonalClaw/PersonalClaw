@@ -338,6 +338,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               ? <span data-type="caption" className="shrink-0 text-on-surface-low">· dormant</span>
                               : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span data-type="caption" className="shrink-0 text-on-surface-low">· no agent references this</span>}
                           {t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
+                          {/* Brought over from an older version and off until the owner allows what
+                              it runs — what the Inbox's review item sends you here to find. Warn, not
+                              danger: nothing is broken, it is waiting for a decision. */}
+                          {t.needsReview && <span data-type="caption" className="shrink-0 text-warn">· waiting for your review</span>}
                           {/* The row's WARNING-severity issues, which reached no surface at all
                               before issue 531 — the store computed them on every load and the wire
                               projection dropped them. Rendered ONLY when there is no error: a row

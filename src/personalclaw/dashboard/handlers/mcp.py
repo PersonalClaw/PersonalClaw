@@ -54,17 +54,12 @@ def _is_valid_mcp_name(name: str) -> bool:
 # dashboard wrote one file but the native loop read another, only reconciled
 # because discovery merged both. Now everything reads+writes the ONE file, via
 # config_dir() so PERSONALCLAW_HOME is honored (the old Path.home() hardcode
-# ignored it). A one-time migration folds any legacy settings/mcp.json content in.
+# ignored it). Nothing reads the legacy settings/mcp.json any more: a server still
+# in it is named by the Doctor (`tools.legacy_mcp_settings`) for the owner to add.
 def _canonical_mcp_json() -> Path:
     from personalclaw.config.loader import config_dir
 
     return config_dir() / "mcp.json"
-
-
-def _legacy_mcp_json() -> Path:
-    from personalclaw.config.loader import config_dir
-
-    return config_dir() / "settings" / "mcp.json"
 
 
 # The INSTALLED agent config, resolved the same deferred way and for the same reason as
@@ -81,37 +76,6 @@ def _installed_agent_json() -> Path:
     from personalclaw.agent import AGENT_FILENAME, agents_dir
 
     return agents_dir() / AGENT_FILENAME
-
-
-def _migrate_legacy_mcp_json() -> None:
-    """One-time fold of the legacy ``settings/mcp.json`` into the canonical file.
-
-    Any server present only in the legacy file is copied into the canonical one
-    (canonical wins on a name clash), then the legacy file is emptied so it can
-    never re-diverge. No-op when the legacy file is absent/empty."""
-    legacy = _legacy_mcp_json()
-    try:
-        if not legacy.is_file():
-            return
-        ldata = json.loads(legacy.read_text(encoding="utf-8"))
-        lservers = ldata.get("mcpServers") or {}
-        if not lservers:
-            return
-        canon = _canonical_mcp_json()
-        cdata = json.loads(canon.read_text(encoding="utf-8")) if canon.is_file() else {}
-        cservers = cdata.setdefault("mcpServers", {})
-        moved = 0
-        for name, spec in lservers.items():
-            if name not in cservers:  # canonical wins on clash
-                cservers[name] = spec
-                moved += 1
-        if moved:
-            _atomic_write(canon, cdata)
-            logger.info("mcp: migrated %d server(s) from legacy settings/mcp.json", moved)
-        # empty the legacy file so it can't re-diverge
-        _atomic_write(legacy, {"mcpServers": {}})
-    except Exception:
-        logger.debug("mcp: legacy migration skipped", exc_info=True)
 
 
 # There is no `_GLOBAL_MCP_JSON`. It was `_canonical_mcp_json()` frozen at import, kept after UT3
@@ -1636,9 +1600,9 @@ def _load_json_for_update(path: Path) -> dict[str, Any]:
 
 
 def _is_personalclaw_document(path: Path) -> bool:
-    """``mcp.json`` (and its legacy ``settings/`` twin) or the agent config — the files whose MCP
-    server secrets live in the credential store. Any other path is another tool's own file."""
-    return path in {_canonical_mcp_json(), _legacy_mcp_json(), _installed_agent_json()}
+    """``mcp.json`` or the agent config — the files whose MCP server secrets live in the credential
+    store. Any other path is another tool's own file."""
+    return path in {_canonical_mcp_json(), _installed_agent_json()}
 
 
 def _atomic_write(path: Path, data: dict) -> None:

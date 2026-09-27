@@ -1860,18 +1860,6 @@ async def start_dashboard(
 
     app.on_cleanup.append(_control_bridge_shutdown)
 
-    async def _mcp_migrate_startup(app_: web.Application) -> None:
-        """UT3: fold any legacy ``settings/mcp.json`` content into the canonical
-        ``~/.personalclaw/mcp.json`` once, so the dual store can't re-diverge."""
-        from personalclaw.dashboard.handlers.mcp import _migrate_legacy_mcp_json
-
-        try:
-            _migrate_legacy_mcp_json()
-        except Exception:
-            logger.exception("Failed to migrate legacy mcp.json")
-
-    app.on_startup.append(_mcp_migrate_startup)
-
     async def _settle_outside_home_startup(app_: web.Application) -> None:
         """Once per home: copy home the skills earlier releases installed in ~/.agents/skills,
         and let go of a saved workspace pointer that is only the old default. Writes nothing

@@ -78,7 +78,6 @@ _DRIVER = textwrap.dedent("""
 
             rebuild_agent_config()
             migrate_plaintext_secrets()
-            h._migrate_legacy_mcp_json()
 
         app = web.Application()
         app["state"] = type("State", (), {"_background_tasks": set()})()

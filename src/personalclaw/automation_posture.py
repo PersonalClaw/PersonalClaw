@@ -62,6 +62,21 @@ def _posture_value(config: Mapping[str, Any], key: str) -> str:
     return value.lower() if key == "capability" else value
 
 
+def loosened_keys(config: Mapping[str, Any]) -> list[str]:
+    """The posture keys whose value in *config* loosens over leaving them unset.
+
+    What a step carries that only the owner's consent could have put there. A boot that imports a
+    step from a file with no record of that consent (`triggers.legacy_import`) drops exactly these
+    and keeps the rest of the step: a tightening value (``capability: "research"``) stays, and so
+    does every key that is not a posture key.
+    """
+    return [
+        key
+        for key, spec in POSTURE_SPECS.items()
+        if spec["security"].loosens(_posture_value({}, key), _posture_value(config, key))
+    ]
+
+
 def unconsented_step_loosening(
     where: str, *, current: Mapping[str, Any], new: Mapping[str, Any], body: Any
 ) -> tuple[str, str] | None:

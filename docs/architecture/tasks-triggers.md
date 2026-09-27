@@ -73,10 +73,32 @@ relative to `PersonalClaw/src/personalclaw/`.
   and at most 30 event fires a minute run across all event triggers. A process
   with no gateway — the CLI, or the `mcp-core` server an agent's memory tools
   run in — parks an event a stored trigger wants in `trigger-spool.jsonl`, and
-  the gateway's next tick re-emits it. A legacy `event_triggers.json` is
-  absorbed into the store once at boot and renamed `.migrated`. An
-  agent-lifecycle event (a session ending, a tool call) is a **lifecycle**
-  trigger, not an event trigger.
+  the gateway's next tick re-emits it. An agent-lifecycle event (a session
+  ending, a tool call) is a **lifecycle** trigger, not an event trigger.
+- **Legacy automation files** (`triggers/legacy_import.py`) — `crons.json`,
+  `event_triggers.json` and `autonudge.json` held automations before the one
+  store. All three are imported by the boot pass
+  (`boot_migrate.migrate_and_arm`, before the dashboard is up) **once per home**
+  and renamed `<name>.imported-<date>`; a copy by that name (or the `.migrated` an earlier
+  build left) means the import happened, so a file found again is not read and
+  the Doctor names it (`automations.legacy_files`). An imported row is
+  `created_by: import`, carries no capability block and none of the step keys
+  that loosen whether its agent asks (`automation_posture.loosened_keys`), and
+  one that would run anything needing a grant — or a nudge, which types into a
+  chat — arrives switched off (`needs_review` on the wire). Switching it on is
+  the only grant: `POST /api/triggers/{id}/toggle` answers
+  `confirmation_required` until the owner consents, then freezes the providers
+  (`screen.grant_action`), makes the row theirs and writes the grant to the SEL.
+  The boot's `backfill_capabilities` skips imported rows, the chat's
+  `automation_resume`/`automation_update` refuse to switch one on, and a manual
+  run (`POST /api/triggers/{id}/run`, which the chat's `automation_run` and
+  `schedule_trigger` also use, and whose dispatch does not read the capability
+  block) is refused until it is on. One Inbox
+  item (`cron/trigger_import`) lists what waits, raised once the dashboard is
+  up from the rows still waiting, so a crash between the import and the
+  announcement still announces it — once. The legacy MCP store
+  `settings/mcp.json` is not read at all (the Doctor names a server left in
+  it, `tools.legacy_mcp_settings`).
 - **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
   one-shot LLM call, **validated with croniter before use** (a hallucinated
   expression never reaches the store).

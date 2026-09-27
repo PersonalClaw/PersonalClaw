@@ -247,6 +247,20 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_ERROR,
         owner="personalclaw.triggers.delivery",
     ),
+    # The triggers a legacy import brought over and switched off (`triggers/legacy_import.py`).
+    # A decision: they stay off until the owner switches each on, so no verdict may hide the row,
+    # and only the owner closes it. WARNING, like `guardrails/autonomy_revocation`: automations the
+    # owner made in an older version have already stopped running, and only they can start them.
+    NotificationKind(
+        "cron",
+        "trigger_import",
+        "Triggers brought over for review",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        decision=True,
+        owner="personalclaw.inbox",
+    ),
     # heartbeat — 5 sites in gateway.py
     NotificationKind(
         "heartbeat",
@@ -725,6 +739,11 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # F-31. `task_due`, not the bare `due`: the wire string is what the digest groups by and the
     # SPA keys its label on, and a bare `due` would read as belonging to whatever next registers it.
     "task_due": ("tasks", "due"),
+    # The legacy-import review item. Its bare kind IS its wire string, and it still needs this row:
+    # `kind_for_legacy` resolves the wire value back through here, and without it the item's rule
+    # would be system/generic's — the registry's 🪤 one level down, exactly as `autonomy_revocation`
+    # above found.
+    "trigger_import": ("cron", "trigger_import"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
