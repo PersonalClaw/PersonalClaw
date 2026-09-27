@@ -191,7 +191,10 @@ asked the machine not to show you.
 **Where:** the **+** menu in the composer → **Capture screen area**.
 
 Snip a region of your screen and it arrives as an ordinary attachment on your next message —
-same chip, same removal, same text extraction as a file you dragged in.
+same chip and same removal as a file you dragged in, and it reaches the model the way any
+attached image does (below). A screenshot already on your clipboard needs no menu: paste it
+into the composer (⌘V / Ctrl+V) and it attaches the same way. A paste that carries text as
+well — cells copied from a spreadsheet bring a picture of themselves along — pastes the text.
 
 There are two ways it can happen, and PersonalClaw picks for you:
 
@@ -201,6 +204,21 @@ There are two ways it can happen, and PersonalClaw picks for you:
   frame** and stops the capture immediately — nothing keeps recording — and then you drag a
   crop box on that frozen frame. `Esc` cancels and attaches nothing. If the macOS path fails
   (no display server, permission refused), this is the fallback.
+
+### How an attached image reaches the model
+
+When the model answering the chat takes images, it is shown the image itself. Whether it does
+is read from what the platform records: the provider's declaration that its connection carries
+images (Anthropic, Bedrock, OpenAI-compatible and Ollama connections do) *and* the model's own
+image-understanding capability as Settings → Models lists it. An image larger than 1568 px on
+its long edge is scaled down first.
+
+When it does not — a text-only model, or an agent CLI such as Claude Code, which runs its own
+connection — the image goes as text: what OCR and your image-understanding model read from it.
+The chip says **as text** before you send, with the reason ("gemma3:1b can't take images.")
+and what the model will get instead. If nothing is set up to read an image, it gets only the
+image's size and format, and the chip says that too. After sending, the chip on your message
+keeps saying **sent as text**, and its preview shows exactly the text that was sent.
 
 ### When the menu entry is not there
 

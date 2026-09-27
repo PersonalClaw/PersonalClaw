@@ -1282,13 +1282,14 @@ async def api_chat_screen_state(request: web.Request) -> web.Response:
     drift into its own explanation of a decision it doesn't make.
     """
     from personalclaw.dashboard import screen_context
+    from personalclaw.dashboard.chat_runner import session_image_input
 
     state: DashboardState = request.app["state"]
     name = str(request.query.get("session") or "")
     session = state._sessions.get(name)
     enabled = bool(AppConfig.load().dashboard.screen_share_enabled)
-    model_label = getattr(session, "model", "") or "" if session else ""
-    delivery, reason = screen_context.resolve_delivery(model_label)
+    verdict = await session_image_input(state, session)
+    delivery, reason = screen_context.resolve_delivery(verdict.accepted)
     return web.json_response(
         {
             "enabled": enabled,
@@ -1296,6 +1297,35 @@ async def api_chat_screen_state(request: web.Request) -> web.Response:
             "reason": reason,
             "staged": bool(session and screen_context.pending(session.key)),
         }
+    )
+
+
+async def api_chat_image_input(request: web.Request) -> web.Response:
+    """GET /api/chat/image-input?session=<id> — whether an attached image reaches the model as one.
+
+    Returns ``{"accepted", "reason", "model"}``: ``accepted`` is whether the model the chat's
+    next turn is served by takes images as pixels (the platform's record,
+    ``providers.image_input``), and ``reason`` the sentence saying why not. The attachment chip
+    renders these; the turn decides from the same record, so the chip's promise and the turn's
+    delivery agree. What an image sent as text carries is the image's own extraction result
+    (``GET /api/attachment-extract``'s ``read``), which the chip reads per file. Optional
+    ``agent``/``model``/``runtime`` (the ACP runtime a picked agent runs on) answer for a
+    composer with no session.
+    """
+    from personalclaw.dashboard.chat_runner import session_image_input
+
+    state: DashboardState = request.app["state"]
+    name = str(request.query.get("session") or "")
+    session = state._sessions.get(name) if name else None
+    verdict = await session_image_input(
+        state,
+        session,
+        agent=str(request.query.get("agent") or ""),
+        model=str(request.query.get("model") or ""),
+        runtime=str(request.query.get("runtime") or ""),
+    )
+    return web.json_response(
+        {"accepted": verdict.accepted, "reason": verdict.reason, "model": verdict.model}
     )
 
 

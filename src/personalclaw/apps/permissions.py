@@ -1328,6 +1328,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/chat/screen-frame": OwnerOnly(
         "whether one of your chats can share your screen, and the frame staged for it"
     ),
+    "GET /api/chat/image-input": OwnerOnly(
+        "whether the model one of your chats uses takes images — the chip on your attachments"
+    ),
     # ── sessions (your history, by its key) ──
     "DELETE /api/sessions": OwnerOnly("deleting your closed chats for good"),
     "DELETE /api/sessions/{key}": OwnerOnly("deleting a chat from your history for good"),

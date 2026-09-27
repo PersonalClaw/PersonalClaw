@@ -17,6 +17,8 @@ import asyncio
 import logging
 import os
 
+from personalclaw.knowledge.extract import Extracted
+
 logger = logging.getLogger(__name__)
 
 _MAX_ENTRIES = 200
@@ -27,7 +29,7 @@ class AttachmentExtractor:
     """Fires-and-tracks extraction tasks keyed by upload path."""
 
     def __init__(self) -> None:
-        self._tasks: dict[str, asyncio.Task[str]] = {}
+        self._tasks: dict[str, asyncio.Task[Extracted]] = {}
 
     def start(self, path: str, mime: str | None = None) -> None:
         """Begin extracting *path* now (idempotent). Returns immediately."""
@@ -44,18 +46,18 @@ class AttachmentExtractor:
             # await-path will fall back to a synchronous extract.
             logger.debug("attachment extract: no loop to start task for %s", path)
 
-    async def _run(self, path: str, mime: str | None) -> str:
-        from personalclaw.knowledge.extract import extract_file_content
+    async def _run(self, path: str, mime: str | None) -> Extracted:
+        from personalclaw.knowledge.extract import extract_file
 
         try:
-            text = await extract_file_content(path, mime)
+            got = await extract_file(path, mime)
         except Exception:
             logger.warning("attachment extract failed for %s", path, exc_info=True)
-            return ""
-        return (text or "")[:_MAX_TEXT_CHARS]
+            return Extracted("", False)
+        return Extracted(got.text[:_MAX_TEXT_CHARS], got.read)
 
-    async def get(self, path: str, mime: str | None = None) -> str:
-        """Await + return the extracted text for *path*. Starts extraction if it
+    async def get(self, path: str, mime: str | None = None) -> Extracted:
+        """Await + return what extraction got from *path*. Starts extraction if it
         wasn't already kicked off at upload (so a late/missed start still works).
         Blocks until extraction completes — this is the turn-gating point."""
         if path not in self._tasks:
@@ -63,16 +65,11 @@ class AttachmentExtractor:
         task = self._tasks.get(path)
         if task is None:
             # couldn't schedule a task (no loop) → extract inline
-            from personalclaw.knowledge.extract import extract_file_content
-
-            try:
-                return (await extract_file_content(path, mime))[:_MAX_TEXT_CHARS]
-            except Exception:
-                return ""
+            return await self._run(path, mime)
         try:
             return await task
         except Exception:
-            return ""
+            return Extracted("", False)
 
 
 _INSTANCE: AttachmentExtractor | None = None

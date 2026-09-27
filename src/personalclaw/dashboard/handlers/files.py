@@ -1000,7 +1000,10 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
     """GET /api/attachment-extract?path=... — the extracted text content for an
     uploaded attachment, so the chat UI can preview what the agent saw. Awaits
     the extraction kicked off at upload (or runs it now). Restricted to the
-    uploads dir to prevent reading arbitrary files through this surface."""
+    uploads dir to prevent reading arbitrary files through this surface.
+
+    ``read`` says whether the text was read from the file's content, or is only its
+    structural descriptor (size and format) — the attachment chip's sentence depends on it."""
     import mimetypes as _mt
 
     caller = request.get("user", "dashboard")
@@ -1022,14 +1025,14 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.dashboard.attachment_extract import display_name, get_extractor
 
-    text = await get_extractor().get(path, _mt.guess_type(path)[0])
+    got = await get_extractor().get(path, _mt.guess_type(path)[0])
     _sel().log_api_access(
         caller=caller,
         operation="attachment_extract",
         outcome="allowed",
-        resources=f"name={display_name(path)} chars={len(text)}",
+        resources=f"name={display_name(path)} chars={len(got.text)}",
     )
-    return web.json_response({"name": display_name(path), "text": text})
+    return web.json_response({"name": display_name(path), "text": got.text, "read": got.read})
 
 
 async def api_screenshot(request: web.Request) -> web.Response:

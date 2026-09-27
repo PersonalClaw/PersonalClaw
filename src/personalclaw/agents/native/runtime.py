@@ -312,6 +312,14 @@ class NativeAgentRuntime(AgentProvider):
 
         # Conversation history — owned by the loop (complete() is stateless).
         self._messages: list[dict] = []
+        # Images staged for the NEXT turn (`stage_image_part`), and the ones riding the turn
+        # in flight with the user message they belong to. Pixels never enter `_messages`:
+        # they are laid onto each inference's REQUEST copy (`_request_messages`), so every
+        # model call of the turn sees them, compaction and the char backstop never count
+        # base64, and a later turn is never handed an earlier turn's image.
+        self._staged_images: list[str] = []
+        self._turn_images: list[str] = []
+        self._turn_message: dict | None = None
         # Discovered tool surface, populated by start().
         self._tool_defs: list[Any] = []
         self._tool_schema: list[dict] = []
@@ -869,7 +877,9 @@ class NativeAgentRuntime(AgentProvider):
         # the previous turn and requeues what it finds, so replaying it here would deliver
         # a second copy of a steer the user can already see in the queue strip.
         self._steer_pending.clear()
+        self._turn_images, self._staged_images = self._staged_images, []
         self._messages.append({"role": "user", "content": message})
+        self._turn_message = self._messages[-1]
 
         tools_kwarg, turn_note = self._prepare_turn_tools(message)
         if turn_note:
@@ -958,9 +968,7 @@ class NativeAgentRuntime(AgentProvider):
                     enabled=self._prompt_cache_enabled(),
                 )
                 logger.debug("native: prompt-cache mode %s", getattr(mode, "value", mode))
-                msgs = mark_cacheable_prefix(
-                    self._messages, mode, generation=self._cache_generation
-                )
+                msgs = self._request_messages(mode)
                 # #2287/#252: the native loop's ONE correction-retry. A transient
                 # inference failure (provider 5xx, dropped connection, timeout)
                 # that arrives BEFORE anything user-visible streamed is retried
@@ -1051,9 +1059,7 @@ class NativeAgentRuntime(AgentProvider):
                                 # deliberately NOT appended here (see its trap note —
                                 # that list is the automatic trigger's own bookkeeping,
                                 # and polluting it latches threshold compaction off).
-                                msgs = mark_cacheable_prefix(
-                                    self._messages, mode, generation=self._cache_generation
-                                )
+                                msgs = self._request_messages(mode)
                                 assistant_text = ""
                                 usage = None
                                 continue
@@ -1222,6 +1228,8 @@ class NativeAgentRuntime(AgentProvider):
                 tool_call_count=agg_tool_calls,
             )
         finally:
+            self._turn_images = []
+            self._turn_message = None
             self._cancel.end_turn()
 
     def _prepare_turn_tools(self, message: str) -> tuple[list[dict] | None, str]:
@@ -2248,18 +2256,41 @@ class NativeAgentRuntime(AgentProvider):
         return True
 
     def stage_image_part(self, data_url: str) -> bool:
-        """Forward an image content part to the INNER model provider (MI-4).
+        """Put *data_url* on the NEXT turn as a neutral image part (MI-4). See the ABC.
 
-        The runtime owns the ReAct loop, not the wire format, so the image has to be
-        placed by whoever knows the provider's shape. Delegating means the honest
-        False propagates too: a runtime whose inner provider can't carry an image
-        reports that upward, and the screen-context channel degrades to a text
-        description instead of silently dropping pixels into a request.
+        The loop owns the turn, so it owns the image too: the part is laid onto the turn's
+        user message in EVERY inference request of that turn (`_request_messages`), including
+        the calls after a tool result — an image staged on the inner provider rode only the
+        first. Translating the neutral part to a wire is the inner provider's job, and the
+        caller has already asked the platform's record whether that provider's type carries
+        images and whether the model reads them (``providers.image_input``).
         """
-        stage = getattr(self._model, "stage_image_part", None)
-        if not callable(stage):
+        if not isinstance(data_url, str) or not data_url.startswith("data:"):
             return False
-        return bool(stage(data_url))
+        self._staged_images.append(data_url)
+        return True
+
+    def _request_messages(self, mode: PromptCache) -> list[dict]:
+        """The message list one inference sends: the cache hint, then the turn's images.
+
+        Never mutates ``_messages``. The images go onto the turn's own user message, found by
+        identity (``mark_cacheable_prefix`` keeps positions), so a steer or a volatile note
+        appended later in the turn never takes them. A turn message compaction folded away
+        takes its images with it — there is nothing left for them to belong to.
+        """
+        msgs = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
+        if not self._turn_images or self._turn_message is None:
+            return msgs
+        idx = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
+        if idx < 0:
+            return msgs
+        out = list(msgs)
+        target = out[idx]
+        text = target.get("content")
+        parts: list[dict] = [{"type": "text", "text": str(text or "")}]
+        parts.extend({"type": "image_url", "image_url": {"url": u}} for u in self._turn_images)
+        out[idx] = {**target, "content": parts}
+        return out
 
     def drain_tool_outcomes(self) -> list[tuple[str, str]]:
         """Return this run's accumulated ``(tool, outcome)`` pairs and clear them.

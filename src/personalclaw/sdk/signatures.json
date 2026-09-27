@@ -2022,13 +2022,6 @@
     "params": [],
     "returns": "None"
    },
-   "stage_image_part": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "data_url"}
-    ],
-    "returns": "bool"
-   },
    "start": {
     "kind": "async method",
     "params": [],
@@ -6157,13 +6150,6 @@
     "params": [],
     "returns": "None"
    },
-   "stage_image_part": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "data_url"}
-    ],
-    "returns": "bool"
-   },
    "start": {
     "kind": "async method",
     "params": [],
@@ -6528,13 +6514,6 @@
     "kind": "async method",
     "params": [],
     "returns": "None"
-   },
-   "stage_image_part": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "data_url"}
-    ],
-    "returns": "bool"
    },
    "start": {
     "kind": "async method",

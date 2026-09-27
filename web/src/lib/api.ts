@@ -5064,6 +5064,15 @@ export interface ResidentProvider {
 export interface ResidencySnapshot {
   loaded: LoadedModel[]; providers: ResidentProvider[]; pressure: MemoryPressure
 }
+/** `GET /api/chat/image-input` — how an attached image reaches the model on a chat's next turn. */
+export interface ChatImageInput {
+  /** The model the next turn is served by takes images as pixels. */
+  accepted: boolean
+  /** Why not, as a sentence (`"gemma3:1b can't take images."`); `""` when accepted. */
+  reason: string
+  model: string
+}
+
 export interface DashboardConfig {
   restore_sessions: boolean; restore_window_minutes: number; merge_queued_messages: boolean
   // AI auto-tagging at title-generation time (default on; never touches
@@ -7001,6 +7010,19 @@ export const api = {
   /** Pin a frame — the ONLY path that puts one on disk, as an ordinary attachment. */
   pinScreenFrame: (session: string, frame_b64: string) =>
     post<{ ok: boolean; path: string; name: string }>('/api/chat/screen-frame/pin', { session, frame_b64 }),
+  /** How an attached image reaches the model on this chat's next turn: as an image
+   *  (`accepted`), or as its text, with the server-composed `reason`. What that text is comes
+   *  from the image's own extraction (`attachmentExtract`'s `read`). Asked with the composer's
+   *  agent/model (and the ACP `runtime` the pick runs on, if any) before a session exists; a
+   *  session answers for itself. */
+  chatImageInput: (session: string, sel: { agent?: string; model?: string; runtime?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (session) q.set('session', session)
+    if (sel.agent) q.set('agent', sel.agent)
+    if (sel.model) q.set('model', sel.model)
+    if (sel.runtime) q.set('runtime', sel.runtime)
+    return get<ChatImageInput>(`/api/chat/image-input?${q.toString()}`)
+  },
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
@@ -8452,7 +8474,9 @@ export const api = {
   // upload (multipart — no JSON headers)
   // Extracted text content for an uploaded attachment (what the agent saw) — used
   // by the chat attachment-chip preview. Awaits the upload-time extraction.
-  attachmentExtract: (path: string) => get<{ name: string; text: string }>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),
+  /** What extraction got from an uploaded attachment. `read` is false when `text` is only the
+   *  file's size and format — nothing could read its content. */
+  attachmentExtract: (path: string) => get<{ name: string; text: string; read: boolean }>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),
   uploadFiles: async (
     files: File[],
     onProgress?: (fileIndex: number, p: { loaded: number; total: number; pct: number }) => void,

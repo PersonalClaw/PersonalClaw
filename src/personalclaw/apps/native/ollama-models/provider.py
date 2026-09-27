@@ -27,6 +27,7 @@ with two relevant endpoints:
 The endpoint is overridable via ``ProviderEntry.options.endpoint``.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -1189,8 +1190,14 @@ class OllamaCatalog(ModelManager):
 
     # ── Discovery ──────────────────────────────────────────────────────
     async def list_models(self) -> list[ModelInfo]:
-        """List locally-installed models via ``GET /api/tags``. Raises when it cannot."""
+        """List locally-installed models via ``GET /api/tags``. Raises when it cannot.
+
+        A chat model's ``image_modality`` tag follows what Ollama itself reports for it
+        (:meth:`_served_capabilities`), not only what its name suggests.
+        """
         data = await self._tags()
+        names = [str(m.get("name", "")) for m in data.get("models", []) if m.get("name")]
+        served = await self._served_capabilities(names)
 
         out: list[ModelInfo] = []
         for m in data.get("models", []):
@@ -1204,7 +1211,9 @@ class OllamaCatalog(ModelManager):
                 ModelInfo(
                     id=name,
                     name=name,
-                    capabilities=infer_capabilities(name, families),
+                    capabilities=_with_served_vision(
+                        infer_capabilities(name, families), served.get(name)
+                    ),
                     size=size or None,
                     extra={
                         k: v
@@ -1220,6 +1229,39 @@ class OllamaCatalog(ModelManager):
                 )
             )
         return out
+
+    async def _served_capabilities(self, names: list[str]) -> dict[str, list[str]]:
+        """Ollama's OWN capability list for each installed model (``POST /api/show``), by name.
+
+        The vendor's record of what a model serves: ``vision`` is on ``gemma4:12b`` and
+        ``qwen2.5vl:7b``, whose names carry no marker the id classifier knows, so without this
+        the platform recorded both as text-only and a chat on them was never shown an image.
+        Asked concurrently, and fail-soft per model: a model whose show call fails is left out
+        of the map and keeps the tags its id implies.
+        """
+        import aiohttp
+
+        async def _one(session: Any, name: str) -> tuple[str, list[str] | None]:
+            try:
+                async with session.post(
+                    f"{self._endpoint}/api/show",
+                    json={"name": name},
+                    timeout=aiohttp.ClientTimeout(total=_SHOW_TIMEOUT),
+                ) as r:
+                    if r.status != 200:
+                        return name, None
+                    data = await r.json()
+            except Exception:  # noqa: BLE001 — one model's show must not fail the listing
+                logger.debug("Ollama /api/show failed for %s", name, exc_info=True)
+                return name, None
+            caps = data.get("capabilities") if isinstance(data, dict) else None
+            return name, [str(c) for c in caps] if isinstance(caps, list) else None
+
+        if not names:
+            return {}
+        async with aiohttp.ClientSession() as session:
+            pairs = await asyncio.gather(*(_one(session, n) for n in names))
+        return {name: caps for name, caps in pairs if caps is not None}
 
     async def test_connection(self) -> ConnectionResult:
         """Probe reachability via ``/api/tags`` (a cheap local call)."""
@@ -1413,6 +1455,20 @@ class OllamaCatalog(ModelManager):
             if v
         }
         return ModelInfo(id=model, name=model, capabilities=[], extra=extra)
+
+
+def _with_served_vision(inferred: list[str], served: list[str] | None) -> list[str]:
+    """``inferred`` tags with ``image_modality`` set by what Ollama reports the model serves.
+
+    Only a CHAT model's image tag moves: a media model's single tag is left alone. With no
+    report (``None``, or an empty list from an older Ollama) the id's inference stands.
+    """
+    if not served or "chat" not in inferred:
+        return inferred
+    tags = [t for t in inferred if t != "image_modality"]
+    if "vision" in served:
+        tags.append("image_modality")
+    return tags
 
 
 def _humanize_bytes(n: int) -> str:

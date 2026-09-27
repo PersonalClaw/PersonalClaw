@@ -88,6 +88,15 @@ def detect_image_type(data: bytes) -> str | None:
     return None
 
 
+def has_image_extension(path: str) -> bool:
+    """True when *path*'s extension is on the image allowlist — the user meant an image.
+
+    Only the name is read: this sorts an attachment onto the image path, and
+    :func:`assert_image` still checks the bytes before any decoder or model sees them.
+    """
+    return os.path.splitext(path)[1].lower() in _EXTENSIONS
+
+
 def assert_image(path: str) -> str:
     """Gate *path* for the OCR engines: allowlisted extension, matching true type, size.
 

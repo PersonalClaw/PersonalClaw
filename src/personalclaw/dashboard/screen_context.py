@@ -168,22 +168,18 @@ def live_sessions() -> int:
 
 # ── Delivery routing (§5.3) ───────────────────────────────────────────────────
 #
-# Pure policy: given the model a session is bound to, decide HOW a frame can reach
-# it. Kept here beside the slot so the route (which tells the UI whether to offer
-# the control, and why not) and the chat runner (which actually delivers) share ONE
-# implementation of "is this model a vision model?" — two callers deriving that
-# separately is how a toggle ends up enabled for a model that then can't read what
-# it is sent.
+# Pure policy: given the platform's answer about images for the model a session is bound
+# to (``providers.image_input`` — the provider type's ``supports_vision`` and the model's
+# ``image_modality`` tag, the same record an attached image is decided by), decide HOW a
+# frame can reach it. The route (which tells the UI whether to offer the control, and why
+# not) and the chat runner (which actually delivers) both route through here, so a toggle
+# cannot be enabled for a model that then can't read what it is sent.
 #
-# One honest caveat: a shared implementation is not the same as identical answers,
-# because the two callers cannot supply the same input. The runner holds the live
-# provider and resolves `auto`/empty to the model actually about to serve the turn
-# (`chat_runner._bound_model_id`); the route runs before any provider exists and can
-# only pass `session.model` as stored. So on an `auto` session the route may report
-# DELIVERY_DESCRIBED (or DELIVERY_NONE) where the runner will go DELIVERY_NATIVE.
-# The divergence is one-directional and in the safe direction — the UI can only
-# under-promise, never promise pixels that don't arrive — and `useScreenShare`
-# deliberately does not surface the mode to the user for exactly this reason.
+# One honest caveat: the two callers cannot always supply the same answer. The runner asks
+# about the LIVE runtime (``served_model_ref`` — the entry and model actually serving the
+# turn); the route asks about that same runtime when the session already has one, and about
+# the model the session's selection resolves to when it does not. The divergence, when there
+# is one, is the gap between a selection and the model a fresh runtime then serves.
 
 #: A frame rides the turn as a real image content part.
 DELIVERY_NATIVE = "native"
@@ -195,49 +191,14 @@ DELIVERY_DESCRIBED = "described"
 DELIVERY_NONE = "none"
 
 
-def model_reads_images(model_label: str) -> bool:
-    """True when *model_label* names a model that declares image understanding.
-
-    ``model_label`` is the session's bound model in either bare (``gpt-4o``,
-    ``llava:latest``) or provider-qualified
-    (``Bedrock:global.anthropic.claude-opus-4-8``) form.
-
-    **Both readings are tried**, because the two forms are not distinguishable:
-    model ids legitimately contain colons (``…-v1:0``, ``llava:latest``), so a
-    leading ``provider:`` prefix cannot be told apart from the first segment of a
-    bare id. Stripping to the post-colon tail — the obvious reading — silently
-    misclassifies every bare Ollama-style id, because the tail of ``llava:latest``
-    is ``latest``, which declares nothing. Capability inference is substring-based,
-    so consulting the whole label as well can only ADD a match, never lose one.
-
-    An empty label or ``"auto"`` returns **False**. That is the conservative answer
-    and the correct one: "auto" means the runtime picks, so we cannot show that the
-    model reads pixels, and honesty says an unconfirmed vision model gets a
-    description rather than an image it may silently ignore.
-    """
-    label = (model_label or "").strip()
-    if not label or label.lower() == "auto":
-        return False
-    readings = [label]
-    _, sep, tail = label.partition(":")
-    if sep and tail:
-        readings.append(tail)
-    try:
-        from personalclaw.llm.catalog import infer_capabilities
-
-        return any("image_modality" in infer_capabilities(r) for r in readings)
-    except Exception:  # noqa: BLE001 — an unresolvable id is simply not vision
-        return False
-
-
-def resolve_delivery(model_label: str) -> tuple[str, str]:
-    """Return ``(mode, reason)`` for a frame on a session bound to *model_label*.
+def resolve_delivery(accepts_images: bool) -> tuple[str, str]:
+    """Return ``(mode, reason)`` for a frame on a session whose model ``accepts_images``.
 
     ``reason`` is empty for the two working modes and, for
     :data:`DELIVERY_NONE`, is the user-facing sentence the disabled control shows —
     so the UI never has to invent its own explanation for a decision made here.
     """
-    if model_reads_images(model_label):
+    if accepts_images:
         return DELIVERY_NATIVE, ""
     try:
         from personalclaw.providers.provider_bridge import can_resolve_use_case
