@@ -27,7 +27,7 @@ def home(tmp_path, monkeypatch):
     (h / "config.json").write_text(json.dumps({"theme": "dark"}))
     (h / "tasks").mkdir()
     (h / "tasks" / "t1.json").write_text(json.dumps({"id": "t1"}))
-    (h / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-ROUTECANARY0001\n")
+    (h / ".env").write_text("ANTHROPIC_API_KEY=fake-anthropic-1\n")
     monkeypatch.setenv("PERSONALCLAW_HOME", str(h))
     monkeypatch.setattr("personalclaw.portability.config_dir", lambda: h)
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: h)
@@ -100,7 +100,7 @@ async def test_export_returns_a_zip_with_no_secret_bytes(home):
     async with TestClient(TestServer(_app())) as client:
         resp = await client.post("/api/durability/export", json={})
         blob = await resp.read()
-    assert b"sk-ant-ROUTECANARY0001" not in blob
+    assert b"fake-anthropic-1" not in blob
     names = zipfile.ZipFile(io.BytesIO(blob)).namelist()
     assert any(n.endswith("MANIFEST.json") for n in names)
     assert any(n.endswith("config.json") for n in names)

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ShieldAlert, ShieldQuestion } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -33,10 +34,18 @@ export function ReviewNote() {
 export function GrantNote({ labels, enabled, onAllow, busy = false }: {
   labels: string[]
   enabled: boolean
-  onAllow: () => void
+  onAllow: () => void | Promise<void>
   busy?: boolean
 }) {
   const actions = labels.map((label) => `“${label}”`).join(' and ')
+  // Whether THIS Allow is in flight. `busy` is the inspector's one flag, shared with its switch and
+  // its other actions (Run now, Test, Delete), so it dims Allow while any of them runs but cannot say
+  // Allow is the one working: spinning on it would announce an Allow nobody pressed.
+  const [allowing, setAllowing] = useState(false)
+  const allow = async () => {
+    setAllowing(true)
+    try { await onAllow() } finally { setAllowing(false) }
+  }
   return (
     <div role="note" className="flex items-start gap-s text-warn">
       <ShieldAlert size={14} aria-hidden className="mt-0.5 shrink-0" />
@@ -49,7 +58,7 @@ export function GrantNote({ labels, enabled, onAllow, busy = false }: {
         </p>
         {enabled && (
           <div>
-            <Button variant="secondary" size="sm" onClick={onAllow} disabled={busy} disabledReason={BUSY_REASON}>
+            <Button variant="secondary" size="sm" onClick={allow} loading={allowing} disabled={busy} disabledReason={BUSY_REASON}>
               Allow
             </Button>
           </div>

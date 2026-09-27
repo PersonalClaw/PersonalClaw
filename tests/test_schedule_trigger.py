@@ -1,8 +1,8 @@
 """Unit tests for on-demand Schedule triggering.
 
-trigger_schedule_job validates the job-id locally and POSTs to the running
-gateway's /run route via the internal-secret IPC (mcp_core._post). These tests
-monkeypatch _post so no gateway is needed.
+trigger_schedule_job POSTs to the running gateway's /run route via the internal-secret IPC
+(mcp_core._post), the id percent-encoded. These tests monkeypatch _post so no gateway is needed;
+`test_cron_trigger_takes_the_ids_cron_add_makes.py` drives it against the real routes.
 """
 
 from __future__ import annotations
@@ -13,13 +13,21 @@ import personalclaw.mcp_core as mc
 import personalclaw.schedule_trigger as st
 
 
-def test_rejects_bad_job_id() -> None:
-    ok, msg = st.trigger_schedule_job("nope!!")
-    assert ok is False
-    assert "invalid job id" in msg
-    # Also empty.
-    ok2, _ = st.trigger_schedule_job("")
-    assert ok2 is False
+def test_an_empty_id_is_refused_before_any_post(monkeypatch: pytest.MonkeyPatch) -> None:
+    posted: list[str] = []
+    monkeypatch.setattr(mc, "_post", lambda path, body=None: posted.append(path) or {"ok": True})
+    assert st.trigger_schedule_job("  ") == (False, "no job id given")
+    assert posted == []
+
+
+def test_the_id_is_percent_encoded_into_the_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An app's job name can hold any character; none of them may change the route."""
+    posted: list[str] = []
+    monkeypatch.setattr(mc, "_post", lambda path, body=None: posted.append(path) or {"ok": True})
+    assert st.trigger_schedule_job("app:x:Nightly Sync/../../tokens?all=1")[0] is True
+    assert posted == [
+        "/api/triggers/schedule:app%3Ax%3ANightly%20Sync%2F..%2F..%2Ftokens%3Fall%3D1/run"
+    ]
 
 
 def test_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,6 +44,20 @@ def test_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Nightly Report" in msg
     # Hits the unified trigger run route with the namespaced id (not a fresh service).
     assert posted["path"] == "/api/triggers/schedule:abc123/run"
+
+
+@pytest.mark.parametrize(
+    ("note", "said"),
+    [
+        ("failed: no chat model is bound", "'Nightly' failed: no chat model is bound"),
+        ("no action provider configured", "'Nightly' did not run: no action provider configured"),
+    ],
+)
+def test_a_run_that_did_not_succeed_says_why(note, said, monkeypatch: pytest.MonkeyPatch) -> None:
+    """It said "trigger failed" and dropped the run route's own note on why."""
+    answer = {"ok": False, "name": "Nightly", "result": note, "status": ""}
+    monkeypatch.setattr(mc, "_post", lambda path, body=None: answer)
+    assert st.trigger_schedule_job("clock:nightly") == (False, said)
 
 
 def test_already_running(monkeypatch: pytest.MonkeyPatch) -> None:

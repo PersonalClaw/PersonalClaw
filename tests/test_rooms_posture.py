@@ -527,6 +527,29 @@ def test_the_critics_write_tool_is_refused_while_the_executors_reaches_the_human
     assert asked == ["Bash"], "the human was asked ONCE — only by the member entitled to ask"
 
 
+@pytest.mark.parametrize("tool", ["computer_click", "workflow_start", "memory_remember"])
+def test_the_critic_is_refused_a_change_that_carries_no_write_word(enabled, tool):
+    """🔴 Red on main: the critic's `read` grant was judged by a list of write words, and these
+    carry none — so the critic reached the human with a desktop click, a run start and a memory
+    write. What its tool declares decides; a member's CLI tool declares nothing."""
+    room = _room_with_two_members("No write word")
+    asked: list[str] = []
+
+    async def human(event) -> bool:
+        asked.append(getattr(event, "title", ""))
+        return True
+
+    approver = posture.RoomApprover(identity="owner", decide=human)
+    sessions = _Sessions(tools={f"room:{room.id}:critic": tool})
+    store.append_message(room.id, role="user", content="go", speaker="")
+
+    _drive_every_member(sessions, room.id, approver=approver)
+
+    critic = sessions.providers[f"room:{room.id}:critic"]
+    assert critic.rejected == ["r1"] and critic.approved == []
+    assert asked == []
+
+
 def test_a_refused_tool_is_legible_on_the_transcript_not_a_silent_drop(enabled):
     """The bar: a user can see WHICH member was refused WHICH tool and WHY.
 

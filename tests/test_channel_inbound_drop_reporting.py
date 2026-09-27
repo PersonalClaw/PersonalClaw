@@ -36,7 +36,7 @@ PROVIDER = "discord"
 _OWNED_LOGGERS = ("personalclaw.channel_trust", "personalclaw.channel_inbound")
 
 #: A body deliberately shaped like something you would never want in an operator log.
-SECRET_BODY = "@Bot my api key is sk-live-000111222333 please remember it"
+SECRET_BODY = "@Bot my api key is fake-key-1 please remember it"
 
 
 @pytest.fixture(autouse=True)
@@ -488,7 +488,7 @@ def test_the_log_line_never_carries_the_message_body(caplog):
     # FLOOR: the sweep is only meaningful if it actually saw the lines it claims to check.
     assert len(emitted) >= 3, f"expected a line per branch, got {emitted}"
     for _, _, msg in emitted:
-        assert "sk-live-000111222333" not in msg
+        assert "fake-key-1" not in msg
         assert SECRET_BODY not in msg
 
 

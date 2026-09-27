@@ -40,7 +40,7 @@ def sdk(monkeypatch):
 def _provider(model: str, **options: Any) -> AnthropicProvider:
     return AnthropicProvider(
         model=model,
-        credential=Credential(name="x", kind="api_key", secret="sk-test", source="env"),
+        credential=Credential(name="x", kind="api_key", secret="fake-key-test", source="env"),
         extra_options=options,
     )
 
@@ -188,7 +188,7 @@ def _bind_branded_anthropic_app(monkeypatch, model: str) -> None:
             name="fixture-claude",
             type=spec.type,
             model="",
-            options={"api_key": "sk-fixture"},
+            options={"api_key": "fake-key-fixture"},
             declared_capabilities=frozenset({Capability.CHAT}),
         )
     )

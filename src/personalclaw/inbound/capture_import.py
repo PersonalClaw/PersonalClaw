@@ -41,6 +41,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -903,11 +904,6 @@ def capture_cmd(
     while "imported 0 from a file you named" is a result a script should be able
     to gate on. A duplicate exits 0 — a no-op re-import is the requested outcome.
     """
-    action = getattr(args, "capture_action", None)
-    if action != "import":
-        print(f"Usage: personalclaw capture import <file> --format {'|'.join(FORMATS)}")
-        return 2
-
     try:
         report = import_capture_file(
             args.file,
@@ -918,7 +914,10 @@ def capture_cmd(
     except ImportError as exc:
         # The store is the sibling half. Name it rather than showing a
         # traceback: "no module named …" is the actionable fact.
-        print(f"capture import needs the capture store, which is not installed: {exc}")
+        print(
+            f"capture import needs the capture store, which is not installed: {exc}",
+            file=sys.stderr,
+        )
         return 1
 
     if getattr(args, "as_json", False):

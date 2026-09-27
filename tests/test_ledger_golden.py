@@ -329,7 +329,7 @@ def test_the_golden_run_exercised_both_spill_reasons_and_the_ledger_mirror():
     assert '"result_omitted": true' in spill
 
     emitters = (GOLDEN_DIR / "emitters_journal.jsonl").read_text(encoding="utf-8")
-    for secret in ("sk-ant-api03-DEADBEEF", "AKIAIOSFODNN7EXAMPLE"):
+    for secret in ("fake-anthropic-2", "AKIAIOSFODNN7EXAMPLE"):
         assert secret not in emitters, f"{secret} reached the golden journal"
         assert secret not in spill, f"{secret} reached the golden spill stub"
 

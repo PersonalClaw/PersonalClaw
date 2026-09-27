@@ -52,6 +52,7 @@ while not terminal:
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
 | `loop_convergence.py` | what a tripped loop does next: one decision through `loop.tick.evaluate` on the node's `SupervisorPolicy`, the ladder position persisted on the run row, a replan as a real mutation, or a hand-off to a human |
 | `gate_answers.py` | a step waiting on a human — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, a decline and ending the run at an approval it did not get, closing an ended run's waits, and withdrawing an ask nobody answered |
+| `ending_sentence.py` | the sentence a run ends with when a step's failure is the reason: how a step is named (a fan-out item by its item), a failure's cause as one clause, the steps after a step in each sequence that holds it, and the ending of a run that went on past a failed step (`for_failures`) |
 | `mid_flight.py` | the mid-flight mutation queue — held beside the run so a restart keeps it — and applying it at the tick's safe point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags |
 | `effect_boundary.py` | the effect ledger at execution time: ATTEMPTED before an effect-committing dispatch, its verdict after, and the committed-effect refusal or teardown before a redo |
 | `task_projection.py` | projecting settled nodes into Tasks and running their done-criteria, scheduled off the tick and never failing a node whose work succeeded |
@@ -102,7 +103,7 @@ while not terminal:
 | `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |
 | `contracts.py` | derived parameter schemas, per-stage done-means contracts and their lint, and blocking-vs-open decision typing |
 | `revision.py` | typed merge-by-id patches, the NO_UPDATE sentinel, TTL'd draft sketches, and the announce-block review surface |
-| `autonomy.py` | the risk-signal registry, autonomy floors and offers, HITL/AFK typing compiled to `require_hitl`, the confirmation matrix, the two interrupts, earned trust |
+| `autonomy.py` | the risk-signal registry, autonomy floors and offers, HITL/AFK typing compiled to `require_hitl`, the confirmation matrix (an action step is asked about by the effect its provider declares, `ActionProvider.effect`, and a declared deletion is never auto-approved), the two interrupts, earned trust |
 | `grill_protocol.py` | the structured `rigor: deep` protocol: recommendation-bearing questions, the facts-vs-decisions channel split, adaptive pacing, stress probes, the Step-0 schema, frozen prohibitions |
 | `rigor.py` | the cheap end of the axis: `rigor: fast` + its auto-scheduled refinement gate, Specify's one-stage rewrite, the append-only acceptance ratchet, revise-spec-from-artifact |
 | `template_pipeline.py` | chat-session mining, discover-then-freeze candidates on the scope ladder, the `suggest_template` nudge with its anti-nag rules, entity scrubbing |
@@ -114,7 +115,7 @@ while not terminal:
 | `publish_seam.py` | where `publish.py`'s decision is carried out, called from `engine.dispatch` beside the artifact gate: the artifact registry write, the media copies a published body references (read only from under the run's own cwd, sensitive paths refused), the run's `publishes.jsonl` the outbox lists, and the consumption outcome question the dormancy sweep grades. A malformed declaration fails the node; a registry failure is reported on the result instead |
 | `filedrop.py` | the per-run file drop (spec-declared, approval-gated multipart ingestion into the run's `immutable` `dropped/` zone, fenced on read) and the outbox — the run's published-artifact listing projected from the publish journal rather than a second registry |
 | `pinned.py` | the pinned-artifact set a user curates for the composable home (`entity_settings/pinned_artifacts.json`), owning its own entity file the way `channel_trust` does. Stores only slugs — name, kind and version are re-read from the artifact on every load, so a rename or a new version cannot leave a stale pin |
-| `project_archive.py` | the archive I/O around `project_export`'s planner: an allowlist walk into `plan_export`, a manifest ZIP, and extraction into a per-call temp dir reaped in `finally`. Writes only plan-ACCEPTED entries so the archive and its manifest cannot disagree, reuses `project_export.safe_member` rather than adding a second path check, and offers optional AES-GCM via the `oauth2` extra's `cryptography` |
+| `project_archive.py` | the archive I/O around `project_export`'s planner: an allowlist walk into `plan_export`, a manifest ZIP, and extraction into a per-call temp dir reaped in `finally`. Writes only plan-ACCEPTED entries so the archive and its manifest cannot disagree, reuses `project_export.safe_member` rather than adding a second path check, and offers optional AES-GCM through the `cryptography` dependency |
 | `batch_compile.py` | batch `subagent_run` compiled to a `parallel[stage...]` run: the N≥2 threshold, capability classes, the single-writer lint, static depth rejection, typed leaf outputs compiled to `output_contract`, and the safety-filtered recall view. Called from `mcp_subagents._run_compiled_batch`, which persists the compiled spec as a def and starts a run against it, so the widget rebuilds from disk after a restart. Emits the top-level `workspace:` block the run-start applier reads (`provisioning.declares_workspace`), so the fan-out is provisioned into one isolated `scratch` substrate — RUN-scoped, because there is no per-node provisioning in the engine. A crash-surviving batch is therefore SUSPENDED with a Resume affordance rather than auto-adopted (§5.2), since `stamp_run` records a recoverable `worktree_path` for every isolated mode |
 | `roster.py` | the slug-keyed agent catalog PROJECTION over `config.json agents{}` plus the reserved system names (WORK-R16) — owns no state and reads the SAME `AppConfig.agents` dict `subagent._validate_agent` checks, so there is one answer to "which agents exist". Consumed in production by `batch_compile.agent_lint`, which slug-resolves each leaf's declared agent and persists the resolved CONFIG KEY (never the slug — `_validate_agent` checks config keys, so a persisted slug would fail every multi-word agent name); also supplies the `unresolved_slugs` drift check the test gate runs over every bundled template |
 | `workspace.py` | the `workspace` provisioning block (mode/preserve/setup/teardown/env), reserved-var rejection, the secret-filtered spawn env with presence-only flags, and tolerant `.folder.yaml` contracts |
@@ -138,7 +139,7 @@ while not terminal:
 | `web_preview.py` | a run's localhost dev-server preview: fixed-argv `lsof`/`ss`/`ps` host-fact probes, port→pid→cwd attribution scoped to the run's own workspace, and the honest empty reason when no scanner exists |
 | `loop_run_map.py` | the `Loop`→`WorkflowRun` field map: every `Loop` field either maps to a run field, maps to a template input, or is listed as homeless — the checked starting point for retiring the second work-unit noun |
 | `loop_view.py` | the READ half of that map: a run started as a loop (`WorkflowRun.loop_kind`) projected back into the loop wire shape, so `GET /api/loops` lists every loop whatever backs it. The projected row carries `run_id` (the discriminator every surface routes by); run statuses map onto the nearest truthful loop status (`escalated` → `complete` + a non-`done` stop reason, i.e. "Ended early"); the cycle count is the root loop's distinct finished iterations and the budget is the one the engine stops at; and `RUN_ACTION_SOURCE_STATES` is the run's narrower action table (no resume from `failed`), railed equal to the frontend mirror |
-| `deliverable.py` | a run's DOCUMENT deliverable + working log, the run-side answer to `GET /api/loops/{id}/report`: the kind→filename resolution DERIVED by walking `loop_aliases` forward and asking each kind's own `deliverable_name` (never a constant here), the workspace-then-run-dir root order that mirrors `loop/watchdog._deliverable_file`, a confined + redacted read with a blob ceiling that bounds the redactor's quadratic unbroken-token cost, and a five-member NAMED absence vocabulary — unknown template, kind declares none, not written, no root, unreadable — because a blank panel cannot tell a finished verifiable goal from a slow worker. Carries no money field by design (issue #2566) |
+| `deliverable.py` | a run's DOCUMENT deliverable + working log, the run-side answer to `GET /api/loops/{id}/report`: the kind→filename resolution DERIVED by walking `loop_aliases` forward and asking each kind's own `deliverable_name` (never a constant here) unless the run's own spec states its document (a top-level `"document"`: a filename, or `""` for none — `goal-pursuit-monitor` keeps none, since each wake is a fresh step with no directory of its own to keep a log in), the workspace-then-run-dir root order that mirrors `loop/watchdog._deliverable_file`, a confined + redacted read with a blob ceiling that bounds the redactor's quadratic unbroken-token cost, and a five-member NAMED absence vocabulary — unknown template, kind declares none, not written, no root, unreadable — because a blank panel cannot tell a finished verifiable goal from a slow worker. Carries no money field by design (issue #2566) |
 
 ## Containers do not execute
 
@@ -272,6 +273,13 @@ nothing naming the key. The store is the one Settings → Secrets writes
 (`llm/credentials.py` `CredentialStore`, reading `config/credentials.py`). An owned
 `PCSECRET_…` key, which belongs to a provider's or an app's own setting, is refused by
 name with the reason, so a step cannot read another record's key.
+
+A `{{secret:KEY}}` is filled in only where the step runs its config itself. A step whose
+config is text for a model (a `stage`, `infer` or `visualize` step, and an `action` whose
+provider's action is a model turn, `ActionProvider.hands_config_to_a_model`) keeps the
+reference as the name (`node_bindings._reference_kept`): filled in there, the value would be
+in the model's context. A stage's agent uses the name in a command, and its `bash` tool fills
+it in as the command runs.
 
 Two asymmetries that are easy to get backwards:
 
@@ -420,9 +428,12 @@ that card's wording is what the run page and the Inbox show.
 Each ask is its own record. Its question is the one its step kept when it began
 to wait (`NodeInstance.ask`), not the run's one `attention` slot, which two steps
 waiting at once would share. Its confirmation id is minted with it from `(run,
-gate, epoch)` and which ask of that step it is (`confirmation.request_id`), and is
+step, epoch)` and which ask of that step it is (`confirmation.request_id`), and is
 carried on its continuation, so the answer cites the id the question was asked
-with. A step can ask twice in one epoch (approved, run again, stopped again; a
+with. The step is its instance path, which names a loop's cycle
+(`…body@2.children[0]`): each cycle's ask of a gate inside a loop is its own
+question, where a node id — which every cycle repeats — gave them all one id. A
+step can ask twice in one epoch (approved, run again, stopped again; a
 rewind that does not force), and the second ask is a new question that no earlier
 answer can answer. An ask that closes with nobody answering it — the run ended, a
 rewind withdrew it, its deadline passed — resolves `withdrawn` with the reason and
@@ -446,6 +457,26 @@ ceiling bounds them, so under `{"approval": {"value": "ask"}}` neither stands an
 gate asks, and a gate the policy did approve is written to the audit log
 (`workflow_gate.approved_without_asking`) as well as the run's journal.
 
+**Only you answer.** A gate's question is put to you, and `controller.resume`, the one entry point
+every answer goes through, refuses anyone else before the token is touched (`approval_answer`,
+[security.md](security.md#who-answers-an-approval-approval_answerpy)). That covers an app's token,
+an agent's tool (the gateway's internal secret) and the run itself. An agent's `workflow_resume`
+lifts a pause and answers nothing: an answer it sends is refused with the sentence saying who
+answers, and audited (`approval.answer_refused`). The one exception is an `event` gate, which
+parks a run until something happens and asks nobody's permission. The trigger it waits for answers
+it, as a monitor's self-scheduled wake does, and you still can. A trigger answers no other gate, so
+a trigger an agent armed against its own run (`resume_run_id: "self"`) cannot approve that run's
+approval gate. Its fire is refused, and the gate waits for you.
+
+**An `event` gate is woken, not answered.** Its ask is `event` (`human_input.AskKind.EVENT`, from
+the gate's own kind, whatever `ask_kind` says), and its answer is the wake's payload: whatever the
+trigger was armed with (`set_onetime_task` arms it with its `message`), or `true` when you press
+**Wake it now** on the run page, the Inbox row or Mission Control's card. Any payload moves the
+run on, and the gate's output records it as `answer`. It is never read as a verdict or a verb: a
+`false` does not decline the run, a `{"revise": …}` does not amend a step, an "always allow" is
+not remembered (`Ask.rememberable`), and the gate policy does not auto-approve it in an unattended
+run, since approving it would skip the wait it is for.
+
 A trigger's action that stops the same way asks through the trigger instead
 ([tasks-triggers.md](tasks-triggers.md#an-action-that-stops-for-you-asks-you)):
 its run is recorded `waiting`, one Inbox row carries the same card, and Approve
@@ -462,8 +493,8 @@ resolve and before the frontier, and `end_at_gate` ends the run there:
 * **Deny** — on a gate, or on a parked step — makes the step `declined`: not a
   failure, so no `on_error` can continue past it, and not a pass. The run ends
   `declined`, and its error names the gate and who said no ("“approve” was declined
-  by Keyur, so nothing after it ran"): the owner's name for a dashboard answer, the
-  channel for a remote one, the trigger for an automation.
+  by Keyur, so nothing after it ran"): the owner's name, and the channel for a remote
+  reply.
 * **No answer** — the gate's deadline passed — keeps the gate `failed`, because
   nobody chose it and an unattended run must surface it. The run ends
   `failed`, saying how long it waited. A gate waits as long as every other approval:
@@ -481,10 +512,17 @@ resolve and before the frontier, and `end_at_gate` ends the run there:
   that escalated. A check continues past a failure only when the gate itself
   declares it: `on_error: null_continue` runs what follows and the run still ends
   `failed`; `allow_failure: true` records the failure as degraded and the run can
-  complete. Of the bundled templates, `knowledge-lint` declares `allow_failure` on
-  its per-item judge (it records each item's verdict, and nothing after it writes),
-  and `audit-sweep`'s `fix_enabled`, a mode switch that was written as a gate, is a
-  branch.
+  complete. An `expression` gate asks nobody, so the words its author gives it are
+  its `message`: what the step's failure and the run's ending say when the condition
+  is false ("“Frozen region untouched” failed: the candidate wrote into the frozen
+  region …, so nothing after it ran"); without one, the condition itself is the
+  cause. Of the bundled templates, `knowledge-lint` declares `allow_failure` on its
+  per-item judge (it records each item's verdict, and nothing after it writes),
+  `audit-sweep`'s `fix_enabled`, a mode switch that was written as a gate, is a
+  branch, and `produce-and-audit`'s quality gate, whose words asked a person to
+  accept an artifact the audit had not passed, is a real approval that a branch asks
+  only then. No bundled gate carries words the engine never shows
+  (`test_workflows_no_gate_text_goes_unshown`).
 
 Every way, each step after the gate, in each sequence that holds it, is marked
 skipped with the reason ("not run: “approve” was declined", "not run: “verify”
@@ -493,6 +531,21 @@ container holding it (`tick.container_outcome`) and makes even a plain `needs`
 onto it unreachable. The engine has no construct for an author to declare a path
 taken on a decline — a denied gate's answer never entered the binding namespace,
 and `on_error` is a failure policy — so a decline always stops the run.
+
+**A failure the run went on past says so.** Outside a gate, `on_error:
+null_continue` — the default — lets the steps after a failed step run, and the run
+ends `failed` (or `escalated`, for a judge or a loop that would not decide) once
+they have. Its error says the run continued past a failed step when a step after it
+ran, then names each failed step and its cause, a fan-out item by its item
+(`ending_sentence.for_failures`): "The run continued past “summarize”, which failed:
+model output was not valid JSON." The continuation comes first because the line is
+read cut short — the Workflows list shows it on one line, and a cause can be a
+model's whole reply. A failed last step, or a failed `parallel` leg whose siblings
+ran beside it, is named without that claim. The failures are followed down
+from the run's own outcome through the scheduler's derivation, so a failure the run
+tolerated (`allow_failure`, a `skip` fan-out, a leg of an `any` join) is never named
+as its reason. That ending used to be empty — the completion path's terminal write
+took no `error` — so the run page read "Failed" over nothing.
 
 A run that ends closes whatever it was still asking, whichever way it ended:
 `gate_answers.close_waits` cancels each waiting step and withdraws its ask, and
@@ -601,12 +654,19 @@ selected tier translates to its native knobs.
 | `docker` | bind-mount container | core builtin (self-gates on the daemon probe) | UID-aligned bind-mount over the workspace; `allowed_write_paths`/`grant_paths` mounted rw, everything else unreachable; `egress_tier: off` → `--network none`; ceilings → `--pids-limit`/`--memory` |
 | `lima` | VM (`limactl shell`) | **app** (`apps/lima-sandbox`, enabled via `SandboxTypeHandler`) | full-VM isolation; host↔guest path translation for the guest workdir; availability = `limactl` present + instance `Running`, else a typed reasoned refusal (greyed-with-reason, never a silent host downgrade). Per-exec network / pids / memory are instance-creation config, so at this layer they are advisory rather than fabricated |
 
-A tier that is requested but unavailable **refuses** rather than downgrading to the host: an
-unattended run parks `needs-input`, an app backend declines to launch, and an interactive
-terminal falls back to a path-guard-only host shell (the picker already greyed the tier out with
-its reason). App backends select a tier through the `backend.sandbox` manifest field, with the
-app's `permissions.network` → `egress_tier` and `permissions.storage` → `allowed_write_paths`; a
-terminal session selects one per-session through the picker (`GET /api/sandbox/providers`).
+A tier that is requested but unavailable, or not installed at all, **refuses** rather than
+downgrading to the host: an unattended run parks `needs-input`, an app backend declines to launch,
+an agent session or second opinion does not start (`resolve_provider` raises for a named tier
+nothing registered, and resolves to `none` only when no tier is named), and a terminal is not
+opened, with a sentence in its tab that names the tier and why. App backends select a tier
+through the `backend.sandbox` manifest field, with the app's `permissions.network` →
+`egress_tier` and `permissions.storage` → `allowed_write_paths`; a terminal session selects one
+per-session through the picker (`GET /api/sandbox/providers`). The tier is part of the terminal's
+session id (`<id>@<tier>`, `<id>@none` for the host shell), so every open of the session, a
+reconnect after a gateway restart included, is in that tier or refused, and a tier shell is never
+a tmux client. An id that names no tier was made before ids carried one; nothing says where its
+shell ran, so opening it is refused (*This terminal was opened before an update; open a new
+one.*) while closing it still works.
 
 ## Templates
 

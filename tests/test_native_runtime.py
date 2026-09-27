@@ -29,7 +29,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_RESULT,
     AgentEvent,
 )
-from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
+from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProvider, ToolResult
 
 
 class _ScriptedModel:
@@ -54,10 +54,14 @@ class _ScriptedModel:
 
 
 class _Tool(ToolProvider):
-    def __init__(self, name="echo", requires_approval=False, interactive=False) -> None:
+    def __init__(
+        self, name="echo", requires_approval=False, interactive=False, risk_level=None
+    ) -> None:
         self._name = name
         self._req = requires_approval
         self._interactive = interactive
+        # What the tool declares; None leaves the definition's own default (a change).
+        self._risk = risk_level
         self.invoked: list[dict] = []
 
     @property
@@ -76,6 +80,7 @@ class _Tool(ToolProvider):
                 parameters={"type": "object"},
                 requires_approval=self._req,
                 interactive=self._interactive,
+                **({"risk_level": self._risk} if self._risk is not None else {}),
             )
         ]
 
@@ -501,7 +506,7 @@ async def test_task_mode_plan_allows_read_blocks_write():
             [AgentEvent(kind=EVENT_TEXT_CHUNK, text="ok"), AgentEvent(kind=EVENT_COMPLETE)],
         ]
     )
-    read_tool = _Tool(name="read_file", requires_approval=False)
+    read_tool = _Tool(name="read_file", requires_approval=False, risk_level=RiskLevel.SAFE)
     rt = NativeAgentRuntime(
         definition=_defn(), model_provider=read_model, tool_providers=[read_tool]
     )

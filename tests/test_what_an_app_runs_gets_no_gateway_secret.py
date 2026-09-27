@@ -43,7 +43,7 @@ from tests.test_install_a_sidecar_engine import _stub_python
 #: name-pattern would recognise.
 _SECRETS = {
     "AWS_SECRET_ACCESS_KEY": "aws-secret-4d2a",
-    "ANTHROPIC_API_KEY": "sk-ant-planted-91b0",
+    "ANTHROPIC_API_KEY": "fake-anthropic-planted-91b0",
     "ACME_DEPLOY_PAT": "deploy-pat-5e77",
 }
 _PROXY_PASSWORD = "proxy-pass-7c1e"

@@ -151,7 +151,7 @@ def test_a_credential_never_reaches_the_record_or_the_sidecar(_isolated_home):
 def test_the_field_name_survives_per_field_screening(_isolated_home):
     """The measured hazard: screening a COMPOSED line destroys the field name.
 
-    `_CREDENTIAL_PATTERNS` matches `api_key=sk-ant-…` as ONE span including the prefix,
+    `_CREDENTIAL_PATTERNS` matches `api_key=fake-anthropic-1…` as ONE span including the prefix,
     so a trailing chokepoint over an assembled record collapses the whole pair to
     `[REDACTED: credential]`. Screening each source string at entry keeps the name.
     """

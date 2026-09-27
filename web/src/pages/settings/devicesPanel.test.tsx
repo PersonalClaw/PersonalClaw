@@ -6,7 +6,7 @@ import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
 import { invalidateKeys } from '../../lib/data'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { api, type DeviceRec, type DevicePairStart } from '../../lib/api'
+import { api, type DeviceRec, type DevicePairStart, type IntegrationRec } from '../../lib/api'
 import { encodeQr, qrPath } from '../../lib/qr'
 
 // ── Settings → Devices ────────────────────────────────────────────────────────────────────────
@@ -72,6 +72,9 @@ beforeEach(() => {
   // 🪤 The list rides a cached key, so a previous test's payload would seed the next mount and
   // every assertion below would measure the wrong fixture.
   invalidateKeys('settings:devices')
+  invalidateKeys('settings:integrations')
+  // The panel also lists integration tokens; none, unless a test says otherwise.
+  vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({ integrations: [], problem: '' })
 })
 
 afterEach(() => {
@@ -491,6 +494,8 @@ describe('the list names every sign-in, and signs any of them out', () => {
     const dialog = await screen.findByRole('alertdialog')
     expect(dialog.textContent ?? '').toMatch(/iPhone/)
     expect(dialog.textContent ?? '', 'a paired device signs back in by pairing').toMatch(/pair it again/)
+    // Ledger 359: its pushes end with its sign-in, and the owner is told before choosing.
+    expect(dialog.textContent ?? '').toMatch(/gets no more push notifications from it/)
     fireEvent.click(Array.from(dialog.querySelectorAll('button')).find((b) => /^sign out$/i.test(b.textContent ?? ''))!)
     await waitFor(() => expect(revoke).toHaveBeenCalledWith('phone'))
   })
@@ -504,6 +509,7 @@ describe('the list names every sign-in, and signs any of them out', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Sign out all other devices$/i }))
     const dialog = await screen.findByRole('alertdialog')
     expect(dialog.textContent ?? '').toMatch(/2 other devices and tokens/)
+    expect(dialog.textContent ?? '').toMatch(/get no more push notifications/)
     expect(dialog.textContent ?? '').toMatch(/This device stays signed in/)
     expect(others, 'asking is not doing').not.toHaveBeenCalled()
     fireEvent.click(Array.from(dialog.querySelectorAll('button')).find((b) => /sign out all others/i.test(b.textContent ?? ''))!)
@@ -532,5 +538,162 @@ describe('the list names every sign-in, and signs any of them out', () => {
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(reload).toHaveBeenCalled())
     expect(revoke).not.toHaveBeenCalled()
+  })
+})
+
+// ── Integration tokens (ledger 317a) ───────────────────────────────────────────────────────────
+//
+// The tokens an external agent reaches an inbound surface with had no lifetime and no list: an
+// MCP token pasted into an editor's config long ago still worked, and the owner could not see it,
+// let alone revoke it. Each is now listed here, with when it stops working and a revoke.
+
+const NOW = Math.floor(Date.now() / 1000)
+
+function integration(over: Partial<IntegrationRec> = {}): IntegrationRec {
+  return {
+    id: 'surface-mcp',
+    kind: 'surface',
+    name: 'MCP token',
+    surfaces: ['mcp'],
+    surface_names: ['MCP'],
+    issued_at: NOW - 3 * 86400,
+    expires_at: NOW + 87 * 86400,
+    last_seen: 0,
+    found: false,
+    state: 'live',
+    renew: 'personalclaw inbound token create mcp --rotate',
+    ...over,
+  }
+}
+
+const IDE_CLIENT = integration({
+  id: 'client-abc', kind: 'client', name: 'ide', surfaces: ['mcp', 'a2a'], surface_names: ['MCP', 'A2A'],
+  renew: '', last_seen: NOW - 7200,
+})
+
+describe('integration tokens are listed, with when each stops working, and a revoke', () => {
+  it('lists each surface token and each client, and what each reaches', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({ integrations: [integration(), IDE_CLIENT], problem: '' })
+    mount()
+    await waitFor(() => expect(screen.getByText('Integrations (2)')).toBeTruthy())
+    expect(screen.getByText('MCP token')).toBeTruthy()
+    const surfaceMeta = screen.getByText('Reaches MCP').parentElement?.textContent ?? ''
+    expect(surfaceMeta).toMatch(/^Surface token · Reaches MCP · Last used never$/)
+    const clientMeta = screen.getByText('Reaches MCP, A2A').parentElement?.textContent ?? ''
+    expect(clientMeta).toMatch(/^Client · Reaches MCP, A2A · Last used 2h ago$/)
+    expect(screen.getAllByText(/^Issued 3d ago · stops working /)).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Revoke MCP token' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: "Revoke the “ide” client's token" })).toBeTruthy()
+  })
+
+  it('says a token stopped working, and how to make a new one', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({
+      integrations: [integration({ state: 'expired', issued_at: NOW - 91 * 86400, expires_at: NOW - 86400, found: true })],
+      problem: '',
+    })
+    mount()
+    await waitFor(() => expect(screen.getByText('Expired')).toBeTruthy())
+    const line = screen.getByText(/^First seen /).textContent ?? ''
+    expect(line).toMatch(/^First seen .* · stopped working .* · a new one: personalclaw inbound token create mcp --rotate$/)
+  })
+
+  it('offers no revoke for a token that is already revoked', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({ integrations: [integration({ state: 'revoked' })], problem: '' })
+    mount()
+    await waitFor(() => expect(screen.getByText('Revoked')).toBeTruthy())
+    expect(screen.getByText(/^Issued 3d ago · revoked/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Revoke MCP token' })).toBeNull()
+  })
+
+  it('asks before revoking, naming what keeps working, and a dismissal revokes nothing', async () => {
+    const revoke = vi.spyOn(api, 'deviceIntegrationRevoke').mockResolvedValue({ ok: true, revoked: 'surface-mcp' })
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({ integrations: [integration()], problem: '' })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke MCP token' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent).toMatch(/Revoke MCP token\?/)
+    expect(dialog.textContent).toMatch(/Registered clients keep their own tokens\./)
+    expect(dialog.textContent).toMatch(/personalclaw inbound token create mcp --rotate/)
+    const cancel = Array.from(dialog.querySelectorAll('button')).find((b) => /cancel/i.test(b.textContent ?? ''))
+    fireEvent.click(cancel!)
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(revoke).not.toHaveBeenCalled()
+  })
+
+  it('a confirmed revoke sends that token and re-reads the list', async () => {
+    const revoke = vi.spyOn(api, 'deviceIntegrationRevoke').mockResolvedValue({ ok: true, revoked: 'client-abc' })
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    const list = vi.spyOn(api, 'deviceIntegrations')
+    list.mockResolvedValueOnce({ integrations: [IDE_CLIENT], problem: '' }).mockResolvedValue({ integrations: [], problem: '' })
+    const toasts = captureToasts()
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: "Revoke the “ide” client's token" }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent).toMatch(/Register it again to give it a new token\./)
+    const go = Array.from(dialog.querySelectorAll('button')).find((b) => /^revoke$/i.test(b.textContent ?? ''))
+    fireEvent.click(go!)
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith('client-abc'))
+    await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(1))
+    expect(toasts).toContain("The “ide” client's token is revoked.")
+  })
+
+  it('a failed revoke is reported with the reason, and the token stays listed', async () => {
+    vi.spyOn(api, 'deviceIntegrationRevoke').mockRejectedValue(new Error('the token record is read-only'))
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({ integrations: [integration()], problem: '' })
+    const toasts = captureToasts()
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke MCP token' }))
+    const dialog = await screen.findByRole('alertdialog')
+    const go = Array.from(dialog.querySelectorAll('button')).find((b) => /^revoke$/i.test(b.textContent ?? ''))
+    fireEvent.click(go!)
+    await waitFor(() => expect(toasts.some((t) => t === "Couldn't revoke MCP token: the token record is read-only")).toBe(true))
+    expect(screen.getByText('MCP token')).toBeTruthy()
+  })
+
+  it('names a failed read of the list, and still shows the devices', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockRejectedValue(new Error('gateway unreachable'))
+    mount()
+    await waitFor(() => expect(screen.getByText("Couldn't load your integration tokens")).toBeTruthy())
+    expect(screen.getByText('Kitchen tablet')).toBeTruthy()
+  })
+
+  it('says when the record of token lifetimes cannot be read', async () => {
+    const problem = "The record of when each integration token stops working can't be read, so every surface token is refused until it can: inbound_tokens.json is not valid JSON"
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({ integrations: [], problem })
+    mount()
+    await waitFor(() => expect(screen.getByText(problem)).toBeTruthy())
+    expect(screen.getByText('Integrations')).toBeTruthy()
+  })
+
+  it('shows no Integrations section when there are none', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    mount()
+    await waitFor(() => expect(screen.getByText('Kitchen tablet')).toBeTruthy())
+    expect(screen.queryByText(/^Integrations/)).toBeNull()
+  })
+})
+
+describe('an integration row reads as a heading', () => {
+  it('a surface token is named as a heading, and a client as its owner named it', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([device()])
+    vi.spyOn(api, 'deviceIntegrations').mockResolvedValue({
+      integrations: [
+        integration({ id: 'surface-capture', name: 'capture proxy token', surfaces: ['capture'], surface_names: ['capture proxy'] }),
+        integration({ id: 'client-x', kind: 'client', name: 'my ide', renew: '' }),
+      ],
+      problem: '',
+    })
+    mount()
+    await waitFor(() => expect(screen.getByText('Capture proxy token')).toBeTruthy())
+    expect(screen.getByText('my ide')).toBeTruthy()
+    // The sentence keeps it lowercase, where it sits mid-sentence.
+    expect(screen.getByRole('button', { name: 'Revoke capture proxy token' })).toBeTruthy()
   })
 })

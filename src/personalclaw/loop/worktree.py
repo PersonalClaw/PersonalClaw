@@ -74,7 +74,10 @@ def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]
     # run drives them). Deliver the ``build`` ceiling (raised NOFILE for many file
     # handles + OOM bias) via the post-exec shim, prepended to argv. Synchronous run
     # off no event loop, so no fork-wedge hazard; the shim applies the limit after exec.
-    from personalclaw.sandbox import PROFILE_BUILD, spawn_shim_argv
+    # The environment is the child allowlist (`build_child_env`): `commit` and `merge` run the
+    # repository's hooks, which can be tracked files the loop's own work edits, and an inherited
+    # `GIT_DIR` or `GIT_WORK_TREE` would point every step at another repository.
+    from personalclaw.sandbox import PROFILE_BUILD, build_child_env, spawn_shim_argv
 
     try:
         p = subprocess.run(
@@ -83,6 +86,7 @@ def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]
             capture_output=True,
             timeout=timeout,
             check=False,
+            env=build_child_env(site="loop-worktree-git"),
         )
         out = (p.stdout or b"").decode("utf-8", "replace") + (p.stderr or b"").decode(
             "utf-8", "replace"

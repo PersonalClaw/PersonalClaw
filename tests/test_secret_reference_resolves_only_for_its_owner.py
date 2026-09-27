@@ -30,8 +30,8 @@ APP = "fixture-reader"
 OTHER = "fixture-holder"
 VAULT_KEY = "FIXTURE_VAULT_TOKEN"
 
-OWN_TOKEN = "xoxb-own-5e4d3c2b-fixture"
-OTHER_TOKEN = "xoxb-other-9a8b7c6d-never-reaches-another-app"
+OWN_TOKEN = "fake-bot-token-own-5e4d3c2b-fixture"
+OTHER_TOKEN = "fake-bot-token-other-9a8b7c6d-never-reaches-another-app"
 VAULT_VALUE = "ghp-vault-1f2e3d4c-never-reaches-an-app"
 
 
@@ -250,7 +250,7 @@ async def test_the_providers_list_masks_a_reference_whatever_its_field_is_called
 
 def test_a_save_naming_another_owners_key_is_refused_and_stores_nothing(home):
     key = _other_apps_key()
-    fresh = "xoxb-fresh-0a1b2c3d-typed-alongside"
+    fresh = "fake-bot-token-fresh-0a1b2c3d-typed-alongside"
 
     with pytest.raises(ValueError) as refused:
         ProviderSettings.save(APP, {"bot_token": make_ref(key), "app_token": fresh})
@@ -445,7 +445,7 @@ def test_config_get_reveal_does_not_reveal_another_owners_key():
     from personalclaw.config.secret_refs import reveal_stored_values, store_provider_options
 
     key = _other_apps_key()
-    own = store_provider_options("mine", "openai", {"api_key": "sk-core-own-4c5d6e7f"})
+    own = store_provider_options("mine", "openai", {"api_key": "fake-key-core-own-4c5d6e7f"})
     doc = {
         "providers": [
             {"name": "mine", "type": "openai", "options": own},
@@ -455,7 +455,7 @@ def test_config_get_reveal_does_not_reveal_another_owners_key():
 
     revealed, missing = reveal_stored_values(doc)
 
-    assert revealed["providers"][0]["options"]["api_key"] == "sk-core-own-4c5d6e7f"
+    assert revealed["providers"][0]["options"]["api_key"] == "fake-key-core-own-4c5d6e7f"
     assert revealed["providers"][1]["options"]["api_key"] == make_ref(key)
     assert OTHER_TOKEN not in json.dumps(revealed) and missing == []
 

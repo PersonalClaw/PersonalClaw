@@ -131,7 +131,13 @@ class _TrustMode:
 
     @property
     def from_config(self) -> bool:
-        return self._from_config
+        """Whether YOLO is on because the config says so, read back like :meth:`is_active`.
+
+        Reading the cached flag alone let the two disagree once the config dropped ``agent.yolo``
+        outside Settings: a channel's ``yolo on`` was told YOLO was permanently on from the config
+        while the next check was about to end it.
+        """
+        return self.is_active() and self._from_config
 
     def remaining_secs(self) -> float | None:
         """Seconds until auto-expiry, or None if inactive/permanent."""

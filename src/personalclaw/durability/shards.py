@@ -36,6 +36,7 @@ import os
 import re
 import shutil
 import sqlite3
+import sys
 import tempfile
 import uuid
 from contextlib import closing
@@ -941,24 +942,24 @@ def backup_cmd(args) -> int:
             print(f"⚠️  skipped {entry_id}: {reason}")
         return 0
 
-    if command == "validate":
-        shard_dir = Path(args.shard_dir).expanduser() if args.shard_dir else default_shard_dir(home)
-        if not shard_dir.is_dir():
-            print(f"❌ No shard export at {shard_dir} — run `personalclaw backup export` first.")
-            return 1
-        report = validate(shard_dir)
-        if report.ok:
-            print(
-                f"✅ Export valid: {report.shards_checked} shard(s), "
-                f"{report.rows_checked:,} row(s) verified (bytes + rows + sha256 + parse)."
-            )
-            return 0
-        print(f"❌ Export INVALID — {len(report.problems)} problem(s):")
-        for problem in report.problems[:50]:
-            print(f"  - {problem}")
-        if len(report.problems) > 50:
-            print(f"  … and {len(report.problems) - 50} more")
+    # `validate`: the parser allows no other command.
+    shard_dir = Path(args.shard_dir).expanduser() if args.shard_dir else default_shard_dir(home)
+    if not shard_dir.is_dir():
+        print(
+            f"❌ No shard export at {shard_dir} — run `personalclaw backup export` first.",
+            file=sys.stderr,
+        )
         return 1
-
-    print("Usage: personalclaw backup {export|validate}")
-    return 2
+    report = validate(shard_dir)
+    if report.ok:
+        print(
+            f"✅ Export valid: {report.shards_checked} shard(s), "
+            f"{report.rows_checked:,} row(s) verified (bytes + rows + sha256 + parse)."
+        )
+        return 0
+    print(f"❌ Export INVALID — {len(report.problems)} problem(s):")
+    for problem in report.problems[:50]:
+        print(f"  - {problem}")
+    if len(report.problems) > 50:
+        print(f"  … and {len(report.problems) - 50} more")
+    return 1

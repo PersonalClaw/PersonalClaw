@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.approval_answer import YOU
+
 WEB = Path(__file__).resolve().parents[1] / "web" / "src"
 
 
@@ -107,7 +109,7 @@ async def _request(state, tool: str, tool_input: str):
         if "ap-1" in state._pending_approvals:
             break
     row = dict(state._pending_approvals["ap-1"])
-    state.resolve_approval("ap-1", False)
+    state.resolve_approval("ap-1", False, by=YOU)
     await task
     return row
 
@@ -171,7 +173,7 @@ async def test_the_verdict_is_derived_before_redaction_rewrites_the_command() ->
     row = await _request(state, "bash", json.dumps({"command": raw}))
     # The two strings really do differ — otherwise this test proves nothing at all.
     assert "REDACTED" in str(row["tool_input"])
-    assert "sk-ant-api03" not in str(row["tool_input"])
+    assert "fake-anthropic-api03" not in str(row["tool_input"])
     # …and the published verdict is the one the raw command earns.
     from personalclaw.task_modes import is_read_only_bash
 

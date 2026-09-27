@@ -166,16 +166,37 @@ def calls_the_browser_gate(source: str) -> list[str]:
     spells out one level up: this file's own prose names all three helpers, and a substring
     search would call that a gate. Asking the syntax tree "is this a call" separates the module
     that can skip from the module that merely talks about skipping.
+
+    A call counts only when it resolves to ``browse_chrome``: an attribute of a name the module
+    is imported as, or a name imported from it. ``missing`` is a common name, and matching it on
+    any receiver put ``grants.missing(trigger)`` on the browser leg.
     """
+    tree = ast.parse(source)
+    module_names: set[str] = set()
+    gate_names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == browse_chrome.__name__:
+                    module_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module == browse_chrome.__name__:
+            for alias in node.names:
+                if alias.name in _GATE_CALLS:
+                    gate_names[alias.asname or alias.name] = alias.name
     hits: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in _GATE_CALLS:
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in _GATE_CALLS
+            and isinstance(func.value, ast.Name)
+            and func.value.id in module_names
+        ):
             hits.append(f"{func.attr}() at line {node.lineno}")
-        elif isinstance(func, ast.Name) and func.id in _GATE_CALLS:
-            hits.append(f"{func.id}() at line {node.lineno}")
+        elif isinstance(func, ast.Name) and func.id in gate_names:
+            hits.append(f"{gate_names[func.id]}() at line {node.lineno}")
     return hits
 
 
@@ -416,6 +437,8 @@ class TestTheDetectors:
             'import browse_chrome\nbrowse_chrome.websockets_or_skip("P")\n',
             'import browse_chrome\nbrowse_chrome.missing("P", "no browser")\n',
             'from browse_chrome import chrome_or_skip\nchrome = chrome_or_skip("P")\n',
+            'import browse_chrome as bc\nbc.chrome_or_skip("P")\n',
+            'from browse_chrome import missing as gone\ngone("P", "no browser")\n',
         ],
     )
     def test_a_real_gate_call_is_caught(self, source: str) -> None:
@@ -429,6 +452,9 @@ class TestTheDetectors:
             '"""A docstring naming chrome_or_skip and websockets_or_skip."""\n',
             'HELPERS = ["chrome_or_skip", "websockets_or_skip", "missing"]\n',
             "missing = {1, 2} - {1}\nassert not missing\n",
+            # Another module's function that shares a gate's name.
+            "from personalclaw.triggers import grants\nassert grants.missing(row) == []\n",
+            "def missing():\n    return []\n\nmissing()\n",
         ],
     )
     def test_a_mere_mention_is_not_a_gate(self, source: str) -> None:

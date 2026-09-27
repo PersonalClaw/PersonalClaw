@@ -26,6 +26,7 @@ _ensure_ssl_certs()
 
 import argparse
 import asyncio
+import io
 import logging
 import os
 import sys
@@ -37,16 +38,8 @@ from personalclaw.config import AppConfig, config_dir
 from personalclaw.config.loader import (
     DASHBOARD_PORT,
 )
+from personalclaw.constants import BANNER
 from personalclaw.seed import seed_cmd
-
-BANNER = r"""
-   ___                           _  ___ _
-  | _ \___ _ _ ___ ___ _ _  __ _| |/ __| |__ ___ __ __
-  |  _/ -_) '_(_-</ _ \ ' \/ _` | | (__| / _` \ V  V /
-  |_| \___|_| /__/\___/_||_\__,_|_|\___|_\__,_|\_/\_/
-
-  Your personal AI agent
-"""
 
 
 def _resolve_gateway_args(args: argparse.Namespace) -> dict:
@@ -226,6 +219,38 @@ def _hide_internal_commands(parser: argparse.ArgumentParser) -> None:
         # subcommand's tree is not walked twice.
         for child in dict.fromkeys(action.choices.values()):
             _hide_internal_commands(child)
+
+
+#: The command groups whose bare name does something of its own, so it is not a usage error:
+#: ``auth``, ``incident`` and ``push`` show their status and ``skills`` lists the installed
+#: skills. Every other group needs one of its commands (:func:`_require_subcommands`).
+RUN_WITHOUT_A_SUBCOMMAND = frozenset({"auth", "incident", "push", "skills"})
+
+
+def _require_subcommands(parser: argparse.ArgumentParser) -> None:
+    """Make ``personalclaw <group>`` with none of the group's commands a usage error.
+
+    It printed a hand-written usage line, on stdout for twelve groups and with exit 0 for seven,
+    so a script read ``personalclaw cron`` as having done something. argparse now refuses it as it
+    refuses every other malformed command line: the usage on stderr, ``error: the following
+    arguments are required: {list,add,…}``, and exit 2. ``--help`` is unchanged.
+
+    The metavar is pinned to the group's own commands because argparse names a missing
+    subcommand by its metavar, and without one by its ``dest`` (``cron_action``). The pinned
+    text is what argparse renders by default, so no help surface changes. Runs over the
+    finished tree, as :func:`_hide_internal_commands` does, so every command is already there.
+    """
+    for top in parser._actions:
+        if not isinstance(top, argparse._SubParsersAction):
+            continue
+        for name, group in top.choices.items():
+            if name in RUN_WITHOUT_A_SUBCOMMAND:
+                continue
+            for action in group._actions:
+                if isinstance(action, argparse._SubParsersAction):
+                    action.required = True
+                    if action.metavar is None:
+                        action.metavar = "{%s}" % ",".join(action.choices)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -539,8 +564,10 @@ allow and changes nothing.
     cron_add = cron_sub.add_parser("add", help="Add a cron job")
     cron_add.add_argument("name", help="Job name")
     cron_add.add_argument("message", help="Message to send to agent")
-    cron_add.add_argument("--every", type=int, help="Interval in seconds")
-    cron_add.add_argument(
+    # One cadence, and only one: a missing or doubled one is the parser's usage error (exit 2).
+    cron_cadence = cron_add.add_mutually_exclusive_group(required=True)
+    cron_cadence.add_argument("--every", type=int, help="Interval in seconds")
+    cron_cadence.add_argument(
         "--cron", dest="cron_expr", help='Cron expression (e.g. "0 9 * * MON-FRI")'
     )
     cron_add.add_argument(
@@ -563,8 +590,11 @@ allow and changes nothing.
     cron_update.add_argument("job_id", help="Job ID to update")
     cron_update.add_argument("--name", help="New job name")
     cron_update.add_argument("--message", help="New message")
-    cron_update.add_argument("--every", type=int, dest="every_secs", help="New interval in seconds")
-    cron_update.add_argument("--cron", dest="cron_expr", help="New cron expression")
+    cron_new_cadence = cron_update.add_mutually_exclusive_group()
+    cron_new_cadence.add_argument(
+        "--every", type=int, dest="every_secs", help="New interval in seconds"
+    )
+    cron_new_cadence.add_argument("--cron", dest="cron_expr", help="New cron expression")
     cron_update.add_argument(
         "--channel", help="New place results go: a chat channel's name or <name>:<chat id>"
     )
@@ -690,9 +720,11 @@ Examples:
         "inbound", help="Manage the inbound access surfaces (openai, mcp, a2a, capture, bridge)"
     )
     inbound_sub = inbound_parser.add_subparsers(dest="inbound_command")
-    inbound_token = inbound_sub.add_parser("token", help="Create or inspect a surface token")
+    inbound_token = inbound_sub.add_parser(
+        "token", help="Create, inspect or revoke a surface token"
+    )
     inbound_token.add_argument(
-        "token_action", choices=("create", "show"), nargs="?", default="create"
+        "token_action", choices=("create", "show", "revoke"), nargs="?", default="create"
     )
     # `choices` is deliberately NOT set from `EXTERNAL_ACCESS_SURFACES` here: importing
     # the config loader at parser-build time would put a heavy module on every CLI
@@ -709,13 +741,14 @@ Examples:
         action="store_true",
         help="Replace an existing token (the old one stops working)",
     )
-    # `confirm` resolves a control-bridge action the bridge flagged
-    # `requiresConfirmation`. It is a CLI verb because the whole
-    # point is that a HUMAN authorises the write — the agent that asked cannot.
-    inbound_confirm = inbound_sub.add_parser(
-        "confirm", help="Confirm a pending control-bridge action by its token"
+    inbound_token.add_argument(
+        "--ttl",
+        default="90d",
+        help=(
+            "How long a created token works: 30m, 20h, 7d (default: 90d, the limit for a "
+            "long-lived credential — longer is refused)"
+        ),
     )
-    inbound_confirm.add_argument("confirm_token", help="The confirm_token the bridge returned")
 
     # capture — telemetry import for agents that cannot be proxied
     # (EXTERNAL-ACCESS §8). The proxy half of capture needs no CLI; this half does,
@@ -762,6 +795,12 @@ Examples:
     auth_revoke = auth_sub.add_parser("revoke", help="End dashboard sessions")
     auth_revoke.add_argument("--all", action="store_true", help="Revoke every session")
     auth_revoke.add_argument(
+        "--port", type=int, default=0, help="Gateway port (defaults to the configured one)"
+    )
+    auth_rotate = auth_sub.add_parser(
+        "rotate-key", help="Replace the sign-in key, signing every device and token out"
+    )
+    auth_rotate.add_argument(
         "--port", type=int, default=0, help="Gateway port (defaults to the configured one)"
     )
 
@@ -1440,11 +1479,19 @@ Examples:
     )
 
     _hide_internal_commands(parser)
+    _require_subcommands(parser)
     return parser
 
 
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
+    # stdout a line at a time, so that a line on stderr lands after what was printed before it
+    # when both streams go to one pipe (`personalclaw setup 2>&1 | tee setup.log`). A piped
+    # stdout is otherwise buffered in blocks, and each failure `setup` names on stderr came out
+    # ahead of the prompt it answers.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
+
     # Load .env from the working directory and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.
@@ -1745,8 +1792,12 @@ def main() -> None:
     elif args.command == "skills":
         _handle_skills(args)
     else:
-        print(BANNER)
-        parser.print_help()
+        # `personalclaw` with no command is the same usage error as a group with none of its
+        # commands (`_require_subcommands`): on stderr, exit 2. The whole help, not argparse's
+        # one-line usage, because it lists every command; `--help` prints it on stdout.
+        print(BANNER, file=sys.stderr)
+        parser.print_help(sys.stderr)
+        sys.exit(2)
 
 
 # ── Config ──
@@ -1815,9 +1866,6 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
 
     from personalclaw.workflows.replay import ReplayError, replay_run
 
-    if getattr(args, "workflow_command", None) != "replay":
-        print("usage: personalclaw workflow replay <run_id>", file=sys.stderr)
-        return 2
     try:
         result = replay_run(args.run_id)
     except ReplayError as exc:
@@ -2022,9 +2070,6 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         print(f"\n{len(dirs)} skill(s) checked, {tampered} tampered.")
         if tampered:
             sys.exit(1)
-        return
-
-    print("Usage: personalclaw skills [list|search|install|remove|curate|verify]")
 
 
 def _incident_cmd(args) -> None:  # noqa: ANN001

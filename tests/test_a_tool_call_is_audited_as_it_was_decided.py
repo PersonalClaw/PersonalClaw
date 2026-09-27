@@ -32,6 +32,7 @@ import pytest
 from test_native_runtime import _defn, _ScriptedModel
 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
+from personalclaw.approval_answer import YOU
 from personalclaw.config import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard.chat_runner import run_chat
@@ -150,7 +151,7 @@ async def _answer_when_asked(state: DashboardState, session, action: str) -> Non
     for _ in range(400):
         pending = [k for k, f in session._approval_futures.items() if not f.done()]
         if pending:
-            state.decide_session_approval(session, pending[0], action)
+            state.decide_session_approval(session, pending[0], action, by=YOU)
             return
         await asyncio.sleep(0.01)
     raise AssertionError("the chat never asked")
@@ -213,7 +214,9 @@ async def test_a_channel_s_answer_is_a_person_s_too(tmp_path):
         for _ in range(400):
             pending = [k for k, f in session._approval_futures.items() if not f.done()]
             if pending:
-                assert state.resolve_approval(chat_approval_id(session.key, pending[0]), True)
+                assert state.resolve_approval(
+                    chat_approval_id(session.key, pending[0]), True, by=YOU
+                )
                 return
             await asyncio.sleep(0.01)
         raise AssertionError("the chat never asked")

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { changelogBody } from './UpdatesPanel'
+import { changelogBody, plainHeadline, updateEntries } from './UpdatesPanel'
 
 // ── The panel told the reader how the panel works ─────────────────────────────────────────────────
 //
@@ -103,5 +103,59 @@ describe('the changelog card renders the changelog, not the file', () => {
     expect(src, 'the card must render the transformed body').toMatch(/<Markdown>\{changelogBody\(changelog\)\}<\/Markdown>/)
     expect(src, 'the raw document must not be rendered again').not.toMatch(/<Markdown>\{changelog\}<\/Markdown>/)
     expect(src, 'and the empty state still answers for an absent changelog').toMatch(/No changelog available\./)
+  })
+})
+
+// ── A headline-only CHANGELOG: the bold marks nothing, and the blank lines make gaps ──────────────
+//
+// Every entry is one line, `- **<headline>**`. Measured on `#/settings/updates` with that file: 926 of
+// 962 items rendered bold (weight 600) under an `Added` heading drawn at 500, and the gap between two
+// items was 6px in one section and 36px in the next — the sections that separate entries with blank
+// lines parse as loose lists, one paragraph per item.
+
+describe('the changelog card shows headline-only entries as one plain, even list', () => {
+  it('an entry that is one bold span is shown plain', () => {
+    expect(plainHeadline('- **Settings → Security sets how long a sign-in lasts.**'))
+      .toBe('- Settings → Security sets how long a sign-in lasts.')
+    expect(plainHeadline('- **`inbound` is renamed `external_access`**')).toBe('- `inbound` is renamed `external_access`')
+  })
+
+  it('bold inside the sentence stays, and so does a headline with text after it', () => {
+    // A span that closes only at the end, with balanced bold inside it: one headline.
+    expect(plainHeadline('- **A → **B** C**')).toBe('- A → **B** C')
+    // The first span closes after A: this line is a headline plus text, not one span.
+    expect(plainHeadline('- **A** and **B**')).toBe('- **A** and **B**')
+    // An entry whose bold picks out a word keeps it.
+    expect(plainHeadline('- The **YOLO mode** toggle applies at once.')).toBe('- The **YOLO mode** toggle applies at once.')
+    expect(plainHeadline('- **Never closes')).toBe('- **Never closes')
+  })
+
+  it('a blank line between two entries is dropped; one beside a heading is kept', () => {
+    const md = ['## [Unreleased]', '', '### Added', '', '- **One.**', '', '- **Two.**', '', '', '- **Three.**', '',
+      '### Fixed', '', '- **Four.**'].join('\n')
+    expect(changelogBody(md)).toBe(['### [Unreleased]', '', '#### Added', '', '- One.', '- Two.', '- Three.', '',
+      '#### Fixed', '', '- Four.'].join('\n'))
+  })
+
+  it('leaves bullets, bold and blank lines inside fenced code alone', () => {
+    const md = ['## [1.0.0]', '', '```diff', '- **kept**', '', '- **kept too**', '```', '', '- **Shown plain.**'].join('\n')
+    expect(changelogBody(md).split('\n')).toEqual(['### [1.0.0]', '', '```diff', '- **kept**', '', '- **kept too**', '```', '',
+      '- Shown plain.'])
+  })
+
+  it('the real CHANGELOG reaches the card with every entry plain and no gap between entries', () => {
+    const out = changelogBody(readFileSync(join(process.cwd(), '..', 'CHANGELOG.md'), 'utf8')).split('\n')
+    const entries = out.filter((l) => l.startsWith('- '))
+    expect(entries.length, 'the card must still list the entries').toBeGreaterThan(100)
+    expect(entries.filter((l) => plainHeadline(l) !== l), 'an entry still rendered as one bold span').toEqual([])
+    const gaps = out.filter((l, i) => !l.trim() && out[i - 1]?.startsWith('- ') && out[i + 1]?.startsWith('- '))
+    expect(gaps.length, 'a blank line between two entries makes the list loose').toBe(0)
+  })
+
+  it('the entries an update brings are its added entry lines, shown plain', () => {
+    const changes = ['## [0.2.1] — 2026-10-01', '', '### Added', '', '- **A new thing.**', '- **Another.**'].join('\n')
+    expect(updateEntries(changes)).toBe('- A new thing.\n- Another.')
+    expect(updateEntries('## [0.2.1] — 2026-10-01\n\n### Added'), 'a diff that added no entry lists nothing').toBe('')
+    expect(updateEntries(''), 'no diff, nothing').toBe('')
   })
 })

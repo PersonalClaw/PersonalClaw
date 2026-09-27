@@ -53,8 +53,8 @@ SDK_PACKAGE = "personalclaw.sdk"
 #: What a reviewer is told to do when the snapshot is stale. One sentence, shared by the
 #: generator, the test and the CI job, so the three never give different instructions.
 REGENERATE = (
-    "run `python scripts/sdk_signature_snapshot.py`, review the diff, and add a CHANGELOG entry "
-    "naming the apps the change affects (CONTRIBUTING.md#sdk-changes)"
+    "run `python scripts/sdk_signature_snapshot.py`, review the diff, and add a CHANGELOG headline "
+    "naming the apps the change affects in backticks (CONTRIBUTING.md#changelog)"
 )
 
 _ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")

@@ -46,7 +46,7 @@ class TestDiagnosticsLogRedaction:
         through (#406). The second case below is the one that fails on the old
         patterns, and it is why both are here.
         """
-        token_part = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+        token_part = "fake-github-token-1"
         raw = f"app registry: git fetch errored for https://user:{token_part}@github.com/repo.git"
         redacted = _redact_log_text(raw)
         assert token_part not in redacted
@@ -100,7 +100,7 @@ class TestDiagnosticsLogRedaction:
         handler = _RingLogHandler(ring)
         handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
 
-        pat_token = "ghp_secretTokenVal1234567890abcdef"
+        pat_token = "fake-github-token-2"
         secret_url = f"https://user:{pat_token}@example.com/repo.git"
         record = logging.LogRecord(
             name="personalclaw.catalog",

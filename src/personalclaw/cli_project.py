@@ -12,6 +12,7 @@ two facts the user has to act on — what was skipped, and which credentials the
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -56,13 +57,14 @@ def _export(args: argparse.Namespace) -> int:
 
     project = _resolve_project(args.project)
     if project is None:
-        print(f"❌ No project matches {args.project!r}")
+        print(f"❌ No project matches {args.project!r}", file=sys.stderr)
         return 1
 
     if args.passphrase and not pa.encryption_available():
         print(
-            "❌ Encryption needs the optional `cryptography` extra: "
-            "pip install 'personalclaw[oauth2]'"
+            "❌ Encryption needs the `cryptography` package, which PersonalClaw depends on and "
+            "this environment is missing: pip install 'cryptography>=42'",
+            file=sys.stderr,
         )
         return 1
 
@@ -78,7 +80,7 @@ def _export(args: argparse.Namespace) -> int:
             passphrase=args.passphrase or "",
         )
     except pa.ArchiveRefused as exc:
-        print(f"❌ Export refused ({exc.reason}): {exc.detail}")
+        print(f"❌ Export refused ({exc.reason}): {exc.detail}", file=sys.stderr)
         return 1
 
     out = (
@@ -125,7 +127,7 @@ def _import(args: argparse.Namespace) -> int:
 
     archive = Path(args.archive).expanduser()
     if not archive.is_file():
-        print(f"❌ No such archive: {archive}")
+        print(f"❌ No such archive: {archive}", file=sys.stderr)
         return 1
 
     store = HierarchyStore()
@@ -135,10 +137,10 @@ def _import(args: argparse.Namespace) -> int:
             archive, existing_names=existing, passphrase=args.passphrase or ""
         )
     except pa.ArchiveRefused as exc:
-        print(f"❌ Refused ({exc.reason}): {exc.detail}")
+        print(f"❌ Refused ({exc.reason}): {exc.detail}", file=sys.stderr)
         return 1
     except pa.EncryptionUnavailable as exc:
-        print(f"❌ {exc}")
+        print(f"❌ {exc}", file=sys.stderr)
         return 1
 
     print(import_summary(plan, preview=True))
@@ -153,7 +155,7 @@ def _import(args: argparse.Namespace) -> int:
         print("   (dry run — nothing was written)")
         return 0
     if not plan.ok:
-        print("❌ Nothing importable in this archive.")
+        print("❌ Nothing importable in this archive.", file=sys.stderr)
         return 1
 
     created, written = pa.import_project(
@@ -169,10 +171,7 @@ def _import(args: argparse.Namespace) -> int:
 
 
 def project_main(args: argparse.Namespace) -> int:
-    command = getattr(args, "project_command", "") or ""
-    if command == "export":
+    """``personalclaw project export|import``; the parser refuses a bare ``project``."""
+    if getattr(args, "project_command", "") == "export":
         return _export(args)
-    if command == "import":
-        return _import(args)
-    print("Usage: personalclaw project {export|import} …")
-    return 1
+    return _import(args)

@@ -340,6 +340,25 @@ async def api_changelog(request: web.Request) -> web.Response:
 _apply_in_flight = False
 
 
+def _busy() -> web.Response | None:
+    """The 409 for an update that must not start now, or ``None`` when one may.
+
+    One is already running; or the gateway is stopping to restart. A restart returns to whoever
+    asked for it and the gateway then takes a moment to stop, so an apply's own slot is free again
+    by then: an Update pressed in that moment would pull, install and build against the tree the
+    new image starts from, while the gateway stops under it.
+    """
+    from personalclaw.restart_request import pending
+
+    if _apply_in_flight:
+        return web.json_response({"error": "An update is already in progress"}, status=409)
+    if pending() is not None:
+        return web.json_response(
+            {"error": "PersonalClaw is restarting. Try again once it is back."}, status=409
+        )
+    return None
+
+
 async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.Response:
     """Upgrade a pip/uv/pipx install in place, then graceful re-exec (T4.3).
 
@@ -356,8 +375,9 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     """
     global _apply_in_flight
 
-    if _apply_in_flight:
-        return web.json_response({"error": "An update is already in progress"}, status=409)
+    busy = _busy()
+    if busy is not None:
+        return busy
     _apply_in_flight = True
     state.push_refresh("updating")
 
@@ -520,11 +540,9 @@ async def api_update_apply(request: web.Request) -> web.Response:
             status=400,
         )
 
-    if _apply_in_flight:
-        return web.json_response(
-            {"error": "An update is already in progress"},
-            status=409,
-        )
+    busy = _busy()
+    if busy is not None:
+        return busy
     # Claim the in-flight slot BEFORE the first await below — otherwise two
     # concurrent POSTs could both pass the check while one parks on a subprocess.
     # A rejected concurrent request therefore does NO config read and NO network.
@@ -685,17 +703,17 @@ async def api_update_apply(request: web.Request) -> web.Response:
             state.push_update_progress("building", "Building frontend…")
             await build_frontend_async(pkg_root, push_progress=state.push_update_progress)
 
-            # Restart: save history + clean up sessions then exec the same process
+            # Restart: the gateway stops the way every stop runs, then starts the new image
             state.push_update_progress("restarting", "Restarting server…")
-            logger.info("Update complete — saving history and cleaning up before restart")
+            logger.info("Update complete — restarting")
             await _graceful_reexec(state, auth_mode=_live_auth_mode(request))
         except Exception:
             logger.exception("Update failed")
             state.push_update_progress("failed", "Update failed — check logs")
             state.push_refresh("update_failed")
         finally:
-            # Reached on every failure path (and harmlessly never observed on
-            # success — the process image is replaced by the re-exec above).
+            # Reached on success too, since a restart returns once it is asked for; `_busy`
+            # refuses the next apply while the gateway stops to restart.
             _apply_in_flight = False
 
     task = asyncio.create_task(_apply())
@@ -718,55 +736,28 @@ def _live_auth_mode(request: web.Request) -> str:
 
 
 async def _graceful_reexec(state: DashboardState, *, auth_mode: str = "") -> None:
-    """Save history, close sessions, drain frames, then exec a fresh gateway
-    in-place. Shared by the update-apply restart and the standalone restart
-    endpoint so both use the identical proven sequence. ``os.execv`` replaces
-    this process image (same PID) — the kernel hands the listen socket to the
-    new image after it binds, so there is no window where nothing is running.
-    Uses ``-m personalclaw`` (not ``sys.argv[0]``) because a build-artifact
-    clean may have removed the original ``__main__`` path.
+    """Restart the gateway: stop it the way every stop runs, then start a fresh image in place.
 
-    Preserves the resolved AUTH MODE across the re-exec (#46): the gateway reads
-    ``PERSONALCLAW_AUTH_MODE`` from the env at boot, but the original launcher's env
-    may not survive (e.g. the parent shell that exported ``=none`` exits, the
-    process gets reparented to PID 1, and a plain ``os.execv`` that relied on that
-    var being in ``os.environ`` would come back token-required). That's a SURPRISING
-    security-posture flip on a Restart. So snapshot the LIVE mode from the running
-    app's ``auth_cfg`` and pass it explicitly via ``os.execve`` — a Restart re-applies
-    code without ever changing whether auth is on/off."""
+    Shared by the update-apply restart, the standalone restart endpoint and the staged
+    auto-update, so all three restart the same way. It used to re-exec from here, after saving
+    chat history, closing sessions and stopping app processes — and nothing else, so every other
+    step of a stop was skipped: time travel's pending commits were never written (the edits made
+    just before a Restart had no history), and the durability loop, search indexer and sign-in
+    tally were never stopped or flushed. It now asks for the restart
+    (:mod:`personalclaw.restart_request`) and the gateway, when its own shutdown is done, starts
+    the new image (``GatewayOrchestrator._finish``) — the new image keeps this PID.
+
+    *auth_mode* is the LIVE ``AuthConfig.mode`` (an AuthMode str-enum: 'none' / 'local_token' / …)
+    the caller read from ``request.app['auth_cfg']``, pinned into the new image's environment (#46)
+    so a Restart re-applies code without ever changing whether auth is on or off."""
     exe = sys.executable
     if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
         state.push_update_progress("error", "Cannot restart: invalid Python executable path")
         return
-    from personalclaw.dashboard.chat import save_all_sessions_to_history
+    from personalclaw.restart_request import request_restart
 
-    # Snapshot the currently-active auth mode into the child's env so the re-exec'd
-    # gateway resolves the SAME posture regardless of the inherited env (#46).
-    # ``auth_mode`` is the live ``AuthConfig.mode`` (an AuthMode str-enum: 'none' /
-    # 'local_token' / …) passed by the caller from ``request.app['auth_cfg']``;
-    # AuthConfig.from_env() reads PERSONALCLAW_AUTH_MODE lowercased, so the enum
-    # value round-trips exactly.
-    child_env = dict(os.environ)
-    if auth_mode:
-        child_env["PERSONALCLAW_AUTH_MODE"] = str(auth_mode)
-
-    try:
-        save_all_sessions_to_history(state)
-    except Exception:
-        logger.debug("History save before restart failed", exc_info=True)
-    try:
-        await state.sessions.close_all()
-    except Exception:
-        logger.debug("Session cleanup before restart failed", exc_info=True)
-    # The new image keeps this PID, so an app backend or worker left running would stay its
-    # child, unsupervised and never reaped — see ``app_runtime.stop_processes``.
-    from personalclaw.apps.app_runtime import stop_processes
-
-    await asyncio.to_thread(stop_processes)
-    sys.stdout.flush()
-    sys.stderr.flush()
     await asyncio.sleep(0.5)  # let pending SSE/WS frames drain to clients
-    os.execve(exe, [exe, "-m", "personalclaw"] + sys.argv[1:], child_env)
+    request_restart(auth_mode=auth_mode)
 
 
 async def api_restart(request: web.Request) -> web.Response:

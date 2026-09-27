@@ -41,6 +41,7 @@ import inspect
 import io
 import json
 import re
+import sys
 import tarfile
 import urllib.error
 import urllib.request
@@ -697,7 +698,7 @@ def create_provider(config: dict[str, Any] | None = None) -> {class_name}:
 
 
 def _render_app_cli_py(*, app_name: str, display_name: str) -> str:
-    return f'''"""CLI seams for {app_name} (plan 32): a setup step and a doctor probe.
+    return f'''"""CLI seams for {app_name}: a setup step and a doctor probe.
 
 ``personalclaw setup`` calls :func:`setup` after the core steps; ``personalclaw doctor``
 calls :func:`doctor` and renders the lines it returns as this app's section.
@@ -1386,14 +1387,15 @@ def _from_template_cmd(args: argparse.Namespace, *, url: str, archive: str) -> i
             f"       Fetch it and rename in place (the template README is the walkthrough):\n"
             f"         personalclaw app new --from-template\n"
             f"       Or generate a named app directly:\n"
-            f"         personalclaw app new {args.name} --type tool"
+            f"         personalclaw app new {args.name} --type tool",
+            file=sys.stderr,
         )
         return 2
     if args.type:
-        print("error: --from-template and --type are different paths — pick one")
+        print("error: --from-template and --type are different paths — pick one", file=sys.stderr)
         return 2
     if url and archive:
-        print("error: pass either --template-url or --template-archive, not both")
+        print("error: pass either --template-url or --template-archive, not both", file=sys.stderr)
         return 2
     try:
         result = from_template(
@@ -1403,7 +1405,7 @@ def _from_template_cmd(args: argparse.Namespace, *, url: str, archive: str) -> i
             force=args.force,
         )
     except ScaffoldError as exc:
-        print(f"error: {exc}")
+        print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"Fetched {result.source}")
     print(f"Created {result.path} — {len(result.files)} files")
@@ -1417,23 +1419,24 @@ def _from_template_cmd(args: argparse.Namespace, *, url: str, archive: str) -> i
 
 
 def app_cmd(args: argparse.Namespace) -> int:
-    """``personalclaw app …`` — returns the process exit code."""
-    if getattr(args, "app_cmd", None) != "new":
-        print("Usage: personalclaw app new [NAME --type TYPE | --list-types]")
-        return 2
+    """``personalclaw app new`` — returns the process exit code. The parser refuses a bare
+    ``app``; the usage errors below are the ones only this command can see, on stderr, exit 2."""
     if getattr(args, "list_types", False):
         print(render_type_table(provider_type_rows()))
         return 0
     template_url = getattr(args, "template_url", "") or ""
     template_archive = getattr(args, "template_archive", "") or ""
     if (template_url or template_archive) and not getattr(args, "from_template", False):
-        print("error: --template-url/--template-archive only apply with --from-template")
+        print(
+            "error: --template-url/--template-archive only apply with --from-template",
+            file=sys.stderr,
+        )
         return 2
     if getattr(args, "from_template", False):
         return _from_template_cmd(args, url=template_url, archive=template_archive)
     if not args.name or not args.type:
-        print("Usage: personalclaw app new NAME --type TYPE")
-        print("       personalclaw app new --list-types")
+        print("Usage: personalclaw app new NAME --type TYPE", file=sys.stderr)
+        print("       personalclaw app new --list-types", file=sys.stderr)
         return 2
     try:
         result = scaffold(
@@ -1446,7 +1449,7 @@ def app_cmd(args: argparse.Namespace) -> int:
             force=args.force,
         )
     except ScaffoldError as exc:
-        print(f"error: {exc}")
+        print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"Created {result.path} — a {result.type} app")
     for rel in result.files:

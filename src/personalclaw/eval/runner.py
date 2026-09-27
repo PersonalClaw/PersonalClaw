@@ -28,8 +28,10 @@ from personalclaw.llm.base import (
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
     EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
     ModelProvider,
 )
+from personalclaw.llm.events import unasked_outcome, unasked_reason
 from personalclaw.memory import MemoryStore
 from personalclaw.sel import sel
 
@@ -374,10 +376,15 @@ class EvalRunner:
         memory_context = ""
         if ctx_builder is not None:
             from personalclaw.context_headroom import resolve_window
+            from personalclaw.security import redact_for_model
 
             window = await resolve_window(serving=provider)
-            memory_context = ctx_builder.build_session_context(
-                session_key=session_key, window=window.budget_tokens
+            # Handed to the model below outside `build_message`, so masked here, where the prompt
+            # is composed (`ContextBuilder.build_session_context` returns stored text as stored).
+            memory_context = redact_for_model(
+                ctx_builder.build_session_context(
+                    session_key=session_key, window=window.budget_tokens
+                )
             )
 
         session_result = SessionResult(name=session_def.name)
@@ -418,6 +425,60 @@ class EvalRunner:
             return "prefix_fs"
         return "unsafe"
 
+    @classmethod
+    def _allowlist_refusal(cls, event: Any) -> str:
+        """Why the allowlist refuses this call, or ``""`` when it approves it.
+
+        A known read-only tool is approved outright. A file tool is approved only for a target
+        it can name and that is not a sensitive path (deny-by-default). Anything else is refused.
+        """
+        from personalclaw.security import is_sensitive_path
+
+        safety = cls._classify_safe_tool(event)
+        if safety == "exact":
+            return ""
+        if safety == "unsafe":
+            return "not_read_only"
+        target = cls._extract_path_from_input(event.tool_input or "")
+        if not target:
+            return "no_path"
+        if is_sensitive_path(str(Path(target).expanduser().resolve())):
+            return "sensitive_path"
+        return ""
+
+    async def _decide_permission(
+        self, provider: ModelProvider, event: Any, session_key: str
+    ) -> None:
+        """Answer one permission request, then write its one audit row.
+
+        The allowlist approves without asking anyone, so it is a grant: the operator ceiling
+        bounds it (`approval_grants`, rule 2), and the row names it as what decided (rule 3). The
+        row is written after the answer took effect, as every decision row is.
+        """
+        from personalclaw import approval_grants
+
+        title = str(event.title or "")
+        reason = self._allowlist_refusal(event)
+        decided_by = approval_grants.EVAL_SAFE_TOOLS
+        if not reason and not approval_grants.stands(
+            approval_grants.EVAL_SAFE_TOOLS, caller=session_key, subject=title[:80]
+        ):
+            reason, decided_by = "refused_by_ceiling", approval_grants.NOBODY
+        if reason:
+            logger.warning("Refused tool in eval (%s): %s", reason, title)
+            await provider.reject_tool(event.request_id)
+        else:
+            await provider.approve_tool(event.request_id)
+        sel().log_tool_invocation(
+            session_key=session_key,
+            source="eval_runner",
+            tool_name=title,
+            tool_kind=event.tool_kind,
+            outcome="denied" if reason else "auto_approved",
+            request_id=event.request_id,
+            metadata={"reason": reason or "read_only_tool", "decided_by": decided_by},
+        )
+
     @staticmethod
     def _extract_path_from_input(tool_input: str) -> str:
         """Try to extract a file path from tool_input (JSON or plain text)."""
@@ -445,63 +506,34 @@ class EvalRunner:
         t0 = time.monotonic()
         chunks: list[str] = []
         tool_calls: list[str] = []
+        # The calls this turn asked about. Each gets its row when it is decided; every other
+        # call gets its one row from its result.
+        asked: set[str] = set()
 
         async for event in provider.stream(turn_def.user):
             if event.kind == EVENT_TEXT_CHUNK:
                 chunks.append(event.text)
             elif event.kind == EVENT_TOOL_CALL:
+                # The card of a call being made, before any gate has run: not a decision, so it is
+                # not audited (the row this wrote said `invoked` for a call later refused).
                 tool_calls.append(event.text)
+            elif event.kind == EVENT_PERMISSION_REQUEST:
+                asked.add(str(event.tool_call_id or ""))
+                await self._decide_permission(provider, event, session_key)
+            elif event.kind == EVENT_TOOL_RESULT and str(event.tool_call_id or "") not in asked:
+                # A call nobody was asked about: its one row, from what the runtime stamped on
+                # its result (`llm.events.unasked_outcome`).
+                meta = event.tool_meta or {}
+                decided_by = unasked_reason(meta)
                 sel().log_tool_invocation(
                     session_key=session_key,
-                    tool_name=event.text,
-                    outcome="invoked",
                     source="eval_runner",
+                    tool_name=event.title,
+                    tool_kind=event.tool_kind,
+                    outcome=unasked_outcome(meta),
+                    request_id=str(event.tool_call_id or ""),
+                    metadata={"reason": decided_by, "decided_by": decided_by},
                 )
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                from personalclaw.security import is_sensitive_path
-
-                safety = self._classify_safe_tool(event)
-                if safety == "exact":
-                    # Known non-filesystem read-only tool — approve without path check
-                    sel().log_tool_invocation(
-                        session_key=session_key,
-                        tool_name=event.title,
-                        outcome="approved",
-                        source="eval_runner",
-                    )
-                    await provider.approve_tool(event.request_id)
-                elif safety == "prefix_fs":
-                    # Filesystem operation — deny-by-default path check
-                    target = self._extract_path_from_input(event.tool_input or "")
-                    if target:
-                        target = str(Path(target).expanduser().resolve())
-                    if target and not is_sensitive_path(target):
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            tool_name=event.title,
-                            outcome="approved",
-                            source="eval_runner",
-                        )
-                        await provider.approve_tool(event.request_id)
-                    else:
-                        outcome = "rejected_sensitive" if target else "rejected_no_path"
-                        logger.warning("Rejected tool (path check failed): %s", event.title)
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            tool_name=event.title,
-                            outcome=outcome,
-                            source="eval_runner",
-                        )
-                        await provider.reject_tool(event.request_id)
-                else:
-                    logger.warning("Rejected unsafe tool in eval: %s", event.title)
-                    sel().log_tool_invocation(
-                        session_key=session_key,
-                        tool_name=event.title,
-                        outcome="rejected",
-                        source="eval_runner",
-                    )
-                    await provider.reject_tool(event.request_id)
             elif event.kind == EVENT_COMPLETE:
                 break
 

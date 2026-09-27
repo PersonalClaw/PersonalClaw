@@ -161,12 +161,25 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         filename="task-nl_to_cron.md",
         kind="user",
         category="internal",
-        description="Convert a natural-language scheduling request into a 5-field cron expression.",
+        description=(
+            "Read a natural-language scheduling request as a 5-field cron expression, or as the "
+            "one time it names."
+        ),
         variables=(
             PromptVariable(
                 name="request",
                 required=True,
                 description="The natural-language scheduling request.",
+            ),
+            PromptVariable(
+                name="now",
+                required=True,
+                description="The current date and time in the user's timezone.",
+            ),
+            PromptVariable(
+                name="timezone",
+                required=True,
+                description="The user's timezone, as an IANA name.",
             ),
         ),
     ),

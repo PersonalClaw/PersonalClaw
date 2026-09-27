@@ -418,7 +418,6 @@ READ_ONLY_PROVIDERS: frozenset[str] = frozenset(
         "notify",  # raises a dashboard notification
         "send-message",  # delivers to a channel the user already configured
         "create-task",  # files a task row — the user's own inbox, no external effect
-        "call-app-route",  # drives a declared app route; the APP's own perms bound it
         "knowledge-retrieve",  # queries the knowledge store
         "knowledge-health",  # deterministic store health report, zero tokens
         "knowledge-gaps",  # finds referenced-but-unwritten entities, zero tokens
@@ -442,6 +441,12 @@ READ_ONLY_PROVIDERS: frozenset[str] = frozenset(
 WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
     {
         "bash",  # arbitrary shell
+        # Drives a declared app route, and a route can write, send or delete: the app's own
+        # permissions bound what its backend may do, not which of its routes a trigger runs
+        # unasked. It is read-only exactly when the route it drives DECLARES `readOnly` (the
+        # declared effect, `CallAppRouteActionProvider.effect`), which `provider_is_read_only`
+        # asks with the action's config (`READ_ONLY_WHEN_DECLARED`).
+        "call-app-route",
         "run-script",  # sandboxed Python, but still executes author-supplied code
         "run-prompt",  # spawns an LLM turn with the unattended toolset
         "invoke-agent",  # same, with an agent persona
@@ -582,17 +587,45 @@ APP_DELIVERED_PROVIDERS: frozenset[str] = frozenset(
 )
 
 
-def provider_is_read_only(provider: str) -> bool:
+#: Write-capable providers whose effect depends on what they are pointed at: read-only for one
+#: action exactly when that action DECLARES a read (`ActionProvider.effect` returns
+#: ``RiskLevel.SAFE`` for its config). Each is listed in `WRITE_CAPABLE_PROVIDERS` too, which is
+#: what it is when nothing declares otherwise.
+READ_ONLY_WHEN_DECLARED: frozenset[str] = frozenset({"call-app-route"})
+
+
+def provider_is_read_only(provider: str, config: dict[str, Any] | None = None) -> bool:
     """Whether `provider` is safe to auto-fire without an explicit capability opt-in.
 
     Fails CLOSED for an unknown name: an action nobody classified is treated as write-capable, so a
     provider added without a line in the tables above needs an opt-in rather than inheriting the
     permissive default. That is the same choice `EMPTY_MEANS` makes one level up.
+
+    *config* is the action's own config, for a provider in `READ_ONLY_WHEN_DECLARED`: read-only
+    when that action declares a read, and without a config never.
     """
     name = (provider or "").strip()
     if not name:
         return False
+    if name in READ_ONLY_WHEN_DECLARED:
+        if not isinstance(config, dict):
+            return False
+        from personalclaw.action_providers.registry import action_effect
+        from personalclaw.tool_providers.base import RiskLevel
+
+        return action_effect(name, config) == RiskLevel.SAFE
     return name in READ_ONLY_PROVIDERS
+
+
+def action_config(trigger: Any) -> dict[str, Any]:
+    """The config of `trigger`'s declared action, from either stored shape (`{"inline": {provider,
+    config}}` or the flat `{provider, config}`); ``{}`` when it declares none."""
+    workflow = getattr(trigger, "workflow", None)
+    if not isinstance(workflow, dict):
+        return {}
+    inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+    config = (inline or workflow).get("config")
+    return dict(config) if isinstance(config, dict) else {}
 
 
 def requested_capabilities(trigger: Any) -> dict[str, list[str]]:
@@ -651,7 +684,8 @@ def capabilities_for_action(trigger: Any) -> dict[str, Any]:
     owner's yes is the only thing that grants it (`triggers.grants`).
     """
     requested = requested_capabilities(trigger)
-    providers = [p for p in requested.get("providers", []) if not provider_is_read_only(p)]
+    config = action_config(trigger)
+    providers = [p for p in requested.get("providers", []) if not provider_is_read_only(p, config)]
     return {"providers": providers} if providers else {}
 
 

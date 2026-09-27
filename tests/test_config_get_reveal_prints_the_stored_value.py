@@ -21,7 +21,7 @@ import pytest
 from personalclaw.config import loader as config_loader
 
 TOKEN = "whk_fixtureRevealToken_0a1b2c3d4e5f6789"
-API_KEY = "sk-fixtureRevealProviderKey-00998877665544"
+API_KEY = "fake-key-1"
 
 
 @pytest.fixture

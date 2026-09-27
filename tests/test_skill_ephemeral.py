@@ -61,8 +61,8 @@ def test_context_block_makes_drafts_live(home):
 def test_redacts_secrets_in_body(home):
     # The draft body runs through the same credential redactor as auto-extraction
     # (conservative: catches key=value secret shapes). Prove redaction is applied.
-    d = ephemeral.remember("sess:1", "creds", "set aws_secret_access_key=AKIAIOSFODNN7EXAMPLE now")
-    assert "AKIAIOSFODNN7EXAMPLE" not in d.body
+    d = ephemeral.remember("sess:1", "creds", "set aws_secret_access_key=fake-aws-key-id-1 now")
+    assert "fake-aws-key-id-1" not in d.body
     assert "REDACTED" in d.body
 
 

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.mcp_client import McpClientRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -223,7 +224,7 @@ async def _answer_the_next_approval(state, decision: bool) -> dict:
         pending = [dict(v) for v in state._pending_approvals.values()]
         if pending:
             row = pending[0]
-            state.resolve_approval(str(row["id"]), decision)
+            state.resolve_approval(str(row["id"]), decision, by=YOU)
             return row
         await asyncio.sleep(0.01)
     raise AssertionError("no approval record was ever published")

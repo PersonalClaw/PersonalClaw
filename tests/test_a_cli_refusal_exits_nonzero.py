@@ -157,6 +157,7 @@ def test_cron_trigger_the_gateway_refused_exits_1(home, capsys, monkeypatch):
         return {"refused": refusal}
 
     monkeypatch.setattr("personalclaw.mcp_core._post", _post)
+    _seed(home, "abc123")  # a job the store has: an unknown one is refused before any post
 
     err = _refused(capsys, lambda: _cron(cron_action="trigger", job_id="abc123"))
 

@@ -35,7 +35,6 @@ from personalclaw.task_modes import (
     UNCLASSIFIED,
     classify_invocation,
     extract_bash_command,
-    infer_risk_from_name,
     is_shell_invocation,
     resolve_effective_risk,
     shell_command,
@@ -90,28 +89,23 @@ class TestDecoyCannotLowerRisk:
         assert resolve_effective_risk("", "vendor_wipe_database", "", {"command": "ls"}) != "safe"
 
     def test_the_decoy_cannot_produce_a_read_only_verdict(self):
-        """A tool that legitimately answers READ_ONLY must still be forced MUTATING by a
-        decoy `command`, or the bypass reopens through the kind/name fallthrough.
-
-        This used to be demonstrated with `memory_forget`, which reached READ_ONLY because
-        `forget` was missing from `_MUTATING_NAME_HINTS` — that was #2118, and it is fixed,
-        so `memory_forget` now answers MUTATING on its name alone and can no longer show
-        this property. `memory_recall` is a genuine read, which is the honest fixture for it:
-        the point is that a non-shell tool carrying a shell string is not a call we
-        understand, whatever its name says.
+        """Only a tool's DECLARATION makes it a read, so no argument can: a tool that declares
+        a change, or declares nothing, stays MUTATING with a read-only `command` beside it.
+        And a tool that declares it only reads is one whatever its arguments say — the
+        declaration speaks for the tool, not the call's data.
         """
-        assert classify_invocation("memory_recall", "", {"rule": "x"}) == READ_ONLY
-        assert classify_invocation("memory_recall", "", {"rule": "x", "command": "ls"}) == MUTATING
+        assert classify_invocation("caution", "memory_remember", "", {"command": "ls"}) == MUTATING
+        assert classify_invocation("", "memory_recall", "", {"command": "ls"}) == MUTATING
+        assert (
+            classify_invocation("safe", "memory_recall", "", {"rule": "x", "command": "ls"})
+            == READ_ONLY
+        )
 
 
 #: The subset of :data:`DESTRUCTIVE_TOOLS` that ``task_mode_denies`` actually denies, so a
-#: "the decoy no longer unlocks it" assertion has something to measure.
-#:
-#: ``memory_forget`` was deliberately ABSENT here while #2118 was open: it graded
-#: ``destructive`` by name inference but classified READ_ONLY, and ``task_mode_denies``
-#: consults only the classifier, so it ran in ask/plan with no decoy needed. #2118 is closed
-#: — ``_MUTATING_NAME_HINTS`` is now a union over ``_DESTRUCTIVE_NAME_HINTS`` — so it belongs
-#: in this list, and its presence is what keeps the decoy legs below honest about it.
+#: "the decoy no longer unlocks it" assertion has something to measure. Every one of them
+#: declares it changes something, so all of them are denied; ``memory_forget`` was once the
+#: exception (#2118), when the verdict came from its name.
 TASK_MODE_DENIED_TOOLS = [
     ("workflow_delete_def", {"name": "x"}),
     ("artifact_delete", {"slug": "x"}),
@@ -130,60 +124,32 @@ class TestDecoyCannotUnlockTaskModes:
         "tool,args", TASK_MODE_DENIED_TOOLS, ids=[t for t, _ in TASK_MODE_DENIED_TOOLS]
     )
     def test_decoy_does_not_unlock_a_denied_tool(self, mode, tool, args):
-        assert task_mode_denies(mode, tool, "", args), f"{tool} should be denied in {mode}"
-        assert task_mode_denies(mode, tool, "", _with(args, {"command": "ls"})), (
+        assert task_mode_denies(mode, "destructive", tool, "", args), f"{tool} denied in {mode}"
+        assert task_mode_denies(mode, "destructive", tool, "", _with(args, {"command": "ls"})), (
             f"a `command` argument let {tool} RUN in {mode} mode, whose contract is that "
             "mutations do not"
         )
 
     def test_agent_mode_still_allows_everything(self):
         """Vacuity floor: a fix that denied everything would pass every test above."""
-        assert task_mode_denies("agent", "workflow_delete_def", "", {"command": "ls"}) == ""
+        assert (
+            task_mode_denies("agent", "destructive", "workflow_delete_def", "", {"command": "ls"})
+            == ""
+        )
 
-    def test_a_destructive_verb_is_denied_in_ask_and_plan(self):
-        """#2118 CLOSED. This is the inverse of the test that used to pin the gap here.
-
-        The two name heuristics disagreed: ``destroy``, ``drop_``, ``purge`` and ``forget``
-        were destructive-but-not-mutating, so ``memory_forget`` graded ``destructive`` for
-        the approval card while classifying READ_ONLY for the task-mode gate — and ran in
-        ask AND plan mode with nothing to deny it, no decoy argument required. The gate
-        asked only the classifier, and the classifier had never heard of the verb.
-
-        Both heuristics must now agree for every destructive verb, in every mode whose
-        contract is that mutations do not run.
-        """
-        for tool in ("memory_forget", "knowledge_forget", "cache_purge", "session_destroy"):
-            assert infer_risk_from_name(tool) == "destructive", tool
-            assert classify_invocation(tool, "", {}) == MUTATING, (
-                f"{tool} classifies read-only, so the task-mode gate will let it run — "
-                "the #2118 shape"
-            )
+    def test_a_declared_change_is_denied_in_ask_and_plan_whatever_its_name(self):
+        """#2118's shape, closed at the root: `memory_forget` graded destructive for the card
+        while the task-mode gate read its NAME as a read and let it run. The gate now reads the
+        declaration, so a destructive or cautious tool is a change in every mode whose contract
+        is that changes do not run — and a name that sounds like a read does not unlock one."""
+        for declared, tool in (
+            ("destructive", "memory_forget"),
+            ("destructive", "cache_purge"),
+            ("caution", "memory_remember"),
+            ("caution", "get_or_create"),
+        ):
             for mode in ("ask", "plan"):
-                assert task_mode_denies(mode, tool, "", {}), f"{tool} should be denied in {mode}"
-
-    def test_the_destructive_set_is_contained_in_the_mutating_set(self):
-        """The structural half — what stops #2118 recurring rather than being fixed once.
-
-        A destructive verb that is not also mutating is a contradiction, and two independent
-        literals had silently drifted into exactly that. `_MUTATING_NAME_HINTS` is now built
-        as a union over `_DESTRUCTIVE_NAME_HINTS`, so adding a verb to one widens the
-        task-mode gate in the same edit. This asserts the containment rather than the
-        current membership, so it keeps holding as either set grows — the leg above would
-        pass while a NEWLY added destructive verb leaked, because it names four tools.
-        """
-        from personalclaw.task_modes import _DESTRUCTIVE_NAME_HINTS, _MUTATING_NAME_HINTS
-
-        assert _DESTRUCTIVE_NAME_HINTS, "the destructive set is empty — nothing is asserted"
-        missing = [h for h in _DESTRUCTIVE_NAME_HINTS if h not in _MUTATING_NAME_HINTS]
-        assert not missing, (
-            f"destructive verbs absent from the mutating set: {missing}. Each one is a tool "
-            "the approval card grades 'destructive' while the task-mode gate reads it as a "
-            "read and lets it run in ask/plan (#2118)."
-        )
-        assert len(_MUTATING_NAME_HINTS) == len(set(_MUTATING_NAME_HINTS)), (
-            "the union duplicated a fragment; harmless for matching but it means the two "
-            "sets are being maintained by hand again"
-        )
+                assert task_mode_denies(mode, declared, tool, "", {}), f"{tool} ran in {mode}"
 
 
 class TestRealShellCallsAreUnchanged:
@@ -191,20 +157,28 @@ class TestRealShellCallsAreUnchanged:
     `bash`, which is the behaviour `trust_reads` exists to avoid."""
 
     @pytest.mark.parametrize(
-        "title,kind",
+        "title,kind,declared",
         [
-            ("bash", ""),  # native loop: its own tool, and it declares NO kind
-            ("Bash", ""),  # title casing is the model's, not ours
-            ("execute_bash", ""),
-            ("terminal", ""),
-            ("bash", "execute"),  # ACP: kind declared
-            ("anything", "command"),  # ACP: kind alone is enough
-            ("anything", "execute"),
+            ("bash", "", "destructive"),  # native loop: the platform shell, by its declaration
+            ("Bash", "", "destructive"),  # title casing is the model's, not ours
+            ("execute_bash", "", ""),  # ACP CLIs' own shells, which declare nothing
+            ("terminal", "", ""),
+            ("bash", "execute", ""),  # ACP: kind declared
+            ("anything", "command", ""),  # ACP: kind alone is enough
+            ("anything", "execute", ""),
         ],
     )
-    def test_read_only_shell_is_still_downgraded_to_safe(self, title, kind):
-        assert is_shell_invocation(title, kind) is True
-        assert resolve_effective_risk("destructive", title, kind, {"command": "ls -la"}) == "safe"
+    def test_read_only_shell_is_still_downgraded_to_safe(self, title, kind, declared):
+        assert is_shell_invocation(title, kind, declared) is True
+        assert resolve_effective_risk(declared, title, kind, {"command": "ls -la"}) == "safe"
+
+    def test_a_declared_tool_named_like_a_shell_is_not_one(self):
+        """Only the platform's own shell has its command screened. An app's `run_script` that
+        declares CAUTION stays a change whatever its `command` argument reads like — the
+        name would otherwise turn the declaration into a read."""
+        assert is_shell_invocation("run_script", "", "caution") is False
+        assert resolve_effective_risk("caution", "run_script", "", {"command": "ls"}) == "caution"
+        assert task_mode_denies("ask", "caution", "run_script", "", {"command": "ls"}) != ""
 
     @pytest.mark.parametrize("title,kind", [("bash", ""), ("bash", "execute")])
     def test_mutating_shell_is_still_destructive(self, title, kind):
@@ -218,8 +192,8 @@ class TestRealShellCallsAreUnchanged:
         assert shell_command("bash", "", '{"command": "ls"}') == "ls"
 
     def test_read_only_shell_still_runs_in_ask_mode(self):
-        assert task_mode_denies("ask", "bash", "", {"command": "ls"}) == ""
-        assert task_mode_denies("ask", "bash", "", {"command": "rm -rf /"}) != ""
+        assert task_mode_denies("ask", "destructive", "bash", "", {"command": "ls"}) == ""
+        assert task_mode_denies("ask", "destructive", "bash", "", {"command": "rm -rf /"}) != ""
 
 
 class TestAcpInlineCommandTitle:
@@ -233,15 +207,15 @@ class TestAcpInlineCommandTitle:
     def test_running_prefix_is_recognised_as_a_shell_call(self):
         assert is_shell_invocation("Running: ls -la", "") is True
         title, args = "Running: ls -la", {"command": "ls -la"}
-        assert classify_invocation(title, "", args) == READ_ONLY
-        assert resolve_effective_risk("destructive", title, "", args) == "safe"
-        assert task_mode_denies("ask", title, "", args) == ""
+        assert classify_invocation("", title, "", args) == READ_ONLY
+        assert resolve_effective_risk("", title, "", args) == "safe"
+        assert task_mode_denies("ask", "", title, "", args) == ""
 
     def test_a_mutating_inline_command_is_still_denied(self):
         title, args = "Running: rm -rf /", {"command": "rm -rf /"}
-        assert classify_invocation(title, "", args) == MUTATING
-        assert resolve_effective_risk("destructive", title, "", args) == "destructive"
-        assert task_mode_denies("ask", title, "", args) != ""
+        assert classify_invocation("", title, "", args) == MUTATING
+        assert resolve_effective_risk("", title, "", args) == "destructive"
+        assert task_mode_denies("ask", "", title, "", args) != ""
 
     def test_the_prefix_matches_the_one_hooks_normalizes(self):
         """The prefix is not a convention this module invented, and it must not become a
@@ -265,12 +239,10 @@ class TestAcpInlineCommandTitle:
 
 class TestUnreadableShellCall:
     def test_shell_with_no_readable_command_is_unclassified_not_a_read(self):
-        """`bash` carries no mutating name hint, so before the fix an unreadable input
-        fell all the way through to name inference and came back READ_ONLY — the
-        product's own shell tool, classified as a read. It is now UNCLASSIFIED, and
+        """A shell call whose command never arrived is UNCLASSIFIED — not a read — and
         `resolve_effective_risk` honours the declared risk for it."""
         for bad in (None, {}, {"other": "x"}):
-            assert classify_invocation("bash", "", bad) == UNCLASSIFIED
+            assert classify_invocation("destructive", "bash", "", bad) == UNCLASSIFIED
             assert resolve_effective_risk("destructive", "bash", "", bad) == "destructive"
 
     def test_unclassified_shell_never_resolves_safe(self):
@@ -321,11 +293,10 @@ class TestScopedVsRawExtractor:
             and not line.lstrip().startswith("#")
             and ":func:" not in line
         ]
-        assert len(calls) == 2, (
-            f"expected exactly 2 call sites of the RAW extractor in task_modes.py "
-            f"(`shell_command`, and `classify_invocation`'s final decoy check), found "
-            f"{len(calls)} at lines {calls} — a gate reading a `command` key off any "
-            "tool is #443"
+        assert len(calls) == 1, (
+            f"expected exactly 1 call site of the RAW extractor in task_modes.py "
+            f"(`shell_command`), found {len(calls)} at lines {calls} — a gate reading a "
+            "`command` key off any tool is #443"
         )
 
 

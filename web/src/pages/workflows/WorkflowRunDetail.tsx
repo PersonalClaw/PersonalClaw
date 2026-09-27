@@ -531,10 +531,10 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
               <p data-type="body-s" className={run.status === 'declined' ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
             )}
 
-            {/* Beneath the error line, because it explains the same failure in more depth — and
-                on a run that exhausted its retries the line above is EMPTY, which is the whole
-                defect: `_finish(status)` takes no `error` on that path, so the escalation was
-                the only account and nothing read it. */}
+            {/* Beneath the error line, because it explains the same failure in more depth: the
+                line names the step that failed and its cause, and this adds the attempts and the
+                engine's own next move. A run recorded before that line existed has it EMPTY, and
+                then this is its only account. */}
             {escalations.length > 0 && (
               <EscalationPanel
                 reads={escalations}

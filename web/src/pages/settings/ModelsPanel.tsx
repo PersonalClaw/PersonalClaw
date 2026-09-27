@@ -7,8 +7,8 @@ import {
   Trash2, Gavel, FlaskConical, KeyRound, type LucideIcon,
 } from 'lucide-react'
 import {
-  api, isNotRun, isSwitchedOff, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
-  type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
+  api, isLiveDownload, isNotRun, isSwitchedOff, type AvailableModel, type DownloadJob, type JudgeBenchRecommendation,
+  type ProviderHealth, type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
 import { BundledDownloadProgress, modelBytes } from '../chat/bundledModelDownload'
 import { namesModel, splitModelRef } from '../../lib/modelRef'
@@ -256,6 +256,16 @@ export function ModelsPanel() {
       .then((v) => (isSwitchedOff(v) || isNotRun(v) ? [] : v.recommendations))
       .catch(() => [] as JudgeBenchRecommendation[]),
     { persist: false })
+  // 🔑 The downloads the gateway holds, read ONCE for every row, fresh on each open (see
+  // `useRowDownload`): after a reload, a Repair or a Download still running shows its progress
+  // again, and one that failed says why. An enrichment like the two above: a failed read leaves
+  // every row as it would be with nothing running.
+  const [downloads, setDownloads] = useState<ReadonlyMap<string, DownloadJob>>(NO_DOWNLOADS)
+  useEffect(() => {
+    let alive = true
+    api.modelDownloads().then((all) => { if (alive) setDownloads(latestDownloads(all)) }).catch(() => { /* none re-attach */ })
+    return () => { alive = false }
+  }, [])
   const allModels = data?.allModels
   const active = data?.active ?? {}
   const localProviders = useMemo(() => new Set(data?.localProviders ?? []), [data?.localProviders])
@@ -292,7 +302,7 @@ export function ModelsPanel() {
           return (
             <div key={uc}>
               {showGroupHeader && <div data-type="caption" className="mb-1.5 mt-3 px-1 text-on-surface-low uppercase tracking-wide">{meta.group}</div>}
-              <UseCaseRow useCase={uc} chain={active[uc] ?? NO_CHAIN} allModels={allModels} localProviders={localProviders} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
+              <UseCaseRow useCase={uc} chain={active[uc] ?? NO_CHAIN} allModels={allModels} localProviders={localProviders} downloads={downloads} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
             </div>
           )
         })}
@@ -680,6 +690,23 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
  *  so a save from it names none and is refused (`428`) rather than taken as a blind overwrite. */
 const NO_CHAIN: Revisioned<string[]> = { value: [], revision: '' }
 
+/** The key a row finds its model's download by. */
+const downloadKey = (provider: string, model: string) => `${provider}\u0000${model}`
+const NO_DOWNLOADS: ReadonlyMap<string, DownloadJob> = new Map()
+
+/** The job each model's row re-attaches to: the one running, else the newest. A model can hold
+ *  an earlier job that ended beside the one running now (at most one runs: the gateway hands a
+ *  second request for it the same job), and the list is in the order the jobs started. */
+export function latestDownloads(all: DownloadJob[]): ReadonlyMap<string, DownloadJob> {
+  const out = new Map<string, DownloadJob>()
+  for (const job of all) {
+    const key = downloadKey(job.provider, job.model)
+    const held = out.get(key)
+    if (!held || !isLiveDownload(held)) out.set(key, job)
+  }
+  return out
+}
+
 /** The confirm before an Embedding save. A change re-indexes; a clear re-indexes nothing — the
  *  save starts the re-index only once a model is bound (`onSaved`) — so it says what clearing does
  *  instead. It used to ask "Change & re-index" for a clear as well, and nothing re-indexed. */
@@ -728,21 +755,35 @@ const moveRef = (ref: string, dir: -1 | 1): Rebase<string[]> => (theirs) => {
  *
  *  A column, not a bare button: the Repair, Test and Download affordances are buttons themselves
  *  and cannot nest inside the toggle. */
-function ModelRow({ model: m, on, saving, held, localProviders, onToggle, onChanged, onDownloaded }: {
+function ModelRow({ model: m, on, saving, held, localProviders, listed, onToggle, onChanged, onDownloaded }: {
   model: AvailableModel; on: boolean
   /** The chain is being saved. */
   saving: boolean
   /** A refused save of the chain is waiting for the user (`StaleWriteNotice`). */
   held: boolean
   localProviders: ReadonlySet<string>
+  /** The latest job the page's download list holds for this model (`latestDownloads`). */
+  listed?: DownloadJob
   onToggle: () => void
   /** Re-read the page: a repair landed. */
   onChanged: () => void
   /** A chosen model's download landed. */
   onDownloaded: () => void
 }) {
-  // Every row holds one, so it tracks only the download its Repair starts (no list read per row).
-  const repair = useRowDownload(m, onChanged, { reattach: false })
+  // A Repair still running after a reload is found again, so its progress and how it ended show
+  // here. The Repair takes the listed job only for a model on disk: a job running for one is a
+  // Repair, even while its row does not read `truncated` (an unfinished fetch beside the weights
+  // explains the shortfall), and one that ended counts only while the weights are still short. A
+  // model not on disk has its job drawn by its Download (`InlineModelDownload`), and two trackers
+  // would draw it twice.
+  const repairJob = listed && m.downloaded === true && (isLiveDownload(listed) || m.integrity === 'truncated') ? listed : undefined
+  const repair = useRowDownload(m, onChanged, repairJob)
+  // A Repair that fails leaves the weights short, and the page may have been read while its fetch
+  // ran, when nothing looked short: read it again, so the row says truncated and offers Repair
+  // beside why the last one failed.
+  const reread = useRef(onChanged)
+  reread.current = onChanged
+  useEffect(() => { if (repair.failed) reread.current() }, [repair.failed])
   // The status opens under the chip that was pressed, so a Repair pressed at the window's bottom
   // edge drew its progress below the fold (measured in the drive: the row at y=907 of a 900px
   // viewport). `block: 'nearest'`: already on screen, nothing moves; off it, the smallest scroll
@@ -807,16 +848,18 @@ function ModelRow({ model: m, on, saving, held, localProviders, onToggle, onChan
         </div>
       )}
       {isLocal && m.downloaded === true && <ModelTestButton provider={m.provider} model={m.id} />}
-      {on && downloadable && <InlineModelDownload model={m} onDownloaded={onDownloaded} />}
+      {on && downloadable && <InlineModelDownload model={m} listed={listed} onDownloaded={onDownloaded} />}
     </div>
   )
 }
 
-function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRec, onChanged }: {
+function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, health, judgeRec, onChanged }: {
   /** The use case's chain as the panel read it, with the revision of exactly that chain. */
   useCase: string; chain: Revisioned<string[]>; allModels: AvailableModel[]
   /** Providers that can download a model they do not have yet (see `isDownloadable`). */
   localProviders: ReadonlySet<string>
+  /** Each model's latest download job, from the panel's one read of the list (`latestDownloads`). */
+  downloads: ReadonlyMap<string, DownloadJob>
   health: ProviderHealth[]
   judgeRec?: JudgeBenchRecommendation; onChanged: () => void
 }) {
@@ -1089,6 +1132,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
                 return (
                   <ModelRow key={ref} model={m} on={activeModels.includes(ref)}
                     saving={saving} held={conflicted} localProviders={localProviders}
+                    listed={downloads.get(downloadKey(m.provider, m.id))}
                     onToggle={() => toggle(ref)} onChanged={onChanged} onDownloaded={downloaded} />
                 )
               })}

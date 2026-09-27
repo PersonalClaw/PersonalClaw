@@ -564,11 +564,24 @@ class _ApplyError(Exception):
         self.node_id = node_id
 
 
+def _kept(submitted: Any, stored: Any, node_id: str = "") -> Any:
+    """*submitted* with each ``[REDACTED: …]`` marker keeping the value it stands for in *stored*.
+
+    An agent reads a run masked (``workflow_status`` through the model boundary), so a value it
+    sends back in an op can carry a marker where the run holds a value."""
+    from personalclaw.security import MASK_CONFLICT, MaskConflict, keep_masked_values
+
+    try:
+        return keep_masked_values(submitted, stored)
+    except MaskConflict:
+        raise _ApplyError("WF_MUT_MASK_CONFLICT", MASK_CONFLICT, node_id) from None
+
+
 def _apply_one(op: Op, spec: dict[str, Any], instances: dict[str, NodeInstance]) -> None:
     if op.kind == OpKind.SET_INPUT:
         spec.setdefault("inputs", {})
         if isinstance(spec["inputs"], dict):
-            spec["inputs"].update(op.overrides)
+            spec["inputs"].update(_kept(op.overrides, spec["inputs"]))
         return
     if op.kind in (OpKind.FORK, OpKind.REWIND, OpKind.RUN_FROM):
         # State-level ops: they change instance state and run identity, not the spec.
@@ -595,7 +608,7 @@ def _apply_one(op: Op, spec: dict[str, Any], instances: dict[str, NodeInstance])
                     f"cannot change {key!r} on a live node — it is the node's identity",
                     op.node_id,
                 )
-            config[key] = value
+            config[key] = _kept(value, config.get(key), op.node_id)
         return
 
     if op.kind == OpKind.SKIP:

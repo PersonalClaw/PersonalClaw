@@ -32,9 +32,9 @@ import pytest
 
 from personalclaw.apps.secret_fields import SECRET_MASK as MASK
 
-S_KEY = "sk-fixtureArgKey0123456789abcdefABCDEF"
+S_KEY = "fake-key-1"
 S_TOKEN = "fixtureTokenFlagValue42"
-S_ENV = "ghp_fixtureInlineEnvToken0123456789ab"
+S_ENV = "fake-github-token-1"
 S_BEARER = "fixture.bearer.0123456789abcdefghij"
 S_PASS = "fixtureUrlPassword77"
 S_QUERY = "fixtureQueryToken99"
@@ -295,7 +295,10 @@ def test_the_global_config_path_follows_claude_codes_own_rule(monkeypatch, tmp_p
         (["-c", "API_KEY=abc node server.js"], ["-c", f"API_KEY={MASK}"]),
         (["-c", "node server.js --token abc"], ["-c", f"node server.js --token {MASK}"]),
         (["--url=https://h.invalid/p?key=v"], [f"--url=https://h.invalid/p?key={MASK}"]),
-        (["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMDEyMzQ1Njc4OQ"], [MASK]),
+        (
+            ["eyJhbGciOiJIUzI1NiJ9" ".eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMDEyMzQ1Njc4OQ"],
+            [MASK],
+        ),
     ],
 )
 def test_masked_args(args, shown) -> None:

@@ -99,13 +99,13 @@ def test_flush_redacts_secrets(tmp_path: Path):
         {
             "path": "cfg",
             "before": "",
-            "after": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE0000000000000000000X",
+            "after": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE",
         }
     ]
     s.messages = [{"role": "assistant", "content": "wrote config"}]
     cr._flush_file_changes(s)
     after = s.messages[-1]["meta"]["file_changes"][0]["after"]
-    assert "AKIAIOSFODNN7EXAMPLE0000000000000000000X" not in after
+    assert "AKIAIOSFODNN7EXAMPLE" not in after
 
 
 def test_flush_noop_when_no_changes(tmp_path: Path):

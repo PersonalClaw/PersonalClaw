@@ -10,6 +10,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
+
+- **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
+
+- **Settings → Security sets the sign-in lockout: how many wrong attempts, and how long it lasts.**
+
+- **Settings → Security sets how long a sign-in lasts.**
+
 - **A sidecar app's engine installs from the dashboard: Install engine, on its card in Settings → Providers and on its Configure page.**
 
 - **Install consent and the Store card say what an app needs that PersonalClaw doesn't install.**
@@ -44,11 +52,79 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The Session Map is a map of your messages: one marker for each message you sent, all one length, with colour showing which are on screen.**
 
+- **Settings → Updates lists each change as one plain line, shows what an available update brings, and links the upgrade notes.**
+
+### Removed
+
+- **`personalclaw.sdk.channel.generate_token` is off the channel SDK.**
+
+- **The `api_key` and `oauth2` auth modes are gone.**
+
+- **The per-site browse "profile key", which nothing used; a key an earlier release stored is deleted at start.**
+
 ### Fixed
+
+- **A replace restore keeps the engine each returning app has here, instead of moving it into `pre-restore-<ts>/` and asking for Install engine again, and says which engines it kept or set aside.**
+
+- **A gate's Wake it now, Approve and Submit, and a trigger's Allow, show they are working while their own answer is out, and a screen reader hears it.**
+
+- **`personalclaw setup` never says "Done!" after a step that failed: it names each failed step with the command that runs it again, and exits 1.**
+
+- **Settings → Usage counts a room's summaries and a chat's history compression, and its "Not included" figure no longer counts a call a usage row already holds (SDK: `LLMEvent` gains `audit_ids`, an addition no app has to change for).**
+
+- **"Remind me at 5 pm" makes a task that runs once, at 5 pm, where you are.**
+
+- **An automation made in chat runs what it says.**
+
+- **The banner `personalclaw` and `personalclaw chat` print draws PersonalClaw.**
+
+- **`personalclaw` or a command group run with none of its commands (`personalclaw cron`) is a usage error, exit 2 with the usage on stderr, and a refusal prints on stderr, never on stdout.**
+
+- **An automation set to run every 0 seconds or fewer is refused where it is made, instead of saved as one that never runs.**
+
+- **Each cycle of a gate inside a loop asks its own question.**
+
+- **A goal monitor run no longer promises a log it never writes.**
+
+- **OpenAI-compatible clients, A2A agents and capture imports reach `/v1`, `/a2a` and `/capture/import` with their own token.**
+
+- **The status card says how long this browser's sign-in has left.**
+
+- **A Restart saves what a stop saves, time travel's pending history included.**
+
+- **Time travel's memory history follows your memory, and resolving it no longer creates a folder.**
+
+- **Installing or updating an app with a `source` that is not a string is a `400` naming the field.**
+
+- **After a reload, Settings → Models finds a Repair still running and shows its progress under its model, and how it ended.**
+
+- **A chat that started on a chat channel is asked its approvals in that chat, with nothing to set up.**
+
+- **A channel's approval prompt is told how its approval ended.**
+
+- **A chat's progress lines on its channel say how each call ended.**
+
+- **A goal monitor wakes on the trigger it armed, and finishes when its goal is met.**
+
+- **`personalclaw cron trigger` runs the jobs `cron add` makes and `cron list` shows, and the chat can run a job whose name has a space.**
+
+- **An app's request whose body is not a JSON object is refused before it reaches the route.**
+
+- **Stopping the gateway saves the settings history it was still holding.**
+- **A run that went on past a failed step says so, a Run button says what its run recorded, no gate carries words nobody sees, a run's history row is a sentence for every action that prints JSON, and a snapshot merge leaves another home's trigger stamps behind.**
+- **An agent's or a trigger's call to an app route reaches the app.**
+
+- **Allowing something no longer shows a failed request in the browser's console.**
 
 - **A chat that started on a channel can be continued on another one.**
 - **A check gate that fails ends what follows it, a revise closes the question it answered, every queued edit applies, and four surfaces say what happened.**
 - **A workflow's approval gate waits your approval window, a retry a grant ran settles its note, and a lifecycle hook's agent knows its trigger.**
+- **A chat channel's approval prompt shows what will run: the tool, its arguments and why, as the dashboard's approval card shows them.**
+- **Two mails sent in the same second are two Inbox rows.**
+- **Slack's inbox source reads the channels you choose, in Settings → Inbox.**
+- **After Send, the Inbox's open item shows your reply as sent.**
+- **A channel's dashboard link signs in its owner, and nobody else.**
+- **Email's owner is paired from its Configure page, like every channel's.**
 - **An Embedding rebind or clear reaches every memory store at its next use, and memory never compares one embedding model's vectors with another's.**
 - **The status chip says "Choose a model" when no model is chosen, not "12 degraded".**
 - **A media call names its model, like chat, and so does every binding.**
@@ -64,6 +140,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Installing an app's packages, speaking a reply, the Doctor's speech probe and uninstalling the service no longer leave anything outside PersonalClaw's home.**
 
 - **A first loop from onboarding stops after one cycle, each home has a tmux server of its own, and the last files PersonalClaw left outside its home are gone.**
+
+- **A loop that finishes on its last allowed cycle ends complete, so onboarding's first loop no longer ends asking for a decision nobody can give.**
+
+- **The Terminal page no longer lists a workflow run's durable workers as detached terminals, and a durable worker is live only while its command runs.**
+
+- **An agent CLI, MCP server, app backend, app worker or the artifact bundler run through Node keeps its compile cache in the home.**
 
 - **A CLI command that refuses exits 1 and says why on stderr, so a script can tell it did nothing.**
 - **A Repair on Settings → Models shows its download where you pressed it, and is checked for free space first.**
@@ -228,17 +310,49 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Your prompts are no longer buried under PersonalClaw's own.**
 - **The Learning page no longer logs six errors on every visit when evals are off.**
 - **A failed chat turn says what failed and lands where you can see it, and editing an earlier message no longer deletes the turns after it without a trace.**
+
+- **Signing a device out ends its push notifications.**
+
+- **A terminal opened in a sandbox tier opens in that tier every time, or not at all: it never falls back to a shell on this computer.**
+
+- **A durable setup step's arguments stay arguments.**
+
 - **An installed app's panel says what it needs that PersonalClaw doesn't install.**
 
 ### Security
 
+- **The agent's commands, its loops and workflows, and the git that fetches an app get no gateway secret, and an app's own children can have the same allowlist through `personalclaw.sdk.util.child_process_env` (an SDK addition piper-tts and skills-sh use).**
+
+- **A workflow step on the native runtime is held to a step's limits, as on an agent CLI.**
+
+- **A tool runs as a read only when it says it only reads, never because of its name.**
+- **What an agent's model is handed is masked, and a credential it needs is named, not shown.**
+
+- **The sandbox fences the names of what runs as you, not whichever files are there when the agent's shell starts.**
+
+- **Only you answer an approval, and never the party that asked for it.**
+- **"Is YOLO permanent from the config?" is answered from the config.**
+- **The chat's approval card and the phone's approval queue no longer show an autonomy rung for a tool call.**
+
 - **An MCP server runs only once you allow what it runs, and an agent cannot add one.**
+
+- **An ACP agent CLI no longer gets the gateway's secrets.**
+
+- **An ACP agent CLI keeps the provider you picked for it: each ACP app passes the variables its CLI reads to choose a provider, a region and a model, and never a credential.**
+
+- **A background chore runs with no tools.**
+
+- **Every file tool stays inside the places the Files view reaches.**
+
+- **A trigger that drives an app route needs your grant unless the route only reads, and a plan asks about each step by what it declares.**
 
 - **The operator ceiling bounds every approval grant: under `"approval": "ask"` nothing runs without a person, whatever an automation, an agent or a switch says.**
 - **A read-only run's write tools stay refused while a grant approves its calls.**
 - **An approval follows your setting as it is now: a change in Settings reaches the next call, even in a run already going, with no restart.**
 - **A tool call's audit row says what was decided, and by whom, in every runtime.**
 - **A channel is never handed a key: core masks every text it gives Slack, Telegram, Discord or email, once, before the app sends it.**
+- **The tokens your integrations reach PersonalClaw with stop working within 90 days, are listed in Settings → Devices with a revoke, and say why when they stop.**
+
 - **The hourly backup exports your prompt override alone, not every file in your home with it.**
 - **What an agent writes no longer runs as you until you allow it: its webhook callbacks, its heartbeat tasks and the agent CLI's hooks.**
 
@@ -646,7 +760,6 @@ refuse input they used to accept. The breaking list below is not optional readin
 - **The Agents page's group headers now count what the group shows: every group filters its rows through the search box, and the no-match empty states already say so, but each header's `count` read the unfiltered catalog — so searching for something absent rendered `Native | 8` directly above "No matching agents".**
 - **Creating an artifact with an unrecognized `kind` is now a 400 naming the allowed set instead of a silent success that stored the artifact as `widget` — the sandboxed-*execution* kind, so a typo like `"markdwon"` or a plausible `"md"` had its content treated as executable widget payload rather than prose, and lost the comment layer without explanation (sandboxed kinds are not commentable).**
 - **A reaped trigger run reads as a failure everywhere it renders: the reaper writes `health_status: degraded` plus the reap reason while the run-store row still says `success`, and both the detail panel's Last-run badge and the list's schedule-row dot read the two fields through a bare `last_run_status || last_status` chain — so the one record where the fields disagree rendered a green "ok · 1d ago" two lines above the red "Reaped after 1818s" banner.**
-- The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
 - **Reset everything to defaults**
 - **`GET /api/artifacts/{slug}/versions/{n}` now self-describes as the version it carries: `native.get()` read the head metadata and swapped only the content, so v1 and v5 both reported `version: 5` next to different bytes — any caller labeling a version from its own payload mislabeled every historical fetch.**
 - Prompt render and preview now accept the same variable-value payload: preview took the map under `values` while render/launch/snippet-render demanded `variables`, and each silently ignored the other's key — so render returned a false `missing required variable` for a variable that **was** supplied (pointing the caller at the template instead of the request), and preview returned `ok: true` with unsubstituted braces.
@@ -1272,4 +1385,3 @@ agent reference), and a render-smoke gate that closes the v0.1.0 blank-dashboard
 
 - **Single-user, self-hosted, MIT-licensed.**
 - **Requires Python 3.12+; a model-provider API key (or a local Ollama) to start chatting.**
-

@@ -63,6 +63,12 @@ class SecondOpinionActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Second Opinion (hand off to a different runner)"
 
+    @property
+    def hands_config_to_a_model(self) -> bool:
+        """The goal and the ask are the other runner's brief, so a ``{{secret:KEY}}`` stays a
+        name."""
+        return True
+
     async def execute(
         self,
         action_config: dict[str, Any],

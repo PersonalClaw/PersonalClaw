@@ -23,9 +23,11 @@ function is testable at every boundary without a model, and `route()` returning 
 anything it cannot place is what keeps an unroutable request from defaulting into a schedule.
 Ambiguity resolves to NO route and an explanatory error, never to a guess.
 
-`nl_to_cron` still owns cadence→expr. This module only decides WHICH kind, and for `file`
-extracts the paths, because "when a file in ~/notes changes" carries its own glob and asking the
-user again for something they already said is the friction the one-message bar rules out.
+`tools._read_when` owns what a clock `when` means — one time, read without a model by
+`triggers.when`, or a cadence, which `nl_to_cron` turns into an expression. This module only
+decides WHICH kind, and for `file` extracts the paths, because "when a file in ~/notes changes"
+carries its own glob and asking the user again for something they already said is the friction
+The one-message bar rules out.
 """
 
 from __future__ import annotations
@@ -58,6 +60,30 @@ _CLOCK_CUES = (
     "night",
     "minutes",
     "hours",
+)
+
+#: Cues that mean "at one time". Checked with the clock cues — last — so "every file in ~/notes"
+#: stays a watch. Without them "tomorrow", "in an hour" and "next friday" were refused as
+#: unroutable before any reader saw them: the clock cues had been written for cadences.
+_ONE_TIME_CUES = (
+    "today",
+    "tonight",
+    "tomorrow",
+    "minute",
+    "hour",
+    "second",
+    "week",
+    "later",
+    "noon",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "from now",
+    "end of",
 )
 
 #: `file` cues. `changes`/`modified` alone is not enough — "when my calendar changes" is not a
@@ -152,9 +178,9 @@ class Route:
     spec: dict[str, Any] = field(default_factory=dict)
     #: Empty when routed. Non-empty is a REFUSAL to guess, phrased for the user.
     error: str = ""
-    #: Set when the kind is `clock`: the cadence text to hand to `nl_to_cron`. This module does
-    #: not call the converter — keeping it a pure function is what makes every branch testable
-    #: without a model.
+    #: Set when the kind is `clock`: the time text, verbatim, for `tools._read_when` to read as
+    #: one time or a cadence. This module does not read it — keeping it a pure function is what
+    #: makes every branch testable without a model.
     cadence: str = ""
     #: Why this kind was chosen, echoed back to the user. §4 requires agent-created triggers be
     #: "announced to the user on creation", and "routed to file because you named ~/notes" is what
@@ -272,18 +298,19 @@ def route(when: str) -> Route:
             )
 
     # ── clock LAST: only when nothing event-shaped matched ──
-    if _has(low, _CLOCK_CUES) or re.search(r"\b\d{1,2}(:\d{2})?\s*(am|pm)?\b", low):
-        return Route(
-            kind="clock",
-            spec={},
-            cadence=text,
-            because="read as a schedule; converting the cadence to a cron expression",
-        )
+    # One time or a cadence — which of the two is `tools._read_when`'s to say, and it says so in
+    # the created message ("read as one time: today, 5:00 PM PDT").
+    if (
+        _has(low, _CLOCK_CUES)
+        or _has(low, _ONE_TIME_CUES)
+        or re.search(r"\b\d{1,2}(:\d{2})?\s*(am|pm)?\b", low)
+    ):
+        return Route(kind="clock", spec={}, cadence=text, because="read as a time")
 
     return Route(
         error=(
             f"I could not tell what should trigger this from {text!r}. "
-            "Give a cadence ('every weekday at 9') or an event "
-            "('when a file in ~/notes changes')."
+            "Give a time ('at 5pm', 'in 20 minutes'), a cadence ('every weekday at 9') or an "
+            "event ('when a file in ~/notes changes')."
         )
     )

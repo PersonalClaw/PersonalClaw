@@ -28,8 +28,8 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import make_ref, mcp_server_prefix, ref_key
 
-TOKEN = "ghp_fixtureEditFormToken0011223344556677"
-NEW_TOKEN = "ghp_fixtureRotatedToken8899aabbccddeeff"
+TOKEN = "fake-github-token-1"
+NEW_TOKEN = "fake-github-token-2"
 SETTING = "fixture-region-eu-west-9"
 
 

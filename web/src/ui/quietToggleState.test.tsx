@@ -217,7 +217,7 @@ describe('SquareIconButton asks the right question of the right caller', () => {
   })
 })
 
-describe('the SquareIconButton state family is classified, all twelve of it', () => {
+describe('the SquareIconButton state family is classified, all thirteen of it', () => {
   const SRC = join(process.cwd(), 'src')
   const walkTsx = (d: string): string[] =>
     readdirSync(d).flatMap((n) => {
@@ -250,26 +250,30 @@ describe('the SquareIconButton state family is classified, all twelve of it', ()
     return out
   }
 
-  it('is 7 disclosures and 5 toggles — and nothing unclassified', () => {
+  it('is 7 disclosures and 6 toggles — and nothing unclassified', () => {
     // 7, not 6: `ContentSurface`'s Export menu joined the family. It was the ONE genuine defect in
     // the seven-site worklist `rawToggleState` had recorded — a disclosure claiming no state at all
     // — and it is a disclosure rather than a toggle because it reveals the export list below it.
     //
     // 5 toggles, not 4: the per-server elicitation grant on `#/tools` joined the family. It is
     // a toggle because the coral tint and `aria-pressed` ARE the whole answer — nothing unfolds.
+    //
+    // 6 toggles, not 5: the per-server trust in an MCP server's read-only labels joined it beside
+    // that grant, for the same reason: whether the labels are trusted is the whole answer.
     const all = stateBearing()
-    expect(all.length, 'the state-bearing population').toBe(12)
+    expect(all.length, 'the state-bearing population').toBe(13)
     expect(all.filter((x) => x.kind === 'disclosure').length, 'disclosures').toBe(7)
-    expect(all.filter((x) => x.kind === 'toggle').length, 'toggles').toBe(5)
+    expect(all.filter((x) => x.kind === 'toggle').length, 'toggles').toBe(6)
   })
 
-  it('the five toggles are the ones that reveal nothing', () => {
+  it('the six toggles are the ones that reveal nothing', () => {
     // Named, so "finish the sweep" cannot convert a pin into a disclosure. Each is a STATE: pinned,
-    // saved, word-wrap on, this-server-may-ask-me-questions. `aria-expanded` on any of them would
-    // promise content that does not exist.
+    // saved, word-wrap on, this-server-may-ask-me-questions, its-read-only-labels-are-trusted.
+    // `aria-expanded` on any of them would promise content that does not exist.
     const toggles = stateBearing().filter((x) => x.kind === 'toggle').map((x) => x.rel).sort()
     expect(toggles).toEqual([
       'pages/ChatPage.tsx',
+      'pages/tools/ToolsPage.tsx',
       'pages/tools/ToolsPage.tsx',
       'ui/content/ContentSurface.tsx',
       'ui/widget/WidgetFrame.tsx',

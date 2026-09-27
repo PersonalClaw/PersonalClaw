@@ -259,7 +259,8 @@ def test_the_agents_shell_still_reads_and_works_in_the_workspace(home):
 
 def test_the_sandbox_denies_writes_there_at_every_level(home):
     """🔴 Red on main: the OS profile fenced reads of credentials only. Now every level denies a
-    write to each owner-only path, and the Linux launcher binds each one read-only."""
+    write to each owner-only path, and the Linux launcher binds the home read-only with every
+    entry but these bound back writable (`test_the_home_fence_holds_its_names`)."""
     from personalclaw.sandbox import _build_launcher_script, _build_seatbelt_profile
 
     real = os.path.realpath(home)
@@ -269,7 +270,8 @@ def test_the_sandbox_denies_writes_there_at_every_level(home):
         for name in ("hooks", "agents", "grants"):
             assert f'(deny file-write* (subpath "{real}/{name}"))' in profile
     launcher = _build_launcher_script("standard")
-    assert f"('{real}/hooks', True)" in launcher and "_MS_REMOUNT | _MS_RDONLY" in launcher
+    assert f'OWNER_HOME = "{real}"' in launcher and '"hooks"' in launcher
+    assert "_MS_REMOUNT | _MS_RDONLY" in launcher
     compile(launcher, "<launcher>", "exec")
 
 

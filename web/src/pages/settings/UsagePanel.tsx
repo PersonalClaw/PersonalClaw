@@ -163,7 +163,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   return (
     <div className="flex flex-col" style={{ minHeight: 0 }}>
       <PanelHeader title="Usage"
-        hint="What you've spent — real tokens and real USD from a per-turn ledger over every streamed turn (chat, subagents, loops, automations). Unattended model calls are recorded in a separate log that cannot be merged with these without double-counting; the 'By day and purpose' section states how much is excluded. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price row is shown honestly as 'unpriced', never $0.00." />
+        hint="What you've spent — real tokens and real USD from a per-turn ledger: every streamed turn (chat, rooms, subagents, loops, automations), a room's summaries and a chat's history compression. Unattended model calls that write no row of their own are recorded only in a separate log; the 'By day and purpose' section states how much is excluded. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price row is shown honestly as 'unpriced', never $0.00." />
 
       <div className="mb-l">
         <Segmented
@@ -332,7 +332,7 @@ function UsageTable({ rows, keyField, empty, error, onRetry }: {
  *  fill yet (`eval`) never shows as a permanent 0 row. */
 const PURPOSE_LABEL: Record<string, string> = {
   interactive: 'Interactive — turns you watched',
-  background: 'Background — automations and subagents',
+  background: 'Background — automations, subagents and housekeeping',
   loop: 'Loops',
   eval: 'Evaluations',
   app: 'Apps',
@@ -374,9 +374,11 @@ function DailySpendChart({ series }: { series: UsageFold['series'] }) {
  *  Its honesty markers are load-bearing, because this is a money surface:
  *  · a "~" on every figure (each dollar is computed from the price table, not reported by a provider)
  *  · an explicit FLOOR when some model has no price row, instead of a confident total
- *  · the unattended spend that is NOT included, stated with its size — a loop's inner inference is
- *    recorded in a second log with no shared id, so merging the two would double-count. Saying
- *    "excluded, ~$X" is honest; silently omitting it would claim a completeness the data lacks. */
+ *  · the unattended spend that is NOT included, stated with its size — the model calls that wrote
+ *    no row of their own (a chat's title, a judge) are only in the model-call log. A call a row
+ *    already counts is left out of that figure (the row names it), so nothing is counted twice.
+ *    Saying "excluded, ~$X" is honest; silently omitting it would claim a completeness the data
+ *    lacks. */
 function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: number }) {
   if (!fold) return null
   const total = fold.total
@@ -388,8 +390,7 @@ function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: 
       <span className="text-on-surface">Not included:</span>{' '}
       {uncounted.calls.toLocaleString()} unattended model{' '}
       {uncounted.calls === 1 ? 'call' : 'calls'} (~{fmtUsd(uncounted.total_dollars_est)} across the
-      whole log). They are recorded separately and cannot be merged with turns without
-      double-counting loops.
+      whole log). They wrote no usage row, so they are recorded only in the model-call log.
     </div>
   )
   if (total.calls === 0) {

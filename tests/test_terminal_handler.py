@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -244,7 +245,8 @@ class TestApiTerminalCreate:
         assert resp.status == 200
         body = json.loads(resp.body)
         assert "session_id" in body
-        assert len(body["session_id"]) == 12
+        # A host session's id names its tier too: ``<12 hex>@none``.
+        assert re.fullmatch(r"[0-9a-f]{12}@none", body["session_id"]), body["session_id"]
         assert "shell" in body
 
     @pytest.mark.asyncio
@@ -638,16 +640,16 @@ class TestTerminalWsIntegration:
         from aiohttp.test_utils import TestClient, TestServer
 
         async with TestClient(TestServer(app)) as client:
-            async with client.ws_connect("/api/ws/terminal/test-sess-1") as ws:
+            async with client.ws_connect("/api/ws/terminal/test-sess-1@none") as ws:
                 # Session should be registered
-                assert "test-sess-1" in registry
-                sess = registry["test-sess-1"]
+                assert "test-sess-1@none" in registry
+                sess = registry["test-sess-1@none"]
                 assert sess.proc.returncode is None  # alive
                 await ws.close()
 
             # After WS close, session stays (orphan reaper handles cleanup)
-            assert "test-sess-1" in registry
-            sess = registry["test-sess-1"]
+            assert "test-sess-1@none" in registry
+            sess = registry["test-sess-1@none"]
             assert sess.ws is None
             assert sess.last_ws_disconnect is not None
 
@@ -668,7 +670,7 @@ class TestTerminalWsIntegration:
         from aiohttp.test_utils import TestClient, TestServer
 
         async with TestClient(TestServer(app)) as client:
-            async with client.ws_connect("/api/ws/terminal/ping-sess") as ws:
+            async with client.ws_connect("/api/ws/terminal/ping-sess@none") as ws:
                 await ws.send_str(json.dumps({"type": "ping"}))
                 # Drain binary PTY frames until we get the text pong
                 for _ in range(20):
@@ -679,7 +681,7 @@ class TestTerminalWsIntegration:
                 assert data == {"type": "pong"}
                 await ws.close()
 
-            await terminal._kill_session(registry["ping-sess"])
+            await terminal._kill_session(registry["ping-sess@none"])
 
     @pytest.mark.asyncio
     async def test_ws_resize(self, monkeypatch, tmp_path):
@@ -695,7 +697,7 @@ class TestTerminalWsIntegration:
         from aiohttp.test_utils import TestClient, TestServer
 
         async with TestClient(TestServer(app)) as client:
-            async with client.ws_connect("/api/ws/terminal/resize-sess") as ws:
+            async with client.ws_connect("/api/ws/terminal/resize-sess@none") as ws:
                 await ws.send_str(
                     json.dumps(
                         {
@@ -707,12 +709,12 @@ class TestTerminalWsIntegration:
                 )
                 # Give a moment for the message to be processed
                 await asyncio.sleep(0.1)
-                sess = registry["resize-sess"]
+                sess = registry["resize-sess@none"]
                 assert sess.cols == 200
                 assert sess.rows == 50
                 await ws.close()
 
-            await terminal._kill_session(registry["resize-sess"])
+            await terminal._kill_session(registry["resize-sess@none"])
 
     @pytest.mark.asyncio
     async def test_ws_binary_io(self, monkeypatch, tmp_path):
@@ -728,7 +730,7 @@ class TestTerminalWsIntegration:
         from aiohttp.test_utils import TestClient, TestServer
 
         async with TestClient(TestServer(app)) as client:
-            async with client.ws_connect("/api/ws/terminal/io-sess") as ws:
+            async with client.ws_connect("/api/ws/terminal/io-sess@none") as ws:
                 # Send a command — the PTY should echo something back
                 await ws.send_bytes(b"echo hello\n")
                 # Read at least one binary frame back (PTY output)
@@ -737,7 +739,7 @@ class TestTerminalWsIntegration:
                 assert len(msg.data) > 0
                 await ws.close()
 
-            await terminal._kill_session(registry["io-sess"])
+            await terminal._kill_session(registry["io-sess@none"])
 
     @pytest.mark.asyncio
     async def test_ws_reconnect_existing_session(self, monkeypatch, tmp_path):
@@ -754,22 +756,22 @@ class TestTerminalWsIntegration:
 
         async with TestClient(TestServer(app)) as client:
             # First connection
-            async with client.ws_connect("/api/ws/terminal/recon-sess") as ws:
+            async with client.ws_connect("/api/ws/terminal/recon-sess@none") as ws:
                 await ws.close()
 
-            sess = registry["recon-sess"]
+            sess = registry["recon-sess@none"]
             original_pid = sess.proc.pid
             assert sess.ws is None  # disconnected
 
             # Reconnect
-            async with client.ws_connect("/api/ws/terminal/recon-sess") as ws:
-                sess = registry["recon-sess"]
+            async with client.ws_connect("/api/ws/terminal/recon-sess@none") as ws:
+                sess = registry["recon-sess@none"]
                 assert sess.proc.pid == original_pid  # same PTY
                 assert sess.ws is not None  # reconnected
                 assert sess.last_ws_disconnect is None
                 await ws.close()
 
-            await terminal._kill_session(registry["recon-sess"])
+            await terminal._kill_session(registry["recon-sess@none"])
 
     @pytest.mark.asyncio
     async def test_ws_invalid_json_ignored(self, monkeypatch, tmp_path):
@@ -785,7 +787,7 @@ class TestTerminalWsIntegration:
         from aiohttp.test_utils import TestClient, TestServer
 
         async with TestClient(TestServer(app)) as client:
-            async with client.ws_connect("/api/ws/terminal/json-sess") as ws:
+            async with client.ws_connect("/api/ws/terminal/json-sess@none") as ws:
                 await ws.send_str("not valid json")
                 # Should not crash — send a ping to verify connection alive
                 await ws.send_str(json.dumps({"type": "ping"}))
@@ -798,7 +800,7 @@ class TestTerminalWsIntegration:
                 assert data == {"type": "pong"}
                 await ws.close()
 
-            await terminal._kill_session(registry["json-sess"])
+            await terminal._kill_session(registry["json-sess@none"])
 
     @pytest.mark.asyncio
     async def test_ws_spawn_env_disables_shell_auto_update(self, monkeypatch, tmp_path):
@@ -853,7 +855,7 @@ class TestTerminalWsIntegration:
 
         try:
             async with TestClient(TestServer(app)) as client:
-                async with client.ws_connect("/api/ws/terminal/env-sess") as ws:
+                async with client.ws_connect("/api/ws/terminal/env-sess@none") as ws:
                     # A pong proves the handler completed spawn and entered the WS loop.
                     await ws.send_str(json.dumps({"type": "ping"}))
                     msg = await ws.receive(timeout=3)
@@ -862,7 +864,7 @@ class TestTerminalWsIntegration:
                     assert captured["kwargs"]["env"]["DISABLE_AUTO_UPDATE"] == "true"
                     await ws.close()
 
-                await terminal._kill_session(registry["env-sess"])
+                await terminal._kill_session(registry["env-sess@none"])
         finally:
             for fd in slave_fds:
                 os.close(fd)
@@ -885,7 +887,7 @@ class TestTerminalWsIntegration:
             assert resp.status == 200
             body = await resp.json()
             sid = body["session_id"]
-            assert len(sid) == 12
+            assert re.fullmatch(r"[0-9a-f]{12}@none", sid), sid
 
             # List (empty — create only returns ID, doesn't spawn PTY)
             resp = await client.get("/api/terminal/sessions")
@@ -981,6 +983,9 @@ class TestPersistence:
             def __init__(self, argv):
                 self.argv = ["fake-tier-run", *argv]
 
+            def cleanup(self):
+                pass
+
         class _Provider:
             def wrap(self, _spec, argv):
                 return _Handle(argv)
@@ -989,8 +994,13 @@ class TestPersistence:
             "personalclaw.sandbox_providers.get_provider",
             lambda name: _Provider() if name == "fake-tier" else None,
         )
-        if tier:
-            monkeypatch.setitem(terminal._pending_sandbox, "tier-sess", tier)
+
+        async def _no_tmux_sessions():
+            return []
+
+        monkeypatch.setattr(tmux_substrate, "list_sessions", _no_tmux_sessions)
+        # A session opened in a tier carries it in its id.
+        sid = f"tier-sess@{tier or 'none'}"
 
         captured: dict = {}
         worker_fds: list[int] = []
@@ -1022,13 +1032,13 @@ class TestPersistence:
 
         try:
             async with TestClient(TestServer(_make_app(registry=registry))) as client:
-                async with client.ws_connect("/api/ws/terminal/tier-sess") as ws:
+                async with client.ws_connect(f"/api/ws/terminal/{sid}") as ws:
                     await ws.send_str(json.dumps({"type": "ping"}))
                     msg = await ws.receive(timeout=3)
                     assert json.loads(msg.data) == {"type": "pong"}
                     await ws.close()
-                persistent = registry["tier-sess"].persistent
-                await terminal._kill_session(registry["tier-sess"])
+                persistent = registry[sid].persistent
+                await terminal._kill_session(registry[sid])
         finally:
             for fd in worker_fds:
                 os.close(fd)
@@ -1043,7 +1053,7 @@ class TestPersistence:
                 "new-session",
                 "-A",
                 "-s",
-                "pclaw-tier-sess",
+                "pclaw-tier-sess@none",
                 "/bin/sh",
                 "-l",
             ]

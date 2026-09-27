@@ -1,36 +1,38 @@
-"""On-demand Schedule job triggering.
+"""On-demand triggering of a scheduled job, for ``personalclaw cron trigger``.
 
-A thin helper that fires a scheduled job **immediately** by POSTing to the
-running gateway's run route — never by instantiating a fresh ``ScheduleService``
-(a fresh service has no live timer/reaper and would orphan the run). Reuses
-PersonalClaw's internal-secret IPC (``mcp_core._post`` → ``X-Internal-Secret``),
-so both the CLI (``personalclaw cron trigger``) and the ``schedule_trigger`` MCP
-tool go through the same authenticated localhost path.
+A thin helper that fires a job **immediately** by POSTing to the running gateway's run route —
+never by instantiating a fresh ``ScheduleService`` (a fresh service has no live timer/reaper and
+would orphan the run). Reuses PersonalClaw's internal-secret IPC (``mcp_core._post`` →
+``X-Internal-Secret``), the authenticated localhost path the MCP tools use.
 """
 
 from __future__ import annotations
 
-import re
-
-_JOB_ID_RE = re.compile(r"^[a-f0-9]{6,16}$")
+from urllib.parse import quote
 
 
 def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
     """Fire job ``job_id`` now via the running gateway. Returns ``(ok, message)``.
 
-    Validates the id format locally, then POSTs to
-    ``/api/triggers/schedule:{id}/run`` (non-blocking on the server — it spawns
-    the run and returns immediately). A gateway that is down / unreachable yields
-    a friendly error rather than raising.
+    ``job_id`` is a trigger store id, one ``personalclaw cron list`` shows, and the caller has
+    looked it up there: the store is the one complete list of the ids the writers mint
+    (``clock:<name>`` from ``cron add``, ``system:…``, ``app:<app>:<job>``,
+    ``report-schedule:…``), and an app's job name can hold any character, so no pattern can
+    stand in for it. The id is percent-encoded into the path, as the dashboard's Run button
+    does, so no character in it can change which route the request reaches.
+
+    POSTs to ``/api/triggers/schedule:{id}/run`` (non-blocking on the server — it spawns the run
+    and returns immediately). A gateway that is down / unreachable yields a friendly error
+    rather than raising.
     """
     job_id = (job_id or "").strip()
-    if not _JOB_ID_RE.match(job_id):
-        return False, f"invalid job id: {job_id!r}"
+    if not job_id:
+        return False, "no job id given"
     # Deferred import: keeps this module importable in contexts where the MCP
     # core isn't wired, and avoids a circular import at module load.
     from personalclaw.mcp_core import _post
 
-    resp = _post(f"/api/triggers/schedule:{job_id}/run", {})
+    resp = _post(f"/api/triggers/schedule:{quote(job_id, safe='')}/run", {})
     if not isinstance(resp, dict):
         return False, "unexpected response from gateway"
     if resp.get("error"):
@@ -39,9 +41,17 @@ def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
         # The gateway's own sentence — a missing grant says which and how to give it, the kill
         # switch says how to resume. "trigger failed" in its place told the caller nothing.
         return False, str(resp["refused"])
+    name = resp.get("name") or job_id
     if resp.get("ok"):
-        name = resp.get("name") or job_id
         return True, f"triggered '{name}'"
     if resp.get("running"):
         return False, "job is already running"
+    # The run route's note on a run that did not succeed: "failed: <why>" for an action that ran
+    # and failed, or why nothing ran (an unknown or missing action provider). "trigger failed" in
+    # its place hid, say, that no chat model is bound for the job's agent.
+    note = str(resp.get("result") or "")
+    if note.startswith("failed: "):
+        return False, f"'{name}' {note}"
+    if note:
+        return False, f"'{name}' did not run: {note}"
     return False, "trigger failed"

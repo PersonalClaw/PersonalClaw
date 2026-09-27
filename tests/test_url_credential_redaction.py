@@ -1,7 +1,7 @@
 """URL userinfo is a credential shape every pattern was blind to (#406, #751, #280).
 
 `_CREDENTIAL_PATTERNS` is entirely SHAPE- or NAME-based: it recognises provider
-key formats (`sk-ant-…`, `ghp_…`) and `name = value` assignments. A credential
+key formats (`fake-anthropic-1…`, `ghp_…`) and `name = value` assignments. A credential
 carried POSITIONALLY, in the userinfo slot of a URL, matches neither — so
 `https://user:s3cr3t@github.com/a/b.git` survived every surface in this tree that
 "redacts": the diagnostics log stream, the SEL audit `resources` field, agent
@@ -13,7 +13,7 @@ Measured on `origin/main` before any change:
     git clone https://alice:hunter2@git.example…   -> unchanged     LEAK
     ssh://deploy:pa55@host:22/repo                 -> unchanged     LEAK
     postgres://admin:dbpass@db.internal:5432/app   -> unchanged     LEAK
-    https://oauth2:ghp_AAAA…@github.com/a/b.git    -> redacted     …by ACCIDENT
+    https://oauth2:fake-github-token-1…@github.com/a/b.git    -> redacted     …by ACCIDENT
 
 **That last row is why this class survived a test suite.** It was caught only
 because the password happened to be a GitHub token whose SHAPE one of the
@@ -74,8 +74,8 @@ class TestTheSecretIsRemoved:
         """`https://<PAT>@github.com/…` is the documented GitHub form, so treating
         userinfo as secret only when it has two colon-separated parts would miss
         the most common real case."""
-        text = "https://ghp_AAAAAAAAAAAAAAAAAAAAAAAA@github.com/a/b.git"
-        assert "ghp_AAAAAAAAAAAAAAAAAAAAAAAA" not in redact_credentials(text)[0]
+        text = "https://fake-github-token-2@github.com/a/b.git"
+        assert "fake-github-token-2" not in redact_credentials(text)[0]
 
     def test_the_planted_secrets_are_NOT_ones_the_old_patterns_matched(self):
         """The floor that makes every test above mean something.
@@ -125,10 +125,9 @@ class TestNothingElseIsTouched:
 
 
 class TestIdempotence:
-    """`redact_credentials` is NOT idempotent in general: applied twice to a
-    composed `api_key: [REDACTED: …]` line it garbles the text AND loses the field
-    name. A new pass must not add another way for a second application to corrupt
-    text."""
+    """`redact_credentials` is idempotent because none of its passes can match a mask:
+    applied twice to a composed `api_key: [REDACTED: …]` line it keeps the line. A new
+    pass must not add a way for a second application to corrupt text."""
 
     def test_the_pre_pass_is_idempotent(self):
         once, _ = redact_url_userinfo("https://user:s3cr3t@github.com/a/b.git")
@@ -186,7 +185,7 @@ class TestGitSourceValidation:
     REFUSED = [
         "https://user:s3cr3t@github.com/a/b.git",
         "ssh://deploy:pa55@host/repo.git",
-        "https://ghp_AAAAAAAAAAAAAAAAAAAA@github.com/a/b",
+        "https://fake-github-token-3@github.com/a/b",
         "not-a-git-url",
         "",
         "javascript:alert(1)",

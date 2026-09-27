@@ -230,3 +230,61 @@ describe('the external-access controls reach the backend', () => {
     expect(screen.getAllByText(/not editable here/i).length).toBeGreaterThan(0)
   })
 })
+
+// ── A token's lifetime is stated where the surface and the client are (ledger 317a) ──────────────
+//
+// A surface's own token can stop working while the surface stays on for registered clients, and a
+// client's token ends 90 days after it was issued at the latest. Neither may read as "fine".
+
+describe('the page says when an integration token stopped working', () => {
+  const NOW = Math.floor(Date.now() / 1000)
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    patchConfig.mockResolvedValue({})
+    saveListEdits.mockResolvedValue([])
+  })
+
+  it('names an expired surface token beside a surface that is still on for its clients', async () => {
+    externalAccess.mockResolvedValue({
+      ...STATE,
+      surfaces: [{ ...STATE.surfaces[0], token_state: 'expired', token_expires_at: NOW - 60 }],
+    })
+    render(<ExternalAccessPanel />)
+    const pill = await screen.findByText('token expired')
+    expect(pill.getAttribute('title')).toBe(
+      "This surface's own token no longer works (token expired); registered clients keep their own. Create a new one with personalclaw inbound token create mcp --rotate.",
+    )
+    expect(screen.queryByText('not serving')).toBeNull()
+  })
+
+  it('says nothing about a surface token that works', async () => {
+    externalAccess.mockResolvedValue({
+      ...STATE,
+      surfaces: [{ ...STATE.surfaces[0], token_state: 'live', token_expires_at: NOW + 86400 }],
+    })
+    render(<ExternalAccessPanel />)
+    await screen.findByText('Requests per second')
+    expect(screen.queryByText(/^token (expired|revoked|replaced|refused)$/)).toBeNull()
+  })
+
+  it('states when a client’s token stops working, and marks one that already has', async () => {
+    const client = {
+      client_id: 'abc', label: 'ide', surfaces: ['mcp'], agent: '', tools: [], scope: {},
+      rate_overrides: {}, disabled: false, created_at: '', last_seen_at: '',
+      requests_seen: 0, refusals_seen: 0,
+    }
+    externalAccess.mockResolvedValue({
+      ...STATE,
+      clients: [
+        { ...client, expires_at: NOW + 7 * 86400 },
+        { ...client, client_id: 'old', label: 'old-ide', expires_at: NOW - 86400 },
+      ],
+    })
+    render(<ExternalAccessPanel />)
+    expect(await screen.findByText(/^token works until /)).toBeTruthy()
+    expect(screen.getByText(/^token stopped working /)).toBeTruthy()
+    expect(screen.getAllByText('expired')).toHaveLength(1)
+  })
+})

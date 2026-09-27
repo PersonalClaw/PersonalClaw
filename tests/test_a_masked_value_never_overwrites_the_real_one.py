@@ -558,7 +558,7 @@ def test_writing_back_a_listed_fact_keeps_its_hidden_key(tmp_path, monkeypatch):
 
 # ── The credential store: the display mask is never a value ────────────────────────────────
 
-TOKEN = "ghp_fixtureMaskedEditToken00112233445566"
+TOKEN = "fake-github-token-1"
 
 
 @pytest.fixture

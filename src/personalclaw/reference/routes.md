@@ -94,6 +94,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/auth/login` — verify the owner credential and mint a session cookie.
 - `POST /api/auth/logout` — clear the cookie AND revoke the session behind it.
 - `POST /api/auth/password` — set the owner password from an AUTHENTICATED session.
+- `POST /api/auth/rotate-key` — replace the key every sign-in is signed with.
 - `GET /api/auth/session` — the authenticated account view (Settings → Account).
 - `GET /api/auth/status` — what the login UI needs to render itself.
 - `GET /api/autonomy` — every governed action type, its rung, and what it has earned.
@@ -243,6 +244,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/desktop/state` — the shell pushes a refreshed capability manifest.
 - `POST /api/desktop/unregister` — the shell is quitting; forget its capabilities.
 - `GET /api/devices` — every device and token signed in to this gateway.
+- `GET /api/devices/integrations` — every integration token that can reach this gateway.
+- `POST /api/devices/integrations/{id}/revoke` — revoke one integration's token.
 - `POST /api/devices/pair/complete` — redeem a code for a durable device session.
 - `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
 - `POST /api/devices/revoke-others` — sign out every device and token but the caller's own.
@@ -283,6 +286,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/evals/studies` — one compact row per pre-registered study (§2.4 / ES-5).
 - `GET /api/evals/studies/{study_id}` — one study's verdict, agreement and per-run rows.
 - `GET /api/external-access` — the whole operator view of the inbound seam.
+- `POST /api/external-access/bridge/confirmations/{id}` — your answer to a control-bridge action.
 - `POST /api/external-access/clients` — create; DELETE …/{client_id} — revoke.
 - `DELETE /api/external-access/clients/{client_id}` — create; DELETE …/{client_id} — revoke.
 - `POST /api/external-access/clients/{client_id}/disabled` — kill-switch layer (c).
@@ -886,6 +890,6 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /actions` — the self-describing action catalogue (control bridge, loopback).
 - `GET /api/ws` — single multiplexed WebSocket for all real-time events.
 - `GET /api/ws/terminal/{session_id}` — WebSocket PTY for the built-in CLI panel.
-- `POST /confirm` — redeem a confirm_token, running the action the user approved.
+- `POST /confirm` — refused, always: only you confirm a control-bridge action.
 - `GET /mcp` — `GET /mcp` → 405. No SSE stream in v1 (spec-permitted).
 - `POST /mcp` — _(no summary)_

@@ -25,11 +25,11 @@ from personalclaw.config.credentials import credential_names
 from personalclaw.providers import instances
 from personalclaw.providers.settings import ProviderSettings
 
-TOKEN = "xoxb-fixture-4d3c2b1a-never-plaintext"
-APP_TOKEN = "xapp-fixture-9e8d7c6b-never-plaintext"
+TOKEN = "fake-bot-token-fixture-4d3c2b1a-never-plaintext"
+APP_TOKEN = "fake-app-token-fixture-9e8d7c6b-never-plaintext"
 PASSCODE = "fixture-passcode-1a2b3c4d"
-INSTANCE_KEY = "sk-fixture-instance-6f5e4d3c"
-ROTATED = "sk-fixture-instance-rotated-0a9b8c7d"
+INSTANCE_KEY = "fake-key-fixture-instance-6f5e4d3c"
+ROTATED = "fake-key-fixture-instance-rotated-0a9b8c7d"
 
 APP = "fixture-secret-app"
 

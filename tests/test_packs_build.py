@@ -29,7 +29,7 @@ from personalclaw.packs.build import (
 # A recognisable planted secret string used across the fixtures. AWS-key-shaped so BOTH
 # redaction layers fire on it.
 CANARY_AWS = "AKIAIOSFODNN7EXAMPLE"
-CANARY_ENV = "SLACK_BOT_TOKEN=xoxb-CANARY-9999999999-planted-do-not-ship"
+CANARY_ENV = "SLACK_BOT_TOKEN=fake-bot-token-1"
 CANARY_LOCAL = "dashboard-auth-token-CANARY-xyz"
 
 
@@ -295,13 +295,13 @@ def test_golden_pack_greps_clean_of_canaries(bound_home, tmp_path):
     raw = out.read_bytes()
     # Grep the compressed archive AND every decompressed member — a canary must appear in
     # neither.
-    for canary in (CANARY_AWS, CANARY_ENV, CANARY_LOCAL, "xoxb-CANARY", "hmac-CANARY"):
+    for canary in (CANARY_AWS, CANARY_ENV, CANARY_LOCAL, "fake-bot-token-2", "hmac-CANARY"):
         assert canary.encode() not in raw, f"{canary} present in raw pack bytes"
 
     with zipfile.ZipFile(out) as zf:
         for member in zf.namelist():
             data = zf.read(member)
-            for canary in (CANARY_AWS, CANARY_ENV, CANARY_LOCAL, "xoxb-CANARY", "hmac-CANARY"):
+            for canary in (CANARY_AWS, CANARY_ENV, CANARY_LOCAL, "fake-bot-token-2", "hmac-CANARY"):
                 assert canary.encode() not in data, f"{canary} present in member {member}"
         # Positive: the legitimate components DID make it in.
         manifest = json.loads(zf.read("pack.json"))

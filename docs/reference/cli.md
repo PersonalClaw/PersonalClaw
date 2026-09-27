@@ -16,6 +16,24 @@ Commands that talk to a running gateway (`status`, `stop`, `restart`, `token`,
 `logout`, `spawn`) accept `--port` (default: resolved from the `PERSONALCLAW_PORT`
 env var or the `dashboard.url` config).
 
+## Exit codes and output streams
+
+| Exit | Meaning |
+|---|---|
+| `0` | The command did what you asked. |
+| `1` | It ran and refused or failed: no gateway is running, the job id is not there, a check found a problem. |
+| `2` | The command line is wrong, and the usage is on stderr: `personalclaw` alone, a group with none of its commands (`personalclaw cron`), a required argument that is missing or empty, two options that exclude each other (`cron add --every 60 --cron "0 9 * * *"`). |
+
+`--help` prints on stdout and exits `0`. `auth`, `incident` and `push` alone show their status
+and `skills` alone lists the installed skills; every other group needs one of its commands.
+A command whose section below lists its own codes (`run`) follows that list.
+
+stdout carries only what a command produces: the link `token` prints, the jobs `cron list`
+prints, a report. A refusal, a failure or a usage message goes to stderr, so
+`url=$(personalclaw token)` captures a link or nothing. A check whose report is its answer
+(`doctor`, `security verify`, `backup validate`, `inbound token show`) prints the report on
+stdout either way, and its exit status says whether it passed.
+
 ## `personalclaw gateway`
 
 Start the PersonalClaw server (dashboard + channels). This is the long-running
@@ -160,6 +178,13 @@ Install agent config and configure credentials (interactive wizard).
 | `--mode {docker,service,none}` | Deployment mode: Docker Compose, system service (systemd/launchd), or none. |
 | `--provider NAME` | Set the default chat provider by registry entry name. |
 | `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
+| `--app NAME` | Run only the named installed app's setup step. |
+
+A step that fails never ends on "Done!". It says why on stderr and `setup` goes on to the
+next step, then ends on a summary naming each failed step with the command that runs it
+again (`personalclaw setup`, `personalclaw setup --agent-only`, or
+`personalclaw setup --app NAME` for an app's step), and exits 1. What the other steps did
+stays saved, and running `setup` again is safe: Enter at a prompt keeps its answer.
 
 ## `personalclaw doctor`
 
@@ -228,11 +253,11 @@ Manage scheduled jobs.
 | Subcommand | What it does |
 |---|---|
 | `cron list` | List cron jobs. |
-| `cron add NAME MESSAGE [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto] [--yes]` | Add a job — interval (`--every`) or cron expression (`--cron "0 9 * * MON-FRI"`); optionally send results on a chat channel: `--channel telegram` for your DMs there, `--channel telegram:-100123` for a chat. The channel checks the id; `--approval-mode auto` auto-approves the job's tools. A job runs an agent with its tools while you are away, so the command asks what the Triggers page's create dialog asks: without `--yes` it prints the question and creates nothing (exit 1). |
-| `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto\|default] [--yes]` | Update a job (`default` resets approval mode). A new `--message` changes what the job's agent is told to do, and `--approval-mode auto` lets it approve its own tool calls, so each asks what the Triggers page's editor asks: without `--yes` the command prints the question and changes nothing (exit 1). |
+| `cron add NAME MESSAGE (--every SECS \| --cron EXPR) [--channel NAME[:ID]] [--approval-mode auto] [--yes]` | Add a job with one cadence: an interval of more than 0 seconds (`--every`) or a cron expression (`--cron "0 9 * * MON-FRI"`); optionally send results on a chat channel: `--channel telegram` for your DMs there, `--channel telegram:-100123` for a chat. The channel checks the id; `--approval-mode auto` auto-approves the job's tools. A job runs an agent with its tools while you are away, so the command asks what the Triggers page's create dialog asks: without `--yes` it prints the question and creates nothing (exit 1). |
+| `cron update JOB_ID [--name] [--message] [--every SECS \| --cron EXPR] [--channel NAME[:ID]] [--approval-mode auto\|default] [--yes]` | Update a job (`default` resets approval mode); give at least one change, and at most one new cadence. A new `--message` changes what the job's agent is told to do, and `--approval-mode auto` lets it approve its own tool calls, so each asks what the Triggers page's editor asks: without `--yes` the command prints the question and changes nothing (exit 1). |
 | `cron remove JOB_ID` | Remove a job. |
 | `cron pause JOB_ID` / `cron resume JOB_ID` | Pause / resume a job. |
-| `cron trigger JOB_ID` | Fire a job immediately. |
+| `cron trigger JOB_ID` | Fire a job immediately, through the running gateway. `JOB_ID` is an id `cron list` shows, such as `clock:nightly-report` for a job `cron add` made; one that is not there is refused with `Job not found` (exit 1) and nothing is sent. |
 
 ## `personalclaw spawn`
 
@@ -341,7 +366,7 @@ Security audit and deny list.
 | Command | What it does |
 |---|---|
 | `personalclaw snapshot [OUTPUT_DIR] [--keep N] [--list]` | Create a portable backup of PersonalClaw state (keeps the N most recent, default 7; `--list` shows existing snapshots). It carries no credential value — keys and tokens stay in the credential store, and settings hold references to them. It leaves out each app's engine (the app's own Python environment, `apps/<app>/venv`), which is built for the machine it runs on. |
-| `personalclaw restore [SNAPSHOT] [--mode replace\|merge] [--dry-run] [--components LIST] [--list-components] [--force]` | Restore state from a snapshot `.tar.gz`. `--force` restores even while the gateway runs. It names each restored app whose engine is not installed here; Install engine, on the app's card in Settings → Providers, puts it back. |
+| `personalclaw restore [SNAPSHOT] [--mode replace\|merge] [--dry-run] [--components LIST] [--list-components] [--force]` | Restore state from a snapshot `.tar.gz`. `--force` restores even while the gateway runs. It names each restored app whose engine is not installed here; Install engine, on the app's card in Settings → Providers, puts it back. `--mode replace` moves the current state into `pre-restore-<timestamp>/`, except each app's engine: an app the snapshot brings back keeps the engine it has here, since an engine is built for this machine and a snapshot never carries one, and the restore names those apps. An app the snapshot does not have is set aside in that folder with its engine, whose size the restore names, and deleting the folder reclaims it. |
 | `personalclaw backup export [OUT_DIR] [--incremental]` | Export state as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly and syncs without re-uploading unchanged data). Defaults to `<home>/shards`. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. |
 | `personalclaw backup validate [SHARD_DIR]` | Verify an export end to end: the manifest parses, every declared shard exists, and each one's byte length, row count, and SHA-256 re-derive — plus every row re-parses. **Exits non-zero on any problem**, so it works as a cron/CI check. A backup nobody has verified is a hope, not a backup. |
 
@@ -372,18 +397,32 @@ stays off until you both mint a token and flip the flags — and it only answers
 loopback callers.
 
 There are **five** inbound surfaces in the config schema — `openai`, `mcp`, `a2a`,
-`capture`, `bridge` — each with its own token and its own `enabled` flag. Only `mcp`
-has a route today; enabling one of the other four is accepted by config and simply
-has nothing to mount yet.
+`capture`, `bridge` — each with its own token and its own `enabled` flag. On the
+gateway's own port, `mcp` answers at `/mcp`; `openai` at `/v1/chat/completions`,
+`/v1/models` and `/v1/audio/{speech,transcriptions,voices}`; `a2a` at
+`/a2a/agent-card`, `/a2a/tasks` and `/a2a/tasks/{task_id}`; and `capture` at
+`/capture/v1/chat/completions`, `/capture/v1/messages` and `/capture/import`. `bridge`
+listens on a loopback port of its own. Each route checks its surface's own token, so
+the dashboard's sign-in check steps aside for exactly those routes, and any other path
+under those prefixes still needs a dashboard sign-in.
 
 | Command | What it does |
 |---|---|
-| `personalclaw inbound token create <surface> [--rotate]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. `--rotate` replaces an existing token, which immediately invalidates the old one. |
-| `personalclaw inbound token show <surface>` | Report whether a usable token is configured, and why not if it isn't. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
+| `personalclaw inbound token create <surface> [--rotate] [--ttl 90d]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. It works for `--ttl` (`30m`, `20h`, `7d`; default and limit 90 days — longer is refused, never shortened), and the output says until when. `--rotate` replaces a working token, which immediately invalidates the old one; a token that expired or was revoked is replaced without it. |
+| `personalclaw inbound token show <surface>` | Report whether a usable token is configured, when it was created and when it stops working — or why it is not usable. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
+| `personalclaw inbound token revoke <surface>` | Revoke that surface's token at once: whatever still presents it is refused and told it was revoked. The surface stays on, so a registered client's own token keeps working, and the revoked value stays refused for as long as it is configured — even when the environment sets it again at the next start. `create` then makes a new one. |
 
 A token is refused if it is shorter than 32 bytes, equal to the dashboard token or
 internal secret, or equal to **another surface's** token — five surfaces sharing one
 bearer would collapse five independently revocable credentials into one.
+
+Every integration token lasts at most 90 days — a surface token for its `--ttl`, a registered
+client's for the `ttl` it was registered with. A token from before lifetimes existed, or one set
+outside the CLI (Settings → Secrets, an environment variable), lasts 90 days from the first time
+the gateway sees it; a client registered before then, 90 days from its registration. Past its
+lifetime a token is refused with the same `unauthorized` code as any other refusal, and a
+sentence saying it stopped working, when, and how to get a new one. **Settings → Devices** lists
+every integration token with when it stops working, and revokes any of them.
 
 Minting a token is not enough on its own — enable the surface too, and the master
 switch above it:

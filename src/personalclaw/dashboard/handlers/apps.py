@@ -123,10 +123,8 @@ def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error:
     `catalog.add_git_source` — the refusal stops new ones, and this stops the ones that arrive by
     any other route.
 
-    Screened ONCE, here, at the point of entry to the log. Deliberately not at a shared trailing
-    chokepoint: `redact_credentials` is not idempotent over a composed `key: [REDACTED: …]` line —
-    it garbles the text and takes the field NAME with it — so a second sweep over already-screened
-    text is a corruption, not a belt-and-braces.
+    Screened ONCE, here, at the point of entry to the log: the row can never be cleaned after it
+    is written, so the screen has to come before it, where this field is known to be a source.
     """
     try:
         from personalclaw.security import redact_credentials
@@ -679,17 +677,16 @@ async def api_app_install(request: web.Request) -> web.Response:
     commits only if the staged bytes still carry it. Without it — or when the bytes have
     changed since — the answer is 409 with a fresh review (disclosure, scan, digest) and
     nothing is installed. A ``dangerous`` verdict or an invalid signature is always
-    refused."""
+    refused.
+
+    ``source`` is read as the review reads it (``request_validation``): a missing, blank or
+    non-string one is a 400 naming the field before anything is fetched. It was
+    ``str()``-coerced, so ``null`` or a list became the path ``"None"`` or ``"['x']"``."""
     from personalclaw.apps import app_manager
     from personalclaw.apps import source as app_source
 
-    try:
-        body: dict[str, Any] = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    src = str(body.get("source", "")).strip()
-    if not src:
-        return web.json_response({"error": "source is required"}, status=400)
+    body = await json_object_body(request)
+    src = require_string(body, "source")
     consent = _consent_token(body)
 
     try:
@@ -774,15 +771,14 @@ async def api_app_update(request: web.Request) -> web.Response:
 
     An update that changes what the app gets, or scans with warnings, commits only with
     the ``consent`` digest ``POST /api/apps/preview {source, name}`` returned; one that
-    changes none of it needs none (409 otherwise, with the review)."""
+    changes none of it needs none (409 otherwise, with the review). ``source`` is read as the
+    install reads it: a missing or non-string one is a 400 naming the field."""
     from personalclaw.apps import app_manager
     from personalclaw.apps import source as app_source
 
     name = request.match_info["name"]
     body = await json_object_body(request)
-    src = str(body.get("source", "")).strip()
-    if not src:
-        return web.json_response({"error": "source is required"}, status=400)
+    src = require_string(body, "source")
     if (busy := _engine_installing(request, name)) is not None:
         return busy
     consent = _consent_token(body)
@@ -1385,9 +1381,9 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     # string. Build the upstream URL from the same target so the two never drift.
     from yarl import URL
 
-    from personalclaw.apps.app_secret import read_app_secret
+    from personalclaw.apps.app_secret import proxy_signature
     from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
-    from personalclaw.sdk.security import PROXY_SIGNATURE_HEADER, sign_proxy_request
+    from personalclaw.proxy_signature import PROXY_SIGNATURE_HEADER
 
     # The query loses its credentials for the same reason the headers below lose the cookie
     # and Authorization: `?token=` is the owner's token and `?app_token=` an app's, and the
@@ -1402,9 +1398,11 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     # Fail closed: without the per-app secret we cannot prove this request came from the
     # gateway proxy, so we must NOT forward it unsigned (that would defeat the whole
     # inbound-auth boundary). The supervisor minted it at start(); a missing secret means
-    # the backend was never started protected.
-    proxy_secret = read_app_secret(name)
-    if not proxy_secret:
+    # the backend was never started protected. The body is read here, before the signature
+    # that covers it.
+    body = await request.read()
+    signature = proxy_signature(name, request.method, path_qs, body)
+    if signature is None:
         logger.warning("app %s proxy: secret missing; refusing to forward unsigned", name)
         return web.json_response({"error": "app backend not available"}, status=502)
 
@@ -1418,13 +1416,10 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     user_id = request.get("user", "dashboard")
     fwd_headers["Authorization"] = f"Bearer {app_session_token(user_id, name)[0]}"
     fwd_headers["X-PersonalClaw-App"] = name
-    body = await request.read()
-    # Sign the request so the backend's fail-closed middleware can prove it came from the
-    # gateway proxy. The signature covers ts + method + the exact wire path + a hash of
-    # the body, within a ±60s window (replay protection).
-    fwd_headers[PROXY_SIGNATURE_HEADER] = sign_proxy_request(
-        proxy_secret, request.method, path_qs, body
-    )
+    # Signed so the backend's fail-closed middleware can prove it came from the gateway proxy.
+    # The signature covers ts + method + the exact wire path + a hash of the body, within a
+    # ±60s window (replay protection).
+    fwd_headers[PROXY_SIGNATURE_HEADER] = signature
     timeout = aiohttp.ClientTimeout(total=_PROXY_TIMEOUT)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:

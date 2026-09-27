@@ -42,7 +42,7 @@
   "binary_size_rule": {
     "name": "oversized-binary",
     "max_bytes": 524288,
-    "rationale": "A tracked binary is permanent, unshrinkable weight in every clone (no Git LFS here). Measured ceiling after the publication-hygiene pass: the largest tracked binary is `docs/brand/social-preview.png` at 352 KB, and `docs/screenshots/` tops out at 328 KB. 512 KB is one step above that measured max — the same 'one step above measured, forbid growth' shape the structural ratchets use. It would have red `temp-screenshots/graph-cap/before-after-harness.png` (1.80 MB), the single largest file the repo ever tracked. TEXT files are exempt: CHANGELOG.md is 704 KB and grows legitimately."
+    "rationale": "A tracked binary is permanent, unshrinkable weight in every clone (no Git LFS here). Measured ceiling after the publication-hygiene pass: the largest tracked binary is `docs/brand/social-preview.png` at 352 KB, and `docs/screenshots/` tops out at 328 KB. 512 KB is one step above that measured max — the same 'one step above measured, forbid growth' shape the structural ratchets use. It would have red `temp-screenshots/graph-cap/before-after-harness.png` (1.80 MB), the single largest file the repo ever tracked. TEXT files are exempt: a lockfile or the CHANGELOG grows legitimately, and text diffs and compresses."
   },
   "real_home_path_rule": {
     "name": "real-home-path",
@@ -92,6 +92,16 @@
       "code": [],
       "id-head": [],
       "id": []
+    }
+  },
+  "planning_id_rule": {
+    "name": "planning-id",
+    "rationale": "The roadmap is private planning state kept outside this repository, so its ids — a work item's prefix and number, a plan's name, a session, task or section of a plan — mean nothing to a reader of the public tree, and each one publishes what the private plan calls itself. The prefixes and plan names are therefore listed here only as salted digests, with the internal-reference rule's digest and salt. Unlike that rule this one is a RATCHET: the tree still carries a known population of them in comments and docs, which later cleanups remove, so planning-id-baseline.json records it per file and tests/test_planning_id_baseline.py forbids growth. A work-item-prefix value is that prefix's number ceiling (its highest id plus three), so a same-shaped token past it is not an id; a plan-word counts anywhere (any) or only before a section sign, a session or a task (in-context). One CONTROL entry per kind, whose plaintext the test suite assembles at runtime, proves each kind fires.",
+    "how_to_fix": "A comment, docstring, test title or doc names a roadmap or planning id. Say what the code does, or why, without it: the id points into planning state a reader of this repository cannot open. Do NOT regenerate planning-id-baseline.json to bless a rise. To list a new prefix or plan name, run `python scripts/check_publication_hygiene.py --digest KIND TEXT` (KIND: work-item-prefix, plan-name or plan-word) and add the digest here with its value.",
+    "denied": {
+      "work-item-prefix": {},
+      "plan-name": [],
+      "plan-word": {}
     }
   },
   "allowed": [

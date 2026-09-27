@@ -67,9 +67,11 @@ logger = logging.getLogger(__name__)
 #: carrying it sends a content-free ``{kind, item_id}`` ping through
 #: :mod:`personalclaw.push`. ``channel_dm`` sends the note to the owner's DM on the first
 #: connected chat channel that reaches them (``channel_delivery.reach_owner``, from
-#: ``DashboardState.notify``); for ``approval/requested`` it asks there, with Approve/Deny
-#: where the channel has them (``DashboardApprovalState._ask_on_a_channel``). Unlike ``push``
-#: it carries the note's text, because the channel is where the owner reads it.
+#: ``DashboardState.notify``); for ``approval/requested`` it asks on "Send approvals to", with
+#: Approve/Deny where the channel has them (``DashboardApprovalState._asking_channels``). A chat
+#: that started on a channel is asked there without it, as its card is shown here without any
+#: target. Unlike ``push`` it carries the note's text, because the channel is where the owner
+#: reads it.
 TARGETS: tuple[str, ...] = ("dashboard", "channel_dm", "push", "native")
 DEFAULT_TARGETS: tuple[str, ...] = ("dashboard",)
 

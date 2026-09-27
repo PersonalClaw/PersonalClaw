@@ -76,7 +76,7 @@ async def _runtime(ws: Path, model: _ScriptedModel):
     from personalclaw.agents.provider import AgentRuntimeDefinition
 
     runtime = NativeAgentRuntime(
-        definition=AgentRuntimeDefinition(name="personalclaw-lite", provider="native", model="x"),
+        definition=AgentRuntimeDefinition(name="PersonalClaw", provider="native", model="x"),
         model_provider=model,
         tool_providers=[NativeBuiltinToolProvider(cwd=ws)],
         cwd=ws,
@@ -86,7 +86,7 @@ async def _runtime(ws: Path, model: _ScriptedModel):
 
 
 def _gateway(client):
-    """The gateway as the heartbeat pass sees it: its sessions hand out *client* as the background
+    """The gateway as the heartbeat pass sees it: its sessions hand out *client* as the task's own
     session, its context builder frames the task, and a finished task's delivery is recorded."""
     from personalclaw.config import AppConfig
     from personalclaw.gateway import GatewayOrchestrator
@@ -98,7 +98,7 @@ def _gateway(client):
     sessions = MagicMock()
     sessions.get_or_create = AsyncMock(return_value=(client, False, False))
     sessions.release = MagicMock()
-    sessions.recycle_background = AsyncMock()
+    sessions.reset = AsyncMock()
     orch.sessions = sessions
     orch.ctx_builder = MagicMock()
     orch.ctx_builder.build_message = MagicMock(side_effect=lambda text, *a, **k: (text, None))

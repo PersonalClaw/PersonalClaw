@@ -61,7 +61,7 @@ from aiohttp import web
 from personalclaw.http_errors import json_error
 from personalclaw.inbound import auth
 from personalclaw.inbound import caps as caps_mod
-from personalclaw.inbound import framing
+from personalclaw.inbound import framing, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 
@@ -227,11 +227,21 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
     client, client_reason = _lookup_client(presented)
     client_id = getattr(client, "client_id", "") or ""
     if client is None and not auth.verify_bearer(SURFACE, presented):
+        # A token this gateway issued that has since expired, or was revoked or replaced,
+        # is told so; the code stays `unauthorized` for every refusal.
+        ended = tokens.ending(SURFACE, presented)
         return (
             _refuse(
-                json_error("unauthorized", status=401, headers=_NO_STORE),
+                json_error(
+                    "unauthorized",
+                    message=ended.sentence if ended else None,
+                    status=401,
+                    headers=_NO_STORE,
+                ),
                 route=route,
-                refused=client_reason or "bad or missing bearer token",
+                refused=(ended.reason if ended else "")
+                or client_reason
+                or "bad or missing bearer token",
             ),
             "",
             caps_mod.DEFAULT_CAPS,

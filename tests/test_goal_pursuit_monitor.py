@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from personalclaw.nl_to_cron import Schedule
 from personalclaw.triggers import tools as T
 from personalclaw.triggers.store import TriggerStore
 from personalclaw.triggers.wakeup import RESUME_TARGET_KEY, resume_target_of
@@ -34,7 +35,7 @@ def store(tmp_path):
 
 
 def _cron(expr="0 9 * * 1-5"):
-    return lambda _cadence: (expr, "")
+    return lambda _cadence: Schedule(expr=expr)
 
 
 def _epoch(iso: str) -> float:

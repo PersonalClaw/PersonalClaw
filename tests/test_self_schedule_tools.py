@@ -18,6 +18,7 @@ import json
 
 import pytest
 
+from personalclaw.nl_to_cron import Schedule
 from personalclaw.triggers import tools as T
 
 
@@ -45,7 +46,7 @@ def _no_model(monkeypatch):
     than bypassing it to call `T.create` directly.
     """
     monkeypatch.setattr(
-        T, "_default_cadence_to_cron", lambda cadence: ("0 9 * * 1-5", ""), raising=True
+        T, "_default_cadence_to_cron", lambda cadence: Schedule(expr="0 9 * * 1-5"), raising=True
     )
 
 

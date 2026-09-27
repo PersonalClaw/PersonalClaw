@@ -225,6 +225,7 @@ LOOSENING_WRITES = [
     ("security.credential_keychain", {"security": {"credential_keychain": True}}, False),
     ("security.denied_commands", {"security": {"denied_commands": ["^rm "]}}, []),
     ("security.mcp_elicitation_servers", {}, ["some-server"]),
+    ("security.mcp_read_only_servers", {}, ["some-server"]),
     ("security.outside_home", {}, ["agent-skills"]),
     ("sandbox.nofile", {}, 0),  # 0 removes the limit
     ("sandbox.max_pids", {"sandbox": {"max_pids": 500}}, 1000),
@@ -522,15 +523,22 @@ class _PendingApprovalState:
     def refuse_ended_owner(self, approval_id: str) -> str:
         return ""  # a chat still waiting: the work that asked has not ended
 
-    def decide_session_approval(self, session: Any, request_id: str, action: str) -> None:
+    def answer_refusal(self, approval_id: str, by: Any) -> str:
+        from personalclaw import approval_answer
+
+        return approval_answer.refusal(by)
+
+    def decide_session_approval(
+        self, session: Any, request_id: str, action: str, *, by: Any
+    ) -> None:
         self.decisions.append((request_id, action))
 
 
 class TestAnAppAnswersNoApprovalInAChat:
     """A standing verb raises the approval posture, and even a one-off answer decides whether your
-    agent's tool call runs, so no verb on the chat's approve route is an app's. The menu-bar
-    companion relays your answer through ``/api/approvals`` instead, which it declares
-    (``test_apps_cannot_post_into_your_chats.py`` drives that relay)."""
+    agent's tool call runs, so no verb on the chat's approve route is an app's. Nor is
+    ``/api/approvals``: the menu-bar companion answers with your own sign-in
+    (``test_apps_cannot_post_into_your_chats.py``)."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

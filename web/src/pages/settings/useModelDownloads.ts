@@ -17,14 +17,20 @@ import { api, isLiveDownload, type DownloadJob } from '../../lib/api'
  *  `0 MiB of <total>` through completion. The mount path was never affected, which is exactly
  *  why a reload "fixed" it and made the bug look cosmetic.
  *
- *  `reattach: false` skips that mount-time list, for a caller that tracks only the downloads it
- *  starts: every model row of Settings → Models holds one for its Repair, and a list read per row
- *  would be a request per model on every open. */
-export function useModelDownloads(provider: string, onSettled: () => void, { reattach = true }: { reattach?: boolean } = {}) {
+ *  `reattach: false` skips that mount-time list, for a caller whose page reads it once for all its
+ *  rows: every model row of Settings → Models holds one, and a list read per row would be a
+ *  request per model on every open. Such a row re-attaches through `adopt`, the job the page
+ *  listed for its model, attached once per job the way the mount-time list attaches one. */
+export function useModelDownloads(provider: string, onSettled: () => void, { reattach = true, adopt }: {
+  reattach?: boolean
+  adopt?: DownloadJob
+} = {}) {
   const [jobs, setJobs] = useState<Record<string, DownloadJob>>({})
   const streams = useRef<Map<string, EventSource>>(new Map())
   const settled = useRef(onSettled)
   settled.current = onSettled
+  const adopted = useRef('')
+  const began = useRef(false)
 
   const closeStream = useCallback((id: string) => {
     streams.current.get(id)?.close()
@@ -58,10 +64,20 @@ export function useModelDownloads(provider: string, onSettled: () => void, { rea
       }).catch(() => { /* none */ })
     }
     const map = streams.current
-    return () => { alive = false; map.forEach((es) => es.close()); map.clear() }
+    // Closing the streams undoes an adoption too, so the effect below attaches it again.
+    return () => { alive = false; map.forEach((es) => es.close()); map.clear(); adopted.current = '' }
   }, [provider, attach, reattach])
 
+  // The job the caller's page listed, attached once: a later copy of the same job is older than
+  // what its stream has already said, and a download this hook started is newer than the list.
+  useEffect(() => {
+    if (!adopt || adopted.current === adopt.id || began.current) return
+    adopted.current = adopt.id
+    attach(adopt)
+  }, [adopt, attach])
+
   const start = useCallback(async (model: string) => {
+    began.current = true
     const job = await api.startModelDownload(provider, model)
     attach(job)
     // The already-downloaded short-circuit — `start` answers an immediately-`done` job when the

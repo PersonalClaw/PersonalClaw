@@ -22,8 +22,10 @@ function pairedInNameOrder(channels: ChannelRuntime[]): ChannelRuntime[] {
 /** The rule the setting sits under: `channel_delivery.approval_providers(origin)` asks the channel a
  *  chat started on first, and only then what this setting says. */
 const ORIGIN_FIRST = 'A chat that started on a chat channel is asked in that chat.'
-/** What this setting governs: every approval whose chat did not start on a channel. */
-const THE_REST = 'Everything else (a chat here, an unattended run, a trigger)'
+/** What this setting governs: every approval whose chat did not start on a channel, and only while
+ *  the Approval needed row delivers to Channel DM (`approval_state._asking_channels`): without that
+ *  target such an approval is asked on no channel. */
+const THE_REST = 'When Approval needed below delivers to Channel DM, everything else (a chat here, an unattended run, a trigger)'
 
 /** What happens to an approval under this choice, in words. It is the control's description, so it
  *  has to be what `channel_delivery.approval_providers` / `approval_delivery` actually do: the chat's
@@ -56,8 +58,9 @@ export function approvalRouteSentence(chosen: string, channels: ChannelRuntime[]
  *  Approvals went to the first paired channel in name order (Discord, then Email, Slack, Telegram),
  *  so someone with four channels paired had no say in which one asked. The default is still that
  *  order; choosing a channel makes it the only one that asks. It lives beside the per-kind rules
- *  because an approval reaches a channel through the Approval needed row's Channel DM target (and a
- *  subagent's request to start always asks there). */
+ *  because an approval with no channel origin reaches a channel through the Approval needed row's
+ *  Channel DM target (and a subagent's request to start always asks there). A chat that started on
+ *  a channel is asked in that chat without either. */
 export function ApprovalChannelSection({ onSaved }: { onSaved: () => void }) {
   const { data, error, refresh } = useQuery('settings:approval-channel', async () => {
     const [config, channels] = await Promise.all([api.personalclawConfig(), api.channels()])
@@ -67,7 +70,7 @@ export function ApprovalChannelSection({ onSaved }: { onSaved: () => void }) {
   const [chosen, setChosen] = useState<string | null>(null)
   useEffect(() => { if (data) setChosen(data.chosen) }, [data])
 
-  const hint = 'Where a tool approval asks you on a chat channel: when Approval needed below delivers to Channel DM, and when a subagent asks to start. A chat that started on a channel is asked there first; this setting decides the rest. Its Approve and Deny answer it, and so does PersonalClaw.'
+  const hint = 'A chat that started on a chat channel is always asked in that chat. This setting decides where the rest ask you: when Approval needed below delivers to Channel DM, and when a subagent asks to start. Approve and Deny on the channel answer it, and so does PersonalClaw.'
   if (!data && error) return <LoadError what="where approvals go" error={error} onRetry={refresh} />
   if (!data || chosen === null) {
     return (

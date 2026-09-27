@@ -88,6 +88,9 @@ AUTO_EXECUTE = "auto_execute"
 INJECTION = "result_injection"
 #: The gateway has nowhere to ask (no dashboard, no channel) and approves.
 NO_SURFACE = "no_approval_surface"
+#: The eval runner's own allowlist: its read-only tools, and file reads outside sensitive paths.
+#: It also names the runner's refusal of every other call (`eval.runner`).
+EVAL_SAFE_TOOLS = "eval_safe_tools"
 
 #: The approval scale's levels a grant is checked at (`guardrails.registries.SCALE_APPROVAL`).
 #: A blanket grant is ``auto``; a pattern the OPERATOR wrote into the hook settings is

@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
 from personalclaw import memory_holder
+from personalclaw.security import MaskConflict, keep_masked_values, mask_markers, stored_name
 
 logger = logging.getLogger(__name__)
 
@@ -424,13 +425,44 @@ def adjudicate(cand: Candidate, decision: Decision | None) -> Decision:
 # ── Execute ───────────────────────────────────────────────────────────────────
 
 
-def _write(vs, cand: Candidate, source: str, *, holder_attribution: bool) -> bool:
+def _write(
+    vs, cand: Candidate, source: str, *, holder_attribution: bool, replaces: str = ""
+) -> bool:
     item_source = "user_explicit" if cand.confidence >= 1.0 else source
     kwargs: dict[str, Any] = {}
     if holder_attribution and cand.holder:
         kwargs = {"holder": cand.holder, "weight": cand.weight}
-    err = vs.set_semantic(cand.key, cand.value, cand.confidence, item_source, **kwargs)
+    try:
+        key, value = _as_stored(vs, cand.key, cand.value, replaces)
+    except MaskConflict:
+        return False
+    err = vs.set_semantic(key, value, cand.confidence, item_source, **kwargs)
     return err is None
+
+
+def _as_stored(vs, key: str, value: object, replaces: str = "") -> tuple[str, object]:
+    """*key* and *value* with each ``[REDACTED: …]`` marker put back from the fact as stored.
+
+    Consolidation reads memory masked (the background session masks every prompt it is
+    handed), so what it extracts can carry a marker for a value it was not shown: in the key
+    of the fact it updates, or in a value it rewrote. Each is restored from the fact at that
+    key, or from the fact it *replaces* when the key is new, the way a masked fact written back
+    through the Memory page is. Raises :class:`MaskConflict` for a marker that stands for
+    nothing stored, so a marker is never saved over the value it hid.
+    """
+    if mask_markers(key) and vs.get_semantic(key) is None:
+        known = stored_name(key, (str(e.get("key") or "") for e in vs.get_all_semantic()))
+        if known is None:
+            raise MaskConflict()
+        key = known
+    row = vs.get_semantic(key) or (vs.get_semantic(replaces) if replaces else None)
+    if row is None:
+        return key, value
+    try:
+        previous = json.loads(row.get("value_json") or "null")
+    except (TypeError, ValueError):
+        previous = None
+    return key, keep_masked_values(value, previous)
 
 
 def flag_conflict(vs, new_key: str, old_key: str, *, source: str, reason: str = "") -> None:
@@ -553,7 +585,10 @@ def apply_decisions(
                 report.rejected += 1
             continue
         if final.verdict == VERDICT_SUPERSEDE:
-            if not _write(vs, cand, source, holder_attribution=holder_attribution):
+            written = _write(
+                vs, cand, source, holder_attribution=holder_attribution, replaces=final.target
+            )
+            if not written:
                 report.rejected += 1
                 continue
             report.added += 1

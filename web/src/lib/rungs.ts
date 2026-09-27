@@ -1,6 +1,6 @@
 import { FileText, ShieldQuestion, Undo2, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type AutonomyLadder, type AutonomyType } from './api'
+import { api, type ActionProviderName, type AutonomyLadder, type AutonomyType } from './api'
 import { useQuery } from './data'
 
 /** The earned-autonomy ladder, frontend side.
@@ -50,13 +50,24 @@ export function rungReason(t: AutonomyType, ladder: AutonomyLadder | null): stri
   return `${t.key} — ${hint}${t.authority}`
 }
 
-/** provider name → the action type governing it. A dispatch surface (a trigger row) holds a
- *  provider name and nothing else, exactly like the backend seams; the mapping lives on the
- *  declaration and travels on the wire, so the UI never guesses which type owns a provider. */
-export function providerRungIndex(ladder: AutonomyLadder | null): Map<string, AutonomyType> {
-  const index = new Map<string, AutonomyType>()
+/** provider → the action type governing it. A dispatch surface (a trigger row) holds the
+ *  provider it dispatches and nothing else, exactly like the backend seams; the mapping lives on
+ *  the declaration and travels on the wire, so the UI never guesses which type owns a provider.
+ *
+ *  Keyed on `ActionProviderName`, never on a bare string, because a TOOL can carry the same
+ *  word. The chat's approval card and the phone's approval queue looked a tool's name up here,
+ *  and a `bash` call waiting for permission wore the `bash` provider's "runs on its own". A tool
+ *  call dispatches no action provider, so no rung describes it and neither surface asks. */
+export function providerRungIndex(ladder: AutonomyLadder | null): Map<ActionProviderName, AutonomyType> {
+  const index = new Map<ActionProviderName, AutonomyType>()
   for (const t of ladder?.types ?? []) for (const p of t.providers) index.set(p, t)
   return index
+}
+
+/** A wire field that names what a trigger or hook DISPATCHES, as the ladder's key. Only for such
+ *  a field: a tool's name is not one, however alike the two words look. */
+export function dispatchedProvider(name: string): ActionProviderName {
+  return name as ActionProviderName
 }
 
 /** The ladder, cached. `persist: true` — declarations and grants change on a click, not on a

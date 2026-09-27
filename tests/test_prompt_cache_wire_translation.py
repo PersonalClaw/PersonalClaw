@@ -288,7 +288,7 @@ def fake_anthropic_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 
 def _cred() -> Credential:
-    return Credential(name="x", kind="api_key", secret="sk-test", source="env")
+    return Credential(name="x", kind="api_key", secret="fake-key-test", source="env")
 
 
 _CONVERSATION: list[dict] = [

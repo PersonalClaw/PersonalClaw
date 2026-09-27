@@ -17,11 +17,10 @@ is `withdraw_asks`'s: its confirmation resolves `withdrawn`, saying why.
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.ledger import outcomes
-from personalclaw.workflows import attention
+from personalclaw.workflows import attention, ending_sentence
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import judge_calibration, mid_flight, mutations, revision, store
 from personalclaw.workflows.bindings import node_deps
@@ -40,6 +39,7 @@ from personalclaw.workflows.models import (
 from personalclaw.workflows.step_usage import NOTHING_SENT
 
 if TYPE_CHECKING:
+    from personalclaw.approval_answer import Principal
     from personalclaw.workflows.controller import RunController
 
 logger = logging.getLogger(__name__)
@@ -122,13 +122,16 @@ def ensure_continuation(ctl: RunController, path: str) -> None:
         p for p, i in ctl.instances.items() if i.state not in TERMINAL_STATES and p != path
     ]
     # The typed CONFIRMATION record's id, minted with the ask and carried
-    # on it. From `(run, gate, epoch)` and which ask of this step it is, NOT from the resume token
-    # — and not from `(run, gate, epoch)` alone, which a gate asking twice in one epoch (a parked
+    # on it. From `(run, step, epoch)` and which ask of this step it is, NOT from the resume token
+    # — and not from `(run, step, epoch)` alone, which a gate asking twice in one epoch (a parked
     # step approved and stopping again, a rewind that does not force) repeated: the second ask
     # then carried the first one's id, and the first one's answer read as its answer.
-    gate_id = (node.id if node else "") or path
+    #
+    # The STEP is its instance path, not its node id. A loop repeats its body's node ids, and the
+    # ask's ordinal is counted per path, which starts again at zero in each cycle — so keyed on the
+    # node id, every cycle's ask of one gate carried the same id. The path names the cycle.
     confirmation_id = stable_confirmation_id(
-        ctl.run.id, gate_id, inst.epoch, ask=_times_asked(ctl, path)
+        ctl.run.id, path, inst.epoch, ask=_times_asked(ctl, path)
     )
     cont = create_continuation(
         ctl.run.id,
@@ -280,23 +283,16 @@ def _gate_kind(node: Any) -> str:
     return str((node.config or {}).get("kind", "") or "")
 
 
-def decliner(responder: str, channel: str) -> str:
+def decliner(by: Principal, channel: str) -> str:
     """Who declined, as the run's record names them.
 
-    A dashboard, CLI or HTTP answer carries no responder — the gateway already authenticated the
-    one person who can give it — so it names the owner (Settings → Account → "Your name"), or
-    "you" when no name was given. A channel reply must come from the run's owner
-    (`gate_policy.may_answer`) and names where it came from. A trigger that answers a gate is an
-    automation, and is named as one.
+    Only you answer a gate (``approval_answer``), so it names you (Settings → Account → "Your
+    name"), or "you" when no name was given. A channel reply must come from the run's owner
+    (`gate_policy.may_answer`) and names who replied and where.
     """
     from personalclaw.identity import operator_name
 
-    responder = (responder or "").strip()
-    if responder.startswith("trigger:"):
-        return f"the trigger {responder.split(':', 1)[1]}"
-    if responder == "trigger":
-        return "a trigger"
-    name = responder or operator_name() or "you"
+    name = (by.name if channel else "") or operator_name() or "you"
     return f"{name} in {channel}" if channel else name
 
 
@@ -363,8 +359,11 @@ async def end_at_gate(ctl: RunController, path: str) -> None:
     nodes = dict(walk(ctl.root))
     node = nodes.get(spec_path(path))
     label = str((getattr(node, "label", "") or getattr(node, "id", "") or "")) or path
-    followers = _followers(ctl, path, nodes)
-    cause = _clause(inst.failure.cause_plain if inst.failure else "") or "it did not pass"
+    followers = ending_sentence.followers(ctl, path, nodes)
+    cause = (
+        ending_sentence.clause(inst.failure.cause_plain if inst.failure else "")
+        or "it did not pass"
+    )
     if inst.state == InstanceState.DECLINED:
         ending, outcome = RunStatus.DECLINED, "was declined"
         sentence = f"“{label}” was {inst.degraded_reason}"
@@ -388,40 +387,6 @@ async def end_at_gate(ctl: RunController, path: str) -> None:
         sentence += ", so nothing after it ran"
     await ctl._cancel_inflight(ending)
     await ctl._finish(ending, error=f"{sentence}.")
-
-
-def _clause(text: str) -> str:
-    """A failure's cause as a clause of the run's one-line ending: one line, no closing period —
-    a judge's reasoning arrives as prose, and the sentence around it carries its own stop."""
-    return " ".join(str(text or "").split()).rstrip(" .")
-
-
-#: The last segment of an instance path, and what it says about the step's parent: a sequence or
-#: parallel child (`.children[i]`), a branch case, or a container body (`.body`, a `foreach`
-#: item's `.body#i`, a loop iteration's `.body@i`).
-_LAST_SEGMENT = re.compile(r"\.(children\[(\d+)\]|cases\[[^\]]*\]|default|body(?:[#@]\d+)?)$")
-
-
-def _followers(ctl: RunController, path: str, nodes: dict[str, Any]) -> list[str]:
-    """Every step after `path` in each SEQUENCE that holds it, innermost first — the steps a
-    stopping gate stops. Instance paths, so a gate inside a `foreach` item stops what follows it in
-    THAT item, and then what follows the fan-out in the sequence around it."""
-    out: list[str] = []
-    cursor = path
-    while True:
-        match = _LAST_SEGMENT.search(cursor)
-        if match is None:
-            return out
-        parent = cursor[: match.start()]
-        container = nodes.get(spec_path(parent))
-        if (
-            match.group(2) is not None
-            and container is not None
-            and container.kind == NodeKind.SEQUENCE
-        ):
-            index = int(match.group(2))
-            out.extend(f"{parent}.children[{i}]" for i in range(index + 1, len(container.children)))
-        cursor = parent
 
 
 #: The verb an ask's confirmation closes with when NOBODY answered it: the run ended under it, or
@@ -517,7 +482,7 @@ def resume_revise(
     step_ref: str,
     comment: str,
     *,
-    responder: str = "",
+    by: Principal,
     channel: str = "",
 ) -> dict[str, Any]:
     """Apply `revise{step_ref, comment}` to exactly one node, then let the run carry on.
@@ -561,7 +526,10 @@ def resume_revise(
             "message": "a revise must say what to change (`comment`)",
         }
 
-    patch = revision.comment_patch(root, node_id, text, requested_by=responder or channel or "user")
+    # "user" is what the step's prompt calls the reviewer; a channel reply names who replied.
+    patch = revision.comment_patch(
+        root, node_id, text, requested_by=(by.name if channel else "") or "user"
+    )
     if patch is None:
         return {
             "ok": False,
@@ -594,7 +562,7 @@ def resume_revise(
         confirmation_id=cont.confirmation_id,
         verb=REVISED,
         approved=False,
-        resolved_by=responder or channel or "dashboard",
+        resolved_by=by.label,
         reason=f"sent “{node_id}” back to be revised",
     )
 
@@ -616,7 +584,7 @@ def resume_revise(
         preview=mutations.CascadePreview(rerun=[node_id]),
         spec=merged.spec,
     )
-    mid_flight.commit_mutation(ctl, result, responder or channel or "user")
+    mid_flight.commit_mutation(ctl, result, (by.name if channel else "") or "user")
 
     # The revised step re-asks. PENDING at the SAME epoch, matching `mid_flight._apply_reentry`'s
     # no-force behaviour — and the cache cannot serve the old answer anyway, because the
@@ -636,7 +604,7 @@ def resume_revise(
         epoch=cont.epoch,
         step_ref=node_id,
         comment=text,
-        revised_by=responder or channel or "dashboard",
+        revised_by=by.label,
     )
     ctl.run.attention = None
     if ctl.run.status == RunStatus.NEEDS_INPUT:
@@ -745,23 +713,25 @@ def _open_escalation_outcome(
         logger.debug("escalation outcome open failed for run %s", ctl.run.id, exc_info=True)
 
 
-def stable_confirmation_id(run_id: str, gate_id: str, epoch: int, ask: int = 0) -> str:
-    """The stable confirmation id for one ask: (run, gate, epoch) and which ask of that gate it is.
+def stable_confirmation_id(run_id: str, step_path: str, epoch: int, ask: int = 0) -> str:
+    """The stable confirmation id for one ask: (run, step, epoch) and which ask of that step it is.
 
     Delegates to `confirmation.request_id` rather than composing a string here. Two id schemes for
     one record is the failure mode where `confirmation_pending` and `confirmation_resolved` never
     pair up in the ledger, and nobody notices until someone asks how long a gate waited.
 
-    The EPOCH is in the key because a rewind SHOULD produce a new confirmation — the question is
-    being asked about different work — and the ASK's ordinal because the same gate can ask again
-    within one epoch, and that is a new question too (ledger 249). Minted ONCE, when the ask is,
-    and carried on its continuation (`Continuation.confirmation_id`): every later half — the answer,
+    The STEP is its instance path (`root.children[1].body@2.children[0]`), which names the loop
+    cycle it runs in; a node id does not, since every cycle of a loop repeats its body's ids. The
+    EPOCH is in the key because a rewind SHOULD produce a new confirmation — the question is being
+    asked about different work — and the ASK's ordinal because the same step can ask again within
+    one epoch, and that is a new question too (ledger 249). Minted ONCE, when the ask is, and
+    carried on its continuation (`Continuation.confirmation_id`): every later half — the answer,
     the withdrawal — reads it from there rather than deriving it again, so the halves pair by
     construction.
     """
     from personalclaw.workflows.confirmation import request_id
 
-    return request_id(run_id, gate_id, epoch, ask)
+    return request_id(run_id, step_path, epoch, ask)
 
 
 def _times_asked(ctl: RunController, path: str) -> int:

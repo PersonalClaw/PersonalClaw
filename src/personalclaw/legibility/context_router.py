@@ -362,10 +362,24 @@ def assemble(
 
     Kept side-effect-free so the tier ordering, the memory/knowledge boundary, and
     the L0 catalog are unit-testable without any store, embedder, or gateway.
+
+    Every text an agent will read from it is masked here (``security.redact_for_model``): the
+    brief and procedure, each memory, a skill's description, a knowledge title and summary.
+    Here, before anything truncates them, because the JSON, the rendered text and the adapter
+    files all derive from these fields, and an adapter file is read by another agent's CLI
+    straight off the disk, past no boundary of ours.
     """
-    memories = memories or []
-    skills = skills or []
-    knowledge = knowledge or []
+    from personalclaw.security import redact_for_model
+
+    def _masked(value: Any) -> str:
+        return redact_for_model(str(value or ""))
+
+    memories = [{**m, "text": _masked(m.get("text"))} for m in memories or []]
+    skills = [{**s, "description": _masked(s.get("description"))} for s in skills or []]
+    knowledge = [
+        {**k, "title": _masked(k.get("title")), "summary": _masked(k.get("summary"))}
+        for k in knowledge or []
+    ]
 
     # Top tier: brief (WHAT/WHY) then the operating-procedure template. Both are the
     # user's own hard directives — concatenated verbatim, headings kept minimal.
@@ -374,7 +388,7 @@ def assemble(
         rule_parts.append((brief or "").strip())
     if (instructions or "").strip():
         rule_parts.append("### Operating procedure\n" + (instructions or "").strip())
-    rules = "\n\n".join(rule_parts)
+    rules = redact_for_model("\n\n".join(rule_parts))
 
     unloaded = _unloaded_catalog(
         mem_shown=len(memories),

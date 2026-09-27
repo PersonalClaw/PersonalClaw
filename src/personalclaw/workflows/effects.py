@@ -268,11 +268,14 @@ async def run_teardown(
     if not _found:
         return False, f"teardown command not found: {_cmd}"
     argv.append(output_id)
-    env = {**os.environ, "EFFECT_OUTPUT_ID": output_id}
     # Resource ceiling: a BYOI teardown command is agent-influenced (a workflow
     # effect ran it). Deliver the ``tool`` ceiling via the post-exec shim — no preexec_fn,
     # so this spawn never wedges the event loop.
-    from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+    from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
+
+    # Workflow-authored, so the child allowlist and the output id (`build_child_env`), like a
+    # hook or a cron script: never a copy of the gateway's environment and the secrets in it.
+    env = build_child_env(site="workflow-teardown", extra={"EFFECT_OUTPUT_ID": output_id})
 
     try:
         # start_new_session: a teardown command is workflow-authored text, so it is

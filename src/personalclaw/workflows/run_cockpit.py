@@ -252,8 +252,9 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
 
     **The filename is DERIVED, not configured here.** `deliverable.resolve_name` walks the loop
     alias table forward and asks each kind's own `deliverable_name`, so `goal-pursuit-open-ended`
-    resolves to `REPORT.md`, `goal-pursuit-monitor` to `MONITOR_LOG.md` and `design-project` to
-    `DESIGN.md` because those kinds say so — not because this module repeats them.
+    resolves to `REPORT.md` and `design-project` to `DESIGN.md` because those kinds say so — not
+    because this module repeats them. A template that states its own document wins over its kind:
+    `goal-pursuit-monitor` states it keeps none.
 
     **Absence is named, five ways** (see `workflows/deliverable.py`), because a blank panel cannot
     tell a user whether the worker has not written yet, whether this kind produces a check rather
@@ -278,7 +279,8 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
 
     workflow = str(getattr(run, "workflow_name", "") or "")
-    resolved = deliverable_mod.resolve_name(workflow)
+    spec = store.read_spec(run_id)
+    resolved = deliverable_mod.resolve_name(workflow, spec)
     roots = deliverable_mod.run_roots(run)
     report = deliverable_mod.read_document(roots, resolved.name, reason=resolved.reason)
     # The log's name is the loop store's own declaration, imported rather than re-spelled: one
@@ -297,7 +299,7 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
         roots=roots.to_dict(),
         # Whether this run's OWN spec ever names the document. `false` reframes the absence from
         # "not yet" to "never asked for" — see the docstring.
-        instructed=deliverable_mod.instructed_by_spec(store.read_spec(run_id), resolved.name),
+        instructed=deliverable_mod.instructed_by_spec(spec, resolved.name),
     )
 
 

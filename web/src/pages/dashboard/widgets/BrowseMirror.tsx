@@ -95,7 +95,7 @@ function normalizeStatus(s: BrowseStatus | null | undefined): BrowseStatus {
   const expiredIn = s?.expired
   const expired = (Array.isArray(expiredIn) ? expiredIn : [])
     .filter((e): e is BrowseExpiredSite => !!e && typeof (e as BrowseExpiredSite).site === 'string')
-    .map((e) => ({ site: String(e.site), key_present: Boolean(e.key_present) }))
+    .map((e) => ({ site: String(e.site) }))
   // A grant with no `request_id` is unanswerable — there is nothing to POST to — so it is dropped
   // rather than drawn as a card whose buttons cannot work. Anything else degrades to a safe default:
   // an unreadable deadline renders no countdown, never a wrong one.
@@ -314,9 +314,6 @@ export function BrowseMirror() {
             <strong>Sign-in needed for {e.site}</strong> — the saved browse session expired. The next
             step that uses it asks you to sign in, in the browser browse drives; PersonalClaw never
             sees what you type.
-            {e.key_present
-              ? ' Re-auth reuses the existing profile.'
-              : ' A new profile will be created on sign-in.'}
           </p>
         </div>
       ))}

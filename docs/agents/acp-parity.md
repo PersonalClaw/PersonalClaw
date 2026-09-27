@@ -813,7 +813,7 @@ empty, so "no entry" can never be read as "gated".** Do not hand-edit inside the
     - Observation: O97: the execute-kind share of O96's 7 'ungated' rows carries title='Terminal' and reason='no session/request_permission for this tool_call'.
     - State: measured, NOT accepted — the host cannot gate it and nobody blessed it, so it stays loud
   - `Read File`
-    - Reason: claude-code self-approves its own file reads — the same missing frame — so a read of a path the host would have questioned is never offered for a decision. NOT accepted: effective risk resolves to SAFE so it never aborts a turn, but nobody ever blessed it, and an unblessed hole stays loud.
+    - Reason: claude-code self-approves its own file reads — the same missing frame — so a read of a path the host would have questioned is never offered for a decision. NOT accepted: claude-code reports it with kind 'read', so it never aborts a turn, but nobody ever blessed it, and an unblessed hole stays loud.
     - Observation: O98: 'Read File' is the second of the two titles in O96's 7-row 'ungated' set for provider='claude-code'.
     - State: measured, NOT accepted — the host cannot gate it and nobody blessed it, so it stays loud
 - **`codex`** — 1 declared residual entry.
@@ -830,7 +830,7 @@ empty, so "no entry" can never be read as "gated".** Do not hand-edit inside the
     - State: measured, accepted — a documented limitation; the host labels it and stays quiet
   - `fs_read`
     - Reason: kiro self-approves its OWN file reads: the read raises no session/request_permission even though the write in the same turn does, so a read of a path the host would have questioned is never offered for a decision.
-    - Observation: AAP-5 live re-drive 2026-08-18 against real kiro-cli: in one turn 'Creating todo_probe.txt' raised a card while 'Reading todo_probe.txt:1-10' (kind='read') did not — 6 tool calls, 1 gated, 5 ungated. Effective risk resolves to SAFE, so this residue is labelled, never turn-aborting.
+    - Observation: AAP-5 live re-drive 2026-08-18 against real kiro-cli: in one turn 'Creating todo_probe.txt' raised a card while 'Reading todo_probe.txt:1-10' (kind='read') did not — 6 tool calls, 1 gated, 5 ungated. kiro reports it with kind 'read', so this residue is labelled, never turn-aborting.
     - State: measured, accepted — a documented limitation; the host labels it and stays quiet
 <!-- END GENERATED: not-gateable-registry -->
 

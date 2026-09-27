@@ -362,9 +362,8 @@ def test_a_pair_whose_arms_BOTH_finish_IS_judged(eval_home):
 def test_the_arm_runner_screens_its_model_output_exactly_once(eval_home):
     """The one screen, at the point the model's text enters.
 
-    Composed text is never re-screened: `redact_credentials` is not idempotent over a
-    `key: value` line, so a trailing chokepoint would rewrite
-    `api_key: [REDACTED: credential]` into garbage and lose the field name.
+    Everything downstream is composed from the screened value, so one mask, and one only, stands
+    where the key was.
     """
 
     async def leaky(prompt, *, use_case):
@@ -383,9 +382,9 @@ def test_the_arm_runner_screens_its_model_output_exactly_once(eval_home):
         )
     )
 
-    assert "sk-ant-api03-AAAA" not in out.output
+    assert "fake-anthropic-2" not in out.output
     assert "REDACTED" in out.output
-    # Screened exactly once — a second pass is what garbles a composed key/value line.
+    # One mask where the key was.
     assert out.output.count("REDACTED") == 1
 
 
@@ -721,8 +720,8 @@ def test_the_cli_REFUSES_a_tampered_registration_BEFORE_it_quotes_a_spend(
     with pytest.raises(SystemExit) as exc:
         asyncio.run(_study(argparse.Namespace(**args)))
 
-    out = capsys.readouterr().out
+    out, err = capsys.readouterr()
     assert exc.value.code == 1
-    assert studies.SEAL_TAMPERED in out
+    assert studies.SEAL_TAMPERED in err
     assert "arm + " not in out, "refused BEFORE the preflight, not after quoting a spend"
     assert store.read_study_verdict(study_id) is None

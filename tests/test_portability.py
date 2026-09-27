@@ -122,7 +122,9 @@ def fake_personalclaw_home(tmp_path):
     )
 
     # Credential files that must be EXCLUDED
-    (pc / ".env").write_text("SLACK_BOT_TOKEN=xoxb-secret\nSLACK_APP_TOKEN=xapp-secret\n")
+    (pc / ".env").write_text(
+        "SLACK_BOT_TOKEN=fake-bot-token-secret\nSLACK_APP_TOKEN=fake-app-token-secret\n"
+    )
     (pc / ".local_secret").write_text("dashboard-auth-token-xyz")
     (pc / "sel_hmac.key").write_text("hmac-key-content")
     (pc / "telemetry_salt").write_text("salt-value")
@@ -1243,7 +1245,7 @@ class TestExportCarriesEveryDeclaredStore:
         home = _seeded_home(tmp_path)
         monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
         monkeypatch.setattr("personalclaw.portability.config_dir", lambda: home)
-        (home / ".env").write_text("OPENAI_API_KEY=sk-LEAK", encoding="utf-8")
+        (home / ".env").write_text("OPENAI_API_KEY=fake-key-1", encoding="utf-8")
         (home / ".local_secret").write_text("LEAK-local", encoding="utf-8")
         (home / "sel_hmac.key").write_text("LEAK-hmac", encoding="utf-8")
         (home / "telemetry_salt").write_text("LEAK-salt", encoding="utf-8")
@@ -1257,7 +1259,7 @@ class TestExportCarriesEveryDeclaredStore:
         blob = b"".join(zf.read(n) for n in zf.namelist())
 
         for token in (
-            b"sk-LEAK",
+            b"fake-key-1",
             b"LEAK-local",
             b"LEAK-hmac",
             b"LEAK-salt",

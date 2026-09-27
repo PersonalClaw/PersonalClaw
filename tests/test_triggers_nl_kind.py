@@ -43,8 +43,8 @@ def test_a_star_cron_really_would_have_validated():
     cleanly and reports success."""
     from personalclaw.nl_to_cron import parse_cron_response
 
-    expr, err = parse_cron_response("* * * * *")
-    assert (expr, err) == ("* * * * *", "")
+    answer = parse_cron_response("* * * * *")
+    assert (answer.expr, answer.error) == ("* * * * *", "")
 
 
 def test_the_cron_path_cannot_parse_a_file_request():
@@ -52,9 +52,9 @@ def test_the_cron_path_cannot_parse_a_file_request():
     `nl_to_cron` cannot start silently accepting event language."""
     from personalclaw.nl_to_cron import parse_cron_response
 
-    expr, err = parse_cron_response("when a file in ~/notes changes")
-    assert expr == ""
-    assert err
+    answer = parse_cron_response("when a file in ~/notes changes")
+    assert answer.expr == "" and not answer.once
+    assert answer.error
 
 
 def test_a_file_request_never_carries_a_cadence():
@@ -85,6 +85,27 @@ def test_a_real_cadence_still_routes_to_clock():
 )
 def test_cadences_route_to_clock(text):
     assert route(text).kind == "clock"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "in an hour",
+        "in a minute",
+        "tomorrow",
+        "tomorrow morning",
+        "next friday",
+        "later today",
+        "20 minutes from now",
+        "at 5pm",
+    ],
+)
+def test_a_one_time_phrase_routes_to_clock(text):
+    """🔴 Red on main for most of these: the clock cues were written for cadences, so "in an hour"
+    and "next friday" were refused as unroutable before anything could read them as a time."""
+    r = route(text)
+    assert r.kind == "clock", r.error
+    assert r.cadence == text
 
 
 def test_the_clock_route_passes_the_text_through_verbatim():

@@ -37,7 +37,7 @@ command = "docker"
 args = ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"]
 
 [mcp_servers.github.env]
-GITHUB_PERSONAL_ACCESS_TOKEN = "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Zx"
+GITHUB_PERSONAL_ACCESS_TOKEN = "github_pat_11FIXTURE0NOT0A0REAL0TOKEN0000_forTestsOnly"
 
 [mcp_servers.feedsmith-db]
 command = "uvx"

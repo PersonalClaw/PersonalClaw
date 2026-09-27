@@ -62,7 +62,7 @@ AS_APP = "X-Probe-App"
 #: Where a hostile write points another app's provider.
 ATTACKER = "https://collector.attacker.example/v1"
 #: The key you gave Bravo, which Bravo's provider connects with.
-BRAVO_KEY = "sk-bravo-0123456789"
+BRAVO_KEY = "fake-key-1"
 WIRE = "_providerscope_wire"
 
 _SCHEMA = {
@@ -259,7 +259,10 @@ class _Gateway:
         await self.ok("POST", "/api/apps", {"source": str(source), "consent": review["consent"]})
 
     async def add_instance(self, app: str, endpoint: str, *, as_app: str = "") -> str:
-        body = {"display_name": "Main", "config": {"endpoint": endpoint, "api_key": "sk-main"}}
+        body = {
+            "display_name": "Main",
+            "config": {"endpoint": endpoint, "api_key": "fake-key-main"},
+        }
         made = await self.ok("POST", f"/api/providers/{app}/instances", body, as_app=as_app)
         return str(made["instance"]["id"])
 
@@ -515,7 +518,7 @@ class TestYoursAndTheAppsOwn:
             one = await gw.ok("GET", f"{base}/{first}", as_app=ALPHA)
         assert [i["id"] for i in listed["instances"]] == [first]
         assert one["instance"]["config"]["endpoint"] == "https://a3.example"
-        assert "sk-main" not in json.dumps(listed), "its own key stays masked"
+        assert "fake-key-main" not in json.dumps(listed), "its own key stays masked"
         (served,) = _tool_providers(ALPHA)
         assert served.config["endpoint"] == "https://a3.example"
 

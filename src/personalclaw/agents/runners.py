@@ -497,6 +497,10 @@ def probe_runner(defn: RunnerDefinition, *, persist: bool = True) -> HealthEvide
         )
 
     cmd = [*argv, *defn.version_args]
+    # An agent CLI keeps what it inherits, even for `--version`, so it gets the child allowlist
+    # (`sandbox.build_child_env`) like the ACP spawn of the same CLI, never the gateway's secrets.
+    from personalclaw.sandbox import build_child_env
+
     started = time.monotonic()
     try:
         proc = subprocess.run(  # noqa: S603 - argv resolved from the catalog, never a shell
@@ -504,6 +508,7 @@ def probe_runner(defn: RunnerDefinition, *, persist: bool = True) -> HealthEvide
             capture_output=True,
             text=True,
             timeout=PROBE_TIMEOUT_SECS,
+            env=build_child_env(site="runner-probe"),
         )
     except subprocess.TimeoutExpired as exc:
         elapsed = int(round((time.monotonic() - started) * 1000))

@@ -1,6 +1,6 @@
 """Device pairing + Settings → Devices, the list of everything signed in.
 
-Five routes, one credential type:
+Seven routes. Five are about sessions, the one credential a device holds:
 
 * ``POST /api/devices/pair/start``      — owner-authenticated; mints a code + QR payload
 * ``POST /api/devices/pair/complete``   — auth-EXEMPT; the device redeems the code for a session
@@ -8,6 +8,13 @@ Five routes, one credential type:
 * ``POST /api/devices/{id}/revoke``     — owner-authenticated; signs one of them out
 * ``POST /api/devices/revoke-others``   — owner-authenticated, ``{"confirm": true}``; signs out
   all but the caller
+
+Two are about the tokens an external agent reaches an inbound surface with (ledger 317a), which
+are not sessions and never were — but the owner asking "what can reach this gateway?" asks it
+here, so they are listed here too, each with when it stops working and a revoke:
+
+* ``GET  /api/devices/integrations``              — owner-authenticated; every integration token
+* ``POST /api/devices/integrations/{id}/revoke``  — owner-authenticated; revokes one of them
 
 **There is no device token.** A paired device gets an ordinary session cookie from the same
 :func:`token_auth.mint_session` every door uses; pairing names its door (``issuer="pair"``)
@@ -80,6 +87,7 @@ ERR_CODE_EXPIRED = "device_pair_expired"
 ERR_ORIGIN = "device_pair_origin_rejected"
 ERR_LOCKED_OUT = "device_pair_locked_out"
 ERR_UNKNOWN_DEVICE = "device_unknown"
+ERR_UNKNOWN_INTEGRATION = "integration_unknown"
 
 #: The user id a paired device authenticates as. Distinct from `enrolled-device` so the auth
 #: log says which door was used.
@@ -487,13 +495,131 @@ async def api_devices_revoke_others(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "revoked": revoked})
 
 
+async def api_auth_rotate_key(request: web.Request) -> web.Response:
+    """POST /api/auth/rotate-key — replace the key every sign-in is signed with.
+
+    Every browser, paired device and token is signed out at once, the caller's own included, and
+    each is told on its next request that the key was replaced (``token_auth.rotate_signing_key``).
+    Settings → Security sends it, and so does ``personalclaw auth rotate-key`` — over loopback with
+    the local secret, the rail ``personalclaw logout`` uses (the route is a mixed internal path).
+
+    It needs ``{"confirm": true}``, like "Sign out all other devices" and for the same reason, one
+    step further: it signs out the device asking too. Answers how many sessions it signed out and,
+    for a caller that had one, ``notice`` — the sentence that device is told — so the page can
+    show it at once instead of on its next refused request.
+    """
+    from personalclaw.dashboard.token_auth import ended_notice, rotate_signing_key
+
+    if not check_origin(request):
+        _audit("session_key_replaced", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+    if not confirm_granted(await json_object_body(request)):
+        _audit("session_key_replaced", "denied", error="not confirmed")
+        return json_error(
+            "confirmation_required",
+            message=(
+                'send {"confirm": true} — this signs out every browser, paired device and token, '
+                "this one included, and each has to sign in again"
+            ),
+            status=400,
+        )
+    current = str(request.get("session_nonce") or "")
+    actor = str(request.get("user") or "local process")
+    try:
+        signed_out = rotate_signing_key(actor=actor)
+    except OSError as exc:
+        _audit("session_key_replaced", "error", caller=actor, error=str(exc))
+        return json_error(
+            "service_unavailable",
+            message=f"The sign-in key could not be replaced, so nobody was signed out: {exc}",
+            status=503,
+        )
+    # The key's security-log event is the rotation's own (the CLI's in-process path writes it too).
+    notice = ended_notice(current)
+    return web.json_response(
+        {
+            "ok": True,
+            "signed_out": signed_out,
+            "notice": (
+                {"code": notice.code, "reason": notice.reason, "message": notice.message}
+                if notice is not None
+                else None
+            ),
+        }
+    )
+
+
+# ── integrations: the tokens an external agent reaches an inbound surface with ──────────
+
+
+async def api_devices_integrations(request: web.Request) -> web.Response:
+    """GET /api/devices/integrations — every integration token that can reach this gateway.
+
+    Each inbound surface's token and every registered client's (``inbound/tokens.py``): when it
+    was issued, when it stops working, when it was last used, and whether it still works. Never
+    a token or a hash. ``problem`` is the sentence to show when the record of their lifetimes
+    cannot be read, because every surface token is refused until it can.
+    """
+    from personalclaw.inbound import tokens
+
+    rows, problem = tokens.integration_rows()
+    rows.sort(key=lambda r: (r["kind"] != "surface", str(r["name"]).lower()))
+    _audit("integrations_listed", "ok", resources=f"integrations={len(rows)}")
+    return web.json_response({"integrations": rows, "problem": problem})
+
+
+async def api_devices_integration_revoke(request: web.Request) -> web.Response:
+    """POST /api/devices/integrations/{id}/revoke — revoke one integration's token.
+
+    A surface token stops working at once, and stays refused for as long as it is configured —
+    even when the environment sets it again at the next start. The surface stays on, so a
+    registered client's own token keeps working. A client's record is deleted, which is what
+    kills its token. Either way, whatever still presents it is told it was revoked, and when.
+
+    One step, like signing out one device: a leaked token is the reason to reach for this, and
+    a prompt would only delay containment.
+    """
+    if not check_origin(request):
+        _audit("integration_revoked", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+    from personalclaw.inbound import tokens
+
+    row_id = request.match_info.get("id", "")
+    try:
+        revoked = tokens.end_integration(row_id, actor=str(request.get("user") or "owner"))
+    except tokens.RegistryUnavailable as exc:
+        _audit("integration_revoked", "error", error=str(exc), resources=f"integration={row_id}")
+        return json_error(
+            "service_unavailable",
+            message=(
+                "The record of when each integration token stops working can't be written, so "
+                f"nothing was revoked — though every surface token is refused until it can: {exc}"
+            ),
+            status=503,
+        )
+    if not revoked:
+        _audit(
+            "integration_revoked",
+            "denied",
+            error="unknown integration",
+            resources=f"integration={row_id}",
+        )
+        return json_error(ERR_UNKNOWN_INTEGRATION, status=404)
+    _audit("integration_revoked", "ok", resources=f"integration={row_id}")
+    return web.json_response({"ok": True, "revoked": row_id})
+
+
 def register_device_routes(app: web.Application) -> None:
-    """Wire the five API routes plus the redeem PAGE the pairing URL points at."""
+    """Wire the eight API routes plus the redeem PAGE the pairing URL points at."""
     app.router.add_post("/api/devices/pair/start", api_devices_pair_start)
     app.router.add_post("/api/devices/pair/complete", api_devices_pair_complete)
     app.router.add_get("/api/devices", api_devices_list)
     app.router.add_post("/api/devices/revoke-others", api_devices_revoke_others)
+    # Beside the other sign-out actions: replacing the key is signing EVERY device out.
+    app.router.add_post("/api/auth/rotate-key", api_auth_rotate_key)
     app.router.add_post("/api/devices/{id}/revoke", api_devices_revoke)
+    app.router.add_get("/api/devices/integrations", api_devices_integrations)
+    app.router.add_post("/api/devices/integrations/{id}/revoke", api_devices_integration_revoke)
     # Registered here rather than beside the other pages in server.py: it is the entry point of
     # `pair/start`'s URL, and splitting the two across files is how the URL came to point at a
     # route that did not exist.

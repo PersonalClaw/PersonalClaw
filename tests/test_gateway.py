@@ -33,8 +33,8 @@ def _make_orchestrator(
     creds: dict[str, str] = {}
     if slack_enabled:
         creds = {
-            "SLACK_APP_TOKEN": "xapp-test",
-            "SLACK_BOT_TOKEN": "xoxb-test",
+            "SLACK_APP_TOKEN": "fake-app-token-test",
+            "SLACK_BOT_TOKEN": "fake-bot-token-test",
             "PERSONALCLAW_OWNER_ID": owner_id,
         }
     else:

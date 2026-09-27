@@ -254,3 +254,60 @@ describe('an automation whose agent approves itself asks the same way', () => {
     expect(sent).toHaveLength(1)
   })
 })
+
+describe('the consent question is an answer, not a failed request', () => {
+  // The gateway answers a write that needs the owner's yes with the question. Sent as a 400, the
+  // browser logged every Allow the owner was asked for as a failed request, though nothing had
+  // failed. A page that says it asks (`X-PersonalClaw-Consent: ask`, on every write `api.ts`
+  // sends) gets the question as a 200 marked `X-PersonalClaw-Consent-Asked`
+  // (`dashboard/consent_ask.py`); any other client still gets the 400.
+  const QUESTION = 'Allowing “Water the plants” lets the heartbeat run it with your agent’s tools.'
+  const TITLE = 'Allow this heartbeat task to run?'
+
+  function gateway() {
+    const sent: Array<{ asks: string | undefined; body: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const headers = init.headers as Record<string, string>
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      sent.push({ asks: headers['X-PersonalClaw-Consent'], body })
+      if (body.confirm !== true) {
+        const asks = headers['X-PersonalClaw-Consent'] === 'ask'
+        return new Response(JSON.stringify({
+          error: {
+            code: 'confirmation_required',
+            message: 'send {"confirm": true} to confirm',
+            detail: { field: 'heartbeat_task', consent: QUESTION, title: TITLE },
+          },
+        }), {
+          status: asks ? 200 : 400,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(asks ? { 'X-PersonalClaw-Consent-Asked': '1' } : {}),
+          },
+        })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }))
+    return sent
+  }
+
+  it('every write says it asks, and the Allow is asked and sent once more', async () => {
+    const sent = gateway()
+    await expect(api.allowHeartbeatTask('Water the plants')).resolves.toEqual({ ok: true })
+    expect(sent.map((s) => s.asks)).toEqual(['ask', 'ask'])
+    expect(sent.map((s) => s.body)).toEqual([
+      { text: 'Water the plants' },
+      { text: 'Water the plants', confirm: true },
+    ])
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    const opts = confirmSpy.mock.calls[0][0] as { title: string; body: string }
+    expect(opts).toMatchObject({ title: TITLE, body: QUESTION })
+  })
+
+  it('a question that came back 200 is never taken for the write having happened', async () => {
+    confirmSpy.mockImplementation(async () => false)
+    const sent = gateway()
+    await expect(api.allowHeartbeatTask('Water the plants')).rejects.toBeInstanceOf(ConsentDeclined)
+    expect(sent).toHaveLength(1)
+  })
+})

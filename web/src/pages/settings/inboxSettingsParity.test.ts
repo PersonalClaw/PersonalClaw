@@ -35,9 +35,10 @@ const PAGES = join(process.cwd(), 'src/pages')
 const SETTINGS = join(PAGES, 'settings/InboxSettingsPanel.tsx')
 const DRAWER = join(PAGES, 'inbox/InboxSettingsPanel.tsx')
 
-/** Config-flag paths a panel writes through the config PATCH. */
+/** Config paths a panel writes through the config PATCH: a value (`patchConfig`), or a list's
+ *  edits (`saveListEdits`, for `inbox.watched_channels`). */
 function patchedFlags(src: string): Set<string> {
-  return new Set([...src.matchAll(/patchConfig\(\s*'([^']+)'/g)].map((m) => m[1]))
+  return new Set([...src.matchAll(/(?:patchConfig|saveListEdits)\(\s*'([^']+)'/g)].map((m) => m[1]))
 }
 /** Fields a panel writes to the inbox entity-settings store. */
 function savedFields(src: string): Set<string> {

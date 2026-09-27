@@ -1868,9 +1868,6 @@ models = [
     { name = "piper-tts" },
     { name = "sentence-transformers" },
 ]
-oauth2 = [
-    { name = "cryptography" },
-]
 openai = [
     { name = "openai" },
 ]
@@ -1905,7 +1902,6 @@ requires-dist = [
     { name = "cron-descriptor", specifier = ">=1.4,<3" },
     { name = "croniter", specifier = ">=2.0,<3" },
     { name = "cryptography", specifier = ">=42" },
-    { name = "cryptography", marker = "extra == 'oauth2'", specifier = ">=42" },
     { name = "faiss-cpu", marker = "extra == 'embeddings'", specifier = ">=1.7" },
     { name = "faster-whisper", marker = "extra == 'stt'", specifier = ">=1.0" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7,<8" },
@@ -1959,7 +1955,7 @@ requires-dist = [
     { name = "websockets", specifier = ">=12,<18" },
     { name = "zstandard", specifier = ">=0.23,<1" },
 ]
-provides-extras = ["anthropic", "openai", "bedrock", "httpx", "oauth2", "slack", "stt", "tts", "eval", "embeddings", "js-render", "keychain", "models", "dev", "test"]
+provides-extras = ["anthropic", "openai", "bedrock", "httpx", "slack", "stt", "tts", "eval", "embeddings", "js-render", "keychain", "models", "dev", "test"]
 
 [[package]]
 name = "pillow"

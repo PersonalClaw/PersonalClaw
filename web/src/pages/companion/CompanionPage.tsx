@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
 import { api, type PendingApproval, type PushStatus } from '../../lib/api'
@@ -7,9 +7,7 @@ import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps 
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
-import { deriveBlastRadius, establishedFacets, readOnlyCommandOf } from '../chat/approvalMeta'
-import { RungChip } from '../../ui/RungChip'
-import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
+import { approvalRiskOf, deriveBlastRadius, establishedFacets, readOnlyCommandOf } from '../chat/approvalMeta'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -102,11 +100,8 @@ export function CompanionPage({ navigate, query }: RouteProps) {
   }
 
   const pending = (data ?? []).filter((a) => !resolved.has(a.id))
-  // The rung of the action type behind each ask — the same
-  // ladder lookup the chat card and the trigger rows use, so a phone decision sees the
-  // same leash the desktop shows. Tools no type governs get no chip.
-  const { ladder } = useAutonomyLadder()
-  const rungByProvider = useMemo(() => providerRungIndex(ladder), [ladder])
+  // No autonomy rung on a card, as on the chat's: a rung is declared per ACTION PROVIDER, and a
+  // tool call dispatches none (`lib/rungs.providerRungIndex`).
   const focusTarget = focusId ? pending.find((a) => a.id === focusId) : undefined
   // The deep link is honest in BOTH directions. Present-and-found: scroll it into view,
   // move focus to it, ring it. Present-and-missing (answered elsewhere, or it timed out
@@ -171,11 +166,6 @@ export function CompanionPage({ navigate, query }: RouteProps) {
                   tool={ap.tool}
                   args={argsText(ap.tool_input)}
                   purpose={ap.tool_purpose}
-                  badge={
-                    rungByProvider.get(ap.tool) ? (
-                      <RungChip type={rungByProvider.get(ap.tool)!} ladder={ladder} />
-                    ) : undefined
-                  }
                   meta={<ApprovalMeta ap={ap} />}
                   choices={[
                     // The accessible name carries the tool, because a queue paints one card
@@ -380,7 +370,11 @@ function ApprovalMeta({ ap }: { ap: PendingApproval }) {
   // `establishedFacets` returns ONLY what is positively established, so an empty list
   // means "nothing could be established" and must not render as a reassurance.
   const facets = establishedFacets(
-    deriveBlastRadius({ tool: ap.tool, readOnlyCommand: readOnlyCommandOf(ap.is_read_only) }),
+    deriveBlastRadius({
+      tool: ap.tool,
+      risk: approvalRiskOf(ap.risk),
+      readOnlyCommand: readOnlyCommandOf(ap.is_read_only),
+    }),
   )
   if (facets.length) rows.push(['Can touch', facets.map((f) => f.label).join(' · ')])
   if (!rows.length) return null

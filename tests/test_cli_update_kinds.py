@@ -143,7 +143,7 @@ def test_unmapped_kind_refuses_and_names_what_it_detected(
         cli_server._update()
 
     assert exc.value.code == 1
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "flatpak" in out  # says what it saw
     assert "refusing to guess" in out
     assert not git.calls and not spawns  # never fell through to the git pipeline
@@ -287,7 +287,7 @@ def test_git_nightly_fetch_failure_exits_nonzero_before_touching_the_tree(
         cli_server._update()
 
     assert exc.value.code == 1
-    assert "git fetch origin main failed" in capsys.readouterr().out
+    assert "git fetch origin main failed" in capsys.readouterr().err
     assert not git.ran("merge") and not git.ran("reset")
 
 
@@ -313,7 +313,7 @@ def test_release_checkout_refuses_a_dirty_tree(
         cli_server._update()
 
     assert exc.value.code == 1
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "src/personalclaw/cli.py" in out  # names the tracked file at risk
     assert "scratch.txt" not in out  # untracked files are safe — don't cry wolf
     assert "git stash" in out  # names the remedy
@@ -338,7 +338,7 @@ def test_nightly_fast_forward_refuses_a_dirty_tree(
         cli_server._update()
 
     assert exc.value.code == 1
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "git stash" in out
     assert not git.ran("merge") and not git.ran("reset") and not spawns
 
@@ -409,7 +409,7 @@ def test_pip_kind_install_failure_reports_one_clean_line(
         cli_server._update()
 
     assert exc.value.code == 1
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "No solution found when resolving dependencies" in out
     assert "\x1b[" not in out  # no escape sequences leaked to the terminal
 
@@ -430,7 +430,7 @@ def test_pip_kind_no_installer_available_exits_one(
         cli_server._update()
 
     assert exc.value.code == 1
-    assert "no pip, no uv" in capsys.readouterr().out
+    assert "no pip, no uv" in capsys.readouterr().err
     assert not spawns
 
 
@@ -756,6 +756,6 @@ def test_rollback_to_an_unusable_version_refuses_before_installing(
         cli_server._update(to="   ")
 
     assert exc.value.code == 1
-    assert "Not a usable version to pin" in capsys.readouterr().out
+    assert "Not a usable version to pin" in capsys.readouterr().err
     assert not spawns
     assert not (tmp_path / "config.json").exists()  # nothing was written either

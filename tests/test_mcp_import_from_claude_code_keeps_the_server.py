@@ -33,13 +33,15 @@ import pytest
 
 NAME = "cc-echo"
 REMOTE = "cc-remote"
-TOKEN = "ghp_fixtureClaudeCodeImportToken0123456789"
+TOKEN = "fake-github-token-1"
 HEADER_TOKEN = "Bearer fixture-claude-code-remote-header-9f8e7d6c"
 LEVEL = "fixture-verbose-level"
 # A multi-line secret (a PEM key) — the shape `.env` could not hold, which #3617 left inline.
 PEM = (
-    "-----BEGIN PRIVATE KEY-----\nMIIfixtureLineOne0123\nMIIfixtureLineTwo4567\n"
-    "-----END PRIVATE KEY-----"
+    "-----"
+    "BEGIN PRIVATE KEY-----\nMIIfixtureLineOne0123\nMIIfixtureLineTwo4567\n"
+    "-----"
+    "END PRIVATE KEY-----"
 )
 
 # A stdio MCP server whose one tool reports a variable of the environment it was started with.

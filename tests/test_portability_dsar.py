@@ -34,7 +34,7 @@ from personalclaw.portability import (
 # Distinctive byte markers. A substring search for these in the whole zip is the only
 # honest way to ask "did this leak?" — a filename check misses a value copied into a
 # database page or a nested tree file.
-SECRET_ENV = "sk-ant-api03-DSARLEAKCANARY0001"
+SECRET_ENV = "fake-anthropic-1"
 SECRET_LOCAL = "DSARLOCALSECRETCANARY0002"
 SECRET_CRED = "DSARCREDSTORECANARY0003"
 DERIVED_IDS = "DSARDERIVEDIDSCANARY0004"

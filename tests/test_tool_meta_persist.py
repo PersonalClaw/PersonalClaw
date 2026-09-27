@@ -72,8 +72,8 @@ def test_secret_in_tool_output_is_redacted_on_persist():
     round-trip — the persisted inline detail must not leak secrets."""
     meta = {
         "tool_call_id": "t",
-        "output": "export AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE0000000000000000000X",
+        "output": "export AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE",
     }
     red = _redact_meta(meta)
     # The raw secret value must not survive verbatim.
-    assert "AKIAIOSFODNN7EXAMPLE0000000000000000000X" not in red["output"]
+    assert "AKIAIOSFODNN7EXAMPLE" not in red["output"]

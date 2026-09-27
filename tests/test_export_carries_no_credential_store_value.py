@@ -37,10 +37,10 @@ from personalclaw.providers.settings import ProviderSettings
 from personalclaw.sdk.provider_helpers import register_branded_app
 
 PLANTED = {
-    "provider key": "sk-fixture-property-provider-81a2b3c4",
-    "app secret setting": "xoxb-fixture-property-app-5d6e7f80",
-    "Secrets-panel credential": "ghp_fixturePropertyVault0123456789ab",
-    "MCP server env value": "ghp_fixturePropertyMcpEnv9876543210cd",
+    "provider key": "fake-key-fixture-property-provider-81a2b3c4",
+    "app secret setting": "fake-bot-token-fixture-property-app-5d6e7f80",
+    "Secrets-panel credential": "fake-github-token-1",
+    "MCP server env value": "fake-github-token-2",
     "MCP server header": "Bearer fixture-property-mcp-header-11aa22bb",
     "webhook token": "whk_fixturePropertyWebhook_33cc44dd55ee",
 }

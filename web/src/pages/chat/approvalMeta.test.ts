@@ -73,21 +73,22 @@ describe('deriveBlastRadius — the companion path has NO risk', () => {
     expect(withoutRisk.shell).toBe(true)
   })
 
-  it('a read-verb name is its own positive evidence, so reads survive the missing risk', () => {
-    // Mirrors infer_risk_from_name's _READ_VERB_HINTS short-circuit.
-    for (const tool of ['read_file', 'list_dir', 'knowledge_search', 'task_get', 'project_run_status']) {
-      expect(deriveBlastRadius({ tool })).toEqual(
-        { writes: false, network: false, shell: false, readOnly: true },
-      )
+  it('a read-verb name establishes nothing — only the declaration can say "read"', () => {
+    // A name is a guess about what a tool might do. `task_list_create` carries "list" and
+    // creates a list; `computer_click` carries no verb at all and clicks. So a name that
+    // reads like a read is no evidence of one, with or without the risk beside it.
+    for (const tool of ['read_file', 'list_dir', 'knowledge_search', 'task_get', 'task_list_create']) {
+      expect(deriveBlastRadius({ tool })?.readOnly ?? false).toBe(false)
     }
+    expect(deriveBlastRadius({ tool: 'task_list_create' }))
+      .toEqual({ writes: true, network: false, shell: false, readOnly: false })
   })
 
-  it('a verbless read tool is UNKNOWN without risk, not guessed', () => {
-    // grep/glob/repo_map are declared-SAFE native reads, but their names carry no verb the
-    // backend's own _READ_VERB_HINTS would match either. Name evidence alone therefore says
-    // nothing, and saying nothing is the correct answer — this is precisely the case that
-    // wants the `risk` pass-through OU-9 adds to the queue payload, not a cleverer guess.
-    for (const tool of ['grep', 'glob', 'repo_map']) {
+  it('a read tool is UNKNOWN without risk, and read-only with it', () => {
+    // grep/glob/repo_map are declared-SAFE native reads. With no risk their names say
+    // nothing, and saying nothing is the correct answer; the declaration the backend
+    // resolves into `risk` is what establishes the read.
+    for (const tool of ['grep', 'glob', 'repo_map', 'read_file', 'list_dir']) {
       expect(deriveBlastRadius({ tool })).toBeUndefined()
       expect(deriveBlastRadius({ tool, risk: 'safe' })).toEqual(
         { writes: false, network: false, shell: false, readOnly: true },
@@ -160,10 +161,9 @@ describe('RISK_ESTABLISHES_READ_ONLY — a closed enum with no default branch', 
 
 describe('deriveBlastRadius — never under-claims danger', () => {
   it('an established write never also claims read-only, whatever the risk says', () => {
-    // The one place the FE's `remember` token diverges from the backend's
-    // _MUTATING_NAME_HINTS: infer_risk_from_name classifies memory_remember as 'safe'
-    // because it has no `remember` token, so this exact combination is reachable on the
-    // wire. The write must win.
+    // A tool that declared itself a read while its name says it writes (a trusted server
+    // that mislabels one of its tools) can put this combination on the wire. The two
+    // claims are contradictory, and the write must win.
     const d = deriveBlastRadius({ tool: 'memory_remember', risk: 'safe' })!
     expect(d.writes).toBe(true)
     expect(d.readOnly).toBe(false)

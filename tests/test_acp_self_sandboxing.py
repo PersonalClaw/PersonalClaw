@@ -294,7 +294,7 @@ def test_stderr_tail_passthrough_is_redacted(monkeypatch, tmp_path):
         command=["/bin/true"],
         dialect=get_dialect("default"),
     )
-    client._stderr_lines.append("failed with key sk-ant-api03-DEADBEEFDEADBEEFDEADBEEFDEADBEEF")
+    client._stderr_lines.append("failed with key fake-anthropic-1")
     tail = client.stderr_tail()
     assert "failed with key" in tail
     assert "DEADBEEFDEADBEEFDEADBEEFDEADBEEF" not in tail

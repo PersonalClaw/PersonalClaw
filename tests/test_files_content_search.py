@@ -324,9 +324,7 @@ async def test_in_thread_deadline_win_answers_504_logs_sel_and_says_narrow(
 
 
 def test_handler_redacts_secrets_in_preview(tmp_path, monkeypatch):
-    (tmp_path / "leak.txt").write_text(
-        "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLEKEY1234567890abcd needle\n"
-    )
+    (tmp_path / "leak.txt").write_text("AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLEabcd needle\n")
     monkeypatch.setattr(F, "_dashboard_roots", lambda: [("R", str(tmp_path))])
     monkeypatch.setattr(
         F,
@@ -336,4 +334,4 @@ def test_handler_redacts_secrets_in_preview(tmp_path, monkeypatch):
     monkeypatch.setattr(F, "_sel", lambda: MagicMock())
     status, body = _call(str(tmp_path), "needle", monkeypatch=monkeypatch)
     assert status == 200
-    assert all("AKIAIOSFODNN7EXAMPLEKEY1234567890abcd" not in r["preview"] for r in body["results"])
+    assert all("AKIAIOSFODNN7EXAMPLEabcd" not in r["preview"] for r in body["results"])

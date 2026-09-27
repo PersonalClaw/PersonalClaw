@@ -152,7 +152,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
         provider: str,
         parameters: dict,
         requires_approval: bool = True,
-        risk_level: object = "safe",
+        risk_level: object = "caution",
         *,
         default_tier: str = "builtin",
         server_tool: str = "",
@@ -176,9 +176,9 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 "requires_approval": requires_approval,
                 # Declared risk gradient (safe|caution|destructive) — a user-facing
                 # indicator on the Tools page; the approval gate resolves per-invocation
-                # effective risk from it. External tools with no declaration read 'safe'
-                # here (static default); the gate treats unclassified non-reads as caution.
-                "risk_level": getattr(risk_level, "value", risk_level) or "safe",
+                # effective risk from it. A tool that declares nothing reads 'caution', as it
+                # does at every gate: only a declared read is shown as one.
+                "risk_level": getattr(risk_level, "value", risk_level) or "caution",
                 # PT3/UT4: user enable/disable state. A locked tool is always enabled and
                 # not user-toggleable. `disabled` is true if the tool is off individually
                 # OR its whole provider is off; `providerDisabled` distinguishes the two
@@ -226,7 +226,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 getattr(t, "provider", "") or _platform.name,
                 t.parameters,
                 getattr(t, "requires_approval", True),
-                getattr(t, "risk_level", "safe"),
+                getattr(t, "risk_level", "caution"),
             )
     except Exception as exc:
         logger.warning("Failed to enumerate native platform tools", exc_info=True)
@@ -234,8 +234,8 @@ async def api_tools_list(request: web.Request) -> web.Response:
 
     # Source 2: the tool-provider REGISTRY — every registered in-process provider.
     # This already includes personalclaw-core (registered via
-    # their bundled app.json as InProcessMcpToolProvider, which applies the same
-    # infer_risk_from_name classification) plus the entity categories, so there is no
+    # their bundled app.json as InProcessMcpToolProvider, which reads each tool's own
+    # declaration) plus the entity categories, so there is no
     # separate hardcoded core/schedule enumeration. Skip the provider that serves external
     # MCP servers — Source 3 emits their tools labeled per-server; re-adding them here under
     # its name would produce a phantom duplicate group (the _add dedup keys on provider).
@@ -250,7 +250,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 t.provider,
                 t.parameters,
                 t.requires_approval,
-                getattr(t, "risk_level", "safe"),
+                getattr(t, "risk_level", "caution"),
             )
     except Exception as exc:
         logger.warning("Failed to list tools from registry", exc_info=True)
@@ -267,10 +267,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
     except Exception:  # noqa: BLE001 — the catalog still lists what does serve
         logger.warning("Failed to read the tool providers' status", exc_info=True)
 
-    # Dict-defined external MCP tools declare no risk_level, so infer a declared risk
-    # from the tool name for the Tools-page indicator — matching what the MCP adapter
-    # feeds the approval gate. Read tools stay safe.
-    from personalclaw.task_modes import infer_risk_from_name
+    # An external MCP tool's risk is what `mcp_client.declared_risk` makes of its server's
+    # annotations — the same answer the MCP adapter feeds the approval gate, so the Tools page
+    # never shows a tool as a read that the gates treat as a change.
+    from personalclaw.mcp_client import declared_risk, read_only_labels_trusted
 
     # Source 3: External MCP servers from the LIVE in-process client registry — the tools
     # each connected server offers, over the connection an agent's call uses. An agent
@@ -300,13 +300,14 @@ async def api_tools_list(request: web.Request) -> web.Response:
 
         results = await asyncio.gather(*(_list_one(n, c) for n, c in conns))
         for server_name, tools in results:
+            trusted = read_only_labels_trusted(server_name) if tools else False
             for tool in tools:
                 _add(
                     f"mcp/{server_name}/{tool.name}",
                     tool.description,
                     server_name,
                     tool.input_schema,
-                    risk_level=infer_risk_from_name(tool.name),
+                    risk_level=declared_risk(server_name, tool, trusted=trusted).value,
                     # An external MCP server has no supply-chain tier — see the `tier`
                     # note in `_add`. "" is the honest answer, `builtin` would be a lie.
                     default_tier="",

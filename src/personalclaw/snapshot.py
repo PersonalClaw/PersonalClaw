@@ -8,10 +8,12 @@ import os
 import re
 import shutil
 import socket
+import sys
 import tarfile
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from typing import TextIO
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.sqlite_compat import sqlite3
@@ -289,33 +291,101 @@ def _restore_ignore(entry_path: str, root: Path):
     return _ignore
 
 
-def _engines_not_here(snap: Path, components: list[str] | None) -> list[str]:
-    """The apps this restore brought back whose engine is not installed here, by display name.
+def _engines_not_here(snap: Path, components: list[str] | None) -> list[tuple[str, bool]]:
+    """The apps this restore brought back whose engine is not installed here: ``(display name,
+    whether the app has an engine here at all)``.
 
     An engine lives in the app's own ``venv/``, which a snapshot leaves out, so an app that declares
-    one comes back without it and offers Install engine. An app whose engine this home already has
-    (a merge keeps the live ``venv/``) is not named, nor is an app the restore did not touch.
+    one comes back without it and offers Install engine, unless this home had it. A merge keeps the
+    live ``venv/`` and a replace hands it back to the app (:func:`_keep_app_engines`); an engine
+    kept that way was installed for the version this home had, so an app is named with ``True``
+    when the version that came back does not match it, and Install engine then brings that
+    environment up to date. An app whose engine is installed is not named, nor is an app the
+    restore did not touch.
     """
     if not _store_selected(components, "apps") or not (snap / "apps").is_dir():
         return []
     try:
-        from personalclaw.apps.manager import APP_MANIFEST_FILENAME, app_dir, engine_not_installed
+        from personalclaw.apps.manager import (
+            APP_MANIFEST_FILENAME,
+            APP_VENV_DIRNAME,
+            app_dir,
+            engine_not_installed,
+        )
         from personalclaw.apps.manifest import AppManifest
 
-        names: list[str] = []
+        names: list[tuple[str, bool]] = []
         for tree in sorted((snap / "apps").iterdir()):
             if tree.name.startswith(".") or not (tree / APP_MANIFEST_FILENAME).is_file():
                 continue
             if not engine_not_installed(tree.name):
                 continue
-            manifest = AppManifest.from_json_file(app_dir(tree.name) / APP_MANIFEST_FILENAME)
-            names.append(manifest.displayName or tree.name)
+            here = app_dir(tree.name)
+            manifest = AppManifest.from_json_file(here / APP_MANIFEST_FILENAME)
+            names.append((manifest.displayName or tree.name, (here / APP_VENV_DIRNAME).is_dir()))
         return names
     except Exception:  # noqa: BLE001 — a note after the restore must never fail the restore
         import logging
 
         logging.getLogger(__name__).debug("engine census after restore failed", exc_info=True)
         return []
+
+
+def _app_display_name(folder: Path) -> str:
+    """The display name in the app manifest *folder* holds, else the folder's name."""
+    from personalclaw.apps.manager import APP_MANIFEST_FILENAME
+    from personalclaw.apps.manifest import AppManifest
+
+    try:
+        return AppManifest.from_json_file(folder / APP_MANIFEST_FILENAME).displayName or folder.name
+    except Exception:  # noqa: BLE001 — a name for a sentence, never a reason to fail a restore
+        return folder.name
+
+
+def _keep_app_engines(displaced: Path, restored: Path) -> list[str]:
+    """Hand each app's engine back to the app of the same name the restore brought back.
+
+    An engine (``apps/<app>/venv``) is built for this machine: capture leaves it out
+    (``derived_within``) and a restore never plants one, so a replace has nothing to put in its
+    place. Moving it into ``pre-restore-<ts>/`` with the rest of the app left gigabytes of working
+    engine there while the restored app offered to install the same engine again. An update keeps
+    an app's engine the same way (``apps.app_manager._carry_state``: a rename on one filesystem,
+    whatever the size), and the app's own check (``SidecarInstall.installed``: the interpreter, and
+    the packages the restored manifest declares) says whether it fits the version that came back.
+    Everything else of the app, its ``data/`` included, stays displaced, so undoing the restore
+    still has it. Returns the folder names of the apps whose engine stayed.
+    """
+    from personalclaw.apps.app_manager import _carry_state
+    from personalclaw.apps.manager import APP_MANIFEST_FILENAME, APP_VENV_DIRNAME
+
+    if not displaced.is_dir() or not restored.is_dir():
+        return []
+    kept: list[str] = []
+    for old in sorted(displaced.iterdir()):
+        new = restored / old.name
+        if old.name.startswith(".") or not (new / APP_MANIFEST_FILENAME).is_file():
+            continue
+        if _carry_state(old, new, names=(APP_VENV_DIRNAME,)):
+            kept.append(old.name)
+    return kept
+
+
+def _engines_set_aside(displaced: Path) -> list[tuple[Path, int]]:
+    """The engines still in the backup: those of apps the restore did not bring back, with their
+    size. Each stays with its app, as removing an app takes its engine along, so moving the folder
+    back undoes the restore whole; the backup is the user's to delete."""
+    from personalclaw.apps.manager import APP_VENV_DIRNAME
+    from personalclaw.durability.footprint import _tree_bytes
+
+    if not displaced.is_dir():
+        return []
+    out: list[tuple[Path, int]] = []
+    for old in sorted(displaced.iterdir()):
+        venv = old / APP_VENV_DIRNAME
+        if old.name.startswith(".") or venv.is_symlink() or not venv.is_dir():
+            continue
+        out.append((old, _tree_bytes(venv, skip_files=set(), skip_dirs=set())))
+    return out
 
 
 def _projects_component_paths(base: Path) -> list[str]:
@@ -459,11 +529,14 @@ def _want(components: list[str] | None, name: str) -> bool:
     return name in components or "everything" in components
 
 
-def _list_components() -> None:
-    print("Available components:")
+def _list_components(stream: TextIO | None = None) -> None:
+    """The components ``restore --components`` takes: on stdout (``None``, the stdout of the
+    moment) when asked for with ``--list-components``, and on stderr after the refusal of one
+    named that is not one."""
+    print("Available components:", file=stream)
     for k, v in COMPONENT_HELP.items():
-        print(f"  {k:16s} {v}")
-    print("\nCombine with commas: --components memory,crons,skills")
+        print(f"  {k:16s} {v}", file=stream)
+    print("\nCombine with commas: --components memory,crons,skills", file=stream)
 
 
 def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
@@ -517,7 +590,7 @@ def snapshot_main(
     args = parsed
 
     if args.keep <= 0:
-        print(f"❌ --keep value must be a positive integer, got: {args.keep}")
+        print(f"❌ --keep value must be a positive integer, got: {args.keep}", file=sys.stderr)
         return 1
 
     out = Path(args.output_dir or _default_snapshot_dir())
@@ -1497,10 +1570,15 @@ def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str) -> None
                 os.chmod(str(pc / f), 0o600)
 
 
-def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
+def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
+    """Replace the home's state with the snapshot's, moving what it displaces into
+    ``pre-restore-<ts>/``. Returns what the restore did with app engines, for its result:
+    ``engines_kept`` (display names of the apps that kept theirs, :func:`_keep_app_engines`) and
+    ``engines_set_aside`` (``{app, bytes}`` of each left in the backup with its app)."""
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = pc / f"pre-restore-{ts}"
     backup.mkdir(exist_ok=True)
+    kept: list[str] = []
     print("🔄 Replace mode — backing up current state...")
 
     for comp in ("memory", "crons", "config", "notifications", "security"):
@@ -1550,13 +1628,37 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
             elif src.is_file():
                 live.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(src), str(live))
+            if rel == "apps":
+                kept = _keep_app_engines(backup / rel, live)
         print("  ✅ stores")
 
+    kept_names = [_app_display_name(pc / "apps" / name) for name in kept]
+    if kept_names:
+        print(
+            f"  ✅ Kept the engine each of these apps had here: {', '.join(kept_names)}. An engine "
+            "is built for this machine, so the restore leaves it in place."
+        )
+    aside = _engines_set_aside(backup / "apps")
+    if aside:
+        from personalclaw.durability.footprint import human_bytes
+
+        for folder, size in aside:
+            print(
+                f"  ⚠️  {_app_display_name(folder)}'s engine ({human_bytes(size)}) is in {folder}/ "
+                "with the app, which the snapshot does not have. It goes when you delete that "
+                "folder."
+            )
     try:
         backup.rmdir()
     except OSError:
         print(f"  Previous state saved to: {backup}/")
     print("✅ Replace complete.")
+    return {
+        "engines_kept": kept_names,
+        "engines_set_aside": [
+            {"app": _app_display_name(folder), "bytes": size} for folder, size in aside
+        ],
+    }
 
 
 def home_is_populated(pc: Path) -> list[str]:
@@ -1966,12 +2068,13 @@ def restore_apply(archive: Path, mode: str, components: list[str] | None) -> dic
             return {"ok": False, "error": "invalid snapshot format"}
         pc = _pc_dir()
         pc.mkdir(parents=True, exist_ok=True)
+        replaced: dict = {}
         if mode == "replace":
-            _do_replace(roots[0], pc, components)
+            replaced = _do_replace(roots[0], pc, components)
         else:
             _do_merge(roots[0], pc, components)
     _audit("state_restored", f"mode={mode} snapshot={archive.name}")
-    return {"ok": True, "mode": mode, "snapshot": archive.name}
+    return {"ok": True, "mode": mode, "snapshot": archive.name, **replaced}
 
 
 def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None) -> int:
@@ -1995,18 +2098,22 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         return 0
 
     if not args.snapshot:
-        print("❌ snapshot file is required (unless --list-components is given)")
-        return 1
+        # A usage error, so the usage-error status: nothing on the command line to restore.
+        print("❌ snapshot file is required (unless --list-components is given)", file=sys.stderr)
+        return 2
 
     force = getattr(args, "force", False)
     if not force and _is_gateway_running():
         _audit("state_restore_rejected", "reason=gateway_running")
-        print("❌ Gateway is running. Stop it first (personalclaw stop) or use --force.")
+        print(
+            "❌ Gateway is running. Stop it first (personalclaw stop) or use --force.",
+            file=sys.stderr,
+        )
         return 1
 
     snap_path = Path(args.snapshot)
     if not snap_path.is_file():
-        print(f"❌ File not found: {snap_path}")
+        print(f"❌ File not found: {snap_path}", file=sys.stderr)
         return 1
 
     # Parse components
@@ -2015,8 +2122,8 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         components = [c.strip() for c in args.components.split(",")]
         for c in components:
             if c not in VALID_COMPONENTS:
-                print(f"❌ Unknown component: {c}\n")
-                _list_components()
+                print(f"❌ Unknown component: {c}\n", file=sys.stderr)
+                _list_components(sys.stderr)
                 return 1
 
     pc = _pc_dir()
@@ -2044,7 +2151,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             d for d in work.iterdir() if d.is_dir() and d.name.startswith("personalclaw-snapshot-")
         ]
         if not snap_dirs:
-            print("❌ Invalid snapshot format")
+            print("❌ Invalid snapshot format", file=sys.stderr)
             return 1
         snap = snap_dirs[0]
 
@@ -2067,6 +2174,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                     if f.is_file():
                         print(f"  {f.relative_to(snap)}")
                 print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
+                print("  An app the snapshot brings back keeps the engine it has here.")
             return 0
 
         pc.mkdir(parents=True, exist_ok=True)
@@ -2100,7 +2208,13 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
     comp_str = ",".join(components) if components else "all"
     _audit("state_restored", f"mode={mode} components={comp_str} from={snap_path.name}")
 
-    for name in engines:
+    for name, has_one in engines:
+        if has_one:
+            print(
+                f"⚠️  {name}'s engine here does not match the version the restore brought back. "
+                "Install engine, on the app's card in Settings → Providers, brings it up to date."
+            )
+            continue
         print(
             f"⚠️  {name} has no engine here: a snapshot leaves engines out, since each one is "
             "built for the machine it runs on. Install it with Install engine, on the app's card "

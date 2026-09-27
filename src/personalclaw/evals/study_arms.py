@@ -163,10 +163,8 @@ def harvested_study_cases(*, workflow_name: str = "") -> HarvestedSuite:
 
     ``case_input`` is the canonical JSON of the run's RECORDED inputs, not a re-rendered
     prompt: those inputs are the variable an A/B holds still, and they were already screened
-    exactly once by the harvest at the point they entered
-    (:func:`personalclaw.evals.harvest._screen`). Re-screening them here is the documented
-    way to corrupt them — ``redact_credentials`` is not idempotent over a composed
-    ``key: value`` line — so this function screens NOTHING and composes only.
+    once by the harvest at the point they entered (:func:`personalclaw.evals.harvest._screen`),
+    so this function screens NOTHING and composes only.
 
     Catches :class:`~personalclaw.evals.harvest.EmptyHarvestError` on purpose. Letting it
     escape would make an empty ledger a crash in the middle of the flywheel's filing path;
@@ -372,9 +370,8 @@ class TemplateArmRunner:
         elapsed = time.monotonic() - started
 
         # Screened ONCE, here, at the point the model's text enters. Everything downstream
-        # (the judge prompt, the workspace file) is composed FROM this value and is never
-        # screened again — a second pass over a composed `key: value` line is what garbles
-        # the field name (see `harvest._screen`).
+        # (the judge prompt, the workspace file) is composed FROM this value (see
+        # `harvest._screen`).
         output = str(redact(str(text or "")))
         try:
             (workspace / ARM_OUTPUT_FILENAME).write_text(output, encoding="utf-8")

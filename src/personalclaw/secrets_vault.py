@@ -6,8 +6,9 @@ point of this module existing at all instead of the vault being three helpers in
 A redaction design reads the value, then filters it out on the way to the wire. That design is
 one careless line from a leak — every handler holds the secret in a local, and the only thing
 stopping it reaching the client is that nobody returned that local. It also leans on
-``redact_credentials``, which is **not idempotent over a composed ``field: value`` line**, so a
-value that reaches a formatter has already escaped the mechanism meant to catch it.
+``redact_credentials``, which recognises a secret only by **its shape or its field's name**, so a
+value of any other shape that reaches a formatter has already escaped the mechanism meant to catch
+it.
 
 This module instead makes the value *unreachable*:
 
@@ -77,19 +78,15 @@ PROJECT_KEY_SEP = "__"
 
 #: Credential-store key prefixes managed by ANOTHER surface, and therefore hidden from the vault
 #: read model. A user must never see — or be able to delete — one of these from the secrets UI:
+#: an OWNED key (`PCSECRET_…`) is a provider's API key or an app setting's token, kept in the
+#: store by that record's own settings, which reference it. It is managed where it was typed —
+#: Settings → Providers, the app's settings — and deleting it here would leave that setting
+#: pointing at nothing while still reading as configured.
 #:
-#: * a browse profile-encryption key (`BROWSE_PROFILE_KEY_<slug>`) is key material a profile
-#:   depends on, not a credential the user typed;
-#: * an OWNED key (`PCSECRET_…`) is a provider's API key or an app setting's token, kept in the
-#:   store by that record's own settings, which reference it. It is managed where it was typed —
-#:   Settings → Providers, the app's settings — and deleting it here would leave that setting
-#:   pointing at nothing while still reading as configured.
-#:
-#: Kept as literals here because the vault owns its own hiding policy, with a test pinning each
-#: to its producer — `test_browse_credential_handoff` (`browse.handoff.PROFILE_KEY_PREFIX`) and
-#: `test_app_secrets_live_in_the_credential_store` (`config.credentials.OWNED_KEY_PREFIX`) — so
-#: neither can drift without reddening the build.
-RESERVED_KEY_PREFIXES: tuple[str, ...] = ("BROWSE_PROFILE_KEY_", "PCSECRET_")
+#: Kept as a literal here because the vault owns its own hiding policy, with a test pinning it to
+#: its producer — `test_app_secrets_live_in_the_credential_store`
+#: (`config.credentials.OWNED_KEY_PREFIX`) — so it cannot drift without reddening the build.
+RESERVED_KEY_PREFIXES: tuple[str, ...] = ("PCSECRET_",)
 
 
 def is_reserved_key(key: str) -> bool:
@@ -250,8 +247,8 @@ def list_presence(
 
     for key in stored:
         if is_reserved_key(key):
-            # Machine-managed key material (a browse profile-encryption key): present in the
-            # credential store, deliberately absent from the vault. See RESERVED_KEY_PREFIXES.
+            # Managed by the settings record that owns it: present in the credential store,
+            # deliberately absent from the vault. See RESERVED_KEY_PREFIXES.
             continue
         split = split_project_key(key)
         if split is None:

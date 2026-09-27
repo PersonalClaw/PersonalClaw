@@ -70,6 +70,15 @@ export function verifyNote(item: Pick<InboxItem, 'status' | 'refs'>): string {
  *  marks a row SEEN — decremented the header without resolving anything. */
 export { OPEN_STATUSES, isOpenStatus as isOpen } from '../../lib/attentionLanes'
 
+/** Statuses of a row the user is done with: handled, replied (`sent`, older rows) or dismissed.
+ *
+ *  Not simply "not open": a filtered row is held for review behind its Restore banner, not done.
+ *  The Handled filter, its count and the detail panel's settled state all read this one set. */
+export const SETTLED_STATUSES: readonly InboxItemStatus[] = ['handled', 'sent', 'dismissed']
+export function isSettled(status?: string): boolean {
+  return (SETTLED_STATUSES as readonly string[]).includes(status ?? '')
+}
+
 /** Whether *item* is attributed to somebody OTHER than *owner*.
  *
  *  The ONE foreignness test, mirroring the server's `InboxItem.belongs_to` inverted, and it

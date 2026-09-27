@@ -57,7 +57,14 @@ def _production_gate(event: AgentEvent, mode: str) -> str:
     choice (a CLI-declared "read" must not turn a deny-by-default into an allow), and
     replicating it is what makes the ask-mode assertion below measure the real gate.
     """
-    return task_mode_denies(mode, event.title, "", event.tool_input)
+    return task_mode_denies(
+        mode,
+        getattr(event, "risk_level", "") or "",
+        event.title,
+        "",
+        event.tool_input,
+        builds=bool(getattr(event, "builds", False)),
+    )
 
 
 def _tool_call_frame(tool_call_id: str, title: str, kind: str, raw_input: object) -> JsonRpcMessage:
@@ -137,7 +144,8 @@ class TestNotLabelledDestructive:
         assert opened.tool_input == "", "and the command is NOT — that is the whole defect"
 
         assert (
-            classify_invocation(opened.title, opened.tool_kind, opened.tool_input) is UNCLASSIFIED
+            classify_invocation("", opened.title, opened.tool_kind, opened.tool_input)
+            is UNCLASSIFIED
         )
         risk = _production_risk(opened)
         assert risk != "destructive", "absence of a command is not evidence of destruction"
@@ -165,26 +173,24 @@ class TestNotLabelledDestructive:
         turn = _Turn()
         turn.tool_call(_tool_call_frame("t2", "Terminal", "execute", {"command": "rm -rf build"}))
         card = turn.permission(_permission_frame(8, "t2", "Terminal"))
-        assert classify_invocation(card.title, card.tool_kind, card.tool_input) is MUTATING
+        assert classify_invocation("", card.title, card.tool_kind, card.tool_input) is MUTATING
         assert _production_risk(card) == "destructive"
 
-    def test_a_declared_read_kind_reaches_the_risk_decision(self):
-        """`O5`: every claude permission frame arrived ``tool_kind: ""``.
+    def test_a_declared_read_kind_names_the_call_but_is_not_a_declaration(self):
+        """`O5`: every claude permission frame arrived ``tool_kind: ""``; the kind is now
+        correlated from the opening ``tool_call`` frame, so the card and the SEL can name it.
 
-        Consequence beyond the label: trust-reads auto-approves only ``effective_risk ==
-        "safe"``, so a wire-declared ``kind: "read"`` that reached the resolver as ``""``
-        floored at ``caution`` and a plain file read raised a card forever — the coarse
-        "name/kind-based" downgrade the trust_reads row records as PARTIAL.
+        It is still the CLI's LABEL, not a declaration of what the call does: trust-reads
+        auto-approves only an EFFECTIVE-safe call, and a kind the CLI chose would otherwise
+        turn its own "read" into an approval (the rule, which the task-mode gate already
+        followed). So the kind arrives, and the risk stays at the floor for a call that
+        declares nothing.
         """
         turn = _Turn()
         turn.tool_call(_tool_call_frame("t3", "Read File", "read", {"abs_path": "/tmp/probe.txt"}))
         card = turn.permission(_permission_frame(9, "t3", "Read File"))
-        # The VERDICT first, deliberately: dropping the correlation must red on the risk
-        # this surface reports, not merely on an empty field. A field assertion alone
-        # would let a future change satisfy the test by populating the field with
-        # something the resolver ignores.
-        assert _production_risk(card) == "safe"
         assert card.tool_kind == "read"
+        assert _production_risk(card) == "caution"
 
     def test_the_frames_own_kind_still_wins(self):
         """codex DOES declare ``kind`` on its permission payload. It is truth."""
@@ -215,7 +221,7 @@ class TestAskModeAllowsAReadOnlyLs:
         assert _production_gate(card, "ask") == "", "a read-only ls RUNS in ask mode"
         assert _production_gate(card, "plan") == "", "and in plan mode"
         assert _production_risk(card) == "safe"
-        assert classify_invocation(card.title, "", card.tool_input) is READ_ONLY
+        assert classify_invocation("", card.title, "", card.tool_input) is READ_ONLY
         assert card.tool_input, "the command survived the decoder"
 
     def test_a_mutation_is_still_denied_in_ask_mode(self):
@@ -250,9 +256,9 @@ class TestUnknownStaysRepresentable:
         answers three ways, and absence gets its own value instead of being folded into
         either of the two that assert something.
         """
-        assert classify_invocation("Terminal", "execute", "") is UNCLASSIFIED
-        assert classify_invocation("Terminal", "execute", {"command": "ls"}) is READ_ONLY
-        assert classify_invocation("Terminal", "execute", {"command": "rm -rf /"}) is MUTATING
+        assert classify_invocation("", "Terminal", "execute", "") is UNCLASSIFIED
+        assert classify_invocation("", "Terminal", "execute", {"command": "ls"}) is READ_ONLY
+        assert classify_invocation("", "Terminal", "execute", {"command": "rm -rf /"}) is MUTATING
 
     def test_unclassified_never_resolves_permissive(self):
         """Polarity: unknown RISK fails safe, not permissive.
@@ -272,8 +278,8 @@ class TestUnknownStaysRepresentable:
         run under a read-only posture, even though it is no longer *called* destructive.
         """
         for mode in ("ask", "plan", "build"):
-            assert task_mode_denies(mode, "Terminal", "execute", "") != ""
-        assert task_mode_denies("agent", "Terminal", "execute", "") == ""
+            assert task_mode_denies(mode, "", "Terminal", "execute", "") != ""
+        assert task_mode_denies("agent", "", "Terminal", "execute", "") == ""
 
 
 # ── the boundaries this fix depends on ────────────────────────────────────────
@@ -350,5 +356,6 @@ class TestTheProductionCallShapes:
             and node.func.id == "task_mode_denies"
         ]
         assert len(calls) == 1
-        kind_arg = calls[0].args[2]
+        # (session, declared, title, tool_kind, tool_input)
+        kind_arg = calls[0].args[3]
         assert isinstance(kind_arg, ast.Constant) and kind_arg.value == ""

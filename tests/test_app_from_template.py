@@ -550,20 +550,20 @@ def test_the_cli_fetches_from_a_local_archive(
 def test_the_cli_refuses_a_name_with_from_template(capsys: pytest.CaptureFixture) -> None:
     """Renaming is a documented four-edit step, not a half-done silent refactor."""
     assert app_cmd(_args(from_template=True, name="my-tool")) == 2
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "--type tool" in out, "the refusal must point at the path that DOES name an app"
 
 
 def test_the_cli_refuses_from_template_with_a_type(capsys: pytest.CaptureFixture) -> None:
     assert app_cmd(_args(from_template=True, type="tool")) == 2
-    assert "pick one" in capsys.readouterr().out
+    assert "pick one" in capsys.readouterr().err
 
 
 def test_the_cli_refuses_template_flags_without_from_template(
     capsys: pytest.CaptureFixture,
 ) -> None:
     assert app_cmd(_args(template_url="https://codeload.github.com/x/y/tar.gz/main")) == 2
-    assert "--from-template" in capsys.readouterr().out
+    assert "--from-template" in capsys.readouterr().err
 
 
 def test_the_cli_refuses_both_a_url_and_an_archive(capsys: pytest.CaptureFixture) -> None:
@@ -575,7 +575,7 @@ def test_the_cli_refuses_both_a_url_and_an_archive(capsys: pytest.CaptureFixture
         )
     )
     assert code == 2
-    assert "not both" in capsys.readouterr().out
+    assert "not both" in capsys.readouterr().err
 
 
 def test_the_cli_reports_a_refusal_as_exit_1(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
@@ -583,4 +583,4 @@ def test_the_cli_reports_a_refusal_as_exit_1(tmp_path: Path, capsys: pytest.Capt
         _args(from_template=True, dest=str(tmp_path), template_url="https://evil.example.com/x.tgz")
     )
     assert code == 1
-    assert "not allowed" in capsys.readouterr().out
+    assert "not allowed" in capsys.readouterr().err

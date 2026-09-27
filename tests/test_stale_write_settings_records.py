@@ -583,7 +583,11 @@ async def _create_instance(c: TestClient) -> str:
         _INSTANCES,
         json={
             "display_name": "Primary",
-            "config": {"api_key": "sk-fixture-not-real", "default_model": "m1", "endpoint": "e1"},
+            "config": {
+                "api_key": "fake-key-fixture-not-real",
+                "default_model": "m1",
+                "endpoint": "e1",
+            },
         },
     )
     assert resp.status == 201, await resp.text()  # a create names no revision
@@ -644,7 +648,9 @@ class TestAnInstanceIsWrittenOverTheCopyItWasBuiltFrom:
             resp = await _save_instance(c, instance_id, {**config, "default_model": "m2"}, base)
             inst = (await resp.json())["instance"]
             assert inst["revision"] == revision_of(inst["config"])
-            assert "sk-fixture-not-real" not in json.dumps(inst), "a revision response leaked it"
+            assert "fake-key-fixture-not-real" not in json.dumps(
+                inst
+            ), "a revision response leaked it"
             again = await _save_instance(c, instance_id, inst["config"], inst["revision"])
             assert again.status == 200
 

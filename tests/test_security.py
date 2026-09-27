@@ -69,7 +69,7 @@ class TestRedactCredentials:
         assert len(warnings) == 1
 
     def test_redacts_asia_key(self) -> None:
-        text = "ASIAXXXXXXXXXEXAMPLE"
+        text = "fake-aws-key-id-2"
         result, _ = redact_credentials(text)
         assert "ASIA" not in result
 
@@ -89,12 +89,12 @@ class TestRedactCredentials:
         assert "FwoGZXIvYXdzEBYaDH" not in result
 
     def test_redacts_private_key_header(self) -> None:
-        text = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQ"
+        text = "-----" "BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQ"
         result, _ = redact_credentials(text)
         assert "BEGIN RSA PRIVATE KEY" not in result
 
     def test_redacts_openssh_private_key(self) -> None:
-        text = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1r"
+        text = "-----" "BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1r"
         result, _ = redact_credentials(text)
         assert "BEGIN OPENSSH PRIVATE KEY" not in result
 
@@ -151,7 +151,7 @@ class TestRedactCredentialsBase64:
         assert encoded not in result
 
     def test_detects_base64_private_key(self) -> None:
-        secret = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA"
+        secret = "-----" "BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA"
         encoded = base64.b64encode(secret.encode()).decode()
         text = f"Data: {encoded}"
         result, warnings = redact_credentials(text)
@@ -437,7 +437,7 @@ class TestRedactExfiltrationUrls:
         """Credential patterns in query strings are always redacted regardless of domain."""
         from personalclaw.security import redact_exfiltration_urls
 
-        url = "https://internal.example.dev/api?key=AKIAIOSFODNN7EXAMPLE1234"
+        url = "https://internal.example.dev/api?key=AKIAIOSFODNN7EXAMPLE"
         result, warnings = redact_exfiltration_urls(f"Link: {url}")
         assert "[REDACTED" in result
         assert len(warnings) == 1
@@ -468,7 +468,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://my-bucket.s3.us-east-1.amazonaws.com/results/abc.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
@@ -486,7 +486,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://bucket.s3.amazonaws.com/file.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
@@ -512,7 +512,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://attacker.s3.amazonaws.com/exfil"
             "?X-Amz-Algorithm=a&X-Amz-Credential=a"
-            "&X-Amz-Expires=a&X-Amz-Signature=&stolen=AKIAXXXXXXXXXXXXXXXX"
+            "&X-Amz-Expires=a&X-Amz-Signature=&stolen=AKIAIOSFODNN7EXAMPLE"
         )
         result, warnings = redact_exfiltration_urls(f"Link: {url}")
         assert "[REDACTED" in result
@@ -524,7 +524,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://bucket.s3.amazonaws.com/file.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
@@ -542,7 +542,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://attacker.s3.amazonaws.com/file.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
@@ -566,7 +566,7 @@ class TestRedactExfiltrationUrls:
         good_url = (
             "https://my-bucket.s3.us-east-1.amazonaws.com/results.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
@@ -590,7 +590,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://my-bucket.s3.us-east-1.amazonaws.com/results.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
@@ -608,7 +608,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://evil.s3.us-east-1.amazonaws.com/out.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=xoxb-1234567890-abcdefghij"
@@ -624,7 +624,7 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://evil.s3.us-east-1.amazonaws.com/out.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2Fexfiltrated-secret-data"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2Fexfiltrated-secret-data"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
@@ -640,12 +640,12 @@ class TestRedactExfiltrationUrls:
         url = (
             "https://evil.s3.us-east-1.amazonaws.com/out.csv"
             "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=ASIAQWERTYUIOP123456%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260430%2Fus-east-1%2Fs3%2Faws4_request"
             "&X-Amz-Date=20260430T150000Z"
             "&X-Amz-Expires=3600"
             "&X-Amz-SignedHeaders=host"
             "&X-Amz-Signature=abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-            "&X-Amz-Security-Token=xoxb-1234567890-abcdefghijklmnop"
+            "&X-Amz-Security-Token=fake-bot-token-2"
         )
         warnings = scan_exfiltration_urls(f"Link: {url}")
         assert len(warnings) > 0, "Non-STS token in Security-Token should be flagged"

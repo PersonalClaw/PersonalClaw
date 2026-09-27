@@ -67,14 +67,17 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "automation_create",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Create an automation from ONE natural-language message. Use for 'when a file "
-                "in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The "
-                "`when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a "
-                "cadence becomes a cron schedule, an event becomes an event trigger. Give `when` "
-                "+ `name` + `message` (what the automation should do). Announced to you on "
-                "creation, and capped by workflows.self_schedule_max_outstanding. It does not run "
-                "until the owner allows it on the Triggers page, so tell them it is waiting."
+                "in ~/notes changes', 'every weekday at 9', 'at 5pm', 'when my nightly run "
+                "finishes'. The `when` phrase is routed to the right trigger kind "
+                "(file/clock/web_watch/…) — a time runs it once at that time, in the owner's "
+                "timezone, a cadence becomes a repeating schedule, an event becomes an event "
+                "trigger. Give `when` + `name` + `message` (what the automation should do). "
+                "Announced to you on creation with the time it read, and capped by "
+                "workflows.self_schedule_max_outstanding. It does not run until the owner allows "
+                "it on the Triggers page, so tell them it is waiting."
             ),
             "inputSchema": {
                 "type": "object",
@@ -82,8 +85,9 @@ def _list_tools() -> list[dict[str, Any]]:
                     "name": {"type": "string", "description": "A short name for the automation."},
                     "when": {
                         "type": "string",
-                        "description": "Plain English for WHEN it runs: a cadence ('every "
-                        "weekday at 9') or an event ('when a file in ~/notes changes').",
+                        "description": "Plain English for WHEN it runs: one time ('at 5pm', "
+                        "'tomorrow at 9am', 'in 20 minutes'), a cadence ('every weekday at 9') or "
+                        "an event ('when a file in ~/notes changes').",
                     },
                     "message": {
                         "type": "string",
@@ -110,6 +114,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_list",
+            "annotations": {"readOnlyHint": True},
             "description": "List automations with health rollups. Optional `kind` and `state` "
             "('active'/'paused') filters. Broken rows are shown, not hidden.",
             "inputSchema": {
@@ -122,6 +127,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_update",
+            "annotations": {"readOnlyHint": False},
             "description": "Patch an automation. Only settable fields apply (name, spec, gates, "
             "workflow, enabled, delivery, …); health/run fields are rejected and reported. An "
             "edit that changes what its action runs switches it off until the owner allows the "
@@ -141,6 +147,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_pause",
+            "annotations": {"readOnlyHint": False},
             "description": "Pause an automation — it stops firing on its own but is not deleted.",
             "inputSchema": {
                 "type": "object",
@@ -150,6 +157,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_resume",
+            "annotations": {"readOnlyHint": False},
             "description": "Resume a paused automation. Refuses (with the reason) if the row has "
             "a parse error that must be fixed first.",
             "inputSchema": {
@@ -160,6 +168,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_run",
+            "annotations": {"readOnlyHint": False},
             "description": "Fire an automation now. `dry_run: true` walks the gates and reports "
             "what WOULD run without executing. A manual run bypasses quiet-hours and duty limits "
             "but never the injection screen, capability allowlist, or budget.",
@@ -174,6 +183,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_history",
+            "annotations": {"readOnlyHint": True},
             "description": "Recent run/fire rows for an automation, with typed outcomes — to "
             "self-debug why an automation did or did not do something.",
             "inputSchema": {
@@ -187,6 +197,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_delete",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             "description": "Delete an automation permanently. Requires confirm: true — pause it "
             "instead if you might want it back.",
             "inputSchema": {
@@ -200,6 +211,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_delete_all",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             # Scoped in the DESCRIPTION as well as the code: a bulk-delete tool whose blast radius
             # is only discoverable by reading the implementation is one an agent will misuse.
             "description": "Delete every automation YOU created (created_by=agent), in one call. "
@@ -218,14 +230,16 @@ def _list_tools() -> list[dict[str, Any]]:
             # the outstanding-task bound, the command screening and the announcement rather than
             # re-implementing any of it.
             "name": "set_onetime_task",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you "
                 "need to wait for something outside this turn — 'check the build in 20 minutes', "
-                "'follow up tomorrow morning'. The task wakes you with `message` as the "
-                "instruction. Counts against your outstanding-task allowance; it frees a slot "
-                "when it fires, since a one-time task disables itself. It does not run until the "
-                "owner allows it on the Triggers page, unless it wakes a parked run "
-                "(`resume_run_id`), which needs no allowing."
+                "'follow up tomorrow morning' — and to remind the owner of something at a time "
+                "('remind me at 5pm to call Sam': put what to tell them in `message`). The task "
+                "wakes you with `message` as the instruction. Counts against your "
+                "outstanding-task allowance; it frees a slot when it fires, since a one-time task "
+                "disables itself. It does not run until the owner allows it on the Triggers page, "
+                "unless it wakes a parked run (`resume_run_id`), which needs no allowing."
             ),
             "inputSchema": {
                 "type": "object",
@@ -233,8 +247,9 @@ def _list_tools() -> list[dict[str, Any]]:
                     "name": {"type": "string", "description": "A short name for the task."},
                     "when": {
                         "type": "string",
-                        "description": "When to wake, in plain language: 'in 20 minutes', "
-                        "'tomorrow at 9am', '2026-09-01 14:00'.",
+                        "description": "When to wake, in plain language, read in the owner's "
+                        "timezone: 'at 5pm', 'in 20 minutes', 'tomorrow at 9am', "
+                        "'2026-09-01 14:00'. One time only — a cadence is set_recurring_task's.",
                     },
                     "message": {
                         "type": "string",
@@ -244,8 +259,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Wake a PARKED workflow run instead of starting a new "
                         "task: the run id to resume, or 'self' from inside a workflow stage "
-                        "to target your own run. The message becomes the answer the parked "
-                        "gate receives. This is how a monitor run parks between checks.",
+                        "to target your own run. The message becomes the answer to the event "
+                        "gate the run is parked on. This is how a monitor run parks between "
+                        "checks. It answers no other gate: an approval, a choice or a form "
+                        "waits for the owner.",
                     },
                     "ttl_secs": {
                         "type": "number",
@@ -259,6 +276,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "set_recurring_task",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at "
                 "9', 'hourly', 'every Monday'. Use for ongoing monitoring you should keep doing "
@@ -305,12 +323,18 @@ def _http_runner(payload: dict[str, Any]) -> Any:
     Mirrors `schedule_trigger`: an MCP process cannot own the LLM turn, so an immediate run posts
     to the in-process gateway rather than spawning a subagent here. Returns the response dict, or a
     string describing why it could not — never raises into the tool result.
+
+    The id goes into the path percent-encoded, under the `schedule:` namespace, as the dashboard's
+    Run button and `personalclaw cron trigger` send it. An app's job name can hold any character,
+    and a space in one made the request unsendable.
     """
+    from urllib.parse import quote
+
     from personalclaw.mcp_core import _post
 
     trigger_id = str(payload.get("trigger_id") or "")
     try:
-        return _post(f"/api/triggers/{trigger_id}/run", {})
+        return _post(f"/api/triggers/schedule:{quote(trigger_id, safe='')}/run", {})
     except Exception as exc:  # noqa: BLE001 - a failed dispatch is a reported outcome, not a crash
         logger.debug("automation_run HTTP dispatch failed for %s", trigger_id, exc_info=True)
         return f"could not dispatch: {exc}"
@@ -319,19 +343,19 @@ def _http_runner(payload: dict[str, Any]) -> Any:
 def _resolve_resume_target(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     """The `workflow.resume` target a set_*_task call asked for, or (None, "") when it did not.
 
-    `resume_run_id: "self"` resolves from the leaf lineage env (`__wf_run_id`) — the same
-    process-local seam `mcp_shared.leaf_tool_denial` reads, because a workflow stage's
-    in-process tools run inside the leaf's own subprocess. Resolved HERE, at creation, rather
-    than stored symbolically: a persisted "self" would be re-resolved at fire time by whatever
-    process the scheduler runs in, which is never the run it meant.
+    `resume_run_id: "self"` resolves from the leaf's lineage (`mcp_shared.leaf_run_id`) — the one
+    reader `mcp_shared.leaf_tool_denial` uses too, which sees the stage's lineage whether its tools
+    run in an agent CLI's tool server or in-process on the native runtime. Resolved HERE, at
+    creation, rather than stored symbolically: a persisted "self" would be re-resolved at fire time
+    by whatever process the scheduler runs in, which is never the run it meant.
     """
     raw = str(args.get("resume_run_id") or "").strip()
     if not raw:
         return None, ""
     if raw.lower() == "self":
-        import os
+        from personalclaw.mcp_shared import leaf_run_id
 
-        run_id = str(os.environ.get("__wf_run_id", "") or "").strip()
+        run_id = leaf_run_id()
         if not run_id:
             return None, tool_failure(
                 "resume_run_id='self' only works from inside a workflow run — this "
@@ -367,6 +391,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             created_by="agent",
             resume=resume,
             ttl_secs=float(args.get("ttl_secs") or 0),
+            recurrence=T.ONCE,
         )
     elif name == "set_recurring_task":
         # `cadence` is the caller-facing word (a recurrence, not an instant); `when` is what the
@@ -382,6 +407,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             created_by="agent",
             resume=resume,
             ttl_secs=float(args.get("ttl_secs") or 0),
+            recurrence=T.RECURRING,
         )
     elif name == "automation_list":
         result = T.list_automations(

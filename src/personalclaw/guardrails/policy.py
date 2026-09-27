@@ -257,9 +257,9 @@ def is_unattended_session(session_key: str) -> bool:
     from personalclaw.session import _STATELESS_PREFIXES, BACKGROUND_KEY
 
     key = session_key or ""
-    # ``_bg`` is the shared background/heartbeat/cron/lessons session key (see
-    # session.py) — genuinely unattended, so it resolves through HEADLESS even though
-    # it matches no prefix. It's an exact key, not a prefix, hence the equality check.
+    # ``_bg`` is the background chores' shared session key (see session.py) — genuinely
+    # unattended, so it resolves through HEADLESS even though it matches no prefix. It's an
+    # exact key, not a prefix, hence the equality check.
     if key == BACKGROUND_KEY:
         return True
     if key.startswith(_DASHBOARD_WRAPPER + INBOUND_PREFIX):
@@ -423,13 +423,12 @@ def tool_grant_denial(
     through), ``subagent._run_inner``'s permission loop, and the sandbox
     :class:`~personalclaw.sandbox_providers.tool_gateway.ToolGateway`.
 
-    ``write_class`` is supplied by the CALLER, not derived here, because the two live
-    seams already own a write/read classifier apiece and answering the question a third
-    time is how a policy starts to drift: the leaf/spawn seams pass
-    ``batch_compile.is_write_tool`` (the classifier a research LEAF and a research
-    SUBAGENT deny alike) and the gateway passes its declared-kind
-    ``task_modes.task_mode_denies`` verdict. This function owns the grant ALGEBRA — which
-    tier means what — and nothing else.
+    ``write_class`` is supplied by the CALLER, not derived here, because each seam holds a
+    different view of the call: the leaf, spawn and room seams pass
+    ``not task_modes.read_grant_admits(...)`` (what the tool declares — a read, or a
+    proposal), and the sandbox gateway passes its ``task_modes.task_mode_denies`` verdict over
+    each surface tool's own declaration. This function owns the grant ALGEBRA — which tier
+    means what — and nothing else.
 
     Fail-CLOSED at every edge, because a grant set that cannot be read must deny rather
     than wave through:
@@ -466,3 +465,27 @@ def tool_grant_denial(
             f"grants {tier!r} tools only{suffix}"
         )
     return ""
+
+
+def declared_tool_grant_denial(
+    profile: SafetyProfile,
+    tool_name: str,
+    declared: object = "",
+    tool_kind: str = "",
+    tool_input: object = None,
+    *,
+    proposes: bool = False,
+    detail: str = "",
+) -> str:
+    """:func:`tool_grant_denial` for a call judged by what its tool DECLARES.
+
+    A call is within a ``read`` grant when its tool declares it only reads, or that its only
+    effect is a proposal the owner reviews (:func:`personalclaw.task_modes.read_grant_admits`).
+    Every seam that holds a declaration asks it here — a research leaf, a research subagent and
+    the native runtime it is handed to, a room's critic — so they refuse alike. A call that
+    declares nothing is a change, and a ``read`` grant refuses it.
+    """
+    from personalclaw.task_modes import read_grant_admits
+
+    within_read = read_grant_admits(declared, tool_name, tool_kind, tool_input, proposes=proposes)
+    return tool_grant_denial(profile, tool_name, write_class=not within_read, detail=detail)

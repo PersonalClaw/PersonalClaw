@@ -233,7 +233,7 @@ class TestAgentDeniedEnvKeys:
     )
     def test_cc_sandbox_exec_scrubs_agent_creds(self, _stub_bins, monkeypatch):
         """sandbox-exec (macOS) cc path emits env -u for cred keys present in env."""
-        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-secret")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "fake-bot-token-secret")
         monkeypatch.setenv("PERSONALCLAW_OWNER_ID", "U123")
         argv, cleanup = sandbox_exec_argv(["echo", "hi"], sandbox_level="cc")
         try:
@@ -247,7 +247,7 @@ class TestAgentDeniedEnvKeys:
         "personalclaw.sandbox._resolve_enforcement_bin", side_effect=lambda name: f"/usr/bin/{name}"
     )
     def test_standard_sandbox_exec_does_not_scrub_agent_creds(self, _stub_bins, monkeypatch):
-        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-secret")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "fake-bot-token-secret")
         argv, cleanup = sandbox_exec_argv(["echo", "hi"], sandbox_level="standard")
         try:
             assert "SLACK_BOT_TOKEN" not in argv

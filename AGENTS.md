@@ -118,13 +118,21 @@ stays true.
 - **Clean break.** No backward-compat shims, dual paths, dead code, or
   TODO/FIXME/commented-out blocks. Replace a mechanism → delete the old one in
   the same change. Unfinished work lives in a plan file, not in code.
+- **No planning ids in comments or docs.** A work-item id, a plan's name, a
+  session or task number or a section of a plan points into private planning
+  state this repository does not hold; say what the code does or why instead.
+  `tests/test_planning_id_baseline.py` ratchets the ones the tree still has: a new
+  one reds, and removing one means re-running
+  `python scripts/generate_planning_id_baseline.py` in the same commit.
 - **Breaking changes are the maintainer's call, not yours.** During 0.x the
   maintainer lands backward-incompatible clean breaks with **no migrations**
   (the migration-backed lifecycle regime is deliberately deferred until the
   architecture stops moving — so no `lifecycle/` package exists and hand-rolled
   gate/migration machinery is a rejection). Working an owner-assigned roadmap
-  task, a class-B/S clean break is expected: execute it, note it in the
-  CHANGELOG, advise `personalclaw snapshot`. Working anything else, stay
+  task, a class-B/S clean break is expected: execute it, give it a one-line
+  CHANGELOG headline (entries are headline-only), and put the upgrade step —
+  `personalclaw snapshot`, a renamed field — in the upgrade docs
+  ([CONTRIBUTING.md](CONTRIBUTING.md#changelog)). Working anything else, stay
   **additive** (defaults on new fields, tolerant reads, routes beside routes); if
   the clean fix needs a persisted-shape, route-contract, or credential-format
   change, it needs a **migration path** — an unattended, idempotent
@@ -190,7 +198,8 @@ them is not ready to execute a task.
 - **Definition of done, every task:** `make lint` · targeted `pytest` · `make
   test` before the final commit · the web gate incl. render smoke when `web/`
   changed · new behavior has tests (a bug-fix gets a regression test that failed
-  before) · docs moved with the change · CHANGELOG entry for class-B/S · the
+  before) · docs moved with the change · a headline-only CHANGELOG entry for
+  class-B/S · the
   task's "acceptance criteria" clause is literally true.
 - **Close as a user.** Each task table ends with a validation walkthrough —
   execute it, driving the UI/CLI and inspecting every surface (UI, console,
@@ -269,7 +278,8 @@ re-invents a shape another touches:
   is a stable surface: every published signature is checked in
   (`src/personalclaw/sdk/signatures.json`), a change to one — a re-exported core
   function included — regenerates it (`make sdk-snapshot`) and names the apps it
-  affects in the CHANGELOG, and CI runs the first-party apps' contract checks on it
+  affects in its CHANGELOG headline (in backticks, or by a family glob such as
+  `` `*-channel` ``), and CI runs the first-party apps' contract checks on it
   ([CONTRIBUTING.md](CONTRIBUTING.md#sdk-changes)).
 
 ## Repo map

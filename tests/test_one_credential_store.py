@@ -277,7 +277,7 @@ async def test_a_workflow_step_naming_an_owned_key_is_refused_and_says_why(home)
     from personalclaw.workflows.models import RunStatus
 
     owned = _owned_key()
-    cred.save_credential(owned, "sk-owned-by-a-provider")
+    cred.save_credential(owned, "fake-key-owned-by-a-provider")
     spec = _action_spec(
         "reads-an-owned-key", {"provider": "notify", "with": {"k": f"{{{{secret:{owned}}}}}"}}
     )
@@ -298,7 +298,7 @@ def test_an_owned_key_an_app_saved_a_descriptor_for_is_refused(home):
     from personalclaw.llm.credentials import CredentialStore
 
     owned = _owned_key()
-    cred.save_credential(owned, "sk-owned-by-a-provider")
+    cred.save_credential(owned, "fake-key-owned-by-a-provider")
     (home / "credentials.json").write_text(
         json.dumps({owned: {"type": "api_key"}}), encoding="utf-8"
     )
@@ -308,7 +308,7 @@ def test_an_owned_key_an_app_saved_a_descriptor_for_is_refused(home):
 
     assert type(refused.value).__name__ == "OwnedCredentialRefused"
     assert owned in str(refused.value) and "Settings → Secrets" in str(refused.value)
-    assert "sk-owned-by-a-provider" not in str(refused.value)
+    assert "fake-key-owned-by-a-provider" not in str(refused.value)
 
 
 # ── the boot move: credentials.json into the store, verified before it is deleted ──

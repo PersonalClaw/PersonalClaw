@@ -283,7 +283,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
             if not key or value is None:
                 print("Usage: personalclaw config set <key> <value>", file=sys.stderr)
                 print("       personalclaw config set --file <path.json>", file=sys.stderr)
-                sys.exit(1)
+                sys.exit(2)
             cfg = AppConfig.load()
             d = cfg.to_dict()
             parsed = _parse_value(value)
@@ -430,9 +430,6 @@ def _config_cmd(args: argparse.Namespace) -> None:
         print(f"✅ Removed {key}")
     elif action == "edit":
         _edit_config()
-    else:
-        print("Usage: personalclaw config {get,set,unset,edit}", file=sys.stderr)
-        sys.exit(1)
 
 
 def _edit_config() -> None:

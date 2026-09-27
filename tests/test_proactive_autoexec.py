@@ -391,7 +391,10 @@ class TestTheOperations:
         from personalclaw.action_providers.base import ActionContext
         from personalclaw.action_providers.inbox_op_provider import InboxOpActionProvider
 
-        state = _live(tmp_path, [_item("C1_100.5")])
+        item = _item("C1_100.5")
+        # The first message of a Slack thread: its replies name it by its ts.
+        item.source, item.can_reply, item.reply_target = "slack", True, "100.500000"
+        state = _live(tmp_path, [item])
         _wire_services(monkeypatch, state)
         provider = InboxOpActionProvider()
 
@@ -399,9 +402,8 @@ class TestTheOperations:
             {"op": "mute_thread", "item_id": "C1_100.5"}, ActionContext(event="t")
         )
         assert result.success is True
-        # Exactly `item.thread_ts or item.id.split("_", 1)[1]`, which is what
-        # `PUT /api/inbox/{id}` computes.
-        assert state._inbox_svc.state.muted_threads == {"100.5"}
+        # Exactly `InboxItem.thread_key`, which is what `PUT /api/inbox/{id}` writes.
+        assert state._inbox_svc.state.muted_threads == {"100.500000"} == {item.thread_key}
         assert (await provider.reverse(result.reversal)).success is True
         assert state._inbox_svc.state.muted_threads == set()
 

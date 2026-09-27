@@ -393,6 +393,7 @@ async def app_permission_middleware(
         app_request_denial,
         scoped_to_app,
     )
+    from personalclaw.request_validation import RequestValidationError
 
     app_name = request.get("app", "")
     if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
@@ -422,7 +423,13 @@ async def app_permission_middleware(
         route = resource.canonical if resource is not None else ""
         reason = app_request_denial(app_name, request.path, method=request.method, route=route)
         if not reason:
-            reason = await _ownership_denial(request, app_name, route)
+            try:
+                reason = await _ownership_denial(request, app_name, route)
+            except RequestValidationError as exc:
+                # A body the ownership check cannot read names nothing it could admit. This
+                # middleware sits outside `request_boundary`, so it answers the refusal itself,
+                # in the same envelope, before the handler runs.
+                return exc.response
         if reason:
             return _deny(reason)
     if app_name:
@@ -443,22 +450,20 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
     and so that a refused request loads nothing: the creator is read without rehydrating the
     conversation, and another app's settings are never opened.
 
-    A body target reads the JSON body, which aiohttp keeps, so the handler reads the same bytes
-    after. A body that is not a JSON object names nothing, so an optional target passes and the
-    handler refuses the body itself.
+    A body target reads the JSON body through ``json_object_body``, and aiohttp keeps the bytes,
+    so the handler reads the same body after. An empty body names nothing, so an optional target
+    passes. A body that is not a JSON object raises ``RequestValidationError``, which
+    :func:`app_permission_middleware` answers: it runs outside ``request_boundary``.
     """
     from personalclaw.apps.permissions import AppMay, route_authz
+    from personalclaw.request_validation import json_object_body
 
     authz = route_authz(request.method, route)
     if not isinstance(authz, AppMay) or not authz.owns:
         return ""
     body: dict = {}
     if any(target.in_body for target in authz.owns):
-        try:
-            parsed = await request.json()
-        except Exception:  # noqa: BLE001 — unparseable names nothing; the handler refuses it
-            parsed = None
-        body = parsed if isinstance(parsed, dict) else {}
+        body = await json_object_body(request)
     state = request.app.get("state")
     for target in authz.owns:
         named = body.get(target.field) if target.in_body else request.match_info.get(target.field)
@@ -1127,6 +1132,10 @@ async def start_dashboard(
     app.router.add_post(
         "/api/external-access/clients/{client_id}/disabled",
         handlers.api_external_access_client_toggle,
+    )
+    # Your answer to a control-bridge action that waits for you (`inbound/bridge.py`).
+    app.router.add_post(
+        "/api/external-access/bridge/confirmations/{id}", handlers.api_bridge_confirmation
     )
     app.router.add_get("/api/models/health", handlers.api_models_health)
     # The earned-autonomy ladder. One read + three writes, and only ONE of the three
@@ -1798,6 +1807,14 @@ async def start_dashboard(
         move_credentials_file()
     except Exception:  # noqa: BLE001 — never block boot; the next start retries
         logger.warning("moving credentials.json into the credential store failed", exc_info=True)
+    # And the browse "profile keys" an earlier release minted and nothing ever used, which the
+    # Secrets page would list and could not delete (`browse.handoff.forget_unused_profile_keys`).
+    from personalclaw.browse.handoff import forget_unused_profile_keys
+
+    try:
+        forget_unused_profile_keys()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("deleting the unused browse profile keys failed", exc_info=True)
     # Sync config.json provider entries into the LLM registry IMMEDIATELY after
     # extensions load (types are now registered). Must happen BEFORE any handler
     # resolves a provider (e.g. embedding/knowledge auto-embed at boot).
@@ -2222,6 +2239,24 @@ async def start_dashboard(
 
     app.on_cleanup.append(_auth_tally_shutdown)
 
+    async def _durability_shutdown(app_: web.Application) -> None:
+        """Stop the durability loop, and time-travel's debouncer with it, on gateway stop.
+
+        The service starts after ``runner.setup()`` froze ``on_cleanup``, so its stop is
+        registered here and reads the service off the state. Nothing stopped it before. The
+        debouncer is process-wide and runs its own thread, so it outlived the gateway that
+        installed it: the commits it still held were never flushed, and the next gateway in the
+        same process was handed the old debouncer, bound to the old home."""
+        svc = getattr(app_["state"], "_durability_svc", None)
+        if svc is None:
+            return
+        try:
+            svc.stop()
+        except Exception:
+            logger.debug("durability shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_durability_shutdown)
+
     # Static files — React build under /assets, packaged static assets under /static
     if _DIST_DIR.is_dir():
         app.router.add_static(
@@ -2380,6 +2415,7 @@ async def start_dashboard(
     # list (healthz, the manifest, the pre-session front door, WS upgrades, and
     # everything outside /api/) is enumerated with reasons in api_version_gate.py.
     from personalclaw.dashboard.api_version_gate import api_version_middleware
+    from personalclaw.dashboard.consent_ask import consent_ask_middleware
     from personalclaw.dashboard.invalid_id_gate import invalid_id_middleware
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
@@ -2420,6 +2456,8 @@ async def start_dashboard(
                             # internal on-demand fire (cron trigger / schedule_trigger
                             # MCP tool) POSTs /api/triggers/{id}/run with the secret.
                             "/api/triggers",
+                            # Settings → Security (cookie) and `personalclaw auth rotate-key`.
+                            "/api/auth/rotate-key",
                         }
                     ),
                     internal_secret=_internal_secret,
@@ -2429,6 +2467,10 @@ async def start_dashboard(
             ]
         ),
         app_permission_middleware,
+        # The owner's consent question as an answer to a client that asks one, and as the 400
+        # refusal to any other. OUTSIDE the security log's audit, which records the refusal as the
+        # handler made it. See consent_ask.py.
+        consent_ask_middleware,
         sel_audit_middleware,
         # Maps an unguarded request-shape fault (a non-object JSON body, a non-numeric
         # query/path param) raised by the handler to the one 400 wire envelope, so a

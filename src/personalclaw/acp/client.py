@@ -93,7 +93,6 @@ from personalclaw.acp.transport import (  # noqa: E402,F401
     _get_start_time,
     _is_our_child,
     _kill_escaped_children,
-    _resolve_ssh_auth_sock,
 )
 
 

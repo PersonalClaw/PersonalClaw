@@ -76,10 +76,10 @@ def _spawn(monkeypatch, *, binding=None, subject="s"):
 
 
 def test_ambient_credential_does_not_reach_an_unbound_cell(bound_home, monkeypatch):
-    monkeypatch.setenv(AMBIENT_KEY, "sk-ambient-must-not-cross")
+    monkeypatch.setenv(AMBIENT_KEY, "fake-key-ambient-must-not-cross")
     env = _spawn(monkeypatch)
     assert AMBIENT_KEY not in env
-    assert "sk-ambient-must-not-cross" not in json.dumps(env)
+    assert "fake-key-ambient-must-not-cross" not in json.dumps(env)
     # And no binding / no forwarded secret either.
     assert cell_provider.BINDING_ENV not in env
     assert cell_provider.CELL_KEY_ENV not in env
@@ -87,7 +87,7 @@ def test_ambient_credential_does_not_reach_an_unbound_cell(bound_home, monkeypat
 
 def test_ambient_credential_does_not_reach_a_bound_cell_either(bound_home, monkeypatch):
     """A binding grants the model it NAMES — not everything else in the parent env."""
-    monkeypatch.setenv(AMBIENT_KEY, "sk-ambient-must-not-cross")
+    monkeypatch.setenv(AMBIENT_KEY, "fake-key-ambient-must-not-cross")
     binding = cell_provider.resolve_binding("LocalRuntime:test-model")
     env = _spawn(monkeypatch, binding=binding)
     assert AMBIENT_KEY not in env
@@ -133,9 +133,9 @@ def test_a_named_key_variable_is_forwarded_and_only_that_one(monkeypatch):
         model="m1",
         api_key_env="CLOUDY_API_KEY",
     )
-    source = {"CLOUDY_API_KEY": "sk-declared", AMBIENT_KEY: "sk-ambient"}
+    source = {"CLOUDY_API_KEY": "fake-key-declared", AMBIENT_KEY: "fake-key-ambient"}
     env = cell_provider.spawn_env_for({}, binding, source=source)
-    assert env[cell_provider.CELL_KEY_ENV] == "sk-declared"
+    assert env[cell_provider.CELL_KEY_ENV] == "fake-key-declared"
     assert AMBIENT_KEY not in env
     # Under a CELL-SCOPED name — the provider's own variable is never set in the child.
     assert "CLOUDY_API_KEY" not in env

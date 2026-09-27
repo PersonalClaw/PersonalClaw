@@ -44,7 +44,7 @@ def _home(tmp_path):
     conn.commit()
     conn.close()
     # Secrets, which must never appear in an export.
-    (home / ".env").write_text("OPENAI_API_KEY=sk-secret")
+    (home / ".env").write_text("OPENAI_API_KEY=fake-key-secret")
     (home / "sel_hmac.key").write_text("hmac-secret")
     return home
 
@@ -86,7 +86,7 @@ class TestSecretsNeverShard:
         out = tmp_path / "s"
         shards.export_shards(home, out)
         blob = "\n".join(p.read_text(errors="replace") for p in out.rglob("*") if p.is_file())
-        assert "sk-secret" not in blob
+        assert "fake-key-secret" not in blob
         assert "hmac-secret" not in blob
         assert not list(out.glob("env/**"))
         assert not list(out.glob("sel_hmac_key/**"))
@@ -322,7 +322,7 @@ class TestCli:
             shard_dir = None
 
         assert shards.backup_cmd(_Validate()) == 1
-        assert "backup export" in capsys.readouterr().out  # tells you what to run
+        assert "backup export" in capsys.readouterr().err  # tells you what to run
 
 
 @pytest.mark.parametrize("missing", ["tasks", "memory.db", "sessions"])
@@ -391,7 +391,7 @@ class TestImport:
         shards.export_shards(home, out)
         imported = shards.import_shards(out)
         blob = json.dumps(imported.rows)
-        assert "sk-secret" not in blob and "hmac-secret" not in blob
+        assert "fake-key-secret" not in blob and "hmac-secret" not in blob
 
     def test_entries_filter_restricts_the_import(self, tmp_path):
         home = _home(tmp_path)

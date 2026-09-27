@@ -57,9 +57,9 @@ is explicitly not this provider's job, and accepting the shape would mean carryi
 a code path whose whole output is destined for a model context. The URL is additionally screened
 once, at that same boundary, through :func:`personalclaw.security.redact_url_userinfo`, and the
 screened value is what every later composition uses — the error sentence, the JSON payload, the
-fence's ``source_id``. Screening once and early is the contract: ``redact_credentials`` is NOT
-idempotent over a composed ``field: value`` line, so redacting after composition garbles the field
-name. The shape-based sweep is deliberately NOT run over a URL — its base64 pass would rewrite
+fence's ``source_id``. Screening once and early is the contract: every later composition is built
+from the screened value, so none of them has to be screened again. The shape-based sweep is
+deliberately NOT run over a URL — its base64 pass would rewrite
 ordinary path segments into ``[REDACTED: encoded credential]`` and leave the user reading a refusal
 about a URL they cannot recognise.
 
@@ -94,7 +94,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult, site_of
 from personalclaw.errors import AgentError
 
 logger = logging.getLogger(__name__)
@@ -355,6 +355,7 @@ class NetFetchActionProvider(ActionProvider):
             source_id=final_url,
             transformation_path=FENCE_TRANSFORMATION,
         )
+        bytes_truncated = bool(getattr(response, "truncated", False))
         return ActionResult(
             success=True,
             stdout=json.dumps(
@@ -368,12 +369,46 @@ class NetFetchActionProvider(ActionProvider):
                     # second knows the page was bigger than the chokepoint would carry, which is a
                     # different fact from "we trimmed it for the model".
                     "truncated": truncated,
-                    "bytes_truncated": bool(getattr(response, "truncated", False)),
+                    "bytes_truncated": bytes_truncated,
                     "text": fenced,
                 }
             ),
             duration_ms=self._ms(started),
+            summary=self._fetched_sentence(
+                # `host[:port]` of the URL the response came from. Read off the unscreened one on
+                # purpose: the host is no credential, and the screen writes its marker into the
+                # authority, where no URL parser can find the host again.
+                site_of(str(getattr(response, "url", "") or requested_url)),
+                status,
+                content_type,
+                len(text),
+                truncated,
+                bytes_truncated,
+            ),
         )
+
+    @staticmethod
+    def _fetched_sentence(
+        site: str, status: int, content_type: str, chars: int, truncated: bool, capped: bool
+    ) -> str:
+        """What a person reads on the run's history row: how much was read, from where.
+
+        The row used to be `stdout` — the JSON above, the whole fenced page included. That stays
+        the trace and what a workflow step binds. The sentence names the site by `host[:port]`
+        alone and quotes nothing of the page: its text is a third party's, and the row is a line.
+        """
+        where = f" from {site}" if site else ""
+        kind = content_type.split(";", 1)[0].strip()
+        detail = f"HTTP {status}, {kind}" if kind else f"HTTP {status}"
+        if chars == 0:
+            said = f"Fetched an empty page{where} ({detail})."
+        elif truncated:
+            said = f"Fetched the first {chars:,} characters{where} ({detail}); the page is longer."
+        else:
+            said = f"Fetched {chars:,} characters{where} ({detail})."
+        if capped:
+            said += " The download stopped at its size limit, so the page may be incomplete."
+        return said
 
     @staticmethod
     def _ms(started: float) -> int:

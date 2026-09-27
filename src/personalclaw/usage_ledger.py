@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
@@ -57,6 +58,47 @@ class TurnUsage:
     cost_usd: float = 0.0
     priced: bool = True
     duration_ms: int = 0
+    # The ``audit_id`` of each guarded model call this row's tokens came from, as
+    # ``model_calls.jsonl`` records it (``LLMEvent.audit_ids``): the join that lets the usage fold
+    # leave those calls out of its census of the log (``routing.usage.audit_census``). Empty for a
+    # turn no guard wrapped (the interactive chat, an ACP agent CLI).
+    audit_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Attribution:
+    """Whose spend a model call is: the ledger columns only the code that asked for it knows.
+
+    A one-shot completion (``llm_helpers.one_shot_completion(usage=…)``) resolves its own model,
+    so its caller names the rest of the row: the ``source``, the session the call was made for,
+    and the agent that made it.
+    """
+
+    source: str
+    session_key: str = ""
+    agent: str = ""
+
+
+def recorder(provider: object, who: Attribution) -> Callable[[object], None]:
+    """The ``on_complete`` that writes one row for a call made through *provider*, for *who*.
+
+    The row names the model that answered when the event says (a native runtime's
+    ``served_model_ref``), and otherwise the one *provider* was built for: the
+    ``"<entry>:<model>"`` its build stamped (``ModelProvider.served_ref``).
+    """
+    entry, _, model = str(getattr(provider, "served_ref", "") or "").partition(":")
+
+    def record(event: object) -> None:
+        record_from_event(
+            event,
+            source=who.source,
+            session_key=who.session_key,
+            agent=who.agent,
+            provider=entry,
+            model=model,
+        )
+
+    return record
 
 
 def _path() -> Path:
@@ -113,6 +155,13 @@ def answered_provider(event: object, asked: str = "") -> str:
     return _served(event)[0] or asked
 
 
+def _audit_ids(event: object) -> list[str]:
+    """The guarded calls *event* says its usage came from (``LLMEvent.audit_ids``); none from an
+    event of another shape."""
+    named = getattr(event, "audit_ids", ())
+    return [str(i) for i in named if i] if isinstance(named, (list, tuple)) else []
+
+
 def record_from_event(
     event: object,
     *,
@@ -140,6 +189,10 @@ def record_from_event(
     so re-estimating here would both waste the call and double-count it. ``priced`` still
     reflects the price table (``has_pricing``) so an unpriced model with a caller-supplied
     0.0 renders "unpriced", not a free turn.
+
+    The row keeps the ids of the guarded model calls the event says its usage came from
+    (``LLMEvent.audit_ids``), so the usage fold's census of ``model_calls.jsonl`` does not
+    count those calls a second time.
     """
     from datetime import datetime, timezone
 
@@ -175,6 +228,7 @@ def record_from_event(
             cost_usd=cost,
             priced=bool(cost) or has_pricing(model),
             duration_ms=int(getattr(event, "duration_ms", 0) or 0),
+            audit_ids=_audit_ids(event),
         )
     )
 

@@ -81,7 +81,7 @@ def test_set_scope_entry_refuses_and_leaves_the_file_byte_identical(tmp_path: Pa
     p = tmp_path / "claude.json"
     original = (
         '{"projects": {"/work": {"history": ["secret-prompt"]}},\n'
-        ' "mcpServers": {"other": {"command": "srv", "env": {"API_KEY": "sk-live-DO-NOT-LOSE"}}},\n'
+        ' "mcpServers": {"other": {"command": "srv", "env": {"API_KEY": "fake-key-1"}}},\n'
         " TRUNCATED-BY-A-CONCURRENT-WRITE"
     )
     p.write_text(original, encoding="utf-8")
@@ -91,7 +91,7 @@ def test_set_scope_entry_refuses_and_leaves_the_file_byte_identical(tmp_path: Pa
 
     assert outcome == "unreadable", "the refusal must be reported, not silently a no-op"
     assert p.read_bytes() == before, "the file was modified — this is the data loss"
-    assert b"sk-live-DO-NOT-LOSE" in p.read_bytes()
+    assert b"fake-key-1" in p.read_bytes()
 
 
 def test_set_scope_entry_still_works_on_a_readable_file(tmp_path: Path) -> None:
@@ -130,7 +130,7 @@ def test_save_refuses_when_the_existing_config_is_unreadable(tmp_path, monkeypat
     home.mkdir()
     cfg = home / "config.json"
     cfg.write_text(
-        '{"providers": {"anthropic": {"api_key": "sk-ant-DO-NOT-LOSE"}}, BROKEN',
+        '{"providers": {"anthropic": {"api_key": "fake-anthropic-1"}}, BROKEN',
         encoding="utf-8",
     )
     before = cfg.read_bytes()
@@ -141,7 +141,7 @@ def test_save_refuses_when_the_existing_config_is_unreadable(tmp_path, monkeypat
         c.save()
 
     assert cfg.read_bytes() == before, "the config was rewritten without its providers block"
-    assert b"sk-ant-DO-NOT-LOSE" in cfg.read_bytes()
+    assert b"fake-anthropic-1" in cfg.read_bytes()
 
 
 def test_save_still_preserves_the_blocks_on_a_readable_config(tmp_path, monkeypatch) -> None:
@@ -153,9 +153,9 @@ def test_save_still_preserves_the_blocks_on_a_readable_config(tmp_path, monkeypa
     cfg.write_text(
         json.dumps(
             {
-                "providers": {"anthropic": {"api_key": "sk-keep"}},
+                "providers": {"anthropic": {"api_key": "fake-key-keep"}},
                 "use_cases": {"chat": "anthropic"},
-                "slack": {"token": "xoxb-keep"},
+                "slack": {"token": "fake-bot-token-keep"},
             }
         ),
         encoding="utf-8",
@@ -165,9 +165,9 @@ def test_save_still_preserves_the_blocks_on_a_readable_config(tmp_path, monkeypa
     L.AppConfig().save()
 
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    assert data["providers"] == {"anthropic": {"api_key": "sk-keep"}}
+    assert data["providers"] == {"anthropic": {"api_key": "fake-key-keep"}}
     assert data["use_cases"] == {"chat": "anthropic"}
-    assert data["slack"] == {"token": "xoxb-keep"}
+    assert data["slack"] == {"token": "fake-bot-token-keep"}
     assert "meta" in data, "the normal save still stamps meta"
 
 

@@ -197,6 +197,16 @@ def test_action_config_reports_the_render_error_a_real_fire_would_hit(home):
     assert "env" in fact["render_error"]
 
 
+def test_a_chat_made_automation_previews_the_message_it_runs(home):
+    """A Run Prompt action with no saved prompt runs its own message — what an automation made
+    in chat carries — so that is what the preview says it will run."""
+    _put(home, _clock(provider="run-prompt", config={"message": "Remind the owner to stretch."}))
+    _status, body = _simulate("clock:deploy")
+    fact = body["action_config"]
+    assert fact["rendered"] == "Remind the owner to stretch."
+    assert fact["render_error"] == ""
+
+
 def test_secret_references_are_named_never_resolved(home, monkeypatch):
     """A `{{secret:KEY}}` in the config is NAMED in the preview and the credential store is
     never read — a would-execute description that resolved secrets would put a live token one

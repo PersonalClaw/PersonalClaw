@@ -310,7 +310,7 @@ class TestDefRoutes:
                 {
                     "kind": "action",
                     "id": "a",
-                    "config": {"provider": "bash", "token": "ghp_abcdefghijklmnopqrstuv"},
+                    "config": {"provider": "bash", "token": "fake-github-token-1"},
                 }
             ],
         }

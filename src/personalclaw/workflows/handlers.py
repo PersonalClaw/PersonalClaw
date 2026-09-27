@@ -32,6 +32,7 @@ from typing import Any
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 
+from personalclaw import approval_answer
 from personalclaw.config.edit_spec import LOOSEN_TITLE
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
@@ -70,6 +71,9 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # whose macro invocation cannot be expanded. A 400 would suggest a malformed request body.
     "WF_DEF_MACRO_INVALID": (422, "macro_invalid"),
     "WF_DEF_INLINE_SECRET": (422, "inline_secret"),
+    # 409 like every save that cannot put a `[REDACTED: …]` marker back (`http_errors`): the
+    # stored definition no longer lines up with the masked read the save was built from.
+    "WF_DEF_MASK_CONFLICT": (409, "mask_conflict"),
     "WF_DEF_NO_WRITABLE_PROVIDER": (409, "read_only"),
     "WF_DEF_SAVE_FAILED": (500, "save_failed"),
     "WF_DEF_DELETE_FAILED": (500, "delete_failed"),
@@ -99,7 +103,8 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_RESUME_EXPIRED": (410, "token_expired"),
     "WF_RESUME_INVALID_ANSWER": (400, "invalid_answer"),
     "WF_RESUME_ALREADY_USED": (409, "already_used"),
-    "WF_RESUME_NOT_OWNER": (403, "not_owner"),
+    # The one wire code every door answers a refused answer with (`approval_answer`).
+    "WF_RESUME_NOT_OWNER": (403, "approval_owner_only"),
     "WF_RESUME_STALE_EPOCH": (409, "stale_epoch"),
     "WF_FORK_FAILED": (400, "fork_failed"),
     # 409, not 400: the request is well-formed and the state is the problem — a client can fix
@@ -1387,6 +1392,9 @@ async def api_run_steering(request: web.Request) -> web.Response:
 async def api_run_resume(request: web.Request) -> web.Response:
     """Answer a gate, or clear a pause.
 
+    The caller is who the request proved (`approval_answer.of_request`): only you answer a gate,
+    and an app or an agent's tool that sends an answer is refused 403 `approval_owner_only`.
+
     `channel` marks a REMOTE reply, which the engine owner-binds. An HTTP caller is already
     authenticated by the gateway, so it defaults to local — passing a channel through from
     an untrusted body would let a caller claim to be a channel and get the remote path's
@@ -1399,6 +1407,7 @@ async def api_run_resume(request: web.Request) -> web.Response:
     body = await json_object_body(request)
     result = service.resume_run(
         run_id,
+        by=approval_answer.of_request(request),
         supervisor=_supervisor(request),
         token=str(body.get("resume_token", "") or ""),
         answer=body.get("answer"),
@@ -1422,6 +1431,7 @@ async def api_run_confirm(request: web.Request) -> web.Response:
     body = await json_object_body(request)
     result = service.resolve_confirmation(
         run_id,
+        by=approval_answer.of_request(request),
         supervisor=_supervisor(request),
         verb=str(body.get("verb", "") or ""),
         token=str(body.get("resume_token", "") or ""),

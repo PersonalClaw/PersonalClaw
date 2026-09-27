@@ -136,13 +136,13 @@ describe('the dashboard Browse live view band', () => {
   it('an expired session raises a persistent banner naming the site', async () => {
     browseStatus.mockResolvedValue({
       kill: { active: false, reason: '', started_at: '' },
-      expired: [{ site: 'crunchbase.com', key_present: true }],
+      expired: [{ site: 'crunchbase.com' }],
     })
     render(<BrowseMirror />)
     const banner = await waitFor(() => screen.getByRole('alert'))
     expect(banner.textContent).toMatch(/sign-in needed for crunchbase\.com/i)
-    // key_present → the copy promises the existing profile is reused, not re-created.
-    expect(banner.textContent).toMatch(/reuses the existing profile/i)
+    // No promise about a "profile": the per-site key the old sentence keyed on encrypted nothing.
+    expect(banner.textContent).not.toMatch(/profile/i)
   })
 
   it('the browse_auth_expired signal refetches the status read', async () => {
@@ -152,7 +152,7 @@ describe('the dashboard Browse live view band', () => {
     // Newly-expired: the next read carries the site, and the signal is what triggers the read.
     browseStatus.mockResolvedValue({
       kill: { active: false, reason: '', started_at: '' },
-      expired: [{ site: 'wsj.com', key_present: false }],
+      expired: [{ site: 'wsj.com' }],
     })
     act(() => { socketCb?.({ type: 'browse_auth_expired', data: { site: 'wsj.com' } }) })
     await waitFor(() => expect(browseStatus.mock.calls.length).toBeGreaterThan(before))

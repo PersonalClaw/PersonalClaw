@@ -49,7 +49,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -93,9 +93,8 @@ _UNUSABLE_KEYRING_BACKENDS = ("keyring.backends.fail.", "keyring.backends.null."
 #: ``{{secret:<key>}}`` reference to it (``config.secret_refs``), which is the only way it is
 #: read, so an owned key is deliberately NOT mirrored into ``os.environ``: nothing resolves it
 #: by environment name, and exporting it would hand every provider key to every child the
-#: gateway spawns. The vault hides the prefix for the same reason it hides browse profile keys
-#: — the owning settings surface manages it, and deleting it from the Secrets panel would leave
-#: that surface pointing at nothing.
+#: gateway spawns. The vault hides the prefix because the owning settings surface manages it,
+#: and deleting it from the Secrets panel would leave that surface pointing at nothing.
 OWNED_KEY_PREFIX = "PCSECRET_"
 
 
@@ -104,14 +103,44 @@ def is_owned_key(key: str) -> bool:
     return key.startswith(OWNED_KEY_PREFIX)
 
 
+#: Whether this process keeps the OS keychain out entirely (:func:`keychain_off`).
+_keychain_off = False
+
+
+def keychain_off() -> Callable[[], None]:
+    """Keep the OS keychain out of this process, and return the call that lets it back in.
+
+    For a test process on a developer's machine. One keychain serves every home on the machine,
+    so a scratch ``PERSONALCLAW_HOME`` does not keep a test out of the owner's secrets: this
+    module reads the keychain, writes it and deletes from it whenever ``keyring`` is importable.
+    After this call every one of those finds no keychain (:func:`_usable_keyring`), and
+    credentials live in ``<home>/.env`` alone. Call it before anything resolves a credential,
+    and call what it returns when the process is done; each restore puts back what its own call
+    found, so nested calls unwind in order. Apps reach it as
+    ``personalclaw.sdk.testing.keychain_off``.
+    """
+    global _keychain_off
+    found = _keychain_off
+    _keychain_off = True
+
+    def restore() -> None:
+        global _keychain_off
+        _keychain_off = found
+
+    return restore
+
+
 def _usable_keyring() -> object | None:
     """Return the ``keyring`` module iff it is importable AND backed by a real store.
 
     ``keyring`` is an OPTIONAL extra: absent module → ``None``, and every caller
     degrades to ``.env``. Deliberately NOT cached — a cache would have to be reset
     by every test that blocks the import, and this runs at startup/doctor time, not
-    in a hot loop.
+    in a hot loop. Every keychain read, write and delete in this module asks here, which is
+    what makes :func:`keychain_off` complete.
     """
+    if _keychain_off:
+        return None
     try:
         import keyring  # type: ignore[import-not-found]
     except Exception:

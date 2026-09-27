@@ -290,15 +290,31 @@ exactly the situation this feature exists to prevent.
 **Settings → Devices** lists everything signed in: each browser, paired phone and desktop app,
 and every token a script or the CLI minted — what it is, when it signed in, when it was last
 seen and from which address. Sign one out there, or choose **Sign out all other devices** if a
-device is lost or you do not recognise one. From the terminal on the gateway's computer:
+device is lost or you do not recognise one. Under **Integrations** it also lists every token an
+external agent reaches an inbound surface with (an IDE's MCP token, a registered client), with
+when each stops working and a **Revoke**. From the terminal on the gateway's computer:
 
 ```bash
 personalclaw auth revoke --all    # end every session, everywhere
+personalclaw auth rotate-key      # ...and replace the key every sign-in is signed with
 ```
 
 Every sign-out survives a restart too. Your password and 2FA enrollment are untouched, so you
 just sign in again. **Sign out** on this device's own row revokes that session properly — the
 token dies, not just the cookie.
+
+If you think the key itself, or a sign-in, was copied, replace the key: **Settings → Security →
+Sign-in key**, or `personalclaw auth rotate-key`. Signing sessions out one by one leaves the key
+that could mint new ones; replacing it signs out every browser, paired device and token at once,
+this one included, and each is told the key was replaced when it next connects. Integration
+tokens are separate credentials and keep working. The CLI asks the running gateway, which holds
+the key in memory, and replaces the key itself only when no gateway is running; the route is
+`POST /api/auth/rotate-key` with `{"confirm": true}`, and a signed-out browser's refusal carries
+`detail.reason: "key_replaced"` (a script's `Bearer` gets the one `auth_bearer_invalid`, as for
+every refusal). The replaced key stays in `sessions.json` beside those
+sign-outs, only to recognise the sign-ins it signed so each device can be told why, never to
+admit one, and is forgotten once none of those sign-outs is remembered (97 days at most: the
+90-day sign-in limit, then the week a sign-out is explained for).
 
 A signed-out device is told why the next time it is used — "This device was signed out today
 at 09:14 from Settings → Devices on another device", or "Your sign-in on this device lasted 30
@@ -308,7 +324,8 @@ so the CLI or a script minting tokens never signs a browser or a phone out.
 
 A sign-in lasts `auth.session_ttl` (30 days by default) and never more than 90 days, the limit
 for a long-lived credential: the longer a sign-in lasts, the longer a copied link or a stolen
-cookie keeps working. Setting `auth.session_ttl` longer is refused with a sentence saying so; a
+cookie keeps working. Set it in **Settings → Security → Sign-in lifetime**, which offers nothing
+longer than 90 days. Setting `auth.session_ttl` longer anywhere else is refused with a sentence saying so; a
 config file that already says longer is applied as 90 days, and `personalclaw doctor` (and the
 Doctor page, under Security) says so until you fix it.
 
@@ -317,7 +334,8 @@ Doctor page, under Security) says so until you fix it.
 After `auth.lockout_threshold` failures (default 5) from one address, sign-in is refused for
 `auth.lockout_window` (default 15m) and returns `Retry-After`. Wrong-code attempts on the pairing
 form count too. Every attempt — success, failure, lockout — lands in the security event log
-(`personalclaw security events`).
+(`personalclaw security events`). Set both in **Settings → Security → Sign-in lockout**; a change
+that allows more guesses (more attempts, or a shorter lockout) asks first.
 
 ## Getting a push when a run needs your approval
 

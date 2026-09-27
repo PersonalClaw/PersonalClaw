@@ -7,12 +7,18 @@ neutral :class:`AgentEvent` shape. The ACP layer keeps owning ``AcpEvent``
 
 from __future__ import annotations
 
+from personalclaw.acp.mcp_servers import core_tool_declaration
 from personalclaw.acp.types import AcpEvent
 from personalclaw.llm.events import AgentEvent
 
 
 def acp_event_to_agent_event(e: AcpEvent) -> AgentEvent:
-    """Map an ACP stream event to the neutral agent event (field-for-field)."""
+    """Map an ACP stream event to the neutral agent event (field-for-field), plus the
+    declaration of the PersonalClaw tool the call names, if it names one
+    (:func:`~personalclaw.acp.mcp_servers.core_tool_declaration`)."""
+    risk_level, builds, proposes = core_tool_declaration(
+        e.title, e.tool_kind, e.tool_input_obj if e.tool_input_obj is not None else e.tool_input
+    )
     return AgentEvent(
         kind=e.kind,
         text=e.text,
@@ -48,4 +54,7 @@ def acp_event_to_agent_event(e: AcpEvent) -> AgentEvent:
         # (`_acp_failed = _tool_ok is False`) could never be True, leaving a fully
         # implemented warn/block/circuit path inert. Field-for-field means all fields.
         tool_meta=e.tool_meta,
+        risk_level=risk_level,
+        builds=builds,
+        proposes=proposes,
     )

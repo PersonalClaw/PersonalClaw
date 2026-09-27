@@ -244,20 +244,15 @@ class TestCronCli:
         assert self._only(tmp_path).trigger.created_by == "user"
 
     def test_cron_add_without_a_cadence_is_refused(self, tmp_path, capsys):
+        """A usage error, so the parser's: the usage on stderr and exit 2, before any handler."""
+        from personalclaw.cli import build_parser
+
         with pytest.raises(SystemExit) as exited:
-            _cron(
-                argparse.Namespace(
-                    cron_action="add",
-                    name="ops",
-                    message="check",
-                    every=None,
-                    cron_expr=None,
-                    channel=None,
-                    approval_mode="",
-                )
-            )
-        assert exited.value.code == 1
-        assert "Provide --every or --cron" in capsys.readouterr().err
+            build_parser().parse_args(["cron", "add", "ops", "check"])
+        assert exited.value.code == 2
+        err = capsys.readouterr().err
+        assert "usage: personalclaw cron add" in err
+        assert "one of the arguments --every --cron is required" in err
         assert self._store(tmp_path).load() == []
 
     def _seed(self, tmp_path, **over):
@@ -392,26 +387,20 @@ class TestCronCli:
                     approval_mode=None,
                 )
             )
-        assert exited.value.code == 1
+        assert exited.value.code == 2  # a usage error: nothing to update was given
         assert "Provide at least one field to update" in capsys.readouterr().err
 
     def test_cron_update_every_and_cron_exclusive(self, tmp_path, capsys):
+        """A usage error, so the parser's: exit 2 before the handler can write anything."""
+        from personalclaw.cli import build_parser
+
         self._seed(tmp_path)
         with pytest.raises(SystemExit) as exited:
-            _cron(
-                argparse.Namespace(
-                    cron_action="update",
-                    job_id="clock:ops",
-                    name=None,
-                    message=None,
-                    every_secs=600,
-                    cron_expr="0 9 * * *",
-                    channel=None,
-                    approval_mode=None,
-                )
+            build_parser().parse_args(
+                ["cron", "update", "clock:ops", "--every", "600", "--cron", "0 9 * * *"]
             )
-        assert exited.value.code == 1
-        assert "Provide --every or --cron, not both" in capsys.readouterr().err
+        assert exited.value.code == 2
+        assert "argument --cron: not allowed with argument --every" in capsys.readouterr().err
         # And nothing may have been written on the way to that refusal.
         assert self._only(tmp_path).trigger.spec == {"kind": "interval", "interval_secs": 300}
 
@@ -572,12 +561,13 @@ class TestSetupTimezone:
 
         with patch("builtins.input", return_value="Invalid/Timezone"):
             with patch("personalclaw.cli_setup._detect_system_timezone", return_value=""):
-                _setup_timezone()
+                reason = _setup_timezone()
 
         data = json.loads(cfg_file.read_text())
         assert "timezone" not in data
-        output = capsys.readouterr().out
-        assert "Unknown timezone" in output
+        # Three answers that are not zones fail the step, so `setup` cannot end on "Done!".
+        assert reason == "no IANA timezone in 3 tries, so it was not changed"
+        assert "Unknown timezone" in capsys.readouterr().err
 
     def test_missing_database_is_not_called_an_unknown_timezone(
         self, tmp_path, monkeypatch, capsys
@@ -602,13 +592,14 @@ class TestSetupTimezone:
 
         with patch("builtins.input", return_value="America/Los_Angeles"):
             with patch("personalclaw.cli_setup._detect_system_timezone", return_value=""):
-                _setup_timezone()
+                reason = _setup_timezone()
 
         assert "timezone" not in json.loads(cfg_file.read_text())
-        output = capsys.readouterr().out
-        assert "Timezone database unavailable" in output
-        assert "Unknown timezone" not in output
-        assert "tzdata" in output
+        out, err = capsys.readouterr()
+        assert reason and "tzdata" in reason
+        assert "Timezone database unavailable" in err
+        assert "Unknown timezone" not in out + err
+        assert "tzdata" in err
 
     def test_keeps_existing_on_enter(self, tmp_path, monkeypatch):
         """Re-running setup with existing timezone keeps it on Enter."""
@@ -632,12 +623,11 @@ class TestSetupTimezone:
 
         from personalclaw.cli_setup import _setup_timezone
 
-        _setup_timezone()
+        assert _setup_timezone()
 
         # File should be unchanged
         assert cfg_file.read_text() == "not json {{{"
-        output = capsys.readouterr().out
-        assert "Could not read" in output
+        assert "Could not read" in capsys.readouterr().err
 
 
 class TestLogout:
@@ -887,7 +877,7 @@ class TestStop:
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
-        assert "lsof" in capsys.readouterr().out
+        assert "lsof" in capsys.readouterr().err
 
     def test_no_process_on_port(self, capsys):
         from personalclaw.cli_server import _stop
@@ -899,7 +889,7 @@ class TestStop:
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
-        assert "No PersonalClaw gateway" in capsys.readouterr().out
+        assert "No PersonalClaw gateway" in capsys.readouterr().err
 
     def test_no_personalclaw_process(self, capsys):
         from personalclaw.cli_server import _stop
@@ -917,7 +907,7 @@ class TestStop:
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
-        assert "No PersonalClaw gateway" in capsys.readouterr().out
+        assert "No PersonalClaw gateway" in capsys.readouterr().err
 
     def test_ps_not_found(self, capsys):
         from personalclaw.cli_server import _stop
@@ -935,7 +925,7 @@ class TestStop:
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
-        assert "ps" in capsys.readouterr().out
+        assert "ps" in capsys.readouterr().err
 
     def test_successful_stop(self, capsys):
         from personalclaw.cli_server import _stop
@@ -972,7 +962,7 @@ class TestStop:
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
-        assert "No permission" in capsys.readouterr().out
+        assert "No permission" in capsys.readouterr().err
 
     def test_process_already_exited(self, capsys):
         from personalclaw.cli_server import _stop
@@ -991,7 +981,7 @@ class TestStop:
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
-        assert "already exited" in capsys.readouterr().out
+        assert "already exited" in capsys.readouterr().err
 
     def test_partial_permission_denied(self, capsys):
         """One PID succeeds, another is denied — reports both."""
@@ -1017,9 +1007,9 @@ class TestStop:
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
-        out = capsys.readouterr().out
-        assert "SIGTERM" in out
-        assert "No permission" in out
+        out, err = capsys.readouterr()
+        assert "SIGTERM" in out  # what it did, on stdout
+        assert "No permission" in err  # what it could not do, on stderr
 
     def test_lsof_with_warnings(self, capsys):
         """lsof sometimes emits warnings mixed with PIDs — non-digit lines are filtered."""

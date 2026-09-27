@@ -15,7 +15,8 @@ resolving + rendering the saved prompt.
 ``action_config`` shape::
 
     {
-        "prompt_id": "daily-standup",   # saved prompt name; empty → run loop.md
+        "prompt_id": "daily-standup",   # saved prompt name; empty → `message`, else loop.md
+        "message": "Remind me to ...",  # the prompt itself, when no saved prompt is named
         "vars": {"team": "infra"},      # optional: render-time variable values
         "cwd": "/path/to/project",      # optional: run dir + project loop.md lookup
         "agent": "PersonalClaw",        # optional child agent name
@@ -25,9 +26,10 @@ resolving + rendering the saved prompt.
                                           # (default: a fresh ephemeral session)
     }
 
-When ``prompt_id`` is empty the action runs the **default-recurring-prompt** file
-``loop.md`` (project ``<cwd>/loop.md`` > user ``config_dir()/loop.md``), read fresh
-each fire — PClaw's analogue of Claude Code's ``loop.md``.
+When ``prompt_id`` is empty the action runs its ``message`` — the prompt an automation the
+chat makes carries — and with neither, the **default-recurring-prompt** file ``loop.md``
+(project ``<cwd>/loop.md`` > user ``config_dir()/loop.md``), read fresh each fire — PClaw's
+analogue of Claude Code's ``loop.md``.
 """
 
 from __future__ import annotations
@@ -130,6 +132,11 @@ class RunPromptActionProvider(ActionProvider):
         return "Run Prompt"
 
     @property
+    def hands_config_to_a_model(self) -> bool:
+        """The variables render into the agent's prompt, so a ``{{secret:KEY}}`` stays a name."""
+        return True
+
+    @property
     def supports_dry_run(self) -> bool:
         # The spawned turn runs with observe-mode tools (subagent dry_run=True):
         # write-capable tools preview instead of executing.
@@ -153,12 +160,21 @@ class RunPromptActionProvider(ActionProvider):
         elif not isinstance(values, dict):
             return ActionResult(success=False, error="run-prompt 'vars' must be an object")
 
-        # No prompt_id → run the project/user default-recurring-prompt (loop.md),
-        # the thin convenience that makes 'every 20m, run my loop' work with no
-        # saved-prompt id (T3). The file is the prompt source; everything else
-        # (framing, spawn) is identical to a named prompt.
+        # No prompt_id → the action's own `message`, when it has one: what a chat-made automation
+        # carries (`triggers.tools.create`'s `message`, read as this action's prompt by the
+        # Triggers page and `schedule_view` alike). Measured on `main`: this provider read no
+        # `message` at all, so every automation the chat made — "remind me at 5pm" included —
+        # failed on its first fire with "no prompt_id and no loop.md", or ran the owner's loop.md
+        # in its place.
+        #
+        # Neither → run the project/user default-recurring-prompt (loop.md), the thin convenience
+        # that makes 'every 20m, run my loop' work with no saved-prompt id (T3). The file is the
+        # prompt source; everything else (framing, spawn) is identical to a named prompt.
+        message = str(action_config.get("message") or "").strip()
         source_label = f"prompt {prompt_id!r}"
-        if not prompt_id:
+        if not prompt_id and message:
+            rendered, source_label = message, "the automation's message"
+        elif not prompt_id:
             loop_md = resolve_loop_md(cwd)
             if loop_md is None:
                 return ActionResult(

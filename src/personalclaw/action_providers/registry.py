@@ -1,9 +1,10 @@
 """In-process registry of action providers."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from personalclaw.action_providers.base import ActionProvider
+    from personalclaw.tool_providers.base import RiskLevel
 
 
 _providers: "dict[str, ActionProvider]" = {}
@@ -19,6 +20,22 @@ def get_action_provider(name: str) -> "ActionProvider | None":
 
 def list_action_providers() -> list[str]:
     return list(_providers.keys())
+
+
+def action_effect(name: str, action_config: "dict[str, Any] | None" = None) -> "RiskLevel":
+    """What running action *name* with *action_config* does, as its provider declares it
+    (:meth:`ActionProvider.effect`). A change (``CAUTION``) for a provider nothing dispatches, and
+    for one whose declaration raises: an action nobody declared is never taken for a read."""
+    from personalclaw.tool_providers.base import RiskLevel
+
+    _ensure_default_providers_registered()
+    provider = _providers.get(name)
+    if provider is None:
+        return RiskLevel.CAUTION
+    try:
+        return provider.effect(dict(action_config or {}))
+    except Exception:  # noqa: BLE001 - a broken declaration reads as the change it may be
+        return RiskLevel.CAUTION
 
 
 def dispatchable_action_providers() -> frozenset[str]:

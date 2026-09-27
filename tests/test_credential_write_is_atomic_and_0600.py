@@ -38,7 +38,7 @@ def test_a_freshly_created_credential_file_is_0600(home, monkeypatch):
     monkeypatch.setattr(os, "umask", lambda _mask: 0o022, raising=False)
     from personalclaw.config.credentials import _dotenv_save_credentials
 
-    _dotenv_save_credentials({"OPENAI_API_KEY": "sk-secret-1"})
+    _dotenv_save_credentials({"OPENAI_API_KEY": "fake-key-secret-1"})
     ep = home / ".env"
     assert ep.exists(), "the credential file was not written"
     assert (

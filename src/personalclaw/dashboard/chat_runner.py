@@ -117,6 +117,7 @@ from personalclaw.security import is_sensitive_path, redact_credentials, redact_
 from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
+from personalclaw.task_modes import REPORTED_READ_KINDS
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
 if TYPE_CHECKING:
@@ -151,6 +152,18 @@ _UNRUN_STEP_WORDS = {
     "expired": "denied, no answer",
     "cancelled": "cancelled",
 }
+
+
+def _line_status(meta: dict[str, Any]) -> str:
+    """How a call's progress line on the chat's channel ends, from the result of the call
+    (``channel_delivery.TASK_STATUSES``): refused by one of the runtime's own gates, stopped before
+    it ran, or run — and then succeeded or failed, by the one bit a result carries for that."""
+    unasked = unasked_outcome(meta)
+    if unasked == "denied":
+        return "rejected"
+    if unasked == "cancelled":
+        return "cancelled"
+    return "failed" if meta.get("ok") is False else "complete"
 
 
 def _skills_sent(decisions: list, headroom: object) -> list[dict]:
@@ -1163,22 +1176,41 @@ def _turn_attachments(session: _ChatSession) -> list[str]:
     return [p for p in files if _os.path.realpath(p).startswith(roots)]
 
 
+def _ahead_of_the_request(read: str, message: str, sep: str = "\n\n") -> str:
+    """*read* placed in front of the person's request.
+
+    The request goes to the model as typed (``context._Parts``'s ``is_request``), so text read
+    from somewhere and put ahead of it — a cancelled turn read back, a subagent's failure notice,
+    an app's background context, the project's record, a loop's current phase, a hook's output —
+    would reach the model unmasked. It is masked here, where it joins
+    (``security.redact_for_model``).
+    """
+    from personalclaw.security import redact_for_model
+
+    return redact_for_model(read) + sep + message
+
+
 async def _attachment_text_blocks(paths: list[str]) -> str:
     """The labelled extracted-text block for *paths*, or ``""`` when there are none.
 
     AWAITS each file's content extraction (started at upload). A file that yields no text is
     noted, so the model doesn't silently pretend it had content.
+
+    The extracted text is masked (``security.redact_for_model``): it is read out of a file, and a
+    file sent for help with it (a config, a log) carries its keys along. The user's own words this
+    turn go as typed; what their files hold is read.
     """
     import mimetypes as _mt
 
     from personalclaw.dashboard.attachment_extract import display_name, get_extractor
+    from personalclaw.security import redact_for_model
 
     if not paths:
         return ""
     extractor = get_extractor()
     blocks: list[str] = []
     for p in paths:
-        text = (await extractor.get(p, _mt.guess_type(p)[0])).text
+        text = redact_for_model((await extractor.get(p, _mt.guess_type(p)[0])).text or "")
         name = display_name(p)
         if text:
             blocks.append(f"### Attached file: {name}\n\n{text}")
@@ -1721,6 +1753,7 @@ def _report_ungated_tool_call(
     tool_kind: str,
     tool_input: str,
     request_id: str,
+    declared: str = "",
 ) -> str:
     """Surface an ACP tool call the host was never asked about; return an abort reason.
 
@@ -1740,17 +1773,25 @@ def _report_ungated_tool_call(
       chain further ungated mutations behind a gate that was never consulted.
       Writing a hole down is never a way to silence it.
 
+    ``declared`` is the declaration the call carried, which only a call to PersonalClaw's own
+    ``personalclaw-core`` tools has (``acp.mcp_servers.core_tool_declaration``).
+
     Returns the abort reason, or ``""`` to continue the turn.
     """
     entry = acp_permission_authority.not_gateable_entry(acp_cli, title)
     # Declared is not excused: only an ACCEPTED residual may quiet the signal.
     excused = entry is not None and entry.accepted
-    risk = resolve_effective_risk("", title, tool_kind, tool_input)
+    risk = resolve_effective_risk(declared, title, tool_kind, tool_input)
+    # The call already ran, so the only question left is whether it CHANGED something under
+    # a read-only posture. The evidence is what the tool declares (one of our own), a
+    # read-only shell command, or a call the CLI reported with a read kind. The kind decides
+    # only whether the turn stops, never whether anything runs (`REPORTED_READ_KINDS`).
+    reported_read = risk == "safe" or (tool_kind or "").lower() in REPORTED_READ_KINDS
     task_mode = getattr(session, "_task_mode", "agent")
     _title, _ = redact_exfiltration_urls(title or "?")
     _title, _ = redact_credentials(_title)
     abort = ""
-    if not excused and risk != "safe" and task_mode in ("ask", "plan"):
+    if not excused and not reported_read and task_mode in ("ask", "plan"):
         abort = (
             f"{_title} ran without a host approval request under {task_mode} mode "
             f"({acp_cli} never asked) — turn stopped"
@@ -2182,7 +2223,7 @@ async def run_chat(
     # "nothing dangerous happened".
     _gated_tool_calls: set[str] = set()  # tool_call_ids that reached the host gate
     # tool_call_id -> (title, declared kind, input) for calls not yet gated
-    _ungated_candidates: dict[str, tuple[str, str, str]] = {}
+    _ungated_candidates: dict[str, tuple[str, str, str, str]] = {}
     # Loop-breaker bookkeeping for ACP turns (§2.3 gap 5). The native runtime counts
     # its own tool failures inside its dispatch loop; an ACP CLI runs its tools out of
     # process, so the host has to do the counting from the neutral event stream — the
@@ -2371,8 +2412,13 @@ async def run_chat(
     _turn_pixels: list[tuple[str, str]] = []
     _mirror_stream_ts: str = ""
     _mirror_chan: str | None = ""
-    _mirror_active_task = ""
-    _mirror_active_task_title = ""
+    #: The progress lines still open on the channel's stream, by the call each one is for: a line
+    #: ends the way its call did (`_end_mirror_line`), not when the next call starts.
+    _mirror_lines: dict[str, tuple[str, str]] = {}
+    #: How each call that ended before it was shown ended, by the call: a runtime can ask its
+    #: approval before it reports the call (the scripted fixture does), and that call's line is
+    #: then drawn ended, not opened in progress for the end of the turn to call done.
+    _ended_unshown: dict[str, str] = {}
     _mirror_thread: str | None = ""
     _mirror_task_counter = 0
     # The delivery for the channel this session CAME FROM — resolved once, below, and used by
@@ -2381,6 +2427,31 @@ async def run_chat(
     # exactly one provider. Handing it to another one is #959 — a Discord answer delivered to
     # Telegram with a Discord channel id, silently lost.
     _mirror_delivery: Any = None
+
+    async def _end_mirror_line(call_id: str, status: str) -> None:
+        """End *call_id*'s progress line on the channel's stream with *status* — how the call
+        ended (``channel_delivery.TASK_STATUSES``). A line ends once: a call refused at its
+        approval is not ended again, as failed, by the result the runtime then reports."""
+        line = _mirror_lines.pop(call_id, None)
+        if line is None:
+            if call_id:
+                _ended_unshown.setdefault(call_id, status)  # how it ended first is how it ended
+            return
+        if not (_mirror_stream_ts and _mirror_delivery):
+            return
+        try:
+            await _mirror_delivery.append_stream_task(
+                _mirror_chan, _mirror_stream_ts, line[0], line[1], status
+            )
+        except Exception:
+            logger.debug("Mirror tool task failed", exc_info=True)
+
+    async def _refuse_call(event: Any, ended_as: str = "rejected") -> None:
+        """Refuse *event*'s call without running it, and end its progress line on the channel
+        with how (*ended_as*: ``rejected``, or how its approval ended without an answer)."""
+        await client.reject_tool(event.request_id)
+        await _end_mirror_line(event.tool_call_id or "", ended_as)
+
     # Read by the finally's done-branch (maybe_offer_check_work), which runs on EVERY
     # turn exit — including a turn that raises before the telemetry block inside the try
     # (e.g. ProviderResolutionError when no model provider is bound, #2856). Its in-loop
@@ -2796,14 +2867,14 @@ async def run_chat(
                         state.context_builder.conversation_log, session_key
                     )
                     if preamble:
-                        message = preamble + "\n\n" + message
+                        message = _ahead_of_the_request(preamble, message)
             logger.info("Chat session=%s is_new=%s mode=%r", session.key, is_new, session.mode)
             # Drain any pending subagent delivery failures so the LLM knows
             # about timed-out results and can read them from disk.
             if session._pending_subagent_failures:
                 failures = session._pending_subagent_failures[:]
                 session._pending_subagent_failures.clear()
-                message = "\n\n".join(failures) + "\n\n" + message
+                message = _ahead_of_the_request("\n\n".join(failures), message)
             # Drain pending context injections (silent background context
             # from apps/subagents).  Expired entries are discarded.
             if session._pending_context:
@@ -2823,7 +2894,7 @@ async def run_chat(
                     )
                 session._pending_context.clear()
                 if ctx_parts:
-                    message = "\n".join(ctx_parts) + "\n" + message
+                    message = _ahead_of_the_request("\n".join(ctx_parts), message, "\n")
             # Use resolved provider agent name (e.g. "personalclaw"), not the session
             # name (e.g. "default"), so build_message's is_custom check
             # correctly identifies personalclaw sessions and enables skills.
@@ -2850,7 +2921,7 @@ async def run_chat(
             if is_new and session.project_id:
                 _proj_pre = _project_context_preamble(session.project_id)
                 if _proj_pre:
-                    message = f"{_proj_pre}\n\n{message}"
+                    message = _ahead_of_the_request(_proj_pre, message)
             # Goal-loop capabilities (planner/quorum IT-5): a loop's confirmed
             # skill_ids/workflow_ids load ACTIVELY into every cycle's turn, on top
             # of passive surfacing. Looked up from the GoalLoop row keyed off the
@@ -2881,7 +2952,7 @@ async def run_chat(
                         _dir = getattr(_strat, "turn_directive", None) if _strat else None
                         _pd = _dir(_loop) if _dir else ""
                         if _pd:
-                            message = f"{_pd}\n\n{message}"
+                            message = _ahead_of_the_request(_pd, message)
                 except Exception:
                     logger.debug("loop capability lookup skipped", exc_info=True)
             # ── The resumed session's recorded state, checked BEFORE assembly ──
@@ -3051,8 +3122,11 @@ async def run_chat(
         injected = await _fire(HOOK_EVENT_USER_PROMPT_SUBMIT, message)
         all_injected = spawn_injected + injected
         if all_injected:
+            # A hook's output is read, like a command's: masked where it joins the prompt.
             hook_ctx = "\n\n".join(all_injected)
-            full_message = f"[Hook context]\n{hook_ctx}\n[End hook context]\n\n{full_message}"
+            full_message = _ahead_of_the_request(
+                f"[Hook context]\n{hook_ctx}\n[End hook context]", full_message
+            )
 
         if regenerate_hint:
             full_message = f"[System: {regenerate_hint}]\n\n{full_message}"
@@ -3444,34 +3518,31 @@ async def run_chat(
                         event.title or "",
                         event.tool_kind or "",
                         tool_input_to_str(event.tool_input)[:2000],
+                        event.risk_level or "",
                     )
                 await fire_tool_hooks(
                     state._hook_store, event.title, tool_input_to_str(event.tool_input)
                 )
-                # Mirror tool call to linked channel stream
+                # Mirror the call to the linked channel's stream: a line of its own, in progress
+                # until the call ends. The line before it is not marked done here — it ends the way
+                # its own call does (`_end_mirror_line`).
                 if _mirror_stream_ts and _mirror_delivery:
                     try:
-                        if _mirror_active_task:
-                            await _mirror_delivery.append_stream_task(
-                                _mirror_chan,
-                                _mirror_stream_ts,
-                                _mirror_active_task,
-                                _mirror_active_task_title,
-                                "complete",
-                            )
                         _mirror_task_counter += 1
-                        _mirror_active_task = f"tool_{_mirror_task_counter}"
+                        _task_id = f"tool_{_mirror_task_counter}"
                         _task_title = event.tool_purpose or _title
                         _task_title, _ = redact_exfiltration_urls(_task_title)
                         _task_title, _ = redact_credentials(_task_title)
                         _task_title = _task_title[:75]
-                        _mirror_active_task_title = _task_title
+                        _ended = _ended_unshown.pop(event.tool_call_id or "", "")
+                        if not _ended:
+                            _mirror_lines[event.tool_call_id or _task_id] = (_task_id, _task_title)
                         await _mirror_delivery.append_stream_task(
                             _mirror_chan,
                             _mirror_stream_ts,
-                            _mirror_active_task,
+                            _task_id,
                             _task_title,
-                            "in_progress",
+                            _ended or "in_progress",
                         )
                     except Exception:
                         logger.debug("Mirror tool task failed", exc_info=True)
@@ -3579,6 +3650,9 @@ async def run_chat(
                         **({"ok": bool(_tool_ok)} if _tool_ok is not None else {}),
                     },
                 )
+                # The call's line on the channel ends here, the way the call did — unless its
+                # approval already ended it (a refused call's result is its refusal).
+                await _end_mirror_line(event.tool_call_id or "", _line_status(_tmeta))
                 # Mark the matching tool message as done AND persist the output so
                 # both completion state and the inline tool-detail output
                 # survive page reload (persisted in message meta, replayed via SSE).
@@ -3660,7 +3734,9 @@ async def run_chat(
                 # happened", and we abort the turn when the ungated tool is BOTH
                 # undeclared and mutating under a read-only posture.
                 if _acp_cli and event.tool_call_id in _ungated_candidates:
-                    _ung_title, _ung_kind, _ung_input = _ungated_candidates.pop(event.tool_call_id)
+                    _ung_title, _ung_kind, _ung_input, _ung_declared = _ungated_candidates.pop(
+                        event.tool_call_id
+                    )
                     _abort = _report_ungated_tool_call(
                         state,
                         session,
@@ -3670,6 +3746,7 @@ async def run_chat(
                         tool_kind=_ung_kind,
                         tool_input=_ung_input,
                         request_id=event.tool_call_id,
+                        declared=_ung_declared,
                     )
                     if _abort:
                         await _abort_acp_turn(client, "ungated tool call")
@@ -3792,14 +3869,23 @@ async def run_chat(
                 # only reach here when they request approval. plan/ask/build all flow
                 # through the shared gate (plan now allows read-only inspection).
                 _task_mode = getattr(session, "_task_mode", "agent")
-                # tool_kind is deliberately passed EMPTY here even though the frame now
-                # carries the adapter's declared kind: task_mode_denies is
-                # deny-by-default, and a CLI that labels a mutation "read" would
-                # otherwise turn its own denial into an allow. The declared kind is used
-                # for legibility (card/SEL/residue) — never to widen this gate.
-                _tm_deny = task_mode_denies(session, event.title, "", event.tool_input)
+                # What the tool DECLARES is the gate's evidence: a native permission request
+                # carries its tool's `risk_level` and `builds`, and an ACP CLI's frame carries
+                # neither, so only its read-only shell commands pass a restricted mode.
+                # tool_kind is deliberately passed EMPTY even though the frame now carries the
+                # adapter's kind: a CLI that labels a mutation "read" must not turn its
+                # own denial into an allow. The kind is used for legibility (card/SEL/residue)
+                # — never to widen this gate.
+                _tm_deny = task_mode_denies(
+                    session,
+                    getattr(event, "risk_level", "") or "",
+                    event.title,
+                    "",
+                    event.tool_input,
+                    builds=bool(getattr(event, "builds", False)),
+                )
                 if _tm_deny:
-                    await client.reject_tool(event.request_id)
+                    await _refuse_call(event)
                     _title, _ = redact_exfiltration_urls(event.title)
                     _title, _ = redact_credentials(_title)
                     session.append("tool", f"{_title} ({_tm_deny})", "msg msg-tool")
@@ -3830,7 +3916,7 @@ async def run_chat(
                     if _cmd_probe:
                         _cmd_verdict = state.context_builder.hooks.on_tool_call(_cmd_probe)
                         if _cmd_verdict.action == TOOL_DENY:
-                            await client.reject_tool(event.request_id)
+                            await _refuse_call(event)
                             _cmd_reason = getattr(_cmd_verdict, "reason", "") or "security policy"
                             session.append(
                                 "tool",
@@ -3852,7 +3938,7 @@ async def run_chat(
                 if state.context_builder:
                     tool_result = state.context_builder.hooks.on_tool_call(event.title)
                     if tool_result.action == TOOL_DENY:
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         # Carry the deny reason into the transcript so it's visible
                         # why the call was blocked (recoverable hook policy). The
                         # backend's own loop feeds the model its tool_result; this
@@ -3884,7 +3970,7 @@ async def run_chat(
                         try:
                             validated_tool = _validate_tool_name(event.title, event.tool_kind)
                         except ValueError as e:
-                            await client.reject_tool(event.request_id)
+                            await _refuse_call(event)
                             session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                             sel().log_tool_invocation(
                                 session_key=session_key,
@@ -3932,7 +4018,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -3957,7 +4043,7 @@ async def run_chat(
                             tool_input=_parsed_input,
                         )
                     except Exception as hook_exc:
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -3972,7 +4058,7 @@ async def run_chat(
                         )
                         continue
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         _blk = next((r for r in pre_hook_results if r.startswith("BLOCKED:")), "")
                         _blk_reason = _blk.removeprefix("BLOCKED:").strip() or "policy hook"
                         session.append(
@@ -4004,9 +4090,10 @@ async def run_chat(
                     event.tool_kind,
                     event.tool_input,
                 )
-                # Trust-reads: auto-approve any EFFECTIVE-SAFE tool (read_file, grep,
-                # knowledge_search, web_search, AND read-only bash — subsumed as safe
-                # by invocation). CAUTION/DESTRUCTIVE still prompt.
+                # Trust-reads: auto-approve an EFFECTIVE-SAFE call — a tool that declares it
+                # only reads (read_file, knowledge_search, web_search) or a read-only shell
+                # command. A tool that declares nothing (an ACP CLI's own, an untrusted MCP
+                # server's) is CAUTION, so it prompts like every other change.
                 if (
                     session._trust_reads
                     and not session._trust
@@ -4019,7 +4106,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         session.append(
                             "tool",
                             f"{event.title} (invalid: {e})",
@@ -4075,7 +4162,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4103,7 +4190,7 @@ async def run_chat(
                                 tool_input=_parsed_input,
                             )
                         except Exception as hook_exc:
-                            await client.reject_tool(event.request_id)
+                            await _refuse_call(event)
                             session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
                             sel().log_tool_invocation(
                                 session_key=session_key,
@@ -4118,7 +4205,7 @@ async def run_chat(
                             )
                             continue
                         if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                            await client.reject_tool(event.request_id)
+                            await _refuse_call(event)
                             session.append("tool", f"{event.title} (hook blocked)", "msg msg-tool")
                             sel().log_tool_invocation(
                                 session_key=session_key,
@@ -4163,7 +4250,7 @@ async def run_chat(
                 # batch was: a Deny, or no answer in time, or the turn being stopped.
                 refused_as = getattr(session, "_batch_rejected", "")
                 if refused_as:
-                    await client.reject_tool(event.request_id)
+                    await _refuse_call(event, refused_as)
                     _title, _ = redact_exfiltration_urls(event.title)
                     _title, _ = redact_credentials(_title)
                     _purpose = redact_credentials(
@@ -4227,7 +4314,7 @@ async def run_chat(
                 # only ever turn a two-hour park into an immediate denial — it can
                 # never turn a denial into an approval.
                 if _unattended_turn:
-                    await client.reject_tool(event.request_id)
+                    await _refuse_call(event)
                     _ff_title, _ = redact_exfiltration_urls(event.title)
                     _ff_title, _ = redact_credentials(_ff_title)
                     session.append(
@@ -4285,7 +4372,12 @@ async def run_chat(
                 # None means "not a shell call", which must stay distinguishable from
                 # "screened and it mutates" — the consumer treats absence as
                 # not-established, never as verified-absent.
-                read_only = read_only_command(event.title, event.tool_kind, event.tool_input)
+                read_only = read_only_command(
+                    event.title,
+                    event.tool_kind,
+                    event.tool_input,
+                    getattr(event, "risk_level", "") or "",
+                )
                 if read_only is not None:
                     # Persisted spelling stays "1"/"" — this string is already in every
                     # session transcript's `cls` column and rehydrating history must keep
@@ -4400,7 +4492,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4425,7 +4517,7 @@ async def run_chat(
                             tool_input=_parsed_input,
                         )
                     except Exception as hook_exc:
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4440,7 +4532,7 @@ async def run_chat(
                         )
                         break
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                        await client.reject_tool(event.request_id)
+                        await _refuse_call(event)
                         _blk = next((r for r in pre_hook_results if r.startswith("BLOCKED:")), "")
                         _blk_reason = _blk.removeprefix("BLOCKED:").strip() or "policy hook"
                         session.append(
@@ -4492,17 +4584,18 @@ async def run_chat(
                             },
                         )
                 else:
-                    await client.reject_tool(event.request_id)
                     # `cancelled` is the turn being stopped while it waited (see
                     # `DashboardState.cancel_approval`), and `expired` is its window closing with
                     # nobody there. Neither is a person's Deny, so neither is written up as one:
-                    # not in the transcript row, which the steps summary names the step by, and not
-                    # in the audit row, whose Denied filter would otherwise return it.
+                    # not in the transcript row, which the steps summary names the step by, not in
+                    # the audit row, whose Denied filter would otherwise return it, and not on the
+                    # channel's progress line.
                     ended_as = (
                         "cancelled"
                         if outcome == "cancelled"
                         else ("expired" if timed_out else "rejected")
                     )
+                    await _refuse_call(event, ended_as)
                     session.append(
                         "tool",
                         f"{event.title} ({_UNRUN_STEP_WORDS[ended_as]})",
@@ -5143,17 +5236,15 @@ async def run_chat(
         # it. Tearing a stream down on a different provider's handle would address a stream ts
         # that provider never issued.
         if _mirror_stream_ts and _mirror_delivery and _mirror_chan:
-            try:
-                if _mirror_active_task:
-                    await _mirror_delivery.append_stream_task(
-                        _mirror_chan,
-                        _mirror_stream_ts,
-                        _mirror_active_task,
-                        _mirror_active_task_title,
-                        "complete",
-                    )
-            except Exception:
-                logger.debug("Task append cleanup failed", exc_info=True)
+            # A line still open had no result: its call ended with the turn — stopped, broken,
+            # or finished with no result reported, which is the one case left to read as done.
+            _left_as = (
+                "cancelled"
+                if is_cancelled_stop(_stop_reason)
+                else ("failed" if getattr(session, "_last_turn_errored", False) else "complete")
+            )
+            for _call_id in list(_mirror_lines):
+                await _end_mirror_line(_call_id, _left_as)
             try:
                 await _mirror_delivery.stop_stream(_mirror_chan, _mirror_stream_ts)
             except Exception:

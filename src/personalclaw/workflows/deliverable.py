@@ -21,6 +21,11 @@ The direction stays the one ``loop_aliases`` mandates: a kind resolves to a temp
 reverse. This module never asks "which kind was this template", it asks "which templates do the
 kinds produce", and inverts its own forward answer.
 
+**A TEMPLATE MAY STATE ITS OWN** (:data:`DOCUMENT_KEY`), and its statement wins for its runs: the
+template is what a run runs. ``goal-pursuit-monitor`` states it keeps none — each wake is a fresh
+step with no directory of its own to keep a log in — while the legacy monitor LOOP it replaces keeps
+its kind's ``MONITOR_LOG.md`` in the loop's own directory, so the kind's declaration stands.
+
 **ABSENT IS NOT ZERO, AND ABSENT GETS NAMED.** Five different facts all render as "no document" if
 you are careless, and only one of them is a worker that has not written yet:
 
@@ -138,6 +143,42 @@ class NameSource:
         return {"kind": self.kind, "variant": self.variant, "name": self.name}
 
 
+@dataclass(frozen=True)
+class TemplateStatement:
+    """A template's OWN statement of its document (:data:`DOCUMENT_KEY`), as its provenance.
+
+    Its own wire shape rather than a :class:`NameSource` with empty kind fields: "the goal kind's
+    monitor variant says MONITOR_LOG.md" and "this template says it keeps none" are different
+    claims, and the panel names which one it is reading.
+    """
+
+    template: str
+    name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"template": self.template, "name": self.name}
+
+
+#: The top-level key a template states its own document with. A filename names the file its steps
+#: keep; ``""`` says it keeps none — its steps' outputs are the result. A template that states
+#: nothing is answered by the loop kind it belongs to, which is every bundled template but the
+#: monitor: each wake of a monitor is a fresh step with no directory of its own to keep a log in,
+#: while the legacy monitor LOOP keeps its kind's log in the loop's own directory.
+DOCUMENT_KEY = "document"
+
+
+def stated_document(spec: Any) -> str | None:
+    """The document a spec states for itself (:data:`DOCUMENT_KEY`), or None when it states none.
+
+    Only a string is a statement. ``None`` and every other type read as no statement at all, so a
+    malformed key falls back to the kind rather than reading as "keeps no document".
+    """
+    if not isinstance(spec, dict):
+        return None
+    raw = spec.get(DOCUMENT_KEY)
+    return raw.strip() if isinstance(raw, str) else None
+
+
 def template_deliverables() -> dict[str, NameSource]:
     """``{template_name: NameSource}`` for every template a loop kind resolves to.
 
@@ -213,8 +254,8 @@ class ResolvedName:
     name: str
     #: A member of :data:`ABSENT_REASONS` when ``name`` is "", else "".
     reason: str
-    #: Which kind declared it, when one did.
-    source: NameSource | None = None
+    #: Who declared it, when anyone did: the template itself, or the kind it belongs to.
+    source: NameSource | TemplateStatement | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -224,8 +265,19 @@ class ResolvedName:
         }
 
 
-def resolve_name(workflow_name: str) -> ResolvedName:
-    """The document name for a run of ``workflow_name``, with its provenance or its reason."""
+def resolve_name(workflow_name: str, spec: Any = None) -> ResolvedName:
+    """The document name for a run of ``workflow_name``, with its provenance or its reason.
+
+    ``spec`` is the run's own spec. A document it states (:data:`DOCUMENT_KEY`) wins over its
+    kind's: the template is what the run runs, so it is the better witness of what its steps keep.
+    A statement of none is the same declared absence a kind with no document gives.
+    """
+    stated = stated_document(spec)
+    if stated is not None:
+        statement = TemplateStatement(template=workflow_name, name=stated)
+        if not stated:
+            return ResolvedName(name="", reason=KIND_HAS_NO_DOCUMENT, source=statement)
+        return ResolvedName(name=stated, reason="", source=statement)
     table = template_deliverables()
     source = table.get(workflow_name)
     if source is None:
@@ -437,13 +489,16 @@ def instructed_by_spec(spec: Any, name: str) -> bool | None:
     checked and it is not there". A substring scan over the serialized spec rather than a walk of
     prompt fields: the name can legitimately appear in a node prompt, an action argument, a
     workspace setup step or a judge rubric, and a field-by-field walk would answer "no" for the
-    ones it had not learned about yet.
+    ones it had not learned about yet. The spec's own :data:`DOCUMENT_KEY` is left out of the
+    scan: stating a document names it without any step asking for it.
     """
     if not name:
         return None
     try:
         import json
 
+        if isinstance(spec, dict):
+            spec = {k: v for k, v in spec.items() if k != DOCUMENT_KEY}
         return name in json.dumps(spec, ensure_ascii=False, default=str)
     except (TypeError, ValueError):  # pragma: no cover — an unserializable spec answers "unknown"
         logger.debug("spec not serializable; cannot check for %s", name)

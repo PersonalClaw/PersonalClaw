@@ -354,7 +354,7 @@ def test_a_credential_is_redacted_before_indexing(store, artifacts):
     """The change's fourth criterion. Asserted from BOTH directions: the secret is not findable
     by search, and its plaintext is in no stored column — a redaction applied on the way out
     would pass the first check and fail the second."""
-    secret = "sk-livekey1234567890abcdefghijklmn"  # noqa: S105 - a planted fake
+    secret = "fake-key-1"  # noqa: S105 - a planted fake
     queue = _FakeQueue()
     idx = _indexer(store, artifacts, queue)
     art = artifacts.create(

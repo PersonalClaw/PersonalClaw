@@ -2,9 +2,12 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.errors import AgentError
+
+if TYPE_CHECKING:
+    from personalclaw.tool_providers.base import RiskLevel
 
 
 @dataclass
@@ -145,6 +148,19 @@ def provider_failure(provider_name: str, exc: BaseException) -> AgentError:
     )
 
 
+def site_of(url: str) -> str:
+    """`host[:port]` of a URL, for a sentence a provider writes about where it went — never its
+    path, query or credentials, which a history row has no business repeating."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url or "")
+        host, port = parsed.hostname or "", parsed.port
+    except ValueError:
+        return ""
+    return f"{host}:{port}" if host and port else host
+
+
 class ActionProvider(ABC):
     """Pluggable execution backend for a trigger's action."""
 
@@ -179,6 +195,18 @@ class ActionProvider(ABC):
         return False
 
     @property
+    def hands_config_to_a_model(self) -> bool:
+        """Whether this provider's action IS a model turn: its config becomes text an agent's model
+        is handed (a task, a saved prompt's variables, a question for a second model).
+
+        A ``{{secret:KEY}}`` in such a config is therefore never filled in at dispatch
+        (``triggers.secrets.resolve``): it stays the name, and the agent's own tools fill it when
+        they run (the ``bash`` tool does), so the value never reaches the model. False by default,
+        because every other provider runs its config itself, and resolving there is the point.
+        """
+        return False
+
+    @property
     def supports_dry_run(self) -> bool:
         """Whether the provider honors ``action_config["dry_run"]`` with a real
         observe-mode execution (write-capable tools preview instead of executing).
@@ -191,6 +219,21 @@ class ActionProvider(ABC):
         a dry run against a provider that returns False here and records a preview
         of what WOULD run instead (T9 honesty)."""
         return False
+
+    def effect(self, action_config: dict[str, Any]) -> "RiskLevel":
+        """What running this action with *action_config* does, declared the way a tool declares
+        it (:class:`~personalclaw.tool_providers.base.RiskLevel`): ``SAFE`` when its one effect is
+        a read, ``DESTRUCTIVE`` when it deletes, and a change (``CAUTION``) when the provider
+        declares nothing — the default, so an undeclared action is never taken for a read.
+
+        Read wherever how much an action may do unasked is decided: a workflow plan's
+        confirmations (`workflows.autonomy`), and for a provider whose effect depends on its
+        config, whether a trigger may fire it without the owner's grant
+        (`triggers.screen.provider_is_read_only`). Never inferred from the provider's name.
+        """
+        from personalclaw.tool_providers.base import RiskLevel
+
+        return RiskLevel.CAUTION
 
     @property
     def reversal_kinds(self) -> tuple[str, ...]:

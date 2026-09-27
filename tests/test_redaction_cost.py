@@ -88,15 +88,15 @@ CREDENTIALS = [
     "https://user:s3cr3t@github.com/acme/repo.git",
     "ssh://deploy:pa55@host:22/repo",
     "postgres://admin:dbpass@db.internal:5432/app",
-    "https://ghp_AAAAAAAAAAAAAAAAAAAAAAAA@github.com/a/b.git",
+    "https://fake-github-token-1@github.com/a/b.git",
     "AKIAIOSFODNN7EXAMPLE",
     "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     "sk-ant-api03-" + "z" * 30,
-    "sk-proj-" + "Q" * 24,
+    "fake-openai-project-1" + "Q" * 24,
     "api_key=abcdefghij",
     "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
     "-----BEGIN RSA PRIVATE KEY-----",
-    "xoxb-111111111111-AAAAAAAAAAAA",
+    "fake-bot-token-1",
     "AIza" + "b" * 35,
     "client_secret: swordfish99",
 ]
@@ -113,7 +113,7 @@ NEAR_MISSES = [
     "-://user@host",
     ".://user@host",
     "the password is unset",
-    "sk-short",
+    "fake-key-short",
     "bearer x",
 ]
 
@@ -357,14 +357,14 @@ class TestTheCostTracksNothingQuadratic:
 REPEATED = [
     "AKIAIOSFODNN7EXAMPLE AKIAIOSFODNN7EXAMPLE",
     "key=AKIAIOSFODNN7EXAMPLE and again key=AKIAIOSFODNN7EXAMPLE",
-    "AKIAIOSFODNN7EXAMPLE ASIA1234567890123456 AKIAIOSFODNN7EXAMPLE",
-    "first AKIAAAAAAAAAAAAAAAAA middle AKIAAAAAAAAAAAAAAAAA last AKIAAAAAAAAAAAAAAAAA",
+    "AKIAIOSFODNN7EXAMPLE fake-aws-key-id-2 AKIAIOSFODNN7EXAMPLE",
+    "first AKIAIOSFODNN7EXAMPLE middle AKIAIOSFODNN7EXAMPLE last AKIAIOSFODNN7EXAMPLE",
     # A repeat whose copies are separated by ANOTHER credential's tag-to-be.
-    "sk-ant-api03-" + "z" * 30 + " AKIAZZZZZZZZZZZZZZZZ sk-ant-api03-" + "z" * 30,
+    "sk-ant-api03-" + "z" * 30 + " fake-aws-key-id-4 sk-ant-api03-" + "z" * 30,
     # Adjacent, no separator at all.
     "AKIAQQQQQQQQQQQQQQQQAKIAQQQQQQQQQQQQQQQQ",
     # The same credential inside a URL and again bare.
-    "https://u:hunter2@h/x AKIAWWWWWWWWWWWWWWWW https://u:hunter2@h/x AKIAWWWWWWWWWWWWWWWW",
+    "https://u:hunter2@h/x AKIAIOSFODNN7EXAMPLE https://u:hunter2@h/x AKIAIOSFODNN7EXAMPLE",
 ]
 
 

@@ -402,8 +402,8 @@ class TestUpdateApplyPipeline:
         assert fe_built == [str(tmp_path)]
         # THE point: the restart step is reached.
         assert len(reexec_calls) == 1
-        # Success path never observes the flag reset (process would be
-        # replaced), but the finally still runs in-test:
+        # The slot is free once the apply ends; the restart it asks for is what refuses the
+        # next one (`test_restart_runs_the_full_stop`), and this fake asks for none.
         assert upd._apply_in_flight is False
 
     @pytest.mark.asyncio
@@ -658,72 +658,39 @@ class TestPackageRoot:
 
 
 class TestReexecPreservesAuthMode:
-    """#46: _graceful_reexec must carry the live auth mode into the child env via
-    os.execve, so a Restart never silently flips auth-none → token-required (the
-    original launcher's env may not survive the re-exec / reparent to PID 1)."""
+    """#46: the restart _graceful_reexec asks for must carry the live auth mode into the new
+    image's env, so a Restart never silently flips auth-none → token-required (the original
+    launcher's env may not survive the re-exec / reparent to PID 1). The exec itself — the
+    gateway starting that image after its own stop — is `test_restart_runs_the_full_stop`."""
+
+    @staticmethod
+    def _requested(monkeypatch, tmp_path, **kwargs):
+        import asyncio
+
+        import personalclaw.dashboard.handlers.updates as U
+        from personalclaw import restart_request, shutdown_event
+
+        state = _make_state(monkeypatch, tmp_path)
+        monkeypatch.setattr(U.os.path, "isfile", lambda p: True)
+        monkeypatch.setattr(U.os, "access", lambda p, m: True)
+        monkeypatch.setattr(restart_request, "_pending", None)
+        try:
+            asyncio.run(U._graceful_reexec(state, **kwargs))
+            request = restart_request.pending()
+        finally:
+            shutdown_event.clear()
+        assert request is not None, "a restart must be requested"
+        return request
 
     def test_reexec_passes_auth_mode_in_child_env(self, monkeypatch, tmp_path):
-        import asyncio
-
-        import personalclaw.dashboard.handlers.updates as U
-
-        state = _make_state(monkeypatch, tmp_path)
-        # neutralize the pre-exec side effects
-        monkeypatch.setattr(
-            "personalclaw.dashboard.chat.save_all_sessions_to_history", lambda s: None
-        )
-
-        class _Sessions:
-            async def close_all(self):
-                return None
-
-        monkeypatch.setattr(state, "sessions", _Sessions(), raising=False)
-
-        captured = {}
-
-        def _fake_execve(exe, argv, env):
-            captured["env"] = env
-            raise SystemExit  # stop before actually replacing the process
-
-        monkeypatch.setattr(U.os, "execve", _fake_execve)
-        monkeypatch.setattr(U.os.path, "isfile", lambda p: True)
-        monkeypatch.setattr(U.os, "access", lambda p, m: True)
-
-        with pytest.raises(SystemExit):
-            asyncio.run(U._graceful_reexec(state, auth_mode="none"))
-        assert captured["env"].get("PERSONALCLAW_AUTH_MODE") == "none"
+        request = self._requested(monkeypatch, tmp_path, auth_mode="none")
+        assert request.env.get("PERSONALCLAW_AUTH_MODE") == "none"
 
     def test_reexec_without_auth_mode_leaves_env_unset(self, monkeypatch, tmp_path):
-        import asyncio
-
-        import personalclaw.dashboard.handlers.updates as U
-
-        state = _make_state(monkeypatch, tmp_path)
-        monkeypatch.setattr(
-            "personalclaw.dashboard.chat.save_all_sessions_to_history", lambda s: None
-        )
-
-        class _Sessions:
-            async def close_all(self):
-                return None
-
-        monkeypatch.setattr(state, "sessions", _Sessions(), raising=False)
         monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
-
-        captured = {}
-
-        def _fake_execve(exe, argv, env):
-            captured["env"] = env
-            raise SystemExit
-
-        monkeypatch.setattr(U.os, "execve", _fake_execve)
-        monkeypatch.setattr(U.os.path, "isfile", lambda p: True)
-        monkeypatch.setattr(U.os, "access", lambda p, m: True)
-
-        with pytest.raises(SystemExit):
-            asyncio.run(U._graceful_reexec(state))  # no auth_mode
+        request = self._requested(monkeypatch, tmp_path)  # no auth_mode
         # empty auth_mode → don't inject (inherit as-is), so the var stays unset
-        assert "PERSONALCLAW_AUTH_MODE" not in captured["env"]
+        assert "PERSONALCLAW_AUTH_MODE" not in request.env
 
 
 class TestGitCheckReadsRemoteVersion:

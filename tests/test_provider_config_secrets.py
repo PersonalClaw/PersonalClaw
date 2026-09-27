@@ -28,7 +28,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps.secret_fields import SECRET_MASK
 
-_SECRET = "xoxb-NOT-A-REAL-TOKEN-just-a-fixture"
+_SECRET = "fake-bot-token-1"
 
 _SCHEMA = {
     "type": "object",
@@ -107,7 +107,7 @@ async def test_get_config_masks_sensitive_fields(tmp_path):
     """A configured token never leaves the backend through this route."""
     async with _client(tmp_path) as client:
         r = await _save(
-            client, {"bot_token": _SECRET, "app_token": "xapp-1-fixture", "command": "pclaw"}
+            client, {"bot_token": _SECRET, "app_token": "fake-app-token-1", "command": "pclaw"}
         )
         assert r.status == 200, await r.text()
 
@@ -161,8 +161,8 @@ async def test_a_real_new_value_still_overwrites(tmp_path):
     """Masking must not make a token unchangeable."""
     async with _client(tmp_path) as client:
         await _save(client, {"bot_token": _SECRET})
-        await _save(client, {"bot_token": "xoxb-ROTATED-fixture"})
-        assert _stored(tmp_path)["bot_token"] == "xoxb-ROTATED-fixture"
+        await _save(client, {"bot_token": "fake-bot-token-2"})
+        assert _stored(tmp_path)["bot_token"] == "fake-bot-token-2"
 
 
 @pytest.mark.asyncio
@@ -354,8 +354,8 @@ def test_a_masked_document_restores_byte_for_byte():
 
     stored = {
         "providers": [
-            {"name": "a", "options": {"api_key": "sk-a-fixture"}},
-            {"name": "b", "api_key": "sk-b-fixture"},
+            {"name": "a", "options": {"api_key": "fake-key-a-fixture"}},
+            {"name": "b", "api_key": "fake-key-b-fixture"},
         ],
         "slack": {"bot_token": _SECRET, "command": "pclaw"},
     }
@@ -375,8 +375,8 @@ def test_a_reordered_provider_list_restores_by_NAME_not_by_index():
 
     stored = {
         "providers": [
-            {"name": "a", "api_key": "sk-a-fixture"},
-            {"name": "b", "api_key": "sk-b-fixture"},
+            {"name": "a", "api_key": "fake-key-a-fixture"},
+            {"name": "b", "api_key": "fake-key-b-fixture"},
         ]
     }
     incoming = {
@@ -387,14 +387,14 @@ def test_a_reordered_provider_list_restores_by_NAME_not_by_index():
     }
     restored, unresolved = preserve_unchanged_secrets_in_document(incoming, stored)
     assert unresolved == []
-    assert restored["providers"][0]["api_key"] == "sk-b-fixture"
-    assert restored["providers"][1]["api_key"] == "sk-a-fixture"
+    assert restored["providers"][0]["api_key"] == "fake-key-b-fixture"
+    assert restored["providers"][1]["api_key"] == "fake-key-a-fixture"
 
 
 def test_an_unpairable_masked_element_is_reported_rather_than_guessed():
     from personalclaw.apps.secret_fields import preserve_unchanged_secrets_in_document
 
-    stored = {"providers": [{"name": "a", "api_key": "sk-a-fixture"}]}
+    stored = {"providers": [{"name": "a", "api_key": "fake-key-a-fixture"}]}
     incoming = {"providers": [{"name": "renamed", "api_key": SECRET_MASK}]}
     _, unresolved = preserve_unchanged_secrets_in_document(incoming, stored)
     assert unresolved == ["providers[0].api_key"]
@@ -405,10 +405,10 @@ def test_a_real_new_credential_in_a_document_still_overwrites():
     from personalclaw.apps.secret_fields import preserve_unchanged_secrets_in_document
 
     stored = {"slack": {"bot_token": _SECRET}}
-    incoming = {"slack": {"bot_token": "xoxb-ROTATED-fixture"}}
+    incoming = {"slack": {"bot_token": "fake-bot-token-2"}}
     restored, unresolved = preserve_unchanged_secrets_in_document(incoming, stored)
     assert unresolved == []
-    assert restored["slack"]["bot_token"] == "xoxb-ROTATED-fixture"
+    assert restored["slack"]["bot_token"] == "fake-bot-token-2"
 
 
 def test_mask_bearing_paths_finds_a_mask_anywhere_and_nothing_otherwise():

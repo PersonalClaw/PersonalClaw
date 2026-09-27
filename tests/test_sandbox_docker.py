@@ -57,10 +57,11 @@ def test_docker_is_registered_as_a_builtin():
     assert isinstance(p, DockerSandboxProvider)
 
 
-def test_unknown_name_still_fails_open_to_none():
-    """The fail-open is unchanged: only an UNKNOWN name drops to ``none`` — ``docker`` does
-    not, so an explicit docker request cannot silently become a host run."""
-    assert resolve_provider("does-not-exist").name == "none"
+def test_an_unknown_name_is_refused_not_run_on_the_host():
+    """Neither ``docker`` nor a name nothing registered drops to ``none``: an explicit tier
+    request cannot silently become a host run."""
+    with pytest.raises(SandboxUnavailableError):
+        resolve_provider("does-not-exist")
 
 
 # ── command construction ────────────────────────────────────────────────────────

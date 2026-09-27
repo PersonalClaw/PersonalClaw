@@ -553,6 +553,17 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
             raise ValueError("suppressed is not user-writable")
     except ValueError:
         return web.json_response({"error": "verdict must be 'approve' or 'deny'"}, status=422)
+    if verdict is Verdict.APPROVE:
+        # An approve rule answers every matching proposal before it is asked, so only you teach
+        # one (`approval_answer`): an agent's tool that could would be approving its own work
+        # ahead of time. A deny rule only takes away, so anyone who reaches this may add one.
+        from personalclaw import approval_answer
+
+        refused = approval_answer.forbidden(
+            request, what=f"approval_rule:{pattern[:80]}", asked_by=""
+        )
+        if refused is not None:
+            return refused
     try:
         rule = ApprovalRule(
             pattern=pattern,
@@ -758,10 +769,13 @@ async def api_memory_recall(request: web.Request) -> web.Response:
     epi_limit = 12 if deep else 6
 
     parts: list[str] = []
-    # Semantic (query-scored) — and bump recall_count on what surfaces.
+    # Semantic (query-scored) — and bump recall_count on what surfaces. Masked like the episodic
+    # half below and like the fact list it recalls from (`api_memory_semantic`): the Memory page's
+    # recall test shows this block too, and the agent's `memory_recall` is handed it. The keys are
+    # read off the stored block, so a masked key still counts its fact.
     semantic_ctx = svc.semantic_context(query, cap=sem_cap)
     if semantic_ctx:
-        parts.append(semantic_ctx)
+        parts.append(redact_for_display(semantic_ctx))
         try:
             recalled_keys = [
                 line.split(":", 1)[0].strip()

@@ -310,7 +310,8 @@ def validate_updatable_fields(fields: dict[str, Any]) -> None:
 class InboxItem:
     """A message surfaced by Inbox with an optional draft reply."""
 
-    id: str  # channel_ts (unique key)
+    #: Unique, and ends ``_{ts}`` (:attr:`ts`). A polled row's is ``inbox_service.polled_item_id``.
+    id: str
     channel: str
     channel_name: str
     thread_ts: str | None
@@ -334,6 +335,10 @@ class InboxItem:
     #: Where a reply to this row goes. Native: the posting agent's session key. Polled: the
     #: source's own id for the message (``IncomingMessage.id``), which ``send_reply`` is given.
     reply_target: str = ""
+    #: When the reply in ``draft`` was sent (``POST /api/inbox/send``), epoch seconds; 0 while
+    #: none was. What lets the detail panel say "Sent" of a handled row's text, which a row marked
+    #: handled with an unsent draft must not.
+    replied_at: float = 0.0
     # P11: whether the user favorited this item — a strong positive engagement signal
     # feeding the engagement-ranking multiplier (tolerant from_dict makes it back-compat).
     favorited: bool = False
@@ -398,8 +403,26 @@ class InboxItem:
 
     @property
     def ts(self) -> str:
-        """Message timestamp extracted from the item ID ({channel}_{ts})."""
+        """Message timestamp: the tail of the item id, which every id ends with (``…_{ts}``)."""
         return self.id.rsplit("_", 1)[-1]
+
+    @property
+    def thread_key(self) -> str:
+        """What muting this row's thread mutes: the thread it is in, or, for the first message
+        of one, what the rest of that thread will name as their thread.
+
+        That is the message's own id at its source (a chat message's ts, a mail's Message-ID),
+        which a polled row keeps as its ``reply_target``. The id was parsed out of the row id
+        instead, whose tail is a float's spelling of the time, so a mute of a chat message whose
+        ts ended in a zero named no thread at all. A row with neither mutes itself only.
+
+        THE derivation: ``PUT /api/inbox/{id}``'s ``mute_thread`` and the inbox-op action's both
+        read it, since a mute written under another key is one the other cannot find."""
+        if self.thread_ts:
+            return str(self.thread_ts)
+        if self.source != "native" and self.reply_target:
+            return self.reply_target
+        return self.id
 
     @classmethod
     def from_dict(cls, d: dict) -> "InboxItem":

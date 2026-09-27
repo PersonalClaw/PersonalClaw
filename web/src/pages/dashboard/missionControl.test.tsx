@@ -498,10 +498,53 @@ describe('LANE_REFS — the one reconciliation point with views_store', () => {
   })
 })
 
+// ── A parked run is woken from its card, not answered ─────────────────────────────────────────
+//
+// A monitor parks on an `event` gate between checks. Its card is not a question and not an
+// approval: the run carries on when what it waits for happens, and you may wake it now.
+
+/** A monitor's park, as its Inbox row carries it (`block_kind: 'event'`). */
+const parkedItem = (): InboxItem => ({
+  ...questionItem([]),
+  id: 'inbox-parked',
+  message: 'This monitor is parked between checks.',
+  refs: {
+    workflow: 'run-77',
+    workflow_node: 'park',
+    resume_token: 'tok-9',
+    needs_input: {
+      run_id: 'run-77', node_id: 'park', block_kind: 'event',
+      blocker: 'This monitor is parked between checks.',
+      choices: [], resume_token: 'tok-9', actionable: false,
+    },
+  },
+})
+
+describe("a parked run's card", () => {
+  it('wakes the run, and offers nothing to decide', async () => {
+    resumeWorkflowRun.mockResolvedValue({ ok: true, approved: true })
+    toLanes.mockReturnValue(lanes({ 'your-turn': [questionCard(parkedItem())] }))
+    render(<MissionControl />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /^Wake .*loop-worker.* now$/ }))
+
+    expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: true, resume_token: 'tok-9' })
+    expect(await screen.findByRole('status')).toHaveTextContent('Woken — the run is moving again.')
+    expect(screen.queryByRole('button', { name: /^Deny/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull()
+    expect(screen.queryByText(/no preset options/)).toBeNull()
+  })
+})
+
 describe('questionOf — reading the options off the wire', () => {
   it('reads choices and the resume token from refs.needs_input', () => {
     const q = questionOf(questionItem(['a', 'b']))
     expect(q).toMatchObject({ runId: 'run-77', resumeToken: 'tok-9', choices: ['a', 'b'] })
+  })
+
+  it('reads a parked run as one to wake, not an approval', () => {
+    expect(questionOf(parkedItem())).toMatchObject({ event: true, approval: false })
+    expect(questionOf(questionItem())).toMatchObject({ event: false, approval: false })
   })
 
   it('is null for a row that carries no needs_input card', () => {

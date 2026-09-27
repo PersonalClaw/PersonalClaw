@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.approval_answer import CHANNEL, YOU, Principal
 from personalclaw.tool_providers.base import RiskLevel
 from personalclaw.workflows import gate_policy as GP
 from personalclaw.workflows import human_input as HI
@@ -274,35 +275,35 @@ class TestControllerRemoteAnswers:
     async def test_the_owner_may_answer_from_a_channel(self) -> None:
         c, _status = await _run_with({"timeout_secs": 0}, origin=OriginKind.CHAT)
         token = HI.list_continuations(c.run.id)[0].token
-        result = c.resume(token, True, responder="owner-1", channel="slack")
+        result = c.resume(token, True, by=Principal(CHANNEL, "owner-1"), channel="slack")
         assert result["ok"] and result["approved"]
 
     async def test_a_non_owner_channel_reply_is_refused_without_touching_the_token(self) -> None:
         c, _status = await _run_with({"timeout_secs": 0}, origin=OriginKind.CHAT)
         token = HI.list_continuations(c.run.id)[0].token
-        refused = c.resume(token, True, responder="intruder", channel="slack")
+        refused = c.resume(token, True, by=Principal(CHANNEL, "intruder"), channel="slack")
         assert not refused["ok"] and refused["code"] == "WF_RESUME_NOT_OWNER"
         # The token survives, so the real owner can still answer.
-        assert c.resume(token, True, responder="owner-1", channel="slack")["ok"]
+        assert c.resume(token, True, by=Principal(CHANNEL, "owner-1"), channel="slack")["ok"]
 
     async def test_a_local_answer_needs_no_responder(self) -> None:
         c, _status = await _run_with({"timeout_secs": 0}, origin=OriginKind.CHAT)
         token = HI.list_continuations(c.run.id)[0].token
-        assert c.resume(token, True)["ok"]
+        assert c.resume(token, True, by=YOU)["ok"]
 
 
 class TestControllerAlwaysAllow:
     async def test_always_allow_is_remembered_within_the_run(self) -> None:
         c, _status = await _run_with({"timeout_secs": 0}, origin=OriginKind.CHAT)
         token = HI.list_continuations(c.run.id)[0].token
-        c.resume(token, True, always_allow=True)
+        c.resume(token, True, always_allow=True, by=YOU)
         assert len(c._allow_memory) == 1
 
     async def test_a_rewind_clears_the_memory(self) -> None:
         """Otherwise it auto-approves the very step the user rewound to reconsider."""
         c, _status = await _run_with({"timeout_secs": 0}, origin=OriginKind.CHAT)
         token = HI.list_continuations(c.run.id)[0].token
-        c.resume(token, True, always_allow=True)
+        c.resume(token, True, always_allow=True, by=YOU)
         assert len(c._allow_memory) == 1
         c.submit_mutation([{"op": "rewind", "node_id": "approve"}], confirm=True)
         mid_flight.drain_mutations(c)

@@ -57,7 +57,7 @@ def _entry(spec: BrandedProviderSpec, *, model: str = "", **options: Any) -> Pro
         name=ENTRY,
         type=spec.type,
         model=model,
-        options={"api_key": "sk-fixture", **options},
+        options={"api_key": "fake-key-fixture", **options},
         declared_capabilities=frozenset({Capability.CHAT}),
     )
 
@@ -128,7 +128,7 @@ async def test_the_anthropic_wire_probe_asks_for_the_instances_own_model(_anthro
     """Test connection on an Anthropic-wire instance probed a model the instance never named."""
     spec, _factory_fn = _factory("anthropic")
     _f, _c, create_catalog = register_branded_app(spec)
-    catalog = create_catalog({"api_key": "sk-fixture", "default_model": "instance-default"})
+    catalog = create_catalog({"api_key": "fake-key-fixture", "default_model": "instance-default"})
 
     result = await catalog.test_connection()
 

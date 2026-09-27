@@ -33,6 +33,7 @@ def config_path():
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState
+    from personalclaw.sandbox_providers import SandboxHandle
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,58 @@ _ORPHAN_TIMEOUT_S = 300  # 5 min with no WS → reap PTY
 # session_id but the PTY spawns on WS connect). Keyed by session_id.
 _pending_cwd: dict[str, str] = {}
 
-# EI-4 §1.3(3): the sandbox tier chosen for a session at create time, consumed by the WS spawn
-# so the PTY opens INSIDE that tier (the per-session sandbox picker). Empty/absent → the host
-# shell (unchanged, unsandboxed — the user's own interactive terminal). Keyed by session_id.
-_pending_sandbox: dict[str, str] = {}
+# EI-4 §1.3(3): every session id names the tier its shell runs in, ``<id>@<tier>``, the host's
+# (``none``) included, and every open reads the tier from the id: the shell opens in it or is
+# refused, never on this computer's own shell instead. The tier used to be held in a map the first
+# connect popped, so a reconnect after a gateway restart (or after the orphan reaper ended the
+# shell) found no tier and opened the host shell under a sandboxed tab. An id that names no tier
+# was made before ids carried one, and nothing says where its shell ran, so it is refused rather
+# than guessed at: once, since every id made now names its tier.
+_TIER_SEP = "@"
+HOST_TIER = "none"
+LEGACY_ID_REFUSAL = "This terminal was opened before an update; open a new one."
+
+
+def _named_tier(session_id: str) -> str:
+    """The tier *session_id* names, or "" when it names none (an id made before ids carried it)."""
+    return session_id.partition(_TIER_SEP)[2]
+
+
+def session_tier(session_id: str) -> str:
+    """The sandbox tier the terminal session *session_id* was opened in; "" for the host shell."""
+    tier = _named_tier(session_id)
+    return "" if tier == HOST_TIER else tier
+
+
+class _Refused(Exception):
+    """This session is not opened here. The message is the sentence the tab shows."""
+
+
+def _open_in_tier(tier: str, cwd: str, shell: str) -> "SandboxHandle":
+    """*tier*'s launch of a login shell in *cwd*, or :class:`_Refused` saying why it cannot.
+
+    ``env={}`` so the guest/container uses its own base environment rather than the host
+    terminal's."""
+    from personalclaw.sandbox_providers import SandboxSpec, SandboxUnavailableError, get_provider
+
+    provider = get_provider(tier)
+    if provider is None:
+        raise _Refused(
+            f"This terminal is set to run in the {tier} sandbox, which is not installed or is "
+            "turned off. It was not opened, and it never falls back to a shell on this computer."
+        )
+    label = getattr(provider, "display_name", "") or tier
+    try:
+        return provider.wrap(
+            SandboxSpec(workspace_dir=cwd, egress_tier="all", env={}), [shell, "-l"]
+        )
+    except SandboxUnavailableError as exc:
+        fix = exc.fix[:1].upper() + exc.fix[1:]
+        raise _Refused(
+            f"This terminal is set to run in the {label} sandbox, which is not available: "
+            f"{exc.why.rstrip('.')}. It was not opened, and it never falls back to a shell on "
+            f"this computer. {fix}"
+        ) from exc
 
 
 def _sel():
@@ -100,6 +149,9 @@ class _TerminalSession:
     # survive a gateway restart — only the attach-client dies on restart/WS-drop, not the
     # session. The orphan-reaper kills the client, never `tmux kill-session`.
     persistent: bool = False
+    #: The sandbox tier's handle for a shell opened in one: what its wrap made (a container that
+    #: outlived its shell) goes with the session.
+    sandbox: "SandboxHandle | None" = None
 
 
 def _get_registry(request: web.Request) -> dict[str, _TerminalSession | None]:
@@ -207,6 +259,15 @@ async def _kill_session(sess: _TerminalSession) -> None:
         except asyncio.TimeoutError:
             _signal_session(sess, signal.SIGKILL)
             await sess.proc.wait()
+    await _release_sandbox(sess)
+
+
+async def _release_sandbox(sess: _TerminalSession) -> None:
+    """Let go of what the session's sandbox tier made for its shell (a container that outlived an
+    abnormal exit). Once, whichever teardown reaches it first."""
+    handle, sess.sandbox = sess.sandbox, None
+    if handle is not None:
+        await asyncio.to_thread(handle.cleanup)
 
 
 def _signal_session(sess: _TerminalSession, sig: int) -> None:
@@ -317,6 +378,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         )
         return web.Response(status=429, text=f"Max {max_sessions} terminal sessions")
 
+    tier = session_tier(session_id)
+
     # Reserve a placeholder so concurrent requests see the session as taken
     placeholder = not existing
     if placeholder:
@@ -344,6 +407,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         )
     else:
         # Spawn new PTY
+        handle: "SandboxHandle | None" = None
         master_fd, worker_fd = _pty.openpty()
         # Non-blocking master so we can read it via the event loop's add_reader
         # (NOT a blocking os.read on an executor thread — closing the fd from
@@ -352,6 +416,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         # exhausts and the whole gateway hangs. add_reader avoids threads entirely).
         os.set_blocking(master_fd, False)
         try:
+            if not _named_tier(session_id):
+                raise _Refused(LEGACY_ID_REFUSAL)
             fcntl.ioctl(
                 worker_fd,
                 termios.TIOCSWINSZ,
@@ -378,54 +444,35 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 # terminals still prompt). Harmless for bash/fish.
                 "DISABLE_AUTO_UPDATE": "true",
             }
-            # Security: intentionally unsandboxed — this is the user's own
-            # interactive terminal (like SSH), not agent-executed code.
+            # Security: a session in the ``none`` tier is intentionally unsandboxed — this is the
+            # user's own interactive terminal (like SSH), not agent-executed code.
             # Auth is enforced at WS handshake via token_auth_middleware.
             # See CLI_PANEL_DESIGN.md §8 "Security Considerations".
-            # EI-4 §1.3(3): if this session picked a sandbox tier, open the shell INSIDE it — the
-            # provider-wrapped launch (the SAME create_subprocess_limited below runs it, so the
-            # audited spawn site is unchanged). An interactive request is not an unattended run:
-            # when the chosen tier is unavailable we fall back to the host shell (path-guard-only)
-            # rather than hard-parking — the greyed-with-reason picker already warned the user
-            # pre-hoc. ``env={}`` so the guest/container uses its own base environment rather than
-            # the host terminal's.
-            argv: list[str] | None = None
-            _req_sandbox = _pending_sandbox.pop(session_id, "")
-            if _req_sandbox:
-                from personalclaw.sandbox_providers import (
-                    SandboxSpec,
-                    SandboxUnavailableError,
-                    get_provider,
-                )
-
-                _provider = get_provider(_req_sandbox)
-                if _provider is not None:
-                    try:
-                        argv = _provider.wrap(
-                            SandboxSpec(workspace_dir=cwd, egress_tier="all", env={}),
-                            [shell, "-l"],
-                        ).argv
-                    except SandboxUnavailableError as _exc:
-                        logger.info(
-                            "terminal %s: sandbox %r unavailable (%s); host shell fallback",
-                            session_id,
-                            _req_sandbox,
-                            _exc,
-                        )
+            # EI-4 §1.3(3): a session opened in a sandbox tier runs its shell INSIDE that tier —
+            # the provider-wrapped launch (the SAME create_subprocess_limited below runs it, so
+            # the audited spawn site is unchanged) — on its first connect and on every reopen
+            # after it, because the tier is read from the id each time. A tier that is gone or
+            # cannot run is refused with a sentence the tab shows. It is never swapped for the
+            # host shell: that is not a weaker form of the sandbox the tab names, it is the one
+            # place the user chose not to be.
+            handle = _open_in_tier(tier, cwd, shell) if tier else None
             # A shell inside a tier is never a tmux client: a tier that mounts the home (a terminal
             # opened at `~`) would hand the client the home's own server socket, and the shell
             # would then run on the host, outside the sandbox it asked for.
-            persistent = argv is None and _persist_enabled(request)
-            if argv is None:
+            persistent = handle is None and _persist_enabled(request)
+            if handle is not None:
+                argv = handle.argv
+            elif persistent:
                 # P25: a persistent PTY runs a tmux CLIENT attached to a detached session
                 # (created if absent, re-attached if it survived a restart). `new-session -A -s`
                 # is attach-or-create; the daemon (not this client) owns the shell, so a
                 # gateway restart kills only the client — the shell + scrollback live on.
-                argv = (
-                    tmux_substrate.attach_argv(_tmux_session_name(session_id), shell)
-                    if persistent
-                    else [shell, "-l"]
-                )
+                # A run's durable worker shares the server and the name prefix, but it can never
+                # be this session: the name carries the id's ``@<tier>``, and a worker's name is
+                # built from `tmux_substrate.sanitize`'s alphabet, which has no ``@``.
+                argv = tmux_substrate.attach_argv(_tmux_session_name(session_id), shell)
+            else:
+                argv = [shell, "-l"]
             # Resource ceiling: the interactive terminal gets the ``none`` profile
             # explicitly — it is the user's own shell, not agent-executed code, so it must
             # carry no limits and no OOM bias. The ``none`` profile makes the helper a
@@ -450,6 +497,17 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             except OSError:
                 pass
             registry.pop(session_id, None)  # type: ignore[arg-type]
+            if handle is not None:
+                await asyncio.to_thread(handle.cleanup)
+            if isinstance(exc, _Refused):
+                _sel().log_api_access(
+                    caller=caller,
+                    operation="terminal.ws.open",
+                    outcome="denied",
+                    source="dashboard",
+                    resources=f"session={session_id}",
+                    error=str(exc),
+                )
             # WS already prepared — send error over WS then close
             if not ws.closed:
                 await ws.send_str(json.dumps({"type": "error", "message": str(exc)}))
@@ -466,6 +524,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             cwd=str(cwd),
             shell=shell,
             persistent=persistent,
+            sandbox=handle,
         )
         registry[session_id] = sess
         _sel().log_api_access(
@@ -510,6 +569,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 await sess.ws.close()
             except Exception:
                 pass
+        await _release_sandbox(sess)
 
     def on_pty_readable():
         if sess.master_fd < 0:
@@ -607,11 +667,13 @@ async def api_sandbox_providers(request: web.Request) -> web.Response:
     caller = request.get("user")
     if not caller:
         return web.Response(status=401, text="Unauthorized")
-    from personalclaw.sandbox_providers import list_providers, resolve_provider
+    from personalclaw.sandbox_providers import get_provider, list_providers
 
     providers = []
     for pname in list_providers():
-        prov = resolve_provider(pname)
+        prov = get_provider(pname)
+        if prov is None:
+            continue  # turned off between the listing and this read
         try:
             available = bool(prov.available())
         except Exception:
@@ -695,19 +757,34 @@ async def api_terminal_create(request: web.Request) -> web.Response:
                 {"error": "Cannot open a terminal in a system or credential directory."},
                 status=403,
             )
-        _pending_cwd[session_id] = requested_cwd
-    # EI-4 §1.3(3): stash the picked sandbox tier for the WS spawn. Only a CURRENTLY-registered
-    # provider name is honored — an unknown/uninstalled tier is dropped to the host shell, so a
-    # stale picker value can never silently redirect the spawn. "none"/host is the default.
-    if requested_sandbox and requested_sandbox != "none":
+    # EI-4 §1.3(3): the picked sandbox tier rides the session id (``<id>@<tier>``, ``@none`` for
+    # the host shell), so the WS opens the shell in it on the first connect and on every reopen,
+    # a gateway restart included. A tier that is not installed is refused here with a sentence:
+    # it used to be dropped, and the terminal opened on the host under a picker that named the
+    # tier. The host is the default.
+    requested_sandbox = "" if requested_sandbox == HOST_TIER else requested_sandbox
+    if requested_sandbox:
         from personalclaw.sandbox_providers import get_provider
 
-        if get_provider(requested_sandbox) is not None:
-            _pending_sandbox[session_id] = requested_sandbox
-        else:
-            requested_sandbox = ""
-    else:
-        requested_sandbox = ""
+        if get_provider(requested_sandbox) is None:
+            _sel().log_api_access(
+                caller=caller,
+                operation="terminal.session.create",
+                outcome="denied",
+                source="dashboard",
+                resources=f"sandbox_unavailable:{requested_sandbox}",
+            )
+            return json_error(
+                "sandbox_tier_unavailable",
+                message=(
+                    f"The {requested_sandbox} sandbox is not installed or is turned off, so no "
+                    "terminal was opened. Pick another sandbox, or open the terminal without one."
+                ),
+                status=409,
+            )
+    session_id = f"{session_id}{_TIER_SEP}{requested_sandbox or HOST_TIER}"
+    if requested_cwd:
+        _pending_cwd[session_id] = requested_cwd
     _sel().log_api_access(
         caller=caller,
         operation="terminal.session.create",
@@ -756,9 +833,18 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
     # An explicit delete TRULY ends a persistent session — kill its tmux session so the
     # daemon-owned shell is gone (a reap/disconnect only detaches; delete is final). This
     # also covers a detached session that survived a restart (no in-memory entry).
-    persistent = sess.persistent if sess else _persist_enabled(request)
+    persistent = (
+        sess.persistent if sess else (not session_tier(session_id) and _persist_enabled(request))
+    )
+    name = _tmux_session_name(session_id)
+    if (
+        persistent
+        and sess is None
+        and (name, tmux_substrate.WORKER_KIND) in await tmux_substrate.list_sessions()
+    ):
+        persistent = False  # a run's durable worker is not a terminal this route ends
     if persistent:
-        await tmux_substrate.kill_session(_tmux_session_name(session_id))
+        await tmux_substrate.kill_session(name)
 
     if sess is None:
         # Not in-process. If it was a live tmux session we just killed it → ok; else 404.
@@ -843,16 +929,19 @@ async def api_terminal_list(request: web.Request) -> web.Response:
                 "cwd": sess.cwd,
                 "shell": sess.shell,
                 "persistent": sess.persistent,
+                "sandbox": session_tier(sid),
             }
         )
     # P25: surface tmux-backed sessions that survived a GATEWAY RESTART — they have no
     # in-memory registry entry yet (the reader/client died with the old process), but the
     # tmux daemon kept the shell alive. Listing them lets the FE's mount-time restore
     # re-attach after a restart, not just a page reload. Reconnecting maps session_id →
-    # its tmux session (new-session -A re-attaches). Only when persistence is enabled.
+    # its tmux session (new-session -A re-attaches). Only when persistence is enabled. A run's
+    # durable worker lives on the same server under the same prefix and is not a terminal: it
+    # was listed as a detached one, and the page's restore attached a tab to it.
     if _persist_enabled(request):
-        for tname in await tmux_substrate.list_sessions():
-            if not tname.startswith("pclaw-"):
+        for tname, kind in await tmux_substrate.list_sessions():
+            if kind == tmux_substrate.WORKER_KIND or not tname.startswith("pclaw-"):
                 continue
             sid = tname[len("pclaw-") :]
             if sid in seen:
@@ -869,6 +958,7 @@ async def api_terminal_list(request: web.Request) -> web.Response:
                     "shell": "",
                     "persistent": True,
                     "detached": True,
+                    "sandbox": "",
                 }
             )
     _sel().log_api_access(

@@ -1,5 +1,18 @@
 """Shared constants used across cli and gateway modules."""
 
+#: The name, drawn in figlet's "small" font, that ``personalclaw`` with no command and the
+#: ``personalclaw chat`` prompt print. Defined here once and imported by both: when each
+#: module drew its own copy, the two could say different things, and a word search reads
+#: none of it (``tests/test_the_cli_banner_is_personalclaw.py``).
+BANNER = r"""
+   ___                           _  ___ _
+  | _ \___ _ _ ___ ___ _ _  __ _| |/ __| |__ ___ __ __
+  |  _/ -_) '_(_-</ _ \ ' \/ _` | | (__| / _` \ V  V /
+  |_| \___|_| /__/\___/_||_\__,_|_|\___|_\__,_|\_/\_/
+
+  Your personal AI agent
+"""
+
 DATA_WARNING = (
     "⚠️  Do not share confidential, sensitive, or regulated data with AI models.\n"
     "   Review your organization's AI usage and data handling policies\n"

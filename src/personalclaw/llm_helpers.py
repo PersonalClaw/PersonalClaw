@@ -38,6 +38,7 @@ class PromptBusyExhaustedError(Exception):
 if TYPE_CHECKING:
     from personalclaw.history import ConversationLog
     from personalclaw.hooks import HookManager
+    from personalclaw.usage_ledger import Attribution
 
 logger = logging.getLogger(__name__)
 
@@ -572,6 +573,7 @@ async def one_shot_completion(
     output_type: type | None = None,
     model: str = "",
     temperature: float | None = None,
+    usage: "Attribution | None" = None,
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
@@ -645,9 +647,16 @@ async def one_shot_completion(
     merges build kwargs with ``setdefault``, an operator's configured ``max_tokens`` still
     wins. No compaction logic is involved: this makes the number available, it does not
     decide what to drop.
+
+    ``usage`` writes the call to the usage ledger, one row per model call it makes, for whom the
+    caller names (:class:`~personalclaw.usage_ledger.Attribution`): through the seam every
+    turn's row takes (``stream_and_collect(on_complete=…)``), priced by the model the resolved
+    provider was built for. ``None`` (the default) writes nothing, and the call is then counted
+    only in the model-call log, which Settings → Usage states as not included.
     """
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.providers.use_cases import VALID_USE_CASES
+    from personalclaw.usage_ledger import recorder
 
     # Honor a caller that already named a real model-axis use case; the remaining
     # informal label ("ingestion") collapses to the background axis; anything
@@ -717,7 +726,8 @@ async def one_shot_completion(
     async def _run(provider) -> str:
         try:
             await provider.start()
-            text = await stream_and_collect(provider, prompt)
+            on_complete = recorder(provider, usage) if usage is not None else None
+            text = await stream_and_collect(provider, prompt, on_complete=on_complete)
             if output_type is None:
                 return text
             # Typed path: parse; on a miss, ONE targeted correction-note retry.
@@ -726,7 +736,7 @@ async def one_shot_completion(
             from personalclaw.guardrails.failure import FailureMode, correction_note
 
             retry_prompt = f"{prompt}\n\n{correction_note(FailureMode.SCHEMA_VIOLATION)}"
-            retry_text = await stream_and_collect(provider, retry_prompt)
+            retry_text = await stream_and_collect(provider, retry_prompt, on_complete=on_complete)
             if _parse_llm(retry_text, output_type) is not None:
                 return retry_text
             raise OutputContractError(

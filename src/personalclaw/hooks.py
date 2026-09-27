@@ -589,11 +589,14 @@ def _tool_matches(pattern: str, tool_name: str) -> bool:
     return fnmatch.fnmatch(tool_name.lower(), pattern.lower())
 
 
-def validate_file_path(raw: str) -> str | None:
+def validate_file_path(raw: str, *, sensitive: Callable[[str], bool] | None = None) -> str | None:
     """Validate and canonicalize a file path for dashboard file I/O.
 
     Enforces: is_sensitive_path(), realpath canonicalization.
-    Returns the canonical path or None if rejected.
+    Returns the canonical path or None if rejected. ``sensitive`` is the check itself, made once by
+    a caller that asks about many paths (a :class:`~personalclaw.security.SensitivePaths` for a
+    walk, as :class:`~personalclaw.file_roots.Admission` makes); it defaults to
+    :func:`~personalclaw.security.is_sensitive_path`, which is the same answer.
 
     A validator ANSWERS; it does not raise (issue 352). `os.path.realpath` on a path holding a
     NUL byte raises `ValueError: embedded null character`, and this function had no guard — so
@@ -620,7 +623,7 @@ def validate_file_path(raw: str) -> str | None:
     except (ValueError, OSError):
         logger.debug("validate_file_path: uncanonicalizable path rejected", exc_info=True)
         return None
-    if is_sensitive_path(path):
+    if (sensitive or is_sensitive_path)(path):
         return None
     return path
 

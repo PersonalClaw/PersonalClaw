@@ -42,7 +42,8 @@ function endedLine(s: ChannelOwnerStatus): string {
  *  The owner id is who the gateway sends your results, scheduled messages and approval prompts to on
  *  this channel. It was set only by `personalclaw setup`, so a channel set up here reached nobody.
  *  Pairing shows a code; whoever sends it to the bot in a direct message becomes the owner, stored
- *  under this channel's own key, and the page follows the pairing until it ends.
+ *  under this channel's own key, and the page follows the pairing until it ends. A channel where
+ *  the code is sent some other way (a mail to the mailbox) says how (`pairing_hint`).
  *
  *  `channel` is the channel's runtime name (`telegram`), not its app's. */
 export function ChannelOwnerSection({ channel, onChanged }: { channel: string; onChanged?: () => void }) {
@@ -123,7 +124,7 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
       {code ? (
         <div className="flex flex-col gap-s rounded-md bg-surface-container p-m">
           <div data-type="body-s" className="text-on-surface">
-            Send this code to your bot in a direct message on {who}:
+            {status.pairing_hint ? `${status.pairing_hint}:` : `Send this code to your bot in a direct message on ${who}:`}
           </div>
           <div className="flex items-center gap-s">
             <span role="img" data-type="headline-s" className="font-mono tracking-[0.2em] text-on-surface" aria-label={`Pairing code ${code.split('').join(' ')}`}>{code}</span>

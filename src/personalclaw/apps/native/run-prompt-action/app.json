@@ -25,7 +25,14 @@
           "x-meta": {
             "label": "Prompt",
             "widget": "prompt",
-            "help": "The saved Prompt to run. Leave empty to run the project's loop.md (then the user-global loop.md) as a default recurring prompt."
+            "help": "The saved Prompt to run. Leave empty to run the Message below, or, with no Message, the project's loop.md (then the user-global loop.md) as a default recurring prompt."
+          }
+        },
+        "message": {
+          "type": "string",
+          "x-meta": {
+            "label": "Message",
+            "help": "What to run when no saved Prompt is picked. An automation made in chat carries its instruction here."
           }
         },
         "vars": {

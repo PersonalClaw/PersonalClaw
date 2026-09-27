@@ -1128,7 +1128,8 @@ async def api_projects_export(request: web.Request) -> web.Response:
     passphrase = request.query.get("passphrase", "")
     if passphrase and not pa.encryption_available():
         return web.json_response(
-            {"error": "encryption needs the optional `cryptography` extra"}, status=400
+            {"error": "encryption needs the `cryptography` package, which this environment lacks"},
+            status=400,
         )
 
     artifacts: list[dict] = []

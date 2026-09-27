@@ -4,8 +4,10 @@
  *  🔑 THE GATEWAY DECIDES WHICH WRITES NEED IT, NOT THIS FILE. A field on its list
  *  (`config/edit_spec.py`: a `SecurityControl` on the `_EDITABLE_CONFIG` spec, or an agent's
  *  `approval_mode`), or an action a trigger is not allowed to run (`triggers/grants.py`), answers
- *  the write with `400 confirmation_required`, carrying `{field, consent, title}` in
- *  `error.detail`. So a surface never predicts the direction — raising a budget, removing a denied
+ *  the write with `confirmation_required`, carrying `{field, consent, title}` in `error.detail`:
+ *  a 200 marked `X-PersonalClaw-Consent-Asked` to this page, whose writes say they ask
+ *  (`api.ts`), so no failed request is logged for a question, and a 400 to any other client. So a
+ *  surface never predicts the direction — raising a budget, removing a denied
  *  pattern, allowing a host — and cannot disagree with the server about it. It sends the write; if
  *  the gateway asks, the owner is asked in the gateway's own words, heading included, and the
  *  write is resent with `confirm: true` only after they agree. The heading is the gateway's too:

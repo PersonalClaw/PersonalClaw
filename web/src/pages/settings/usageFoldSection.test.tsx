@@ -7,8 +7,7 @@ import { act, render } from '@testing-library/react'
 //
 //   · the total, the daily shape, and the per-purpose split are on screen
 //   · an unpriced model reads as a FLOOR, never as "$0.00 spent"
-//   · the unattended spend the fold refuses to sum is STATED with its size — the whole reason this
-//     change was blocked was that merging it would double-count, and silently omitting it would
+//   · the unattended spend no usage row counts is STATED with its size — silently omitting it would
 //     claim a completeness the data does not have
 //   · every dollar carries a "~" — each is a price-table estimate, not a provider charge
 //
@@ -111,7 +110,9 @@ describe('the By day and purpose section', () => {
     expect(container.textContent).toContain('Not included:')
     expect(container.textContent).toContain('12 unattended model calls')
     expect(container.textContent).toContain('~$4.00')
-    expect(container.textContent).toContain('double-counting loops')
+    // Why they are left out, and that it is the whole reason: they are in no usage row.
+    expect(container.textContent).toContain('They wrote no usage row')
+    expect(container.textContent).not.toContain('double-counting')
   })
 
   it('states that an unpriced model makes the total a floor', async () => {

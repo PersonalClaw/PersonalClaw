@@ -29,8 +29,8 @@ from personalclaw.llm.registry import get_default_registry
 from personalclaw.net.client import FetchResponse
 from personalclaw.sdk.provider_helpers import register_branded_app
 
-KEY = "sk-fixture-5f0c1d9e-never-plaintext"
-ROTATED = "sk-fixture-rotated-8a7b6c5d"
+KEY = "fake-key-fixture-5f0c1d9e-never-plaintext"
+ROTATED = "fake-key-fixture-rotated-8a7b6c5d"
 
 FIXTURE_TYPE = "fixture-keystore-openai"
 FIXTURE_BASE = "https://fixture-keystore.invalid/v1"
@@ -175,7 +175,7 @@ def test_a_new_instance_naming_a_vault_key_authenticates_at_once(
     from personalclaw.config.credentials import save_credential
     from personalclaw.config.secret_refs import make_ref
 
-    vault_name, vault_value = "FIXTURE_VAULT_NEW_INSTANCE_KEY", "sk-fixture-vault-2b3c4d5e"
+    vault_name, vault_value = "FIXTURE_VAULT_NEW_INSTANCE_KEY", "fake-key-fixture-vault-2b3c4d5e"
     # A named (vault) credential is mirrored into the process environment by design; this makes
     # the teardown take it back out, so no later test inherits it.
     monkeypatch.setenv(vault_name, "")
@@ -294,7 +294,7 @@ def test_a_provider_cannot_be_saved_naming_an_apps_key(name):
     from personalclaw.providers.settings import ProviderSettings
     from personalclaw.sel import sel
 
-    token = "xoxb-app-owned-3c4d5e6f-fixture"
+    token = "fake-bot-token-app-owned-3c4d5e6f-fixture"
     ProviderSettings.save("fixture-token-holder", {"bot_token": token})
     settings = manager.app_dir("fixture-token-holder") / "data" / "config.json"
     app_ref = json.loads(settings.read_text(encoding="utf-8"))["bot_token"]

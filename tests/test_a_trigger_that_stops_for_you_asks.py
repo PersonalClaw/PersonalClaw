@@ -118,10 +118,10 @@ def _state() -> types.SimpleNamespace:
     return types.SimpleNamespace(push_refresh=lambda *k: None, _background_tasks=set())
 
 
-def _req(path: str, *, body: dict, match_info: dict):
+def _req(path: str, *, body: dict, match_info: dict, headers: dict | None = None):
     app = web.Application()
     app["state"] = _state()
-    req = make_mocked_request("POST", path, match_info=match_info, app=app)
+    req = make_mocked_request("POST", path, match_info=match_info, app=app, headers=headers)
     req["user"] = "owner"
 
     async def _json():
@@ -271,6 +271,41 @@ def test_approve_runs_it_again_with_your_answer_and_past_the_sign_in_check(home,
     assert _park_rows() == [], "the answered question's row must close"
     (closed,) = _park_rows(open_only=False)
     assert closed.status == "handled"
+
+
+def test_an_agents_tool_answers_nothing_and_leaves_the_question_to_you(home, browse, monkeypatch):
+    """🔴 Only you answer a trigger's question (`approval_answer`). `/api/triggers` admits the
+    gateway's internal secret (for an agent's `/run`), so an agent's tool could post the answer
+    and run the action past the sign-in check it had stopped at. Refused before anything about the
+    trigger is read, audited, and the token still answers for you."""
+    rows: list[dict] = []
+    monkeypatch.setattr(
+        "personalclaw.sel.sel",
+        lambda: types.SimpleNamespace(log_api_access=lambda **kw: rows.append(kw)),
+    )
+    _trigger(home)
+    _run()
+    token = _token()
+
+    resp = asyncio.run(
+        trigger_runs.api_trigger_answer(
+            _req(
+                f"/api/triggers/store:{TID}/answer",
+                body={"resume_token": token, "answer": True},
+                match_info={"id": f"store:{TID}"},
+                headers={"X-Internal-Secret": "s", "X-Session-Key": "dashboard:c1"},
+            )
+        )
+    )
+
+    assert resp.status == 403, _body(resp)
+    assert _body(resp)["error"]["code"] == "approval_owner_only"
+    assert browse.seen == [None], "the agent's answer ran the action"
+    assert len(_park_rows()) == 1, "the question must still be yours to answer"
+    (refused,) = [r for r in rows if r.get("operation") == "approval.answer_refused"]
+    assert refused["caller"] == "agent:dashboard:c1"
+    assert refused["resources"] == f"park:{TID} asked_by=trigger:{TID}"
+    assert _answer(token, True).status == 200
 
 
 def test_approve_spends_the_token_once_however_often_you_click(home, browse):
@@ -521,6 +556,53 @@ def test_a_run_that_goes_through_stamps_success_and_not_waiting(home, finishes):
     live = _live(home)
     assert live.last_success_at and live.last_waiting_at == ""
     assert _last_run_ts(live) == _epoch(live.last_success_at)
+
+
+# ── what a Run button is told: the run's own status, in its row's words ──
+
+
+def test_run_now_answers_that_its_run_waits_for_you_in_the_rows_own_words(home, browse):
+    """🔴 Red on main: `/run` answered `{"ok": true, "result": "ran"}` for a run that stopped for
+    you, so both Run buttons flashed a finished run, and the `automation_run` tool — which relays
+    this answer — told the agent it ran. It answers the status its run recorded, and the row's own
+    line."""
+    _trigger(home)
+
+    body = _run()
+
+    (row,) = _history(home)
+    assert body["ok"] is True
+    assert body["status"] == row["status"] == "waiting"
+    assert body["result"] == row["summary"] and body["result"].startswith("Waiting for you. ")
+
+
+def test_run_now_answers_a_run_that_went_through_as_the_success_it_recorded(home, finishes):
+    """CONTROL: a run that did its work answers `success`, and "ran"."""
+    _trigger(home, workflow=_PUBLIC)
+    body = _run()
+    assert (body["ok"], body["status"], body["result"]) == (True, "success", "ran")
+
+
+def test_the_restart_reviews_run_now_answers_that_its_run_waits_too(home, browse):
+    """The review's Run now reaches the action through the same dispatch, and its card said the
+    automation "ran now" for a run that had stopped for you."""
+    from personalclaw.triggers import review
+
+    _trigger(home)
+    review.record(
+        [review.ReviewCard(trigger_id=TID, kind="missed", count=1, latest=1.0, oldest=1.0)],
+        base_dir=home,
+    )
+    request = _req(
+        "/api/triggers/review",
+        body={"trigger_id": TID, "kind": "missed", "action": "run_now"},
+        match_info={},
+    )
+
+    body = _body(asyncio.run(T.api_trigger_review(request)))
+
+    assert body["ok"] is True and body["status"] == "waiting"
+    assert body["result"].startswith("Waiting for you. ")
 
 
 def test_the_waiting_stamp_survives_a_reload_and_stays_in_this_home(home, browse):

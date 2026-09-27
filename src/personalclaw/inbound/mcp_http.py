@@ -28,6 +28,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.inbound import audit as audit_mod
 from personalclaw.inbound import auth
 from personalclaw.inbound import caps as caps_mod
+from personalclaw.inbound import tokens
 
 logger = logging.getLogger(__name__)
 
@@ -250,10 +251,20 @@ async def handle_mcp(request: web.Request) -> web.Response:
     elif not auth.verify_bearer(SURFACE, presented):
         # Neither credential matched. The audited reason names the CLIENT-lookup
         # outcome when there is one, because "matches no registered client" and
-        # "client is disabled" are different operator problems with the same 401.
+        # "client is disabled" are different operator problems with the same 401. A
+        # token this gateway issued that has since expired, or was revoked or replaced,
+        # is told so in the message; the code stays `unauthorized` for every refusal.
+        ended = tokens.ending(SURFACE, presented)
         return _refuse(
-            json_error("unauthorized", status=401, headers=_NO_STORE),
-            refused=client_reason or "bad or missing bearer token",
+            json_error(
+                "unauthorized",
+                message=ended.sentence if ended else None,
+                status=401,
+                headers=_NO_STORE,
+            ),
+            refused=(ended.reason if ended else "")
+            or client_reason
+            or "bad or missing bearer token",
         )
 
     # 4) Caps — per CLIENT, so one noisy integration cannot starve another. Falls back

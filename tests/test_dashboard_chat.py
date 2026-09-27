@@ -5965,7 +5965,7 @@ class TestAcpProcessDiedRecovery:
 
         async def _stream_then_die(msg):
             yield LLMEvent(
-                kind=EVENT_TEXT_CHUNK, text="partial output with AKIA1234567890ABCDEF secret"
+                kind=EVENT_TEXT_CHUNK, text="partial output with AKIAIOSFODNN7EXAMPLE secret"
             )
             raise AcpProcessDied("pipe broken")
 
@@ -5977,7 +5977,7 @@ class TestAcpProcessDiedRecovery:
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         assert assistant_msgs, "Expected at least one assistant message with redacted content"
         for m in assistant_msgs:
-            assert "AKIA1234567890ABCDEF" not in m.get("content", "")
+            assert "AKIAIOSFODNN7EXAMPLE" not in m.get("content", "")
 
     @pytest.mark.asyncio
     async def test_session_reset_propagated(self, tmp_path: Path) -> None:
@@ -5999,7 +5999,7 @@ class TestAcpProcessDiedRecovery:
         state, session, client, run_chat = self._make_state_and_session(tmp_path)
 
         async def _stream_then_cancel(msg):
-            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="partial with AKIA1234567890ABCDEF key")
+            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="partial with AKIAIOSFODNN7EXAMPLE key")
             raise asyncio.CancelledError()
 
         client.stream = _stream_then_cancel
@@ -6010,7 +6010,7 @@ class TestAcpProcessDiedRecovery:
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         assert assistant_msgs, "Expected at least one assistant message with redacted content"
         for m in assistant_msgs:
-            assert "AKIA1234567890ABCDEF" not in m.get("content", "")
+            assert "AKIAIOSFODNN7EXAMPLE" not in m.get("content", "")
 
     @pytest.mark.asyncio
     async def test_retry_requeues_via_queue_insert(self, tmp_path: Path) -> None:

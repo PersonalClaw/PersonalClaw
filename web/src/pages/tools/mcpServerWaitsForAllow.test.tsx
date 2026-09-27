@@ -49,6 +49,7 @@ function mockApi() {
         mcpPoolStats: () => Promise.resolve({}),
         toolGroups: () => Promise.resolve(null),
         mcpElicitationServers: () => Promise.resolve([]),
+        mcpReadOnlyServers: () => Promise.resolve([]),
         toggleMcpServer: (...a: unknown[]) => { toggleSent(...a); return Promise.resolve({ ok: true }) },
         allowMcpServer: (name: string, revision: string) => withSecurityConsent((confirm) => {
           allowSent({ name, revision, confirm })

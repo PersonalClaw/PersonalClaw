@@ -34,6 +34,7 @@ from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
 from personalclaw.knowledge.semantics import freshness, logical_key, normalize_title
+from personalclaw.tool_providers.base import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,10 @@ class KnowledgeRetrieveActionProvider(ActionProvider):
     @property
     def display_name(self) -> str:
         return "Retrieve Knowledge"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """A read: it queries the knowledge store and changes nothing."""
+        return RiskLevel.SAFE
 
     async def execute(
         self,

@@ -158,7 +158,7 @@ async def test_secrets_masked_in_detail_and_evidence():
     ]
     rep = await run_doctor(DoctorContext(), probes=probes)
     detail = rep["capabilities"]["model-providers"]["probes"][0]["detail"]
-    assert "AKIABBBB" not in detail  # the raw credential must be gone
+    assert "fake-aws-key-id-1" not in detail  # the raw credential must be gone
     assert "REDACTED" in detail  # ...replaced by the redaction marker
 
 

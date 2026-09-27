@@ -209,7 +209,7 @@ def fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 
 def _cred() -> Credential:
-    return Credential(name="x", kind="api_key", secret="sk-test", source="env")
+    return Credential(name="x", kind="api_key", secret="fake-key-test", source="env")
 
 
 # ── supports_tools flags ────────────────────────────────────────────────

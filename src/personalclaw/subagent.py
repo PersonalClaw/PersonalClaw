@@ -38,17 +38,15 @@ from personalclaw.llm.events import (
     unasked_outcome,
     unasked_reason,
 )
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import redact_credentials, redact_exfiltration_urls, redact_for_model
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
 from personalclaw.session_workspace import result_path as _ws_result_path
 from personalclaw.stats import Stats
 from personalclaw.subagent_persistence import (
     _agent_dir,
-    _cleanup_session_files_sync,
     create_agent_folder,
     delete_agent_folder,
-    list_orphans,
     prune_stale_tombstones,
     update_state,
     write_result_chunk,
@@ -374,7 +372,7 @@ class SubagentInfo:
     reaped: bool = False
     streaming_text: str = ""
     elapsed: float = 0.0
-    _raw_task: str = ""  # unredacted task for ACP agent execution prompt
+    _raw_task: str = ""  # the task as given; masked where the agent's prompt is composed
     model: str = ""
     # Per-child token/cost accounting (COST-AND-TOKEN-OBSERVABILITY C2, subagent
     # write-site): carried onto the completion delivery so a fan-out's cost is
@@ -739,221 +737,11 @@ class SubagentManager:
     def start_reaper(self) -> None:
         """Start the periodic reaper loop.  Call once after the event loop is running."""
         if self._reaper_task is None:
+            from personalclaw.subagent_orphans import reconcile_orphans
+
             self._reaper_task = asyncio.create_task(self._reaper_loop())
-            # One-shot orphan reconciliation on startup
-            self._reconcile_task = asyncio.create_task(self._reconcile_orphans())
-
-    async def _reconcile_orphans(self) -> None:
-        """Scan for orphaned agent folders from a prior gateway run.
-
-        For each orphan (folder with state.json but no tombstone.json
-        and not tracked in ``_agents``):
-        - PID alive → SIGKILL, tombstone (gateway_restart)
-        - PID dead + result → tombstone (gateway_restart, delivered)
-        - PID dead + no result → tombstone (gateway_restart, notification_pending)
-        """
-        try:
-
-            orphans = list_orphans()
-            if not orphans:
-                return
-            logger.info("Reconciling %d orphaned subagent(s)", len(orphans))
-            processed = 0
-            for state in orphans:
-                agent_id = state.get("id", "")
-                if not agent_id or agent_id in self._agents:
-                    continue  # tracked in current run, skip
-                try:
-                    pid = state.get("pid")
-                    has_result = False
-                    try:
-
-                        rp = _agent_dir(agent_id) / "result.txt"
-                        has_result = rp.exists() and rp.stat().st_size > 0
-                    except OSError:
-                        pass
-
-                    recovery = "undeliverable"
-                    if pid and self._is_pid_alive(pid):
-                        # Use pid_recorded_at (when PID was actually written) instead of
-                        # started (folder creation time) to avoid false negatives under load
-                        pid_recorded_at = state.get("pid_recorded_at", state.get("started", 0))
-                        if self._is_orphan_process(pid, pid_recorded_at):
-                            self._kill_orphan_pid(pid)
-                            try:
-                                sel().log_tool_invocation(
-                                    session_key=f"subagent:{agent_id}",
-                                    source="subagent",
-                                    tool_name="orphan_reconcile_kill",
-                                    outcome="killed",
-                                    metadata={"subagent_id": agent_id, "pid": pid},
-                                )
-                            except Exception:
-                                logger.debug("SEL audit failed for orphan %s", agent_id)
-                        recovery = "result_available" if has_result else "notification_pending"
-                    elif has_result:
-                        recovery = "result_available"
-                    else:
-                        recovery = "notification_pending"
-
-                    try:
-                        write_tombstone(
-                            agent_id,
-                            cause="gateway_restart",
-                            recovery_action=recovery,
-                            pid=pid,
-                            turns=state.get("turns", 0),
-                            last_tool=state.get("last_tool", ""),
-                        )
-                    except Exception:
-                        logger.debug("Failed to tombstone orphan %s", agent_id, exc_info=True)
-
-                    # Clean up session files for the orphaned agent
-                    session_id = state.get("session_id", "")
-                    if session_id:
-                        try:
-                            _cleanup_session_files_sync(session_id)
-                        except Exception:
-                            logger.debug(
-                                "Session cleanup failed for orphan %s", agent_id, exc_info=True
-                            )
-
-                    logger.info(
-                        "Reconciled orphan %s: recovery=%s, pid=%s, has_result=%s",
-                        agent_id,
-                        recovery,
-                        pid,
-                        has_result,
-                    )
-                    # Notify user about the orphaned agent
-                    try:
-                        await self._notify_orphan(agent_id, state, recovery, has_result)
-                    except Exception:
-                        logger.debug("Notification failed for orphan %s", agent_id, exc_info=True)
-                except Exception:
-                    logger.warning("Failed to reconcile orphan %s", agent_id, exc_info=True)
-
-                # Rate limit: yield to event loop every 50 entries
-                processed += 1
-                if processed % 50 == 0:
-                    await asyncio.sleep(0)
-        except Exception:
-            logger.warning("Orphan reconciliation failed", exc_info=True)
-
-    @staticmethod
-    def _is_pid_alive(pid: int) -> bool:
-        """Check if a PID is still running."""
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True  # process exists, we just can't signal it
-        except OSError:
-            return False
-
-    @staticmethod
-    def _is_orphan_process(pid: int, spawned_at: float) -> bool:
-        """Check if PID belongs to the original subagent (not a recycled PID).
-
-        Compares /proc/{pid} creation time against the recorded spawn time.
-        Returns False if the process was created after the agent was spawned
-        (indicating PID reuse).
-        """
-        try:
-            proc_stat = os.stat(f"/proc/{pid}")
-            # Process was created before or around the time we spawned the agent
-            return proc_stat.st_ctime <= spawned_at + 2.0
-        except (FileNotFoundError, OSError):
-            return False
-
-    @staticmethod
-    def _kill_orphan_pid(pid: int) -> None:
-        """Best-effort SIGKILL of an orphaned process."""
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
-
-    async def _notify_orphan(
-        self, agent_id: str, state: dict, recovery: str, has_result: bool
-    ) -> None:
-        """Notify user about an orphaned subagent.
-
-        1. Try session injection if parent session still exists
-        2. Fall back to the channel DM via send_message MCP tool
-        """
-        task_preview = (state.get("task", "") or "")[:100]
-        parent_session = state.get("parent_session", "")
-
-        result_path = str(_agent_dir(agent_id) / "result.txt")
-
-        if has_result:
-            msg = (
-                f"[Subagent completion event]\n"
-                f"Agent `{agent_id}` ⚠️ orphaned by gateway restart\n"
-                f"Task: {task_preview}\n"
-                f"Result saved at: `{result_path}`\n"
-                f"Use the read tool to retrieve it."
-            )
-        else:
-            msg = (
-                f"[Subagent completion event]\n"
-                f"Agent `{agent_id}` ❌ lost to gateway restart\n"
-                f"Task: {task_preview}\n"
-                f"No result was captured before the restart."
-            )
-
-        # Redact before any delivery path (injection or channel DM)
-        msg = _redact(msg)
-
-        # Try session injection first
-        if parent_session.startswith("dashboard:"):
-            try:
-                injected = await self._try_inject_orphan_notification(parent_session, msg)
-                if injected:
-                    # Update tombstone recovery_action
-                    try:
-                        write_tombstone(
-                            agent_id,
-                            cause="gateway_restart",
-                            recovery_action="delivered",
-                            pid=state.get("pid"),
-                            turns=state.get("turns", 0),
-                            last_tool=state.get("last_tool", ""),
-                        )
-                    except Exception:
-                        pass
-                    return
-            except Exception:
-                logger.debug("Injection failed for orphan %s", agent_id, exc_info=True)
-
-        # Fallback: channel DM
-        try:
-            await self._send_orphan_channel_dm(msg)
-        except Exception:
-            logger.debug("Channel DM fallback failed for orphan %s", agent_id, exc_info=True)
-
-    async def _try_inject_orphan_notification(self, parent_session: str, msg: str) -> bool:
-        """Try to inject a message into the parent dashboard session.
-
-        Returns True if injection succeeded.
-        """
-        # This hooks into the existing dashboard session injection mechanism.
-        # For now, return False to always fall through to the channel DM.
-        # Full injection requires access to the dashboard session, which is
-        # wired up at a higher level (gateway.py). This will be connected
-        # when the notification plumbing is integrated.
-        return False
-
-    async def _send_orphan_channel_dm(self, msg: str) -> None:
-        """Surface an orphan notification (best-effort).
-
-        No channel client is wired at this layer, so the notification is logged
-        at WARNING rather than DM'd.
-        """
-        logger.warning("Orphan notification (channel DM pending): %s", msg[:200])
+            # One-shot reconciliation of what a previous run left, on startup.
+            self._reconcile_task = asyncio.create_task(reconcile_orphans(self._agents))
 
     async def _reaper_loop(self) -> None:
         """Periodically force-kill subagents that exceed the timeout.
@@ -1478,7 +1266,7 @@ class SubagentManager:
             extra_env=dict(extra_env or {}),
             trigger_id=trigger_id or "",
         )
-        info._raw_task = task  # unredacted prompt for ACP agent execution
+        info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
 
         # --- Fan-out stop (C1.4 breaker / C1.5 run budget / kill-fan-out): a stopped
         # fan-out refuses further spawns with the recorded TYPED reason. ---
@@ -2217,7 +2005,8 @@ class SubagentManager:
         # Intentionally check info.agent (not resolved `agent`) so only
         # explicitly requested agents skip _SYSTEM_PREFIX (defense-in-depth).
         named_agent = bool(info.agent and _AGENT_NAME_RE.fullmatch(info.agent))
-        raw_task = info._raw_task or info.task
+        # Composed from what a parent model, a trigger or a workflow step read, so it is masked.
+        raw_task = redact_for_model(info._raw_task or info.task)
         if named_agent:
             message = raw_task
         else:
@@ -2266,13 +2055,14 @@ class SubagentManager:
         # §4.1 read-only research class: resolve ONCE per run. An auto-fired spawn defaults to the
         # research (read-only) class, so its write/execute tools are denied at the approval loop
         # below. Resolved here (not per event) because the class is fixed for the run's lifetime.
+        from functools import partial
+
         from personalclaw.guardrails.policy import (
             TOOL_READ,
             TOOL_READ_WRITE,
-            tool_grant_denial,
+            declared_tool_grant_denial,
             tool_grant_posture,
         )
-        from personalclaw.workflows.batch_compile import is_write_tool
 
         _capability_class = resolve_capability_class(
             capability_class=info.capability_class, approval_mode=info.approval_mode
@@ -2288,8 +2078,9 @@ class SubagentManager:
             TOOL_READ if _research_readonly else TOOL_READ_WRITE,
         )
 
-        def _grant_denial(tool: str) -> str:
-            return tool_grant_denial(_tool_profile, tool, write_class=is_write_tool(tool))
+        # A call is within the grant by what its tool DECLARES, asked as a research leaf's and a
+        # room critic's are (`declared_tool_grant_denial`).
+        _grant_denial = partial(declared_tool_grant_denial, _tool_profile)
 
         # 🔴 The grants are enforced in the approval loop below, which sees only the calls that
         # ASK. A native runtime answers an ask itself while a standing grant stands (its policy
@@ -2340,12 +2131,18 @@ class SubagentManager:
                 # tool-approval layer, BEFORE any auto-approve branch below can admit the call.
                 # Placement is load-bearing: an auto-fired research run resolves
                 # parent_policy="auto" (from approval_mode="auto"), so a denial placed AFTER that
-                # branch would be dead code and the grant would be a label, not a control. Uses
-                # the SAME ``is_write_tool`` policy the workflow research leaf uses
-                # (``leaf_tool_denial``) — a research subagent and a research leaf deny alike —
-                # and the same grant algebra (``tool_grant_denial``), so a ceiling that narrowed
-                # this spawn's tools to an allowlist refuses the rest even for a MUTATING class.
-                _grant_deny = _grant_denial(event.title or "")
+                # branch would be dead code and the grant would be a label, not a control. It is
+                # the check the native runtime is handed, on what the request says its tool
+                # declares; so a ceiling that narrowed this spawn's tools refuses the rest even for
+                # a MUTATING class. An ACP child's own tool declares nothing, so only its read-only
+                # shell commands pass a `read` grant.
+                _grant_deny = _grant_denial(
+                    event.title or "",
+                    event.risk_level,
+                    event.tool_kind,
+                    event.tool_input,
+                    proposes=event.proposes,
+                )
                 if _grant_deny:
                     await self._reject_and_log(
                         client,

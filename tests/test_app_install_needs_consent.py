@@ -330,3 +330,38 @@ async def test_the_review_refuses_a_wrong_typed_field_and_fetches_nothing(
     assert payload["error"]["code"] == "field_not_a_string"
     assert field in payload["error"]["message"]
     assert fetched == [], "the review fetched a source whose request it should have refused"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("route", "value"),
+    [
+        ("/api/apps", ["x"]),
+        ("/api/apps", None),
+        ("/api/apps", 7),
+        ("/api/apps/digest/update", ["x"]),
+        ("/api/apps/digest/update", {"a": "b"}),
+    ],
+    ids=["install-array", "install-null", "install-int", "update-array", "update-object"],
+)
+async def test_install_and_update_refuse_a_source_that_is_not_a_string(
+    tmp_path, monkeypatch, route, value
+):
+    """The two doors beside the review read `source` the way it does (#3748): a non-string one is
+    a 400 naming the field, before anything is fetched. 🔴 Red on main: both `str()`-coerced it,
+    so `null` became the path `"None"` and a list became `"['x']"`, handed to the fetch as if
+    someone had typed it."""
+    from personalclaw.apps import source as app_source
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    fetched: list = []
+    monkeypatch.setattr(app_source, "resolve", lambda *a, **k: fetched.append(a))
+    app = web.Application(middlewares=[request_boundary_middleware()])
+    register_app_routes(app)
+    async with TestClient(TestServer(app)) as client:
+        r = await client.post(route, json={"source": value, "consent": ""})
+        payload = await r.json()
+    assert r.status == 400, payload
+    assert payload["error"]["code"] == "field_not_a_string", payload
+    assert "source" in payload["error"]["message"]
+    assert fetched == [], "a source whose request should have been refused was fetched"

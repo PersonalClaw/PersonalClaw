@@ -188,15 +188,25 @@ def _listing_fetch_policy(source: str, base: str, listed_by: str) -> Any:
 
 def _clone_git(url: str, *, policy: Any = None) -> ResolvedSource:
     """Shallow-clone *url*. With a ``policy`` (a listing's fetch), git runs through the egress
-    guard's tunnel; without one (the owner's own URL), it runs as a plain ``git clone``."""
-    from personalclaw.net.git import GitEgressRefused, GitHostUnreachable, run_git_guarded
+    guard's tunnel; without one (the owner's own URL), it runs as a plain ``git clone``. Either
+    way git gets the child allowlist, not the gateway's environment (``net.git.source_git_env``)."""
+    from personalclaw.net.git import (
+        GitEgressRefused,
+        GitHostUnreachable,
+        run_git_guarded,
+        source_git_env,
+    )
 
     tmp = Path(tempfile.mkdtemp(prefix="pclaw-app-clone-"))
     clone = ["clone", "--depth", "1", "--", url, str(tmp)]
     try:
         if policy is None:
             proc = subprocess.run(
-                ["git", *clone], capture_output=True, text=True, timeout=_CLONE_TIMEOUT
+                ["git", *clone],
+                capture_output=True,
+                text=True,
+                timeout=_CLONE_TIMEOUT,
+                env=source_git_env(site="app-install-git"),
             )
         else:
             proc = run_git_guarded(clone, policy=policy, timeout=_CLONE_TIMEOUT)

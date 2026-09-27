@@ -6,7 +6,8 @@ and a chat's handoff to on a channel (``channel_delivery.reach_owner``). It was 
 reached nobody. Three routes close that:
 
 * ``GET /api/channels/{name}/owner`` — the owner id core uses on that channel and which key it came
-  from, whether the channel can pair from here, and the pairing's state. Never a code.
+  from, whether the channel can pair from here and how the code is sent there (``pairing_hint``,
+  when not a DM to the bot), and the pairing's state. Never a code.
 * ``POST /api/channels/{name}/owner/pairing`` — mint the code, returned ONCE in this response. The
   owner sends it to the bot in a direct message; the channel's inbound crosses the guarded door,
   where :func:`~personalclaw.channel_trust.guard_inbound` stores the sender's id under the
@@ -49,6 +50,15 @@ def _pairing_supported(transport: Any) -> bool:
         return False
 
 
+def _pairing_hint(transport: Any) -> str:
+    """How the owner sends the code on this channel, when the channel says (``""``: a DM)."""
+    try:
+        return str(transport.owner_pairing_hint() or "")
+    except Exception:  # noqa: BLE001 - a broken hint leaves the page's own sentence
+        logger.debug("channel %s: owner_pairing_hint() failed", transport.name, exc_info=True)
+        return ""
+
+
 def _unknown() -> web.Response:
     return json_error("channel_unknown", status=404)
 
@@ -66,6 +76,7 @@ async def api_channel_owner(request: web.Request) -> web.Response:
             "owner_id": owner,
             "source": source,
             "pairing_supported": _pairing_supported(transport),
+            "pairing_hint": _pairing_hint(transport),
             "pairing": channel_trust.owner_pairing_status(transport.name),
         }
     )

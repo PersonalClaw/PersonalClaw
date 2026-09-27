@@ -20,6 +20,7 @@ import asyncio
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import pool, service
 from personalclaw.workflows.pool import DEFAULT_LEASE_SECS, LeaseError
 
@@ -188,13 +189,13 @@ def test_the_lease_dir_is_under_the_CONFIG_dir(tmp_path):
 def test_an_UNKNOWN_verb_is_REFUSED_not_treated_as_a_reject():
     """A typo silently declining an approval would reject work the user meant to allow, and they
     would have no way to know why."""
-    result = service.resolve_confirmation("r-1", verb="yolo")
+    result = service.resolve_confirmation("r-1", verb="yolo", by=YOU)
     assert result["ok"] is False
     assert result["code"] == "WF_CONFIRM_VERB_INVALID"
 
 
 def test_an_EMPTY_verb_is_refused():
-    assert service.resolve_confirmation("r-1", verb="")["ok"] is False
+    assert service.resolve_confirmation("r-1", verb="", by=YOU)["ok"] is False
 
 
 def _a_run() -> str:
@@ -217,7 +218,7 @@ def test_SKIP_and_QUIT_resolve_nothing_and_consume_no_token(verb):
 
     That invariant is unchanged and is what this leg is for. What changed is that the run has to
     exist first — orthogonal to consuming nothing, and the two were previously conflated."""
-    result = service.resolve_confirmation(_a_run(), verb=verb)
+    result = service.resolve_confirmation(_a_run(), verb=verb, by=YOU)
     assert result["ok"] is True
     assert result["resumed"] is False
     assert "code" not in result
@@ -226,11 +227,11 @@ def test_SKIP_and_QUIT_resolve_nothing_and_consume_no_token(verb):
 def test_SKIP_reports_still_pending():
     """Different from rejecting it: without skip a user has to answer in the order the engine
     happened to ask."""
-    assert service.resolve_confirmation(_a_run(), verb="skip")["still_pending"] is True
+    assert service.resolve_confirmation(_a_run(), verb="skip", by=YOU)["still_pending"] is True
 
 
 def test_QUIT_is_not_still_pending():
-    assert service.resolve_confirmation(_a_run(), verb="quit")["still_pending"] is False
+    assert service.resolve_confirmation(_a_run(), verb="quit", by=YOU)["still_pending"] is False
 
 
 @pytest.mark.parametrize("verb", ["approve", "reject", "skip", "quit"])
@@ -251,7 +252,7 @@ def test_EVERY_verb_requires_the_run_to_EXIST(verb):
     still resolve nothing (the leg above). "Touches the run" was conflating "reads it to check it is
     there" with "mutates its gate", and only the second was ever the invariant.
     """
-    result = service.resolve_confirmation("r-missing", verb=verb)
+    result = service.resolve_confirmation("r-missing", verb=verb, by=YOU)
     assert result["ok"] is False
     assert result["code"] == "WF_RUN_NOT_FOUND"
 
@@ -267,15 +268,15 @@ def test_the_gate_answer_is_the_APPROVAL_BOOLEAN_not_the_verb(monkeypatch):
         return {"ok": True, "run_id": run_id}
 
     monkeypatch.setattr(service, "resume_run", fake_resume)
-    service.resolve_confirmation(_a_run(), verb="reject")
+    service.resolve_confirmation(_a_run(), verb="reject", by=YOU)
     assert seen["answer"] is False
-    service.resolve_confirmation(_a_run(), verb="approve")
+    service.resolve_confirmation(_a_run(), verb="approve", by=YOU)
     assert seen["answer"] is True
 
 
 def test_the_result_names_the_verb_and_the_decision(monkeypatch):
     monkeypatch.setattr(service, "resume_run", lambda run_id, **kw: {"ok": True})
-    result = service.resolve_confirmation(_a_run(), verb="approve", note="checked the diff")
+    result = service.resolve_confirmation(_a_run(), verb="approve", note="checked the diff", by=YOU)
     assert result["verb"] == "approve"
     assert result["approved"] is True
 
@@ -287,7 +288,7 @@ def test_a_resume_TOKEN_is_passed_through(monkeypatch):
     monkeypatch.setattr(
         service, "resume_run", lambda run_id, **kw: (seen.update(kw), {"ok": True})[1]
     )
-    service.resolve_confirmation(_a_run(), verb="approve", token="tok-1")
+    service.resolve_confirmation(_a_run(), verb="approve", token="tok-1", by=YOU)
     assert seen["token"] == "tok-1"
 
 
@@ -301,7 +302,7 @@ def test_resolving_rides_the_ONE_resume_path(monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(service, "resume_run", fake_resume)
-    service.resolve_confirmation(_a_run(), verb="approve")
+    service.resolve_confirmation(_a_run(), verb="approve", by=YOU)
     assert called["n"] == 1
 
 

@@ -153,7 +153,7 @@ describe('app config advanced-field disclosure (#500 defect B)', () => {
       (prop) => prop['x-meta']?.tags?.includes('advanced'),
     )
 
-    expect(Object.keys(props)).toHaveLength(9)
+    expect(Object.keys(props)).toHaveLength(10)
     expect(advanced).toHaveLength(8)
   })
 

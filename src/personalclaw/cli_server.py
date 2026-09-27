@@ -118,7 +118,7 @@ def _token(args: argparse.Namespace) -> None:
     try:
         secret = secret_path.read_text().strip()
     except FileNotFoundError:
-        print("❌ Gateway not running — start it with: personalclaw gateway")
+        print("❌ Gateway not running — start it with: personalclaw gateway", file=sys.stderr)
         sys.exit(1)
 
     url = f"http://localhost:{port}/api/token/local?ttl={args.ttl}"
@@ -128,11 +128,11 @@ def _token(args: argparse.Namespace) -> None:
             data = json.loads(resp.read())
             token = data.get("token", "")
     except Exception as exc:
-        print(f"❌ Could not reach gateway on port {port}: {exc}")
+        print(f"❌ Could not reach gateway on port {port}: {exc}", file=sys.stderr)
         sys.exit(1)
 
     if not token:
-        print("❌ Gateway returned empty token")
+        print("❌ Gateway returned empty token", file=sys.stderr)
         sys.exit(1)
     print(f"http://localhost:{port}?token={token}")
     # On stderr, so stdout stays a list of URLs a script can open; a person running
@@ -185,7 +185,7 @@ def _logout(port: int) -> None:
     try:
         secret = secret_path.read_text().strip()
     except FileNotFoundError:
-        print("❌ Gateway not running — start it with: personalclaw gateway")
+        print("❌ Gateway not running — start it with: personalclaw gateway", file=sys.stderr)
         sys.exit(1)
 
     url = f"http://localhost:{port}/api/logout"
@@ -201,13 +201,16 @@ def _logout(port: int) -> None:
             if data.get("ok"):
                 print("✅ All dashboard sessions revoked.")
             else:
-                print(f"❌ Failed to revoke sessions: {data.get('error', 'unknown error')}")
+                print(
+                    f"❌ Failed to revoke sessions: {data.get('error', 'unknown error')}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
     except urllib.error.HTTPError as e:
-        print(f"❌ Failed to revoke sessions: HTTP {e.code}")
+        print(f"❌ Failed to revoke sessions: HTTP {e.code}", file=sys.stderr)
         sys.exit(1)
     except (urllib.error.URLError, OSError):
-        print("❌ Gateway not running — start it with: personalclaw gateway")
+        print("❌ Gateway not running — start it with: personalclaw gateway", file=sys.stderr)
         sys.exit(1)
 
 
@@ -244,7 +247,8 @@ def _stop(port: int) -> None:
         )
         print(
             "❌ `lsof` not found — cannot look up gateway process. "
-            f"Install lsof or use `ss -tlnp | grep {port}` to find the PID manually."
+            f"Install lsof or use `ss -tlnp | grep {port}` to find the PID manually.",
+            file=sys.stderr,
         )
         sys.exit(1)
     except subprocess.CalledProcessError:
@@ -258,7 +262,7 @@ def _stop(port: int) -> None:
             source="cli",
             resources=f"port={port}",
         )
-        print(f"No PersonalClaw gateway currently running on port {port}.")
+        print(f"No PersonalClaw gateway currently running on port {port}.", file=sys.stderr)
         sys.exit(1)
 
     pids = list(dict.fromkeys(int(p) for p in out.splitlines() if p.strip().isdigit()))
@@ -278,7 +282,8 @@ def _stop(port: int) -> None:
         )
         print(
             "❌ `ps` not found — cannot verify gateway process. "
-            "Install procps or manually kill the process."
+            "Install procps or manually kill the process.",
+            file=sys.stderr,
         )
         sys.exit(1)
     if not pids:
@@ -289,7 +294,7 @@ def _stop(port: int) -> None:
             source="cli",
             resources=f"port={port} reason=no_personalclaw_process",
         )
-        print(f"No PersonalClaw gateway currently running on port {port}.")
+        print(f"No PersonalClaw gateway currently running on port {port}.", file=sys.stderr)
         sys.exit(1)
 
     sent: set[int] = set()
@@ -328,7 +333,9 @@ def _stop(port: int) -> None:
             resources=f"pids={denied} port={port}",
         )
         print(
-            f"❌ No permission to stop pid {', '.join(str(p) for p in denied)} — try: sudo personalclaw stop"  # noqa: E501
+            f"❌ No permission to stop pid {', '.join(str(p) for p in denied)} — "
+            "try: sudo personalclaw stop",
+            file=sys.stderr,
         )
         sys.exit(1)
     if not sent:
@@ -339,7 +346,10 @@ def _stop(port: int) -> None:
             source="cli",
             resources=f"port={port} reason=process_already_exited",
         )
-        print(f"No PersonalClaw gateway currently running on port {port} (process already exited).")
+        print(
+            f"No PersonalClaw gateway currently running on port {port} (process already exited).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -472,10 +482,10 @@ def _refuse_dirty_tree(tracked: list[str], operation: str) -> None:
     edits and ask the user to commit or stash. Exits 1 because the update the user
     asked for did not happen.
     """
-    print(f"  ⚠️  Local tracked-file changes would block {operation}:")
+    print(f"  ⚠️  Local tracked-file changes would block {operation}:", file=sys.stderr)
     for line in tracked[:10]:
-        print(f"      {line}")
-    print("     Commit or `git stash` them, then re-run `personalclaw update`.")
+        print(f"      {line}", file=sys.stderr)
+    print("     Commit or `git stash` them, then re-run `personalclaw update`.", file=sys.stderr)
     sys.exit(1)
 
 
@@ -493,7 +503,7 @@ def _update_git(proj: str) -> None:
     if not git_dir:
         # Detection said "git" because a .git was found; losing it between then and
         # now means the tree moved. Say so rather than touching something else.
-        print(f"❌ No git repo at {proj}")
+        print(f"❌ No git repo at {proj}", file=sys.stderr)
         sys.exit(1)
     print(f"  📂 {git_dir}")
 
@@ -510,7 +520,10 @@ def _update_git_nightly(git_dir: str) -> None:
     print("  ⬇️  git fetch…")
     fetched = self_update.git_fetch(git_dir, branch)
     if fetched.returncode != 0:
-        print(f"  ❌ git fetch origin {branch} failed:\n{(fetched.stderr or '').strip()}")
+        print(
+            f"  ❌ git fetch origin {branch} failed:\n{(fetched.stderr or '').strip()}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if self_update.git_is_up_to_date(git_dir, branch):
@@ -525,7 +538,10 @@ def _update_git_nightly(git_dir: str) -> None:
     ff = self_update.git_fast_forward(git_dir, branch)
     if ff.returncode != 0:
         # A diverged branch cannot fast-forward — we do NOT reset over it.
-        print(f"  ❌ fast-forward failed (branch diverged?):\n{(ff.stderr or '').strip()}")
+        print(
+            f"  ❌ fast-forward failed (branch diverged?):\n{(ff.stderr or '').strip()}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     _finish_git_update(git_dir)
@@ -564,12 +580,14 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
     print("  ⬇️  git fetch --tags…")
     fetched = self_update.git_fetch_tags(git_dir)
     if fetched.returncode != 0:
-        print(f"  ❌ git fetch --tags failed:\n{(fetched.stderr or '').strip()}")
+        print(f"  ❌ git fetch --tags failed:\n{(fetched.stderr or '').strip()}", file=sys.stderr)
         sys.exit(1)
     print(f"  🏷  git checkout {target}…")
     checked = self_update.git_checkout(git_dir, target)
     if checked.returncode != 0:
-        print(f"  ❌ git checkout {target} failed:\n{(checked.stderr or '').strip()}")
+        print(
+            f"  ❌ git checkout {target} failed:\n{(checked.stderr or '').strip()}", file=sys.stderr
+        )
         sys.exit(1)
 
     _finish_git_update(git_dir)
@@ -730,7 +748,7 @@ def _install(args: list[str], *, cwd: str, label: str) -> None:
     try:
         argv = install_argv(args)
     except NoInstallerError as exc:
-        print(f"  ❌ {exc}")
+        print(f"  ❌ {exc}", file=sys.stderr)
         sys.exit(1)
 
     print(f"  🔨 {installer_name()} {label}")
@@ -741,7 +759,9 @@ def _install(args: list[str], *, cwd: str, label: str) -> None:
         # Same one-line summary the dashboard shows: uv's stderr is ANSI-colored and
         # leads with the headline, so raw stderr reads as corrupted or as a fragment.
         summary = self_update.installer_error_summary(result.stderr or "", limit=500)
-        print(f"  ❌ Install failed: {summary}" if summary else "  ❌ Install failed")
+        print(
+            f"  ❌ Install failed: {summary}" if summary else "  ❌ Install failed", file=sys.stderr
+        )
         sys.exit(1)
 
 
@@ -762,8 +782,8 @@ def _pin_before_update(to: str) -> None:
     """
     target = self_update.normalize_version(to)
     if not self_update.set_version_pin(target):
-        print(f"❌ Not a usable version to pin: {to!r}")
-        print("   Give a release version, e.g. `personalclaw update --to 0.1.3`.")
+        print(f"❌ Not a usable version to pin: {to!r}", file=sys.stderr)
+        print("   Give a release version, e.g. `personalclaw update --to 0.1.3`.", file=sys.stderr)
         sys.exit(1)
     print(f"  📌 Pinned updates.pin = {target} (clear it to follow the channel again)")
     if self_update.version_tuple(target) < self_update.version_tuple(__version__):
@@ -816,10 +836,18 @@ def _update(to: str = "") -> None:
     if kind not in _UPDATE_HANDLED_KINDS:
         # No silent fall-through to the git pipeline: advancing a tree this kind may
         # not even own is the worst possible guess.
-        print(f"❌ Unrecognized install kind: {kind!r} — refusing to guess how to update it.")
-        print("   Check PERSONALCLAW_INSTALL_KIND, or update the way you installed:")
-        print("   pip/pipx/uv tool → upgrade the `personalclaw` package;")
-        print("   container → docker compose pull && up -d; git checkout → check out the new tag.")
+        print(
+            f"❌ Unrecognized install kind: {kind!r} — refusing to guess how to update it.",
+            file=sys.stderr,
+        )
+        print(
+            "   Check PERSONALCLAW_INSTALL_KIND, or update the way you installed:", file=sys.stderr
+        )
+        print("   pip/pipx/uv tool → upgrade the `personalclaw` package;", file=sys.stderr)
+        print(
+            "   container → docker compose pull && up -d; git checkout → check out the new tag.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if kind == "git":
@@ -989,7 +1017,10 @@ async def _gateway(
             approval_mode=approval_mode,
         )
     except GovernanceBootError as exc:
-        print(f"\n⛔ PersonalClaw did not start — governance could not be established.\n\n{exc}\n")
+        print(
+            f"\n⛔ PersonalClaw did not start — governance could not be established.\n\n{exc}\n",
+            file=sys.stderr,
+        )
         raise SystemExit(1) from None
 
 
@@ -1102,18 +1133,16 @@ def _service_cmd(args: argparse.Namespace) -> int:
             resources=f"rc={rc}",
         )
         return rc
-    if action == "status":
-        rc = service_controller.service_status()
-        sel().log_api_access(
-            caller="cli",
-            operation="service_status",
-            outcome="allowed" if rc == 0 else "error",
-            source="cli",
-            resources=f"rc={rc}",
-        )
-        return rc
-    print("Usage: personalclaw service {install|uninstall|status}", file=sys.stderr)
-    return 2
+    # `status`: the parser allows no other command.
+    rc = service_controller.service_status()
+    sel().log_api_access(
+        caller="cli",
+        operation="service_status",
+        outcome="allowed" if rc == 0 else "error",
+        source="cli",
+        resources=f"rc={rc}",
+    )
+    return rc
 
 
 def _logs_cmd(args: argparse.Namespace) -> None:

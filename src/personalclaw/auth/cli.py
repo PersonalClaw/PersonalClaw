@@ -17,6 +17,7 @@ from __future__ import annotations
 import getpass
 import os
 import sys
+from typing import Any
 
 from personalclaw.auth import credentials as creds
 
@@ -67,7 +68,7 @@ def _set_auth_field(name: str, value: object) -> None:
     try:
         mutate_config(_apply)
     except ConfigWriteError as exc:
-        print(f"❌ {exc}")
+        print(f"❌ {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
 
@@ -77,28 +78,32 @@ def _read_new_password() -> str | None:
         # Deliberately refuse to read a password from a pipe. A piped secret is one that
         # came from a shell history, a script, or a CI log — see `auth bootstrap` for the
         # unattended path, which takes it from the environment instead.
-        print("❌ A password must be typed at a terminal.")
-        print("   For unattended installs set PERSONALCLAW_LOGIN_USER/PERSONALCLAW_LOGIN_PASSWORD")
-        print("   and the gateway will enroll it on first start.")
+        print("❌ A password must be typed at a terminal.", file=sys.stderr)
+        print(
+            "   For unattended installs set PERSONALCLAW_LOGIN_USER/PERSONALCLAW_LOGIN_PASSWORD",
+            file=sys.stderr,
+        )
+        print("   and the gateway will enroll it on first start.", file=sys.stderr)
         return None
     try:
         first = getpass.getpass("New password: ")
         second = getpass.getpass("Confirm password: ")
     except (KeyboardInterrupt, EOFError):
-        print("\nAborted.")
+        print("\nAborted.", file=sys.stderr)
         return None
     if first != second:
-        print("❌ The passwords did not match.")
+        print("❌ The passwords did not match.", file=sys.stderr)
         return None
     return first
 
 
 def auth_cmd(args) -> int:
-    """``personalclaw auth set-password|enable|disable|status|totp``."""
-    action = str(getattr(args, "auth_command", "") or "")
+    """``personalclaw auth [status|set-password|enable|disable|totp|enroll|revoke|rotate-key]``.
 
-    if action in ("", "status"):
-        return _print_status()
+    A bare ``auth`` shows the status. So does anything else the dispatch below does not name,
+    the one answer that changes nothing (the parser allows no other command).
+    """
+    action = str(getattr(args, "auth_command", "") or "")
 
     if action == "set-password":
         user = str(getattr(args, "user", "") or "").strip() or os.environ.get("USER", "owner")
@@ -108,10 +113,10 @@ def auth_cmd(args) -> int:
         try:
             creds.set_password(user, plaintext)
         except ValueError as exc:
-            print(f"❌ {exc}")
+            print(f"❌ {exc}", file=sys.stderr)
             return 1
         except creds.CredentialError as exc:
-            print(f"❌ {exc}")
+            print(f"❌ {exc}", file=sys.stderr)
             return 1
         print(f"✅ Password set for {user!r} ({creds.credentials_path()}, 0600).")
         if not _auth_config().get("login_enabled"):
@@ -120,8 +125,13 @@ def auth_cmd(args) -> int:
 
     if action == "enable":
         if not creds.has_credentials():
-            print("❌ No credential is set. Run `personalclaw auth set-password` first.")
-            print("   Enabling login without one would offer a form nobody can pass.")
+            print(
+                "❌ No credential is set. Run `personalclaw auth set-password` first.",
+                file=sys.stderr,
+            )
+            print(
+                "   Enabling login without one would offer a form nobody can pass.", file=sys.stderr
+            )
             return 1
         _set_auth_field("login_enabled", True)
         print("✅ Owner login enabled. Restart the gateway for it to take effect.")
@@ -143,8 +153,10 @@ def auth_cmd(args) -> int:
     if action == "revoke":
         return _revoke_cmd(args)
 
-    print("Usage: personalclaw auth set-password|enable|disable|status|totp|enroll|revoke")
-    return 2
+    if action == "rotate-key":
+        return _rotate_key_cmd(args)
+
+    return _print_status()
 
 
 def _enroll_cmd(args) -> int:
@@ -184,8 +196,11 @@ def _revoke_cmd(args) -> int:
     and a nonce in a terminal or shell history is a credential.
     """
     if not bool(getattr(args, "all", False)):
-        print("Usage: personalclaw auth revoke --all")
-        print("  Ends every dashboard session. You will need to log in (or use a token) again.")
+        print("Usage: personalclaw auth revoke --all", file=sys.stderr)
+        print(
+            "  Ends every dashboard session. You will need to log in (or use a token) again.",
+            file=sys.stderr,
+        )
         return 2
 
     from personalclaw.config.loader import _DEFAULT_PORT
@@ -196,12 +211,19 @@ def _revoke_cmd(args) -> int:
         print("   Your password and 2FA enrollment are untouched.")
         return 0
 
-    from personalclaw.dashboard.token_auth import revoke_all_sessions
-
-    revoke_all_sessions()
+    _sessions_here().revoke_all_sessions()
     print("✅ Revoked every stored session (no gateway was running).")
     print("   Your password and 2FA enrollment are untouched.")
     return 0
+
+
+def _sessions_here() -> Any:
+    """The session module, for acting on the store in THIS process — only when no gateway is
+    running, since a running one holds the sessions (and the key) in memory. One import site for
+    both commands that fall back to it."""
+    import personalclaw.dashboard.token_auth as token_auth
+
+    return token_auth
 
 
 def _revoke_via_gateway(port: int) -> bool:
@@ -209,6 +231,17 @@ def _revoke_via_gateway(port: int) -> bool:
 
     Reuses the existing loopback + `.local_secret` rail that `personalclaw logout` uses, so this
     adds no new authenticated surface — it is the same internal endpoint.
+    """
+    _reached, answer = _ask_gateway(port, "/api/logout", secret_header="X-Local-Secret", body={})
+    return bool(answer.get("ok"))
+
+
+def _ask_gateway(port: int, path: str, *, secret_header: str, body: dict) -> tuple[bool, dict]:
+    """POST *body* to the running gateway on loopback with the local secret in *secret_header*.
+
+    ``(reached, answer)``: whether a gateway answered at all — a refusal included — and what it
+    said (``{}`` when nothing readable came back). The two are kept apart because an action a
+    running gateway REFUSED must never be retried here as if none were running.
     """
     import json as _json
     import urllib.error
@@ -219,21 +252,67 @@ def _revoke_via_gateway(port: int) -> bool:
     try:
         secret = (config_dir() / ".local_secret").read_text(encoding="utf-8").strip()
     except OSError:
-        return False
+        return False, {}
     if not secret:
-        return False
+        return False, {}
 
     req = urllib.request.Request(
-        f"http://localhost:{port}/api/logout",
+        f"http://localhost:{port}{path}",
         method="POST",
-        headers={"X-Local-Secret": secret, "Content-Type": "application/json"},
-        data=b"{}",
+        headers={secret_header: secret, "Content-Type": "application/json"},
+        data=_json.dumps(body).encode(),
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 - fixed loopback URL
-            return bool(_json.loads(resp.read()).get("ok"))
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
-        return False
+            raw = resp.read()
+    except urllib.error.HTTPError as refused:
+        raw = refused.read()
+    except (urllib.error.URLError, OSError):
+        return False, {}
+    try:
+        answer = _json.loads(raw)
+    except ValueError:
+        return True, {}
+    return True, answer if isinstance(answer, dict) else {}
+
+
+def _rotate_key_cmd(args) -> int:
+    """``personalclaw auth rotate-key`` — replace the key every sign-in is signed with.
+
+    Signs out every browser, paired device and token at once (``token_auth.rotate_signing_key``),
+    and each is told why when it next connects. For when the key, or a sign-in, may have been
+    copied: signing sessions out one by one leaves the key that could mint new ones.
+
+    **Routed through the RUNNING gateway**, for the reason ``auth revoke --all`` is: it holds the
+    key and every live session in memory, so a key written from another process would leave it
+    signing and accepting with the old one until it restarted. It goes over loopback with the
+    local secret (``/api/auth/rotate-key`` is a mixed internal path). With no gateway running
+    there is nothing holding the old key, so it is replaced here.
+    """
+    from personalclaw.config.loader import _DEFAULT_PORT
+
+    port = int(getattr(args, "port", 0) or _DEFAULT_PORT)
+    reached, answer = _ask_gateway(
+        port, "/api/auth/rotate-key", secret_header="X-Internal-Secret", body={"confirm": True}
+    )
+    if reached and not answer.get("ok"):
+        error = answer.get("error")
+        why = error.get("message") if isinstance(error, dict) else error
+        print(
+            f"❌ The gateway did not replace the key, so nobody was signed out: {why or answer}",
+            file=sys.stderr,
+        )
+        return 1
+    if reached:
+        signed_out = int(answer.get("signed_out") or 0)
+    else:
+        signed_out = _sessions_here().rotate_signing_key(actor="cli")
+    ended = f"{signed_out} sign-in{'' if signed_out == 1 else 's'}"
+    print(f"✅ Replaced the sign-in key and signed everyone out ({ended} ended).")
+    print("   Every browser, paired device and token is told why the next time it connects.")
+    print("   Integration tokens are separate and keep working. To sign this computer's browser")
+    print("   back in, run `personalclaw token` and open the link it prints.")
+    return 0
 
 
 def _totp_cmd(args) -> int:
@@ -242,11 +321,8 @@ def _totp_cmd(args) -> int:
         creds.disable_totp()
         print("✅ 2FA turned off. The secret is kept, so re-enabling needs no re-enrollment.")
         return 0
-    if sub != "setup":
-        print("Usage: personalclaw auth totp setup|disable")
-        return 2
     if not creds.has_credentials():
-        print("❌ Set a password first — 2FA is a second factor, not the first.")
+        print("❌ Set a password first — 2FA is a second factor, not the first.", file=sys.stderr)
         return 1
 
     from personalclaw.auth.totp import new_secret, provisioning_uri

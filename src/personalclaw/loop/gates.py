@@ -53,7 +53,7 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
         # shim via an explicit ``/bin/sh -c`` — equivalent to create_subprocess_shell's
         # own shell, but the shim (prepended to argv) needs a real argv to wrap. No
         # preexec_fn: the limit is applied after exec, off the event loop's fork.
-        from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+        from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
 
         proc = await create_subprocess_limited(
             "/bin/sh",
@@ -61,6 +61,9 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
             cmd,
             profile=PROFILE_TOOL,
             cwd=cwd or None,
+            # The loop's persisted command, so the child allowlist (`build_child_env`), like a
+            # cron script: never a copy of the gateway's environment and the secrets in it.
+            env=build_child_env(site="loop-verify"),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
             # Own group: this is `/bin/sh -c <persisted command>`, so the shell forks a

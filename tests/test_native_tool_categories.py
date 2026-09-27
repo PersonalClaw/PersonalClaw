@@ -170,10 +170,19 @@ def test_no_tool_name_collision_between_categories():
 
 
 def test_in_process_catalog_matches_aggregate_and_groups_by_provider():
-    from personalclaw.providers.loader import load_all_extensions
+    # The in-process walk, not the gateway's. `load_all_extensions` also starts the three app
+    # watchdogs and a background package repair, and nothing here stops them: they ran on in the
+    # worker after this test, against whichever test's home was current by then.
+    from personalclaw.apps import backend_runtime, worker_runtime
+    from personalclaw.local_models import sidecar
+    from personalclaw.providers.loader import register_extension_providers
     from personalclaw.tool_providers.registry import list_all_tools, list_providers
 
-    load_all_extensions()
+    watchdogs = (backend_runtime._WATCHDOG, worker_runtime._WATCHDOG, sidecar._WATCHDOG)
+    already = {w.name for w in watchdogs if w.running()}
+    register_extension_providers()
+    started = {w.name for w in watchdogs if w.running()} - already
+    assert not started, f"the catalog walk left gateway watchdogs running: {sorted(started)}"
     provs = {p.name for p in list_providers()}
     assert (
         _CATEGORY_PROVIDERS <= provs

@@ -8,11 +8,14 @@ being on the machine. That is the concrete pain this fixes.
 
 Two pieces of state, deliberately separate files:
 
-* **the signing key** (`session_key`) — 32 random bytes, 0600. Rotating it invalidates
-  everything at once, which is exactly what you want from a panic button and exactly what
-  you do NOT want to happen accidentally on reboot.
+* **the signing key** (`session_key`) — 32 random bytes, 0600. Replacing it (Settings →
+  Security, or `personalclaw auth rotate-key`) signs every session out at once, which is
+  exactly what you want from a panic button and exactly what you do NOT want to happen
+  accidentally on reboot.
 * **the session records** (`sessions.json`) — one entry per minted nonce with its expiry,
-  so a token minted before a restart still verifies afterwards.
+  so a token minted before a restart still verifies afterwards; the endings the gateway
+  explains; and, after a rotation, the replaced key, kept only to recognise the tokens it
+  signed so their holders can be told why they were signed out (:func:`retire_key`).
 
 **Row shape.** A row is a RECORD, not a bare expiry:
 ``{"exp": float, "issuer": str, "app": str?, "device": {...}}``. ``issuer`` is the DOOR the
@@ -68,6 +71,7 @@ should refuse to pretend otherwise.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -167,6 +171,7 @@ END_SIGNED_OUT_OTHERS = "signed_out_others"  # "Sign out all other devices" on a
 END_SIGNED_OUT_EVERYWHERE = "signed_out_everywhere"  # `personalclaw logout` / `auth revoke --all`
 END_LIMIT = "limit"  # more of its kind were signed in than the limit, and it was the idlest
 END_REPLACED = "replaced"  # the same browser signed in again with a newer link
+END_KEY_REPLACED = "key_replaced"  # the owner replaced the key every sign-in is signed with
 END_EXPIRED = "expired"  # it ran its whole lifetime (recorded by the store, never passed in)
 END_REASONS: tuple[str, ...] = (
     END_SIGNED_OUT,
@@ -175,6 +180,7 @@ END_REASONS: tuple[str, ...] = (
     END_SIGNED_OUT_EVERYWHERE,
     END_LIMIT,
     END_REPLACED,
+    END_KEY_REPLACED,
     END_EXPIRED,
 )
 
@@ -184,6 +190,11 @@ MAX_ENDED = 500
 
 #: How long after a session would have expired its ending is still explained.
 ENDED_RETENTION_SECS = 7 * 86400
+
+#: How long the key a rotation replaced is kept: until the last ending it can explain is forgotten
+#: — a session it signed ends at most the lifetime limit after the rotation, and its ending is
+#: explained for :data:`ENDED_RETENTION_SECS` after that.
+RETIRED_KEY_RETENTION_SECS = MAX_LIFETIME_SECS + ENDED_RETENTION_SECS
 
 #: How stale a recorded ``last_seen`` must be before an authorized request rewrites the store.
 #:
@@ -233,16 +244,15 @@ def load_or_create_key() -> bytes:
     return key
 
 
-def rotate_key() -> bytes:
-    """Replace the signing key, invalidating every existing token. Returns the new key."""
+def write_new_key() -> bytes:
+    """Replace the signing key on disk with a fresh one, and return it. Every token signed with
+    the old key stops verifying — end the sessions first (:func:`retire_key`), so each one is
+    remembered as ended rather than left in the store as a row nothing can use."""
     key = os.urandom(KEY_BYTES)
     path = key_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_bytes(path, key, mode=0o600)
-    # The records are meaningless under a new key — a nonce whose signature can no longer be
-    # verified is not a session, it is 100 bytes of noise that would outlive its own expiry.
-    clear_sessions()
-    logger.info("rotated the session signing key; all existing tokens are now invalid")
+    logger.info("replaced the session signing key; every token signed with the old one is refused")
     return key
 
 
@@ -522,6 +532,25 @@ def _parse_ended(raw: Any) -> EndedSession | None:
 class _State:
     records: dict[str, SessionRecord]
     ended: dict[str, EndedSession]
+    #: The key the last rotation replaced, and when — kept beside the endings it can explain
+    #: (:func:`retire_key`). Empty when there has been no rotation, or its time has passed.
+    retired_key: bytes = b""
+    retired_at: float = 0.0
+
+
+def _parse_retired(raw: Any, now: float) -> tuple[bytes, float]:
+    """The ``retired_key`` block's ``(key, retired_at)``, or ``(b"", 0.0)`` — also once it is older
+    than :data:`RETIRED_KEY_RETENTION_SECS`, when no ending it could explain is remembered."""
+    if not isinstance(raw, dict):
+        return b"", 0.0
+    try:
+        key = base64.b64decode(str(raw.get("key") or ""), validate=True)
+        at = float(raw.get("at") or 0.0)
+    except (TypeError, ValueError):
+        return b"", 0.0
+    if len(key) < KEY_BYTES or at + RETIRED_KEY_RETENTION_SECS <= now:
+        return b"", 0.0
+    return key, at
 
 
 def _load_state() -> _State:
@@ -570,7 +599,8 @@ def _load_state() -> _State:
             ended[str(nonce)] = entry
     for nonce, entry in expired.items():
         ended.setdefault(nonce, entry)
-    return _State(records, ended)
+    retired_key, retired_at = _parse_retired(raw.get("retired_key"), now)
+    return _State(records, ended, retired_key, retired_at)
 
 
 def _expired(record: SessionRecord) -> EndedSession:
@@ -599,10 +629,15 @@ def _save_state(state: _State) -> bool:
     }
     if len(ended) > MAX_ENDED:
         ended = dict(sorted(ended.items(), key=lambda kv: kv[1].at, reverse=True)[:MAX_ENDED])
-    payload = {
+    payload: dict[str, Any] = {
         "sessions": {n: r.to_dict() for n, r in live.items()},
         "ended": {n: e.to_dict() for n, e in ended.items()},
     }
+    if state.retired_key and state.retired_at + RETIRED_KEY_RETENTION_SECS > now:
+        payload["retired_key"] = {
+            "key": base64.b64encode(state.retired_key).decode("ascii"),
+            "at": state.retired_at,
+        }
     path = sessions_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -628,9 +663,10 @@ def load_sessions() -> dict[str, float]:
 
 
 def save_session_records(records: dict[str, SessionRecord]) -> None:
-    """Persist *records* as the live set, keeping the remembered endings."""
+    """Persist *records* as the live set, keeping the remembered endings (and the key that can
+    explain them)."""
     state = _load_state()
-    _save_state(_State(dict(records), state.ended))
+    _save_state(_State(dict(records), state.ended, state.retired_key, state.retired_at))
 
 
 def pool_of(record: SessionRecord) -> str:
@@ -874,13 +910,41 @@ def ended_session(nonce: str) -> EndedSession | None:
     return _load_state().ended.get(nonce)
 
 
-def clear_sessions() -> None:
-    """Drop every stored session AND every remembered ending — for a new signing key only.
+def retire_key(key: bytes, *, now: float | None = None) -> list[tuple[str, SessionRecord]]:
+    """End every session because *key*, the key they were signed with, is being replaced — and
+    keep *key* beside those endings. Returns what it ended. Call before the new key is written.
 
-    Under a new key no old token's signature verifies, so there is nothing left to explain.
-    Signing everyone out under the SAME key is :func:`end_sessions`, which remembers why.
+    Under a new key no old token's signature verifies, so without the old key the gateway could
+    not tell a device that really held a session from a stranger — and every device signed out
+    by the rotation would read the same "not signed in" as someone who never was. Kept, it lets
+    the gateway recognise a token it signed, and so tell its holder that the key was replaced,
+    when, and how to sign back in.
+
+    🔴 ONLY TO EXPLAIN. Nothing that admits a session reads it: ``validate_token`` signs with
+    the current key alone, and the endings map is consulted only after a refusal. It goes when
+    the last ending it can explain is forgotten (:data:`RETIRED_KEY_RETENTION_SECS`), or at the
+    next rotation, and it lives in this file because this file is already secret by location
+    everywhere a secret is declared (the durability inventory, the agent's path rules, history).
     """
-    _save_state(_State({}, {}))
+    stamp = time.time() if now is None else float(now)
+    state = _load_state()
+    ended: list[tuple[str, SessionRecord]] = []
+    for nonce, record in list(state.records.items()):
+        state.ended[nonce] = EndedSession(
+            END_KEY_REPLACED, stamp, record.issuer, record.device.kind, record.expiry
+        )
+        ended.append((nonce, record))
+    state.records = {}
+    state.retired_key, state.retired_at = bytes(key), stamp
+    _save_state(state)
+    return ended
+
+
+def retired_key() -> bytes:
+    """The key the last rotation replaced, while an ending it signed is still explained — or
+    ``b""``. For recognising a signed-out device's token (:func:`retire_key`), never for
+    admitting one."""
+    return _load_state().retired_key
 
 
 def session_stats() -> dict[str, Any]:

@@ -34,6 +34,7 @@ import asyncio
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import service, store
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
@@ -170,7 +171,7 @@ def test_RESUME_no_longer_claims_success_on_a_draft_and_writes_nothing() -> None
     # the terminal legs, for the same reason: a status-only assertion leaves the write unexamined.
     store.request_pause(run.id)
 
-    body = service.resume_run(run.id, supervisor=_RecordingSupervisor())
+    body = service.resume_run(run.id, supervisor=_RecordingSupervisor(), by=YOU)
 
     assert body["ok"] is False
     assert body["code"] == "WF_RUN_NOT_LIVE"

@@ -925,7 +925,7 @@ def test_a_manifest_without_the_sources_block_round_trips_byte_identically():
             {
                 "fetchSpec": {
                     "url": "https://a.example/",
-                    "headers": {"Authorization": "Bearer sk-live-literal"},
+                    "headers": {"Authorization": "Bearer fake-key-live-literal"},
                 }
             },
             "must reference a {{secret:KEY}}",
@@ -1114,7 +1114,7 @@ async def test_a_manifest_that_became_invalid_after_install_stops_polling(tmp_pa
     sid, provider, _e, _q = _setup(store, pack, fetcher)
     assert (await provider.poll(sid)).items
     raw = _manifest()["sources"][0]
-    raw["fetchSpec"]["headers"] = {"Authorization": "Bearer sk-live-committed"}
+    raw["fetchSpec"]["headers"] = {"Authorization": "Bearer fake-key-live-committed"}
     (pack / "app.json").write_text(json.dumps(_manifest(sources=[raw])), encoding="utf-8")
     result = await provider.poll(sid)
     assert result.items == []

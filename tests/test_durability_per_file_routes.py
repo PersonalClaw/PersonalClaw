@@ -112,7 +112,7 @@ def seeded(home, ws, monkeypatch):
     a handler that dropped ``paths`` on the floor would pass every assertion.
     """
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
-    root = next(r for r in sh.roots(home=home, workspace=ws) if r.id == "config")
+    root = next(r for r in sh.roots(home=home) if r.id == "config")
     sh.ensure_repo(root, home=home)
     (home / "entity_settings").mkdir(parents=True, exist_ok=True)
     (home / CFG).write_text("cfg-v1\n")

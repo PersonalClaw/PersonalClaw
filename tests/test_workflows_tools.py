@@ -21,6 +21,7 @@ import json
 import pytest
 
 from personalclaw import mcp_workflows as T
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import service, store
 from personalclaw.workflows.models import RunStatus, WorkflowRun
@@ -408,7 +409,7 @@ class TestDefs:
                 {
                     "kind": "action",
                     "id": "a",
-                    "config": {"provider": "bash", "api_key": "sk-ant-abcdefghijklmnopqrst"},
+                    "config": {"provider": "bash", "api_key": "fake-anthropic-1"},
                 }
             ],
         }
@@ -705,7 +706,7 @@ class TestControl:
         await service.author_def(name="wf-res", root=SPEC_ROOT)
         sup = _FakeSupervisor()
         started = await service.start_run(name="wf-res", supervisor=sup, skip_preflight=True)
-        body = service.resume_run(started["run_id"], supervisor=sup, answer=True)
+        body = service.resume_run(started["run_id"], supervisor=sup, answer=True, by=YOU)
         assert not body["ok"] and body["code"] in (
             "WF_NO_PENDING_GATE",
             "WF_RUN_NOT_LIVE",

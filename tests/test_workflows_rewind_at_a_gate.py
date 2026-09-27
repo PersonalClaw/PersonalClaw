@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import service, store
@@ -162,7 +163,7 @@ async def test_a_rewind_confirmed_while_the_run_waits_at_a_gate_applies_at_once(
     assert len(_open_rows(state, c.run.id)) == 1
 
     # And the answer still lands on the rewound run.
-    assert c.resume(token, True)["ok"]
+    assert c.resume(token, True, by=YOU)["ok"]
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
     assert c.run.status == RunStatus.COMPLETE
     assert _completions(c.run.id, "publish") == 1

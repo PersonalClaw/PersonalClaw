@@ -33,17 +33,20 @@ def home_patch(tmp_path):
 
     from personalclaw.config.loader import workspace_root
 
-    roots = [("Test", str(tmp_path)), ("Workspace", os.path.realpath(str(workspace_root())))]
     with (
         patch("os.path.expanduser", side_effect=fake_expanduser),
         patch("os.path.realpath", side_effect=real_realpath),
         patch("pathlib.Path.home", return_value=tmp_path),
-        patch(
+    ):
+        # Resolved under the patched home, so it is the workspace the tests write into. The
+        # "Test" root contains that home, and a root that contains the home does not reach into
+        # it (`file_roots.within`), so the workspace has to be a root of its own.
+        roots = [("Test", str(tmp_path)), ("Workspace", os.path.realpath(str(workspace_root())))]
+        with patch(
             "personalclaw.dashboard.handlers.files._dashboard_roots",
             return_value=roots,
-        ),
-    ):
-        yield tmp_path
+        ):
+            yield tmp_path
 
 
 class TestFileReadResolve:

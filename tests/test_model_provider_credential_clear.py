@@ -26,7 +26,7 @@ from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.dashboard.handlers import providers as H
 
-_KEY = "sk-fixture-not-a-real-credential"
+_KEY = "fake-key-fixture-not-a-real-credential"
 
 
 async def _coro(v):
@@ -137,12 +137,12 @@ def test_update_with_a_real_value_still_overwrites(tmp_path, monkeypatch):
     req = _req(
         "PUT",
         "/api/model-providers/anthropic",
-        {"options": {"api_key": "sk-fixture-rotated"}},
+        {"options": {"api_key": "fake-key-fixture-rotated"}},
         {"name": "anthropic"},
     )
     resp = _run(H.api_provider_update(req))
     assert resp.status == 200, resp.body
-    assert _stored_options(cfg, "anthropic")["api_key"] == "sk-fixture-rotated"
+    assert _stored_options(cfg, "anthropic")["api_key"] == "fake-key-fixture-rotated"
 
 
 def test_create_strips_null_options_rather_than_storing_a_literal_null(tmp_path, monkeypatch):

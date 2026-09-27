@@ -60,6 +60,12 @@ class BestOfNActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Best-of-N Sampling"
 
+    @property
+    def hands_config_to_a_model(self) -> bool:
+        """The prompt and the criteria are what each candidate and the judge are handed, so a
+        ``{{secret:KEY}}`` in them stays a name."""
+        return True
+
     async def execute(
         self,
         action_config: dict[str, Any],

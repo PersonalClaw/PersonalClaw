@@ -21,9 +21,8 @@ written straight from the API request; `run_started.inputs` is the same dict aft
 writer's `redact()`. They are equal in content and NOT equal in safety, so a run with no
 `run_started` record is reported unharvestable rather than harvested off the row. That single rule
 is what makes "a harvested scenario cannot contain a credential" a property of the read path rather
-than a hope. Each raw source is screened through :func:`_screen` exactly ONCE, at its point of
-entry — a trailing pass over the composed case would garble its own output, which :func:`_screen`
-explains and a test pins.
+than a hope. Each raw source is screened through :func:`_screen` once, at its point of entry, and
+the case is composed from what it returns.
 
 **`run_started`/`run_finished` are journal-only.** They are outside
 :data:`~personalclaw.ledger.kinds.LEDGER_KINDS`, so the `events.jsonl` mirror never carries them
@@ -198,19 +197,12 @@ class HarvestReport:
 
 
 def _screen(value: Any) -> Any:
-    """Route one externally-sourced value through the ledger's redactor — EXACTLY ONCE.
+    """Route one externally-sourced value through the ledger's redactor, at the point it enters.
 
-    "Exactly once" is not fussiness, it is a measured property of
-    :func:`~personalclaw.ledger.redaction.redact`. It is idempotent on its OWN output
-    (`redact(redact("sk-…")) == redact("sk-…")`) but NOT on an already-screened value sitting in a
-    `<key>: <value>` string: `redact_credentials` has a `key: value` pattern, so a second pass over
-    `api_key: [REDACTED: credential]` matches `api_key: [REDACTED:` and rewrites it to
-    `[REDACTED: credential] credential]` — garbled text AND the field name silently lost.
-
-    So there is no "screen the whole composed scenario at the end" chokepoint here: composing a
-    turn line out of already-screened inputs and then re-screening the line is exactly the shape
-    that trips it. Instead every raw source is screened at the ONE point it enters, and everything
-    downstream is composed from the screened values.
+    Every raw source is screened where it enters, and everything downstream is composed from the
+    screened values, so a composed turn line holds only screened parts. A second pass over one
+    would change nothing (:func:`~personalclaw.ledger.redaction.redact` skips a value that is
+    already a mask), but the rule is simpler to keep true where each value comes in.
     """
     return redact(value)
 

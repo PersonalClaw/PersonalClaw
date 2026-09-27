@@ -213,17 +213,19 @@ def test_ask_mode_denies_a_mutating_tool_and_allows_a_read(monkeypatch):
     """
     from personalclaw.task_modes import task_mode_denies
 
-    assert task_mode_denies("ask", "write_file", "edit", "{}") != ""
-    assert task_mode_denies("ask", "read_file", "read", "{}") == ""
+    assert task_mode_denies("ask", "caution", "write_file", "", "{}") != ""
+    assert task_mode_denies("ask", "safe", "read_file", "", "{}") == ""
     # VACUITY: `agent` (what --allow sends) must permit the same mutating call.
-    assert task_mode_denies("agent", "write_file", "edit", "{}") == ""
+    assert task_mode_denies("agent", "caution", "write_file", "", "{}") == ""
 
 
 def test_ask_mode_denies_an_unclassifiable_tool(monkeypatch):
-    """Fail-CLOSED: a tool this codebase cannot classify is denied, not waved through."""
+    """Fail-CLOSED: a tool this codebase cannot classify is denied, not waved through —
+    a shell call whose command never arrived, and a tool that declares nothing."""
     from personalclaw.task_modes import task_mode_denies
 
-    assert task_mode_denies("ask", "Terminal", "execute", "") != ""
+    assert task_mode_denies("ask", "", "Terminal", "execute", "") != ""
+    assert task_mode_denies("ask", "", "memory_recall", "", "{}") != ""
 
 
 # ── ACP: refuse a posture that cannot be enforced ───────────────────────────────

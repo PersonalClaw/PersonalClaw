@@ -46,7 +46,13 @@ Run it directly for the report::
         # the internal-reference rule over files OUTSIDE the tree — an unpacked wheel, a PR
         # body or release note saved to a file, anything that is about to be published
     python3 scripts/check_publication_hygiene.py --digest KIND TEXT
-        # the policy line(s) that deny TEXT (KIND: word, phrase, host, code or id)
+        # the policy line(s) that deny TEXT (KIND: word, phrase, host, code or id, or the
+        # planning-id rule's work-item-prefix, plan-name or plan-word)
+
+The policy file also holds ``planning_id_rule``: the private half of the planning-id census,
+digested the same way. That rule is measured by ``scripts/generate_planning_id_baseline.py``,
+not here, because it is the one exception to "ships at zero": the tree still carries a known
+population of planning ids, so it is a shrink-only ratchet with its own committed census.
 """
 
 from __future__ import annotations
@@ -407,8 +413,12 @@ def denylist_entries(kind: str, text: str) -> list[tuple[str, str]]:
 
     *kind* is ``word``, ``phrase`` (two words), ``host`` (denies its subdomains too),
     ``code`` (``ab-12``: denies every code of that letters-and-digit-count shape) or ``id``
-    (a real id: denies every id of that prefix and shape).
+    (a real id: denies every id of that prefix and shape) — or one of the planning-id rule's
+    kinds: ``work-item-prefix`` (a work-item prefix as written, in capitals), ``plan-name`` (a
+    hyphenated plan name, any case) or ``plan-word`` (a one-word plan name).
     """
+    if kind in PLANNING_ID_KINDS:
+        return [(kind, _planning_candidate(kind, text.strip()))]
     low = text.strip().lower()
     words = _WORD.findall(low)
     if kind == "word":
@@ -434,7 +444,26 @@ def denylist_entries(kind: str, text: str) -> list[tuple[str, str]]:
         if not ident:
             raise ValueError(f"an id is abc_ + 14 mixed-case or 8 lowercase base62: {text!r}")
         return [("id", _id_shape(ident)), ("id-head", ident.group("prefix"))]
-    raise ValueError(f"unknown kind {kind!r} (word, phrase, host, code or id)")
+    raise ValueError(
+        f"unknown kind {kind!r} (word, phrase, host, code, id, {', '.join(PLANNING_ID_KINDS)})"
+    )
+
+
+#: The planning-id rule's kinds, and the one spelling each is digested in.
+PLANNING_ID_KINDS = ("work-item-prefix", "plan-name", "plan-word")
+_PLANNING_SHAPES = {
+    "work-item-prefix": re.compile(r"[A-Z][A-Z0-9]{1,5}"),
+    "plan-name": re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+"),
+    "plan-word": re.compile(r"[A-Za-z][A-Za-z0-9]{1,15}"),
+}
+
+
+def _planning_candidate(kind: str, text: str) -> str:
+    """*text* as the planning-id rule digests it: a prefix as written, a plan name or word folded
+    to lower case."""
+    if not _PLANNING_SHAPES[kind].fullmatch(text):
+        raise ValueError(f"not a {kind}: {text!r}")
+    return text if kind == "work-item-prefix" else text.lower()
 
 
 def denylist_lines(kind: str, text: str, salt: str) -> list[str]:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.nl_to_cron import Schedule
 from personalclaw.triggers import tools as T
 from personalclaw.triggers.store import TriggerStore
 
@@ -26,7 +27,7 @@ def store(tmp_path):
 
 def _cron(expr="0 9 * * 1-5"):
     """A stand-in for `nl_to_cron` — injected so no test needs a model."""
-    return lambda _cadence: (expr, "")
+    return lambda _cadence: Schedule(expr=expr)
 
 
 # ── 🔴 criterion 2, in one message ──
@@ -83,7 +84,7 @@ def test_a_file_request_NEVER_calls_the_cadence_converter(store):
 
     def spy(cadence):
         calls.append(cadence)
-        return ("* * * * *", "")
+        return Schedule(expr="* * * * *")
 
     T.create(
         store,
@@ -104,7 +105,7 @@ def test_a_converter_error_fails_the_create_rather_than_saving_a_broken_row(stor
         name="Bad",
         when="every blue moon",
         message="go",
-        cadence_to_cron=lambda _c: ("", "could not parse a cadence"),
+        cadence_to_cron=lambda _c: Schedule(error="could not parse a cadence"),
     )
     assert not result.ok
     assert "could not parse" in result.text
@@ -742,7 +743,7 @@ class TestRegistrationRefusesWhatCouldNeverRun:
             name="From words",
             when="every weekday at 9am",
             message="go",
-            cadence_to_cron=lambda _c: ("99 99 * * *", ""),
+            cadence_to_cron=lambda _c: Schedule(expr="99 99 * * *"),
         )
         assert not result.ok
         assert "99 99 * * *" in result.text

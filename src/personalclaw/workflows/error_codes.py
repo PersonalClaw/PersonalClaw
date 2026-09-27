@@ -271,6 +271,11 @@ WF_ERROR_CODES: dict[str, str] = {
         "The submitted spec contains literal credentials. Refused rather than warned: once "
         "saved the value is on disk. Use `{{secret:KEY}}`."
     ),
+    "WF_DEF_MASK_CONFLICT": (
+        "The submitted spec carries a `[REDACTED: …]` marker — how a masked read stands in for a "
+        "value it hides — that cannot be put back: the definition it was edited from no longer "
+        "lines up with the read. Refused rather than writing the marker over the value."
+    ),
     "WF_DEF_INVALID": "The submitted spec did not pass validation, so it was not saved.",
     "WF_HIDDEN_VALUE_UNMATCHED": (
         "A `_has_<key>` presence flag — how a read stands in for a value it hides — has nothing "
@@ -388,6 +393,10 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_MUT_UNKNOWN_NODE": "The op's target node is not in the spec being mutated.",
     "WF_MUT_UNKNOWN_PARENT": "The op's target parent node is not in the spec being mutated.",
     "WF_MUT_BAD_CONFIG": "The target node's `config` is not an object, so it cannot be patched.",
+    "WF_MUT_MASK_CONFLICT": (
+        "An op's value carries a `[REDACTED: …]` marker — how a masked read of the run stands in "
+        "for a value it hides — that the value it replaces cannot put back."
+    ),
     "WF_MUT_IMMUTABLE_FIELD": (
         "The op would change a field that is the node's identity on a live node, which is not "
         "permitted."
@@ -416,9 +425,10 @@ WF_ERROR_CODES: dict[str, str] = {
     # Returned as inline result dicts from
     # `resume`/`gate_answers.resume_revise`/`loop_convergence.converge_loop`.
     "WF_RESUME_NOT_OWNER": (
-        "The responder or channel is not permitted to answer this gate. Checked before the "
-        "token is touched, and deliberately terse — echoing the gate's content to a shared "
-        "channel would leak it to everyone in it."
+        "Only the owner answers a gate: an agent's tool, a trigger, an app or the run itself "
+        "cannot, and a remote reply must come from the run's owner (`approval_answer`). Checked "
+        "before the token is touched, and deliberately terse — echoing the gate's content to a "
+        "shared channel would leak it to everyone in it."
     ),
     "WF_RESUME_UNKNOWN_TOKEN": "No continuation exists for that resume token on this run.",
     "WF_RESUME_EXPIRED": (

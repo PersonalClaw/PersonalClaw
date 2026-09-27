@@ -55,7 +55,7 @@ from personalclaw.onboarding_import.writers import _PLANNERS, _WRITERS, mcp_conf
 #: The planted credential. If this string reaches ANY output — an item, a note, a log, a
 #: file under the home — a test fails. Shaped like a real key so the redactors engage.
 SECRET = "sk-ant-api03-PLANTEDSECRETVALUE000000000000000000000000000000AA"
-SECRET2 = "ghp_PLANTEDGITHUBTOKENVALUE0000000000000"
+SECRET2 = "fake-github-token-1"
 
 _SKILL_MD = "---\nname: {name}\ndescription: {desc}\n---\n# {name}\nSteps.\n"
 

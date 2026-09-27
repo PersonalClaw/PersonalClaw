@@ -96,6 +96,7 @@ personalclaw inbound token create mcp
 ```
 ✅ Created the mcp inbound token.
 🔑 stored as PERSONALCLAW_INBOUND_MCP_TOKEN in the credential store (keychain, else .env at 0600)
+⏱  It works for 90 days, until 26 December at 14:05; then create a new one. Settings → Devices lists it, and revokes it.
 
 Copy it into your client now — it is not shown again:
 
@@ -112,8 +113,11 @@ confirms a valid token exists and deliberately does not reveal it:
 
 ```
 ✅ mcp: a valid token is configured (PERSONALCLAW_INBOUND_MCP_TOKEN, credential store)
+   Created today at 14:05; it works until 26 December at 14:05.
    The value is intentionally not printed — rotate if you've lost it.
 ```
+
+The token works for 90 days. Ask for less with `--ttl` (`--ttl 7d`); longer is refused.
 
 If you lose it, mint a new one (see [Rotating the token](#rotating-the-token)) — that is cheaper
 than a credential you can read back out of the CLI.
@@ -317,7 +321,8 @@ working the moment the file is replaced:
 personalclaw inbound token create mcp --rotate
 ```
 
-Without `--rotate` the command refuses rather than clobbering an existing token:
+Without `--rotate` the command refuses rather than clobbering a working token (one that expired
+or was revoked is replaced without it):
 
 ```
 ❌ A token already exists for mcp (PERSONALCLAW_INBOUND_MCP_TOKEN).
@@ -325,7 +330,26 @@ Without `--rotate` the command refuses rather than clobbering an existing token:
 ```
 
 After rotating, update the header in your client config. No gateway restart is needed — but a
-client holding the old token will get `401` until you do.
+client holding the old token will get `401` until you do, and its message says the token was
+replaced by a newer one.
+
+### When the token stops working
+
+A token works for 90 days, or the `--ttl` it was created with. After that, your client gets
+`401` with the same `unauthorized` code as any other refusal, and a message saying why:
+
+```
+This MCP token stopped working today at 14:05, 90 days after it was created. Create a new one with `personalclaw inbound token create mcp --rotate`.
+```
+
+To stop a token at once — it leaked, or you no longer use that client — revoke it in
+**Settings → Devices → Integrations**, or from the terminal:
+
+```bash
+personalclaw inbound token revoke mcp
+```
+
+A client that still sends it is told it was revoked, and when.
 
 ---
 

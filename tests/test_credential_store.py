@@ -102,7 +102,7 @@ class TestWhatItRefuses:
         self, home: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         owned = f"{store.OWNED_KEY_PREFIX}PROVIDER_X_1234ABCD__API_KEY"
-        store.save_credential(owned, "sk-owned")
+        store.save_credential(owned, "fake-key-owned")
         monkeypatch.setattr(
             store, "find_credential", lambda *a, **k: pytest.fail("an owned key was read")
         )
@@ -111,7 +111,7 @@ class TestWhatItRefuses:
             CredentialStore(home).resolve(owned)
 
         assert isinstance(refused.value, KeyError)
-        assert "sk-owned" not in str(refused.value)
+        assert "fake-key-owned" not in str(refused.value)
 
     def test_a_deleted_secret_is_gone_on_the_next_read(self, home: Path) -> None:
         reader = CredentialStore(home)

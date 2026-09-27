@@ -222,19 +222,25 @@ def is_history_path(path: Path | str, *, home: Path | None = None) -> bool:
     return True
 
 
-def roots(home: Path | None = None, workspace: Path | None = None) -> tuple[HistoryRoot, ...]:
-    """The tracked roots, resolved against the ACTIVE home and workspace.
+def roots(home: Path | None = None) -> tuple[HistoryRoot, ...]:
+    """The tracked roots of *home* — the ACTIVE home when none is named.
 
     Resolved per call rather than cached at import: an isolated test/dev home is
     set through the environment, and a module-level constant frozen at import
     time is exactly how a "safe" subsystem ends up writing to the real home.
-    """
-    h = _home(home)
-    if workspace is None:
-        from personalclaw.config.loader import workspace_root
 
-        workspace = workspace_root()
-    ws = Path(workspace)
+    Resolving creates nothing — a root is a place to look, and :func:`ensure_repo` makes the
+    work tree when it first commits one. The memory root is the home's own memory folder
+    (``loader.memory_root``), where every memory tree is written. It used to be
+    ``workspace_root()``: the folder new sessions start in, read from the ACTIVE home whatever
+    *home* was, and CREATED on every call — and the debouncer resolves the roots on every write
+    of every store, so each write made ``<config_dir>/workspace``. With the owner's own folder
+    chosen for sessions, it also tracked that folder's ``memory``/``_ext`` instead of the memory.
+    """
+    from personalclaw.config.loader import memory_root
+
+    h = _home(home)
+    ws = memory_root(h)
     return (
         HistoryRoot(
             id="config",

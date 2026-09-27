@@ -80,6 +80,13 @@ to them.
 - **Judge by code truth, not banners** — status text in plans and docs goes
   stale; verify against the actual code before deciding something is or isn't
   done.
+- **Comments and docs name no planning ids** — the roadmap is private planning
+  state kept outside this repository, so a work-item id, a plan's name, a session
+  or task number or a section of a plan points at nothing a reader can open. Say
+  what the code does, or why, instead. `tests/test_planning_id_baseline.py` holds
+  the ones the tree still carries to a per-file census that may only shrink: a
+  new one reds; after removing one, run
+  `python scripts/generate_planning_id_baseline.py` in the same commit.
 
 ## <a name="breaking-changes"></a>Breaking changes: who makes them, and what you should do
 
@@ -92,8 +99,9 @@ so it's worth stating plainly.
 the roadmap's architectural program, the maintainer lands backward-incompatible
 clean breaks where a better design requires one: state shapes change, stores get
 rewritten, endpoints and config fields are replaced outright, and there is **no
-automatic migration** of existing `~/.personalclaw` data. Release notes advise
-`personalclaw snapshot`, and the README carries the standing pre-1.0 warning.
+automatic migration** of existing `~/.personalclaw` data. The upgrade notes in
+[Updating](docs/guides/getting-started.md#updating) advise `personalclaw snapshot`, and the
+README carries the standing pre-1.0 warning.
 This is a decision, not an oversight: carrying compatibility shims through a
 half-built architecture is how projects calcify around designs they meant to
 replace. The migration-backed regime — the **lifecycle mental model** below —
@@ -344,6 +352,12 @@ Two runtime facts that save debugging time:
   relevant to your change locally, and the full suite before a PR.
 - Destructive tests must be isolated: monkeypatch `config_dir`/`tmp_path` so a
   test can never touch a real `~/.personalclaw` (this has bitten before).
+- A fake key looks like no key. A test that only passes an API key or a token through uses a
+  neutral fake (`fake-anthropic-test`); the repository is public and secret scanners read it.
+  A test of shape-based detection (a redactor, a masker, the secret lint) may keep a provider's
+  prefix, never a real token's format: use the AWS documentation's `…EXAMPLE` key id, or split a
+  PEM header or JWT in the source (`"-----" "BEGIN …"`). `tests/test_test_values_have_no_real_token_format.py`
+  holds the test code to that.
 - The config system has a round-trip contract: a new config field must appear in
   the dataclass (+ `_meta`), `load()`, `to_dict()`, and a write path —
   `test_config_roundtrip.py` enforces most of this generically.
@@ -364,10 +378,11 @@ change to someone else's program, and it is handled as one:
   error. Rename the parameter AND make it keyword-only (or add the new one at the end,
   keyword-only). `make sdk-snapshot` refuses the silent shape unless you pass
   `--allow-silent-break` for a genuine widening.
-- **The CHANGELOG entry names the apps the change affects.** Every SDK change needs an entry
-  under `## [Unreleased]`; one that removes or changes something (not only adds) names each
-  app that uses it. CI's `apps-contract` job computes that list from the apps' own imports
-  and calls, and fails an entry that leaves one out.
+- **The CHANGELOG headline names the apps the change affects.** Every SDK change needs an
+  entry under `## [Unreleased]`; one that removes or changes something (not only adds)
+  names each app that uses it in its headline, by bundle name in backticks or by a family
+  glob ([the CHANGELOG](#changelog)). CI's `apps-contract` job computes that list from the
+  apps' own imports and calls, and fails a headline that leaves one out.
 - **CI runs the apps' contract on it.** On any change under `src/personalclaw/sdk/`, the
   `apps-contract` job checks out PersonalClawApps and runs, against your core, its SDK
   contract rails over every bundle and each bundle's `tests/test_sdk_contract.py`. Run it
@@ -427,6 +442,36 @@ is outstanding. `restore` refuses to overwrite a file you edited after the mutat
   [`web/npm-license-records.json`](web/npm-license-records.json), with the fact
   sourced upstream and a note saying where from.
 - Match the existing style; `make lint` must pass.
+
+### <a name="changelog"></a>The CHANGELOG: one headline per change
+
+Every entry is ONE line under `## [Unreleased]`, in its section (`### Added`, `### Changed`,
+`### Removed`, `### Fixed` or `### Security`):
+
+```markdown
+- **Settings → Security sets how long a sign-in lasts.**
+```
+
+- **The headline is the whole entry.** No body, no continuation line, no text after the
+  closing `**` and no prose between entries. Say what changed as a user meets it; how it
+  was built belongs in the commit message. `tests/test_changelog_headline_only.py`
+  enforces the form, and the in-app Updates panel renders the file as it is.
+- **A release's introduction is the one place for prose.** When a release is cut, a
+  short paragraph right under its `## [X.Y.Z]` heading, before its first `###` section,
+  says what the release is about. The website's release summary and the release notes
+  are built from it, and Settings → Updates shows it under the release's heading. It is
+  plain paragraphs (a quoted note is fine), never indented, and nowhere else.
+- **Upgrade steps, config keys and SDK notes go in the docs**, where a reader looks for
+  them: what a user must do to upgrade (`personalclaw snapshot`, a renamed field, a token
+  to re-mint) in [Updating](docs/guides/getting-started.md#updating), a config field in
+  [docs/reference/](docs/reference/), and an SDK change in the `signatures.json` diff and
+  the guide for the kind of app it touches.
+- **An SDK change's headline names the apps it affects**, each by its bundle name in
+  backticks: `` `slack-channel` ``. For a family of apps, a backticked glob over bundle
+  names is the short form: `` `*-channel` `` names every channel app. A glob is an exact
+  list written short, so it must match only apps the change affects: CI's
+  `apps-contract` job refuses one that also matches an app the change leaves alone, or
+  that matches no app at all. See [SDK changes](#sdk-changes).
 
 ### What CI will and won't tell you on your first PR
 

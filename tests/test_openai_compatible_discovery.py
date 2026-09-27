@@ -213,7 +213,7 @@ def test_every_openai_compatible_base_shape_discovers_its_models(
     )
     srv = _Endpoint(served_path, payload)
     try:
-        got = _run(openai_compatible_discover_models(f"{srv.base}{suffix}", "sk-test"))
+        got = _run(openai_compatible_discover_models(f"{srv.base}{suffix}", "fake-key-test"))
         assert [m.id for m in got] == [model_id], f"{case}: wrong models discovered"
         # The vacuity floor for the URL half: the server must have been asked the path it
         # serves. Without this a test could pass on an empty list from a request never made.
@@ -275,7 +275,7 @@ def test_a_discovery_failure_says_what_happened_and_what_to_do(
     srv = _Endpoint("/v1/models", body, status=status)
     try:
         with pytest.raises(ModelDiscoveryError) as caught:
-            _run(openai_compatible_discover_models(f"{srv.base}/v1", "sk-test"))
+            _run(openai_compatible_discover_models(f"{srv.base}/v1", "fake-key-test"))
     finally:
         srv.close()
     msg = str(caught.value)
@@ -284,7 +284,7 @@ def test_a_discovery_failure_says_what_happened_and_what_to_do(
     for fragment in fragments:
         assert fragment in msg, f"{case}: {fragment!r} missing from {msg!r}"
     assert caught.value.url.endswith("/v1/models"), f"{case}: the URL tried must be named"
-    assert "sk-test" not in msg, f"{case}: the credential must never appear in the message"
+    assert "fake-key-test" not in msg, f"{case}: the credential must never appear in the message"
     # A traceback is not the convention; a raw exception class name is not an instruction.
     assert "Traceback" not in msg
 
@@ -295,7 +295,7 @@ def test_a_wrong_base_url_names_the_404_and_the_base_url(allow_loopback_egress: 
     srv = _Endpoint("/v1/models", '{"object":"list","data":[{"id":"served"}]}')
     try:
         with pytest.raises(ModelDiscoveryError) as caught:
-            _run(openai_compatible_discover_models(f"{srv.base}/api/v9/nope", "sk-test"))
+            _run(openai_compatible_discover_models(f"{srv.base}/api/v9/nope", "fake-key-test"))
     finally:
         srv.close()
     assert caught.value.status == 404
@@ -306,7 +306,7 @@ def test_an_unreachable_endpoint_is_not_an_empty_catalog(allow_loopback_egress: 
     # Port 1 on loopback: nothing listens, so this exercises the transport-failure arm
     # without a network call leaving the machine.
     with pytest.raises(ModelDiscoveryError) as caught:
-        _run(openai_compatible_discover_models("http://127.0.0.1:1/v1", "sk-test"))
+        _run(openai_compatible_discover_models("http://127.0.0.1:1/v1", "fake-key-test"))
     assert "Could not reach" in str(caught.value)
     assert caught.value.status is None, "no HTTP status was ever received"
 
@@ -320,7 +320,7 @@ def test_a_blocked_host_says_how_to_allow_list_it(default_egress_posture: None) 
     run; the fixture only makes the config home AND the four call-time seams this test's own,
     so no worker-mate gets to decide what "default" means here (#2938)."""
     with pytest.raises(ModelDiscoveryError) as caught:
-        _run(openai_compatible_discover_models(_BLOCKED_ENDPOINT, "sk-test"))
+        _run(openai_compatible_discover_models(_BLOCKED_ENDPOINT, "fake-key-test"))
     msg = str(caught.value)
     assert "Egress policy blocked" in msg, (
         "the default posture must refuse a loopback endpoint BEFORE any socket is dialled; "
@@ -348,7 +348,7 @@ def test_an_empty_but_valid_list_is_an_honest_zero(allow_loopback_egress: None) 
     everything, or that returned a non-empty list unconditionally, fails here."""
     srv = _Endpoint("/v1/models", '{"object":"list","data":[]}')
     try:
-        assert _run(openai_compatible_discover_models(f"{srv.base}/v1", "sk-test")) == []
+        assert _run(openai_compatible_discover_models(f"{srv.base}/v1", "fake-key-test")) == []
         assert srv.requested == ["/v1/models"]
     finally:
         srv.close()
@@ -380,7 +380,7 @@ def test_unknown_fields_and_extra_envelope_keys_are_ignored_not_fatal(
         ),
     )
     try:
-        got = _run(openai_compatible_discover_models(f"{srv.base}/v1", "sk-test"))
+        got = _run(openai_compatible_discover_models(f"{srv.base}/v1", "fake-key-test"))
     finally:
         srv.close()
     assert [m.id for m in got] == ["MiniMax-M2.5", "MiniMax-M3"]
@@ -402,7 +402,7 @@ def test_the_fail_soft_wrapper_returns_empty_and_logs_at_warning(
     srv = _Endpoint("/v1/models", '{"error":{"message":"nope"}}', status=401)
     try:
         with caplog.at_level(logging.WARNING, logger="personalclaw.llm.catalog"):
-            assert _run(openai_compatible_list_models(f"{srv.base}/v1", "sk-test")) == []
+            assert _run(openai_compatible_list_models(f"{srv.base}/v1", "fake-key-test")) == []
     finally:
         srv.close()
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
@@ -445,7 +445,9 @@ def _byo_catalog(endpoint: str, *, default_model: str = "", fallback: tuple = ()
         api_key_env="",  # no env fallback, so the test's key is the only credential
         fallback_models=fallback,
     )
-    return BrandedCatalog(spec, endpoint=endpoint, api_key="sk-test", default_model=default_model)
+    return BrandedCatalog(
+        spec, endpoint=endpoint, api_key="fake-key-test", default_model=default_model
+    )
 
 
 def test_a_byo_provider_with_nothing_to_fall_back_on_raises_instead_of_listing_zero(

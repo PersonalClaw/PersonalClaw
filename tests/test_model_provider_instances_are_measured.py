@@ -46,7 +46,7 @@ from personalclaw.llm.catalog import (
 )
 
 VENDOR_TYPE = "vendor-models"
-GOOD_KEY = "sk-good-NOT-A-REAL-KEY"
+GOOD_KEY = "fake-key-1"
 
 
 # ── a real loopback vendor ──────────────────────────────────────────────────────
@@ -231,7 +231,7 @@ async def test_a_keyless_instance_is_measured_not_badged_configured(vendor: _Ven
 @pytest.mark.asyncio
 async def test_testing_an_instance_whose_key_is_rejected_says_so(vendor: _Vendor) -> None:
     async with _client() as client:
-        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="sk-revoked")
+        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="fake-key-revoked")
         body = await (await client.post("/api/model-providers/revoked/test")).json()
     assert body["ok"] is False
     assert "No models returned" not in body["message"], body["message"]
@@ -257,7 +257,7 @@ async def test_a_working_instance_tests_connected(vendor: _Vendor) -> None:
 @pytest.mark.asyncio
 async def test_a_rejected_key_is_not_sent_again_on_every_page_load(vendor: _Vendor) -> None:
     async with _client() as client:
-        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="sk-revoked")
+        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="fake-key-revoked")
         await client.post("/api/model-providers/revoked/test")  # the Test button measures it
         before = vendor.hits
         for _ in range(3):
@@ -279,7 +279,7 @@ async def test_a_listing_that_swallowed_a_refusal_is_an_error_row_not_an_empty_o
     """The first load, before any check has landed: the refusal the fail-soft listing
     swallowed is the row's error, where it used to be an empty list reading "no models"."""
     async with _client() as client:
-        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="sk-revoked")
+        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="fake-key-revoked")
         available = await (await client.get("/api/models/available")).json()
     row = next(p for p in available["providers"] if p["name"] == "revoked")
     assert row["models"] == []
@@ -293,8 +293,10 @@ def test_the_same_rejected_key_is_logged_once_not_once_per_load(
     try:
         with caplog.at_level(logging.WARNING, logger="personalclaw.llm.catalog"):
             for _ in range(3):
-                assert asyncio.run(openai_compatible_list_models(srv.endpoint, "sk-one")) == []
-            assert asyncio.run(openai_compatible_list_models(srv.endpoint, "sk-two")) == []
+                assert (
+                    asyncio.run(openai_compatible_list_models(srv.endpoint, "fake-key-one")) == []
+                )
+            assert asyncio.run(openai_compatible_list_models(srv.endpoint, "fake-key-two")) == []
     finally:
         srv.close()
     warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
@@ -313,7 +315,7 @@ async def test_onboarding_and_the_degraded_report_say_the_chat_provider_is_not_a
     set up. Both status routes now carry its last MEASURED connection — and reading them
     measures nothing (the vendor's hit count does not move)."""
     async with _client() as client:
-        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="sk-revoked")
+        await _create(client, "revoked", endpoint=vendor.endpoint, api_key="fake-key-revoked")
         base = (await (await client.get("/api/models/active")).json())["revisions"]["chat"]
         r = await client.put(
             "/api/models/active/chat",
@@ -409,7 +411,7 @@ def test_openai_compatible_discovery_gets_the_same_hint(
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     endpoint = f"http://127.0.0.1:{_closed_port()}/v1"
     with pytest.raises(ModelDiscoveryError) as caught:
-        asyncio.run(openai_compatible_discover_models(endpoint, "sk-test"))
+        asyncio.run(openai_compatible_discover_models(endpoint, "fake-key-test"))
     assert "the connection was refused" in str(caught.value)
     assert "host.docker.internal" in str(caught.value)
 

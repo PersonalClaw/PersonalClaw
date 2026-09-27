@@ -23,6 +23,10 @@ browser instance, so one phone running both the installed PWA and Safari holds t
 subscriptions and a single paired-device id could not name them apart. It is not a
 credential either — the session cookie authenticates this call; the id only says which row
 to replace when a browser re-subscribes.
+
+What ties a destination to a device is the SIGN-IN it was registered on (:func:`_sign_in_of`):
+its row in Settings → Devices and when it ends are stored with it, so signing that device out
+ends its pushes too (``push.revoke_for_sessions``) and one whose sign-in ran out is woken no more.
 """
 
 from __future__ import annotations
@@ -41,6 +45,13 @@ ERR_INVALID = "push_subscription_invalid"
 ERR_NOT_SUBSCRIBED = "push_not_subscribed"
 ERR_RELAY_INVALID = "push_relay_registration_invalid"
 ERR_NOT_REGISTERED = "push_relay_not_registered"
+
+#: Said when the sign-in a request came in on cannot be read back, so a push cannot be tied to it.
+UNTIED_SENTENCE = (
+    "Push was not turned on: this device's sign-in could not be read back, so the push could not "
+    "be tied to it, and it would keep waking this device after it was signed out. Sign in again, "
+    "then turn push on."
+)
 
 #: A W3C ``PushSubscription``'s endpoint. Bounded so a hostile body cannot make the
 #: subscriptions file arbitrarily large — the endpoints browsers actually mint are ~200 chars.
@@ -62,6 +73,28 @@ def _audit(operation: str, outcome: str, *, resources: str = "") -> None:
         )
     except Exception:
         logger.debug("SEL audit failed for %s", operation, exc_info=True)
+
+
+class _Untied(Exception):
+    """The request came in on a sign-in the store does not hold."""
+
+
+def _sign_in_of(request: web.Request) -> tuple[str, float]:
+    """The sign-in this request came in on — its row in Settings → Devices, and when it ends — or
+    ``("", 0.0)`` for a request on no sign-in (a gateway that signs nobody in).
+
+    Raises :class:`_Untied` for a sign-in the store does not hold: a destination registered on it
+    could not be ended by signing the device out, so none is registered.
+    """
+    from personalclaw.dashboard.session_store import load_session_records
+
+    nonce = str(request.get("session_nonce") or "")
+    if not nonce:
+        return "", 0.0
+    record = load_session_records().get(nonce)
+    if record is None:
+        raise _Untied()
+    return record.device.id, record.expiry
 
 
 async def api_push_status(request: web.Request) -> web.Response:
@@ -100,7 +133,12 @@ async def api_push_subscribe(request: web.Request) -> web.Response:
         _audit("push_subscribe", "denied", resources=f"device={device_id} endpoint too long")
         return json_error(ERR_INVALID, status=400)
     try:
-        push.subscribe(device_id, subscription)
+        session, until = _sign_in_of(request)
+    except _Untied:
+        _audit("push_subscribe", "denied", resources=f"device={device_id} sign-in unreadable")
+        return json_error(ERR_INVALID, message=UNTIED_SENTENCE, status=503)
+    try:
+        push.subscribe(device_id, subscription, session=session, until=until)
     except ValueError as exc:
         # The message names the missing field, which is a client-programming fact, not a
         # user secret — so it is safe to return and genuinely useful in a console.
@@ -147,7 +185,12 @@ async def api_push_relay_register(request: web.Request) -> web.Response:
         _audit("push_relay_register", "denied", resources="missing device_id or token")
         return json_error(ERR_RELAY_INVALID, status=400)
     try:
-        push.register_relay_token(device_id, platform, token)
+        session, until = _sign_in_of(request)
+    except _Untied:
+        _audit("push_relay_register", "denied", resources=f"device={device_id} sign-in unreadable")
+        return json_error(ERR_RELAY_INVALID, message=UNTIED_SENTENCE, status=503)
+    try:
+        push.register_relay_token(device_id, platform, token, session=session, until=until)
     except ValueError as exc:
         # Names the bad field/vocabulary — a client-programming fact, not a secret.
         _audit("push_relay_register", "denied", resources=f"device={device_id} platform={platform}")

@@ -62,10 +62,10 @@ def _configure_relay(home: Path, url: str = "https://relay.example/ping") -> Non
 
 
 def test_register_round_trips_and_reregistering_replaces_the_row(home: Path) -> None:
-    push.register_relay_token("phone-1", "ios", "tok-A")
+    push.register_relay_token("phone-1", "ios", "tok-A", session="", until=0.0)
     assert push.load_relay_tokens()["phone-1"]["token"] == "tok-A"
     # Platforms rotate tokens; keeping both rows would ping the phone twice.
-    push.register_relay_token("phone-1", "ios", "tok-B")
+    push.register_relay_token("phone-1", "ios", "tok-B", session="", until=0.0)
     rows = push.load_relay_tokens()
     assert len(rows) == 1
     assert rows["phone-1"]["token"] == "tok-B"
@@ -77,20 +77,21 @@ def test_register_round_trips_and_reregistering_replaces_the_row(home: Path) -> 
 def test_the_platform_vocabulary_is_closed(home: Path) -> None:
     """The relay's whole job is picking APNs vs FCM — an open string just defers the error."""
     with pytest.raises(ValueError):
-        push.register_relay_token("phone-1", "windows", "tok")
+        push.register_relay_token("phone-1", "windows", "tok", session="", until=0.0)
     with pytest.raises(ValueError):
-        push.register_relay_token("phone-1", "", "tok")
+        push.register_relay_token("phone-1", "", "tok", session="", until=0.0)
     with pytest.raises(ValueError):
-        push.register_relay_token("phone-1", "ios", "")
+        push.register_relay_token("phone-1", "ios", "", session="", until=0.0)
     # Case is normalized, not refused: the shell reports Capacitor's platform string.
-    push.register_relay_token("phone-1", "Android", "tok")
+    push.register_relay_token("phone-1", "Android", "tok", session="", until=0.0)
     assert push.load_relay_tokens()["phone-1"]["platform"] == "android"
 
 
 def test_only_the_sender_fields_are_stored(home: Path) -> None:
-    push.register_relay_token("phone-1", "ios", "tok")
+    push.register_relay_token("phone-1", "ios", "tok", session="", until=0.0)
     row = push.load_relay_tokens()["phone-1"]
-    assert set(row) == {"platform", "token", "created_at"}
+    # The two a sender needs, and the sign-in the device registered it on.
+    assert set(row) == {"platform", "token", "created_at", "session", "until"}
 
 
 # ── The wire body ────────────────────────────────────────────────────────────
@@ -138,8 +139,8 @@ def test_deliver_fans_out_over_every_registered_device(
     home: Path, sent: list[dict[str, object]]
 ) -> None:
     _configure_relay(home)
-    push.register_relay_token("phone-1", "ios", "tok-ios")
-    push.register_relay_token("tablet-1", "android", "tok-android")
+    push.register_relay_token("phone-1", "ios", "tok-ios", session="", until=0.0)
+    push.register_relay_token("tablet-1", "android", "tok-android", session="", until=0.0)
     assert push.deliver("approval", "apr-9") == 2
     bodies = [json.loads(c["body"]) for c in sent]
     assert {(b["platform"], b["token"]) for b in bodies} == {
@@ -155,7 +156,7 @@ def test_a_relay_backend_without_a_url_delivers_nothing(
     home: Path, sent: list[dict[str, object]]
 ) -> None:
     (home / "config.json").write_text(json.dumps({"mobile": {"push_backend": "relay"}}))
-    push.register_relay_token("phone-1", "ios", "tok")
+    push.register_relay_token("phone-1", "ios", "tok", session="", until=0.0)
     assert push.deliver("approval", "apr-1") == 0
     assert sent == []
 
@@ -175,7 +176,7 @@ def test_the_backend_switch_keeps_the_transports_apart(
             }
         )
     )
-    push.register_relay_token("phone-1", "ios", "tok")
+    push.register_relay_token("phone-1", "ios", "tok", session="", until=0.0)
     assert push.deliver("approval", "apr-1") == 1
     assert len(sent) == 1
     assert sent[0]["url"] == "https://ntfy.example/pc"

@@ -1,4 +1,4 @@
-"""CLI seams for app-template (plan 32): a setup step and a doctor probe.
+"""CLI seams for app-template: a setup step and a doctor probe.
 
 ``personalclaw setup`` calls :func:`setup` after the core steps; ``personalclaw doctor``
 calls :func:`doctor` and renders the lines it returns as this app's section.

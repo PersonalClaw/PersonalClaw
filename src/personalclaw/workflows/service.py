@@ -29,6 +29,7 @@ import shutil
 import time
 from typing import Any
 
+from personalclaw.approval_answer import Principal
 from personalclaw.stale_write import revision_of
 from personalclaw.workflows import (
     attention,
@@ -444,9 +445,16 @@ async def author_def(
     # still where the read put it, and `DefMetadata.from_dict` would drop an unknown key outright.
     if metadata:
         spec["metadata"] = dict(metadata)
-    spec = secrets.reinject_secrets(
-        spec, await _reinject_source(based_on or name, version=based_on_version)
-    )
+    source = await _reinject_source(based_on or name, version=based_on_version)
+    spec = secrets.reinject_secrets(spec, source)
+    # An agent reads a definition through the model boundary, masked, so a string it hands back
+    # can carry a `[REDACTED: …]` marker where the definition holds a value: each keeps it.
+    from personalclaw.security import MASK_CONFLICT, MaskConflict, keep_masked_values
+
+    try:
+        spec = keep_masked_values(spec, source)
+    except MaskConflict:
+        return _service_failure("WF_DEF_MASK_CONFLICT", MASK_CONFLICT, repromptable=True)
     hidden_lost = secrets.unmatched_flags(spec)
     if spec.get("metadata"):
         # Through `DefMetadata.from_dict` and back out, so the tolerant per-field coercion (unknown
@@ -1822,11 +1830,11 @@ def pending_steering(run_id: str) -> dict[str, Any]:
 def resolve_confirmation(
     run_id: str,
     *,
+    by: Principal,
     supervisor: Any = None,
     verb: str = "",
     token: str = "",
     note: str = "",
-    responder: str = "",
 ) -> dict[str, Any]:
     """Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny needs.
 
@@ -1842,6 +1850,8 @@ def resolve_confirmation(
     `skip` and `quit` resolve nothing on purpose — skip leaves the item pending for the next
     pass (different from rejecting it) and quit stops asking without answering. Neither touches
     the run, so neither consumes the token.
+
+    *by* is who is answering, held to the rule `controller.resume` applies: only you.
     """
     from personalclaw.workflows.confirmation import resolve as resolve_verb
 
@@ -1872,24 +1882,31 @@ def resolve_confirmation(
         # reads. Passing the verb string would make `reject` truthy — the single worst possible
         # mistranslation in this path.
         answer=resolution.approved,
-        responder=responder,
+        by=by,
     )
     result.setdefault("verb", resolution.verb)
-    result.setdefault("approved", resolution.approved)
+    if result.get("ok", True):
+        # Only an answer that applied says what it decided: a refused or lost one decided
+        # nothing, and an `approved: true` beside its error read as the gate approved.
+        result.setdefault("approved", resolution.approved)
     return result
 
 
 def resume_run(
     run_id: str,
     *,
+    by: Principal,
     supervisor: Any = None,
     token: str = "",
     answer: Any = None,
-    responder: str = "",
     channel: str = "",
     always_allow: bool = False,
 ) -> dict[str, Any]:
     """Answer a gate, or clear a pause.
+
+    *by* is who is asking. Anyone who may resume the run may clear its pause; only you answer
+    its gate (`controller.resume`, which refuses anyone else before the token is touched). An
+    `event` gate is the exception: the trigger it waits for answers it too.
 
     When no token is given the newest pending continuation is used — a chat user says
     "approve it", not a 32-character token. If several gates are pending, the token becomes
@@ -1963,9 +1980,7 @@ def resume_run(
                 ],
             )
         token = pending[0].token
-    result = controller.resume(
-        token, answer, responder=responder, channel=channel, always_allow=always_allow
-    )
+    result = controller.resume(token, answer, by=by, channel=channel, always_allow=always_allow)
     result.setdefault("run_id", run_id)
     return result
 

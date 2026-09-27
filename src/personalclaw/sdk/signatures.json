@@ -34,7 +34,8 @@
    {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "extension"},
    {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "login_command"},
    {"annotation": "dict[str, str] | None", "default": "None", "kind": "keyword_only", "name": "requires_executable"},
-   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "self_sandboxing"}
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "self_sandboxing"},
+   {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "env_passthrough"}
   ],
   "returns": "ProviderEntry | None"
  },
@@ -71,6 +72,13 @@
   "kind": "class",
   "members": {
    "display_name": {"kind": "property", "returns": "str", "settable": false},
+   "effect": {
+    "kind": "method",
+    "params": [
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "action_config"}
+    ],
+    "returns": "RiskLevel"
+   },
    "execute": {
     "kind": "async method",
     "params": [
@@ -80,6 +88,7 @@
     ],
     "returns": "ActionResult"
    },
+   "hands_config_to_a_model": {"kind": "property", "returns": "bool", "settable": false},
    "internal": {"kind": "property", "returns": "bool", "settable": false},
    "name": {"kind": "property", "returns": "str", "settable": false},
    "reversal_kinds": {"kind": "property", "returns": "tuple[str, ...]", "settable": false},
@@ -445,11 +454,7 @@
     {"annotation": "AuthMode", "default": "AuthMode.LOCAL_TOKEN", "kind": "positional_or_keyword", "name": "mode"},
     {"annotation": "str", "default": "'127.0.0.1'", "kind": "positional_or_keyword", "name": "bind_host"},
     {"annotation": "str", "default": "'personalclaw_token'", "kind": "positional_or_keyword", "name": "cookie_name"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "oauth2_issuer"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "oauth2_client_id"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "oauth2_audience"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "api_key_env"},
-    {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "csrf_required"}
+    {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "csrf_required"}
    ],
    "returns": "None"
   },
@@ -465,7 +470,7 @@
  "personalclaw.sdk.channel.AuthMode": {
   "bases": ["str", "Enum"],
   "kind": "enum",
-  "members": {"API_KEY": "'api_key'", "LOCAL_TOKEN": "'local_token'", "NONE": "'none'", "OAUTH2": "'oauth2'"}
+  "members": {"LOCAL_TOKEN": "'local_token'", "NONE": "'none'"}
  },
  "personalclaw.sdk.channel.AutoSkillProvenance": {
   "bases": ["object"],
@@ -861,6 +866,11 @@
     "returns": "dict[str, Any]"
    },
    "name": {"kind": "property", "returns": "str", "settable": false},
+   "owner_pairing_hint": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
+   },
    "receive": {
     "kind": "method",
     "params": [],
@@ -1286,7 +1296,10 @@
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "event_count"},
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "tool_call_count"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tool_meta"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "served_model_ref"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "served_model_ref"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "builds"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"},
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "audit_ids"}
    ],
    "returns": "None"
   },
@@ -2076,6 +2089,7 @@
    }
   }
  },
+ "personalclaw.sdk.channel.NOT_THE_OWNER_SENTENCE": {"kind": "value", "type": "str", "value": "\"Only this channel's owner can get a dashboard link: the link signs in as the owner, so nobody else is sent one.\""},
  "personalclaw.sdk.channel.OutboundMessage": {
   "bases": ["object"],
   "init": {
@@ -3485,6 +3499,13 @@
   ],
   "returns": "bool"
  },
+ "personalclaw.sdk.channel.approval_brief_for": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Any", "kind": "positional_or_keyword", "name": "event"}
+  ],
+  "returns": "dict[str, Any] | None"
+ },
  "personalclaw.sdk.channel.assert_channel_contract": {
   "kind": "function",
   "params": [
@@ -3634,15 +3655,6 @@
   ],
   "returns": "str"
  },
- "personalclaw.sdk.channel.generate_token": {
-  "kind": "function",
-  "params": [
-   {"annotation": "str", "kind": "positional_or_keyword", "name": "user_id"},
-   {"annotation": "int", "default": "3600", "kind": "positional_or_keyword", "name": "ttl_seconds"},
-   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "app"}
-  ],
-  "returns": "str"
- },
  "personalclaw.sdk.channel.get_update_info": {
   "kind": "function",
   "params": [],
@@ -3745,6 +3757,15 @@
   ],
   "returns": "str"
  },
+ "personalclaw.sdk.channel.owner_sign_in_token": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "user_id"},
+   {"annotation": "int", "default": "3600", "kind": "positional_or_keyword", "name": "ttl_seconds"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.channel.parse_dashboard_url": {
   "kind": "function",
   "params": [
@@ -3794,6 +3815,16 @@
    {"annotation": "str", "kind": "positional_or_keyword", "name": "text"}
   ],
   "returns": "tuple[str, list[str]]"
+ },
+ "personalclaw.sdk.channel.redeem_owner_pairing_code": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "sender_id"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "code"},
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "name"}
+  ],
+  "returns": "bool"
  },
  "personalclaw.sdk.channel.redeem_pairing_code": {
   "kind": "function",
@@ -3956,7 +3987,8 @@
  "personalclaw.sdk.channel.validate_file_path": {
   "kind": "function",
   "params": [
-   {"annotation": "str", "kind": "positional_or_keyword", "name": "raw"}
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "raw"},
+   {"annotation": "Callable[[str], bool] | None", "default": "None", "kind": "keyword_only", "name": "sensitive"}
   ],
   "returns": "str | None"
  },
@@ -5737,7 +5769,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "summary"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "params"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "body"},
-    {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "agentCallable"}
+    {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "agentCallable"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "readOnly"}
    ],
    "returns": "None"
   },
@@ -5979,11 +6012,21 @@
    "params": [
     {"annotation": "str", "kind": "positional_or_keyword", "name": "name"},
     {"annotation": "str", "kind": "positional_or_keyword", "name": "description"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "input_schema"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "input_schema"},
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"}
    ],
    "returns": "None"
   },
   "kind": "dataclass"
+ },
+ "personalclaw.sdk.mcp.declared_risk": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "server"},
+   {"annotation": "McpToolSpec", "kind": "positional_or_keyword", "name": "tool"},
+   {"annotation": "bool | None", "default": "None", "kind": "keyword_only", "name": "trusted"}
+  ],
+  "returns": "RiskLevel"
  },
  "personalclaw.sdk.mcp.get_current_session_key": {
   "kind": "function",
@@ -5994,13 +6037,6 @@
   "kind": "function",
   "params": [],
   "returns": "McpClientRegistry"
- },
- "personalclaw.sdk.mcp.infer_risk_from_name": {
-  "kind": "function",
-  "params": [
-   {"annotation": "str", "kind": "positional_or_keyword", "name": "name"}
-  ],
-  "returns": "str"
  },
  "personalclaw.sdk.memory.MemoryProvider": {
   "bases": ["ABC"],
@@ -8315,6 +8351,20 @@
   "returns": "bool"
  },
  "personalclaw.sdk.sync.sync_egress_policy": {"kind": "alias", "of": "personalclaw.sdk.net.sync_egress_policy"},
+ "personalclaw.sdk.testing.keychain_off": {
+  "kind": "function",
+  "params": [],
+  "returns": "Callable[[], None]"
+ },
+ "personalclaw.sdk.testing.launch_acp_entry": {
+  "kind": "async function",
+  "params": [
+   {"annotation": "Mapping[str, Any]", "kind": "positional_or_keyword", "name": "options"},
+   {"annotation": "Path", "kind": "positional_or_keyword", "name": "work_dir"},
+   {"annotation": "float", "default": "60.0", "kind": "keyword_only", "name": "timeout"}
+  ],
+  "returns": "int"
+ },
  "personalclaw.sdk.tool.AgentError": {"kind": "alias", "of": "personalclaw.sdk.action.AgentError"},
  "personalclaw.sdk.tool.DEFAULT_TOOL_OUTPUT_CAP": {"kind": "value", "type": "int", "value": "60000"},
  "personalclaw.sdk.tool.ProjectionRule": {
@@ -8348,9 +8398,11 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "provider"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "parameters"},
     {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "requires_approval"},
-    {"annotation": "RiskLevel", "default": "RiskLevel.SAFE", "kind": "positional_or_keyword", "name": "risk_level"},
+    {"annotation": "RiskLevel", "default": "RiskLevel.CAUTION", "kind": "positional_or_keyword", "name": "risk_level"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "interactive"},
-    {"annotation": "int | None", "default": "None", "kind": "positional_or_keyword", "name": "max_output"}
+    {"annotation": "int | None", "default": "None", "kind": "positional_or_keyword", "name": "max_output"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "builds"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"}
    ],
    "returns": "None"
   },
@@ -8722,6 +8774,14 @@
   "returns": "dict[str, str]"
  },
  "personalclaw.sdk.util.atomic_write": {"kind": "alias", "of": "personalclaw.sdk.channel.atomic_write"},
+ "personalclaw.sdk.util.child_process_env": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Mapping[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "installer"}
+  ],
+  "returns": "dict[str, str]"
+ },
  "personalclaw.sdk.util.config_dir": {"kind": "alias", "of": "personalclaw.sdk.channel.config_dir"},
  "personalclaw.sdk.util.outside_home_path": {
   "kind": "function",

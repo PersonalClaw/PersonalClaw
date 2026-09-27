@@ -24,10 +24,14 @@ export function isDownloadable(m: AvailableModel, localProviders: ReadonlySet<st
  *
  *  It is the one download machine, not a second: `useModelDownloads` owns the job, its progress
  *  stream and cancel. This adds what a row needs on top: the refusal in the server's words, and the
- *  download reported ONCE when it lands. `reattach: false` tracks only the download this row starts
- *  (see `useModelDownloads`). */
-export function useRowDownload(model: AvailableModel, onDownloaded: () => void, { reattach = true }: { reattach?: boolean } = {}) {
-  const { jobs, start, cancel } = useModelDownloads(model.provider, () => {}, { reattach })
+ *  download reported ONCE when it lands.
+ *
+ *  🔑 `listed` IS HOW A ROW RE-ATTACHES AFTER A RELOAD. The page reads the download list once
+ *  (`ModelsPanel`) and hands each row the latest job for its model, so a download or a Repair still
+ *  running shows its progress again, and one that ended shows how. A list read per row would be a
+ *  request per model on every open, so the row reads none of its own (`reattach: false`). */
+export function useRowDownload(model: AvailableModel, onDownloaded: () => void, listed?: DownloadJob) {
+  const { jobs, start, cancel } = useModelDownloads(model.provider, () => {}, { reattach: false, adopt: listed })
   const job = jobs[model.id]
   const [error, setError] = useState('')
   const [starting, setStarting] = useState(false)
@@ -98,12 +102,14 @@ export function DownloadFailure({ text }: { text: string }) {
  *  `useRowDownload`'s, and the progress is drawn by the same `BundledDownloadProgress` row the
  *  onboarding offer and the chat notice draw. Nothing downloads on its own: the size and licence
  *  are stated, and the click is the consent. */
-export function InlineModelDownload({ model, onDownloaded }: {
+export function InlineModelDownload({ model, listed, onDownloaded }: {
   model: AvailableModel
+  /** The latest job the page's download list holds for this model (see `useRowDownload`). */
+  listed?: DownloadJob
   /** The download finished — started here, or re-attached to after a reload. Once per job. */
   onDownloaded: () => void
 }) {
-  const download = useRowDownload(model, onDownloaded)
+  const download = useRowDownload(model, onDownloaded, listed)
   const { offer, bytes, running, failed } = download
 
   const needsToken = model.gated === true && model.token_ready === false

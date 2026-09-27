@@ -413,6 +413,6 @@ function fmtMins(m: number): string {
   return `${Math.round(m)}m left`
 }
 function authLabel(a: AuthStatus): string {
-  const mode = a.mode === 'local_token' ? 'Local token' : a.mode === 'oauth2' ? 'OAuth2' : a.mode
-  return a.oauth2_issuer ? `${mode} · ${a.oauth2_issuer}` : `${mode} · ${a.bind_host}`
+  const mode = a.mode === 'local_token' ? 'Local token' : a.mode
+  return `${mode} · ${a.bind_host}`
 }

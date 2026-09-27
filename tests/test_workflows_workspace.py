@@ -177,8 +177,8 @@ def test_an_ungranted_secret_is_ABSENT_not_empty():
 
 def test_a_granted_secret_resolves():
     spec, _ = parse_workspace({"env": {"OPENAI_API_KEY": "{{secret:OPENAI_API_KEY}}"}})
-    env, withheld = spawn_env(spec, granted={"OPENAI_API_KEY": "sk-real"})
-    assert env["OPENAI_API_KEY"] == "sk-real"
+    env, withheld = spawn_env(spec, granted={"OPENAI_API_KEY": "fake-key-real"})
+    assert env["OPENAI_API_KEY"] == "fake-key-real"
     assert withheld == []
 
 
@@ -208,7 +208,7 @@ def test_inherit_does_NOT_pass_a_host_SECRET_without_a_grant():
     """Otherwise "inherit my environment" becomes a blanket credential grant, which is exactly the
     leak the secret filter exists to prevent."""
     spec, _ = parse_workspace({"env": {"GITHUB_TOKEN": None}})
-    env, withheld = spawn_env(spec, host_env={"GITHUB_TOKEN": "ghp_real"})
+    env, withheld = spawn_env(spec, host_env={"GITHUB_TOKEN": "fake-github-token-real"})
     assert env == {}
     assert withheld == ["GITHUB_TOKEN"]
 
@@ -216,9 +216,11 @@ def test_inherit_does_NOT_pass_a_host_SECRET_without_a_grant():
 def test_an_inherited_secret_CAN_be_explicitly_granted():
     spec, _ = parse_workspace({"env": {"GITHUB_TOKEN": None}})
     env, _withheld = spawn_env(
-        spec, granted={"GITHUB_TOKEN": "ghp_real"}, host_env={"GITHUB_TOKEN": "ghp_real"}
+        spec,
+        granted={"GITHUB_TOKEN": "fake-github-token-real"},
+        host_env={"GITHUB_TOKEN": "fake-github-token-real"},
     )
-    assert env == {"GITHUB_TOKEN": "ghp_real"}
+    assert env == {"GITHUB_TOKEN": "fake-github-token-real"}
 
 
 def test_an_absent_host_var_is_withheld_rather_than_set_empty():

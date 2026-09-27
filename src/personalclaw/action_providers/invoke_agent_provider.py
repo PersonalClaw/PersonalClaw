@@ -57,6 +57,11 @@ class InvokeAgentActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Invoke Agent"
 
+    @property
+    def hands_config_to_a_model(self) -> bool:
+        """The task template is the agent's task, so a ``{{secret:KEY}}`` in it stays a name."""
+        return True
+
     async def execute(
         self,
         action_config: dict[str, Any],

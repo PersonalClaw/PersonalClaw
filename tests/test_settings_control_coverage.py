@@ -49,6 +49,10 @@ WEB_SRC = REPO / "web/src"
 #:   ``setCredentialKeychain`` write their value). #2801's own caveat anticipated exactly this ("a
 #:   section could be written by a dedicated route rather than ``patchConfig``") and checked two
 #:   candidates; these four were not among them.
+#:
+#: ``auth`` is the tenth, added when its last two keys got a control:
+#: ``auth.lockout_threshold`` and ``auth.lockout_window`` were allowlisted, bounded and read by
+#: every sign-in door, and only a hand edit of ``config.json`` could change them.
 IN_SCOPE_SECTIONS = (
     "workflows",
     "external_access",
@@ -59,6 +63,7 @@ IN_SCOPE_SECTIONS = (
     "loops",
     "tools",
     "security",
+    "auth",
 )
 
 #: Allowlisted paths in scope that deliberately have NO control, each with the reason.

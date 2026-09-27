@@ -34,6 +34,7 @@ import asyncio
 import json
 import os
 import resource
+import shutil
 import sys
 import time
 from contextlib import contextmanager
@@ -294,6 +295,67 @@ async def test_the_ceiling_actually_reaches_the_build_child(tmp_path, home, monk
         f"the build child's NOFILE is {got_soft}, not raised to its hard limit {got_hard} — "
         "this is not the `build` profile's ceiling"
     )
+
+
+# ── the bundler keeps its compile cache in the home ──────────────────────────
+
+
+def stub_reports_env(report: Path) -> str:
+    """A bundler that records the compile-cache location it was handed, then emits a bundle."""
+    return (
+        "#!/bin/sh\n"
+        + _OUTFILE_SH
+        + f'printf %s "$NODE_COMPILE_CACHE" > {json.dumps(str(report))}\n'
+        + '[ -n "$out" ] && printf %s "window.__built=1;" > "$out"\n'
+        + "exit 0\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_bundler_is_handed_a_compile_cache_in_the_home(tmp_path, home, monkeypatch):
+    report = tmp_path / "cache-dir.txt"
+    monkeypatch.setenv(
+        TOOLCHAIN_ROOT_ENV, str(_toolchain(tmp_path / "tc", stub_reports_env(report)))
+    )
+    await build_react_artifact(slug="w", source=JSX, files_root=tmp_path / "out")
+
+    assert report.read_text() == str(home / "installer-cache" / "node-compile-cache")
+
+
+_NODE_BUNDLER = """#!{node}
+// A stand-in bundler, run by Node: it turns the compile cache on the way npm does, compiles a
+// module, reports where Node keeps the cache, and writes the bundle it was asked for.
+const m = require('module')
+m.enableCompileCache()
+require('./lib.js')
+const out = process.argv.find((a) => a.startsWith('--outfile=')).slice('--outfile='.length)
+require('fs').writeFileSync({report}, String(m.getCompileCacheDir()))
+require('fs').writeFileSync(out, 'window.__built=1;')
+m.flushCompileCache()
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+@pytest.mark.asyncio
+async def test_a_node_bundler_compiles_into_the_home_not_the_temp_folder(
+    tmp_path, home, monkeypatch
+):
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(temp))
+    report = tmp_path / "cache-dir.txt"
+    root = _toolchain(
+        tmp_path / "tc",
+        _NODE_BUNDLER.format(node=shutil.which("node"), report=json.dumps(str(report))),
+    )
+    (root / "node_modules" / ".bin" / "lib.js").write_text("module.exports = () => 42\n")
+    monkeypatch.setenv(TOOLCHAIN_ROOT_ENV, str(root))
+    await build_react_artifact(slug="w", source=JSX, files_root=tmp_path / "out")
+
+    cache = home / "installer-cache" / "node-compile-cache"
+    assert report.read_text().startswith(str(cache)), report.read_text()
+    assert any(cache.rglob("*")), "Node wrote no compile cache into the home"
+    assert not (temp / "node-compile-cache").exists(), "the compile cache went to the temp folder"
 
 
 # ── the build never reaches the network ──────────────────────────────────────

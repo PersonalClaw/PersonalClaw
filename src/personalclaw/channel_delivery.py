@@ -38,6 +38,18 @@ from personalclaw.security import redact_values_for_display
 
 logger = logging.getLogger(__name__)
 
+#: How a progress item on a channel's stream stands (:meth:`ChannelDelivery.append_stream_task`):
+#: running, then how its call ended — ran and succeeded, ran and failed, or did not run because its
+#: approval was refused, went unanswered, or its turn stopped first.
+TASK_STATUSES: tuple[str, ...] = (
+    "in_progress",
+    "complete",
+    "failed",
+    "rejected",
+    "expired",
+    "cancelled",
+)
+
 
 @runtime_checkable
 class ChannelDelivery(Protocol):
@@ -169,8 +181,15 @@ class ChannelDelivery(Protocol):
         status: str,
     ) -> None:
         """Append/update a progress item on an in-flight stream started by
-        start_stream. ``status`` is a generic progress state ("in_progress" /
-        "complete"). Channels without task-animation may no-op."""
+        start_stream. Channels without task-animation may no-op.
+
+        ``status`` is how the item stands, one of :data:`TASK_STATUSES`: ``in_progress`` while
+        the call runs, then how it ended. ``complete`` is a call that ran and succeeded and
+        ``failed`` one that ran and failed. The other three are a call that did not run because
+        its approval did not approve it, named as the approval ended: ``rejected`` (refused, by
+        you or by a rule), ``expired`` (nobody answered in time) and ``cancelled`` (the turn
+        stopped first). A channel shows each as what it is: a line that says done for a call
+        that never ran tells the owner something untrue."""
         ...
 
     async def stop_stream(self, channel: str, stream_ts: str) -> None:
@@ -188,29 +207,46 @@ class ChannelDelivery(Protocol):
     ) -> "bool | None":
         """Prompt the owner to approve a tool call on this channel.
 
-        Returns ``True`` (approved) / ``False`` (rejected), or ``None`` if the
+        Returns ``True`` (approved) / ``False`` (not approved), or ``None`` if the
         channel can't prompt (no owner/channel) so the gateway falls back to the
         dashboard. Implementations own the channel-specific approval UI + the wait
         for the owner's response, and should coordinate with the dashboard via the
         ``on_prompted`` hook (invoked with the pending record) when provided by the
         caller. ``sessions`` is the live SessionManager for cross-surface reconcile.
 
-        **The approval brief (additive meta).** ``event.tool_meta`` carries the core-
-        composed brief under
-        :data:`~personalclaw.approval_brief.APPROVAL_BRIEF_META_KEY`, so a channel can
-        tell the owner what the call would TOUCH, not just what it is called::
+        **How it ends.** The pending record carries a ``future``. The owner's press on this
+        channel resolves it with ``"approved"`` or ``"rejected"``. However else the approval ends,
+        core resolves it with how it ended (``approval_state.APPROVAL_OUTCOMES``): ``"approved"``
+        or ``"rejected"`` when it was answered somewhere else (the dashboard, the phone),
+        ``"expired"`` when nobody answered inside the owner's window, ``"cancelled"`` when the
+        work that asked stopped first. The wait keeps no clock of its own: the window is core's,
+        up to a week, and core ends the wait however the approval ends, so a prompt that gave up
+        on its own timer would say an approval had ended while it still waited. Once the future
+        resolves, the prompt says how it ended and takes its buttons off, and a press on it
+        after that is answered with that outcome rather than taken for an answer.
 
-            {"tool": str,              # tool identity, same value as event.title
+        **What the prompt shows: the approval brief.** ``event.tool_meta`` carries the
+        core-composed brief under
+        :data:`~personalclaw.approval_brief.APPROVAL_BRIEF_META_KEY`, which a channel reads
+        with ``personalclaw.sdk.channel.approval_brief_for(event)`` (that also composes one
+        for an approval the channel's own turn raised)::
+
+            {"tool": str,              # the tool, masked
+             "input": str,             # its arguments, masked, as the dashboard's card
+                                       #   shows them ("" when it takes none)
+             "purpose": str,           # why the runner says it is calling it, masked
              "risk": str,              # EFFECTIVE per-invocation risk (not the
                                        #   DECLARED event.risk_level)
+             "summary": str,           # "Can: writes files · Risk: Caution", or ""
              "blastRadius": {"writes": bool, "network": bool,
                              "shell": bool, "readOnly": bool},   # optional
              "blastRadiusLine": str}                             # optional
 
-        Reading it is OPTIONAL and purely additive: the method's arguments are
-        unchanged, no existing field or ``tool_meta`` key is replaced, and a channel
-        that ignores the key prompts exactly as it did before. Two rules for a
-        renderer:
+        A prompt shows the tool, the arguments, the purpose and the summary line, which is
+        what the dashboard's approval card shows, and splits like a reply when that is too
+        long for one message, the buttons on the last part. Every string is already masked
+        (:func:`~personalclaw.security.redact_field`), so a channel masks nothing itself.
+        Two rules for a renderer that reads the facets itself:
 
         * ``blastRadius``/``blastRadiusLine`` are ABSENT when nothing could be
           established — show no blast-radius line at all, rather than "nothing
@@ -219,9 +255,7 @@ class ChannelDelivery(Protocol):
           enumerate all four with on/off states: a ``False`` means "not established",
           and painting it as "no network" turns absence of evidence into an all-clear.
 
-        The brief is a compact summary for a surface with no room — the dashboard
-        remains the rich approval surface, and rendering logic stays in the channel's
-        own bundle."""
+        The rendering stays in the channel's own bundle."""
         ...
 
 
@@ -496,9 +530,10 @@ def approval_providers(origin: str = "") -> list[str]:
     return order
 
 
-def approval_delivery(origin: str = "") -> "ChannelDelivery | None":
-    """The channel that asks the owner an approval: the first of :func:`approval_providers` that
-    knows the owner (``owner_id_for``) and has an Approve/Deny prompt, or None when none does.
+def approval_delivery(origin: str = "") -> "tuple[str, ChannelDelivery] | None":
+    """The channel that asks the owner an approval, as ``(provider, delivery)``: the first of
+    :func:`approval_providers` that knows the owner (``owner_id_for``) and has an Approve/Deny
+    prompt, or None when none does. The provider names who answers there (you, on that channel).
 
     A channel with no owner id cannot ask anyone, so it is passed over rather than asked and left
     to answer "cannot prompt" — which ended a subagent's approval at the dashboard while the next
@@ -512,7 +547,7 @@ def approval_delivery(origin: str = "") -> "ChannelDelivery | None":
             and getattr(delivery, "request_approval", None) is not None
             and owner_id_for(key)
         ):
-            return delivery
+            return key, delivery
     return None
 
 

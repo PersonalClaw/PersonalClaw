@@ -7,7 +7,9 @@ surface exists to guarantee, each of which fails silently if it regresses:
 * the discovery file carries a token **ref**, never the token, and is 0600;
 * ``requiresConfirmation`` is enforced **server-side** — a flagged action does not mutate
   on first call, no matter what the client sends;
-* a confirm token is **single-use** and expires;
+* only **you** confirm it — the client that asked cannot, whatever credential it holds
+  (``approval_answer``);
+* a confirmation is **single-use** and expires;
 * the catalogue is **filtered to the caller's pin** and the digest covers what was
   actually served — a self-describing surface that describes more than the caller may
   invoke is an enumeration of the authority the caller lacks, and the same predicate has
@@ -59,6 +61,13 @@ def _request(state, *, headers=None, body=None, peer="127.0.0.1"):
 
 def _payload(resp):
     return json.loads(resp.body.decode())
+
+
+def _you():
+    """You, answering: the principal every owner-side answer below is given as."""
+    from personalclaw.approval_answer import YOU
+
+    return YOU
 
 
 # ── the self-describing catalogue ────────────────────────────────────────────
@@ -231,11 +240,14 @@ class TestConfirmationIsServerSide:
         body = _payload(resp)
         assert resp.status == 202
         assert body["status"] == "needs_confirmation"
-        assert body["confirm_token"]
+        assert body["confirmation"]
+        assert "owner" in body["message"] and "cannot confirm" in body["message"]
         assert ran == [], "a confirm-gated action mutated before the user confirmed"
 
     @pytest.mark.asyncio
-    async def test_the_user_is_told_and_the_notice_carries_the_token(self, admitted, monkeypatch):
+    async def test_you_are_asked_in_the_inbox_and_the_row_names_the_asker(
+        self, admitted, monkeypatch
+    ):
         """Raised through `emit_attention_item` — `inbox.py` calls that "the only correct
         way to raise a durable agent request", because a caller doing `store.add` plus
         `state.notify` separately drifts into two notifications for one event or a row
@@ -261,12 +273,17 @@ class TestConfirmationIsServerSide:
                 body={"action": "toggle_automation", "params": {"id": "t1"}},
             )
         )
-        token = _payload(resp)["confirm_token"]
+        token = _payload(resp)["confirmation"]
         assert raised, "no needs-input attention item was raised"
         kw = raised[-1]
         assert kw["kind"] == "needs_input"
-        assert kw["refs"]["confirm_token"] == token
+        assert kw["refs"]["confirmation"] == token
         assert kw["refs"]["action"] == "toggle_automation"
+        # Who asked, recorded as it is asked: the one party that may never answer it.
+        assert kw["refs"]["asked_by"] == "bridge:surface"
+        assert bridge._pending[token]["asked_by"] == "bridge:surface"
+        # What it would do, so you do not confirm it blind.
+        assert "toggle_automation" in kw["body"] and '"id": "t1"' in kw["body"]
         # Idempotent per token: a client that retries must not stack inbox rows.
         assert kw["dedup_key"] == f"control_bridge:{token}"
 
@@ -290,6 +307,11 @@ class TestConfirmationIsServerSide:
                 for a in bridge.actions()
             ),
         )
+        closed: list[dict] = []
+        monkeypatch.setattr(
+            "personalclaw.inbox.resolve_attention_items",
+            lambda state, refs, **_kw: closed.append(refs) or 1,
+        )
         state = _State()
         first = await bridge.handle_action(
             _request(
@@ -298,37 +320,166 @@ class TestConfirmationIsServerSide:
                 body={"action": "create_task", "params": {"title": "write me"}},
             )
         )
-        token = _payload(first)["confirm_token"]
-        ok = await bridge.handle_confirm(
-            _request(state, headers={"Authorization": "Bearer x"}, body={"confirm_token": token})
-        )
+        token = _payload(first)["confirmation"]
+        ok = await bridge.answer_confirmation(state, token, approved=True, by=_you())
         assert ok.status == 200 and _payload(ok)["status"] == "ok"
         assert calls == [{"title": "write me"}]
+        assert closed == [{"source": "control_bridge", "confirmation": token}]
 
-        # Single-use: replaying the token must not mutate again.
-        replay = await bridge.handle_confirm(
-            _request(state, headers={"Authorization": "Bearer x"}, body={"confirm_token": token})
-        )
+        # Single-use: answering it again must not mutate again.
+        replay = await bridge.answer_confirmation(state, token, approved=True, by=_you())
         assert replay.status == 404
-        assert len(calls) == 1, "a confirm token was redeemable twice"
+        assert len(calls) == 1, "a confirmation was answerable twice"
 
     @pytest.mark.asyncio
-    async def test_an_unknown_token_is_refused(self, admitted):
-        resp = await bridge.handle_confirm(
+    async def test_the_client_that_asked_cannot_confirm_it(self, admitted, monkeypatch):
+        """🔴 The asker answering its own approval. The 202 handed the client its token and
+        ``/confirm`` redeemed it with the same bearer, so a confirm-flagged action ran after two
+        calls from the one party it was supposed to wait on. Both body spellings are sent, so this
+        reads the same on a build that still took ``confirm_token``."""
+        calls: list[dict] = []
+        audited: list[dict] = []
+        sel_rows: list[dict] = []
+
+        async def _record(state, params):
+            calls.append(params)
+            return {"ok": True}
+
+        monkeypatch.setattr(
+            bridge,
+            "_REGISTRY",
+            tuple(
+                (
+                    bridge.Action(**{**a.__dict__, "handler": _record})
+                    if a.name == "create_task"
+                    else a
+                )
+                for a in bridge.actions()
+            ),
+        )
+        monkeypatch.setattr(bridge, "audit", lambda surface, **kw: audited.append(kw))
+        monkeypatch.setattr(
+            "personalclaw.sel.sel",
+            lambda: SimpleNamespace(log_api_access=lambda **kw: sel_rows.append(kw)),
+        )
+        state = _State()
+        first = await bridge.handle_action(
             _request(
-                _State(),
+                state,
                 headers={"Authorization": "Bearer x"},
-                body={"confirm_token": "not-a-real-token"},
+                body={"action": "create_task", "params": {"title": "mine"}},
             )
         )
+        minted = _payload(first)
+        token = minted.get("confirmation") or minted.get("confirm_token")
+        own = await bridge.handle_confirm(
+            _request(
+                state,
+                headers={"Authorization": "Bearer x"},
+                body={"confirmation": token, "confirm_token": token},
+            )
+        )
+        assert own.status == 403, own.body
+        assert _payload(own)["error"]["code"] == "approval_owner_only"
+        assert calls == [], "the client that asked confirmed its own action"
+        assert bridge.pending_count() == 1, "the refusal spent the owner's confirmation"
+        assert audited[-1]["route"] == "/confirm" and audited[-1]["status"] == 403
+        (refused,) = [r for r in sel_rows if r["operation"] == "approval.answer_refused"]
+        assert refused["caller"] == "bridge:surface"
+        assert refused["resources"].endswith("asked_by=bridge:surface")
+
+    @pytest.mark.asyncio
+    async def test_a_confirm_whose_body_does_not_parse_gets_the_same_refusal(
+        self, admitted, monkeypatch
+    ):
+        """The door refuses whatever it is sent, so a body that does not parse is refused the
+        same way, and its attempt is on record the same way."""
+        audited: list[dict] = []
+        monkeypatch.setattr(bridge, "audit", lambda surface, **kw: audited.append(kw))
+        monkeypatch.setattr(
+            "personalclaw.sel.sel", lambda: SimpleNamespace(log_api_access=lambda **kw: None)
+        )
+        resp = await bridge.handle_confirm(
+            _request(_State(), headers={"Authorization": "Bearer x"}, body=None)
+        )
+        assert resp.status == 403, resp.body
+        assert _payload(resp)["error"]["code"] == "approval_owner_only"
+        assert audited[-1]["route"] == "/confirm" and audited[-1]["status"] == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("who", ["app", "agent", "bridge"])
+    async def test_only_you_answer_it(self, admitted, monkeypatch, who):
+        """The answer path itself holds the rule, whichever door calls it."""
+        from personalclaw import approval_answer as A
+
+        by = {"app": A.app("probe"), "agent": A.agent("dashboard:c1"), "bridge": A.bridge()}[who]
+        state = _State()
+        first = await bridge.handle_action(
+            _request(
+                state,
+                headers={"Authorization": "Bearer x"},
+                body={"action": "create_task", "params": {"title": "t"}},
+            )
+        )
+        token = _payload(first)["confirmation"]
+        resp = await bridge.answer_confirmation(state, token, approved=True, by=by)
+        assert resp.status == 403
+        assert bridge.pending_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_declining_runs_nothing_and_spends_it(self, admitted, monkeypatch):
+        calls: list[dict] = []
+
+        async def _record(state, params):
+            calls.append(params)
+            return {"ok": True}
+
+        monkeypatch.setattr(
+            bridge,
+            "_REGISTRY",
+            tuple(
+                (
+                    bridge.Action(**{**a.__dict__, "handler": _record})
+                    if a.name == "create_task"
+                    else a
+                )
+                for a in bridge.actions()
+            ),
+        )
+        monkeypatch.setattr(
+            "personalclaw.inbox.resolve_attention_items", lambda state, refs, **_kw: 1
+        )
+        state = _State()
+        first = await bridge.handle_action(
+            _request(
+                state,
+                headers={"Authorization": "Bearer x"},
+                body={"action": "create_task", "params": {"title": "no"}},
+            )
+        )
+        token = _payload(first)["confirmation"]
+        no = await bridge.answer_confirmation(state, token, approved=False, by=_you())
+        assert no.status == 200 and _payload(no)["status"] == "declined"
+        assert calls == []
+        assert bridge.pending_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_confirmation_is_refused(self, admitted, monkeypatch):
+        monkeypatch.setattr(
+            "personalclaw.inbox.resolve_attention_items", lambda state, refs, **_kw: 0
+        )
+        resp = await bridge.answer_confirmation(
+            _State(), "not-a-real-one", approved=True, by=_you()
+        )
         assert resp.status == 404
+        assert _payload(resp)["error"]["code"] == "confirm_token_invalid"
 
     def test_a_token_expires(self, monkeypatch):
         """An abandoned intent must not be redeemable hours later by whatever still
         holds the token."""
         bridge._pending.clear()
         action = next(a for a in bridge.actions() if a.requires_confirmation)
-        token = bridge._mint_confirmation(action, {"title": "x"})
+        token = bridge._mint_confirmation(action, {"title": "x"}, asked_by="bridge:surface")
         assert bridge.pending_count() == 1
         # Compute the target BEFORE patching: a lambda that reads `_pending[token]`
         # lazily raises KeyError the second time `_reap` calls it, because the first
@@ -824,10 +975,11 @@ class TestTheCatalogueIsFilteredToThePin:
         assert raised == [], "the owner was asked to approve an action the client cannot run"
 
     @pytest.mark.asyncio
-    async def test_redemption_re_checks_the_pin(self, admitted, register_client, monkeypatch):
-        """Catalogue and redemption are the two places the pin has to hold, and this is
-        the one that could drift: a token minted by a WIDER principal must not become a
-        way for a narrower one to run an action its own record forbids."""
+    async def test_your_answer_re_checks_the_askers_pin(
+        self, admitted, register_client, monkeypatch
+    ):
+        """The pin holds when you answer as well as when the client asked: a client whose record
+        was narrowed in between does not get the action its record now forbids."""
         calls: list[dict] = []
 
         async def _record(state, params):
@@ -847,24 +999,71 @@ class TestTheCatalogueIsFilteredToThePin:
             ),
         )
         monkeypatch.setattr("personalclaw.inbox.emit_attention_item", lambda state, **kw: "item-1")
+        monkeypatch.setattr(
+            "personalclaw.inbox.resolve_attention_items", lambda state, refs, **_kw: 1
+        )
+        from personalclaw.inbound import clients as clients_mod
+
         state = _State()
-        # Minted by the un-pinned SURFACE principal.
+        client, token = register_client(["create_task"])
         minted = await bridge.handle_action(
             _request(
                 state,
-                headers=_bearer("surface-token"),
+                headers=_bearer(token),
                 body={"action": "create_task", "params": {"title": "wide"}},
             )
         )
-        token_value = _payload(minted)["confirm_token"]
-        # Redeemed by a narrower client whose record does not include the action.
-        _client, narrow = register_client(["list_automations"])
-        resp = await bridge.handle_confirm(
-            _request(state, headers=_bearer(narrow), body={"confirm_token": token_value})
-        )
+        confirmation = _payload(minted)["confirmation"]
+        assert bridge._pending[confirmation]["asked_by"] == f"bridge:{client.client_id}"
+        # The client's record is narrowed before you answer.
+        records = clients_mod.load_clients()
+        records[client.client_id].tools = ["list_automations"]
+        clients_mod.save_clients(records)
+        resp = await bridge.answer_confirmation(state, confirmation, approved=True, by=_you())
         assert resp.status == 403
         assert _payload(resp)["error"]["code"] == "action_not_bound"
-        assert calls == [], "a narrower client redeemed a wider principal's confirmation"
+        assert calls == [], "a narrowed client got the action its record now forbids"
+
+    @pytest.mark.asyncio
+    async def test_a_revoked_clients_confirmation_does_not_run(
+        self, admitted, register_client, monkeypatch
+    ):
+        """Taking a client away takes its pending requests with it."""
+        calls: list[dict] = []
+
+        async def _record(state, params):
+            calls.append(params)
+            return {"ok": True}
+
+        monkeypatch.setattr(
+            bridge,
+            "_REGISTRY",
+            tuple(
+                (
+                    bridge.Action(**{**a.__dict__, "handler": _record})
+                    if a.name == "create_task"
+                    else a
+                )
+                for a in bridge.actions()
+            ),
+        )
+        monkeypatch.setattr("personalclaw.inbox.emit_attention_item", lambda state, **kw: "item-1")
+        monkeypatch.setattr(
+            "personalclaw.inbox.resolve_attention_items", lambda state, refs, **_kw: 1
+        )
+        from personalclaw.inbound import clients as clients_mod
+
+        state = _State()
+        client, token = register_client(["create_task"])
+        minted = await bridge.handle_action(
+            _request(state, headers=_bearer(token), body={"action": "create_task", "params": {}})
+        )
+        confirmation = _payload(minted)["confirmation"]
+        assert clients_mod.revoke_client(client.client_id)
+        resp = await bridge.answer_confirmation(state, confirmation, approved=True, by=_you())
+        assert resp.status == 409
+        assert _payload(resp)["error"]["code"] == "bridge_client_gone"
+        assert calls == []
 
     @pytest.mark.asyncio
     async def test_the_catalogue_and_the_invoke_path_cannot_disagree(

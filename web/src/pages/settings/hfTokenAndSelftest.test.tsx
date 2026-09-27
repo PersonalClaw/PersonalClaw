@@ -30,6 +30,8 @@ vi.mock('../../lib/api', async (importOriginal) => {
       modelsHealth: () => Promise.resolve({ providers: [] }),
       judgeBench: () => Promise.resolve({ ran: false }),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
+      // The panel reads the download list once, so a row can re-attach to a running download.
+      modelDownloads: () => Promise.resolve([]),
       modelsLoaded: () => Promise.resolve({
         loaded: [], providers: [],
         pressure: { total_mb: 0, used_mb: 0, available_mb: 0, used_pct: 0, warn_pct: 85, warn: false, source: 'unavailable' },
@@ -101,9 +103,9 @@ describe('the HuggingFace token section in the Models panel', () => {
     render(<ModelsPanel />)
 
     const input = await screen.findByLabelText('HuggingFace token')
-    fireEvent.change(input, { target: { value: 'hf_pasted_secret_token' } })
+    fireEvent.change(input, { target: { value: 'fake-hf-token-pasted_secret_token' } })
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
-    await waitFor(() => expect(setHfToken).toHaveBeenCalledWith('hf_pasted_secret_token'))
+    await waitFor(() => expect(setHfToken).toHaveBeenCalledWith('fake-hf-token-pasted_secret_token'))
   })
 })
 

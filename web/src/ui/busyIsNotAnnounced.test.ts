@@ -341,10 +341,17 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
 
   it('🔴 THE RATCHET: the number of busy-gated Buttons announcing nothing may only go DOWN', () => {
     // 179 as first measured; 114 once Class A, the self-spun bystanders and the identity-gated half of
-    // Class B were closed; **79 now.** The converted sites drop out of the population entirely, because
-    // `disabled={busy}` is GONE from them rather than supplemented. A CEILING, not a floor: each future
-    // fix lowers it (lower it in that PR), and a NEW `<Button disabled={busy}>` with no `loading=`
-    // raises it and reds this.
+    // Class B were closed; 79 once the census learned the spellings described below; **76 now.** The
+    // converted sites drop out of the population entirely, because `disabled={busy}` is GONE from them
+    // rather than supplemented. A CEILING, not a floor: each future fix lowers it (lower it in that
+    // PR), and a NEW `<Button disabled={busy}>` with no `loading=` raises it and reds this.
+    //
+    // 🪤 A CEILING LEFT ABOVE THE COUNT IS A FREE PASS FOR THE NEXT REGRESSION, and one was spent. A
+    // deleted site took the count to 78 while this still read 79, so the next new unannounced button
+    // (a trigger's Allow) landed green; only the one after it (a gate's "Wake it now") went red. Both
+    // took the two-prop fix, with the gate panel's Approve and Submit, which shared the cause: each
+    // component had only its caller's shared `busy`, so `loading` now comes from the control's OWN
+    // in-flight action and `disabled` keeps the shared flag. Lower this the moment the count drops.
     //
     // 🔑 THE 114 → 79 STEP CAME FROM FIXING THE CENSUS, NOT FROM A SWEEP, and that is the part worth
     // reading. `spinnerCond` recognised only `<Loader2`, so 33 sites that hand-roll their in-flight
@@ -364,7 +371,7 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
       'a busy-gated Button that announces nothing to assistive tech:\n  ' +
         unannounced.slice(0, 12).map((s) => `${s.at}  disabled={${s.gate}}`).join('\n  ') +
         `\n  …and ${Math.max(0, unannounced.length - 12)} more`,
-    ).toBeLessThanOrEqual(79)
+    ).toBeLessThanOrEqual(76)
   })
 
   it('records the classes, because they want OPPOSITE fixes', () => {

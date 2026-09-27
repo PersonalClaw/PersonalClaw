@@ -251,14 +251,14 @@ def test_credentials_in_an_artifact_body_are_redacted_on_the_way_in(provider):
 
     provider.create(
         name="Doc",
-        content="const key = 'sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'",
+        content="const key = 'fake-anthropic-1'",
         kind="document",
     )
     out = _inject_artifact_content(None, _Session(_msg(["doc"])), "review")
     # Assert the body REACHED the prompt first — otherwise "the key is absent" would
     # pass just as well if nothing were injected at all, proving nothing.
     assert "const key" in out
-    assert "sk-ant-api03-AAAA" not in out
+    assert "fake-anthropic-2" not in out
 
 
 # ── create() echoes the PERSISTED body, not the raw input (#781) ──────────────

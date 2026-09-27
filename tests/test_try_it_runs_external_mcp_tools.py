@@ -51,11 +51,13 @@ from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolR
 SERVER = "fixture"
 
 # A real MCP server. `delete_stack` writes a marker file when it runs, so a test can tell a call
-# that was refused from one that ran and whose answer was lost.
+# that was refused from one that ran and whose answer was lost. It DECLARES itself destructive
+# (`destructiveHint`), which is what makes it one: a tool's name says nothing.
 _FIXTURE = textwrap.dedent("""
     import os, socket, sys
 
     from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 
     TRANSPORT, MARKER, PORT_FILE = sys.argv[1:4]
     mcp = FastMCP("fixture")
@@ -66,7 +68,10 @@ _FIXTURE = textwrap.dedent("""
         return f"hello {name}"
 
 
-    @mcp.tool(description="tear down a stack")
+    @mcp.tool(
+        description="tear down a stack",
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
+    )
     def delete_stack(name: str) -> str:
         with open(MARKER, "a") as f:
             f.write(name + "\\n")
@@ -110,11 +115,11 @@ _APP_MANIFEST = {
 }
 _APP_PROVIDER = textwrap.dedent("""
     from personalclaw.sdk.mcp import (
+        declared_risk,
         get_current_session_key,
         get_mcp_client_registry,
-        infer_risk_from_name,
     )
-    from personalclaw.sdk.tool import RiskLevel, ToolDefinition, ToolProvider, ToolResult
+    from personalclaw.sdk.tool import ToolDefinition, ToolProvider, ToolResult
 
 
     def create_mcp_provider(config=None):
@@ -144,7 +149,7 @@ _APP_PROVIDER = textwrap.dedent("""
                             provider="mcp",
                             parameters=tool.input_schema,
                             requires_approval=True,
-                            risk_level=RiskLevel(infer_risk_from_name(tool.name)),
+                            risk_level=declared_risk(server, tool),
                         )
                     )
             return tools

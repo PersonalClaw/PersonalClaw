@@ -1038,6 +1038,9 @@ def test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_just
         "personalclaw.dashboard.sse.SseHub",
         "personalclaw.dashboard.sse.SseRegistry",
         "personalclaw.dashboard.state.DashboardState",
+        # Reached only through `DashboardState`: its approval methods take who is answering
+        # (`resolve_approval(..., by=)`), so it is owed exactly when the state is.
+        "personalclaw.approval_answer.Principal",
     }, (
         "without the dashboard exemption the gap rail reports "
         f"{sorted(would_gap)}. If that set is EMPTY the exemption is dead and must be deleted; "

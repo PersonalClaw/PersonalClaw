@@ -68,8 +68,8 @@ async def _statuses(monkeypatch, home, entries) -> dict[str, bool]:
 
 @pytest.mark.asyncio
 async def test_a_configured_credential_reports_ok_not_missing(monkeypatch, tmp_path):
-    """The defect, at the endpoint. `sk-configured` is right there in the home's store."""
-    (tmp_path / ".env").write_text("MY_KEY=sk-configured\n", encoding="utf-8")
+    """The defect, at the endpoint. `fake-key-configured` is right there in the home's store."""
+    (tmp_path / ".env").write_text("MY_KEY=fake-key-configured\n", encoding="utf-8")
     entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "MY_KEY")]
 
     assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": True}
@@ -80,7 +80,7 @@ async def test_a_value_left_in_the_retired_credentials_file_reports_missing(monk
     """The pair: "always there" would satisfy the test above and be just as wrong. A value in
     `credentials.json`, which nothing reads any more, is not a stored credential."""
     (tmp_path / "credentials.json").write_text(
-        json.dumps({"MY_KEY": {"type": "api_key", "value": "sk-in-the-old-file"}}),
+        json.dumps({"MY_KEY": {"type": "api_key", "value": "fake-key-in-the-old-file"}}),
         encoding="utf-8",
     )
     entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "MY_KEY")]

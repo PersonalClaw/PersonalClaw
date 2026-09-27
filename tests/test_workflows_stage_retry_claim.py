@@ -49,6 +49,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import engine
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
@@ -254,7 +255,7 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
         await asyncio.wait_for(controller._terminal.wait(), timeout=RUN_TIMEOUT)
         pending = HI.list_continuations(run.id)
         assert len(pending) == 1, f"the gate is not waiting to be answered: {pending}"
-        assert controller.resume(pending[0].token, True)["ok"]
+        assert controller.resume(pending[0].token, True, by=YOU)["ok"]
         return first, await controller.run_to_completion(timeout=RUN_TIMEOUT)
 
     first, second = asyncio.run(_go())
@@ -353,7 +354,7 @@ def test_a_rewind_the_owner_confirmed_reruns_a_stage_that_SUCCEEDED(wired) -> No
         await asyncio.wait_for(controller._terminal.wait(), timeout=RUN_TIMEOUT)
         pending = HI.list_continuations(run.id)
         assert len(pending) == 1, f"the gate is not waiting to be answered: {pending}"
-        assert controller.resume(pending[0].token, True)["ok"]
+        assert controller.resume(pending[0].token, True, by=YOU)["ok"]
         return first, await controller.run_to_completion(timeout=RUN_TIMEOUT)
 
     first, second = asyncio.run(_go())

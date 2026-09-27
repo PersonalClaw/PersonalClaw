@@ -86,6 +86,8 @@ def ask_body(ask: dict[str, Any] | None, handoff: dict[str, Any] | None) -> str:
                 "choice": "Waiting for you to choose an option.",
                 "text": "Waiting for a written answer.",
                 "form": "Waiting for you to fill in a form.",
+                # Not a question: nobody has to answer it, and you can wake it early.
+                "event": "Parked until something wakes it. You can wake it now.",
             }.get(kind, f"Waiting for a {kind} answer.")
         )
     attempted = [str(a) for a in ((handoff or {}).get("attempted") or []) if str(a).strip()]
@@ -240,9 +242,11 @@ def announce_loop_end(state: Any, run: Any, status: Any) -> str:
 
     * ``complete`` → one "Loop complete" notification;
     * ``failed`` → one "Loop failed" notification, carrying the engine's reason;
-    * ``escalated`` → a durable **needs a decision** inbox row plus its one notification (the
-      loop stopped before its done condition and a human decides what happens next — the
-      standing-request shape, like a loop waiting on input);
+    * ``escalated`` → a durable inbox row plus its one notification: the loop stopped before its
+      done condition, and a human decides what happens next on the run page (Retry, Fork). Its
+      title says what happened — "Loop stopped at its budget", or "Loop stopped before it
+      finished" — and not that it waits on an answer: nothing answers an escalation where the
+      row is;
     * ``cancelled`` and ``declined`` → nothing: the user did it.
 
     Its refs carry ``loop`` (every loop surface deep-links by it, and ``#/loops/<id>`` lands on
@@ -265,15 +269,17 @@ def announce_loop_end(state: Any, run: Any, status: Any) -> str:
             state.notify(notification_kinds.LOOP_FAILED, "Loop failed", body[:300], meta=meta)
         elif status == RunStatus.ESCALATED:
             from personalclaw.inbox import ItemKind, emit_attention_item
+            from personalclaw.workflows.loop_iteration import BUDGET_TRIPS
 
             attention = getattr(run, "attention", None) or {}
             detail = str(attention.get("detail") or attention.get("reason") or "").strip()
+            budget = str(attention.get("reason") or "") in BUDGET_TRIPS
             return emit_attention_item(
                 state,
                 source=SOURCE,
                 kind=KIND,
                 item_kind=ItemKind.NEEDS_INPUT.value,
-                title="Loop needs a decision",
+                title="Loop stopped at its budget" if budget else "Loop stopped before it finished",
                 body=f"{title} — {detail}" if detail else title,
                 refs={"loop": run.id, "loop_kind": run.loop_kind, "workflow": run.id},
                 dedup_key=f"loop-run:{run.id}:escalated",

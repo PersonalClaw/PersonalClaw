@@ -806,14 +806,23 @@ def test_cli_json_output_and_exit_codes(
     assert "invalid JSON" in capsys.readouterr().out
 
 
-def test_cli_bare_capture_prints_usage(
+def test_cli_bare_capture_is_a_usage_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    args = _parse_argv(["capture"], monkeypatch, tmp_path)
-    assert capture_cmd(args, stage=FakeStore()) == 2
-    out = capsys.readouterr().out
-    assert "capture import" in out
-    assert "jsonl|json|sse" in out
+    """A bare `capture` is the parser's usage error: the usage on stderr, exit 2, and nothing
+    dispatched. It printed a hand-written usage line on stdout from the handler."""
+    import personalclaw.cli as cli
+
+    dispatched: list[Any] = []
+    monkeypatch.setattr(cli, "_capture_cmd", lambda args, **_kw: dispatched.append(args) or 0)
+    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["personalclaw", "capture"])
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+    assert exited.value.code == 2
+    out, err = capsys.readouterr()
+    assert out == "" and "usage: personalclaw capture" in err and "{import}" in err
+    assert dispatched == []
 
 
 # ── 6. The HTTP half — POST /capture/import ──

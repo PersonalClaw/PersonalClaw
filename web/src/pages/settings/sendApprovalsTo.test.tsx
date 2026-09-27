@@ -12,7 +12,8 @@ import type { ChannelRuntime, NotificationRuleRow } from '../../lib/api'
 //
 // Ledger 283: an approval for a chat that STARTED on a channel is asked in that chat first, since
 // the person asking is there; the setting decides everything else (a chat here, an unattended run,
-// a trigger). The sentence under the control says exactly that, under every choice.
+// a trigger). The sentence under the control says exactly that, under every choice. Ledger 361: the
+// chat's own channel asks with no Channel DM target at all, so the section and the row say so.
 
 const patchConfig = vi.fn()
 
@@ -76,7 +77,7 @@ describe('Send approvals to', () => {
     expect(select.value).toBe('')
     expect(options(select)).toEqual(['The first connected channel that knows you', 'Discord', 'Telegram'])
     expect(screen.getByText(
-      'A chat that started on a chat channel is asked in that chat. Everything else (a chat here, an unattended run, a trigger) asks the first connected channel that knows you, in name order: Discord, Telegram. Choose one to be asked only there.',
+      'A chat that started on a chat channel is asked in that chat. When Approval needed below delivers to Channel DM, everything else (a chat here, an unattended run, a trigger) asks the first connected channel that knows you, in name order: Discord, Telegram. Choose one to be asked only there.',
     )).toBeInTheDocument()
   })
 
@@ -86,7 +87,7 @@ describe('Send approvals to', () => {
     await waitFor(() => expect(patchConfig).toHaveBeenCalled())
     expect(patchConfig.mock.calls.at(-1)?.slice(0, 2)).toEqual(['agent.approval_channel', 'telegram'])
     expect(await screen.findByText(
-      "A chat that started on a chat channel is asked in that chat. Everything else (a chat here, an unattended run, a trigger) asks only on Telegram. When it can't reach you, the approval waits here in PersonalClaw, and no other channel is asked.",
+      "A chat that started on a chat channel is asked in that chat. When Approval needed below delivers to Channel DM, everything else (a chat here, an unattended run, a trigger) asks only on Telegram. When it can't reach you, the approval waits here in PersonalClaw, and no other channel is asked.",
     )).toBeInTheDocument()
   })
 
@@ -107,7 +108,7 @@ describe('Send approvals to', () => {
       const id = select.getAttribute('aria-describedby') || ''
       const sentence = document.getElementById(id.split(' ').find((i) => document.getElementById(i)) || '')?.textContent || ''
       expect(sentence, `under ${stored || 'the default'}`).toMatch(
-        /^A chat that started on a chat channel is asked in that chat\. Everything else \(a chat here, an unattended run, a trigger\) /,
+        /^A chat that started on a chat channel is asked in that chat\. When Approval needed below delivers to Channel DM, everything else \(a chat here, an unattended run, a trigger\) /,
       )
     }
   })
@@ -119,13 +120,22 @@ describe('Send approvals to', () => {
     await waitFor(() => expect(select.value).toBe(''))
   })
 
-  it('the approval row names where its Channel DM goes', async () => {
+  it('the approval row names where its Channel DM goes, and not the chat channel it cannot switch', async () => {
+    // Ledger 361: a chat that started on a channel is asked in that chat whatever this box says,
+    // so the box must not read as the switch for it.
     await mount()
     fireEvent.click(await screen.findByRole('button', { name: /delivery detail for Approval needed/i }))
     const row = screen.getByRole('checkbox', { name: /Deliver Approval needed to Channel DM/ })
     expect(row.getAttribute('aria-label')).toBe(
-      'Deliver Approval needed to Channel DM (asks where the chat started, else on the channel under Send approvals to, above)',
+      'Deliver Approval needed to Channel DM (asks on the channel under Send approvals to, above; a chat that started on a channel is asked there either way)',
     )
     expect(within(row.closest('label') as HTMLElement).getByText(/Send approvals to/)).toBeInTheDocument()
+  })
+
+  it('says a chat that started on a channel is always asked there, and what the setting decides', async () => {
+    await mount()
+    expect(screen.getByText(
+      'A chat that started on a chat channel is always asked in that chat. This setting decides where the rest ask you: when Approval needed below delivers to Channel DM, and when a subagent asks to start. Approve and Deny on the channel answer it, and so does PersonalClaw.',
+    )).toBeInTheDocument()
   })
 })

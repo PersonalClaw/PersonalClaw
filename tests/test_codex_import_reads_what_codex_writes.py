@@ -32,10 +32,7 @@ from personalclaw.onboarding_import import ImportCategory, WriteOutcome, run_imp
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 
 #: Credentials the fixture carries, fake and real-shaped. None may reach the scan's wire form.
-_GITHUB_PAT = (
-    "github_pat_11BKQ7T3A0x9QmTz4LpW2e_R8vYc3NfK6hJd1Sa5GqUo7XbM2iEw9"
-    "PzLt4VnC8rDy0HsJf3AkWm6QeTg1BZx"
-)
+_GITHUB_PAT = "github_pat_11FIXTURE0NOT0A0REAL0TOKEN0000_forTestsOnly"
 _DB_PASSWORD = "s3a-Gull-Harbour-42"
 #: What the fixture's ``auth.json`` holds: never opened, so none of it can appear anywhere.
 _AUTH_VALUES = (

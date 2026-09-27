@@ -29,6 +29,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from pathlib import Path
 
 from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
@@ -71,6 +72,15 @@ _DEFAULT_TIMEOUT_SECS = 300.0
 
 def _new_audit_id() -> str:
     return uuid.uuid4().hex[:16]
+
+
+def _naming_the_call(event: LLMEvent, audit_id: str) -> LLMEvent:
+    """*event*, the call's terminal ``EVENT_COMPLETE``, naming the attempt that completed it
+    (``LLMEvent.audit_ids``). A copy, so the provider's own event stays as it made it; an event of
+    any other type passes through as it came."""
+    if not isinstance(event, LLMEvent):
+        return event
+    return replace(event, audit_ids=(*event.audit_ids, audit_id))
 
 
 def _mark(call: ModelCall | None, state: str) -> None:
@@ -286,10 +296,10 @@ class ModelCallGuard(ModelProvider):
         substitution. Measured on `c22f79660`: the recorded prompt artifact for a judge node still
         carried `127.0.0.1` while the model was handed `[REDACTED_PHONE]`, so every replay, eval
         and judge bench read text the model never saw, with nothing saying so. Publishing here
-        rather than re-scanning at the recording seam is not a style choice: `redact_credentials`
-        is NOT idempotent over a composed `key: value` line, so a second pass can garble the text
-        and silently drop the field name. One scan, one chokepoint, and the result carried
-        forward."""
+        rather than re-scanning at the recording seam is not a style choice: only this text is
+        what went on the wire, and a second scan at another moment can differ from it, because
+        the mode is re-read on every call (`_refresh_scan_mode`). One scan, one chokepoint, and
+        the result carried forward."""
         self._refresh_scan_mode()
         result = scan_outbound(text, mode=self._scan_mode)
         record_outbound(
@@ -496,6 +506,10 @@ class ModelCallGuard(ModelProvider):
                     )
                     self._settle_call(call, event, tokens_in, tokens_out, dollars)
                     recorded = True
+                    # The usage this event carries is this call's, and the row a caller writes
+                    # from it (`usage_ledger.record_from_event`) keeps the id: that is the join
+                    # that keeps the model-call census from counting the call a second time.
+                    event = _naming_the_call(event, audit_id)
                 yield event
         except TimeoutError:
             self._breaker.record_failure()

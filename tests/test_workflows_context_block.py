@@ -192,14 +192,14 @@ class TestStagedEcho:
                         {
                             "kind": "action",
                             "id": "a",
-                            "config": {"provider": "x", "api_key": "sk-real-secret-value"},
+                            "config": {"provider": "x", "api_key": "fake-key-real-secret-value"},
                         }
                     ],
                 },
             },
         )
         echo = CB.staged_spec_echo(run.id)
-        assert "sk-real-secret-value" not in echo
+        assert "fake-key-real-secret-value" not in echo
         assert "_has_api_key" in echo
 
     def test_an_unknown_run_echoes_nothing(self) -> None:

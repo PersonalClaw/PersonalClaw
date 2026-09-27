@@ -31,6 +31,7 @@ from test_dashboard_approval import _make_session, _set_stream
 from test_pending_approval_every_surface import world  # noqa: F401 - a fixture, used by name
 from test_pending_approval_every_surface import CHAT, _bash_request, _finish, _turn, _until
 
+from personalclaw.approval_answer import YOU
 from personalclaw.dashboard.chat import run_chat
 from personalclaw.inbox import OPEN_STATUSES
 
@@ -77,7 +78,7 @@ async def test_asked_again_and_answered_the_note_is_handled_with_the_answer(
     try:
         # Asked again, not yet answered: the call is still undecided, so the note still stands.
         assert world.store.items[note.id].status in OPEN_STATUSES
-        world.state.decide_session_approval(world.session, "req-2", answer)
+        world.state.decide_session_approval(world.session, "req-2", answer, by=YOU)
         await asyncio.wait_for(task, timeout=5)
     finally:
         await _finish(task)
@@ -102,7 +103,7 @@ async def test_answered_from_anywhere_else_it_is_handled_the_same_way(
     )
     try:
         (approval_id,) = list(world.state._pending_approvals)
-        assert world.state.resolve_approval(approval_id, True) is True
+        assert world.state.resolve_approval(approval_id, True, by=YOU) is True
         await asyncio.wait_for(task, timeout=5)
     finally:
         await _finish(task)
@@ -119,7 +120,7 @@ async def test_a_different_call_of_the_same_tool_leaves_the_note_open(
         world, world.session, "req-2", "ls /tmp/scratch", window=60, monkeypatch=monkeypatch
     )
     try:
-        world.state.decide_session_approval(world.session, "req-2", "approved")
+        world.state.decide_session_approval(world.session, "req-2", "approved", by=YOU)
         await asyncio.wait_for(task, timeout=5)
     finally:
         await _finish(task)
@@ -138,7 +139,7 @@ async def test_the_same_call_answered_in_another_chat_leaves_it_open(
         world, other, "req-2", "rm -rf /tmp/scratch", window=60, monkeypatch=monkeypatch
     )
     try:
-        world.state.decide_session_approval(other, "req-2", "approved")
+        world.state.decide_session_approval(other, "req-2", "approved", by=YOU)
         await asyncio.wait_for(task, timeout=5)
     finally:
         await _finish(task)

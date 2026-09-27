@@ -41,6 +41,7 @@ import inspect
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import service, store
 from personalclaw.workflows.models import RunStatus
 
@@ -77,7 +78,7 @@ CONTROL_VERBS = [
     ("cancel_run", lambda s: service.cancel_run(MISSING, supervisor=s)),
     ("pause_run", lambda s: service.pause_run(MISSING, supervisor=s)),
     ("steer_run", lambda s: service.steer_run(MISSING, "go left")),
-    ("resume_run", lambda s: service.resume_run(MISSING, supervisor=s, answer="yes")),
+    ("resume_run", lambda s: service.resume_run(MISSING, supervisor=s, answer="yes", by=YOU)),
     ("rewind_run", lambda s: service.rewind_run(MISSING, "root", supervisor=s)),
     ("run_from", lambda s: service.run_from(MISSING, "root", supervisor=s)),
     (
@@ -88,19 +89,19 @@ CONTROL_VERBS = [
     ("preview_edit", lambda s: service.preview_edit(MISSING, [{"op": "retry", "node_id": "root"}])),
     (
         "resolve_confirmation:approve",
-        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="approve"),
+        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="approve", by=YOU),
     ),
     (
         "resolve_confirmation:reject",
-        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="reject"),
+        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="reject", by=YOU),
     ),
     (
         "resolve_confirmation:skip",
-        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="skip"),
+        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="skip", by=YOU),
     ),
     (
         "resolve_confirmation:quit",
-        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="quit"),
+        lambda s: service.resolve_confirmation(MISSING, supervisor=s, verb="quit", by=YOU),
     ),
 ]
 
@@ -123,7 +124,9 @@ def test_skip_and_quit_do_not_claim_a_pending_gate() -> None:
     above would also catch this, but a red naming the shape is worth more than one naming a code.
     """
     for verb in ("skip", "quit"):
-        body = service.resolve_confirmation(MISSING, supervisor=_FakeSupervisor(), verb=verb)
+        body = service.resolve_confirmation(
+            MISSING, supervisor=_FakeSupervisor(), verb=verb, by=YOU
+        )
         assert body["ok"] is False
         assert "still_pending" not in body
         assert body.get("resumed") is None
@@ -133,7 +136,9 @@ def test_an_unknown_VERB_is_still_refused_before_anything_else() -> None:
     """🪤 The floor for the reordering. The existence check moved ABOVE the verb split, and it must
     not have moved above the verb VALIDATION — a typo'd verb has to stay a 400 rather than becoming
     a 404 about the run, or the caller is told to fix the wrong thing."""
-    body = service.resolve_confirmation(MISSING, supervisor=_FakeSupervisor(), verb="aprove")
+    body = service.resolve_confirmation(
+        MISSING, supervisor=_FakeSupervisor(), verb="aprove", by=YOU
+    )
     assert body["ok"] is False
     assert body["code"] == "WF_CONFIRM_VERB_INVALID"
 
@@ -155,7 +160,7 @@ def test_resume_REFUSES_a_terminal_run_and_does_not_write_to_it(status: RunStatu
     run = _terminal_run(status)
     store.request_pause(run.id)
 
-    body = service.resume_run(run.id, supervisor=_FakeSupervisor())
+    body = service.resume_run(run.id, supervisor=_FakeSupervisor(), by=YOU)
 
     assert body["ok"] is False
     assert body["code"] == "WF_RUN_ALREADY_TERMINAL"

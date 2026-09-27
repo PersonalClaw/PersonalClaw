@@ -86,18 +86,23 @@ _extract_bash_command = task_modes.extract_bash_command
 
 
 def task_mode_denies(
-    session: "_ChatSession", title: str, tool_kind: str, tool_input: object
+    session: "_ChatSession",
+    declared: object,
+    title: str,
+    tool_kind: str,
+    tool_input: object,
+    *,
+    builds: bool = False,
 ) -> str:
     """Return a deny-reason for the session's TASK mode, or '' to allow the tool.
 
     Thin session-aware wrapper over the canonical gate in ``task_modes`` (the same
-    logic the native runtime enforces before approval). Note: unlike the runtime,
-    which gates EVERY mode here, this dashboard-side path still treats ``plan`` via
-    the dedicated plan branch in ``chat_runner`` — so it forwards plan to the shared
-    gate too (which now allows read-only inspection in plan, blocking only writes).
+    logic the native runtime enforces before approval). ``declared`` and ``builds`` are what
+    the tool behind the call declares — a permission request's ``risk_level``/``builds`` —
+    and an ACP CLI's own tool declares nothing, so only its read-only shell commands pass.
     """
     mode = getattr(session, "_task_mode", "agent")
-    return task_modes.task_mode_denies(mode, title, tool_kind, tool_input)
+    return task_modes.task_mode_denies(mode, declared, title, tool_kind, tool_input, builds=builds)
 
 
 def apply_task_mode(state: DashboardState, session: "_ChatSession", mode: str) -> None:

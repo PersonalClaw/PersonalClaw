@@ -940,7 +940,7 @@ def test_every_store_row_is_listed_exactly_once(home, state):
 
     store = _store(home)
     specs = {
-        "clock": {"kind": "interval", "every_secs": 3600},
+        "clock": {"kind": "interval", "interval_secs": 3600},
         "event": {"pattern": "MemoryKeyPattern", "key_glob": "project.*"},
         "file": {"paths": ["~/notes"]},
         "web_watch": {"url": "https://example.com"},

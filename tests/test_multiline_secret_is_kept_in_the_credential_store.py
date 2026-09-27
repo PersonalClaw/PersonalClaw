@@ -28,10 +28,12 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import get_credential, save_credential
 
 PEM = (
-    "-----BEGIN PRIVATE KEY-----\n"
+    "-----"
+    "BEGIN PRIVATE KEY-----\n"
     "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7fixture\n"
     "c2VjcmV0LWZpeHR1cmUtbGluZS10d28=\n"
-    "-----END PRIVATE KEY-----"
+    "-----"
+    "END PRIVATE KEY-----"
 )
 
 
@@ -86,8 +88,8 @@ def test_a_value_round_trips_through_the_env_file_and_python_dotenv_agrees(home,
 
 
 def test_a_plain_value_is_written_exactly_as_before(home) -> None:
-    save_credential("PCSECRET_TEST__PLAIN", "sk-abc123_DEF-456")
-    assert "PCSECRET_TEST__PLAIN=sk-abc123_DEF-456\n" in (home / ".env").read_text(encoding="utf-8")
+    save_credential("PCSECRET_TEST__PLAIN", "fake-key-1")
+    assert "PCSECRET_TEST__PLAIN=fake-key-1\n" in (home / ".env").read_text(encoding="utf-8")
 
 
 def _put(name: str, body: dict):

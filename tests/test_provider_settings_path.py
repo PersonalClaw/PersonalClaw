@@ -43,8 +43,8 @@ def test_provider_settings_agrees_with_app_config_path():
 
 def test_round_trip_key_visible_to_provider(tmp_path):
     """A key written via ProviderSettings.save is read back by load (same path)."""
-    ProviderSettings.save("brave-search", {"api_key": "sk-brave-probe"})
+    ProviderSettings.save("brave-search", {"api_key": "fake-key-brave-probe"})
     loaded = ProviderSettings.load("brave-search")
-    assert loaded.get("api_key") == "sk-brave-probe"
+    assert loaded.get("api_key") == "fake-key-brave-probe"
     # and it landed in data/config.json specifically
     assert (ProviderSettings.config_path("brave-search")).parent.name == "data"

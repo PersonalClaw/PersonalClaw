@@ -398,6 +398,7 @@ async def _apply_resume(wakeup: Any, *, now: float = 0.0, base_dir: Any = None) 
 
     try:
         try:
+            from personalclaw import approval_answer
             from personalclaw.workflows import service as wfs
             from personalclaw.workflows import store as wf_store
         except Exception as exc:  # noqa: BLE001 - a broken import must not take the tick with it
@@ -461,7 +462,9 @@ async def _apply_resume(wakeup: Any, *, now: float = 0.0, base_dir: Any = None) 
                 # answer a gate. That is the safe default for an unattended fire: a monitor says
                 # "carry on", and auto-approving a gate is something an author has to write down.
                 answer=payload.get("gate_answer") if answers_gate else None,
-                responder=f"trigger:{trigger_id}" if trigger_id else "trigger",
+                # A trigger answers only an `event` gate, the park it was armed to wake; any other
+                # gate asks the owner, and `controller.resume` refuses it (`approval_answer`).
+                by=approval_answer.trigger(trigger_id),
             )
         except Exception as exc:  # noqa: BLE001 - the outcome IS the error
             logger.warning("resume of %s raised for %s", run_id, trigger_id, exc_info=True)

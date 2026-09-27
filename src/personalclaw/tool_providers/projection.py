@@ -760,9 +760,16 @@ def project_and_retain(
     when the result was projected and a ``session_key`` is available, ``raw_ref`` — plus
     the preview names the recovery affordance (``tool_result_get(result_id="r_…")``) so
     the model can pull the dropped slice. Small / unknown → pass-through (fail-soft),
-    exactly as ``project_output``."""
+    exactly as ``project_output``.
+
+    The text is masked FIRST (``security.redact_for_model``), and the masked text is what is
+    projected and retained. The model boundary masks every tool result again, but it sees only
+    the projection: a cut or a ``tool_result_get`` slice through a key would hand it a prefix no
+    pattern can recognise. Masked here, a cut can only split a ``[REDACTED: …]`` marker."""
+    from personalclaw.security import redact_for_model
     from personalclaw.tool_providers import result_store
 
+    text = redact_for_model(text)
     proj = project_output(text, cap=cap, content_type=content_type)
     # meta carries the projection outcome too, so callers (e.g. _ok_capped, the MCP
     # adapter) read truncated/original_length from here instead of re-running

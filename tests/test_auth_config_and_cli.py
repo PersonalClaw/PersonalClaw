@@ -245,7 +245,7 @@ def test_enable_is_refused_without_a_credential(capsys) -> None:
     from personalclaw.auth.cli import auth_cmd
 
     assert auth_cmd(_Args(auth_command="enable")) == 1
-    assert "No credential is set" in capsys.readouterr().out
+    assert "No credential is set" in capsys.readouterr().err
 
 
 def test_enable_then_disable_writes_only_the_flag(_isolated_home, capsys) -> None:
@@ -292,7 +292,7 @@ def test_set_password_refuses_a_non_tty(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     assert auth_cmd(_Args(auth_command="set-password", user="jordan")) == 1
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "must be typed at a terminal" in out
     assert "PERSONALCLAW_LOGIN_USER" in out
     assert creds.has_credentials() is False
@@ -307,7 +307,7 @@ def test_set_password_prompts_twice_and_rejects_a_mismatch(monkeypatch, capsys) 
     answers = iter(["correct-horse-battery", "correct-horse-bettery"])
     monkeypatch.setattr(cli.getpass, "getpass", lambda *_a, **_k: next(answers))
     assert cli.auth_cmd(_Args(auth_command="set-password", user="jordan")) == 1
-    assert "did not match" in capsys.readouterr().out
+    assert "did not match" in capsys.readouterr().err
     assert creds.has_credentials() is False
 
 
@@ -332,7 +332,7 @@ def test_set_password_reports_a_too_short_password(monkeypatch, capsys) -> None:
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     monkeypatch.setattr(cli.getpass, "getpass", lambda *_a, **_k: "short")
     assert cli.auth_cmd(_Args(auth_command="set-password", user="jordan")) == 1
-    assert "at least" in capsys.readouterr().out
+    assert "at least" in capsys.readouterr().err
 
 
 def test_status_warns_when_login_is_on_but_unconfigured(_isolated_home, capsys) -> None:
@@ -361,7 +361,7 @@ def test_totp_setup_needs_a_password_first(capsys) -> None:
     from personalclaw.auth.cli import auth_cmd
 
     assert auth_cmd(_Args(auth_command="totp", totp_action="setup")) == 1
-    assert "Set a password first" in capsys.readouterr().out
+    assert "Set a password first" in capsys.readouterr().err
 
 
 def test_totp_setup_prints_the_secret_once(monkeypatch, capsys) -> None:
@@ -381,10 +381,14 @@ def test_totp_setup_prints_the_secret_once(monkeypatch, capsys) -> None:
 
 
 def test_an_unknown_subcommand_is_a_usage_error(capsys) -> None:
-    from personalclaw.auth.cli import auth_cmd
+    """The parser's refusal, so the usage error every command line gets: stderr, exit 2."""
+    from personalclaw.cli import build_parser
 
-    assert auth_cmd(_Args(auth_command="frobnicate")) == 2
-    assert "Usage:" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exited:
+        build_parser().parse_args(["auth", "frobnicate"])
+    assert exited.value.code == 2
+    out, err = capsys.readouterr()
+    assert out == "" and "usage: personalclaw auth" in err and "invalid choice" in err
 
 
 def test_the_cli_registers_the_auth_command(tmp_path) -> None:

@@ -151,6 +151,10 @@ class TestNoNewUngatedDestructiveRoute:
         # device may be compromised, and it must take effect immediately. Confirming a lockout
         # protects nothing and delays containment.
         "/api/devices/{id}/revoke": "security containment — must not be slowed by a prompt",
+        # The same containment for an integration's token: a leaked one must stop at once.
+        "/api/devices/integrations/{id}/revoke": (
+            "security containment — a leaked integration token must stop at once"
+        ),
         # RECOVERY, not destruction: it archives the existing SEL log under a timestamp and starts
         # a fresh HMAC chain, and it exists to recover from a chain that is already broken.
         "/api/sel/rotate": "recovery path; archives rather than discards",

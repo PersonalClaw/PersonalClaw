@@ -1,11 +1,12 @@
 """The template-refiner agent is propose-only, and its tools file, never apply.
 
-Two enforcement layers must BOTH hold and are both asserted here: (1) the refiner's tool set
-contains no write or orchestration tool, checked against the SAME classifiers the workflow leaf
-posture enforces (`batch_compile.is_write_tool` + `ORCHESTRATION_TOOLS`), so adding a direct
-template-write tool reds this; (2) a research-class leaf — which is what the `refine-template`
-stage runs as — denies every write tool (and `workflow_author`) at the handler while admitting
-the refiner's read/propose tools. And the propose tool FILES a proposal and mutates no template.
+Two enforcement layers must BOTH hold and are both asserted here: (1) every tool the refiner
+holds DECLARES it only reads or only proposes, and none is an orchestration tool — the same
+declarations the workflow leaf posture enforces (`task_modes.read_grant_admits` +
+`ORCHESTRATION_TOOLS`), so adding a direct template-write tool reds this; (2) a research-class
+leaf — which is what the `refine-template` stage runs as — denies every write tool (and
+`workflow_author`) at the handler while admitting the refiner's read/propose tools. And the
+propose tool FILES a proposal and mutates no template.
 """
 
 from __future__ import annotations
@@ -14,13 +15,14 @@ import json
 
 import pytest
 
+from personalclaw import mcp_core
 from personalclaw.agents import defaults as agent_defaults
 from personalclaw.learning import proposals, refiner_tools
+from personalclaw.tool_providers.base import PROPOSES_META_KEY
 from personalclaw.workflows import versions
 from personalclaw.workflows.batch_compile import (
     ORCHESTRATION_TOOLS,
     Capability,
-    is_write_tool,
     leaf_tool_posture,
 )
 from personalclaw.workflows.bundled_defs import bundled_root
@@ -40,13 +42,21 @@ def _home(tmp_path, monkeypatch):
 # ── layer 1: the declared tool set carries no writer or orchestrator ─────────
 
 
+def _reads_or_proposes(tool: str) -> bool:
+    """What the tool DECLARES: it only reads, or its only effect is a proposal."""
+    declared = mcp_core.own_tool(tool) or {}
+    return (declared.get("annotations") or {}).get("readOnlyHint") is True or (
+        (declared.get("_meta") or {}).get(PROPOSES_META_KEY) is True
+    )
+
+
 def test_the_refiner_tool_set_is_propose_only() -> None:
-    """Every tool the refiner holds is a read or a propose — none is a write or orchestration
-    tool. Uses the classifiers the runtime leaf posture actually enforces, so adding a direct
-    template-write tool (e.g. `workflow_author`, in ORCHESTRATION_TOOLS, or any `*_write`) reds."""
+    """Every tool the refiner holds declares a read or a proposal — none is a write or an
+    orchestration tool. Uses the declarations the runtime leaf posture actually enforces, so
+    adding a direct template-write tool (e.g. `workflow_author`, in ORCHESTRATION_TOOLS) reds."""
     assert refiner_tools.REFINER_TOOL_NAMES  # non-empty: an empty set would vacuously "pass"
     for tool in refiner_tools.REFINER_TOOL_NAMES:
-        assert not is_write_tool(tool), f"{tool} looks like a writer"
+        assert _reads_or_proposes(tool), f"{tool} declares a change"
         assert tool not in ORCHESTRATION_TOOLS, f"{tool} is an orchestration tool"
 
 
@@ -81,7 +91,7 @@ def test_a_research_leaf_denies_writers_yet_admits_the_refiner_tools() -> None:
     assert "workflow_author" in posture["denied_tools"]
     # The refiner's own tools survive a read-only leaf (neither write nor orchestration).
     for tool in refiner_tools.REFINER_TOOL_NAMES:
-        assert not is_write_tool(tool)
+        assert _reads_or_proposes(tool)
         assert tool not in set(posture["denied_tools"])
 
 

@@ -9,8 +9,11 @@ tools — read, write, edit, ls, glob, grep, and bash — scoped to the session'
 sensitive-path) plus :func:`personalclaw.sandbox.wrap_argv` for shell.
 
 All paths are resolved relative to ``cwd`` and confined to it (no escaping the
-workspace via ``..`` or absolute paths outside it). Tool execution itself is
-also gated by the runtime's approval gate (``requires_approval`` per tool).
+workspace via ``..`` or absolute paths outside it), through the check the Files
+view makes (``file_roots.admit``: symlinks resolved, no credential or secret
+file); a listing or a search leaves out what that check refuses. Tool execution
+itself is also gated by the runtime's approval gate (``requires_approval`` per
+tool).
 """
 
 from __future__ import annotations
@@ -18,8 +21,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import os
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from personalclaw import cancellation
 from personalclaw.agents.native import read_gate
@@ -27,7 +31,15 @@ from personalclaw.agents.native.decision_tool_defs import decision_tool_definiti
 from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
-from personalclaw.security import MASK_CONFLICT, MaskConflict, keep_masked_spans
+from personalclaw.security import (
+    MASK_CONFLICT,
+    MaskConflict,
+    keep_masked_lines,
+    keep_masked_spans,
+    keep_masked_values,
+    mask_markers,
+    masked_edit,
+)
 from personalclaw.tool_providers import result_store
 from personalclaw.tool_providers.base import (
     RiskLevel,
@@ -36,6 +48,10 @@ from personalclaw.tool_providers.base import (
     ToolResult,
 )
 from personalclaw.tool_providers.projection import project_and_retain, project_output
+
+if TYPE_CHECKING:
+    from personalclaw.file_roots import Admission
+    from personalclaw.triggers.secrets import UnresolvedSecret
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +119,21 @@ def bind_tool_context(
         _projection.bind_project_dir(cwd),
     ]
     return tokens
+
+
+def current_tool_roots() -> list[str]:
+    """Where this turn's file tools reach, for a tool served outside the platform provider
+    (``code_map``): the session's folder and the extra roots the runtime bound, else the default
+    workspace. Real paths; the first is the one a relative path starts from."""
+    import os
+
+    cwd = _CURRENT_CWD.get()
+    if cwd:
+        return [os.path.realpath(cwd), *(os.path.realpath(r) for r in _CURRENT_EXTRA_ROOTS.get())]
+    from personalclaw.config.loader import default_workspace_dir
+
+    workspace = default_workspace_dir() or ""
+    return [os.path.realpath(workspace)] if workspace else []
 
 
 def reset_tool_context(tokens) -> None:
@@ -294,6 +325,104 @@ def _enrich_in_background(item_id: str) -> None:
     task.add_done_callback(_bg_ingest_tasks.discard)
 
 
+def _pattern_leaves_workspace(pattern: str) -> bool:
+    """Whether a ``glob``/``grep`` pattern names a place outside the workspace by itself: an
+    absolute or ``~`` path, or a ``..`` segment. Matches are checked one by one as well; this is
+    the refusal that says why, instead of an empty result."""
+    parts = pattern.replace("\\", "/").split("/")
+    return pattern.startswith(("/", "~", "\\")) or Path(pattern).is_absolute() or ".." in parts
+
+
+def _pattern_refusal(arg: str, pattern: str) -> ToolResult:
+    return ToolResult(
+        success=False,
+        error=(
+            f"{arg} {pattern!r} leaves the workspace: patterns are relative to it and cannot "
+            "climb out of it (no absolute path, `~` or `..`)"
+        ),
+        recovery_hints=[
+            f"Write {arg} relative to the workspace, e.g. 'src/**/*.py'. Files outside it are "
+            "not reachable from these tools."
+        ],
+    )
+
+
+def _stored_secret(key: str) -> str:
+    """What a command's ``{{secret:KEY}}`` is filled with: a credential the owner stored by name in
+    Settings → Secrets, and nothing else, or ``""``.
+
+    Not ``triggers.secrets.default_resolver``, which reads the gateway's environment first: that is
+    the owner's own action config, while here the agent chooses the name, and in a sandbox tier
+    the environment is exactly what the sandbox keeps from the command. A key another surface
+    manages (``secrets_vault.RESERVED_KEY_PREFIXES``) is not one the owner stored by name, so it is
+    not filled either; an owned key is refused before any resolver is asked.
+    """
+    from personalclaw.config.credentials import credential_names, get_credential
+    from personalclaw.secrets_vault import is_reserved_key
+
+    try:
+        if is_reserved_key(key) or key not in credential_names():
+            return ""
+        return get_credential(key)
+    except Exception:  # noqa: BLE001 - an unreadable store fills nothing, and says so
+        logger.debug("credential store unreadable while filling %r", key, exc_info=True)
+        return ""
+
+
+def _unfilled_reference(missing: UnresolvedSecret) -> str:
+    """The refusal for a command whose ``{{secret:KEY}}`` names nothing the owner stored."""
+    reference = "{{secret:" + missing.key + "}}"
+    if missing.refused is not None:
+        return (
+            f"The command refers to {reference}, which is a setting's own credential: only the "
+            "setting that stored it can use it. Nothing was run."
+        )
+    return (
+        f"The command refers to {reference}, and Settings → Secrets holds no credential by that "
+        "name. Nothing was run."
+    )
+
+
+def _environment_credentials() -> list[str]:
+    """The credential values a command's environment can carry, to mask out of what it prints.
+
+    Every variable named like a stored credential (Settings → Secrets mirrors those into the
+    gateway's environment) or read as one by the one hint list (``matches_secret_hint``). Taken
+    from the environment the command inherits, so the store's values are never read for this.
+    """
+    from personalclaw.config.credentials import credential_names
+    from personalclaw.workflows.secrets import matches_secret_hint
+
+    try:
+        stored = set(credential_names())
+    except Exception:  # noqa: BLE001 - the name hints still apply
+        stored = set()
+    return [
+        value
+        for name, value in os.environ.items()
+        if value and (name in stored or matches_secret_hint(name))
+    ]
+
+
+def _marker_note(sent: str, written: str, before: str) -> str:
+    """What a file write says about the ``[REDACTED: …]`` markers it was sent: kept as the values
+    they stand for, or written as plain text because they stood for nothing the file held."""
+    as_text = len(mask_markers(written)) - len(mask_markers(before))
+    kept = len(mask_markers(sent)) - max(as_text, 0)
+    note = ""
+    if kept > 0:
+        note += (
+            f". The {kept} [REDACTED: …] marker(s) it was sent stand for values the file already "
+            "held, and those stay as they were"
+        )
+    if as_text > 0:
+        note += (
+            f". {as_text} [REDACTED: …] marker(s) were written as plain text: a value you were "
+            "shown masked cannot be copied into a file"
+        )
+    return note
+
+
 def _ok_capped(
     text: str,
     limit: int = _MAX_OUTPUT_CHARS,
@@ -445,18 +574,35 @@ class NativeBuiltinToolProvider(ToolProvider):
         return self._display
 
     # ── path confinement ──
-    def _resolve(self, rel: str) -> Path:
+    def _roots(self) -> list[Path]:
+        """Where this turn's file tools reach: the session's folder, then its extra roots."""
+        return [self._cwd.resolve(), *self._extra_roots]
+
+    def _admission(self) -> "Admission":
+        """The Files view's containment (`file_roots.admit`) over :meth:`_roots`, made once for a
+        call that asks about many paths (a listing, a search, a map)."""
+        from personalclaw.file_roots import Admission
+
+        return Admission([str(root) for root in self._roots()])
+
+    def _resolve(self, rel: str, admission: "Admission | None" = None) -> Path:
         """Resolve ``rel`` under cwd (or an extra allowed root); raise on escape.
 
         A relative path resolves under cwd. An absolute path is accepted only if it
         lands inside cwd OR one of ``extra_roots`` (the project files dir for a
         brownfield worker). This keeps the default workspace-only confinement for
-        chat sessions while letting a worker reach its engine files."""
+        chat sessions while letting a worker reach its engine files.
+
+        Then the check the Files view and ``/api/file-read`` make (`file_roots.admit`): with
+        symlinks and ``..`` resolved, no credential or secret file — a protected home location
+        (``~/.ssh``, ``~/.aws``, the keychain, the home's own ``.env``, ``auth/``,
+        ``governance/``), PersonalClaw's own keys wherever they sit, a ``.env``, ``*.key``,
+        ``*.pem`` or ``*.secret`` — and nothing an alias of one reaches."""
         from personalclaw.file_roots import within
 
-        base = self._cwd.resolve()
+        allowed = self._roots()
+        base = allowed[0]
         p = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
-        allowed = [base, *self._extra_roots]
         if not any(root == p or root in p.parents for root in allowed):
             raise ValueError(f"path {rel!r} escapes the workspace root")
         # A worker whose folder CONTAINS the home (a brownfield loop bound to `~`) reaches into it
@@ -465,6 +611,10 @@ class NativeBuiltinToolProvider(ToolProvider):
         if not within(str(p), [str(root) for root in allowed]):
             raise ValueError(
                 f"path {rel!r} is inside PersonalClaw's own home, which this tool does not reach"
+            )
+        if (admission or self._admission())(str(p)) is None:
+            raise ValueError(
+                f"path {rel!r} is a credential or secret file, which this tool does not reach"
             )
         return p
 
@@ -601,9 +751,11 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "type-checkers (ruff, eslint, tsc, go vet), builds, package managers, and any "
                     "standard CLI. Prefer real commands over asking for a dedicated tool. Runs in a "  # noqa: E501
                     "login shell at the workspace root; stdout+stderr are merged and the exit code "
-                    "is reported. Sandboxed + credential/exfiltration deny-list enforced. Args: "
-                    "command (str), optional timeout (int seconds, default 120, max 600 — raise it "
-                    "for a slow test suite or build)."
+                    "is reported. Sandboxed + credential/exfiltration deny-list enforced. To use a "
+                    "credential the user stored in Settings → Secrets, write {{secret:NAME}} where "
+                    "its value goes: the value is filled in when the command runs and is masked in "
+                    "the output, so you never see it. Args: command (str), optional timeout (int "
+                    "seconds, default 120, max 600 — raise it for a slow test suite or build)."
                 ),
                 parameters={
                     **s,
@@ -972,8 +1124,11 @@ class NativeBuiltinToolProvider(ToolProvider):
             )
         content = str(a["content"])
         self._checkpoint_pre_edit(path)
+        written = content
+        before = ""
 
         def _write() -> str | None:
+            nonlocal written, before
             # Returns an error string on a known-failure, else None on success. Guard
             # the cases that would otherwise raise a raw OSError caught by the generic
             # invoke() handler — which leaks the absolute server path + gives a
@@ -985,11 +1140,23 @@ class NativeBuiltinToolProvider(ToolProvider):
             parent = path.parent
             if parent.exists() and not parent.is_dir():
                 return "parent is not a directory"
+            # The agent was shown this file masked (`format_tool_result`), so a line it kept holds
+            # a marker where the file holds a value: each such line keeps its stored bytes.
+            if path.is_file():
+                try:
+                    before = path.read_text(encoding="utf-8")
+                    written = keep_masked_lines(content, before)
+                except UnicodeDecodeError:
+                    written = content  # not text, so nothing in it was shown masked
+                except MaskConflict as refused:
+                    return f"mask: {refused}"
             parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            path.write_text(written, encoding="utf-8")
             return None
 
         err = await asyncio.get_event_loop().run_in_executor(None, _write)
+        if err and err.startswith("mask: "):
+            return ToolResult(success=False, error=err.removeprefix("mask: "))
         if err == "is a directory":
             return ToolResult(
                 success=False,
@@ -1006,7 +1173,11 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "A directory in the path is actually a file — pick a different location or remove the conflicting file first."  # noqa: E501
                 ],
             )
-        return ToolResult(success=True, output=f"Wrote {len(content)} chars to {a['path']}")
+        return ToolResult(
+            success=True,
+            output=f"Wrote {len(content)} chars to {a['path']}"
+            + _marker_note(content, written, before),
+        )
 
     async def _t_edit_file(self, a: dict) -> ToolResult:
         path = self._resolve(str(a["path"]))
@@ -1028,7 +1199,13 @@ class NativeBuiltinToolProvider(ToolProvider):
             if old == new:
                 return False, "old_str and new_str are identical (no change)"
             text = path.read_text(encoding="utf-8")
-            count = text.count(old)
+            # Found and replaced in the file as the agent was shown it, masked
+            # (`format_tool_result`), and mapped back onto the stored bytes, so a value hidden
+            # behind a marker stays exactly where it is.
+            try:
+                edited, count = masked_edit(text, old, new, replace_all=replace_all)
+            except MaskConflict as refused:
+                return False, f"mask: {refused}"
             if count == 0:
                 return False, "old_str not found in file"
             # Ambiguous edit guard (matches the Claude Code Edit contract): a
@@ -1037,12 +1214,17 @@ class NativeBuiltinToolProvider(ToolProvider):
             if count > 1 and not replace_all:
                 return False, f"old_str matched {count} times (not unique)"
             n = count if replace_all else 1
-            path.write_text(text.replace(old, new, n), encoding="utf-8")
-            return True, f"Edited {a['path']} ({n} replacement{'s' if n != 1 else ''})"
+            path.write_text(edited, encoding="utf-8")
+            return True, (
+                f"Edited {a['path']} ({n} replacement{'s' if n != 1 else ''})"
+                + _marker_note(new, edited, text)
+            )
 
         ok, msg = await asyncio.get_event_loop().run_in_executor(None, _edit)
         if ok:
             return ToolResult(success=True, output=msg)
+        if msg.startswith("mask: "):
+            return ToolResult(success=False, error=msg.removeprefix("mask: "))
         if msg.startswith("not a file"):
             hint = "Use glob or list_dir to confirm the path, or write_file to create it first."
         elif "not unique" in msg:
@@ -1056,12 +1238,19 @@ class NativeBuiltinToolProvider(ToolProvider):
         return ToolResult(success=False, error=msg, recovery_hints=[hint])
 
     async def _t_list_dir(self, a: dict) -> ToolResult:
-        path = self._resolve(str(a.get("path") or "."))
+        admission = self._admission()
+        path = self._resolve(str(a.get("path") or "."), admission)
 
         def _ls() -> str | None:
             if not path.is_dir():
                 return None
-            entries = sorted(p.name + ("/" if p.is_dir() else "") for p in path.iterdir())
+            # An entry the tools could not open is not named either: a secret file, and a link
+            # that leads out of the workspace, as the Files view leaves them out of its listing.
+            entries = sorted(
+                p.name + ("/" if p.is_dir() else "")
+                for p in path.iterdir()
+                if admission(str(p)) is not None
+            )
             return "\n".join(entries) or "(empty)"
 
         listing = await asyncio.get_event_loop().run_in_executor(None, _ls)
@@ -1078,9 +1267,18 @@ class NativeBuiltinToolProvider(ToolProvider):
     async def _t_glob(self, a: dict) -> ToolResult:
         base = self._cwd.resolve()
         pattern = str(a["pattern"])
+        if _pattern_leaves_workspace(pattern):
+            return _pattern_refusal("pattern", pattern)
+        admission = self._admission()
 
         def _glob() -> str:
-            matches = sorted(str(p.relative_to(base)) for p in base.glob(pattern) if p.is_file())
+            # A match the tools could not open is not listed: a secret file, or one a link
+            # inside the workspace leads to outside it.
+            matches = sorted(
+                str(p.relative_to(base))
+                for p in base.glob(pattern)
+                if p.is_file() and admission(str(p)) is not None
+            )
             if len(matches) > 500:
                 # Signal the cap rather than silently showing 500 of N (no-silent-truncation).
                 shown = matches[:500]
@@ -1101,6 +1299,9 @@ class NativeBuiltinToolProvider(ToolProvider):
         base = self._cwd.resolve()
         query = str(a["query"])
         glob_pat = str(a.get("glob") or "**/*")
+        if _pattern_leaves_workspace(glob_pat):
+            return _pattern_refusal("glob", glob_pat)
+        admission = self._admission()
         max_results = int(a.get("max_results") or 200)
         use_regex = bool(a.get("regex"))
         # Compile once when in regex mode; a bad pattern is a usable error, not a crash.
@@ -1124,6 +1325,10 @@ class NativeBuiltinToolProvider(ToolProvider):
                     continue
                 # Skip VCS/vendored/build dirs — searching them is slow + noisy.
                 if any(part in self._SKIP_DIRS for part in p.relative_to(base).parts):
+                    continue
+                # Never read a file the tools could not open: a secret file, or one a link
+                # inside the workspace leads to outside it.
+                if admission(str(p)) is None:
                     continue
                 try:
                     for i, line in enumerate(
@@ -1153,7 +1358,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         top-level definitions, so the agent orients without reading everything.
         Dependency-free: Python via the stdlib ``ast``, other languages via a
         couple of cheap top-level regexes (def/class/func/export/type)."""
-        base = (self._resolve(str(a["path"])) if a.get("path") else self._cwd).resolve()
+        admission = self._admission()
+        base = (self._resolve(str(a["path"]), admission) if a.get("path") else self._cwd).resolve()
         max_files = int(a.get("max_files") or 200)
 
         def _build() -> str:
@@ -1199,7 +1405,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             for root_path, dirnames, filenames in base.walk():
                 dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs)
                 for fn in sorted(filenames):
-                    if Path(fn).suffix in exts:
+                    # Mapped only when the tools could open it: never a secret file, or one a
+                    # link inside the workspace leads to outside it.
+                    if Path(fn).suffix in exts and admission(str(root_path / fn)) is not None:
                         files.append(root_path / fn)
                         if len(files) >= max_files:
                             truncated = True
@@ -1278,8 +1486,35 @@ class NativeBuiltinToolProvider(ToolProvider):
             except (TypeError, ValueError):
                 requested = _BASH_TIMEOUT
             timeout = max(1.0, min(requested, _BASH_TIMEOUT_MAX))
-        command = str(a["command"])
-        # App-level guards before any execution:
+        # A credential is named, never written: `{{secret:NAME}}` is filled in here, as the command
+        # runs, from what the owner stored in Settings → Secrets (`triggers.secrets.resolve`, the
+        # resolution a trigger's action gets at dispatch). The approval card shows the command as
+        # the agent wrote it, reference and all; every value handed to the command is masked out
+        # of what it prints, and out of any refusal below, before either reaches the model.
+        from personalclaw.triggers.secrets import UnresolvedSecret
+        from personalclaw.triggers.secrets import resolve as resolve_references
+
+        handed: list[str] = []
+
+        def _filled(key: str) -> str:
+            value = _stored_secret(key)
+            if value:
+                handed.append(value)
+            return value
+
+        try:
+            command = str(resolve_references(str(a["command"]), resolver=_filled))
+        except UnresolvedSecret as missing:
+            return ToolResult(
+                success=False,
+                error=_unfilled_reference(missing),
+                recovery_hints=[
+                    "Use a name the user has stored in Settings → Secrets, or ask them to store it."
+                ],
+            )
+        handed.extend(_environment_credentials())
+        # App-level guards before any execution, judged on the command that will RUN, so a value a
+        # reference fills in cannot carry a sensitive path or a denied pattern past them:
         # 1. sensitive credential-path access (is_sensitive_bash_command);
         # 2. the configured execute_bash denied-command regexes (credential
         #    exfiltration — aws s3 cp, echo $AWS_SECRET, IMDS 169.254.169.254, …).
@@ -1287,7 +1522,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         if sens:
             return ToolResult(
                 success=False,
-                error=sens,
+                error=security.redact_known_values(sens, handed),
                 recovery_hints=[
                     "This command touches a sensitive credential path. Use a non-credential path or a different approach."  # noqa: E501
                 ],
@@ -1310,7 +1545,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         if named and not is_read_only_bash(command):
             return ToolResult(
                 success=False,
-                error=owner_only.refusal(named),
+                error=security.redact_known_values(owner_only.refusal(named), handed),
                 recovery_hints=[
                     "Leave PersonalClaw's own config, hooks, agent files and grants to the owner. Tell them what you would change and why."  # noqa: E501
                 ],
@@ -1335,7 +1570,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         if offer is not None:
             return ToolResult(
                 success=False,
-                error=offer.reason,
+                error=security.redact_known_values(offer.reason, handed),
                 recovery_hints=[trigger_handoff.HANDOFF_HINT],
             )
 
@@ -1346,12 +1581,21 @@ class NativeBuiltinToolProvider(ToolProvider):
             # agent-influenced spawn — deliver the ``tool`` ceiling via the post-exec
             # shim (full caps + OOM bias so a runaway command is killed before the
             # gateway). No preexec_fn: delivery is after exec, off the event-loop fork.
-            from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+            from personalclaw.sandbox import (
+                PROFILE_TOOL,
+                build_child_env,
+                create_subprocess_limited,
+            )
 
             proc = await create_subprocess_limited(
                 *wrapped,
                 profile=PROFILE_TOOL,
                 cwd=str(self._cwd),
+                # The agent's command runs with the child allowlist (`build_child_env`), like a
+                # hook or a cron script, never with a copy of the gateway's environment: the
+                # gateway holds every secret saved in PersonalClaw. `bash -l` still reads the
+                # owner's login profile, so the shell is set up the way theirs is.
+                env=build_child_env(site="native-bash"),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 # Its own process group. Two reasons, both load-bearing:
@@ -1394,7 +1638,11 @@ class NativeBuiltinToolProvider(ToolProvider):
                     Path(cleanup).unlink(missing_ok=True)
                 except OSError:
                     pass
-        raw = (out or b"").decode("utf-8", "replace")
+        # Masked before it is projected or retained: the values this tool handed the command, which
+        # no pattern can recognise, and then what the patterns do (`project_and_retain`'s reason).
+        raw = security.redact_for_model(
+            security.redact_known_values((out or b"").decode("utf-8", "replace"), handed)
+        )
         rc = proc.returncode
         if rc == 0:
             # Shell output is log-shaped → project (keep error/warn lines + tail)
@@ -2170,6 +2418,17 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "the task follows.",
                 ],
             )
+        # task_get and task_list showed this task masked (`format_tool_result`), so a text field
+        # sent back can carry a marker where the task holds a value: each keeps what it stands for.
+        stored = await registry.get_task(item_id)
+        if stored is not None:
+            current = stored.to_dict()
+            try:
+                for key in ("title", "description", "labels", "exit_criteria", "action_plan"):
+                    if key in fields:
+                        fields[key] = keep_masked_values(fields[key], current.get(key))
+            except MaskConflict:
+                return ToolResult(success=False, error=f"task_update: {MASK_CONFLICT}")
         try:
             task = await registry.update_task(item_id, **fields)
         except reconcile.DependencyCycleError as e:

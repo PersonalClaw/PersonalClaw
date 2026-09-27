@@ -6,7 +6,7 @@ import sys
 from personalclaw.acp.errors import AcpError, AcpTimeoutError
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
-from personalclaw.constants import DATA_WARNING
+from personalclaw.constants import BANNER, DATA_WARNING
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, ModelProvider
 
 
@@ -17,16 +17,6 @@ def config_path():
     import-time binding captures whatever the name pointed at on first use (#2443).
     """
     return config_loader.config_path()
-
-
-BANNER = r"""
-   ___                           _  ___ _
-  | _ \___ _ _ ___ ___ _ _  __ _| |/ __| |__ ___ __ __
-  |  _/ -_) '_(_-</ _ \ ' \/ _` | | (__| / _` \ V  V /
-  |_| \___|_| /__/\___/_||_\__,_|_|\___|_\__,_|\_/\_/
-
-  Your personal AI agent
-"""
 
 
 async def _chat(message: str | None, model: str | None) -> None:
@@ -123,11 +113,12 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
         print()
 
 
-def _ensure_default_agent_in_config() -> None:
+def _ensure_default_agent_in_config() -> str | None:
     """Ensure config.json includes a default PersonalClaw agent for fresh installs.
 
-    In the config transaction. An unreadable config.json is reported and left alone: this
-    used to read it as `{}` and write the default agent over every setting it held.
+    In the config transaction. An unreadable config.json is left alone, and why is returned for
+    `setup` to report: this used to read it as `{}` and write the default agent over every
+    setting it held. None when the agent is there.
     """
     from personalclaw.config.loader import ConfigWriteError
     from personalclaw.config.transactions import mutate_config
@@ -147,4 +138,5 @@ def _ensure_default_agent_in_config() -> None:
     try:
         mutate_config(_seed, path=config_path())
     except ConfigWriteError as exc:
-        print(f"  ⚠️  Could not add the default agent: {exc}", file=sys.stderr)
+        return f"could not add the default agent: {exc}"
+    return None

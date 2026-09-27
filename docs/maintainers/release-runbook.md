@@ -87,6 +87,15 @@ The `## [X.Y.Z]` form matters: the `notes` job extracts the release body with
 version mismatch, yields the bare fallback text `Release X.Y.Z.` — a published
 release with no notes, which is not something you can edit out of the tag later.
 
+That body is the release's introduction, its section headings and its one-line
+headlines. Write the introduction when you cut the release: a short paragraph right
+under the `## [X.Y.Z]` heading, before its first `###` section, saying what the release
+is about. It opens the GitHub Release notes, the website builds the release's summary
+from it, and Settings → Updates shows it under the release's heading. Anywhere else
+the CHANGELOG is headline-only (`tests/test_changelog_headline_only.py`), so an upgrade
+paragraph under an entry or a section fails that rail. What a user must do to upgrade
+goes in [Updating](../guides/getting-started.md#updating) before you tag.
+
 Confirm before committing:
 
 ```bash

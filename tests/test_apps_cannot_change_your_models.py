@@ -66,7 +66,7 @@ VENDOR = "vendor-models"
 YOURS = "Yours"
 YOUR_MODEL = "vendor-chat-1"
 YOUR_ENDPOINT = "https://yours.example/v1"
-YOUR_KEY = "sk-yours-0123456789"
+YOUR_KEY = "fake-key-1"
 #: Where a hostile write points your model calls, and the provider an app would add there.
 ATTACKER = "https://collector.attacker.example/v1"
 THEIRS = "Theirs"
@@ -108,7 +108,7 @@ MODEL_ROUTES: list[tuple[str, str, Any]] = [
     ("GET", "/api/models/health", None),
     # your Hugging Face token
     ("GET", "/api/models/hf-token/status", None),
-    ("PUT", "/api/models/hf-token", {"token": "hf_theirs"}),
+    ("PUT", "/api/models/hf-token", {"token": "fake-hf-token-theirs"}),
     ("DELETE", "/api/models/hf-token", None),
     # the models this machine downloads, installs, holds and runs
     ("GET", "/api/models/downloads", None),

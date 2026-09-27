@@ -40,6 +40,16 @@ def _refuse(sentence: str) -> NoReturn:
     sys.exit(1)
 
 
+def _usage_error(sentence: str) -> NoReturn:
+    """Say on stderr what the command line is missing, and exit 2, the usage-error status.
+
+    The status argparse gives a command line it cannot parse, for the checks only the command
+    can make: an argument given as an empty string, "at least one field", one of three flags.
+    """
+    print(sentence, file=sys.stderr)
+    sys.exit(2)
+
+
 def _spawn(args: argparse.Namespace) -> None:
     """Dispatch spawn subcommands: run, list.
 
@@ -56,15 +66,13 @@ def _spawn(args: argparse.Namespace) -> None:
     on the "gateway not running" arm below — reporting a running gateway as down.
     """
     action = getattr(args, "spawn_action", None)
-    if action not in ("list", "run"):
-        print("Usage: personalclaw spawn {run|list}")
-        return
-
     port = args.port
     base = f"http://localhost:{port}"
 
     if not probe_gateway(port):
-        print("Error: gateway not running (cannot reach dashboard on port %d)" % port)
+        print(
+            "Error: gateway not running (cannot reach dashboard on port %d)" % port, file=sys.stderr
+        )
         sys.exit(1)
     try:
         token = mint_local_token(port)
@@ -72,12 +80,12 @@ def _spawn(args: argparse.Namespace) -> None:
         # Liveness is confirmed (probe_gateway passed above) — a mint failure here is a
         # DIFFERENT fact than "not running" (e.g. this process does not share the
         # gateway's PERSONALCLAW_HOME, so it holds no `.local_secret`) and must read as one.
-        print(f"Error: {exc}")
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
     if action == "list":
         _spawn_list(base, port, token)
-    else:
+    elif action == "run":
         _spawn_run(args, base, port, token)
 
 
@@ -90,12 +98,14 @@ def _spawn_list(base: str, port: int, token: str) -> None:
     except urllib.error.HTTPError as e:
         try:
             body = json.loads(e.read())
-            print(f"Error: {body.get('error', e.reason)}")
+            print(f"Error: {body.get('error', e.reason)}", file=sys.stderr)
         except Exception:
-            print(f"Error: {e.code} {e.reason}")
+            print(f"Error: {e.code} {e.reason}", file=sys.stderr)
         sys.exit(1)
     except (urllib.error.URLError, OSError):
-        print("Error: gateway not running (cannot reach dashboard on port %d)" % port)
+        print(
+            "Error: gateway not running (cannot reach dashboard on port %d)" % port, file=sys.stderr
+        )
         sys.exit(1)
     agents = data.get("agents", [])
     if not agents:
@@ -120,12 +130,14 @@ def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> No
     except urllib.error.HTTPError as e:
         try:
             body = json.loads(e.read())
-            print(f"Error: {body.get('error', e.reason)}")
+            print(f"Error: {body.get('error', e.reason)}", file=sys.stderr)
         except Exception:
-            print(f"Error: {e.code} {e.reason}")
+            print(f"Error: {e.code} {e.reason}", file=sys.stderr)
         sys.exit(1)
     except (urllib.error.URLError, OSError):
-        print("Error: gateway not running (cannot reach dashboard on port %d)" % port)
+        print(
+            "Error: gateway not running (cannot reach dashboard on port %d)" % port, file=sys.stderr
+        )
         sys.exit(1)
 
     agent_id = result["id"]
@@ -235,9 +247,6 @@ def _handle_agent(args: argparse.Namespace) -> None:
         cfg.save()
         print(f"Deleted agent: {args.name}")
 
-    else:
-        print("Usage: personalclaw agent {list|create|update|delete}")
-
 
 def _pair(args: argparse.Namespace) -> None:
     """Mint a one-time channel pairing code and print it ONCE (CE-1 T1.5).
@@ -250,8 +259,7 @@ def _pair(args: argparse.Namespace) -> None:
 
     provider = (getattr(args, "provider", "") or "").strip().lower()
     if not provider:
-        print("❌ Usage: personalclaw pair <provider>   (e.g. telegram, discord, email)")
-        sys.exit(1)
+        _usage_error("❌ Usage: personalclaw pair <provider>   (e.g. telegram, discord, email)")
     code = create_pairing_code(provider)
     minutes = PAIRING_CODE_TTL_SECS // 60
     print(f"Pairing code for {provider}: {code}")
@@ -316,8 +324,6 @@ def _automation(args: argparse.Namespace) -> None:
             print(render(report))
         if not report.ok:
             sys.exit(1)
-        return
-    print("Usage: personalclaw automation verify-migration [--json]")
 
 
 def _cron_channel_problem(channel: str | None) -> str:
@@ -435,19 +441,18 @@ def _cron(args: argparse.Namespace) -> None:
             print(f"  {status} {trigger.id}  {shown.get('name') or ''}  ({sched})  {detail[:60]}")
 
     elif action == "add":
-        every = getattr(args, "every", None)
         cron_expr = getattr(args, "cron_expr", None)
         channel = (getattr(args, "channel", None) or "").strip() or None
         approval_mode = getattr(args, "approval_mode", "") or ""
         problem = _cron_channel_problem(channel)
         if problem:
             _refuse(f"Error: {problem}")
-        if cron_expr:
+        # The parser requires exactly one of the two (`cron_cadence` in `cli.build_parser`), and
+        # `tools.create` refuses an interval that would never fire (`arm.semantic_spec_issues`).
+        if cron_expr is not None:
             spec = {"kind": "cron", "expr": cron_expr}
-        elif every:
-            spec = {"kind": "interval", "interval_secs": int(every)}
         else:
-            _refuse("Provide --every or --cron")
+            spec = {"kind": "interval", "interval_secs": int(args.every)}
 
         workflow = {
             "inline": {
@@ -547,11 +552,7 @@ def _cron(args: argparse.Namespace) -> None:
                 spec_update = {"kind": "cron", "expr": val}
         approval = getattr(args, "approval_mode", None)
         if not patch and not spec_update and approval is None:
-            _refuse("Provide at least one field to update")
-        if getattr(args, "every_secs", None) is not None and (
-            getattr(args, "cron_expr", None) is not None
-        ):
-            _refuse("Provide --every or --cron, not both")
+            _usage_error("Provide at least one field to update")
 
         existing = store.get(args.job_id)
         if existing is None:
@@ -678,7 +679,19 @@ def _cron(args: argparse.Namespace) -> None:
         print(result.text)
 
     elif action == "trigger":
-        # Fire via the RUNNING gateway (a CLI process has no clock loop).
+        # Fire via the RUNNING gateway (a CLI process has no clock loop). The id is looked up in
+        # the store `list` reads, as `update`, `remove`, `pause` and `resume` do: every id a writer
+        # minted is there, and anything else is refused before a request is sent. This was a
+        # pattern for the old 6-16 hex ids, which refused every id `add` makes (`clock:<name>`).
+        if store.get(args.job_id) is None:
+            sel().log_api_access(
+                caller="cli",
+                operation="cron.trigger",
+                outcome="not_found",
+                source="cli",
+                resources=f"job_id={args.job_id} reason=not_found",
+            )
+            _refuse(f"Job not found: {args.job_id}")
         from personalclaw.schedule_trigger import trigger_schedule_job
 
         ok, message = trigger_schedule_job(args.job_id)
@@ -693,9 +706,6 @@ def _cron(args: argparse.Namespace) -> None:
         if not ok:
             _refuse(f"Error: {message}")
         print(message)
-
-    else:
-        print("Usage: personalclaw cron {list|add|update|remove|pause|resume|trigger}")
 
 
 def _security(args: argparse.Namespace) -> None:
@@ -774,8 +784,6 @@ def _security(args: argparse.Namespace) -> None:
                 f"⚠️  HMAC chain COMPROMISED: {valid}/{total} entries valid, {total - valid} tampered."  # noqa: E501
             )
             sys.exit(1)
-    else:
-        print("Usage: personalclaw security {audit|deny-list|events|verify}")
 
 
 async def _run_eval(args: argparse.Namespace) -> None:
@@ -927,7 +935,7 @@ async def _judge_bench(args: argparse.Namespace) -> None:
         fixture_set = jb.load_fixture_set(args.fixture_set)
         paired, unpaired = jb.build_specs(fixture_set, tiers=tiers, sample_counts=samples)
     except (jb.JudgeBenchError, ValueError) as exc:
-        print(f"Error: {exc}")
+        print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     cells = jb.bench_cells(paired, unpaired)
@@ -978,7 +986,7 @@ def _eval_harvest(args: argparse.Namespace) -> None:
         try:
             suite = hv.load_harvested_suite(workflow_name=getattr(args, "workflow", "") or "")
         except hv.EmptyHarvestError as exc:
-            print(f"Refusing: {exc}")
+            print(f"Refusing: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
         print(f"Harvested suite: {len(suite)} case(s)")
         for installed in suite:
@@ -998,7 +1006,7 @@ def _eval_harvest(args: argparse.Namespace) -> None:
     )
 
     if report.is_refusal:
-        print(f"Refusing: {report.refusal}")
+        print(f"Refusing: {report.refusal}", file=sys.stderr)
         raise SystemExit(1)
 
     wrote = sum(1 for c in report.cases if c.written)
@@ -1061,21 +1069,20 @@ async def _study(args: argparse.Namespace) -> None:
     if view_id:
         view = studies.study_view(view_id)
         if view is None:
-            print(f"Error: no registered study {view_id!r}")
+            print(f"Error: no registered study {view_id!r}", file=sys.stderr)
             raise SystemExit(1)
         print(json.dumps(view, indent=2, sort_keys=True))
         return
 
     study_id = str(getattr(args, "run", "") or "")
     if not study_id:
-        print("Nothing to do. Pass --list, --view <id> or --run <id>.")
-        raise SystemExit(1)
+        _usage_error("Nothing to do. Pass --list, --view <id> or --run <id>.")
 
     from personalclaw.evals import store as evals_store
 
     raw = evals_store.read_study_registration(study_id)
     if raw is None:
-        print(f"Error: no registered study {study_id!r}")
+        print(f"Error: no registered study {study_id!r}", file=sys.stderr)
         raise SystemExit(1)
     reg = studies.registration_from_dict(raw)
 
@@ -1085,7 +1092,7 @@ async def _study(args: argparse.Namespace) -> None:
     except studies.StudyError as exc:
         # A study whose arms cannot be built is refused BEFORE the preflight, so the printed
         # spend is never for a matrix that could not have run.
-        print(f"Refusing: {exc}")
+        print(f"Refusing: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     suite = study_arms.harvested_study_cases(
@@ -1117,7 +1124,7 @@ async def _study(args: argparse.Namespace) -> None:
             samples=samples,
         )
     except studies.StudyError as exc:
-        print(f"Refusing: {exc}")
+        print(f"Refusing: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     agreement = "unmeasurable" if result.agreement is None else f"{result.agreement:.2f}"
@@ -1173,7 +1180,7 @@ def _ablation(args: argparse.Namespace) -> None:
     if component_id:
         matches = [c for c in ablation.registry() if c.component_id == component_id]
         if not matches:
-            print(f"Error: no registered component {component_id!r} (try --list).")
+            print(f"Error: no registered component {component_id!r} (try --list).", file=sys.stderr)
             raise SystemExit(1)
         component: ablation.AblationComponent = matches[0]
     else:
@@ -1188,7 +1195,7 @@ def _ablation(args: argparse.Namespace) -> None:
         # Before the preflight print, so a typo'd target is a message and not a matrix.
         ablation.validate_component(component)
     except ValueError as exc:
-        print(f"Error: {exc}")
+        print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     arms = component.arms()
     print(
@@ -1217,12 +1224,12 @@ def _ablation(args: argparse.Namespace) -> None:
     except ablation.LiveStateMutatedError as exc:
         # Loud, not swallowed: the run altered the operator's config, which is the one thing
         # §3.1 forbids outright.
-        print(f"REFUSED: {exc}")
+        print(f"REFUSED: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     except (scenario_lib.ScenarioLibraryError, evals_store.PinRequiredError) as exc:
         # A misregistered subject or an incomplete pin is a registry mistake, not a crash. The
         # message already names what is installed — a traceback on top of it only hides it.
-        print(f"Error: {exc}")
+        print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     _print_ablation_report(report)
     if report.verdict == ablation.REMOVE:
@@ -1319,14 +1326,13 @@ def _eval_gate(args: argparse.Namespace) -> None:
 
     pid = str(getattr(args, "proposal", "") or "").strip()
     if not pid:
-        print("Error: name a proposal id to gate (or pass --list).")
-        raise SystemExit(1)
+        _usage_error("Error: name a proposal id to gate (or pass --list).")
 
     from personalclaw.learning import proposals as queue
 
     prop = queue.get(pid)
     if prop is None:
-        print(f"Error: no proposal {pid!r}.")
+        print(f"Error: no proposal {pid!r}.", file=sys.stderr)
         raise SystemExit(1)
 
     budget = float(getattr(args, "budget", 0.0) or 0.0)
@@ -1355,7 +1361,7 @@ def _eval_gate(args: argparse.Namespace) -> None:
 
     report = gate.gate_proposal(pid, budget_usd=budget or None, trials=trials)
     if report is None:
-        print(f"Error: no proposal {pid!r}.")
+        print(f"Error: no proposal {pid!r}.", file=sys.stderr)
         raise SystemExit(1)
     _print_gate_report(report)
 
@@ -1437,13 +1443,13 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
         try:
             card = json.loads(Path(label_path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"Error: unreadable card {label_path}: {exc}")
+            print(f"Error: unreadable card {label_path}: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
         # Accept the card shape this command PRINTS, so the round-trip is copy-edit-apply
         # and not "now transform it into some other schema".
         card_store = str(card.get("store", "") or "")
         if card_store and card_store not in rb.STORES:
-            print(f"Error: card declares unknown store {card_store!r}.")
+            print(f"Error: card declares unknown store {card_store!r}.", file=sys.stderr)
             raise SystemExit(1)
         if card_store:
             stores = (card_store,)
@@ -1462,7 +1468,8 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
         if not labels:
             print(
                 'Error: no labels in the card. Mark each query\'s answers under "relevant": '
-                '["<id>", ...] before applying it.'
+                '["<id>", ...] before applying it.',
+                file=sys.stderr,
             )
             raise SystemExit(1)
 
@@ -1497,7 +1504,7 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
                 print(f"Not measured: {exc}")
                 continue
             except (rb.MaskNotAppliedError, rb.StoreMutatedError) as exc:
-                print(f"REFUSED: {exc}")
+                print(f"REFUSED: {exc}", file=sys.stderr)
                 raise SystemExit(1) from exc
             _print_retrieval_report(result)
         finally:
@@ -1588,9 +1595,6 @@ def _learn(args: argparse.Namespace) -> None:
             if not svc.delete_lesson(args.query):
                 _refuse(f"No lessons match: {args.query}")
             print(f"Removed lessons matching: {args.query}")
-
-        else:
-            print("Usage: personalclaw learn {add|list|remove}")
     finally:
         vs.close()
 
@@ -1677,7 +1681,7 @@ def _memory_cmd(args: argparse.Namespace) -> None:
         elif action == "import":
             import_file = getattr(args, "file", None)
             if not import_file:
-                _refuse("Usage: personalclaw memory import <file>")
+                _usage_error("Usage: personalclaw memory import <file>")
             path = Path(import_file)
             if not path.is_file():
                 _refuse(f"File not found: {import_file}")
@@ -1689,8 +1693,5 @@ def _memory_cmd(args: argparse.Namespace) -> None:
             print(f"  Semantic: {counts['semantic']}")
             print(f"  Episodic: {counts['episodic']}")
             print(f"  Skipped:  {counts['skipped']}")
-
-        else:
-            print("Usage: personalclaw memory {list|search|stats|audit|export|migrate|import}")
     finally:
         store.close()

@@ -15,9 +15,12 @@ located first and the test FAILS when the anchor is missing, rather than passing
    it cannot be.
 2. The three install-kind guides each describe the four things a user has to decide —
    channels, pinning, opt-in staging, and the check kill switch.
-3. `CHANGELOG.md` carries the breaking entry for the main-tracking → release-tracking flip —
-   in whichever section currently holds it — and that entry advises `personalclaw snapshot`
-   and names the four `updates.*` fields a reader has to act on.
+3. The main-tracking → release-tracking flip is recorded twice, each where its reader looks:
+   `CHANGELOG.md` carries its headline under a release section, and the getting-started
+   guide's "Updating" section carries its upgrade steps — `personalclaw snapshot`, the four
+   `updates.*` fields a reader has to act on, and the one-time mapping of the retired
+   `auto_update` / `dashboard.update_dev_mode` flags. The CHANGELOG is headline-only, so the
+   steps cannot live under the headline any more.
 
 🪤 EVERY MATCH IS CASE-INSENSITIVE AND SUBSTRING-BASED ON PURPOSE, but the negative checks are
 phrase lists rather than keyword sweeps: "cannot be turned off" is the claim, and a keyword
@@ -77,40 +80,26 @@ def _section(text: str, heading_contains: str) -> str:
     return ""
 
 
-def _entry(text: str, phrase: str) -> tuple[str, str]:
-    """``(enclosing section heading, bullet block)`` for the CHANGELOG entry citing *phrase*.
+def _headline(text: str, phrase: str) -> tuple[str, str]:
+    """``(enclosing release heading, entry line)`` for the CHANGELOG headline citing *phrase*.
 
-    An entry is its ``- `` line plus every following indented continuation line — most of
-    this file's bullets wrap — so the block returned is the whole entry a reader sees, not
-    the one physical line the phrase happened to land on.
+    An entry is one line — the CHANGELOG is headline-only (``test_changelog_headline_only``).
 
     Deliberately searches the WHOLE file rather than one section. A release cut moves
-    `[Unreleased]` content into `## [X.Y.Z]` and leaves `_Nothing yet._` behind, so an
-    assertion anchored on `[Unreleased]` reds on every cut while the entry it guards is
-    still there, one section down. The heading comes back with the block so the caller can
-    still require the entry to be FILED under a release section rather than stranded in the
-    file preamble.
+    `[Unreleased]` content into `## [X.Y.Z]`, so an assertion anchored on `[Unreleased]` reds
+    on every cut while the entry it guards is still there, one section down. The heading comes
+    back with the line so the caller can still require the entry to be FILED under a release
+    section rather than stranded in the file preamble.
 
-    Returns ``("", "")`` when no entry cites the phrase — callers assert on that first.
+    Returns ``("", "")`` when no headline cites the phrase — callers assert on that first.
     """
-    lines = text.splitlines()
     want = phrase.lower()
     heading = ""
-    i = 0
-    while i < len(lines):
-        line = lines[i]
+    for line in text.splitlines():
         if line.startswith("## "):
             heading = line
-        if not line.startswith("- "):
-            i += 1
-            continue
-        j = i + 1
-        while j < len(lines) and lines[j].strip() and lines[j][:1] in (" ", "\t"):
-            j += 1
-        block = "\n".join(lines[i:j])
-        if want in block.lower():
-            return heading, block
-        i = j
+        elif line.startswith("- ") and want in line.lower():
+            return heading, line
     return "", ""
 
 
@@ -234,30 +223,40 @@ def test_each_install_guide_documents_rolling_back(guide: str) -> None:
     ), f"docs/guides/{guide} never mentions rolling back"
 
 
-# ── 3. the class-B CHANGELOG entry for the flip ─────────────────────────────
+# ── 3. the class-B flip: its headline, and its upgrade steps ────────────────
 
 #: Any ONE of these identifies the flip entry. A disjunction rather than one exact sentence
 #: so a reworded entry that still makes the claim is not a false red.
 FLIP_PHRASES = ("tracks releases, not `main`", "release-tracking", "not `main`")
 
+#: The guide whose "Updating" section is where a user about to update reads what to do.
+UPGRADE_GUIDE = GUIDES / "getting-started.md"
+
+#: What a user upgrading across the flip has to act on: the snapshot (pre-1.0 releases carry
+#: no migration), the four `updates.*` fields, and the two retired flags whose one-time
+#: mapping decides where an existing home lands.
+FLIP_UPGRADE_STEPS = (
+    "personalclaw snapshot",
+    "updates.channel",
+    "updates.pin",
+    "updates.auto",
+    "updates.check_enabled",
+    "auto_update",
+    "dashboard.update_dev_mode",
+)
+
 
 def test_changelog_records_the_main_tracking_to_release_tracking_flip() -> None:
-    """The breaking entry EXISTS in the CHANGELOG, advises a snapshot, and names its fields.
+    """The class-B flip has a CHANGELOG headline, filed under a release section.
 
     Class B is "changes the shape of a user's install or its state", which this is: the
     default auto-apply flipped off, the git kind stopped following a branch, and a home
-    carrying the legacy `auto_update` bool is remapped on load. The entry is how a user who
-    upgrades learns any of that happened — which is the property pinned here.
+    carrying the legacy `auto_update` bool is remapped on load. The headline is how a user
+    who upgrades learns that it happened.
 
-    The claim is about EXISTENCE, not position. This asserted `[Unreleased]` before, and a
-    release cut moves that section's content into `## [X.Y.Z]` and leaves `_Nothing yet._`
-    behind, so every cut red this rail while the entry was still recorded one section down —
-    the test failed precisely when the change it guards reached the users it was written for.
-
-    Scoped TIGHTER than before in exchange: the snapshot advice and the four field names are
-    now required in the flip ENTRY, where a reader meets them, rather than anywhere in a
-    section that also holds dozens of unrelated entries. That is what the old code comment
-    claimed ("nameable from the entry itself") without enforcing.
+    The claim is about EXISTENCE, not position: a release cut moves `[Unreleased]` content
+    into `## [X.Y.Z]`, so the entry is looked for in every section. What the user has to DO
+    is the next test's subject — a headline-only CHANGELOG has no body to carry it.
     """
     text = _read(CHANGELOG)
     assert any(
@@ -266,21 +265,31 @@ def test_changelog_records_the_main_tracking_to_release_tracking_flip() -> None:
 
     heading = entry = ""
     for phrase in FLIP_PHRASES:
-        heading, entry = _entry(text, phrase)
+        heading, entry = _headline(text, phrase)
         if entry:
             break
     assert entry, (
-        "no CHANGELOG entry describes the main-tracking → release-tracking flip; looked for "
-        f"{FLIP_PHRASES} in every entry, in every section"
+        "no CHANGELOG headline describes the main-tracking → release-tracking flip; looked "
+        f"for {FLIP_PHRASES} in every entry, in every section"
     )
     assert heading.startswith("## ["), (
         "the flip entry must be filed under a release section — `[Unreleased]` before a cut, "
         f"`[X.Y.Z]` after one — not stranded in the preamble; found it under {heading!r}"
     )
-    assert "personalclaw snapshot" in entry, (
-        "a class-B entry under the pre-1.0 banner advises `personalclaw snapshot` instead of "
-        "shipping migration machinery"
-    )
-    # The four fields a reader has to act on must be nameable from the entry itself.
-    for field in ("updates.channel", "updates.pin", "updates.auto", "updates.check_enabled"):
-        assert field in entry, f"the entry must name {field}"
+
+
+def test_the_updating_guide_carries_the_flips_upgrade_steps() -> None:
+    """The steps a user upgrading across the flip must take live in the guide they update from.
+
+    Before the CHANGELOG went headline-only these were required in the flip entry's body,
+    where a reader met them. That body is gone, so the same steps are required — every one of
+    them — in the getting-started guide's "Updating" section, which is where the reader who
+    is about to run `personalclaw update` looks. Scoped to that SECTION rather than the whole
+    guide, so a field named in an unrelated paragraph cannot satisfy it.
+    """
+    body = _section(_read(UPGRADE_GUIDE), "Updating")
+    assert body, f"{UPGRADE_GUIDE.name} has no Updating section — the upgrade steps have no home"
+    missing = [step for step in FLIP_UPGRADE_STEPS if step not in body]
+    assert (
+        not missing
+    ), f"docs/guides/{UPGRADE_GUIDE.name}'s Updating section never names: {', '.join(missing)}"

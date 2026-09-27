@@ -453,6 +453,22 @@ def semantic_spec_issues(
 
     clock_kind = str(spec.get("kind", "") or "")
     expr = str(spec.get("expr", "") or "").strip()
+    if clock_kind == "interval" and _positive(spec.get("interval_secs")) <= 0:
+        # `cadence_next_fire` arms an interval of no seconds above zero to 0.0: the trigger would
+        # sit enabled and never fire. Missing, zero, negative and not-a-number all land here.
+        seconds = spec.get("interval_secs")
+        issues.append(
+            Issue(
+                path="spec.interval_secs",
+                severity="error",
+                message=(
+                    "an interval clock needs the seconds between fires"
+                    if seconds is None
+                    else f"{seconds!r} is not a number of seconds above 0"
+                )
+                + " — the trigger would arm to nothing and never fire",
+            )
+        )
     cron_usable = False
     if clock_kind == "cron" and expr:
         from croniter import croniter  # type: ignore[import-untyped]

@@ -12,9 +12,9 @@ a *network* boundary, not an *authorization* one (see
 request it forwards with an HMAC over a per-app secret; this middleware verifies that
 signature **fail-closed** so a local process that finds the port cannot bypass the
 gateway proxy (and therefore session auth + the app-permission middleware). The signer
-side lives in the gateway (``dashboard/handlers/apps.py``); both sides call
-:func:`build_signing_string` / :func:`sign_proxy_request` here so the wire contract has
-exactly one definition.
+side lives in the gateway (``apps.app_secret.proxy_signature``); both sides build the message
+with :func:`build_signing_string` (``personalclaw.proxy_signature``, re-exported here) so the wire
+contract has exactly one definition.
 
 The signed message is::
 
@@ -28,7 +28,6 @@ probes it directly, not through the signing proxy.
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import os
 import sys
@@ -37,6 +36,12 @@ from collections.abc import Awaitable, Callable, Iterable
 
 from aiohttp import web
 
+from personalclaw.proxy_signature import (  # noqa: F401
+    PROXY_SIGNATURE_HEADER,
+    build_signing_string,
+    hmac_hex,
+    sign_proxy_request,
+)
 from personalclaw.security import fence_untrusted  # noqa: F401
 
 __all__ = [
@@ -49,9 +54,6 @@ __all__ = [
     "APP_SECRET_ENV",
 ]
 
-# The header the gateway proxy attaches and the backend verifies. Value is
-# ``<ts>:<hmac_hex>``.
-PROXY_SIGNATURE_HEADER = "X-PersonalClaw-Proxy"
 # Acceptance window in seconds either side of ``now`` — a captured signature replayed
 # after this many seconds is refused.
 PROXY_SIGNATURE_WINDOW_SECS = 60
@@ -60,32 +62,6 @@ APP_SECRET_ENV = "PERSONALCLAW_APP_SECRET"
 # Path(s) exempt from signature: the gateway watchdog probes the backend's health
 # endpoint directly (not through the signing proxy), so it must not require a signature.
 _DEFAULT_EXEMPT: frozenset[str] = frozenset({"/health"})
-
-
-def build_signing_string(ts: int, method: str, path_qs: str, body: bytes) -> str:
-    """The canonical message both sides HMAC: ``<ts>:<METHOD>:<path?query>:<sha256(body)>``.
-
-    ``path_qs`` is the on-the-wire request target the backend sees (aiohttp's
-    ``request.raw_path`` — the path plus any query string, percent-encoded). The signer
-    passes the exact same target it forwards, so the two reconstruct an identical string.
-    """
-    return f"{ts}:{method}:{path_qs}:{hashlib.sha256(body).hexdigest()}"
-
-
-def _hmac_hex(secret: str, message: str) -> str:
-    return hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
-
-
-def sign_proxy_request(
-    secret: str, method: str, path_qs: str, body: bytes, *, ts: int | None = None
-) -> str:
-    """Build the ``X-PersonalClaw-Proxy`` header value for a request. Used by the proxy.
-
-    Returns ``"<ts>:<hmac_hex>"``. ``ts`` defaults to the current unix second (injectable
-    for tests).
-    """
-    ts = int(time.time()) if ts is None else ts
-    return f"{ts}:{_hmac_hex(secret, build_signing_string(ts, method, path_qs, body))}"
 
 
 def _verify(
@@ -101,7 +77,7 @@ def _verify(
         return False, "malformed timestamp"
     if abs(int(time.time()) - ts) > window_secs:
         return False, "stale signature (outside window)"
-    expected = _hmac_hex(secret, build_signing_string(ts, method, path_qs, body))
+    expected = hmac_hex(secret, build_signing_string(ts, method, path_qs, body))
     if not hmac.compare_digest(expected, mac):
         return False, "signature mismatch"
     return True, ""

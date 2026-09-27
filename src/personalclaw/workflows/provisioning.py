@@ -239,10 +239,15 @@ async def _run_step_durable(
     *,
     name: str,
     step: str,
-    session_env: dict[str, str],
+    spawn_env: dict[str, str],
     timeout: float,
 ) -> tuple[bool, str] | None:
     """Run one setup step INSIDE the run's durable tmux session. ``None`` → bare fallback.
+
+    The step runs with exactly *spawn_env*, the environment the bare path gives it. A tmux
+    session starts from the environment its SERVER was started with, which is whatever the first
+    client on the socket had (the gateway's, or a terminal's), so the worker is started under
+    ``env -i`` (``sandbox.exact_env_argv``) rather than handed ``-e`` additions to it.
 
     The mechanism: ``tmux new-session -d`` hands the step to the tmux DAEMON, so a gateway
     killed mid-`npm install` leaves the install running — and the boot sweep's §5.1 pre-step
@@ -289,14 +294,18 @@ async def _run_step_durable(
     except OSError:
         return None
 
-    from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
+    from personalclaw.sandbox import PROFILE_TOOL, exact_env_argv, spawn_shim_argv
 
+    exact_env = exact_env_argv(spawn_env)
+    if exact_env is None:
+        return None
     # The ceiling still applies INSIDE the session: the worker argv is shim-prepended here,
     # so the tmux server execs our post-exec shim which setrlimits and then execs the step.
     # Without this, routing a step through tmux would quietly shed the tool ceiling the bare
     # path delivers — a resource-limit downgrade nobody chose.
     worker = spawn_shim_argv(list(argv), PROFILE_TOOL)
     command = [
+        *exact_env,
         "/bin/sh",
         "-c",
         _DURABLE_STEP_SH,
@@ -305,8 +314,12 @@ async def _run_step_durable(
         str(out_path),
         *worker,
     ]
-    if not await tmux_substrate.new_session(
-        name, workspace=str(cwd), command=command, env=session_env
+    # `new_session` is True only while the step is running. A step that already FINISHED in the
+    # session reads False too, and its rc file says so: reading it is the result, and falling back
+    # would run the step a second time.
+    if (
+        not await tmux_substrate.new_session(name, workspace=str(cwd), command=command)
+        and not rc_path.exists()
     ):
         return None
 
@@ -387,24 +400,21 @@ async def run_step(
     found = os.path.exists(binary) if os.path.sep in binary else bool(shutil.which(binary))
     if not found:
         return False, f"command not found: {binary}"
-    spawn_env = {**os.environ, **(env or {})}
+    from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
+
+    # A step is workflow-authored text, so it runs with the child allowlist and its own declared
+    # env (`build_child_env`), like a hook or a cron script, never with a copy of the gateway's
+    # environment and every secret saved in PersonalClaw. The durable path gives it the same.
+    spawn_env = build_child_env(site="workflow-step", extra=env)
 
     if durable_session and _durable_enabled():
-        # Only what the worker needs crosses into the session: the explicit step env plus the
-        # gateway's PATH/PYTHONPATH (the two whose absence makes a step fail under tmux that
-        # succeeds bare). The daemon inherited the rest from the gateway that first touched
-        # our socket.
-        session_env = {**(env or {})}
-        for key in ("PATH", "PYTHONPATH"):
-            if key in spawn_env:
-                session_env.setdefault(key, spawn_env[key])
         try:
             durable = await _run_step_durable(
                 argv,
                 cwd,
                 name=durable_session,
                 step=command,
-                session_env=session_env,
+                spawn_env=spawn_env,
                 timeout=timeout,
             )
         except Exception:
@@ -416,8 +426,6 @@ async def run_step(
             durable = None
         if durable is not None:
             return durable
-
-    from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
     try:
         # start_new_session: a setup/teardown step is workflow-authored text, and the

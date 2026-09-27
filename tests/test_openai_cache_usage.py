@@ -226,7 +226,7 @@ def _provider(chunks: list[Any]) -> Any:
 
     provider = OpenAIProvider(
         model=_MODEL,
-        credential=Credential(name="x", kind="api_key", secret="sk-test", source="env"),
+        credential=Credential(name="x", kind="api_key", secret="fake-key-test", source="env"),
     )
     provider._client.chat = _Chat(_Completions(chunks))
     return provider

@@ -157,8 +157,8 @@ describe('the instance card wires the two halves together', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Edit' }))
 
     const typed = await waitFor(() => screen.getByLabelText('OpenAI API Key') as HTMLInputElement)
-    await userEvent.type(typed, 'sk-typed-then-abandoned')
-    expect(typed.value).toBe('sk-typed-then-abandoned')
+    await userEvent.type(typed, 'fake-key-typed-then-abandoned')
+    expect(typed.value).toBe('fake-key-typed-then-abandoned')
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Edit' }))

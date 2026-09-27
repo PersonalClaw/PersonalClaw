@@ -202,10 +202,11 @@ Library re-reads the list when its socket reopens, so the notice goes when the r
 chat turn already in flight finishes on the provider instance it started with; the next one
 builds from the new code.
 
-**The restart itself** re-executes the gateway in place (`os.execve`, same PID), so before it
-does, `stop_processes()` stops every app backend and worker (watchdogs first). A process left
-running would stay a child of the new image, which neither supervises it nor reaps it at boot
-(only a process whose parent died counts as an orphan there).
+**The restart itself** is the gateway's own full stop, then a re-execution in place (`os.execve`,
+same PID; `restart_request.py`) — so its first step, `stop_processes()`, stops every app backend
+and worker (watchdogs first), and every other step of a stop runs too. A process left running
+would stay a child of the new image, which neither supervises it nor reaps it at boot (only a
+process whose parent died counts as an orphan there).
 
 **UI bundles** are served with `Cache-Control: no-cache`, and every bundle URL carries the app's
 `uiRevision` (a digest of the bundles its manifest declares), so a tab that already imported the
@@ -325,8 +326,11 @@ therefore session auth and `app_permission_middleware` entirely. The app
 platform's whole permission story assumes requests arrive through the proxy —
 so that assumption is now enforced, not merely documented.
 
-Every request the proxy forwards carries an HMAC signature the backend verifies
-**fail-closed**:
+Every request the gateway sends a backend carries an HMAC signature the backend
+verifies **fail-closed**: what the proxy forwards, and what an agent's or a trigger's
+`call_app_route` sends (`tool_providers/app_routes.py`). Both sign through one signer,
+`apps/app_secret.proxy_signature`, over the contract in `personalclaw/proxy_signature.py`,
+and neither sends a request unsigned when the app has no secret:
 
 - **Header:** `X-PersonalClaw-Proxy: <ts>:<hmac_hex>`.
 - **Signed message:** `<ts>:<METHOD>:<raw_path?query>:<sha256_hex(body)>` —
@@ -370,8 +374,13 @@ backend has no access to the gateway's SecurityEventLog).
   (boundary-lint-enforced by `tests/test_apps_import_boundary.py`). Modules
   cover models, channels, tools, search, memory, knowledge, STT/TTS,
   credentials, settings (`ProviderSettings` — each app's persisted store),
-  security helpers, and `provider_helpers.register_branded_app` for
-  protocol-thin branded model apps.
+  security helpers, `provider_helpers.register_branded_app` for
+  protocol-thin branded model apps, and `testing.keychain_off` for an app's
+  test harness, which keeps the test process out of the machine's OS keychain
+  (one keychain serves every home, so a scratch `PERSONALCLAW_HOME` does not).
+  `testing.launch_acp_entry` launches an ACP entry's command with the environment
+  a spawn from that entry gets, so an ACP app's tests check what its CLI is
+  handed with a stub in the CLI's place, never the CLI itself.
 - **Its signatures are a reviewed contract**: every name each `sdk` module publishes
   is recorded in `src/personalclaw/sdk/signatures.json`
   (`scripts/sdk_signature_snapshot.py`), `tests/test_sdk_signature_snapshot.py`

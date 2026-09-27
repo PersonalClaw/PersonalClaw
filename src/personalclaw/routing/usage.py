@@ -9,10 +9,11 @@ question, and the reason it was BLOCKED before — see the plan's MRT-3 executio
 
 PersonalClaw records model cost in two places that cannot be safely summed:
 
-* ``usage/turns.jsonl`` (``usage_ledger.py``) — one row per streamed TURN, five live writers, with
-  real caller provenance in ``source``: ``chat`` | an app name | ``loop`` | ``cron`` | ``channel``
-  | ``cli`` | ``subagent`` | ``background``. This covers interactive chat — the user's largest line
-  item — so it is THE spend record and the only honest input for a "~$X this month" sentence.
+* ``usage/turns.jsonl`` (``usage_ledger.py``) — one row per streamed TURN, and per room summary and
+  history compression, with real caller provenance in ``source``: ``chat`` | an app name | ``loop``
+  | ``cron`` | ``channel`` | ``cli`` | ``subagent`` | ``room`` | ``background``. This covers
+  interactive chat — the user's largest line item — so it is THE spend record and the only honest
+  input for a "~$X this month" sentence.
 * ``model_calls.jsonl`` (``guardrails/audit.py``) — one row per guarded ``ModelProvider.complete()``
   ATTEMPT. ``provider_bridge`` attaches the guard only for
   ``use_case in ("reasoning", "background", "loops", "orchestration")`` and states the exclusion as
@@ -20,18 +21,18 @@ PersonalClaw records model cost in two places that cannot be safely summed:
   human-watched"), so this record structurally cannot answer "what did this cost me".
 
 A union of the two double-counts: a loop worker's turn is recorded as a ``source="loop"`` turn AND
-its inner inference resolves under the ``loops`` axis into a guarded attempt row. Neither row
-carries the other's identity — there is no ``audit_id`` on a turn and no session key on an attempt —
-so there is NO join key with which to deduplicate. A cross-store total is therefore not merely
-expensive to get right, it is currently *unavailable*, and a money surface that silently
-double-counts is worse than one that admits a gap.
+its inner inference resolves under the ``loops`` axis into a guarded attempt row, and so do a room's
+summaries and a chat's history compression, which write a row of their own. The join is the
+attempt's ``audit_id``: the guard stamps it on the ``EVENT_COMPLETE`` it yields
+(``LLMEvent.audit_ids``), the native loop carries those of every inference of its turn, and the
+ledger row written from that event keeps them (``TurnUsage.audit_ids``). A money surface that
+silently double-counts is worse than one that admits a gap, so nothing is summed across the two.
 
-So: the fold sums the ledger, and :func:`audit_census` counts what is being left out
-(``fold["uncounted"]``) so the surface can say "N unattended calls (~$X) are recorded but not
-included here, because they cannot be merged without double-counting loops". That turns an
-invisible gap into a stated one. Closing it properly means widening the attempt audit to cover
-every axis and retiring one of the two records — a breaking change across five writers, out of this
-change's scope.
+So: the fold sums the ledger, and :func:`audit_census` counts the attempts NO ledger row names
+(``fold["uncounted"]``): the model calls that wrote no usage row (a chat's title, a judge, a
+digest). The surface says "N unattended calls (~$X) wrote no usage row and are not included here",
+which turns an invisible gap into a stated one. Closing it means giving each of those callers a row
+(``llm_helpers.one_shot_completion(usage=…)``), one caller at a time.
 
 **Purpose is the unifying vocabulary.** The ledger's ``source`` maps into the fixed
 ``interactive | background | loop | eval | app`` vocabulary. A source that is none of the known
@@ -320,15 +321,31 @@ def fold_turn_row(
 # ── the audit census (what this fold deliberately does NOT count) ────────────────────────
 
 
-def audit_census(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def ledgered_audit_ids(ledger_rows: list[dict[str, Any]]) -> frozenset[str]:
+    """The ``audit_id`` of every guarded model call a ledger row already counts (``audit_ids``)."""
+    ids: set[str] = set()
+    for row in ledger_rows:
+        named = row.get("audit_ids")
+        if isinstance(named, list):
+            ids.update(str(audit_id) for audit_id in named if audit_id)
+    return frozenset(ids)
+
+
+def audit_census(
+    rows: list[dict[str, Any]], *, ledgered: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """Count the guarded-attempt spend the fold leaves out, so the gap is stated not hidden.
 
-    Returns ``{calls, dollars_est, by_use_case, days}``. This is NOT added to any total: a loop's
-    inner inference appears both here and as a ledger turn, and the two rows share no id, so
-    summing them would double-count with no way to detect it. See the module docstring.
+    Returns ``{calls, dollars_est, by_use_case, days}``: the attempts no ledger row counts. An
+    attempt whose ``audit_id`` is in *ledgered* is a call a turn's row already carries (the row
+    names it, :func:`ledgered_audit_ids`), so it is in the fold's figures and not in this census.
+    What remains is NOT added to any total: those calls wrote no usage row, so the ledger has
+    nothing to fold for them. See the module docstring.
     """
     out: dict[str, Any] = {"calls": 0, "dollars_est": 0.0, "by_use_case": {}, "days": {}}
     for rec in rows:
+        if str(rec.get("audit_id", "") or "") in ledgered:
+            continue
         out["calls"] += 1
         out["dollars_est"] = round(
             float(out["dollars_est"]) + float(rec.get("dollars_est", 0.0) or 0.0), 6
@@ -382,15 +399,18 @@ def fold_files(
     audit_path: Path | None = None,
     ledger_path: Path | None = None,
 ) -> dict[str, Any]:
-    """A fold built from scratch: the ledger summed, the attempt audit censused."""
+    """A fold built from scratch: the ledger summed, the attempts no ledger row counts censused."""
     audit_path, ledger_path = _default_paths(audit_path, ledger_path)
     look = _rate_lookup(home)
     fold = empty_fold()
     turns = 0
-    for row in _iter_json_lines(ledger_path):
+    ledger_rows = _iter_json_lines(ledger_path)
+    for row in ledger_rows:
         if fold_turn_row(fold, row, look=look):
             turns += 1
-    fold["uncounted"] = audit_census(_iter_json_lines(audit_path))
+    fold["uncounted"] = audit_census(
+        _iter_json_lines(audit_path), ledgered=ledgered_audit_ids(ledger_rows)
+    )
     fold["sources"] = {"usage_ledger": turns}
     return fold
 
@@ -688,7 +708,6 @@ def usage_recap(month: str, *, fold: dict[str, Any] | None = None, home: Path | 
 def _uncounted_sentence(uncounted: dict[str, Any]) -> str:
     n = int(uncounted.get("calls", 0) or 0)
     return (
-        f"Separately, {n} unattended model {'call' if n == 1 else 'calls'} were recorded this "
-        "month but are not included above — they cannot be merged with turns without "
-        "double-counting loops."
+        f"Separately, {n} unattended model {'call' if n == 1 else 'calls'} this month wrote no "
+        "usage row, so they are not included above."
     )

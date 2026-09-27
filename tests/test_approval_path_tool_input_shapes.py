@@ -44,6 +44,8 @@ import json
 
 import pytest
 
+from personalclaw.approval_answer import YOU
+
 
 def _state():
     from unittest.mock import MagicMock
@@ -70,7 +72,7 @@ async def _row(state, tool: str, tool_input: object) -> dict:
         await task
         raise AssertionError("request_approval never published a row")
     row = dict(state._pending_approvals["ap-1"])
-    state.resolve_approval("ap-1", False)
+    state.resolve_approval("ap-1", False, by=YOU)
     assert await task is False
     return row
 

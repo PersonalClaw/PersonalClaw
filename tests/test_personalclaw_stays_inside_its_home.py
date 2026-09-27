@@ -472,12 +472,12 @@ def test_the_hugging_face_cli_sign_in_is_not_read_until_allowed(real_home, monke
 
     token_file = real_home / ".cache" / "huggingface" / "token"
     token_file.parent.mkdir(parents=True)
-    token_file.write_text("hf_machine_wide_token_1234", encoding="utf-8")
+    token_file.write_text("fake-hf-token-machine_wide_token_1234", encoding="utf-8")
     for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     assert hf_token._read_hf_cli_file() == ""
     _allow("huggingface-cache")
-    assert hf_token._read_hf_cli_file() == "hf_machine_wide_token_1234"
+    assert hf_token._read_hf_cli_file() == "fake-hf-token-machine_wide_token_1234"
 
 
 def test_an_app_gets_the_hugging_face_folder_read_only_and_only_once_allowed(real_home):

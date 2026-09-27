@@ -41,6 +41,8 @@ vi.mock('../../lib/api', async (importOriginal) => {
       // what the panel really sees on a fresh install.
       judgeBench: () => Promise.resolve({ ran: false }),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], reclaimable_bytes: 0 }),
+      // The panel reads the download list once, so a row can re-attach to a running download.
+      modelDownloads: () => Promise.resolve([]),
       // The panel's loaded-models section fetches on mount too; an unmocked call
       // here would make this test fail for a reason that has nothing to do with caching.
       modelsLoaded: () => Promise.resolve({

@@ -47,7 +47,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw import review_triage
+from personalclaw import approval_answer, review_triage
+from personalclaw.approval_answer import Principal
 from personalclaw.guardrails.calls import CallLog, capture_model_calls
 from personalclaw.workflows import (
     attention,
@@ -55,6 +56,7 @@ from personalclaw.workflows import (
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import (
     effect_boundary,
+    ending_sentence,
     execution_hints,
     gate_answers,
     gate_policy,
@@ -707,7 +709,9 @@ class RunController:
 
         if fr.complete and not self._inflight:
             status = _ROOT_TO_RUN.get(fr.outcome or InstanceState.DONE, RunStatus.COMPLETE)
-            await self._finish(status)
+            # A run that went on past a failed step (`on_error: null_continue`, the default) says
+            # which step failed and that it continued past it; a clean run says nothing.
+            await self._finish(status, error=ending_sentence.for_failures(self))
             return True
 
         self._check_budget_warning()
@@ -765,36 +769,57 @@ class RunController:
         token: str,
         answer: Any,
         *,
-        responder: str = "",
+        by: Principal,
         channel: str = "",
         always_allow: bool = False,
     ) -> dict[str, Any]:
-        """Answer a waiting gate. The out-of-band entry point (widget, inbox, HTTP, chat).
+        """Answer a waiting gate. The one entry point every door answers through (the run page,
+        the Inbox, Mission Control, HTTP).
+
+        *by* is who is answering. Only you answer a gate, and never the run that asked it: an
+        agent's tool, an app and the run itself are refused with ``WF_RESUME_NOT_OWNER`` and
+        audited (``approval_answer``), before the token is touched. The one exception is an
+        ``event`` gate, which parks the run until something happens and asks nobody's
+        permission: the trigger it waits for wakes it by answering it. A trigger answers no other
+        gate, so a trigger an agent armed cannot approve its own run's approval gate. What wakes an
+        event gate is its payload (`AskKind.EVENT`): whatever it carries moves the run on, and it
+        is never a no, a `revise` or a remembered allow.
 
         The answer is VALIDATED before the token is consumed: rejecting afterwards would
         have already destroyed the token, leaving a dead link and an unanswered gate. Then
         the token is consumed ATOMICALLY, so a double-click or a retried POST cannot replay
         one approval into two actions.
 
-        `channel` marks a REMOTE reply. A remote answer must come from the run's owner —
-        without that binding, a shared channel is a privilege-escalation path where anyone
-        who can type can approve someone else's deployment (WF2-R7).
+        `channel` marks a REMOTE reply, and *by* is then you on that channel, named by who
+        replied. A remote answer must come from the run's owner — without that binding, a shared
+        channel is a privilege-escalation path where anyone who can type can approve someone
+        else's deployment (WF2-R7).
         """
         from personalclaw.workflows.human_input import (
             Ask,
+            AskKind,
             consume_continuation,
             expired_item,
             load_continuation,
         )
 
-        allowed, why = gate_policy.may_answer(self.run, responder=responder, channel=channel)
+        # Read, not claimed: which gate this answers decides who may answer it.
+        cont = load_continuation(self.run.id, token)
+        refused = approval_answer.check(
+            by,
+            what=f"gate:{self.run.id}",
+            asked_by=approval_answer.run(self.run.id).label,
+            event=cont is not None and self._waits_on_event(cont.instance_path),
+        )
+        if refused:
+            return {"ok": False, "code": "WF_RESUME_NOT_OWNER", "message": refused}
+        allowed, why = gate_policy.may_answer(self.run, responder=by.name, channel=channel)
         if not allowed:
             # Checked BEFORE the token is touched, and deliberately terse: replying with
             # the gate's content to a shared channel would leak it to everyone in it.
             logger.info("workflow %s: refusing remote gate answer — %s", self.run.id, why)
             return {"ok": False, "code": "WF_RESUME_NOT_OWNER", "message": why}
 
-        cont = load_continuation(self.run.id, token)
         if cont is None:
             return {"ok": False, "code": "WF_RESUME_UNKNOWN_TOKEN"}
         if cont.expired:
@@ -803,18 +828,20 @@ class RunController:
             self._publish("workflow_needs_input", item)
             return {"ok": False, "code": "WF_RESUME_EXPIRED", "item": item}
 
+        ask = Ask.from_dict(cont.ask)
         # The `revise` verb (UP): "change step 3, then carry on" — neither an approval nor a
         # rejection. Recognised HERE, alongside `validate_answer` and for the same reason: a revise
         # naming a step that does not exist must leave the token intact so the reviewer can correct
-        # the name, and a check placed after the claim would have destroyed it already.
-        revise = gate_answers.parse_revise(answer)
+        # the name, and a check placed after the claim would have destroyed it already. Never in
+        # an EVENT's answer, which is the wake's payload and nothing else: read as a verb, a
+        # trigger's `{"revise": ...}` rewrote the steps of the run it was armed to wake.
+        revise = None if ask.kind == AskKind.EVENT else gate_answers.parse_revise(answer)
         if revise is not None:
             step_ref, comment = revise
             return gate_answers.resume_revise(
-                self, cont, token, step_ref, comment, responder=responder, channel=channel
+                self, cont, token, step_ref, comment, by=by, channel=channel
             )
 
-        ask = Ask.from_dict(cont.ask)
         problem = ask.validate_answer(answer)
         if problem:
             # Validated BEFORE consuming: the token survives so the user can correct it.
@@ -833,15 +860,14 @@ class RunController:
 
         filled = ask.apply_defaults(answer)
         approved = gate_answers.is_approved(ask, filled)
-        if approved and always_allow and not ask.rerun:
+        if approved and always_allow and ask.rememberable:
             # Run-scoped, keyed by (operation, target) — and cleared on rewind, so it can
-            # never auto-approve a step the user rewound to reconsider. Never for a step that
-            # parked (`ask.rerun`): what it waits for is a person's act, which no remembered
-            # answer can perform the next time it parks.
+            # never auto-approve a step the user rewound to reconsider. Never for an ask no
+            # remembered answer can stand in for (`Ask.rememberable`).
             node = dict(walk(self.root)).get(spec_path(cont.instance_path))
             self._allow_memory.remember(node.config if node else {}, cont.node_id)
         inst.wake_at = 0.0
-        who = gate_answers.decliner(responder, channel)
+        who = gate_answers.decliner(by, channel)
         if ask.rerun:
             gate_answers.settle_parked_step(
                 self, cont, inst, approved=approved, answer=filled, who=who
@@ -870,7 +896,7 @@ class RunController:
             confirmation_id=cont.confirmation_id,
             verb="approve" if approved else "reject",
             approved=approved,
-            resolved_by=responder or channel or "dashboard",
+            resolved_by=by.label,
         )
         self.journal.write(
             journal_mod.GATE_RESOLVED,
@@ -1508,7 +1534,14 @@ class RunController:
             # clock and an ACTION that parked is waiting for a person to do something (sign in,
             # raise a budget) that no policy can do for them. Applied to every WAITING result, it
             # marked a `risk: caution` browse step in a scheduled run done with `approved: true`
-            # for a sign-in nobody made.
+            # for a sign-in nobody made. Nor an `event` gate, which asks no question: it waits for
+            # something to happen, and a policy that "approved" it would skip the wait it is for.
+            from personalclaw.workflows.human_input import AskKind
+
+            asks_a_question = (
+                item.node.kind == NodeKind.GATE
+                and (result.ask or {}).get("kind") != AskKind.EVENT.value
+            )
             verdict = (
                 gate_policy.decide(
                     item.node.config or {},
@@ -1517,7 +1550,7 @@ class RunController:
                     mode=self.run.mode,
                     memory=self._allow_memory,
                 )
-                if item.node.kind == NodeKind.GATE
+                if asks_a_question
                 else None
             )
             if verdict is not None and verdict.approved:
@@ -1739,9 +1772,8 @@ class RunController:
                 # The prompt the PROVIDER received, with the fact of a substitution beside it
                 # (#3166). `result.resolved_prompt` is post-scan since the dispatcher reads it back
                 # from `guardrails.wire`, so what gets persisted is what the redactor produced —
-                # the record and the wire agree. Nothing re-scans here: `redact_credentials` is not
-                # idempotent over a composed line, so a second pass at the recording seam could
-                # garble the very text it was meant to protect.
+                # the record and the wire agree. Nothing re-scans here: the record is the wire's
+                # text, and a scan run again at the recording seam could only guess at it.
                 resolved_prompt_ref=node_bindings.store_prompt(
                     self, item.path, result.resolved_prompt
                 ),
@@ -2005,6 +2037,16 @@ class RunController:
             self.instances[path] = inst
         return inst
 
+    def _waits_on_event(self, path: str) -> bool:
+        """Whether the step at *path* is an ``event`` gate: parked until something happens, not
+        waiting for a person's answer (:meth:`resume`)."""
+        node = dict(walk(self.root)).get(spec_path(path))
+        return (
+            node is not None
+            and node.kind == NodeKind.GATE
+            and str((node.config or {}).get("kind", "") or "") == "event"
+        )
+
     def _persist_state(self) -> None:
         store.write_state(self.run.id, self.instances)
 
@@ -2137,8 +2179,8 @@ class RunController:
                 self.services.attention_state, self.run.id, run_ending(status)
             )
             # A run started as a loop says it ended, the way a loops-table loop does — after the
-            # resolve above, so the "needs a decision" row it may raise is not closed with the
-            # run's other rows.
+            # resolve above, so the row an escalated loop raises is not closed with the run's
+            # other rows.
             attention.announce_loop_end(self.services.attention_state, self.run, status)
             if status == RunStatus.COMPLETE:
                 run_finish.revise_project_overview(self)

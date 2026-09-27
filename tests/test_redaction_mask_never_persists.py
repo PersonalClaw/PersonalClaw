@@ -5,7 +5,7 @@ form seeds its draft from that response and sends it back verbatim, and the save
 inverse — so saving a prompt after ANY edit, even a title-only one, replaced the stored body
 with `[REDACTED: credential]`. Prompts keep no version history, so the original was gone:
 
-    on disk       ->  key: sk-ant-api03-AAAA…LLLL
+    on disk       ->  key: fake-anthropic-1…LLLL
     GET returns   ->  key: [REDACTED: credential]
     PUT it back   ->  {"ok": true}
     on disk NOW   ->  [REDACTED: credential]

@@ -18,7 +18,7 @@ from personalclaw import bg_compress
 from personalclaw.history import ConversationLog, model_view, span_digest
 
 
-async def _fake_prose(text, *, cap=2000, raw_ref=""):
+async def _fake_prose(text, *, cap=2000, raw_ref="", usage=None):
     """Deterministic stand-in for the LLM summarizer."""
     return f"[summary of {len(text)} chars]"
 
@@ -129,7 +129,7 @@ async def test_a_current_record_is_not_summarized_again(tmp_path, monkeypatch):
     _age(log, "s1")
     calls: list[str] = []
 
-    async def _counting(text, *, cap=2000, raw_ref=""):
+    async def _counting(text, *, cap=2000, raw_ref="", usage=None):
         calls.append(text)
         return "[summary]"
 

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { FieldError, FieldHintProvider } from '../../ui/forms'
+import { FieldError, FieldHintProvider, Select } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
 import {
@@ -12,6 +12,8 @@ import {
   type OutsideHomePlace,
 } from '../../lib/api'
 import { confirm } from '../../ui/dialog'
+import { ConsentDeclined } from '../../lib/securityConsent'
+import { reportSignedOut } from '../../lib/signedOut'
 import {
   desktopBridge, getLoginItem, requestDesktopCapability, setLoginItem,
 } from '../../lib/desktopBridge'
@@ -21,7 +23,7 @@ import { invalidateKeys, useQuery } from '../../lib/data'
 import { rebaseList, type Rebase } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
-import { PanelHeader, Section, SavedToast, Row, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
+import { PanelHeader, Section, SavedToast, Row, RowGroup, ToggleRow, NumberRow, StrListField, Field } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
@@ -81,6 +83,9 @@ export function SecurityPanel() {
         </div>
       </Section>
       <SignedInSummary />
+      <SignInLifetime />
+      <SignInLockout />
+      <SigningKey />
       {!denied && deniedErr ? (
         <Section title="Shell denylist">
           <LoadError what="shell denylist patterns" error={deniedErr} onRetry={refreshDenied} />
@@ -122,6 +127,275 @@ function SignedInSummary() {
           </Row>
         </RowGroup>
       )}
+    </Section>
+  )
+}
+
+/** The longest a sign-in may last, in seconds: 90 days, the gateway's limit
+ *  (`auth/lifetimes.py::MAX_LIFETIME_SECS`). */
+export const SIGN_IN_LIMIT_SECS = 90 * 86400
+const UNIT_SECS: Record<string, number> = { m: 60, h: 3600, d: 86400 }
+
+/** `30m` / `20h` / `7d` in seconds, or `null` — the gateway's one lifetime grammar
+ *  (`auth/lifetimes.py::lifetime_seconds`): a whole number and a unit, nothing around it. */
+export function lifetimeSecs(text: string): number | null {
+  const m = /^(\d+)([mhd])$/.exec(text)
+  if (!m) return null
+  const secs = Number(m[1]) * UNIT_SECS[m[2]]
+  return secs > 0 ? secs : null
+}
+
+/** `12 hours` / `45 days` — *secs* in the largest unit it is a whole number of. */
+export function lifetimeWords(secs: number): string {
+  for (const [unit, size] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) {
+    if (secs >= size && secs % size === 0) {
+      const n = secs / size
+      return `${n} ${unit}${n === 1 ? '' : 's'}`
+    }
+  }
+  return `${secs} seconds`
+}
+
+/** The lifetimes offered. The longest is the limit itself, so nothing longer can be chosen here. */
+export const SIGN_IN_LIFETIMES: { value: string; label: string }[] = [
+  { value: '12h', label: '12 hours' },
+  { value: '1d', label: '1 day' },
+  { value: '7d', label: '7 days' },
+  { value: '14d', label: '14 days' },
+  { value: '30d', label: '30 days — the default' },
+  { value: '60d', label: '60 days' },
+  { value: '90d', label: '90 days — the limit' },
+]
+
+/** `auth.session_ttl` — how long a browser sign-in lasts (ledger 317c).
+ *
+ *  It had no control anywhere: `personalclaw config set` and a hand-edited `config.json` were the
+ *  only ways to shorten how long a stolen cookie keeps working. The write goes through the one
+ *  config PATCH, so the gateway validates it (the 90-day limit is its rule, `config/editable.py`)
+ *  and asks for the owner's consent when it lengthens the sign-in (a `SecurityControl`), with no
+ *  second copy of either decision here.
+ *
+ *  🔑 THE CAP IS IN THE CONTROL, not a clamp behind it: the longest option is 90 days, so a longer
+ *  lifetime cannot be picked. A value set elsewhere is shown as its own option rather than
+ *  mis-shown as a preset; one over the limit is shown for what it is, with the fact that every
+ *  sign-in lasts 90 days anyway — the same sentence `personalclaw doctor` prints. */
+function SignInLifetime() {
+  const [saved, setSaved] = useState(false)
+  const [stored, setStored] = useState<string | null>(null)
+  const { data, error, refresh } = useQuery('settings:auth', () =>
+    api.personalclawConfig().then((c) => (c.auth ?? {}) as Record<string, unknown>),
+  )
+  useEffect(() => {
+    if (!data) return
+    setStored(typeof data.session_ttl === 'string' && data.session_ttl ? data.session_ttl : '30d')
+  }, [data])
+  const label = 'Sign-ins last'
+  const hint = 'How long a browser stays signed in after a password, a device code, a pairing, or the link the gateway opens at start, before it must sign in again. At most 90 days: the longer a sign-in keeps working, the longer anyone who copies it can use your dashboard. A change applies to the next sign-in; a device already signed in keeps the lifetime it signed in with.'
+
+  if (!data && error) {
+    return (
+      <Section title="Sign-in lifetime">
+        <LoadError what="sign-in lifetime" error={error} onRetry={refresh} />
+      </Section>
+    )
+  }
+  const current = stored ?? '30d'
+  const secs = lifetimeSecs(current)
+  const over = secs !== null && secs > SIGN_IN_LIMIT_SECS
+  const options = SIGN_IN_LIFETIMES.some((o) => o.value === current)
+    ? SIGN_IN_LIFETIMES
+    : [
+      ...SIGN_IN_LIFETIMES,
+      secs === null
+        ? { value: current, label: `${current} — not a length of time`, disabled: true }
+        : over
+          ? { value: current, label: `${current} — longer than the limit`, disabled: true }
+          : { value: current, label: `${lifetimeWords(secs)} — set outside Settings` },
+    ]
+  const choose = (value: string) => {
+    const prev = current
+    setStored(value)
+    api.patchConfig('auth.session_ttl', value).then(() => {
+      setSaved(true); window.setTimeout(() => setSaved(false), 1500)
+      invalidateKeys('settings:auth')
+    }).catch((e) => {
+      setStored(prev)
+      if (e instanceof ConsentDeclined) { notify(e.message); return }
+      notify(`Couldn't change how long a sign-in lasts: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+  return (
+    <Section title="Sign-in lifetime">
+      <RowGroup>
+        <Field label={label} hint={hint}>
+          <div className="flex items-center gap-s">
+            <Select value={current} options={options} onChange={choose} disabled={stored === null}
+              disabledReason={stored === null ? 'Still reading how long a sign-in lasts' : undefined} />
+            <SavedToast show={saved} />
+          </div>
+          {over ? (
+            <p role="status" data-type="body-s" className="mt-s flex items-start gap-1.5 text-on-surface">
+              <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+              <span>{`auth.session_ttl is ${current}, longer than the 90-day limit for a sign-in, so every sign-in lasts 90 days. Choose 90 days or less.`}</span>
+            </p>
+          ) : secs === null ? (
+            <p role="status" data-type="body-s" className="mt-s flex items-start gap-1.5 text-on-surface">
+              <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+              <span>{`auth.session_ttl is “${current}”, which is not a length of time, so every sign-in lasts the 30-day default. Choose a lifetime.`}</span>
+            </p>
+          ) : null}
+        </Field>
+      </RowGroup>
+    </Section>
+  )
+}
+
+/** The attempt counts offered, and the lockout lengths. The gateway's bounds are 1–100 attempts
+ *  (`config/editable.py`); a value set outside Settings is shown as itself, as the lifetime above is. */
+export const LOCKOUT_ATTEMPTS: { value: string; label: string }[] = [
+  { value: '3', label: '3 wrong attempts' },
+  { value: '5', label: '5 wrong attempts — the default' },
+  { value: '10', label: '10 wrong attempts' },
+  { value: '20', label: '20 wrong attempts' },
+]
+export const LOCKOUT_WINDOWS: { value: string; label: string }[] = [
+  { value: '5m', label: '5 minutes' },
+  { value: '15m', label: '15 minutes — the default' },
+  { value: '30m', label: '30 minutes' },
+  { value: '1h', label: '1 hour' },
+  { value: '4h', label: '4 hours' },
+  { value: '1d', label: '1 day' },
+]
+
+/** `auth.lockout_threshold` + `auth.lockout_window` — how many wrong tries a device gets.
+ *
+ *  Both were on the config PATCH allowlist, bounded, help-texted and read by every sign-in door —
+ *  the password page, a device code, a pairing code — with no control anywhere: the Account panel
+ *  STATED the lockout, and a hand-edited `config.json` was the only way to change it. The writes go
+ *  through the one config PATCH, which validates them and asks for consent when a change allows
+ *  more guesses (more attempts, or a shorter lockout), with no second copy of either rule here. */
+function SignInLockout() {
+  const [saved, setSaved] = useState<'' | 'threshold' | 'window'>('')
+  const [stored, setStored] = useState<{ threshold: string; window: string } | null>(null)
+  const { data, error, refresh } = useQuery('settings:auth', () =>
+    api.personalclawConfig().then((c) => (c.auth ?? {}) as Record<string, unknown>),
+  )
+  useEffect(() => {
+    if (!data) return
+    const threshold = Number(data.lockout_threshold)
+    setStored({
+      threshold: Number.isInteger(threshold) && threshold > 0 ? String(threshold) : '5',
+      window: typeof data.lockout_window === 'string' && data.lockout_window ? data.lockout_window : '15m',
+    })
+  }, [data])
+
+  if (!data && error) {
+    return (
+      <Section title="Sign-in lockout">
+        <LoadError what="sign-in lockout" error={error} onRetry={refresh} />
+      </Section>
+    )
+  }
+  const current = stored ?? { threshold: '5', window: '15m' }
+  const windowSecs = lifetimeSecs(current.window)
+  const attemptOptions = LOCKOUT_ATTEMPTS.some((o) => o.value === current.threshold)
+    ? LOCKOUT_ATTEMPTS
+    : [...LOCKOUT_ATTEMPTS, { value: current.threshold, label: `${current.threshold} wrong attempts — set outside Settings` }]
+  const windowOptions = LOCKOUT_WINDOWS.some((o) => o.value === current.window)
+    ? LOCKOUT_WINDOWS
+    : [
+      ...LOCKOUT_WINDOWS,
+      windowSecs === null
+        ? { value: current.window, label: `${current.window} — not a length of time`, disabled: true }
+        : { value: current.window, label: `${lifetimeWords(windowSecs)} — set outside Settings` },
+    ]
+  const unread = stored === null ? 'Still reading the sign-in lockout' : undefined
+
+  const write = (field: 'threshold' | 'window', value: string) => {
+    const prev = current
+    setStored({ ...current, [field]: value })
+    const [path, wire] = field === 'threshold'
+      ? ['auth.lockout_threshold', Number(value)] as const
+      : ['auth.lockout_window', value] as const
+    api.patchConfig(path, wire).then(() => {
+      setSaved(field); window.setTimeout(() => setSaved(''), 1500)
+      invalidateKeys('settings:auth')
+    }).catch((e) => {
+      setStored(prev)
+      if (e instanceof ConsentDeclined) { notify(e.message); return }
+      notify(`Couldn't change the sign-in lockout: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Sign-in lockout"
+      hint="How many wrong passwords, device codes or pairing codes a device may try before PersonalClaw stops accepting them from it for a while. Fewer attempts and a longer lockout make guessing slower; a lockout you trip yourself ends on its own.">
+      <RowGroup>
+        <Field label="Stop accepting sign-ins after" hint="Wrong attempts from one address, counted over the lockout below.">
+          <div className="flex items-center gap-s">
+            <Select value={current.threshold} options={attemptOptions} onChange={(v) => write('threshold', v)}
+              disabled={stored === null} disabledReason={unread} />
+            <SavedToast show={saved === 'threshold'} />
+          </div>
+        </Field>
+        <Field label="Lockout lasts" hint="How long sign-ins from that address are refused — and the window its wrong attempts are counted over.">
+          <div className="flex items-center gap-s">
+            <Select value={current.window} options={windowOptions} onChange={(v) => write('window', v)}
+              disabled={stored === null} disabledReason={unread} />
+            <SavedToast show={saved === 'window'} />
+          </div>
+          {windowSecs === null ? (
+            <p role="status" data-type="body-s" className="mt-s flex items-start gap-1.5 text-on-surface">
+              <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+              <span>{`auth.lockout_window is “${current.window}”, which is not a length of time, so a lockout lasts the 15-minute default. Choose a length.`}</span>
+            </p>
+          ) : null}
+        </Field>
+      </RowGroup>
+    </Section>
+  )
+}
+
+/** Replace the key every sign-in is signed with.
+ *
+ *  `session_store.rotate_key` existed and nothing called it, so the one answer to "the key, or a
+ *  sign-in, may have been copied" was not in the product: signing devices out one by one leaves the
+ *  key that could sign new ones in. The gateway signs every browser, paired device and token out —
+ *  this one included — and tells each why; the sentence it answers for THIS browser is shown at
+ *  once, through the same signed-out screen its next refused request would bring up. */
+function SigningKey() {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const replace = async () => {
+    if (!(await confirm({
+      title: 'Replace the sign-in key?',
+      body: 'Every browser, paired device and token signed in to this gateway is signed out at once — this browser too — and each is told why the next time it connects. Each one has to sign in again. Integration tokens are separate and keep working.',
+      confirmLabel: 'Replace and sign everyone out',
+      danger: true,
+    }))) return
+    setBusy(true); setErr('')
+    try {
+      const { signed_out: signedOut, notice } = await api.rotateSigningKey()
+      if (notice) { reportSignedOut(notice); return }
+      // No session of its own ended (the local-network bypass admits this browser without one).
+      notify(`The sign-in key was replaced, and ${signedOut === 1 ? 'one sign-in' : `${signedOut} sign-ins`} ended.`, 'success')
+    } catch (e) {
+      setErr(`Couldn't replace the sign-in key: ${String((e as Error)?.message || e)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Section title="Sign-in key"
+      hint="Every sign-in to this gateway is signed with one key. If you think the key, or a sign-in, was copied, replace it: every browser, paired device and token is signed out at once, and nothing signed with the old key works again.">
+      <RowGroup>
+        <Row label="Replace the key and sign everyone out" hint="This browser is signed out too. Sign back in the way you signed in: your password, a pairing, or a new personalclaw token link.">
+          <Button variant="danger" size="sm" onClick={replace} loading={busy}>
+            <KeyRound size={15} /> Replace the key
+          </Button>
+        </Row>
+      </RowGroup>
+      {err && <FieldError>{err}</FieldError>}
     </Section>
   )
 }

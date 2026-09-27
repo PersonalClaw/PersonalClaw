@@ -434,9 +434,8 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/updates.py::api_update_apply._apply::asyncio.create_subprocess_exec": (
         "service: update git/pip"
     ),
-    "dashboard/handlers/updates.py::_graceful_reexec::os.execve": (
-        "service: re-exec the gateway itself"
-    ),
+    # A restart is the gateway's own full stop, then this exec of its fresh image.
+    "restart_request.py::start::os.execve": ("service: re-exec the gateway itself"),
     # System metrics — host-fact probes (sysctl/ps/vm_stat/netstat).
     "dashboard/handlers_system.py::_get_static_system_info::subprocess.check_output": (
         "host-fact: static sysinfo"
@@ -466,12 +465,9 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "frontend.py::build_frontend_async::asyncio.create_subprocess_exec": (
         "operator: frontend npm build"
     ),
-    # Gateway auto-update — service; re-execs the gateway itself.
+    # Gateway auto-update — service; its restart goes through `restart_request.start`.
     "gateway.py::GatewayOrchestrator._auto_apply_update::asyncio.create_subprocess_exec": (
         "service: auto-update git/pip"
-    ),
-    "gateway.py::GatewayOrchestrator._auto_apply_update::os.execv": (
-        "service: re-exec the gateway itself"
     ),
     "gateway.py::_wslview_open::subprocess.run": "operator: open browser on WSL",
     # Knowledge media pipeline — ffprobe/ffmpeg on operator-ingested media (host tools).

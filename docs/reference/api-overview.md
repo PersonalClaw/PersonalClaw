@@ -60,7 +60,7 @@ why and how to sign in, with `detail.reason` and `detail.at`, and `X-Auth-Requir
 
 | Code | `detail.reason` | When |
 |---|---|---|
-| `session_signed_out` | `signed_out`, `signed_out_elsewhere`, `signed_out_others`, `signed_out_everywhere`, `limit`, `replaced` | Its session was ended — the message says by what, and when. |
+| `session_signed_out` | `signed_out`, `signed_out_elsewhere`, `signed_out_others`, `signed_out_everywhere`, `limit`, `replaced`, `key_replaced` | Its session was ended — the message says by what, and when. `key_replaced`: the owner replaced the key every sign-in is signed with (Settings → Security, or `personalclaw auth rotate-key`), which ends them all. |
 | `session_signed_out` | `ended` | A genuine session nobody remembers ending (more than a week ago, or the store was cleared). |
 | `session_expired` | `expired` | Its session ran its lifetime. |
 | `session_expired` | `link_expired` | A `?token=` link past the 24 hours it can be opened in. |
@@ -193,6 +193,12 @@ has cost someone a debugging session.
 - **An install needs consent, always.** `POST /api/apps/preview {source}` returns what
   the app would get plus a `consent` digest of the exact bytes; `POST /api/apps`
   `{source, consent}` installs only those bytes. A request without it installs nothing.
+- **A write that needs the owner's yes answers with the question.** Sent without
+  `"confirm": true`, it is refused `400 confirmation_required` with `{field, consent, title}` in
+  `error.detail`, and nothing is written. A client that will ask the owner itself sends
+  `X-PersonalClaw-Consent: ask` and gets the same body as a `200` marked
+  `X-PersonalClaw-Consent-Asked: 1`, which the dashboard does for every write, so its Allow
+  dialogs log no failed request. Treat that `200` as the question, never as a success.
 - **Task comment authors are server-derived.** `POST /api/tasks/{task_id}/comments`
   rejects an `author` in the body; the configured username wins.
 - **Locked dashboard presets refuse mutation.** `PUT`/`DELETE` on a locked

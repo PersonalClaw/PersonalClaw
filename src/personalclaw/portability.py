@@ -881,7 +881,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
       directory is the recovery: it is removed only when it ends up empty, i.e. only
       when nothing was displaced. A replace that dies mid-way is therefore recoverable
       by hand, which is the honest guarantee — a "hybrid home" with no trace of what it
-      replaced is what this ordering exists to prevent.
+      replaced is what this ordering exists to prevent. An app's engine is not the home's
+      state (an archive never carries one), so it stays with the app of the same name the
+      archive brings back, and ``engines_kept``/``engines_set_aside`` say which.
     """
     pc = _pc_dir()
     summary: dict = {"mode": mode, "items": []}
@@ -920,7 +922,11 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
         if mode == "replace":
             before = {p.name for p in pc.glob("pre-restore-*") if p.is_dir()}
             try:
-                _do_replace(snap, pc, None)
+                # What became of each app's engine: kept for the app that came back, or left in
+                # the backup with an app that did not (`snapshot._keep_app_engines`).
+                summary.update(
+                    {key: value for key, value in _do_replace(snap, pc, None).items() if value}
+                )
             finally:
                 # Report the escape hatch whether the replace finished or raised — a
                 # half-done replace is exactly when the user needs to be told where

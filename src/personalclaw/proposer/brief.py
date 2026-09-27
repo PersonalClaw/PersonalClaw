@@ -13,9 +13,9 @@ Two properties the plan calls out explicitly:
   text a prompt injection rides in on, so they go through
   :func:`personalclaw.security.fence_untrusted` before a second model reads them.
 
-Redaction is applied ONCE per field, at construction, never again over the composed markdown:
-``redact_credentials`` is not idempotent across a composed line, and re-screening a rendered
-document destroys field names. Each source is screened at entry.
+Redaction is applied ONCE per field, at construction, and the markdown is composed from the
+screened fields: screened as a whole instead, a `field: value` line would lose its field name into
+the mask along with the value. Each source is screened at entry.
 """
 
 from __future__ import annotations

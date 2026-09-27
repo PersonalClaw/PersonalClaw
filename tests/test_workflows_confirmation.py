@@ -128,7 +128,7 @@ def test_a_TRAVERSAL_token_is_refused(tmp_path, monkeypatch):
 
 def test_the_preview_redacts_a_provider_key_with_HYPHENS():
     """`sk-[A-Za-z0-9]{32,}` cannot match a key whose body contains hyphens, so
-    `sk-live-…` survived into a redacted preview."""
+    `fake-key-live…` survived into a redacted preview."""
     request = build_request(
         run_id="r", gate_id="g", payload="the key sk-live-ABCDEFGH1234567890 here", now=NOW
     )

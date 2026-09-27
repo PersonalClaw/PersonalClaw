@@ -73,8 +73,8 @@ def test_core_spec_declares_the_session_inject_back(home):
     ancestors for a ``session_pid_<pid>.txt``, so ``subagent_run`` completion and
     ``notify`` would land on whatever session that walk happens to find.
     """
-    env = _env_of(core_mcp_servers(session_key="sk-abc")[0])
-    assert env["PERSONALCLAW_SESSION_KEY"] == "sk-abc"
+    env = _env_of(core_mcp_servers(session_key="fake-key-abc")[0])
+    assert env["PERSONALCLAW_SESSION_KEY"] == "fake-key-abc"
 
 
 def test_core_spec_declares_the_isolated_home(home):
@@ -166,7 +166,7 @@ class _FakeConn:
         return True
 
 
-def _client(home, session_key="sk-live"):
+def _client(home, session_key="fake-key-live"):
     from personalclaw.acp.client import AcpClient
 
     return AcpClient(work_dir=home / "workspace", session_key=session_key)
@@ -177,7 +177,7 @@ def test_client_session_new_carries_core(home):
     c = _client(home)
     servers = c._core_mcp_servers()
     assert [s["name"] for s in servers] == [CORE_SERVER_NAME]
-    assert _env_of(servers[0])["PERSONALCLAW_SESSION_KEY"] == "sk-live"
+    assert _env_of(servers[0])["PERSONALCLAW_SESSION_KEY"] == "fake-key-live"
 
 
 def test_client_rebuilds_the_spec_after_rekey(home):
@@ -187,9 +187,9 @@ def test_client_rebuilds_the_spec_after_rekey(home):
     captured in ``__init__`` would pin session 1's key onto every later session,
     which is the inject-back landing on the wrong chat.
     """
-    c = _client(home, session_key="sk-first")
-    c.rekey("sk-second")
-    assert _env_of(c._core_mcp_servers()[0])["PERSONALCLAW_SESSION_KEY"] == "sk-second"
+    c = _client(home, session_key="fake-key-first")
+    c.rekey("fake-key-second")
+    assert _env_of(c._core_mcp_servers()[0])["PERSONALCLAW_SESSION_KEY"] == "fake-key-second"
 
 
 def test_fresh_turn_session_carries_core(home):
@@ -311,11 +311,11 @@ async def test_pooled_path_defaults_to_core(home):
 
     conn = _FakeConn()
     await open_acp_session_provider(
-        conn, runtime_id="acp:demo", cwd=home / "workspace", session_key="sk-pool"
+        conn, runtime_id="acp:demo", cwd=home / "workspace", session_key="fake-key-pool"
     )
     servers = conn.new_params[0]["mcpServers"]
     assert [s["name"] for s in servers] == [CORE_SERVER_NAME]
-    assert _env_of(servers[0])["PERSONALCLAW_SESSION_KEY"] == "sk-pool"
+    assert _env_of(servers[0])["PERSONALCLAW_SESSION_KEY"] == "fake-key-pool"
 
 
 @pytest.mark.asyncio

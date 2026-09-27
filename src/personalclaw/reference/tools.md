@@ -320,7 +320,7 @@ Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, ca
 
 ### `automation_create`
 
-Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a cadence becomes a cron schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation, and capped by workflows.self_schedule_max_outstanding. It does not run until the owner allows it on the Triggers page, so tell them it is waiting.
+Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'at 5pm', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a time runs it once at that time, in the owner's timezone, a cadence becomes a repeating schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation with the time it read, and capped by workflows.self_schedule_max_outstanding. It does not run until the owner allows it on the Triggers page, so tell them it is waiting.
 
 **Response type:** `automation.create.result`
 
@@ -331,7 +331,7 @@ Create an automation from ONE natural-language message. Use for 'when a file in 
 - `message` (string, optional) — What the automation should do when it fires.
 - `name` (string, required) — A short name for the automation.
 - `spec` (string, optional) — Optional explicit trigger spec when `kind` is given, as JSON text (one object). For kind `event`: {"pattern": P} plus the one matcher key P reads, P one of MemoryUpdate, MemoryKeyPattern (key_glob), ContentMatch (content_re), InboxMessage, InboxSender (sender_glob), InboxAddress (address_glob), AppEvent (event_glob); the source is derived from the pattern.
-- `when` (string, optional) — Plain English for WHEN it runs: a cadence ('every weekday at 9') or an event ('when a file in ~/notes changes').
+- `when` (string, optional) — Plain English for WHEN it runs: one time ('at 5pm', 'tomorrow at 9am', 'in 20 minutes'), a cadence ('every weekday at 9') or an event ('when a file in ~/notes changes').
 
 **Example — Create a file-watch automation in one message:**
 
@@ -447,7 +447,7 @@ Pause an automation — it stops firing on its own but is not deleted.
 
 **Response type:** `automation.pause.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `id` (string, required) — The automation id (e.g. 'file:my-notes').
@@ -466,7 +466,7 @@ Resume a paused automation. Refuses (with the reason) if the row has a parse err
 
 **Response type:** `automation.resume.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `id` (string, required) — The automation id (e.g. 'file:my-notes').
@@ -531,7 +531,7 @@ Patch an automation. Only settable fields apply (name, spec, gates, workflow, en
 
 ### `set_onetime_task`
 
-Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you need to wait for something outside this turn — 'check the build in 20 minutes', 'follow up tomorrow morning'. The task wakes you with `message` as the instruction. Counts against your outstanding-task allowance; it frees a slot when it fires, since a one-time task disables itself. It does not run until the owner allows it on the Triggers page, unless it wakes a parked run (`resume_run_id`), which needs no allowing.
+Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you need to wait for something outside this turn — 'check the build in 20 minutes', 'follow up tomorrow morning' — and to remind the owner of something at a time ('remind me at 5pm to call Sam': put what to tell them in `message`). The task wakes you with `message` as the instruction. Counts against your outstanding-task allowance; it frees a slot when it fires, since a one-time task disables itself. It does not run until the owner allows it on the Triggers page, unless it wakes a parked run (`resume_run_id`), which needs no allowing.
 
 **Response type:** `automation.create.result`
 
@@ -540,9 +540,9 @@ Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you 
 **Parameters:**
 - `message` (string, required) — The instruction to give yourself when it fires.
 - `name` (string, required) — A short name for the task.
-- `resume_run_id` (string, optional) — Wake a PARKED workflow run instead of starting a new task: the run id to resume, or 'self' from inside a workflow stage to target your own run. The message becomes the answer the parked gate receives. This is how a monitor run parks between checks.
+- `resume_run_id` (string, optional) — Wake a PARKED workflow run instead of starting a new task: the run id to resume, or 'self' from inside a workflow stage to target your own run. The message becomes the answer to the event gate the run is parked on. This is how a monitor run parks between checks. It answers no other gate: an approval, a choice or a form waits for the owner.
 - `ttl_secs` (number, optional) — How long the task may stay armed before it expires (default: 7 days). Every self-scheduled task expires — a forgotten clock must not run forever.
-- `when` (string, required) — When to wake, in plain language: 'in 20 minutes', 'tomorrow at 9am', '2026-09-01 14:00'.
+- `when` (string, required) — When to wake, in plain language, read in the owner's timezone: 'at 5pm', 'in 20 minutes', 'tomorrow at 9am', '2026-09-01 14:00'. One time only — a cadence is set_recurring_task's.
 
 **Example — Wake yourself once to check on something:**
 
@@ -600,7 +600,7 @@ Activate an element by index. The default performs an accessibility press, which
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `app` (string, optional) — Coordinate methods only: target app.
@@ -646,7 +646,7 @@ Perform a named accessibility action the element advertises (for controls a pres
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `action` (string, required) — An action name from the element's own 'actions' list.
@@ -671,7 +671,7 @@ Scroll the element at this index.
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `amount` (integer, optional) — Lines to scroll (default 3).
@@ -743,7 +743,7 @@ Type text into the element at this index. Refuses secure/password destinations, 
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `element_index` (integer, required) — Zero-based index of the element within that snapshot.
@@ -768,7 +768,7 @@ PROPOSE a saved artifact as a dashboard tile on the user's composable home. The 
 
 **Response type:** `dashboard.tile.propose.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `size` (string, optional) — Flow-layout size hint (default m). No coordinates.
@@ -817,7 +817,7 @@ Register a webhook listener so an external system can inject a message into a de
 
 **Response type:** `hook.register.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `context_summary` (string, required) — Summary of current work context for session resume
@@ -838,7 +838,7 @@ Stop the auto-nudge loop driving your current session. Call this when you determ
 
 **Response type:** `loop.nudge_stop.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `reason` (string, optional) — Why the loop is being stopped (logged for audit)
@@ -919,7 +919,7 @@ Review THIS conversation and propose updates to the current project's context �
 
 **Response type:** `project.context.review.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `items` (array, required) — The proposed changes.
@@ -945,7 +945,7 @@ Propose (never apply) a typed diff to a workflow template. The diff is a list of
 
 **Response type:** `refiner.proposal.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `ops` (string, required) — Typed engine ops, as JSON text: an array of objects, each {op, node_id?, fields?, ...}.
@@ -1013,7 +1013,7 @@ PROPOSE a finished piece of work as a reusable skill — the retroactive compani
 
 **Response type:** `skill.promote.proposal.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `description` (string, required) — One line on when this skill applies.
@@ -1040,7 +1040,7 @@ Capture a skill the USER just taught you ("from now on…", "always do X", "reme
 
 **Response type:** `skill.remember.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `body` (string, required) — The procedure/rule to remember (markdown).
@@ -1103,7 +1103,7 @@ Offer to save a recurring task shape as a reusable workflow template. LOCAL-ONLY
 
 **Response type:** `template.nudge.decision`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `decision` (string, optional) — 'observe' (default) counts one more occurrence and asks whether to offer. Report the user's answer to a previous offer with 'accepted' or 'declined' — a decline is permanent for this shape.
@@ -1474,7 +1474,7 @@ Save a learned correction or preference that persists across all future sessions
 
 **Response type:** `memory.remember.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `category` (string, required) — Category: tool, preference, or knowledge
@@ -1494,11 +1494,11 @@ Save a learned correction or preference that persists across all future sessions
 
 ### `triage_rules`
 
-List, add, or revoke the triage approval rules — what the proactive digest may do without asking again. action='list' shows every rule with its hit count and where it came from; action='add' needs a pattern (like 'archive:sender:noreply.github.com') and a verdict ('approve' or 'deny'); action='revoke' needs the rule id from list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal.
+List, add, or revoke the triage approval rules — what the proactive digest may do without asking again. action='list' shows every rule with its hit count and where it came from; action='add' needs a pattern (like 'archive:sender:noreply.github.com') and the verdict 'deny'; action='revoke' needs the rule id from list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal. Only the owner teaches an approve rule, by answering the digest: an agent cannot approve work ahead of time.
 
 **Response type:** `memory.triage_rules`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `action` (string, required) — list | add | revoke
@@ -1506,7 +1506,7 @@ List, add, or revoke the triage approval rules — what the proactive digest may
 - `id` (string, optional) — The rule id (user.approval.*) to revoke
 - `pattern` (string, optional) — Colon-delimited pattern, narrowest first segment is the action type: <action>[:<qualifier>...] (add only)
 - `scope` (string, optional) — Where the rule applies (default global)
-- `verdict` (string, optional) — approve = auto-execute, deny = silently skip (add only)
+- `verdict` (string, optional) — deny = silently skip matching proposals (add only)
 
 **Example — List the taught triage rules:**
 
@@ -1661,7 +1661,7 @@ Sample N candidate answers to the SAME prompt in parallel (each at a different t
 
 **Response type:** `sampling.best_of_n`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `criteria` (string, optional) — What 'best' means here — the judge scores each candidate against this. Confirm it with the user.
@@ -2028,7 +2028,7 @@ Diagnose workflow runs that drifted — nodes stuck running, gates nobody can an
 
 **Response type:** `workflow.audit.report`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `dry_run` (boolean, optional) — true (default) = report only; false = repair.
@@ -2045,7 +2045,7 @@ Save a workflow definition from an explicit DAG spec — the low-level authoring
 
 **Response type:** `workflow.def.saved`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `description` (string, optional)
@@ -2071,7 +2071,7 @@ Cancel a run. The intent is persisted, so it is honoured even if the gateway res
 
 **Response type:** `workflow.run.cancelled`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `run_id` (string, required) — The run id (from workflow_start).
@@ -2134,7 +2134,7 @@ Branch a NEW run from this one, leaving the original untouched — for exploring
 
 **Response type:** `workflow.fork.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `checkpoint_id` (string, optional) — Fork from this checkpoint instead of current state.
@@ -2252,7 +2252,7 @@ Pause a running workflow: in-flight nodes finish, nothing new launches. Resume w
 
 **Response type:** `workflow.run.paused`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `run_id` (string, required) — The run id (from workflow_start).
@@ -2291,23 +2291,19 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
 
 ### `workflow_resume`
 
-Answer a workflow that is waiting on a human, or clear a pause. `answer` is JSON text: for an approval gate pass true or false; for a choice or form pass the value or object. To change ONE step instead of accepting or rejecting the whole plan, pass {"revise": {"step_ref": "<step id>", "comment": "what to change"}} — that step's instruction is amended and the gate re-asks, leaving every other step exactly as it was. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
+Lift a workflow's pause so it carries on. It answers no gate: a workflow waiting on a human (an approval, a choice, a form, a plan to review) is answered by the owner, never by an agent. Tell them it is waiting; they answer it in PersonalClaw (the Inbox, Home or the run's page).
 
-**Response type:** `workflow.gate.resolved`
+**Response type:** `workflow.run.resumed`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
-- `always_allow` (boolean, optional) — Auto-approve this same operation for the rest of THIS run (cleared if the run is rewound).
-- `answer` (string, optional) — The answer as JSON text: true or false for an approval; a JSON string or object otherwise; or {"revise": {"step_ref": "...", "comment": "..."}} to amend one step and re-ask.
-- `resume_token` (string, optional) — Which gate to answer (required if several are pending).
 - `run_id` (string, required) — The run id (from workflow_start).
 
-**Example — Approve a waiting gate:**
+**Example — Lift a run's pause:**
 
 ```json
 {
-  "answer": "true",
   "run_id": "a1b2c3d4"
 }
 ```
@@ -2318,7 +2314,7 @@ Reset a node AND everything that consumes its output, so they re-run — the in-
 
 **Response type:** `workflow.mutation.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `confirm_cascade` (boolean, optional) — Accept re-running completed nodes.
@@ -2364,7 +2360,7 @@ Skip one or more pending nodes in a running workflow. A skipped node produces no
 
 **Response type:** `workflow.mutation.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `node_ids` (array, required)
@@ -2387,7 +2383,7 @@ Start a workflow run from a saved definition. mode='background' (default) return
 
 **Response type:** `workflow.run.started`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `idempotency_key` (string, optional) — Caller-chosen key; a retry with the same key is deduped.
@@ -2411,7 +2407,7 @@ Start a run that already exists as a DRAFT — the launch step after workflow_fo
 
 **Response type:** `workflow.run.started`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `run_id` (string, required) — The run id (from workflow_start).
@@ -2455,7 +2451,7 @@ Look up where a symbol is defined and which files reference it, or outline one f
 - `file` (string, optional) — Outline this file instead: its imports and every definition with line numbers. A workspace-relative or trailing path fragment both work.
 - `refresh` (boolean, optional) — Re-index changed files before answering. The index self-updates, so this is only for a tree you just modified outside the session.
 - `symbol` (string, optional) — Function, class, method or type name to locate. Returns its definition sites plus the files that reference it.
-- `workspace` (string, optional) — Directory to query. Defaults to the active workspace; you rarely need to set this.
+- `workspace` (string, optional) — Directory to query, inside the session's workspace. Defaults to the workspace itself; you rarely need to set this.
 
 **Example — Find where a function is defined and what calls it:**
 
@@ -2489,7 +2485,7 @@ The codebase's shape: the most-referenced modules and their public surface, with
 **Response type:** `code.map.overview`
 
 **Parameters:**
-- `workspace` (string, optional) — Directory to summarize (defaults to the active one).
+- `workspace` (string, optional) — Directory to summarize, inside the session's workspace (defaults to the workspace itself).
 
 **Example — Get the shape of an unfamiliar codebase before exploring it:**
 

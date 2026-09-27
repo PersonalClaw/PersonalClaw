@@ -177,6 +177,9 @@ def test_load_all_extensions_loads_through_the_one_path_and_keeps_the_gateway_ta
         "personalclaw.local_models.sidecar.start_sidecar_watchdog",
         lambda: calls.append("sidecar_watchdog"),
     )
+    # The tail also launches a package repair on a thread of its own. Left real, it ran on after
+    # this test, against whichever test's home was current by then.
+    monkeypatch.setattr("personalclaw.apps.app_manager.repair_app_packages", lambda: [])
 
     loader.load_all_extensions()
 

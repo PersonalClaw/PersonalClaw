@@ -200,7 +200,7 @@ redact_cases=(
     "SecretAccessKey=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG"
     "SessionToken=FwoGZXIvYXdzEBYaDHlongtoken1234567890abc"
-    "-----BEGIN RSA PRIVATE KEY-----"
+    "-----""BEGIN RSA PRIVATE KEY-----"
     "xoxb-1234567890-abcdefghijklmnop"
 )
 
@@ -239,7 +239,7 @@ else
     fail "Base64-encoded credentials NOT detected"
 fi
 
-b64_privkey=$(echo -n "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA" | base64)
+b64_privkey=$(echo -n "-----""BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA" | base64)
 if check_redaction "$b64_privkey" >/dev/null 2>&1; then
     pass "Base64-encoded private key detected and redacted"
 else

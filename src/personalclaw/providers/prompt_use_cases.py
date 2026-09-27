@@ -79,7 +79,7 @@ BUNDLED_PROMPT_CATEGORY: dict[str, str] = {p.use_case: p.category for p in _CATA
 # Humanizing produces the right label for most keys ("history_compression" →
 # "History compression"). These are the ones where it does not.
 _USE_CASE_LABEL_OVERRIDES: dict[str, str] = {
-    "nl_to_cron": "Natural language → cron",
+    "nl_to_cron": "Natural language → schedule",
     "sdlc_stage_gate": "SDLC stage gate",
     "eval_judge": "Eval judge",
     "cycle_judge_skeptic": "Cycle judge (skeptic)",

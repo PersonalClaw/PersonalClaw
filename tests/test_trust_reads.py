@@ -30,10 +30,13 @@ def _make_state(tmp_path):
 
 
 def _make_app(state: DashboardState) -> web.Application:
+    from chat_test_helpers import _api_app
+
     from personalclaw.dashboard.chat import api_chat_mode, api_chat_session_approve
 
-    app = web.Application()
-    app["state"] = state
+    # The shared builder: the request boundary, and the request signed in as the owner, who is
+    # the one party that answers an approval (`approval_answer`).
+    app = _api_app(state)
     app.router.add_post("/api/chat/sessions/{session}/approve", api_chat_session_approve)
     app.router.add_post("/api/chat/mode", api_chat_mode)
     return app

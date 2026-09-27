@@ -532,10 +532,17 @@ resource-ceiling shim (`sandbox.py::spawn_shim_argv`).
 **What is not enforced:** anything about the code itself. A backend that names no
 sandbox, a provider module, an MCP server, a setup hook and a CLI step have your files and
 your network. A provider module runs inside the gateway, and a CLI step inside `personalclaw
-setup` or `doctor`, so both see the environment of the process they run in. An ACP agent an
-app registers is handed the gateway's environment, less the few credential names its sandbox
-scrubs (`sandbox.py::_SENSITIVE_ENV_PREFIXES`), because the agent CLI signs in to its model
-provider with it. A source parser has your files and no network.
+setup` or `doctor`, so both see the environment of the process they run in. A child that a
+provider module starts inherits it too unless the provider passes the child allowlist
+(`personalclaw.sdk.util.child_process_env`); the first-party apps that start a program built
+by someone else (Piper's synthesis, the skills search's `npx`) do. The ones that start your own
+authenticated tools with a fixed command (`gh`, `glab`, a sync app's `git` or `rsync` to your
+remote, an ops runbook's action) keep it, because those tools sign in from it. An ACP agent an
+app registers starts from the same allowlist, plus the variables its app declares for it and
+the session it answers for (`acp/transport.py`). An agent CLI that signs in to its model
+provider from an environment variable, such as an API key, gets that variable only if you pass
+its name through in `sandbox.env_passthrough`; a sign-in the CLI keeps in its own config folder
+needs nothing passed. A source parser has your files and no network.
 
 **What the consent surface tells you:** the install dialog reads `apps/disclosure.describe`
 and has a row titled *What it runs on this machine*. It leads with the gateway's own
@@ -599,6 +606,69 @@ and header names. That is what you are shown, so that is what a yes is to.
   a file to bind, so a home with no `mcp.json` yet leaves the path writable to the agent's shell,
   as it does for `config.json`. A definition written there waits for your Allow like any other.
 
+## 10. A process running as you can answer as you
+
+Only you answer an approval (`approval_answer`; [security.md](../architecture/security.md#who-answers-an-approval-approval_answerpy)).
+An app's token, an agent's tool, a trigger, a workflow run and a control-bridge client are
+refused, and so is the party that asked. What the gateway checks is the credential a request
+presents. It cannot see past that credential to the process holding it.
+
+- **Your sign-in can be minted by any process running as you.** `personalclaw token` prints a link
+  that signs in as you. It signs the link with `session_key` in your PersonalClaw home, a file every
+  process under your account can read. The agent's file tools and its shell's command screen refuse
+  that path by name (`security.HOME_SECRET_FILE_BASENAMES`). Nothing stops a shell from running
+  `personalclaw token`, which reads the key inside its own process. So could a local program that
+  talks to the control bridge, and so could an app's code (§7).
+- **What that credential then answers as is you.** The refusals above stop every path that presents
+  what it is: an app's token, the internal secret, a bridge bearer, a trigger. They do not stop a
+  process that takes your own credential.
+- **What limits it today:** an agent has to leave its tools' contract to do this. It must run the
+  CLI in a shell and then call the dashboard's API with the link, which is a deliberate act. It is
+  not a door left open for a model that follows its tools' descriptions.
+
+## 11. What reaches a model is masked by shape, and an agent CLI's own tools are outside it
+
+Every tool answer, every stored text a prompt is built from, a spawned agent's task and an
+attached file's text are masked before an agent's model is handed them
+([threat model §5](threat-model.md#5-system--persisted--exported-state)). The mask is the one your
+views show, and it has these edges:
+
+- **It finds a secret by its shape or its field's name.** A provider key, a token, a URL's login
+  or a webhook is masked wherever it appears; a password written into a note as a plain word, or a
+  code in a sentence, reaches the model as written. The one exception is `bash`: it masks every
+  value it handed the command it ran, whatever its shape, the credentials in its environment and the
+  `{{secret:NAME}}` values it filled in.
+- **An ACP agent CLI's own tools are outside it.** Claude Code's `Read` or `Bash`, and any other
+  CLI's own file and shell tools, read inside the CLI and send what they read to that CLI's
+  provider without passing PersonalClaw. Only PersonalClaw's own tools, which the CLI reaches over
+  MCP, are masked for it. Such a CLI also has no way to fill in a `{{secret:NAME}}` itself.
+- **A one-shot model call is scanned, not masked.** A workflow's infer, judge and visualize
+  steps, a knowledge item's digest and a sync-conflict merge you review have no tools to read
+  with. They pass the outbound scan at the model-call guard instead: at `guardrails.scan_mode`'s
+  default, `redact`, a credential in the prompt is replaced before it leaves; `block` refuses the
+  call and `warn` sends it. A provider the guard counts as local is not scanned, and it counts a
+  loopback endpoint and any Ollama instance, wherever that runs. Masking these would put a marker
+  into answers that are written back, such as a merge you accept. PersonalClaw's own chores (a
+  title, follow-ups, memory consolidation) are masked, because they run in the background
+  session.
+- **Pixels are not masked.** An image you attach, and a screen frame for computer use, go to a
+  vision model as they are, and a key visible in them goes with them.
+- **What you type this turn goes as typed.** A key pasted into a message reaches the model; it is
+  masked when that turn is read back later (history, a compaction, a search).
+- **A hidden value can only stay where it is.** The agent's file tools refuse a change that would
+  move, copy or rewrite a value it was shown as a marker. A tool outside PersonalClaw's own stores
+  (an MCP server that writes a file on a remote service) cannot put a value back, so a marker the
+  agent passes it arrives as text.
+- **An automation's prompt keeps a reference as its name.** An agent task, a saved prompt's
+  variables and a workflow's stage, infer and visualize steps hand the model `{{secret:NAME}}`,
+  not the value, and an agent uses it in a command. A prompt written to hand the model the value
+  itself no longer does.
+
+**What this means for you:** store a credential in Settings → Secrets and refer to it as
+`{{secret:NAME}}` where it is used, rather than writing it into a note, a prompt or a file an agent
+will read. Work that needs a stored credential inside a command runs on the native runtime, whose
+`bash` fills the reference in.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -608,7 +678,10 @@ patched inline in a docs change. Every item above has a named future direction
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
 weight's sha256 when it loads, for the gap in #5; per-app OS isolation for every kind of app
-code, which today only a backend that names a sandbox tier has, for #7). This page will shrink
-as those land.
+code, which today only a backend that names a sandbox tier has, for #7; a session signing key the
+agent's shell cannot read, for #10; masking an agent CLI's requests in the capture proxy its
+model calls can already be pointed at (`inbound/capture_proxy.py`), and counting a provider as
+local by where its endpoint is rather than by its kind, for #11). This page will shrink as
+those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

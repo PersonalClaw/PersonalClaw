@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-TOKEN = "ghp_fixture_hourly_backup_0123456789abcd"
+TOKEN = "fake-github-token-fixture_hourly_backup_0123456789abcd"
 SESSION_KEY = "fixture-session-key-5e4d3c2b1a09"
 PROMPT = "You are terse, and you answer in one line.\n"
 

@@ -321,7 +321,7 @@ def test_a_credential_in_the_summary_is_redacted():
     delivery does today. A run summary is whatever the run produced — it can contain a token a
     tool printed."""
     delivery = _ok(summary="key sk-ant-api03-LOOKSREALENOUGH1234567890 leaked")
-    assert "sk-ant-api03" not in delivery.body
+    assert "fake-anthropic-api03" not in delivery.body
     assert "REDACTED" in delivery.body
 
 
@@ -329,7 +329,7 @@ def test_redaction_covers_the_title_too():
     """The trigger NAME is user-authored and reaches the title; redacting only the body would leak
     through the one line every surface shows."""
     delivery = _ok(trigger_name="job sk-ant-api03-LOOKSREALENOUGH1234567890")
-    assert "sk-ant-api03" not in delivery.title
+    assert "fake-anthropic-api03" not in delivery.title
 
 
 def test_the_body_is_capped():

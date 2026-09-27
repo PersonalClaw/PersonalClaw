@@ -50,10 +50,7 @@ def plant_fixture_home(target: Path) -> Path:
 
 
 #: Credentials the fixture carries, fake and real-shaped. None may reach the scan's wire form.
-_GITHUB_PAT = (
-    "github_pat_11BKQ7T3A0x9QmTz4LpW2e_R8vYc3NfK6hJd1Sa5GqUo7XbM2iEw9"
-    "PzLt4VnC8rDy0HsJf3AkWm6QeTg1BZx"
-)
+_GITHUB_PAT = "github_pat_11FIXTURE0NOT0A0REAL0TOKEN0000_forTestsOnly"
 _CONTEXT7_KEY = "ctx7sk-9b2e4f61-7a3c-4d8e-b5f0-1c6a2d9e3f47"
 _GRAFANA_TOKEN = "glsa_Q3v8Tn2Lk9Wx4Rb7Zc1Ym6Hd0Fp5Js_2e7a9c1b"
 _DB_PASSWORD = "s3a-Gull-Harbour-42"

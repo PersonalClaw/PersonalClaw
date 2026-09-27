@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 APP = "data-link-app"
-OUTSIDE_SECRET = "sk-outside-file-3c2b1a0f"
+OUTSIDE_SECRET = "fake-key-outside-file-3c2b1a0f"
 
 
 @pytest.fixture(autouse=True)

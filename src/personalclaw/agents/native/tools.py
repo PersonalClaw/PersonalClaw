@@ -102,8 +102,11 @@ class InProcessMcpToolProvider(ToolProvider):
             return self._tools
         _list_tools = self._import_module()._list_tools
 
-        from personalclaw.task_modes import infer_risk_from_name
-        from personalclaw.tool_providers.base import RiskLevel
+        from personalclaw.tool_providers.base import (
+            BUILDS_META_KEY,
+            PROPOSES_META_KEY,
+            risk_from_annotations,
+        )
 
         raw = await asyncio.get_event_loop().run_in_executor(None, _list_tools)
         defs: list[ToolDefinition] = []
@@ -115,17 +118,11 @@ class InProcessMcpToolProvider(ToolProvider):
                 or {"type": "object", "properties": {}}
             )
             name = str(tool.get("name", ""))
-            # These dict-defined tools carry no risk_level, so classify by name
-            # (artifact_delete → destructive, automation_create/notify → caution,
-            # *_list/*_get → safe). An explicit "risk_level" in the tool dict wins,
-            # so a module can override the inference. Feeds both the approval gate
-            # (via the runtime's risk map) and the Tools-page indicator.
-            declared = str(tool.get("risk_level", "")).lower()
-            risk = (
-                declared
-                if declared in ("safe", "caution", "destructive")
-                else infer_risk_from_name(name)
-            )
+            # Each tool dict DECLARES what a call does, in the MCP spec's own words
+            # (`annotations.readOnlyHint` / `destructiveHint`) — the same declaration an ACP CLI
+            # reads when the `mcp-core` server lists it. These modules are PersonalClaw's own, so
+            # the declaration is trusted; a dict that declares nothing is CAUTION.
+            meta = tool.get("_meta") if isinstance(tool.get("_meta"), dict) else {}
             defs.append(
                 ToolDefinition(
                     name=name,
@@ -135,7 +132,9 @@ class InProcessMcpToolProvider(ToolProvider):
                     # The native loop's approval gate decides per-call; the core
                     # tools self-enforce deny-list/sensitive-path internally too.
                     requires_approval=True,
-                    risk_level=RiskLevel(risk),
+                    risk_level=risk_from_annotations(tool.get("annotations"), trusted=True),
+                    builds=meta.get(BUILDS_META_KEY) is True,
+                    proposes=meta.get(PROPOSES_META_KEY) is True,
                 )
             )
         self._tools = defs
@@ -178,7 +177,20 @@ def format_tool_result(result: ToolResult) -> str:
     machine-actionable ``recovery_hints`` on failure (so it adapts instead of
     guessing). Without this, hints a tool carefully populated would be silently
     dropped at the model boundary.
+
+    This is where a tool's answer becomes model context, for every provider the native loop
+    calls: the platform tools, the in-process categories, an app's tools and a remote MCP
+    server's. So the string is masked here (``security.redact_for_model``) and a new tool is
+    masked without asking to be. The tool card shows the same string, which is what the model
+    was handed.
     """
+    from personalclaw.security import redact_for_model
+
+    return redact_for_model(_rendered(result))
+
+
+def _rendered(result: ToolResult) -> str:
+    """The unmasked text :func:`format_tool_result` masks."""
     if result.success:
         out = result.output or ""
         if result.truncated and result.original_length is not None:

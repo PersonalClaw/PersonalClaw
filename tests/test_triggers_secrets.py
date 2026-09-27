@@ -25,7 +25,7 @@ import pytest
 from personalclaw.triggers import secrets as S
 from personalclaw.workflows import node_bindings
 
-_FAKE = {"MY_KEY": "sk-abc123", "TOK": "t0k"}
+_FAKE = {"MY_KEY": "fake-key-abc123", "TOK": "t0k"}
 
 
 def _resolver(key: str) -> str:
@@ -68,7 +68,7 @@ def test_a_non_string_leaf_is_not_scanned():
 
 def test_a_whole_string_reference_yields_the_raw_value():
     """A field that IS a token — the value must not be wrapped or stringified."""
-    assert S.resolve("{{secret:MY_KEY}}", resolver=_resolver) == "sk-abc123"
+    assert S.resolve("{{secret:MY_KEY}}", resolver=_resolver) == "fake-key-abc123"
 
 
 def test_an_embedded_reference_is_substituted_in_place():
@@ -79,7 +79,7 @@ def test_an_embedded_reference_is_substituted_in_place():
 def test_padded_braces_resolve():
     """A user who pads the braces means the same thing; failing on whitespace is the kind of silent
     near-miss that sends someone back to pasting the credential inline."""
-    assert S.resolve("{{ secret:MY_KEY }}", resolver=_resolver) == "sk-abc123"
+    assert S.resolve("{{ secret:MY_KEY }}", resolver=_resolver) == "fake-key-abc123"
 
 
 def test_nested_config_resolves_throughout():
@@ -87,11 +87,13 @@ def test_nested_config_resolves_throughout():
         {"headers": {"Authorization": "Bearer {{secret:TOK}}"}, "args": ["{{secret:MY_KEY}}"]},
         resolver=_resolver,
     )
-    assert resolved == {"headers": {"Authorization": "Bearer t0k"}, "args": ["sk-abc123"]}
+    assert resolved == {"headers": {"Authorization": "Bearer t0k"}, "args": ["fake-key-abc123"]}
 
 
 def test_two_references_in_one_string_both_resolve():
-    assert S.resolve("{{secret:MY_KEY}}:{{secret:TOK}}", resolver=_resolver) == "sk-abc123:t0k"
+    assert (
+        S.resolve("{{secret:MY_KEY}}:{{secret:TOK}}", resolver=_resolver) == "fake-key-abc123:t0k"
+    )
 
 
 def test_a_config_with_no_references_is_returned_UNCHANGED():
@@ -218,7 +220,7 @@ def test_a_fired_trigger_receives_the_RESOLVED_config():
     real = AP.get_action_provider
     try:
         AP.get_action_provider = lambda name: rec
-        with patch.object(S, "default_resolver", lambda k: "sk-RESOLVED"):
+        with patch.object(S, "default_resolver", lambda k: "fake-key-1"):
             asyncio.run(
                 _orch()._fire_store_trigger(
                     _trigger("echo {{secret:MY_KEY}}"), {"trigger_id": "clock:x"}
@@ -226,7 +228,7 @@ def test_a_fired_trigger_receives_the_RESOLVED_config():
             )
     finally:
         AP.get_action_provider = real
-    assert rec.seen["command"] == "echo sk-RESOLVED"
+    assert rec.seen["command"] == "echo fake-key-1"
 
 
 def test_an_unresolved_secret_means_the_provider_is_NEVER_CALLED():
@@ -263,7 +265,7 @@ def test_the_stored_config_is_never_mutated():
     real = AP.get_action_provider
     try:
         AP.get_action_provider = lambda name: rec
-        with patch.object(S, "default_resolver", lambda k: "sk-RESOLVED"):
+        with patch.object(S, "default_resolver", lambda k: "fake-key-1"):
             asyncio.run(_orch()._fire_store_trigger(trigger, {"trigger_id": "clock:x"}))
     finally:
         AP.get_action_provider = real
@@ -382,14 +384,14 @@ def _webhook(tmp_path, token_ref, *, tid="webhook:deploy"):
 
 def test_a_VERBATIM_webhook_token_is_flagged(tmp_path):
     """🔴 MEASURED. Decision 12 says webhook bearer tokens are "SHA-256-hashed at rest" and R14 says
-    "never verbatim in triggers.json". The store wrote `sk-LITERAL-SECRET-abc123` straight to disk
+    "never verbatim in triggers.json". The store wrote `fake-key-2` straight to disk
     with `ok: True` and ZERO warnings.
 
     The lint would have caught that string — but it scans the `workflow` only, and a webhook's
     token lives in `spec`. So the one field on the one kind whose entire purpose is authentication
     was the field with no credential lint.
     """
-    row = _webhook(tmp_path, "sk-LITERAL-SECRET-abc123")
+    row = _webhook(tmp_path, "fake-key-2")
     assert [i.message for i in row.warnings], "a pasted token must be visible on the row"
     assert "{{secret:KEY}}" in row.warnings[0].message, "and must name the fix"
 
@@ -399,8 +401,8 @@ def test_the_token_is_still_ON_DISK_so_the_fix_says_ROTATE(tmp_path):
     the user believing the exposure was handled, so the doctor's fix says to rotate."""
     from personalclaw.triggers.calendar import diagnose
 
-    _webhook(tmp_path, "sk-LITERAL-SECRET-abc123")
-    rows = [{"id": "schedule:webhook:deploy", "spec": {"token_ref": "sk-LITERAL-SECRET-abc123"}}]
+    _webhook(tmp_path, "fake-key-2")
+    rows = [{"id": "schedule:webhook:deploy", "spec": {"token_ref": "fake-key-2"}}]
     finding = next(
         f
         for f in diagnose(rows, known_workflows=None).findings
@@ -423,7 +425,7 @@ def test_a_padded_reference_is_not_flagged(tmp_path):
 def test_the_flag_is_a_WARNING_so_the_webhook_still_LOADS(tmp_path):
     """Refusing would break every webhook a user has already authored — the population that most
     needs to keep working while they migrate."""
-    row = _webhook(tmp_path, "sk-LITERAL-SECRET-abc123")
+    row = _webhook(tmp_path, "fake-key-2")
     assert row.ok is True
     assert not row.errors
 

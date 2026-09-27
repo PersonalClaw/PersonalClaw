@@ -395,6 +395,11 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
                     raise ConfigValueError(
                         f"invalid regex {v!r}: {exc}", f"{path_key}={value}"
                     ) from None
+        # The same write-boundary normalisation a `str` field's sanitizer gets (below): it
+        # refuses an entry it could only "fix" by changing what it names.
+        sanitize = spec.get("sanitize")
+        if sanitize:
+            value = sanitize(value)
     elif spec["type"] == "str":
         if not isinstance(value, str):
             raise ConfigValueError("must be a string", f"{path_key}={value}")

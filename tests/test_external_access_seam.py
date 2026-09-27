@@ -1055,6 +1055,8 @@ class TestAuditAndSel:
         assert logged == []
 
     def test_client_lifecycle_events_are_SEL_logged(self, monkeypatch):
+        """A client's token starts and ends with the rows every sign-in writes, so the security
+        log answers "what could reach this gateway, and when did that stop" in one query."""
         logged: list[str] = []
 
         class _Sel:
@@ -1065,9 +1067,7 @@ class TestAuditAndSel:
         client, _ = clients_mod.create_client("ide", surfaces=["mcp"])
         clients_mod.set_disabled(client.client_id, True)
         clients_mod.revoke_client(client.client_id)
-        assert "inbound_client_created" in logged
-        assert "inbound_client_disabled" in logged
-        assert "inbound_client_revoked" in logged
+        assert logged == ["session_signed_in", "inbound_client_disabled", "session_signed_out"]
 
 
 # ══ Clause 10 — the new stores join the export/snapshot sets ══════════════════

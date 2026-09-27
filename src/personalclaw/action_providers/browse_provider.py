@@ -75,7 +75,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult, site_of
 from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.loop import (
     MAX_STEPS_DEFAULT,
@@ -115,18 +115,6 @@ USE_CASE = "reasoning"
 #: How much of a finished run's notes its one-line summary quotes. The notes stay whole on
 #: `stdout`; the history row shows a line, and a page of notes is not one.
 _SUMMARY_NOTES_MAX = 300
-
-
-def _site_of(url: str) -> str:
-    """`host[:port]` of a URL for a sentence — never its path, query or credentials."""
-    from urllib.parse import urlparse
-
-    try:
-        parsed = urlparse(url or "")
-        host, port = parsed.hostname or "", parsed.port
-    except ValueError:
-        return ""
-    return f"{host}:{port}" if host and port else host
 
 
 def _budget_check() -> tuple[str, str]:
@@ -665,7 +653,7 @@ class BrowseActionProvider(ActionProvider):
         """
         count = result.step_count
         head = f"Browse finished in {count} step{'' if count == 1 else 's'}"
-        site = _site_of(result.final_url)
+        site = site_of(result.final_url)
         if site:
             head += f" at {site}"
         noted = [" ".join(n.split()).rstrip(" .;") for n in result.notes]

@@ -126,7 +126,7 @@ def secret_home(tmp_path, monkeypatch):
     # so it takes the allowlist to be plain containment too: its refusals are the guards' alone.
     monkeypatch.setattr(
         "personalclaw.file_roots.within",
-        lambda canonical, roots: any(
+        lambda canonical, roots, **_: any(
             r and (canonical == r or canonical.startswith(r + os.sep)) for r in roots
         ),
     )

@@ -31,7 +31,12 @@ from personalclaw.workflows.models import (
     spec_path,
     walk,
 )
-from personalclaw.workflows.resilience import BreakerState, check_breaker, error_signature
+from personalclaw.workflows.resilience import (
+    BreakerState,
+    BreakerVerdict,
+    check_breaker,
+    error_signature,
+)
 from personalclaw.workflows.tick import derive_state, loop_should_continue
 
 if TYPE_CHECKING:
@@ -44,9 +49,11 @@ if TYPE_CHECKING:
 #: what the escalation ladder is for, and failing it binary is the bug PP-15 fixes. A loop that
 #: reached the `max_iterations` or token cap ITS AUTHOR SET is not thrashing and has nothing
 #: cheaper to try: spending a fresh session and a model switch on a satisfied budget would
-#: re-run the work the cap existed to bound. So budgets keep going straight to the escalation
-#: artifact, exactly as before, and only thrash reaches the ladder.
-_BUDGET_TRIPS = frozenset({"max_iterations", "token_cap"})
+#: re-run the work the cap existed to bound. So a spent budget skips the ladder and ends the
+#: loop — complete when its own exit test was met or its judge accepted the last iteration, and
+#: escalated, naming the budget, when it would otherwise have gone on — and only thrash reaches
+#: the ladder.
+BUDGET_TRIPS = frozenset({"max_iterations", "token_cap"})
 
 
 def _consume_steering(ctl: RunController, parent_path: str, node: Node, iteration: int) -> None:
@@ -163,21 +170,13 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         tokens=inst.tokens,
     )
     verdict = check_breaker(node, breaker)
-    if verdict.tripped:
-        ctl.journal.iteration(
-            parent_path,
-            node.id,
-            iteration=iteration,
-            outcome=f"breaker:{verdict.reason}",
-            error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
-            tokens=inst.tokens,
+    # A spent budget is not a stall, and it is not the answer yet either: whether this
+    # iteration finished the loop is asked first, below.
+    spent = verdict.tripped and verdict.reason in BUDGET_TRIPS
+    if verdict.tripped and not spent:
+        _journal_breaker_trip(
+            ctl, parent_path, node, iteration, breaker, inst.tokens, verdict.reason
         )
-        if verdict.reason in _BUDGET_TRIPS:
-            # A satisfied budget is not a stall. Unchanged pre-PP-15 behaviour.
-            loop_convergence.surface_loop(
-                ctl, parent_path, node, reason=verdict.reason, detail=verdict.detail
-            )
-            return
         if loop_convergence.converge_loop(
             ctl,
             parent_path,
@@ -216,6 +215,33 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         dry_streak=ctl._dry_streaks.get(parent_path, 0),
         ctx=ctx,
     )
+    # The budget stops a loop only when the loop would otherwise go on: its own exit test ran
+    # first (`loop_should_continue`), and a loop that met it on the last iteration its budget
+    # allows has finished. The budget used to be checked first, so exactly those loops ended
+    # escalated instead of complete.
+    budget = None
+    if keep_going and spent:
+        budget = verdict
+    elif not keep_going and reason == "max_iterations":
+        budget = BreakerVerdict(True, "max_iterations")
+    if budget is not None:
+        accepted = _judge_accepted(ctl, node, parent_path, iteration)
+        if accepted:
+            # The judge accepted the iteration the budget ended on: the loop's done. One the
+            # judge did not accept, or with no judge, genuinely ran out of budget.
+            keep_going, reason = False, "judge_done"
+        else:
+            _journal_breaker_trip(
+                ctl, parent_path, node, iteration, breaker, inst.tokens, budget.reason
+            )
+            loop_convergence.surface_loop(
+                ctl,
+                parent_path,
+                node,
+                reason=budget.reason,
+                detail=_budget_detail(node, budget.reason, breaker, judged=accepted is not None),
+            )
+            return
     ctl.journal.iteration(
         parent_path,
         node.id,
@@ -247,7 +273,7 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # success. Re-asking the SOLE detector is how the two endings are told apart without
     # inventing a second piece of state: anything tripping here was tripping earlier too.
     final = check_breaker(node, breaker)
-    if final.tripped and final.reason not in _BUDGET_TRIPS:
+    if final.tripped and final.reason not in BUDGET_TRIPS:
         loop_convergence.surface_loop(
             ctl, parent_path, node, reason=final.reason, detail=final.detail
         )
@@ -256,6 +282,83 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     loop_inst = ctl._instance(parent_path)
     loop_inst.state = InstanceState.DONE
     loop_inst.completed_at = now_stamp()
+
+
+def _journal_breaker_trip(
+    ctl: RunController,
+    parent_path: str,
+    node: Node,
+    iteration: int,
+    breaker: BreakerState,
+    tokens: int,
+    reason: str,
+) -> None:
+    """Journal the iteration a breaker trip ended, a stall it caught or a budget it spent.
+
+    One writer for both, so the ``breaker:<reason>`` outcome is spelled in one place
+    (``tests/test_audit_outcome_families.py`` counts each site it cannot read statically)."""
+    ctl.journal.iteration(
+        parent_path,
+        node.id,
+        iteration=iteration,
+        outcome=f"breaker:{reason}",
+        error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
+        tokens=tokens,
+    )
+
+
+def _judge_accepted(
+    ctl: RunController, node: Node, parent_path: str, iteration: int
+) -> bool | None:
+    """Did this iteration's judge accept it? ``None`` when no judge ruled on a whole iteration.
+
+    The judge is the body stage that declares ``judge_contract``, and "accepted" is its
+    validated ``passed``: a PASS the contract upheld (`judge_contract.JudgeVerdict.passed`), not
+    a PASS that scored none of its rubric. Read only from a judge whose instance for THIS
+    iteration succeeded, the rule `_progress_value` states for why; the last one in document
+    order wins. An iteration in which any body node FAILED has no ruling here: a judge that
+    passed it was ruling on work that did not finish, and `surface_loop` tells that story.
+    """
+    if node.body is None:
+        return None
+    base = f"{parent_path}.body@{iteration}"
+    if any(
+        inst.state is InstanceState.FAILED
+        for path, inst in ctl.instances.items()
+        if path == base or path.startswith(f"{base}.")
+    ):
+        return None
+    accepted: bool | None = None
+    for sub, child in walk(node.body):
+        if not child.id or not (child.config or {}).get("judge_contract"):
+            continue
+        inst = ctl.instances.get(base if sub == "root" else f"{base}{sub[len('root'):]}")
+        if inst is None or inst.state not in SUCCESS_STATES:
+            continue
+        out = ctl._outputs.get(child.id)
+        accepted = isinstance(out, dict) and out.get("passed") is True
+    return accepted
+
+
+def _budget_detail(node: Node, reason: str, breaker: BreakerState, *, judged: bool) -> str:
+    """The sentence a loop that ran out of budget escalates with: the budget, by name.
+
+    ``judged`` says whether a judge ruled on the iteration the budget ended on, which is what
+    tells "the judge did not accept it" apart from "its own exit test was not met".
+    """
+    cfg = node.config or {}
+    if reason == "token_cap":
+        cap = cfg.get("max_tokens")
+        spent = f"{cap:,} tokens" if isinstance(cap, int) else "tokens"
+        used = f" ({breaker.tokens:,} used)"
+        budget = f"It used its budget of {spent}{used}"
+    else:
+        cap = cfg.get("max_iterations")
+        count = cap if isinstance(cap, int) and cap > 0 else breaker.iterations
+        budget = f"It used its budget of {count} cycle{'' if count == 1 else 's'}"
+    if judged:
+        return f"{budget}, and the judge did not accept the last one."
+    return f"{budget} before its exit condition was met."
 
 
 def _iteration_complete(ctl: RunController, node: Node, parent_path: str, iteration: int) -> bool:

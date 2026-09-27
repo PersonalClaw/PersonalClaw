@@ -272,15 +272,14 @@ def test_the_planted_credential_is_one_redaction_recognizes():
     )
 
 
-def test_redaction_is_not_idempotent_over_a_key_value_line():
-    """WHY the harvest screens each source exactly once instead of re-screening the composed case.
+def test_redaction_is_idempotent_over_a_key_value_line():
+    """A second pass over an already-screened value in a `<key>: <value>` string changes nothing.
 
-    `redact()` IS idempotent on its own output. It is NOT idempotent on an already-screened value
-    sitting in a `<key>: <value>` string: `redact_credentials` has a `key: value` pattern, so a
-    second pass matches `api_key: [REDACTED:` and rewrites it — garbling the text AND losing the
-    field name. A trailing whole-scenario `redact()` would therefore corrupt the turn text of every
-    case whose inputs held a credential. Pinned here so nobody "simplifies" the screen back into
-    one trailing pass.
+    `redact_credentials` has a `key: value` pattern, and it used to match `api_key: [REDACTED:`
+    and rewrite it, garbling the text AND losing the field name, so a composed case could only be
+    screened source by source. The pattern now skips a value that is already a mask, which is
+    what lets every read an agent's model is handed be masked at one boundary even when the read
+    was already masked for a UI. The harvest still screens each source once, where it enters.
     """
     from personalclaw.ledger import redact
 
@@ -288,8 +287,8 @@ def test_redaction_is_not_idempotent_over_a_key_value_line():
     assert redact(once) == once, "redact must be idempotent on its OWN output"
 
     already_screened = "- api_key: [REDACTED: credential]"
-    assert redact(already_screened) != already_screened
-    assert "api_key" not in redact(already_screened), "the field name is lost by a second pass"
+    assert redact(already_screened) == already_screened, "a second pass keeps the line"
+    assert "api_key" in redact(already_screened), "and the field name with it"
 
 
 def test_the_turn_text_of_a_screened_case_is_not_garbled(home):
@@ -635,7 +634,7 @@ def test_the_cli_exits_nonzero_on_an_empty_population(home, capsys):
     with pytest.raises(SystemExit) as exc:
         _eval_harvest(_cli())
     assert exc.value.code == 1
-    assert "Refusing: no replay population" in capsys.readouterr().out
+    assert "Refusing: no replay population" in capsys.readouterr().err
 
 
 def test_the_cli_exits_zero_when_runs_existed_but_none_qualified(home, capsys):
@@ -666,7 +665,7 @@ def test_the_cli_list_flag_refuses_an_empty_suite(home, capsys):
     with pytest.raises(SystemExit) as exc:
         _eval_harvest(_cli(list_suite=True))
     assert exc.value.code == 1
-    assert "Refusing:" in capsys.readouterr().out
+    assert "Refusing:" in capsys.readouterr().err
 
 
 # ── the library's own runner accepts a harvested case ─────────────────────────

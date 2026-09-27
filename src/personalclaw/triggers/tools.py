@@ -64,23 +64,125 @@ AGENT_RECURRING_TTL_SECS = 30 * 86400
 MIN_AGENT_TTL_SECS = 60
 MAX_AGENT_TTL_SECS = 90 * 86400
 
+#: How long past its own time an unfired one-time task stays armed (the gateway was off when it was
+#: due). Its default expiry covers its time plus this, so a one-time task set further out than the
+#: one-shot TTL still fires: measured on `main`, "remind me on the 20th" made 23 days out expired on
+#: day 7 and never ran.
+ONE_TIME_LATE_SECS = 86400
 
-def _agent_expiry_iso(resolved_spec: dict, ttl_secs: float, *, now: float = 0.0) -> str:
-    """The mandatory `expires_at` for an agent-created trigger, as the entity's ISO form.
+#: What a `when` must read as when the tool carrying it says: `set_onetime_task` runs once and
+#: `set_recurring_task` repeats. `automation_create` takes either, and passes "".
+ONCE = "once"
+RECURRING = "recurring"
+
+
+def _agent_expiry(resolved_spec: dict, ttl_secs: float, *, now: float = 0.0) -> float:
+    """The mandatory expiry for an agent-created trigger, as epoch seconds.
 
     `resolved_spec` decides the default: a spec carrying `at` is a one-shot and gets the short
-    TTL; anything else (cron, watch kinds) gets the recurring one. Explicit `ttl_secs` wins,
-    clamped to the sane window rather than refused — the caller asked for a bound and gets one.
+    TTL — or, when its own time is further out than that, its time plus `ONE_TIME_LATE_SECS`, since
+    a one-time task that expires before it runs is a reminder that silently never comes. Anything
+    else (cron, watch kinds) gets the recurring TTL. Explicit `ttl_secs` wins, clamped to the sane
+    window rather than refused — the caller asked for a bound and gets one (`create` refuses one
+    that would end before the task's own time).
     """
     import time as _time
-    from datetime import datetime, timezone
 
     base = float(now) if now else _time.time()
     if ttl_secs and ttl_secs > 0:
-        ttl = min(max(float(ttl_secs), float(MIN_AGENT_TTL_SECS)), float(MAX_AGENT_TTL_SECS))
-    else:
-        ttl = float(AGENT_ONETIME_TTL_SECS if resolved_spec.get("at") else AGENT_RECURRING_TTL_SECS)
-    return datetime.fromtimestamp(base + ttl, tz=timezone.utc).isoformat()
+        return base + min(
+            max(float(ttl_secs), float(MIN_AGENT_TTL_SECS)), float(MAX_AGENT_TTL_SECS)
+        )
+    if not resolved_spec.get("at"):
+        return base + float(AGENT_RECURRING_TTL_SECS)
+    try:
+        at = float(resolved_spec.get("at") or 0)
+    except (TypeError, ValueError):
+        at = 0.0
+    return max(base + float(AGENT_ONETIME_TTL_SECS), at + float(ONE_TIME_LATE_SECS))
+
+
+def _iso(epoch: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class _Timing:
+    """What a clock `when` read as: the spec it becomes and the sentence saying so, or the error."""
+
+    spec: dict[str, Any] = field(default_factory=dict)
+    because: str = ""
+    error: str = ""
+
+
+def _read_when(text: str, *, recurrence: str, converter: Any, now: float = 0.0) -> _Timing:
+    """A clock `when` → a one-time `at` spec or a cron spec — never a cron for one time.
+
+    An explicit one time is read WITHOUT a model (`triggers.when`), in the owner's zone. Only a
+    phrase that leaves the time to judgement reaches `converter` — `nl_to_cron`, which is handed
+    the clock and the zone and answers either a cadence or `ONCE <time>`. A phrase the tool cannot
+    carry is refused with the tool that can: a one-time task runs once, a recurring one repeats.
+    """
+    import time as _time
+
+    from personalclaw.triggers import when as when_mod
+
+    current = float(now) if now else _time.time()
+    if not when_mod.is_recurring(text):
+        one = when_mod.read_one_time(text, now=current)
+        if one is not None:
+            return _one_time(one, text=text, recurrence=recurrence, now=current)
+    elif recurrence == ONCE:
+        return _Timing(error=_repeats_but_once(text))
+
+    answer = converter(text)
+    if answer.error:
+        return _Timing(error=answer.error)
+    if answer.once:
+        from personalclaw.timezones import resolve_zone
+
+        one = when_mod.OneTime(at=answer.at, zone=answer.zone, tz=resolve_zone(answer.zone))
+        return _one_time(one, text=text, recurrence=recurrence, now=current)
+    if recurrence == ONCE:
+        return _Timing(error=_repeats_but_once(text, expr=answer.expr))
+    return _Timing(
+        spec={"kind": "cron", "expr": answer.expr}, because="read as a repeating schedule"
+    )
+
+
+def _one_time(one: Any, *, text: str, recurrence: str, now: float) -> _Timing:
+    """A one-time reading as an `at` spec — refused when the tool repeats or the time has passed."""
+    from personalclaw.timezones import is_known_zone
+
+    said = one.describe(now=now)
+    if recurrence == RECURRING:
+        return _Timing(
+            error=(
+                f"{text!r} is one time ({said}), and a recurring task repeats. Give how often it "
+                "should run ('every day at 5pm'), or use set_onetime_task to run it once."
+            )
+        )
+    if one.at <= now:
+        return _Timing(error=f"{said} has already passed. Give a time that is still to come.")
+    spec: dict[str, Any] = {"kind": "at", "at": one.at, "delete_after_run": False}
+    try:
+        if is_known_zone(one.zone):
+            # Shown in the zone it was said in. An ISO offset is not a zone, and the instant
+            # does not need one.
+            spec["timezone"] = one.zone
+    except Exception:  # noqa: BLE001 - no tz database: the instant stands without a display zone
+        logger.debug("zone %r not checkable; leaving it off the spec", one.zone)
+    return _Timing(spec=spec, because=f"read as one time: {said}")
+
+
+def _repeats_but_once(text: str, *, expr: str = "") -> str:
+    reading = f" ({expr})" if expr else ""
+    return (
+        f"{text!r} repeats{reading}, and a one-time task runs once. Give the one time it should "
+        "run ('tomorrow at 9am'), or use set_recurring_task to repeat it."
+    )
 
 
 def max_agent_triggers() -> int:
@@ -416,6 +518,7 @@ def create(
     ttl_secs: float = 0,
     gates: dict[str, Any] | None = None,
     owner_consented: bool = False,
+    recurrence: str = "",
 ) -> AutomationToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
@@ -423,9 +526,16 @@ def create(
     a file-watch request must never reach a component whose only output shape is a cron expression.
     An explicit `kind`+`spec` bypasses routing for a caller that already knows.
 
-    `cadence_to_cron` is injected (defaulting to the shipped `nl_to_cron`) so every branch of this
-    function is testable without a model — the same seam `ScheduleService` uses for `_on_job` and
-    the executor uses for its runner.
+    A clock `when` becomes ONE TIME or a CADENCE, never a cron for one time (`_read_when`): "at 5
+    pm", "in 20 minutes" and "tomorrow at 9am" are read without a model into a one-time `at` spec
+    in the owner's zone, and only a phrase that leaves the time to judgement is asked of the model.
+    `recurrence` is what the calling tool promises — `ONCE` (`set_onetime_task`) or `RECURRING`
+    (`set_recurring_task`) — and a `when` that reads the other way is refused with the tool that
+    fits, rather than made into what the caller did not ask for.
+
+    `cadence_to_cron` is injected (defaulting to the shipped `nl_to_cron`, which answers a
+    `nl_to_cron.Schedule`) so every branch of this function is testable without a model — the same
+    seam `ScheduleService` uses for `_on_job` and the executor uses for its runner.
 
     🔴 A NEW TRIGGER IS GRANTED ONLY BY THE OWNER'S YES (`triggers.grants`). `owner_consented` is
     that yes: the Triggers page's create dialog passes it after asking, and the CLI after `--yes`.
@@ -455,11 +565,17 @@ def create(
         resolved_kind, because = routed.kind, routed.because
         resolved_spec = {**routed.spec, **resolved_spec}
         if routed.cadence and "expr" not in resolved_spec and "at" not in resolved_spec:
-            converter = cadence_to_cron or _default_cadence_to_cron
-            expr, err = converter(routed.cadence)
-            if err:
-                return AutomationToolResult(False, f"Error: {err}", {"cadence": routed.cadence})
-            resolved_spec = {"kind": "cron", "expr": expr, **resolved_spec}
+            timing = _read_when(
+                routed.cadence,
+                recurrence=recurrence,
+                converter=cadence_to_cron or _default_cadence_to_cron,
+            )
+            if timing.error:
+                return AutomationToolResult(
+                    False, f"Error: {timing.error}", {"cadence": routed.cadence}
+                )
+            resolved_spec = {**timing.spec, **resolved_spec}
+            because = timing.because
 
     if resolved_kind == "event":
         # An event spec names its pattern; the source follows from it, and an author who names one
@@ -572,7 +688,20 @@ def create(
     # the row never exists without its bound; user-created rows keep their opt-in expiry
     # semantics untouched.
     if created_by == "agent" and not trigger.expires_at:
-        trigger.expires_at = _agent_expiry_iso(resolved_spec, ttl_secs)
+        expiry = _agent_expiry(resolved_spec, ttl_secs)
+        try:
+            one_time_at = float(resolved_spec.get("at") or 0)
+        except (TypeError, ValueError):
+            one_time_at = 0.0
+        if one_time_at > 0 and expiry <= one_time_at:
+            # A one-time task that expires before its own time never runs, and says nothing.
+            return AutomationToolResult(
+                False,
+                f"Error: ttl_secs ends before the task's own time ({_iso(one_time_at)}), so it "
+                "would expire without running. Give a longer ttl_secs, or leave it out.",
+                {"ttl_secs": ttl_secs},
+            )
+        trigger.expires_at = _iso(expiry)
 
     from personalclaw.triggers.arm import arm as _arm
 
@@ -619,8 +748,8 @@ def create(
     )
 
 
-def _default_cadence_to_cron(cadence: str) -> tuple[str, str]:
-    """Bridge to the shipped `nl_to_cron` from this synchronous dispatch.
+def _default_cadence_to_cron(cadence: str) -> Any:
+    """Bridge to the shipped `nl_to_cron` from this synchronous dispatch; a `nl_to_cron.Schedule`.
 
     Mirrors `mcp_schedule._nl_to_cron_blocking` rather than inventing a second async bridge: the
     two would drift, and this one is already proven against a running loop.
@@ -719,6 +848,26 @@ def update(
             f"Error: nothing to update. Not settable here: {', '.join(rejected) or 'none given'}.",
             {"rejected": rejected},
         )
+    # The agent was shown this automation masked (`automation_list`, and the model boundary), so a
+    # value it patches back can carry a `[REDACTED: …]` marker where the row holds the value: each
+    # keeps what it stands for, the way the Triggers editor's save does (`_keep_masked_trigger`).
+    from personalclaw.security import MASK_CONFLICT, MaskConflict, keep_masked_values
+
+    def _stored_as_sent(key: str, value: Any) -> Any:
+        # An action is compared in the shape the patch sends it in (either form reaches here).
+        stored = getattr(row.trigger, key, None)
+        if key != "workflow":
+            return stored
+        action = _inline_action_of(stored)
+        return {"inline": action} if isinstance(value, dict) and "inline" in value else action
+
+    try:
+        applied = {
+            key: keep_masked_values(value, _stored_as_sent(key, value))
+            for key, value in applied.items()
+        }
+    except MaskConflict:
+        return AutomationToolResult(False, f"Error: {MASK_CONFLICT}")
     # The same registration refusals as `create`. Without them the update path is the hole —
     # save a `gateway` browse automation, then patch its `workflow` to `user_browser`, and the
     # create-time check has been walked around. #779/#687 close the same hole for the other two:

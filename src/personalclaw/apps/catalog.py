@@ -869,6 +869,9 @@ def _read_git_registry(url: str, *, deadline: float | None = None) -> str | None
     import subprocess
     import tempfile
 
+    from personalclaw.net.git import source_git_env
+
+    env = source_git_env(site="app-source-git")
     tmp = tempfile.mkdtemp(prefix="pclaw-registry-")
     try:
         proc = subprocess.run(
@@ -876,6 +879,7 @@ def _read_git_registry(url: str, *, deadline: float | None = None) -> str | None
             capture_output=True,
             text=True,
             timeout=_git_timeout(60, deadline),
+            env=env,
         )
         if proc.returncode != 0:
             logger.debug(
@@ -888,6 +892,7 @@ def _read_git_registry(url: str, *, deadline: float | None = None) -> str | None
             capture_output=True,
             text=True,
             timeout=_git_timeout(30, deadline),
+            env=env,
         )
         # A source with no registry index → git exits non-zero on the missing path.
         return show.stdout if show.returncode == 0 else ""
@@ -1081,6 +1086,8 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
     if cached is not None and (now - cached[0]) < _GIT_SCAN_TTL_SECS:
         return cached[1]
 
+    from personalclaw.net.git import source_git_env
+
     entries: list[CatalogEntry] = []
     tmp = tempfile.mkdtemp(prefix="pclaw-gitscan-")
     try:
@@ -1089,6 +1096,7 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
             capture_output=True,
             text=True,
             timeout=_git_timeout(90, deadline),
+            env=source_git_env(site="app-source-git"),
         )
         if proc.returncode != 0:
             logger.debug(

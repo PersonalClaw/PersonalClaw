@@ -17,8 +17,8 @@ the path was never mounted — and a model dir that was not granted cannot be de
 
 **Failure honesty.** ``available()`` probes the docker CLI + daemon (cached). When Docker
 is absent, :meth:`DockerSandboxProvider.wrap` raises :class:`SandboxUnavailableError` instead of
-falling back to the host — the registry only fails open for an *unknown* name, and a caller that
-asked for ``docker`` on a no-Docker machine must get a typed refusal (which an unattended run
+falling back to the host (the registry refuses a name nothing registered the same way): a caller
+that asked for ``docker`` on a no-Docker machine must get a typed refusal (which an unattended run
 parks needs-input on), never a silent host downgrade.
 
 This tier is core-native (registered at boot beside ``none``), not an installable app; the app

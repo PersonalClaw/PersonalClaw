@@ -47,7 +47,6 @@ from personalclaw.workflows.batch_compile import (
     compile_batch,
     contract_lint,
     forbidden_declarations,
-    is_write_tool,
     leaf_tool_posture,
     lineage_env,
     mutating_chain,
@@ -232,32 +231,8 @@ def test_orchestration_tools_are_denied_at_EVERY_depth():
         assert ORCHESTRATION_TOOLS <= denied
 
 
-def test_a_declared_write_tool_is_honored_for_a_research_leaf():
-    """An author who says a research leaf needs one has made a decision; overriding it would
-    make the
-    declaration pointless. Everything UNDECLARED stays denied."""
-    posture = leaf_tool_posture(Capability.RESEARCH, declared=["knowledge_persist", "read_file"])
-    assert posture["allowed_writers"] == ["knowledge_persist"]
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["file_write", "knowledge_persist", "bash", "git_commit", "artifact_update", "send_email"],
-)
-def test_a_mutating_tool_is_recognized(name):
-    assert is_write_tool(name) is True
-
-
-@pytest.mark.parametrize("name", ["knowledge_search", "read_file", "list_dir", "web_fetch"])
-def test_a_read_tool_is_not_flagged(name):
-    assert is_write_tool(name) is False
-
-
-def test_the_write_marker_list_is_over_inclusive_ON_PURPOSE():
-    """A read tool wrongly called a writer costs one declaration; a writer wrongly called a reader
-    gives a research leaf silent write access. The asymmetry decides the direction of the guess — so
-    a newly-added write tool is denied by DEFAULT rather than admitted."""
-    assert is_write_tool("some_future_write_thing") is True
+# Which tools a research leaf may call is what each tool DECLARES, asked at the handler seam
+# (`mcp_shared.leaf_tool_denial`); `tests/test_research_class_tool_census.py` is its census.
 
 
 def test_a_research_leaf_declaring_WRITES_is_an_error():
@@ -790,7 +765,7 @@ def test_a_FAILED_redactor_withholds_the_view_rather_than_showing_it_raw(monkeyp
         raise RuntimeError("redactor unavailable")
 
     monkeypatch.setattr("personalclaw.security.redact", boom)
-    view = recall_view("sk-live-abc123 and other secrets")
+    view = recall_view("fake-key-live-abc123 and other secrets")
     assert view["text"] == ""
     assert view["redacted"] is True
     assert "withheld" in view["error"]

@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import logging
 import re
-import secrets
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -287,10 +286,6 @@ def record_login(
     meta.session_valid_until = ts + max(0.0, float(ttl_secs))
     meta.auth_state = AUTH_STATE_ACTIVE
     save_meta(url, meta)
-    # A persisted session is captured under a profile-encryption key held in the credential
-    # store (never in the profile dir). Ensured HERE — the moment a session first exists — so the
-    # key management ships with a real writer rather than as inert scaffolding.
-    ensure_profile_key(url)
     return meta
 
 
@@ -310,69 +305,41 @@ def mark_expired(url: str, *, now: float | None = None) -> ProfileMeta:
     return meta
 
 
-#: Credential-store key prefix for a site's profile-encryption key (BA-5, plan §(c)). The key is
-#: generated once per site and stored through the ACTIVE credential backend (keychain, else
-#: ``.env`` at 0600); it is NEVER written into the profile directory, whose whole point is that it
-#: can be encrypted by a key that does not sit beside the cookies it protects. ``secrets_vault``
-#: hides this prefix from the user's vault — it is machine-managed key material, not a secret the
-#: user typed and could delete out from under a profile that depends on it.
-PROFILE_KEY_PREFIX = "BROWSE_PROFILE_KEY_"
+#: The credential-store prefix an earlier release stored a per-site "profile-encryption key" under,
+#: at every browse sign-in (``BROWSE_PROFILE_KEY_<site>``). Nothing ever encrypted a profile with
+#: one, and nothing read one but a presence check, so none is minted now;
+#: :func:`forget_unused_profile_keys` deletes the ones left behind.
+_UNUSED_PROFILE_KEY_PREFIX = "BROWSE_PROFILE_KEY_"
 
 
-def _key_name_for_slug(slug: str) -> str:
-    return f"{PROFILE_KEY_PREFIX}{slug}"
+def forget_unused_profile_keys() -> int:
+    """Delete every ``BROWSE_PROFILE_KEY_<site>`` an earlier release left in the credential store,
+    and return how many. Idempotent: run at every start, it finds nothing after the first.
 
-
-def profile_key_name(url: str) -> str:
-    """The credential-store key holding the profile-encryption key for ``url``'s site."""
-    return _key_name_for_slug(site_slug(url))
-
-
-def ensure_profile_key(url: str) -> str:
-    """The site's profile-encryption key, generated and stored in the credential store on first
-    use. Idempotent — an existing key is returned untouched, so a re-login never rotates the key
-    out from under a profile it already encrypts.
-
-    Held in the credential store and NEVER in the profile directory (§5.1 / BA-5): a key that sat
-    beside the cookies it protects would protect nothing. Generated with ``secrets.token_urlsafe``,
-    so it is a real 256-bit key rather than a marker.
+    Deleted rather than left: with nothing hiding the prefix any more, each would show on the
+    Secrets page as a secret the owner never typed — and one the page cannot delete, because a
+    site's name carries a dot or a dash, which a secret's name may not.
     """
-    from personalclaw.config.credentials import get_credential, save_credential
+    from personalclaw.config.credentials import credential_names, delete_credential
 
-    name = profile_key_name(url)
-    existing = get_credential(name)
-    if existing:
-        return existing
-    key = secrets.token_urlsafe(32)
-    save_credential(name, key)
-    return key
-
-
-def has_profile_key(url: str) -> bool:
-    """Whether a profile-encryption key exists for ``url``'s site — presence only, no value read.
-
-    Uses :func:`~personalclaw.config.credentials.credential_names` (name-only) rather than
-    ``get_credential(...) != ""`` so a presence check never puts the key value in a local a caller
-    could leak — the same discipline the secrets vault's read model follows."""
-    from personalclaw.config.credentials import credential_names
-
-    return profile_key_name(url) in credential_names()
+    removed = 0
+    for name in credential_names():
+        if name.startswith(_UNUSED_PROFILE_KEY_PREFIX) and delete_credential(name):
+            removed += 1
+    if removed:
+        logger.info("browse: deleted %d unused profile key(s) an earlier release stored", removed)
+    return removed
 
 
 def expired_sites() -> list[dict[str, Any]]:
     """Every site whose saved session is EXPIRED — the set BA-5's persistent banner renders.
 
     Scans the profiles root (cheap, offline) and returns the sites whose ``.meta.json`` records
-    ``auth_state=expired``. ``key_present`` reports whether the site's profile-encryption key is in
-    the credential store, so the panel can tell the user that re-auth will reuse the existing
-    profile rather than establish a new one. An unreadable meta is surfaced as expired — a profile
-    we cannot read is precisely a session a human should re-establish.
+    ``auth_state=expired``. An unreadable meta is surfaced as expired — a profile we cannot read is
+    precisely a session a human should re-establish.
     """
     import json
 
-    from personalclaw.config.credentials import credential_names
-
-    names = set(credential_names())
     root = profiles_root()
     out: list[dict[str, Any]] = []
     try:
@@ -389,8 +356,7 @@ def expired_sites() -> list[dict[str, Any]]:
             meta = ProfileMeta(site=pdir.name, auth_state=AUTH_STATE_EXPIRED)
         if meta.auth_state != AUTH_STATE_EXPIRED:
             continue
-        slug = meta.site or pdir.name
-        out.append({"site": slug, "key_present": _key_name_for_slug(slug) in names})
+        out.append({"site": meta.site or pdir.name})
     return out
 
 

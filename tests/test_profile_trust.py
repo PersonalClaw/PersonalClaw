@@ -45,7 +45,9 @@ def _mock_memory_ok(monkeypatch):
     monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
 
 
-def _manager_with_tool(tool_title: str, *, hook_action: str = TOOL_AUTO_APPROVE):
+def _manager_with_tool(
+    tool_title: str, *, hook_action: str = TOOL_AUTO_APPROVE, risk_level: str = ""
+):
     """A SubagentManager whose subagent stream emits ONE permission request for ``tool_title``.
 
     ``provider.approve_tool`` / ``provider.reject_tool`` are AsyncMocks so a test can assert which
@@ -62,7 +64,11 @@ def _manager_with_tool(tool_title: str, *, hook_action: str = TOOL_AUTO_APPROVE)
 
     async def _stream(*_a, **_kw):
         yield LLMEvent(
-            kind=EVENT_PERMISSION_REQUEST, title=tool_title, request_id=1, tool_kind="fs"
+            kind=EVENT_PERMISSION_REQUEST,
+            title=tool_title,
+            request_id=1,
+            tool_kind="fs",
+            risk_level=risk_level,
         )
         yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="ok")
         yield LLMEvent(kind=EVENT_COMPLETE)
@@ -160,12 +166,33 @@ async def test_auto_fired_research_spawn_denies_bash_execute(agent_root):
 
 @pytest.mark.asyncio
 async def test_research_spawn_allows_read_tool(agent_root):
-    """The gate is scoped, not deny-all: a read-only tool clears the research gate and is admitted
-    (here by the auto-approve hook). Proves the deny is about WRITES, not every tool."""
-    manager, provider = _manager_with_tool("read_file")
+    """The gate is scoped, not deny-all: a tool that declares it only reads clears the research
+    gate and is admitted (here by the auto-approve hook). Proves the deny is about WRITES, not
+    every tool."""
+    manager, provider = _manager_with_tool("read_file", risk_level="safe")
     await _run_spawn(manager, capability_class=None, approval_mode="auto")
     provider.approve_tool.assert_awaited_once_with(1)
     provider.reject_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["computer_click", "workflow_start"])
+async def test_research_spawn_denies_a_change_with_no_write_word(agent_root, tool):
+    """🔴 Red on main: the research gate matched write WORDS, and neither name has one."""
+    manager, provider = _manager_with_tool(tool)
+    await _run_spawn(manager, capability_class=None, approval_mode="auto")
+    provider.reject_tool.assert_awaited_once_with(1)
+    provider.approve_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_research_spawn_denies_a_read_name_that_declares_nothing(agent_root):
+    """What admits a read is the tool's declaration, never its name: a CLI's own tool called
+    ``read_file`` declares nothing, so the research gate treats it as the change it may be."""
+    manager, provider = _manager_with_tool("read_file")
+    await _run_spawn(manager, capability_class=None, approval_mode="auto")
+    provider.reject_tool.assert_awaited_once_with(1)
+    provider.approve_tool.assert_not_awaited()
 
 
 @pytest.mark.asyncio

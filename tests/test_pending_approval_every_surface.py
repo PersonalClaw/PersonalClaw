@@ -34,6 +34,7 @@ from test_dashboard_approval import (  # the file's own run_chat harness
     _set_stream,
 )
 
+from personalclaw.approval_answer import YOU
 from personalclaw.dashboard.approval_state import chat_approval_id
 from personalclaw.dashboard.chat import api_chat_session_approve, run_chat
 from personalclaw.dashboard.handlers.sessions import api_approval_resolve, api_approvals
@@ -178,7 +179,7 @@ async def test_the_registry_id_is_unique_across_chats_that_reuse_a_request_id(wo
         assert len({r["id"] for r in rows}) == 2, "two pending approvals share one id"
 
         by_session = {r["session"]: r for r in rows}
-        assert world.state.resolve_approval(by_session["chat-b"]["id"], False) is True
+        assert world.state.resolve_approval(by_session["chat-b"]["id"], False, by=YOU) is True
         assert not world.session._approval_futures["req-1"].done(), "chat-a was answered for chat-b"
     finally:
         await _finish(first)
@@ -457,7 +458,7 @@ async def test_a_background_approval_reaches_the_inbox_and_leaves_it(world):
         await _until(lambda: "sub-1" in world.state._pending_approvals, "registered")
         rows = _approval_rows(world.store, open_only=True)
         assert [r.refs["approval"] for r in rows] == ["sub-1"]
-        assert world.state.resolve_approval("sub-1", False) is True
+        assert world.state.resolve_approval("sub-1", False, by=YOU) is True
         assert await asyncio.wait_for(task, timeout=5) is False
         assert not _approval_rows(world.store, open_only=True)
     finally:

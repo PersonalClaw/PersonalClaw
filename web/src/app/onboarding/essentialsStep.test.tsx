@@ -457,7 +457,7 @@ describe('the model lane completes entirely in-flow', () => {
     const h = renderStep()
     await installCard('openai')
     const key = await screen.findByLabelText('OpenAI API Key')
-    fireEvent.change(key, { target: { value: 'sk-secret' } })
+    fireEvent.change(key, { target: { value: 'fake-key-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     return h
   }
@@ -465,7 +465,7 @@ describe('the model lane completes entirely in-flow', () => {
   it('creates the provider with the schema-declared key, then Tests it', async () => {
     await walkModelLane()
     await waitFor(() => expect(testModelProvider).toHaveBeenCalledWith('openai'))
-    expect(createModelProvider).toHaveBeenCalledWith({ name: 'openai', type: 'openai', model: '', options: { api_key: 'sk-secret' } })
+    expect(createModelProvider).toHaveBeenCalledWith({ name: 'openai', type: 'openai', model: '', options: { api_key: 'fake-key-secret' } })
   })
 
   it('binds the chosen chat model as a canonical provider:model ref', async () => {
@@ -510,7 +510,7 @@ describe('the model lane completes entirely in-flow', () => {
     const { container } = await walkModelLane()
     await screen.findByRole('alert')
     // The key lives in the masked input's value only; no rendered text repeats it.
-    expect(container.textContent).not.toContain('sk-secret')
+    expect(container.textContent).not.toContain('fake-key-secret')
   })
 
   it('skips straight to binding when a provider already exists but nothing is bound', async () => {
@@ -561,7 +561,7 @@ describe('the model lane completes entirely in-flow', () => {
   it('applies a corrected key to the existing instance instead of dead-ending on 409', async () => {
     createModelProvider.mockRejectedValue(new Error(JSON.stringify({ error: "Provider 'openai' already exists" })))
     await walkModelLane()
-    await waitFor(() => expect(updateModelProvider).toHaveBeenCalledWith('openai', { options: { api_key: 'sk-secret' } }))
+    await waitFor(() => expect(updateModelProvider).toHaveBeenCalledWith('openai', { options: { api_key: 'fake-key-secret' } }))
     expect(testModelProvider).toHaveBeenCalledWith('openai')
   })
 })
@@ -604,7 +604,7 @@ describe('an emptied credential field clears the stored value, not just the form
     mockClearableKeySchema()
     await reenterConfigureProvider()
     const key = await screen.findByLabelText('OpenAI API Key')
-    fireEvent.change(key, { target: { value: 'sk-typo' } })
+    fireEvent.change(key, { target: { value: 'fake-key-typo' } })
     fireEvent.change(key, { target: { value: '' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     await waitFor(() => expect(updateModelProvider).toHaveBeenCalledWith('openai', { options: { api_key: null } }))
@@ -625,9 +625,9 @@ describe('an emptied credential field clears the stored value, not just the form
   it('still sends a real typed value normally, not a clear', async () => {
     mockClearableKeySchema()
     await reenterConfigureProvider()
-    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-rotated' } })
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-rotated' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
-    await waitFor(() => expect(updateModelProvider).toHaveBeenCalledWith('openai', { options: { api_key: 'sk-rotated' } }))
+    await waitFor(() => expect(updateModelProvider).toHaveBeenCalledWith('openai', { options: { api_key: 'fake-key-rotated' } }))
   })
 })
 
@@ -674,7 +674,7 @@ describe('skipping every optional lane still reaches the next step', () => {
     expect(onDone, 'the required rail is not yet satisfied').not.toHaveBeenCalled()
 
     await installCard('openai')
-    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
 
@@ -1112,7 +1112,7 @@ describe('the model lane reads ready only after a build check', () => {
     onboardingModelCheck.mockReturnValue(new Promise((r) => { release = r }))
     const { onDone } = renderStep()
     await installCard('openai')
-    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
 
@@ -1138,7 +1138,7 @@ describe('the model lane reads ready only after a build check', () => {
     }))
     const { onDone } = renderStep()
     await installCard('openai')
-    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
     expect(await screen.findByText(/has no secret in the credential store/)).toBeTruthy()
@@ -1356,7 +1356,7 @@ describe('an empty discovery result is disambiguated, not asserted', () => {
     testModelProvider.mockResolvedValue(probe as never)
     const h = renderStep()
     await installCard('openai')
-    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     await waitFor(() => expect(chatModels).toHaveBeenCalled())
     return h
@@ -1406,7 +1406,7 @@ describe('an untested connection is not reported as a passed test', () => {
     testModelProvider.mockResolvedValue({ ok: true, status: 'no_probe', message: 'No connectivity probe available for this provider type' })
     renderStep()
     await installCard('openai')
-    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     // A function matcher, because the provider name is its own text node: `{provider} has no…`
     // renders two children and a string matcher spans neither.
@@ -1421,7 +1421,7 @@ describe('an untested connection is not reported as a passed test', () => {
     // resolves — and the failure surfaces far from this screen.
     renderStep()
     await installCard('openai')
-    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
     await waitFor(() => expect(createModelProvider).toHaveBeenCalled())
     const [body] = createModelProvider.mock.calls[0]

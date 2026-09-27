@@ -321,6 +321,16 @@ def config_path() -> Path:
 _MEMORY_ROOT_DIR_NAME = "workspace"
 
 
+def memory_root(home: Path | None = None) -> Path:
+    """The folder every memory tree is written under — ``<home>/workspace`` — WITHOUT creating it.
+
+    *home* is the active home when none is named. Not :func:`workspace_root`, which is where new
+    sessions start and which the owner may point anywhere (``PERSONALCLAW_WORKSPACE``, or the
+    folder ``personalclaw setup`` saves): memory stays in the home whichever folder that is.
+    """
+    return (Path(home) if home is not None else config_dir()) / _MEMORY_ROOT_DIR_NAME
+
+
 def _slug_cwd(cwd: str) -> str:
     """Turn an absolute working-directory path into a stable, fs-safe slug.
 
@@ -346,7 +356,7 @@ def memory_dir_for_cwd(cwd: str | None = None) -> Path:
     An empty/unset cwd maps to a shared ``_default`` partition. This is the
     fallback store used when an agent has no explicit ``memory_store`` provider.
     """
-    root = config_dir() / _MEMORY_ROOT_DIR_NAME
+    root = memory_root()
     if not cwd:
         return root / "_ext" / "_default"
     return root / "_ext" / _slug_cwd(cwd)
@@ -622,19 +632,21 @@ class AgentConfig:
         ),
     )
     #: Which chat channel asks you to approve a tool call ("Send approvals to") when the chat
-    #: asking did not start on a channel: a chat that did is asked there first, since the person
-    #: asking is there. Empty asks the first connected channel that knows you, in name order,
-    #: which is all there was before an owner with several channels paired could choose. A
-    #: channel's name asks only there: when it cannot reach you the approval waits in
+    #: asking did not start on a channel: a chat that did is always asked there, since the person
+    #: asking is there. It asks when the Approval needed rule delivers to Channel DM, and when a
+    #: subagent asks to start. Empty asks the first connected channel that knows you, in name
+    #: order, which is all there was before an owner with several channels paired could choose.
+    #: A channel's name asks only there: when it cannot reach you the approval waits in
     #: PersonalClaw, and no other channel is asked.
     approval_channel: str = field(
         default="",
         metadata=_meta(
             "Send Approvals To",
-            "Where a tool approval asks you when its chat did not start on a channel (a chat in "
-            "PersonalClaw, an unattended run, a trigger), by the channel's name (telegram, "
-            "discord, email, slack). A chat that started on a channel is asked there first. "
-            "Empty asks the first connected channel that knows you, in name order. A named "
+            "Where a tool approval asks you on a chat channel when its chat did not start on one "
+            "(a chat in PersonalClaw, an unattended run, a trigger), by the channel's name "
+            "(telegram, discord, email, slack): when Approval needed delivers to Channel DM, and "
+            "when a subagent asks to start. A chat that started on a channel is always asked "
+            "there. Empty asks the first connected channel that knows you, in name order. A named "
             "channel asks only there; when it cannot reach you, the approval waits in "
             "PersonalClaw.",
         ),
@@ -2716,9 +2728,15 @@ class InboxConfig:
         default="",
         metadata=_meta("User ID", "Your user ID on the message source (set during setup)."),
     )
+    #: Handed to every source's ``poll``; a source that reads it says so (``watches_channels``),
+    #: and Settings → Inbox shows the list while one is polled.
     watched_channels: list[str] = field(
         default_factory=list,
-        metadata=_meta("Watched Channels", "Channel IDs to monitor."),
+        metadata=_meta(
+            "Channels to Read",
+            "The channels an installed chat app reads into your Inbox, each by its id. A "
+            "channel's first read starts after its newest message.",
+        ),
     )
     poll_interval_seconds: int = field(
         default=60,
@@ -4778,6 +4796,12 @@ class AppConfig:
                 mcp_elicitation_servers=[
                     s.strip()
                     for s in (security_data.get("mcp_elicitation_servers", []) or [])
+                    if isinstance(s, str) and s.strip()
+                ],
+                # The same kind of per-server ALLOWLIST, filtered the same fail-closed way.
+                mcp_read_only_servers=[
+                    s.strip()
+                    for s in (security_data.get("mcp_read_only_servers", []) or [])
                     if isinstance(s, str) and s.strip()
                 ],
                 # An allowlist too, filtered the same fail-closed way.

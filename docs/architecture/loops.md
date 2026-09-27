@@ -103,9 +103,15 @@ The loop surfaces do not care which home a loop has:
   dispatched stage whose subagent this process does not know
   (`stage_settlement.requeue_orphaned_stages`) — without both, a run past its first iteration
   failed "run deadlocked" after a restart.
-- **Ending.** A run with a `loop_kind` announces its end as a loops-table loop does
+- **Ending.** A loop's own exit test is asked before its cycle budget
+  (`workflows/tick.py:loop_should_continue`), and the budget stops it only when it would otherwise
+  go on: on the cycle the budget ends on, a judge stage that accepted the work is the loop's done
+  (`workflows/loop_iteration.py:advance_loop`). A loop that genuinely runs out escalates with a
+  sentence naming the budget ("It used its budget of 6 cycles, and the judge did not accept the
+  last one."). A run with a `loop_kind` announces its end as a loops-table loop does
   (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification, and
-  a "Loop needs a decision" inbox item when it escalates; a cancel says nothing.
+  an inbox item when it escalates, titled "Loop stopped at its budget" or "Loop stopped before it
+  finished"; a cancel says nothing.
 
 For a loops-table loop, pause, stop and delete also stop the worker's turn IN FLIGHT
 (`manager.halt_worker_turns`) — disarming the nudge loop only stops the NEXT cycle — and the cycle

@@ -168,7 +168,9 @@ def _built(name: str) -> list:
 
 @pytest.mark.asyncio
 async def test_saving_a_channel_setting_rebuilds_its_transport_and_moves_its_inbound(tmp_path):
-    manifest = _install(tmp_path, "probe-channel", "channel", "create_channel", token="xoxb-old")
+    manifest = _install(
+        tmp_path, "probe-channel", "channel", "create_channel", token="fake-bot-token-old"
+    )
     async with _gateway(tmp_path) as (client, registry):
         registry.register(manifest, enabled=True)
         old = channel_transports.get_transport("probe")
@@ -176,12 +178,14 @@ async def test_saving_a_channel_setting_rebuilds_its_transport_and_moves_its_inb
         await channel_transports.bind_inbound(services)  # what the gateway does at boot
         assert await _eventually(lambda: old.inbound == [("start", services)])
 
-        resp = await _save(client, "PUT", "/api/apps/probe-channel/config", {"token": "xoxb-saved"})
+        resp = await _save(
+            client, "PUT", "/api/apps/probe-channel/config", {"token": "fake-bot-token-saved"}
+        )
         assert resp.status == 200, await resp.text()
 
         new = channel_transports.get_transport("probe")
         assert new is not old, "the saved setting reached no live transport"
-        assert new.config["token"] == "xoxb-saved"
+        assert new.config["token"] == "fake-bot-token-saved"
         assert old.inbound[-1] == ("stop", None), "the old receiver was left running"
         assert await _eventually(
             lambda: new.inbound == [("start", services)]
@@ -195,10 +199,12 @@ async def test_saving_any_apps_setting_rebuilds_its_provider(tmp_path):
     async with _gateway(tmp_path) as (client, registry):
         registry.register(manifest, enabled=True)
         before = registry.get("probe-tasks").provider_instance
-        resp = await _save(client, "PUT", "/api/apps/probe-tasks/config", {"token": "sk-saved"})
+        resp = await _save(
+            client, "PUT", "/api/apps/probe-tasks/config", {"token": "fake-key-saved"}
+        )
         assert resp.status == 200, await resp.text()
         after = registry.get("probe-tasks").provider_instance
-        assert after is not before and after.config["token"] == "sk-saved"
+        assert after is not before and after.config["token"] == "fake-key-saved"
 
 
 @pytest.mark.asyncio

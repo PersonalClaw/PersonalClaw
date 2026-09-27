@@ -287,7 +287,7 @@ def surface_loop(
             f"{failed} of {attempted} iterations failed instead of finishing their work"
             + (f", the first with: {first_error}" if first_error else "")
             + f". The loop then stopped on `{reason}`"
-            + (f" ({detail})" if detail else "")
+            + (f" ({detail.rstrip('.')})" if detail else "")
             + "."
         )
         reason = "iterations_failed"

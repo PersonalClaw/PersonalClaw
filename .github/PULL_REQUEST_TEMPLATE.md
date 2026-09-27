@@ -34,8 +34,9 @@ R / B / S per the lifecycle mental model (see CONTRIBUTING.md#breaking-changes):
 The migration-backed gate/migration regime is deliberately deferred until the
 architecture stops moving, so there is no gate/migration machinery to use yet.
 - Maintainer, on a roadmap task: class-B/S ships as a clean break under the
-  pre-1.0 banner — say so here, add a CHANGELOG entry, advise `personalclaw
-  snapshot` in release notes.
+  pre-1.0 banner — say so here, add a one-line CHANGELOG headline, and put the
+  upgrade step (`personalclaw snapshot`, a renamed field) in the upgrade docs
+  (CONTRIBUTING.md#changelog).
 - Contributor: aim for class R. If your change is B/S, describe the break here
   rather than building compatibility shims or migration helpers — the maintainer
   decides whether to take it, reshape it additively, or schedule it. See

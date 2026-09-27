@@ -43,10 +43,10 @@ SHELL = {
 }
 #: Secrets the same shell exports. None may reach a service file.
 SECRETS = {
-    "AWS_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
+    "AWS_ACCESS_KEY_ID": "fake-aws-key-id-1",
     "AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     "AWS_SESSION_TOKEN": "IQoJb3JpZ2luX2VjEXAMPLESESSIONTOKEN0123456789",
-    "GITHUB_TOKEN": "ghp_exampleExampleExampleExample0123456789",
+    "GITHUB_TOKEN": "fake-github-token-1",
 }
 
 

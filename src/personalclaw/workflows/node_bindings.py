@@ -88,8 +88,45 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
         has_previous=_previous_output(ctl, item.path) is not None,
         seen_filter=seen.unseen if seen else None,
         brief=_session_brief(ctl),
-        secret_resolver=_secret_resolver,
+        secret_resolver=(
+            _reference_kept if _config_reaches_a_model(ctl, item.node) else _secret_resolver
+        ),
     )
+
+
+#: Node kinds whose bound config is the text of a model call: a stage's agent task, an infer
+#: prompt, a visualize hint.
+_MODEL_FACING_KINDS = frozenset({NodeKind.STAGE, NodeKind.INFER, NodeKind.VISUALIZE})
+
+
+def _config_reaches_a_model(ctl: RunController, node: Node) -> bool:
+    """Whether *node*'s bound config becomes text a model is handed: a model-calling kind, or an
+    action whose provider's action IS a model turn (``hands_config_to_a_model``), looked up the
+    way ``engine.dispatch_action`` will look it up."""
+    if node.kind in _MODEL_FACING_KINDS:
+        return True
+    if node.kind != NodeKind.ACTION:
+        return False
+    getter = ctl.services.get_provider
+    if getter is None:
+        from personalclaw.action_providers.registry import (
+            _ensure_default_providers_registered,
+            get_action_provider,
+        )
+
+        _ensure_default_providers_registered()
+        getter = get_action_provider
+    provider = getter(str((node.config or {}).get("provider", "") or ""))
+    return bool(getattr(provider, "hands_config_to_a_model", False))
+
+
+def _reference_kept(key: str) -> str:
+    """A ``{{secret:KEY}}`` in text a model will be handed, left as the name.
+
+    Filled in there, the value would be in the model's context. Left as the name, the agent the
+    text reaches fills it when one of its tools runs (the ``bash`` tool does), so a stage can still
+    use the credential and never see it."""
+    return "{{secret:" + key + "}}"
 
 
 def node_artifacts(ctl: RunController) -> dict[str, str] | None:

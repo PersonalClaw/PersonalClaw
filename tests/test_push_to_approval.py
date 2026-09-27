@@ -45,6 +45,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw import notification_kinds, notification_rules, push
+from personalclaw.approval_answer import YOU
 from personalclaw.config.loader import config_dir
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -102,6 +103,9 @@ def _subscribe_one(device_id: str = "phone-1") -> tuple[str, bytes]:
             "endpoint": "https://push.example/send/abc123",
             "keys": {"p256dh": push._b64url(ua_public), "auth": push._b64url(auth_secret)},
         },
+        # On no sign-in: a test gateway with nobody signed in, so nothing ends it but this test.
+        session="",
+        until=0.0,
     )
     return push._b64url(auth_secret), ua_private.private_numbers().private_value.to_bytes(32, "big")
 
@@ -334,7 +338,7 @@ def test_a_subscription_needs_an_https_endpoint_and_both_keys(home: Path) -> Non
         {"endpoint": "https://push.example/x"},
     ):
         with pytest.raises(ValueError):
-            push.subscribe("phone-1", bad)
+            push.subscribe("phone-1", bad, session="", until=0.0)
     assert push.load_subscriptions() == {}
 
 
@@ -350,6 +354,8 @@ def test_resubscribing_replaces_the_row_and_the_file_is_owner_only(home: Path) -
             "endpoint": "https://push.example/send/SECOND",
             "keys": {"p256dh": "aaa", "auth": "bbb"},
         },
+        session="",
+        until=0.0,
     )
     rows = push.load_subscriptions()
     assert list(rows) == ["phone-1"]
@@ -373,9 +379,12 @@ def test_only_the_three_sender_fields_are_stored(home: Path) -> None:
             "expirationTime": 123,
             "keys": {"p256dh": "aaa", "auth": "bbb", "future": "field"},
         },
+        session="",
+        until=0.0,
     )
     row = push.load_subscriptions()["phone-1"]
-    assert set(row) == {"endpoint", "keys", "created_at"}
+    # The three a sender needs, and the sign-in the device registered it on.
+    assert set(row) == {"endpoint", "keys", "created_at", "session", "until"}
     assert set(row["keys"]) == {"p256dh", "auth"}
 
 
@@ -699,7 +708,7 @@ async def test_the_whole_push_to_approval_chain_advances_a_paused_run(
     assert listed[0]["tool"] == "Bash"
 
     # 5. approve → the paused run proceeds
-    assert state.resolve_approval(approval_id, True) is True
+    assert state.resolve_approval(approval_id, True, by=YOU) is True
     assert await asyncio.wait_for(pending, timeout=5) is True
 
 
@@ -721,7 +730,7 @@ async def test_a_rule_that_says_never_stops_the_approval_push(
     pending = asyncio.create_task(state.request_approval("appr-quiet", source="cron", tool="Bash"))
     await asyncio.sleep(0)
     assert pinged == []
-    assert state.resolve_approval("appr-quiet", False) is True
+    assert state.resolve_approval("appr-quiet", False, by=YOU) is True
     assert await asyncio.wait_for(pending, timeout=5) is False
 
 

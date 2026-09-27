@@ -18,11 +18,13 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from personalclaw import approval_answer
+from personalclaw.approval_answer import AnswerRefused, Principal
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
-from personalclaw.task_modes import read_only_command, tool_input_to_str
+from personalclaw.task_modes import read_only_command, resolve_effective_risk, tool_input_to_str
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import _ChatSession
@@ -60,16 +62,6 @@ def _mark_permission_resolved(messages: list[dict], request_id: str, decision: s
 #: set is a 400 at the route, never a silent denial.
 SESSION_APPROVAL_ACTIONS = frozenset(
     {"approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"}
-)
-
-#: Why an app may not answer an approval raised in a conversation the app itself started — the
-#: refusal ``handlers/sessions.api_approval_resolve`` gives (the chat's own approve route is the
-#: owner's outright, in ``apps/permissions.ROUTE_AUTHZ``). The relay a companion runs there
-#: carries YOUR decision; in the app's own conversation the app answering would be the app
-#: deciding its own request, past whatever made that conversation ask (the operator ceiling, or
-#: an ``agent`` grant it no longer holds).
-APP_OWN_APPROVAL_REFUSAL = (
-    "an approval raised in a conversation this app started is yours to answer, not the app's"
 )
 
 #: How a pending approval ENDS — the ``outcome`` every ``approval_resolved`` frame carries. The
@@ -124,6 +116,20 @@ def _who_asked(entry: dict[str, Any]) -> str:
     if entry.get("source") == "subagent":
         return f"A subagent of “{title}”" if title else "A subagent"
     return "A background task"
+
+
+def _background_asker(*, source: str, session: str, trigger: str) -> str:
+    """Who raised a background origin's approval, as the principal an answer is compared with
+    (``approval_answer``, rule 2): the trigger whose run asked, the workflow run whose step asked,
+    else the agent (a subagent, an MCP server's question) under its source."""
+    if trigger:
+        return approval_answer.trigger(trigger).label
+    from personalclaw.workflows.ownership import parse_owned
+
+    step = parse_owned(session)
+    if step is not None:
+        return approval_answer.run(step[0]).label
+    return approval_answer.agent(source or session).label
 
 
 def _approval_row_body(entry: dict[str, Any]) -> str:
@@ -196,12 +202,17 @@ class DashboardApprovalState:
         session: str = "",
         trigger: str = "",
         asked_on_channel: bool = False,
+        risk_level: str = "",
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
 
+        ``risk_level`` is what the tool behind the call DECLARES (``AgentEvent.risk_level``;
+        ``""`` when nothing does). The pending row carries the call's effective risk from it,
+        so the queue, its nudge and the phone describe the call from the declaration and the
+        screened command, never from the tool's name.
+
         ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
-        gateway's race for a background origin), so the ``channel_dm`` target must not ask a
-        second time.
+        gateway's race for a background origin), so no channel is asked a second time from here.
 
         ``trigger`` is the store id of the trigger whose run asked (its action's agent), or ``""``.
         It names the asker on every surface, and it is what lets the note an unanswered one leaves
@@ -249,6 +260,7 @@ class DashboardApprovalState:
             tool_purpose=tool_purpose,
             session=session,
             trigger=trigger,
+            asked_by=_background_asker(source=source, session=session, trigger=trigger),
             # #2821: the same command-screening verdict the chat card gets, from the same
             # owner, so the two surfaces that ask a human for permission cannot describe
             # one call differently.
@@ -259,7 +271,10 @@ class DashboardApprovalState:
             # more precise input — `read_only_command` is typed `object` precisely so it can
             # read a native dict's `command` key instead of re-parsing a serialized copy.
             # `None` when this is not a shell call.
-            is_read_only=read_only_command(tool, "", tool_input),
+            is_read_only=read_only_command(tool, "", tool_input, risk_level),
+            # Only from a declaration: a call that carries none (an ACP agent's own tool, an MCP
+            # server's question) has no risk anybody established, and "" says exactly that.
+            risk=resolve_effective_risk(risk_level, tool, "", tool_input) if risk_level else "",
         )
         if asked_on_channel:
             self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
@@ -339,6 +354,9 @@ class DashboardApprovalState:
             agent=agent,
             risk=risk,
             grant_agent=grant_agent,
+            asked_by=approval_answer.asker_of_chat(
+                f"{DASHBOARD_SESSION_PREFIX}{session.key}", created_by_app=session.created_by_app
+            ).label,
         )
         await self._hold_approval(entry)
 
@@ -353,6 +371,7 @@ class DashboardApprovalState:
         tool_purpose: str,
         session: str,
         is_read_only: bool | None,
+        asked_by: str,
         agent: str = "",
         risk: str = "",
         grant_agent: str = "",
@@ -364,10 +383,12 @@ class DashboardApprovalState:
         card, the out-of-context nudge, the phone queue) and the source of the Inbox row — so a
         field supplied here reaches every door, and no door can describe the call differently.
 
-        Every LLM-sourced string is redacted here, once, for both origins. ``agent``/``risk``/
+        Every LLM-sourced string is redacted here, once, for both origins. ``agent`` and
         ``grant_agent`` are known only to a chat and stay empty for a background origin: empty
-        is "not known", never "none". ``trigger`` is known only to a trigger's run, and its name is
-        read once, here, so the ask and its note name it the same way.
+        is "not known", never "none". ``risk`` is the call's effective risk, from what its tool
+        declares, when it declares one. ``trigger`` is known only to a trigger's run, and its name
+        is read once, here, so the ask and its note name it the same way. ``asked_by`` is the
+        principal that raised it, which may never answer it (``approval_answer``, rule 2).
         """
         from personalclaw.triggers.store import trigger_name
 
@@ -391,6 +412,7 @@ class DashboardApprovalState:
             "grant_agent": grant_agent,
             "trigger": trigger,
             "trigger_name": redact_field(trigger_name(trigger)) if trigger else "",
+            "asked_by": asked_by,
             "ts": time.time(),
         }
 
@@ -486,12 +508,13 @@ class DashboardApprovalState:
         if entry:
             self._record_ending(approval_id, outcome)
         self.__dict__.get("_channel_asked", set()).discard(approval_id)
-        # A prompt still open on the owner's channel is closed with how it ended, so the message
-        # there says so instead of offering buttons that answer nothing.
+        # A prompt still open on the owner's channel is closed with how it ended — one of the four
+        # outcomes, not "rejected" for all but one — so the message there says what happened
+        # instead of offering buttons that answer nothing (`ChannelDelivery.request_approval`).
         pending = self.__dict__.get("_channel_prompts", {}).pop(approval_id, None)
         future = getattr(pending, "future", None)
         if future is not None and not future.done():
-            future.set_result("approved" if outcome == "approved" else "rejected")
+            future.set_result(outcome)
         try:
             from personalclaw.inbox import resolve_attention_items
 
@@ -786,76 +809,113 @@ class DashboardApprovalState:
         card the dashboard already renders — a behaviour change to every existing user, in
         exchange for nothing the phone needs.
 
-        The same rule's ``channel_dm`` target asks the owner on their chat channel
-        (:meth:`_ask_on_a_channel`), with Approve/Deny where the channel has them.
+        A chat channel asks too (:meth:`_ask_on_a_channel`), with Approve/Deny where it has them:
+        the channel the chat started on, whatever the rule says, and the rule's ``channel_dm``
+        target adds the owner's "Send approvals to" (:meth:`_asking_channels`).
         """
         try:
             from personalclaw import notification_kinds, notification_rules, push
 
             registered = notification_kinds.kind_for_legacy(notification_kinds.APPROVAL)
             rule = notification_rules.resolve_rule(registered.source, registered.kind)
-            if rule.mode == "never":
-                return
-            if "push" in rule.targets:
+            pings = rule.mode != "never"
+            if pings and "push" in rule.targets:
                 push.deliver_async("approval", approval_id)
-            if "channel_dm" in rule.targets:
-                self._ask_on_a_channel(approval_id)
+            asking = self._asking_channels(approval_id, pings and "channel_dm" in rule.targets)
+            self._ask_on_a_channel(approval_id, asking)
         except Exception:
             self._log.debug("approval push dispatch failed", exc_info=True)
 
-    def _ask_on_a_channel(self, approval_id: str) -> None:
-        """The ``channel_dm`` target of ``approval/requested``: ask the owner on their channel.
+    def _asking_channels(self, approval_id: str, channel_dm: bool) -> list[str]:
+        """The chat channels that may ask *approval_id*, in the order they are tried.
 
-        Skipped when the caller is already asking there (``asked_on_channel``). Runs as a task on
-        the gateway's loop, so the approval is listed everywhere else first and never waits on a
-        channel."""
+        The channel the chat started on (``channel_provider_for``) asks whatever the Approval
+        needed row says. It is where the person asking is, so its prompt is that chat's approval
+        card, which PersonalClaw shows for a chat of its own whatever the rule says too; waiting
+        for a ``channel_dm`` target there left a chat started on Telegram asking nobody on
+        Telegram. The rule's ``channel_dm`` target (*channel_dm*, which ``never`` turns off)
+        adds the rest of ``channel_delivery.approval_providers``: "Send approvals to", for an
+        approval with no channel origin and after an origin that cannot ask. Without it no other
+        channel stands in, and the approval waits in PersonalClaw, where every approval is listed.
+        """
+        from personalclaw import channel_delivery
+
+        entry = self._pending_approvals.get(approval_id) or {}
+        session = str(entry.get("session") or "")
+        origin = self.channel_provider_for(session) if session else ""
+        if not channel_dm:
+            return [origin] if origin and channel_delivery.delivery_for(origin) is not None else []
+        providers = channel_delivery.approval_providers(origin)
+        chosen = channel_delivery.approval_channel() if not providers else ""
+        if chosen:
+            self._log.info(
+                "approval %s: approvals go to %s, which is not connected, so it waits in "
+                "PersonalClaw",
+                approval_id,
+                chosen,
+            )
+        return providers
+
+    def _ask_on_a_channel(self, approval_id: str, providers: list[str]) -> None:
+        """Ask the owner on the first of *providers* that can (:meth:`_approval_on_a_channel`).
+
+        Skipped when the caller is already asking there (``asked_on_channel``), and when no channel
+        may ask. Runs as a task on the gateway's loop, so the approval is listed everywhere else
+        first and never waits on a channel."""
         entry = self._pending_approvals.get(approval_id)
-        if not entry or approval_id in self.__dict__.get("_channel_asked", set()):
+        if not entry or not providers or approval_id in self.__dict__.get("_channel_asked", set()):
             return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             self._log.debug("approval %s: no loop here to ask on a channel from", approval_id)
             return
-        task = loop.create_task(self._approval_on_a_channel(approval_id, dict(entry)))
+        task = loop.create_task(self._approval_on_a_channel(approval_id, dict(entry), providers))
         tasks = getattr(self, "_background_tasks", None)
         if isinstance(tasks, set):
             tasks.add(task)
             task.add_done_callback(tasks.discard)
 
-    async def _approval_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
-        """Ask on the first channel that can: Approve/Deny where it has them, else a link.
+    async def _approval_on_a_channel(
+        self, approval_id: str, entry: dict[str, Any], providers: list[str]
+    ) -> None:
+        """Ask on the first of *providers* that can: Approve/Deny where it has them, else a link.
 
-        The channels are ``channel_delivery.approval_providers(origin)``: the channel the chat
-        started on first (``channel_provider_for``), asked in that chat, since the person asking
-        is there; then the owner's "Send approvals to" channel alone when they chose one, else
-        every connected channel in name order, as ``channel_delivery.reach_owner`` tries them.
-        The first one with an owner id and a ``request_approval`` prompt asks, and a press there
-        answers this approval the way the dashboard's buttons do (:meth:`resolve_approval`). An
-        answer given anywhere else closes that prompt (:meth:`withdraw_approval`). A prompt that
-        runs out on the channel decides nothing: this approval keeps its own window. When no
-        channel can prompt, the owner gets a message with the link to answer it instead.
+        *providers* is :meth:`_asking_channels`: the channel the chat started on first, asked in
+        that chat, since the person asking is there; then, with the ``channel_dm`` target, the
+        owner's "Send approvals to" channel alone when they chose one, else every connected
+        channel in name order, as ``channel_delivery.reach_owner`` tries them. The first one with
+        an owner id and a ``request_approval`` prompt asks, and a press there answers this
+        approval the way the dashboard's buttons do (:meth:`resolve_approval`). An answer given
+        anywhere else, and the approval expiring or being cancelled, close that prompt with how it
+        ended (:meth:`withdraw_approval`). When none of them can prompt, the owner gets a message
+        with the link to answer it instead, on the same channels.
 
         The channel is handed a short token, not the approval id: a chat's id carries its session
-        key, and a button's data has a size cap on some channels."""
+        key, and a button's data has a size cap on some channels. It is handed the entry's brief
+        too (``approval_brief.entry_approval_brief``), which is what its prompt shows: the tool,
+        its arguments and purpose as this entry holds them for the dashboard's card, and what the
+        call can touch."""
         import secrets
         from types import SimpleNamespace
 
         from personalclaw import channel_delivery
+        from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY, entry_approval_brief
         from personalclaw.config.credentials import owner_id_for
 
+        brief = entry_approval_brief(entry)
         event = SimpleNamespace(
             request_id=secrets.token_hex(6),
             title=str(entry.get("tool") or ""),
             tool_input=str(entry.get("tool_input") or ""),
             tool_purpose=str(entry.get("tool_purpose") or ""),
             risk_level=str(entry.get("risk") or ""),
-            tool_meta={},
+            tool_meta={APPROVAL_BRIEF_META_KEY: brief} if brief else {},
         )
         prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
         session = str(entry.get("session") or "")
         origin = self.channel_provider_for(session) if session else ""
-        for provider in channel_delivery.approval_providers(origin):
+        for provider in providers:
             delivery = channel_delivery.delivery_for(provider)
             ask = getattr(delivery, "request_approval", None)
             if delivery is None or ask is None or not owner_id_for(provider):
@@ -893,17 +953,24 @@ class DashboardApprovalState:
             future = getattr(seen.get("pending"), "future", None)
             pressed = future is not None and future.done() and not future.cancelled()
             if pressed and approval_id in self._pending_approvals:
-                self.resolve_approval(approval_id, bool(approved))
+                # The channel's app checked the press is its paired owner's (the contract of
+                # `ChannelDelivery.request_approval`), so this is you, on that channel.
+                self.resolve_approval(
+                    approval_id, bool(approved), by=approval_answer.on_channel(provider)
+                )
             return
-        await self._approval_link_on_a_channel(approval_id, entry)
+        await self._approval_link_on_a_channel(approval_id, entry, providers)
 
-    async def _approval_link_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
+    async def _approval_link_on_a_channel(
+        self, approval_id: str, entry: dict[str, Any], providers: list[str]
+    ) -> None:
         """Tell the owner on their channel that an approval is waiting, with where to answer it.
 
-        Tried in :func:`channel_delivery.approval_providers`'s order — the chat's own channel
-        first, then "Send approvals to" — so the link never lands on a channel the owner did not
-        choose, and a chat that started on a channel hears about its approval there."""
-        from personalclaw.channel_delivery import approval_channel, approval_providers, reach_owner
+        Tried on the channels that could not prompt, in the same order (:meth:`_asking_channels`):
+        the chat's own channel first, then "Send approvals to" — so the link never lands on a
+        channel the owner did not choose, and a chat that started on a channel hears about its
+        approval there."""
+        from personalclaw.channel_delivery import reach_owner
         from personalclaw.dashboard.channel_messages import dashboard_link
 
         what = str(entry.get("tool") or "a tool call")
@@ -911,30 +978,36 @@ class DashboardApprovalState:
         link = dashboard_link(f"#/companion?approval={approval_id}")
         text = f"PersonalClaw is waiting for your approval: {what}" + (f", to {why}" if why else "")
         text += f". Answer it here: {link}" if link else ". Answer it in PersonalClaw."
-        chosen = approval_channel()
-        session = str(entry.get("session") or "")
-        order = approval_providers(self.channel_provider_for(session) if session else "")
         outcome = None
-        for provider in order:
+        for provider in providers:
             outcome = await reach_owner(
                 lambda delivery, dm: delivery.deliver_text(dm, text), only=provider
             )
             if outcome.delivered:
                 return
-        if not order and chosen:
-            self._log.info(
-                "approval %s: approvals go to %s, which is not connected, so it waits in "
-                "PersonalClaw",
-                approval_id,
-                chosen,
-            )
-        elif outcome is not None and not outcome.no_channel:
+        if outcome is not None and not outcome.no_channel:
             self._log.warning(
                 "approval %s: no channel reached the owner: %s", approval_id, outcome.sentence()
             )
 
-    def resolve_approval(self, approval_id: str, approved: bool) -> bool:
+    def answer_refusal(self, approval_id: str, by: Principal) -> str:
+        """Why *by* may not answer the pending approval *approval_id*, audited; ``""`` if it may.
+
+        ``approval_answer``'s rule for this registry: only you answer, and never the principal the
+        approval recorded as asking it (``asked_by``). Asked by every door before it delivers an
+        answer, and again by :meth:`resolve_approval` and :meth:`decide_session_approval`
+        themselves, so a door that forgot to ask still answers nothing.
+        """
+        entry = self._pending_approvals.get(approval_id) or {}
+        return approval_answer.check(
+            by, what=f"approval:{approval_id}", asked_by=str(entry.get("asked_by") or "")
+        )
+
+    def resolve_approval(self, approval_id: str, approved: bool, *, by: Principal) -> bool:
         """Answer a pending approval by its REGISTRY id, from any surface. False if not pending.
+
+        *by* is who is answering. Only you answer, and never the party that asked
+        (:meth:`answer_refusal`): anyone else is refused and audited, and this returns False.
 
         A background origin's future lives here and receives the ``bool`` its gateway waiter
         converts. A chat-held approval is answered by :meth:`decide_session_approval` — the very
@@ -945,6 +1018,8 @@ class DashboardApprovalState:
         An approval whose owner has ended is not answered at all: :meth:`refuse_ended_owner`
         cancels it and this returns False, so no door can deliver an Approve to work that is over.
         """
+        if self.answer_refusal(approval_id, by):
+            return False
         if self.refuse_ended_owner(approval_id):
             return False
         fut = self._approval_futures.get(approval_id)
@@ -957,7 +1032,8 @@ class DashboardApprovalState:
                     tool_name="approval_decision",
                     outcome="approved" if approved else "rejected",
                     request_id=approval_id,
-                    source="dashboard",
+                    # Who answered: you, or you on a named channel.
+                    source=by.label,
                 )
             except Exception:
                 self._log.warning("SEL audit failed for approval resolution", exc_info=True)
@@ -970,18 +1046,13 @@ class DashboardApprovalState:
         held = session._approval_futures.get(request_id)
         if held is None or held.done():
             return False
-        self.decide_session_approval(session, request_id, "approved" if approved else "rejected")
+        self.decide_session_approval(
+            session, request_id, "approved" if approved else "rejected", by=by
+        )
         return True
 
-    def approval_conversation_app(self, approval_id: str) -> str:
-        """The app that started the conversation holding the pending approval *approval_id* (by its
-        REGISTRY id), or ``""`` — for one of your chats, and for an approval no chat holds."""
-        entry = self._pending_approvals.get(approval_id)
-        session = self._sessions.get(str(entry.get("session") or "")) if entry else None
-        return session.created_by_app if session is not None else ""
-
     def decide_session_approval(
-        self, session: "_ChatSession", request_id: str, action: str
+        self, session: "_ChatSession", request_id: str, action: str, *, by: Principal
     ) -> dict[str, object] | None:
         """Answer the approval a chat is waiting on — the ONE decision path, whichever door.
 
@@ -998,7 +1069,13 @@ class DashboardApprovalState:
         grant actually did, or None for every other verb: a scope that grants nothing has no
         grant to describe, and an always-present object with ``persisted: false`` would read as
         a failed grant on an Allow-once (#541/#683).
+
+        *by* is who is answering, held to :meth:`answer_refusal` here as well as at the door: a
+        refused answer raises :class:`AnswerRefused` and decides nothing, whatever the door did.
         """
+        refused = self.answer_refusal(chat_approval_id(session.key, request_id), by)
+        if refused:
+            raise AnswerRefused(refused)
         name = session.key
         original_action = action
         grant: dict[str, object] | None = None

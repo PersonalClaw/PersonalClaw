@@ -41,11 +41,12 @@ pytestmark = pytest.mark.skipif(not sh.git_available(), reason="git is required 
 def _isolate(tmp_path, monkeypatch):
     """Both rails: an isolated home AND an isolated workspace."""
     home = tmp_path / "home"
-    ws = tmp_path / "ws"
+    ws = home / "workspace"  # the home's memory folder, where every memory tree is written
     home.mkdir(parents=True, exist_ok=True)
     ws.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
-    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(ws))
+    # Where new sessions start — deliberately NOT the memory folder, which never follows it.
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "sessions"))
     # A leftover subscriber from another test would make a "the seam fires" rail
     # pass for the wrong reason. Clear the debouncer SINGLETON before the hooks, not
     # just the hooks: `install()` early-returns a non-None `_installed` without
@@ -72,11 +73,12 @@ def home(tmp_path) -> Path:
 
 @pytest.fixture
 def ws(tmp_path) -> Path:
-    return tmp_path / "ws"
+    """The home's memory folder (``loader.memory_root``) — the memory root's work tree."""
+    return tmp_path / "home" / "workspace"
 
 
 def _root(home: Path, ws: Path, root_id: str) -> sh.HistoryRoot:
-    root = next(r for r in sh.roots(home=home, workspace=ws) if r.id == root_id)
+    root = next(r for r in sh.roots(home=home) if r.id == root_id)
     sh.ensure_repo(root, home=home)
     return root
 
@@ -154,7 +156,7 @@ class TestPostWriteSeam:
 
 class TestRoots:
     def test_every_done_when_root_is_covered(self, home, ws):
-        ids = {r.id for r in sh.roots(home=home, workspace=ws)}
+        ids = {r.id for r in sh.roots(home=home)}
         assert ids == {"config", "skills", "prompts", "projects", "memory"}
 
     @pytest.mark.parametrize(
@@ -256,11 +258,11 @@ class TestSecrets:
         `ls-files` would report it clean.
         """
         (home / "config.json").write_text("{}")
-        (home / ".env").write_text("OPENAI_API_KEY=sk-do-not-commit")
+        (home / ".env").write_text("OPENAI_API_KEY=fake-key-do-not-commit")
         (home / "security").mkdir()
         (home / "security" / "credentials.json").write_text("SUPER-SECRET")
         (home / "skills").mkdir()
-        (home / "skills" / ".env").write_text("ANTHROPIC_API_KEY=sk-also-secret")
+        (home / "skills" / ".env").write_text("ANTHROPIC_API_KEY=fake-key-also-secret")
 
         cfg = _root(home, ws, "config")
         skills = _root(home, ws, "skills")
@@ -285,8 +287,8 @@ class TestSecrets:
                 if kind != "blob":
                     continue
                 body = _git_out(root, home, "cat-file", "-p", sha)
-                assert "sk-do-not-commit" not in body
-                assert "sk-also-secret" not in body
+                assert "fake-key-do-not-commit" not in body
+                assert "fake-key-also-secret" not in body
                 assert "SUPER-SECRET" not in body
 
     def test_a_secret_survives_a_rollback_with_unchanged_bytes(self, home, ws):
@@ -296,7 +298,7 @@ class TestSecrets:
         `git clean -fdx` to make the tree "match" the target commit.
         """
         secret = home / ".env"
-        secret.write_text("OPENAI_API_KEY=sk-keep-me")
+        secret.write_text("OPENAI_API_KEY=fake-key-keep-me")
         before = secret.read_bytes()
         (home / "config.json").write_text('{"v": 1}')
         root = _root(home, ws, "config")
@@ -660,7 +662,7 @@ class TestHourlyMemoryCommit:
         assert [r["root"] for r in results] == ["memory"], "only memory roots run hourly"
         assert results[0]["changed"] is True
 
-        root = next(r for r in sh.roots(home=home, workspace=ws) if r.id == "memory")
+        root = next(r for r in sh.roots(home=home) if r.id == "memory")
         assert sh.commit_count(root, home=home) == 1  # vacuity floor
         entry = sh.timeline(root, home=home)[0]
         assert entry["surface"] == sh.SURFACE_SCHEDULED and entry["unattended"] is True
@@ -673,7 +675,7 @@ class TestHourlyMemoryCommit:
 
         result = service.run_history_commit()
         assert result.ok and not result.skipped, result.detail
-        root = next(r for r in sh.roots(home=home, workspace=ws) if r.id == "memory")
+        root = next(r for r in sh.roots(home=home) if r.id == "memory")
         assert sh.commit_count(root, home=home) == 1
 
         class Off:
@@ -701,7 +703,7 @@ class TestHourlyMemoryCommit:
         assert [r.job for r in results] == ["history_commit"]
         assert results[0].ok, results[0].detail
         assert float(service.load_state().get("last_history", 0)) == pytest.approx(now)
-        root = next(r for r in sh.roots(home=home, workspace=ws) if r.id == "memory")
+        root = next(r for r in sh.roots(home=home) if r.id == "memory")
         assert sh.commit_count(root, home=home) == 1  # vacuity floor
 
 

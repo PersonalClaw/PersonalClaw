@@ -868,8 +868,16 @@ _CREDENTIAL_PATTERNS = re.compile(
     # Generic `key = value` credential assignment. Keyed on the NAME so the value's shape does
     # not have to be guessed — an unknown provider's key format is exactly what a shape-based
     # pattern misses.
+    #
+    # A value that is already one of this module's masks is not a credential, so the pattern
+    # does not take it for one (`(?!\[REDACTED:)`). Without that, a second pass over
+    # `password: [REDACTED: credential]` read `[REDACTED:` as the password and wrote
+    # `[REDACTED: credential] credential]`, losing the field name; and an editor's save that
+    # restored masks from such a view put the stored value back without its label. It is the
+    # only alternative here that could match a mask, so a second pass of `redact_credentials`,
+    # or of `redact_for_display` and `redact_field` built on it, changes nothing.
     r"|(?i:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret"
-    r"|password|passwd|private[_-]?key)\s*[:=]\s*[^\s,;'\"]{8,}"
+    r"|password|passwd|private[_-]?key)\s*[:=]\s*(?!\[REDACTED:)[^\s,;'\"]{8,}"
     # `Authorization: Bearer <token>` / a bare bearer token.
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/-]{16,}=*"
     r")",
@@ -1010,9 +1018,9 @@ def _scheme_run_start(text: str, sep: int) -> int:
 
 #: What replaces the userinfo. Contains a space, which the `userinfo` class above excludes — so
 #: re-running the pre-pass over its own output cannot match again. Idempotence by construction
-#: rather than by a guard someone could delete: `redact_credentials` is NOT idempotent in general
-#: (a composed `key: [REDACTED: …]` line garbles and loses the field name), so a new pass must not
-#: add another way for a second application to corrupt text.
+#: rather than by a guard someone could delete: `redact_credentials` is idempotent only because no
+#: pass in it can match a mask (the assignment rule's `(?!\[REDACTED:)` is the one place that has
+#: to say so), and a new pass must not add a way for a second application to corrupt text.
 _URL_USERINFO_TAG = "[REDACTED: url credential]"
 
 
@@ -1190,6 +1198,50 @@ def redact_for_display(text: str) -> str:
     return masked
 
 
+def redact_for_model(text: str) -> str:
+    """The mask on every text an agent's model is handed: what a tool answers, the stored text a
+    prompt is assembled from, a spawned agent's task.
+
+    It is the display mask, deliberately. The model is shown the same ``[REDACTED: …]`` chips the
+    user's views show, so every save that puts a mask back (:func:`keep_masked_spans`,
+    :func:`masked_edit`, :func:`keep_masked_lines`) restores a value an agent echoes exactly as it
+    restores one the user's editor echoes. Idempotent, so a read that was already masked for a UI
+    passes through unchanged.
+
+    Nothing that needs a secret's value reads it back through here: a tool that needs one takes a
+    ``{{secret:KEY}}`` reference and resolves it when it runs (``triggers.secrets.resolve``).
+    """
+    return redact_for_display(text)
+
+
+#: What stands in for a value a tool handed to the code it ran, in that code's output. The same
+#: text as a shape-found credential's mask, so the inverses and the model read it the same way.
+_KNOWN_VALUE_MASK = "[REDACTED: credential]"
+
+#: Shorter values are not masked by value: `1`, `true` or a region name would mask every
+#: occurrence of an ordinary word. A secret that short is not one a mask can protect.
+_KNOWN_VALUE_MIN_LEN = 8
+
+
+def redact_known_values(text: str, values: Iterable[str]) -> str:
+    """*text* with every occurrence of each of *values* replaced by a credential mask.
+
+    For the tool that itself handed those values out: a command it ran with a resolved
+    ``{{secret:KEY}}`` or a credential in its environment. The shape-based mask cannot see a
+    password like ``correct-horse-battery``, and this tool knows it exactly. Longest first, so a
+    value that contains another is replaced whole.
+    """
+    wanted = sorted(
+        {v for v in values if isinstance(v, str) and len(v) >= _KNOWN_VALUE_MIN_LEN},
+        key=len,
+        reverse=True,
+    )
+    if not text or not wanted:
+        return text
+    pattern = re.compile("|".join(re.escape(v) for v in wanted))
+    return pattern.sub(_KNOWN_VALUE_MASK, text)
+
+
 def redact_values_for_display(value: Any) -> Any:
     """:func:`redact_for_display` over every string in a JSON-shaped value.
 
@@ -1219,9 +1271,11 @@ def redact_field(text: str) -> str:
     ``rooms/`` is domain code and may not import the HTTP surface — an upward edge the
     structural import-direction ratchet refuses.
 
-    Distinct from :func:`redact_for_display` in pass ORDER, which is load-bearing:
-    ``redact_credentials`` is not idempotent over an already-masked line, so the two
-    compositions are not interchangeable and neither can be expressed as the other.
+    Distinct from :func:`redact_for_display` in pass ORDER, which is load-bearing: run first,
+    the exfiltration pass masks the whole of a URL whose query carries a key shape it knows (an
+    AWS key id, a Slack token, a long encoded blob), while the display order masks the key and
+    keeps the URL. The two compositions give different text, so neither can be expressed as the
+    other.
     """
     if not text:
         return ""
@@ -1318,10 +1372,159 @@ MASK_CONFLICT = (
 
 
 class MaskConflict(ValueError):
-    """A save echoed a display mask whose stored value can no longer be located."""
+    """A save echoed a display mask whose stored value can no longer be located, or could only
+    be placed by guessing. *message* is the sentence the refusal answers with."""
 
-    def __init__(self) -> None:
-        super().__init__(MASK_CONFLICT)
+    def __init__(self, message: str = MASK_CONFLICT) -> None:
+        super().__init__(message)
+
+
+#: What an agent's file write answers when it would change, move or copy a value hidden from it.
+HIDDEN_VALUE_KEPT = (
+    "A [REDACTED: …] marker stands for a value this file holds that you were not shown. It can "
+    "stay where it is, but it cannot be moved, copied or rewritten from its marker, and this "
+    "change would do that. Nothing was written. Change only the text around a marker (edit_file "
+    "does that exactly), and leave changing a hidden value to the user."
+)
+
+#: What an agent's edit answers when the text it names begins or ends part-way into a marker.
+MARKER_CUT = (
+    "old_str begins or ends inside a [REDACTED: …] marker, which stands for a value this file "
+    "holds that you were not shown. Nothing was written. Include the whole marker in old_str, or "
+    "none of it."
+)
+
+
+def mask_markers(text: str) -> list[str]:
+    """Every ``[REDACTED: …]`` marker in *text*, in order."""
+    return _MASK_RE.findall(text)
+
+
+def _mask_segments(masked: str, stored: str) -> list[tuple[int, int, int, int]] | None:
+    """Where each marker of *masked* sits and the stored span it stands for, in order:
+    ``(masked_start, masked_end, stored_start, stored_end)``. ``None`` when the walk
+    (:func:`_mask_pairs`) cannot account for the whole stored text."""
+    pairs = _mask_pairs(masked, stored)
+    if pairs is None:
+        return None
+    literals = _MASK_RE.split(masked)
+    segments: list[tuple[int, int, int, int]] = []
+    shown = kept = 0
+    for index, (mask, original) in enumerate(pairs):
+        shown += len(literals[index])
+        kept += len(literals[index])
+        segments.append((shown, shown + len(mask), kept, kept + len(original)))
+        shown += len(mask)
+        kept += len(original)
+    return segments
+
+
+def _stored_offset(segments: list[tuple[int, int, int, int]], pos: int) -> int | None:
+    """The stored offset that masked offset *pos* stands for; ``None`` when *pos* falls strictly
+    inside a marker, where no stored offset corresponds to it."""
+    shift = 0
+    for shown_start, shown_end, _kept_start, kept_end in segments:
+        if pos <= shown_start:
+            break
+        if pos < shown_end:
+            return None
+        shift = kept_end - shown_end
+    return pos + shift
+
+
+def masked_edit(stored: str, old: str, new: str, *, replace_all: bool = False) -> tuple[str, int]:
+    """*stored* with *old* replaced by *new*, where both were written against the masked view of
+    it (:func:`redact_for_display`): an agent editing a file it was shown masked.
+
+    Each occurrence is found in the MASKED text and mapped back onto the stored one, so everything
+    outside it keeps its stored bytes exactly, hidden values included. A marker in *new* is put back
+    from the hidden values inside the text it replaces, in order; dropping one drops that value.
+
+    Returns ``(text, occurrences)``, the occurrences counted in the masked text: the caller refuses
+    none, and more than one without *replace_all*, as it would any edit. Raises
+    :class:`MaskConflict` when an occurrence begins or ends inside a marker (:data:`MARKER_CUT`),
+    when *new* holds more markers of a kind than the text it replaces hides
+    (:data:`HIDDEN_VALUE_KEPT`: a hidden value cannot be copied or moved), or when the masked text
+    cannot be walked back onto the stored one.
+    """
+    shown = redact_for_display(stored)
+    count = shown.count(old) if old else 0
+    if count == 0 or (count > 1 and not replace_all):
+        return stored, count
+    times = count if replace_all else 1
+    if shown == stored:
+        return stored.replace(old, new, times), count
+    segments = _mask_segments(shown, stored)
+    if segments is None:
+        raise MaskConflict()
+    out: list[str] = []
+    copied = searched = 0
+    for _ in range(times):
+        start = shown.find(old, searched)
+        end = start + len(old)
+        kept_start, kept_end = _stored_offset(segments, start), _stored_offset(segments, end)
+        if kept_start is None or kept_end is None:
+            raise MaskConflict(MARKER_CUT)
+        hidden: dict[str, list[str]] = {}
+        for shown_start, shown_end, orig_start, orig_end in segments:
+            if start <= shown_start and shown_end <= end:
+                hidden.setdefault(shown[shown_start:shown_end], []).append(
+                    stored[orig_start:orig_end]
+                )
+
+        def _take(m: "re.Match[str]", hidden: dict[str, list[str]] = hidden) -> str:
+            queue = hidden.get(m.group(0))
+            if not queue:
+                raise MaskConflict(HIDDEN_VALUE_KEPT)
+            return queue.pop(0)
+
+        out.append(stored[copied:kept_start])
+        out.append(_MASK_RE.sub(_take, new))
+        copied, searched = kept_end, end
+    out.append(stored[copied:])
+    return "".join(out), count
+
+
+def keep_masked_lines(submitted: str, stored: str) -> str:
+    """The text a whole-file write persists when it was written against the masked view of
+    *stored* (:func:`redact_for_display`): an agent overwriting a file it was shown masked.
+
+    Aligned line by line, so a line the write keeps exactly as it was shown keeps its stored bytes,
+    hidden values included. A hidden value can only stay on its own unchanged line: a write that
+    changes, removes, moves or copies a line holding a marker raises :class:`MaskConflict`
+    (:data:`HIDDEN_VALUE_KEPT`), because which value it would mean cannot be known, and
+    :func:`masked_edit` changes the text around a marker exactly. A file with nothing hidden is
+    written as submitted.
+    """
+    shown = redact_for_display(stored)
+    if submitted == shown:
+        return stored
+    if shown == stored:
+        return submitted
+    segments = _mask_segments(shown, stored)
+    if segments is None:
+        raise MaskConflict()
+    import difflib
+
+    shown_lines = shown.splitlines(keepends=True)
+    submitted_lines = submitted.splitlines(keepends=True)
+    starts = [0]
+    for line in shown_lines:
+        starts.append(starts[-1] + len(line))
+    out: list[str] = []
+    matcher = difflib.SequenceMatcher(None, shown_lines, submitted_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            kept_start = _stored_offset(segments, starts[i1])
+            kept_end = _stored_offset(segments, starts[i2])
+            if kept_start is None or kept_end is None:
+                raise MaskConflict()
+            out.append(stored[kept_start:kept_end])
+            continue
+        if any(_MASK_RE.search(line) for line in (*shown_lines[i1:i2], *submitted_lines[j1:j2])):
+            raise MaskConflict(HIDDEN_VALUE_KEPT)
+        out.extend(submitted_lines[j1:j2])
+    return "".join(out)
 
 
 def keep_masked_spans(submitted: str, stored: str) -> str:

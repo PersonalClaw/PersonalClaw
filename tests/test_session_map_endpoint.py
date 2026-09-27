@@ -590,7 +590,7 @@ class TestSummaryLabel:
         verbatim, bypassing the scrub the preview it replaces gets for free. The redaction
         therefore has to happen at the write, and this is the test that says so.
         """
-        secret = "sk-ant-api03-" + "A" * 95
+        secret = "fake-anthropic-api03" + "A" * 95
         summary = build_turn_summary(
             request=f"deploy with {secret} please",
             reply="done",
@@ -598,7 +598,7 @@ class TestSummaryLabel:
         )
         assert summary
         assert secret not in summary
-        assert "sk-ant-api03" not in summary
+        assert "fake-anthropic-1" not in summary
 
     def test_no_user_row_means_no_turn_to_summarize(self):
         session = MagicMock()

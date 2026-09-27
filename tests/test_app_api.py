@@ -41,7 +41,11 @@ async def _client(tmp_path):
     ):
         # Fresh supervisor per test so backend processes don't leak between tests.
         backend_runtime._supervisor = backend_runtime.BackendSupervisor()
-        app = web.Application()
+        # The request boundary the dashboard runs these routes behind: it is what turns a
+        # request-shape refusal (`source` missing or not a string) into the 400 wire envelope.
+        from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+        app = web.Application(middlewares=[request_boundary_middleware()])
         register_app_routes(app)
         async with TestClient(TestServer(app)) as client:
             try:
@@ -329,18 +333,16 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
         await _consented_install(client, src)
 
         # set a real secret + a normal field
-        r = await _save_config(
-            client, "sec", {"api_key": "sk-REALSECRET-123", "endpoint": "https://x"}
-        )
+        r = await _save_config(client, "sec", {"api_key": "fake-key-1", "endpoint": "https://x"})
         assert r.status == 200
         put_body = await r.json()
         # the PUT response must NOT echo the raw secret back
-        assert put_body["config"]["api_key"] != "sk-REALSECRET-123"
+        assert put_body["config"]["api_key"] != "fake-key-1"
         assert "api_key" in put_body["_secret_set"]
 
         # GET masks the secret (raw value never leaves the backend) but keeps endpoint
         body = await (await client.get("/api/apps/sec/config")).json()
-        assert body["config"]["api_key"] != "sk-REALSECRET-123"
+        assert body["config"]["api_key"] != "fake-key-1"
         assert body["config"]["api_key"]  # a non-empty mask sentinel
         assert body["config"]["endpoint"] == "https://x"
         assert body["_secret_set"] == ["api_key"]
@@ -354,13 +356,13 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
         from personalclaw.providers.settings import ProviderSettings
 
         raw = ProviderSettings.load("sec")
-        assert raw["api_key"] == "sk-REALSECRET-123"  # NOT overwritten by the sentinel
+        assert raw["api_key"] == "fake-key-1"  # NOT overwritten by the sentinel
         assert raw["endpoint"] == "https://y"  # normal field updated
 
         # a genuinely new secret value DOES overwrite
-        r = await _save_config(client, "sec", {"api_key": "sk-NEW-456", "endpoint": "https://y"})
+        r = await _save_config(client, "sec", {"api_key": "fake-key-2", "endpoint": "https://y"})
         assert r.status == 200
-        assert ProviderSettings.load("sec")["api_key"] == "sk-NEW-456"
+        assert ProviderSettings.load("sec")["api_key"] == "fake-key-2"
 
 
 @pytest.mark.asyncio
@@ -384,14 +386,12 @@ async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
         await _consented_install(client, src)
-        r = await _save_config(
-            client, "sec", {"api_key": "sk-DETAIL-SECRET-789", "endpoint": "https://x"}
-        )
+        r = await _save_config(client, "sec", {"api_key": "fake-key-3", "endpoint": "https://x"})
         assert r.status == 200, await r.text()
 
         raw = await (await client.get("/api/apps/sec")).text()
         assert (
-            "sk-DETAIL-SECRET-789" not in raw
+            "fake-key-3" not in raw
         ), "the app detail route handed out the stored secret while /config masked it"
         body = json.loads(raw)
         assert body["config"]["api_key"] == SECRET_MASK
@@ -401,7 +401,7 @@ async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(
         # …and the stored value is untouched.
         from personalclaw.providers.settings import ProviderSettings
 
-        assert ProviderSettings.load("sec")["api_key"] == "sk-DETAIL-SECRET-789"
+        assert ProviderSettings.load("sec")["api_key"] == "fake-key-3"
 
 
 @pytest.mark.asyncio
@@ -425,7 +425,7 @@ async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path, 
     async with _client(tmp_path) as client:
         await _consented_install(client, _app_src(tmp_path, "sec", setup={"configSchema": schema}))
         save_credential("VAULT_FIXTURE_KEY", "ghp-vault-value-never-an-apps")
-        ProviderSettings.save("other-app", {"bot_token": "xoxb-other-app-value"})
+        ProviderSettings.save("other-app", {"bot_token": "fake-bot-token-other-app-value"})
         other_file = tmp_path / "apps" / "other-app" / "data" / "config.json"
         others = ref_key(json.loads(other_file.read_text(encoding="utf-8"))["bot_token"])
         config_file = tmp_path / "apps" / "sec" / "data" / "config.json"
@@ -446,13 +446,15 @@ async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path, 
                 "Store the key under Sec instead: type the key itself — not a reference — into "
                 "API Key on Sec's Configure page." in message
             ), message
-            assert "ghp-vault-value" not in text and "xoxb-other-app-value" not in text
+            assert "ghp-vault-value" not in text and "fake-bot-token-other-app-value" not in text
             assert not config_file.exists(), "a refused save reached the disk"
 
         # The supported path: type the key itself, and it is stored under this app.
-        r = await _save_config(client, "sec", {"api_key": "sk-typed-here", "endpoint": "https://x"})
+        r = await _save_config(
+            client, "sec", {"api_key": "fake-key-typed-here", "endpoint": "https://x"}
+        )
         assert r.status == 200, await r.text()
-        assert ProviderSettings.load("sec")["api_key"] == "sk-typed-here"
+        assert ProviderSettings.load("sec")["api_key"] == "fake-key-typed-here"
 
 
 @pytest.mark.asyncio
@@ -464,14 +466,16 @@ async def test_a_reference_in_a_field_the_schema_does_not_call_secret_is_masked(
     schema = {"type": "object", "properties": {"endpoint": {"type": "string"}}}
     async with _client(tmp_path) as client:
         await _consented_install(client, _app_src(tmp_path, "sec", setup={"configSchema": schema}))
-        ProviderSettings.save("sec", {"api_key": "sk-own-app-value-123"})
+        ProviderSettings.save("sec", {"api_key": "fake-key-own-app-value-123"})
         config_file = tmp_path / "apps" / "sec" / "data" / "config.json"
         ref = json.loads(config_file.read_text(encoding="utf-8"))["api_key"]
         config_file.write_text(json.dumps({"endpoint": ref}), encoding="utf-8")
 
         for route in ("/api/apps/sec/config", "/api/apps/sec"):
             raw = await (await client.get(route)).text()
-            assert "sk-own-app-value-123" not in raw, f"{route} handed out a resolved reference"
+            assert (
+                "fake-key-own-app-value-123" not in raw
+            ), f"{route} handed out a resolved reference"
             body = json.loads(raw)
             assert body["config"] == {"endpoint": SECRET_MASK}
             assert body["_secret_set"] == ["endpoint"]

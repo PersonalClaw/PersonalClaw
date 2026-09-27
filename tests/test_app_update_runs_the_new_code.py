@@ -905,7 +905,9 @@ def _app_processes() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_the_restart_it_asks_for_leaves_no_app_process_of_the_image_it_replaces(home):
+async def test_the_restart_it_asks_for_leaves_no_app_process_of_the_image_it_replaces(
+    home, monkeypatch
+):
     """A Restart re-executes the gateway in place (``os.execve``, same PID), so a process the old
     image left running stays a child of the new one — which does not supervise it (its tables
     start empty) and does not reap it at boot (only a process whose parent died counts as an
@@ -915,9 +917,14 @@ async def test_the_restart_it_asks_for_leaves_no_app_process_of_the_image_it_rep
     workers, and after three, four of each. The extra ones kept the version of their Restart, so
     an update after it stopped only the new image's processes: ``worker.json`` was still being
     written by the v4 worker after the updates to v5 and v6.
+
+    A Restart is the gateway's own stop followed by the new image (``restart_request``), so this
+    drives both halves: the request, then ``_finish`` — the stop that reaps them first.
     """
+    from personalclaw import restart_request, shutdown_event
     from personalclaw.dashboard.handlers import updates
 
+    monkeypatch.setattr(restart_request, "_pending", None)
     async with _gateway() as gw:
         await gw.install(_probe(home, "v1", parts=("backend", "worker")))
         children = _app_processes()
@@ -927,12 +934,17 @@ async def test_the_restart_it_asks_for_leaves_no_app_process_of_the_image_it_rep
         def execve(*_args: Any) -> None:  # where the new image would take over this PID
             at_exec.update({part: proc.poll() is None for part, proc in children.items()})
 
-        async def close_all() -> None:
-            return None
-
-        state = types.SimpleNamespace(sessions=types.SimpleNamespace(close_all=close_all))
-        with patch.object(updates.os, "execve", execve):
-            await updates._graceful_reexec(state)  # type: ignore[arg-type]
+        state = types.SimpleNamespace(push_update_progress=lambda *a, **k: None)
+        try:
+            with (
+                patch("os.execve", execve),
+                patch("os._exit"),
+                patch("personalclaw.session.cleanup_orphaned_sessions"),
+            ):
+                await updates._graceful_reexec(state)  # type: ignore[arg-type]
+                await gw.orch._finish()
+        finally:
+            shutdown_event.clear()
 
     assert at_exec == {
         "backend": False,

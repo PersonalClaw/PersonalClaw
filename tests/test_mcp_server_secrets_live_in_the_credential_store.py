@@ -30,8 +30,8 @@ from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import make_ref, migrate_plaintext_secrets, ref_key
 from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs
 
-TOKEN = "ghp_fixtureMcpServerToken0123456789abcdef"
-OLD_TOKEN = "ghp_fixtureStaleAgentConfigCopy99887766"
+TOKEN = "fake-github-token-1"
+OLD_TOKEN = "fake-github-token-2"
 HEADER_TOKEN = "Bearer fixture-remote-header-token-5a4b3c2d"
 
 # A stdio MCP server that reports its own environment: `read_env` returns a variable, and the one

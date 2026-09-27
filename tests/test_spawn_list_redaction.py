@@ -9,7 +9,7 @@ class TestSpawnListRedactBeforeTruncate:
     def test_credential_at_truncation_boundary_is_redacted(self):
         """A credential straddling the 60-char boundary must be fully redacted."""
         padding = "A" * 50
-        secret = "AKIAIOSFODNN7EXAMPLE"
+        secret = "fake-aws-key-id-1"
         task = padding + secret  # 70 chars total
 
         fake_response = {
@@ -30,7 +30,7 @@ class TestSpawnListRedactBeforeTruncate:
             result = _call_tool_inner("subagent_list", {})
 
         # The raw key must not appear (even partially) in the output
-        assert "AKIAIOSFODNN7EXAMPLE" not in result
+        assert "fake-aws-key-id-1" not in result
         assert "AKIA" not in result
 
 

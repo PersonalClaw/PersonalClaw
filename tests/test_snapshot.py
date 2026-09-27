@@ -237,7 +237,7 @@ class TestSnapshot:
         # But our validation is post-parse, so it returns 1
         ret = snapshot_main([str(tmp_path / "x"), "--keep", "0"])
         assert ret == 1
-        assert "positive integer" in capsys.readouterr().out
+        assert "positive integer" in capsys.readouterr().err
 
 
 # ── Restore Tests ─────────────────────────────────────────────────────────────
@@ -574,7 +574,7 @@ class TestComponents:
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         ret = restore_main([str(tarball), "--components", "bogus"])
         assert ret == 1
-        assert "Unknown component: bogus" in capsys.readouterr().out
+        assert "Unknown component: bogus" in capsys.readouterr().err
 
     def test_all_components(self, env, monkeypatch):
         """TEST 23"""
@@ -823,7 +823,7 @@ class TestGatewayRunningRefusal:
         monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: True)
         ret = restore_main([str(tarball), "--mode", "replace"])
         assert ret == 1
-        assert "Gateway is running" in capsys.readouterr().out
+        assert "Gateway is running" in capsys.readouterr().err
 
     def test_restore_allowed_with_force(self, env, capsys, monkeypatch):
         """--force bypasses gateway check."""
@@ -1208,7 +1208,7 @@ def _seeded_snapshot(root: Path, *, secrets: bool = False) -> Path:
     (snap / "entity_settings").mkdir(exist_ok=True)
     (snap / "entity_settings" / "e.json").write_text('{"v":"FROM-SNAPSHOT"}', encoding="utf-8")
     if secrets:
-        (snap / ".env").write_text("OPENAI_API_KEY=sk-FROM-SNAPSHOT", encoding="utf-8")
+        (snap / ".env").write_text("OPENAI_API_KEY=fake-key-1", encoding="utf-8")
         (snap / ".local_secret").write_text("FROM-SNAPSHOT", encoding="utf-8")
         (snap / "credentials").mkdir(exist_ok=True)
         (snap / "credentials" / "c.json").write_text('{"tok":"FROM-SNAPSHOT"}', encoding="utf-8")

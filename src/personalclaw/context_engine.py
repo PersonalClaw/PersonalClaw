@@ -38,6 +38,7 @@ from personalclaw.context_headroom import (
     Window,
     check,
 )
+from personalclaw.security import redact_for_model
 
 if TYPE_CHECKING:
     from personalclaw.context import ContextBuilder
@@ -272,9 +273,13 @@ def active_recall_block(
         local = service_for(memory).active_recall(text, cap=2000)
         # Both halves run inside the SAME bounded worker, so the cross-partition search
         # shares the one timeout + circuit breaker the recall path already enforces —
-        # locality must not be able to double a turn's recall budget.
-        return memory_locality.compose_recall(
-            builder, text, cwd=cwd, local=local, cap=2000, memory_store=memory_store
+        # locality must not be able to double a turn's recall budget. Masked as it is read
+        # (`redact_for_model`), like the memory `build_message` reads into its parts: this
+        # block is prepended to the prompt outside them.
+        return redact_for_model(
+            memory_locality.compose_recall(
+                builder, text, cwd=cwd, local=local, cap=2000, memory_store=memory_store
+            )
         )
 
     # 🔴 NOT a `with` block, and that is the whole timeout. `ThreadPoolExecutor.__exit__` calls
@@ -377,7 +382,8 @@ def push_context_block(
             log_events=log_events,
             min_confidence=min_confidence,
         )
-        return block
+        # Masked as it is read, for the reason the recall block is.
+        return redact_for_model(block or "")
 
     # Same join hazard as the recall path above — see the note there.
     _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)

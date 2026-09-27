@@ -9,10 +9,11 @@ the shape of that mechanism is the whole point of the file, so it is worth stati
 SHAPE- and NAME-based: it knows `sk-ant-…`, `ghp_…` and `name = value` assignments. A human password
 (`hunter2`) matches none of them, and a 2FA code (`418290`) matches nothing that is not also a
 line number. So a design where the credential travels and a redactor tries to catch it fails for
-exactly the inputs this invariant is about. It is also **not idempotent over a composed
-`field: value` line** — a second application garbles the field name — which forbids the tempting
-"redact everything on the way out" posture: composition happens many times, so the screen must
-happen ONCE, at the boundary, BEFORE composition.
+exactly the inputs this invariant is about. It also **garbles a composed `field: value` line whose
+value is another screen's marker** — `password: [withheld]` loses its field name into a
+`[REDACTED: …]` mask — which forbids the tempting "redact everything on the way out" posture:
+composition happens many times, so the screen must happen ONCE, at the boundary, BEFORE
+composition.
 
 **So the invariant is three refusals, not a filter.**
 

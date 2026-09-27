@@ -10,11 +10,10 @@ text the model never saw, with nothing anywhere saying a substitution happened.
 This module is the one-way channel that closes the gap, and its shape is dictated by two hazards
 already measured in this codebase:
 
-* **Redacting twice is not an option.** ``security.redact_credentials`` is idempotent on its own
-  direct output but NOT on a composed ``key: value`` line built from an already-redacted value —
-  it rewrites ``api_key: [REDACTED: credential]`` into ``[REDACTED: credential] credential]`` and
-  takes the field name with it. So the fix cannot be "scan again where we record"; the scan has to
-  stay at exactly one chokepoint and PUBLISH what it produced.
+* **Scanning again where we record is not an option.** The record has to be the text the provider
+  was handed, and only the chokepoint holds it: a second scan would run under whatever mode is set
+  by then (``_refresh_scan_mode`` re-reads it on every call), so it can differ from what went on
+  the wire. The scan has to stay at exactly one chokepoint and PUBLISH what it produced.
 * **A redacted read is never a write source.** Nothing here round-trips: the recorder carries the
   wire text forward into the journal, and no path reads a redacted body back into a write.
 

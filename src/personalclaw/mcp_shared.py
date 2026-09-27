@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 import urllib.request
+from collections.abc import Mapping
+from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Callable
 
@@ -277,6 +279,71 @@ def respond(req_id: Any, result: Any, error: dict | None = None) -> None:
 #: announce), unlike the credential material `leaf_env` strips.
 _LINEAGE_KEYS = ("__wf_depth", "__wf_run_id", "__wf_project_id", "__wf_node_id")
 
+#: Env flag a compiled leaf carries when its posture is read-only. Written from the compiled
+#: `postures` block, so the handler enforces the capability the COMPILER assigned rather than a
+#: second guess at it.
+LEAF_READ_ONLY_KEY = "__wf_read_only"
+
+#: Every key a leaf's tools read about the leaf they run for: its lineage and its posture.
+LEAF_KEYS: tuple[str, ...] = (*_LINEAGE_KEYS, LEAF_READ_ONLY_KEY)
+
+#: The lineage a NATIVE session's in-process tools read, bound by the native runtime around each
+#: tool call (`bind_leaf_lineage`). A tool server an agent CLI starts reads the same keys from its
+#: own environment, which IS the leaf's: the spawn wrote them there (`engine.leaf_spawn_env`). A
+#: native session runs its tools inside the gateway process, whose environment is nobody's lineage
+#: — so on the native runtime a stage read depth 0, its posture read "may write", and
+#: `resume_run_id: "self"` found no run. One reader serves both (`leaf_value`): the binding when
+#: there is one, else the process environment.
+_BOUND_LINEAGE: ContextVar[Mapping[str, str] | None] = ContextVar(
+    "personalclaw_leaf_lineage", default=None
+)
+
+
+def leaf_lineage(env: Mapping[str, str] | None) -> dict[str, str]:
+    """The keys of *env* that tell a leaf's tools which leaf they run for (:data:`LEAF_KEYS`)."""
+    source = env or {}
+    return {key: str(source[key]) for key in LEAF_KEYS if key in source}
+
+
+def bind_leaf_lineage(lineage: Mapping[str, str] | None) -> Token:
+    """Make *lineage* what this context's leaf readers see, until :func:`reset_leaf_lineage`.
+
+    An EMPTY lineage is still a binding: it says "this session is no leaf", and the readers do not
+    then fall back to the process environment, which inside the gateway belongs to no session.
+    """
+    return _BOUND_LINEAGE.set(leaf_lineage(lineage))
+
+
+def reset_leaf_lineage(token: Token) -> None:
+    _BOUND_LINEAGE.reset(token)
+
+
+def leaf_value(key: str) -> str:
+    """One leaf key (:data:`LEAF_KEYS`) for the leaf this call runs for, or "" for none.
+
+    The ONE reader of the leaf's lineage and posture. The native runtime's binding when there is
+    one; else the process environment, which is what a tool server an agent CLI starts was spawned
+    with.
+    """
+    bound = _BOUND_LINEAGE.get()
+    source: Mapping[str, str] = bound if bound is not None else os.environ
+    return str(source.get(key, "") or "")
+
+
+def leaf_depth() -> int:
+    """The workflow depth of the leaf this call runs for; 0 when it runs for no leaf."""
+    from personalclaw.workflows.engine import WF_DEPTH_KEY
+
+    try:
+        return int(leaf_value(WF_DEPTH_KEY) or "0")
+    except ValueError:
+        return 0
+
+
+def leaf_run_id() -> str:
+    """The workflow run the leaf this call runs for belongs to, or ""."""
+    return leaf_value("__wf_run_id").strip()
+
 
 def leaf_env(parent_env: dict[str, str], lineage: dict[str, str]) -> dict[str, str]:
     """The env a compiled batch leaf runs with: the parent's, minus credentials, plus lineage.
@@ -310,22 +377,25 @@ def leaf_tool_denial(name: str) -> str:
       for a research-class leaf, `read_write` for a mutating one — and
       `guardrails.policy.tool_grant_posture` intersects it with the operator CEILING, so an
       operator's `{"scopes": {"tools": {"allow": [...]}}}` narrows this call rather than being a
-      composed value nothing reads. The write/read classification stays
-      `batch_compile.is_write_tool`, the classifier a research LEAF and a research SUBAGENT deny
-      alike; only the tier algebra is shared.
+      composed value nothing reads. Whether the call is within a `read` grant is what the TOOL
+      declares (`mcp_core.own_tool`: its `annotations`, and `_meta` for a proposal), answered by
+      `guardrails.policy.declared_tool_grant_denial` — the question a research SUBAGENT and a
+      read-only room member are asked too.
 
     Depth 0 is the parent: it is not a leaf and is not restricted, so the parent's own
     `subagent_run` still works.
     """
+    from personalclaw import mcp_core
     from personalclaw.guardrails.policy import (
         TOOL_READ,
         TOOL_READ_WRITE,
-        tool_grant_denial,
+        declared_tool_grant_denial,
         tool_grant_posture,
     )
+    from personalclaw.tool_providers.base import PROPOSES_META_KEY, risk_from_annotations
     from personalclaw.workflows import batch_compile
 
-    depth = _leaf_depth()
+    depth = leaf_depth()
     if depth <= 0:
         return ""
     if name in batch_compile.ORCHESTRATION_TOOLS:
@@ -349,10 +419,16 @@ def leaf_tool_denial(name: str) -> str:
     # tier is the compiled posture's, the operator ceiling when the ceiling narrowed it. Telling an
     # author to re-declare a leaf that a ceiling refused would send them to fix the wrong file.
     ceiling_narrowed = profile.tool_grants != (TOOL_READ if read_only else TOOL_READ_WRITE)
-    return tool_grant_denial(
+    # What the tool declares. A name this surface does not serve declares nothing, so it is a
+    # change as far as a `read` grant is concerned.
+    declared = mcp_core.own_tool(name) or {}
+    raw_meta = declared.get("_meta")
+    meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
+    return declared_tool_grant_denial(
         profile,
         name,
-        write_class=batch_compile.is_write_tool(name),
+        risk_from_annotations(declared.get("annotations"), trusted=True),
+        proposes=meta.get(PROPOSES_META_KEY) is True,
         detail=(
             "widen the governance ceiling's tools scope if this leaf must call it"
             if ceiling_narrowed
@@ -361,23 +437,8 @@ def leaf_tool_denial(name: str) -> str:
     )
 
 
-def _leaf_depth() -> int:
-    from personalclaw.workflows.engine import WF_DEPTH_KEY
-
-    try:
-        return int(os.environ.get(WF_DEPTH_KEY, "0") or "0")
-    except ValueError:
-        return 0
-
-
-#: Env flag a compiled leaf carries when its posture is read-only. Written from the compiled
-#: `postures` block, so the handler enforces the capability the COMPILER assigned rather than a
-#: second guess at it.
-LEAF_READ_ONLY_KEY = "__wf_read_only"
-
-
 def _leaf_is_read_only() -> bool:
-    return os.environ.get(LEAF_READ_ONLY_KEY, "") == "1"
+    return leaf_value(LEAF_READ_ONLY_KEY) == "1"
 
 
 def call_tool_with_logging(
@@ -551,13 +612,19 @@ def run_mcp_stdio_loop(
                     ),
                 )
             else:
+                from personalclaw.security import redact_for_model
                 from personalclaw.tool_providers.base import ToolFailure
 
                 result_text = call_tool_fn(tool_name, tool_args)
                 # The handler's verdict is its answer's type (#3487); the MCP client reads it
                 # as `isError`, so an ACP agent can report the call failed.
                 is_error = isinstance(result_text, ToolFailure)
-                respond(req_id, build_tool_response(result_text, is_error=is_error))
+                # Where an ACP agent's call to one of these tools becomes its model's context,
+                # the twin of `format_tool_result` in the native loop: every answer masked, so a
+                # new tool is too.
+                respond(
+                    req_id, build_tool_response(redact_for_model(result_text), is_error=is_error)
+                )
         elif req_id is not None:
             respond(
                 req_id,

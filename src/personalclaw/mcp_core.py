@@ -38,7 +38,7 @@ from typing import Any
 
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
-from personalclaw.tool_providers.base import tool_failure
+from personalclaw.tool_providers.base import BUILDS_META_KEY, PROPOSES_META_KEY, tool_failure
 
 
 def config_dir() -> Path:
@@ -146,6 +146,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "skill_invoke",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Load a skill's full instructions by name. Your context carries only "
                 "a compact INDEX of available skills (name + one-line description); "
@@ -167,6 +168,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "skill_search",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Find a skill by capability across your ENTIRE skill library — not just "
                 "the skills surfaced in your context this turn. Use when the task might "
@@ -188,6 +190,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "skill_resource",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Load ONE file a skill declared as a resource (a reference doc, a data "
                 "file, a helper script). skill_invoke lists a skill's resources as a "
@@ -217,6 +220,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "get_context",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Call at the START of every task to load this project's routed context. "
                 "Returns, in lost-in-the-middle order: hard RULES & directives (the "
@@ -253,6 +257,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "skill_remember",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 'Capture a skill the USER just taught you ("from now on…", "always do X", '
                 '"remember this workflow"). Writes a SESSION-LIVE draft: it\'s active for the '
@@ -278,6 +284,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "template_save_from_session",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {PROPOSES_META_KEY: True},
             "description": (
                 "Propose saving the multi-step procedure just carried out in this session as a "
                 "reusable workflow template. Files a DRAFT proposal for the user to accept or "
@@ -314,6 +322,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "project_context_review",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {PROPOSES_META_KEY: True},
             "description": (
                 "Review THIS conversation and propose updates to the current project's context — "
                 "its instructions, an inlined context file, or a skill. Call ONLY when the user "
@@ -377,6 +387,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "skill_promote",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True, PROPOSES_META_KEY: True},
             "description": (
                 "PROPOSE a finished piece of work as a reusable skill — the retroactive companion "
                 "to skill_remember. Use after a task or workflow run SUCCEEDED and the procedure "
@@ -424,6 +436,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "dashboard_tile_propose",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {PROPOSES_META_KEY: True},
             "description": (
                 "PROPOSE a saved artifact as a dashboard tile on the user's composable home. "
                 "The artifact must already be saved (a slug); this pins a PROPOSAL that renders "
@@ -454,6 +468,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "wait",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Pause execution for a specified duration while preserving full session "
                 "context. Use when waiting for external systems (code review, CI "
@@ -476,6 +491,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "hook_register",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Register a webhook listener so an external system can inject a message "
                 "into a dedicated agent session later. Returns the webhook URL and session "
@@ -502,6 +518,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "notify",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Notify the user via their configured notification channel(s) "
                 "(dashboard notification, plus any connected messaging channel such "
@@ -601,6 +618,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "notify_attachment",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Send a file to the user. Copies the file to the outbox and "
                 "notifies the dashboard/channel with a download link. Use when "
@@ -621,6 +639,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "loop_nudge_stop",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Stop the auto-nudge loop driving your current session. Call this "
                 "when you determine the loop should halt (e.g. goal complete, "
@@ -641,6 +660,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "suggest_template",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Offer to save a recurring task shape as a reusable workflow template. "
                 "LOCAL-ONLY: it decides whether the offer is welcome and returns the wording, "
@@ -680,6 +700,7 @@ def _list_tools() -> list[dict[str, Any]]:
             # The template refiner's READ tool. Screened + fenced by construction, so a
             # poisoned run transcript can neither steer clustering nor reach the prompt.
             "name": "refiner_evidence",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Read a workflow template's own run-ledger failures, already screened for "
                 "injection and clustered worst-first, plus the top cluster worth targeting. "
@@ -701,6 +722,8 @@ def _list_tools() -> list[dict[str, Any]]:
             # cannot apply the diff. The frozen-region + legal-op gate runs first, so a diff
             # touching id/triggers/surfacing metadata is refused rather than filed.
             "name": "propose_template_diff",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {PROPOSES_META_KEY: True},
             "description": (
                 "Propose (never apply) a typed diff to a workflow template. The diff is a list "
                 "of the engine's own ops (update_node/insert/delete/move/set_input); an op "
@@ -1787,6 +1810,19 @@ def _aggregated_list_tools() -> list[dict[str, Any]]:
     for mod_path in _AGGREGATED_CATEGORY_MODULES:
         tools.extend(importlib.import_module(mod_path)._list_tools())
     return tools
+
+
+def own_tool(name: str) -> dict[str, Any] | None:
+    """The tool dict PersonalClaw's own ``mcp-core`` surface serves as *name*, or ``None``.
+
+    Where a seam that holds only a tool's NAME reads what the tool declares
+    (``annotations``/``_meta``): the in-process handler every one of these tools funnels
+    through (``mcp_shared.leaf_tool_denial``). An exact lookup, never a match.
+    """
+    for tool in _aggregated_list_tools():
+        if tool.get("name") == name:
+            return tool
+    return None
 
 
 def _aggregated_call_tool(name: str, raw_args: dict[str, Any]) -> str:

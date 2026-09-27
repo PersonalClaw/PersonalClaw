@@ -7,9 +7,12 @@ Warm session pool: ``start_pool()`` pre-spawns ACP agent processes so
 ``get_or_create()`` returns instantly.  After handing out a warm session,
 a replacement is created in the background to maintain the target count.
 
-Background session: ``BACKGROUND_KEY`` is a persistent shared session for
-lightweight background work (cron, heartbeat, lesson extraction).  It
-stays alive between uses, serialized by the per-session semaphore.
+Background session: ``BACKGROUND_KEY`` is a persistent shared session for the
+background chores (titles, follow-ups, suggestions, folder icons, history
+compression, memory consolidation).  It is always the lite agent, which has no
+tools, whoever reaches it first.  It stays alive between uses, serialized by the
+per-session semaphore.  Heartbeat tasks do not run here: each runs in a session
+of its own (``heartbeat_tasks_provider.task_session_key``).
 
 At >= 90% context usage, fires a background task that sends /compact
 to the ACP agent (which natively summarizes older turns), then resets the
@@ -64,6 +67,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from personalclaw import shutdown_event
+from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import default_workspace_dir
 from personalclaw.llm.base import CancelOutcome, ModelProvider
@@ -125,7 +129,7 @@ _LOOP_WORKER_PREFIX = "dashboard:loop-"
 # Session key prefixes that are stateless (reset after each use) — skip resume
 _STATELESS_PREFIXES = ("cron:", _SUBAGENT_PREFIX, _CHANNEL_PREFIX, "inbox:", "side:")
 
-# Background session key — cron, heartbeat, lessons share this session
+# Background session key — the chores share this session, as the toolless lite agent
 BACKGROUND_KEY = "_bg"
 
 
@@ -142,6 +146,21 @@ _BG_BLIND_RECYCLE_PROMPTS = 40  # recycle after 40 prompts if no metadata
 
 # Persistent session keys — never expired by idle cleanup
 _PERSISTENT_KEYS = frozenset({BACKGROUND_KEY})
+
+
+def chore_prompt(session_key: str, message: str) -> str:
+    """*message* as the session named *session_key* is handed it: masked in the background session.
+
+    The background session runs PersonalClaw's own chores (a title, follow-ups, suggestions,
+    memory consolidation). No person types into it, and every prompt it is handed is composed
+    from stored text, so it is masked (``security.redact_for_model``), once for every chore.
+    """
+    if session_key != BACKGROUND_KEY:
+        return message
+    from personalclaw.security import redact_for_model
+
+    return redact_for_model(message)
+
 
 # Type alias for provider factory — accepts optional session key
 ProviderFactory = Callable[..., ModelProvider]
@@ -529,7 +548,7 @@ class SessionManager:
             # consolidation stop burning the flagship chat model once the user
             # binds a cheap model to the axis (unbound → chat chain, unchanged).
             provider = self._provider_factory(
-                BACKGROUND_KEY, agent="personalclaw-lite", model_axis="background"
+                BACKGROUND_KEY, agent=LITE_AGENT_NAME, model_axis="background"
             )
             async with self._start_sem:
                 await provider.start()
@@ -722,6 +741,7 @@ class SessionManager:
 
         try:
             from personalclaw.acp.connection_pool import get_acp_pool
+            from personalclaw.llm.acp_agent import options_env
             from personalclaw.llm.acp_session_provider import concurrent_sessions_enabled
             from personalclaw.llm.registry import get_default_registry
 
@@ -750,7 +770,7 @@ class SessionManager:
                 dialect=str(dialect) if dialect else None,
                 session_files_dir=_Path(str(sfd)) if sfd else None,
                 sandbox_mode=str(options.get("sandbox_mode") or "auto"),
-                extra_env=(_env if isinstance((_env := options.get("env")), dict) else None),
+                extra_env=options_env(options) or None,
                 session_key=key,
                 channel_id=channel_id,
                 model=model or "",
@@ -981,7 +1001,7 @@ class SessionManager:
                 model = model or "auto"
             # Human-readable name
             if key == BACKGROUND_KEY:
-                name = "Background (titles, cron, heartbeat)"
+                name = "Background chores (titles, suggestions, summaries)"
             elif key.startswith("dashboard:"):
                 name = f"Chat ({key.split(':', 1)[1]})"
             else:
@@ -1030,9 +1050,9 @@ class SessionManager:
     async def recycle_background(self) -> None:
         """Check background session context and recycle if too full.
 
-        Background tasks are stateless (cron, heartbeat, lessons), so we
+        Background chores are stateless (titles, summaries, consolidation), so we
         don't need compaction — just kill the old session and create a fresh
-        one.  Called after each background task completes.
+        one.  Called after each background chore completes.
 
         Thresholds are more aggressive than chat compaction:
         - At ≥ 70% context → recycle
@@ -1117,7 +1137,10 @@ class SessionManager:
         # A cold-started background session (its _ensure_background creation died,
         # or a consumer touched it first) must resolve the background axis too —
         # same governance as the normal creation path.
+        # And it is the lite agent, whoever asks: a chore that named no agent used to
+        # cold-start it as the default agent, with every tool that agent has.
         if key == BACKGROUND_KEY:
+            agent = LITE_AGENT_NAME
             extra_factory_kwargs.setdefault("model_axis", "background")
 
         # Fast path: existing session — hold lock only briefly
@@ -1233,7 +1256,7 @@ class SessionManager:
         #
         # Unattendedness is DERIVED from the session key via the guardrail layer's own
         # classifier, not taken on trust from the caller. Only ``subagent.py`` passes
-        # ``unattended=True``; the cron parent session, the ``_bg`` heartbeat, loop-cycle
+        # ``unattended=True``; the cron parent session, a heartbeat task, loop-cycle
         # workers, the inbox/side sweeps, channel deliveries and sessionless trigger
         # dispatches all arrive here without it — nine unattended families that a
         # kwarg-only gate silently let through. One vocabulary, no per-caller opt-in: the

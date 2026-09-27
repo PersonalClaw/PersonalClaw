@@ -71,7 +71,7 @@ def _listed(state: DashboardState) -> list[dict]:
 def test_a_chat_made_event_or_manual_automation_is_listed_and_counted(home):
     store = TriggerStore(base_dir=home)
     for kind, spec in (
-        ("clock", {"kind": "interval", "every_secs": 3600}),
+        ("clock", {"kind": "interval", "interval_secs": 3600}),
         ("event", {"pattern": "MemoryKeyPattern", "key_glob": "project.*"}),
         ("manual", {}),
     ):

@@ -224,7 +224,7 @@ def _where_it_lives(key: str, owner: SecretOwner) -> str:
         return "another app's credential" if owner.app is not None else "an app's credential"
     if key.startswith(_MCP_OWNED_PREFIX):
         return "another MCP server's credential"
-    if key.startswith(OWNED_KEY_PREFIX) or key.startswith("BROWSE_PROFILE_KEY_"):
+    if key.startswith(OWNED_KEY_PREFIX):
         return "a credential of PersonalClaw's own settings"
     return "a credential in Settings → Secrets"
 

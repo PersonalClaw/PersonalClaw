@@ -399,7 +399,7 @@ class TestCallFailureAdvance:
         def fake_resolve(use_case, **kw):
             return providers[kw["model_override"]][0]
 
-        async def fake_stream(provider, prompt):
+        async def fake_stream(provider, prompt, **_kw):
             result = providers[provider._ref][1]
             if isinstance(result, Exception):
                 raise result
@@ -433,7 +433,7 @@ class TestCallFailureAdvance:
         def fake_resolve(use_case, **kw):
             return providers[kw["model_override"]][0]
 
-        async def fake_stream(provider, prompt):
+        async def fake_stream(provider, prompt, **_kw):
             raise providers[provider._ref][1]
 
         with (

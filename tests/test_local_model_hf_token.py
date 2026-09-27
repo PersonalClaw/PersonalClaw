@@ -214,16 +214,16 @@ async def test_set_token_writes_credential_store_and_audits_by_name(monkeypatch)
     fake_sel = _FakeSel()
     monkeypatch.setattr("personalclaw.sel.sel", lambda: fake_sel)
 
-    hf_token.set_token("hf_secret_value_1234", caller="dashboard:test")
+    hf_token.set_token("fake-hf-token-secret_value_1234", caller="dashboard:test")
 
     # Written to SOURCE 1 = the credential store, under the HF_TOKEN key.
-    assert saved == [(hf_token.CREDENTIAL_NAME, "hf_secret_value_1234")]
+    assert saved == [(hf_token.CREDENTIAL_NAME, "fake-hf-token-secret_value_1234")]
     # SEL logged the SET event, by NAME — the value must appear in NO field.
     assert len(fake_sel.events) == 1
     ev = fake_sel.events[0]
     assert ev["operation"] == "hf_token.set"
     assert ev["resources"] == "HF_TOKEN"
-    assert "hf_secret_value_1234" not in repr(ev)
+    assert "fake-hf-token-secret_value_1234" not in repr(ev)
 
 
 def test_set_token_rejects_an_empty_value(monkeypatch):
@@ -290,7 +290,7 @@ async def test_whoami_result_is_cached_within_ttl(monkeypatch):
 
     monkeypatch.setattr("personalclaw.net.fetch", fake_fetch)
     monkeypatch.setattr(hf_token, "_whoami_ttl_s", lambda: 600.0)
-    _sources(monkeypatch, store="hf_cached_tok")
+    _sources(monkeypatch, store="fake-hf-token-cached_tok")
 
     await hf_token.resolve_valid_token()
     await hf_token.resolve_valid_token()
@@ -306,7 +306,7 @@ async def test_network_unknown_is_not_cached(monkeypatch):
         raise RuntimeError("network down")
 
     monkeypatch.setattr("personalclaw.net.fetch", fake_fetch)
-    _sources(monkeypatch, store="hf_unknown_tok")
+    _sources(monkeypatch, store="fake-hf-token-unknown_tok")
 
     await hf_token.resolve_valid_token()
     await hf_token.resolve_valid_token()

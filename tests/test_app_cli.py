@@ -86,9 +86,9 @@ def test_setup_step_that_raises_does_not_abort(_isolate, capsys):
         module_body="def run(ctx):\n    ctx.print('z-good ran')\n",
         cli={"setup": "cli_setup:run"},
     )
-    app_cli.run_app_setup_steps()  # must not raise
-    out = capsys.readouterr().out
-    assert "a-bad" in out and "boom" in out  # warning shown
+    assert app_cli.run_app_setup_steps() == [("a-bad", "setup step failed — RuntimeError: boom")]
+    out, err = capsys.readouterr()
+    assert "❌ a-bad: setup step failed — RuntimeError: boom" in err  # said, on stderr
     assert "z-good ran" in out  # later app still ran (alphabetical order)
 
 
@@ -192,8 +192,9 @@ def test_malformed_cli_ref_is_a_warning_not_a_crash(_isolate, capsys):
         module_body="def run(ctx):\n    ctx.print('never')\n",
         cli={"setup": "not_a_valid_ref"},
     )
-    app_cli.run_app_setup_steps()  # must not raise
-    assert "bad-ref" in capsys.readouterr().out
+    [(app, why)] = app_cli.run_app_setup_steps()  # must not raise
+    assert app == "bad-ref" and why.startswith("setup step unavailable")
+    assert "❌ bad-ref: setup step unavailable" in capsys.readouterr().err
 
 
 # ── an app's step imports its own package (#124) ────────────────────────────────
@@ -285,9 +286,9 @@ def test_an_unavailable_step_exits_non_zero_with_its_reason(_isolate, capsys, _n
     with pytest.raises(SystemExit) as exit_info:
         _setup(only_app="broken-app")
     assert exit_info.value.code == 1
-    out = capsys.readouterr().out
-    assert "broken-app: setup step unavailable — ModuleNotFoundError" in out
-    assert "no_such_package_anywhere" in out
+    err = capsys.readouterr().err
+    assert "broken-app: setup step unavailable — ModuleNotFoundError" in err
+    assert "no_such_package_anywhere" in err
 
 
 def test_a_step_that_raises_exits_non_zero(_isolate, capsys):
@@ -303,7 +304,7 @@ def test_a_step_that_raises_exits_non_zero(_isolate, capsys):
     with pytest.raises(SystemExit) as exit_info:
         _setup(only_app="raises-app")
     assert exit_info.value.code == 1
-    assert "setup step failed — RuntimeError: token rejected" in capsys.readouterr().out
+    assert "setup step failed — RuntimeError: token rejected" in capsys.readouterr().err
 
 
 def test_naming_an_app_with_no_step_exits_non_zero(_isolate, capsys):
@@ -312,7 +313,7 @@ def test_naming_an_app_with_no_step_exits_non_zero(_isolate, capsys):
     with pytest.raises(SystemExit) as exit_info:
         _setup(only_app="not-installed")
     assert exit_info.value.code == 1
-    assert "not-installed" in capsys.readouterr().out
+    assert "not-installed" in capsys.readouterr().err
 
 
 def test_a_step_that_runs_exits_zero(_isolate, capsys):
@@ -331,7 +332,8 @@ def test_a_step_that_runs_exits_zero(_isolate, capsys):
 
 
 def test_the_full_wizard_names_failed_app_steps_and_exits_non_zero(_isolate, capsys, monkeypatch):
-    """One broken app never aborts the wizard, but the wizard no longer ends on "Done!"."""
+    """One broken app never aborts the wizard, but the wizard no longer ends on "Done!": it
+    names the app and the command that runs just its step again."""
     from personalclaw import cli_setup
 
     for step in (
@@ -360,10 +362,12 @@ def test_the_full_wizard_names_failed_app_steps_and_exits_non_zero(_isolate, cap
     with pytest.raises(SystemExit) as exit_info:
         cli_setup._setup()
     assert exit_info.value.code == 1
-    out = capsys.readouterr().out
+    out, err = capsys.readouterr()
     assert "b-fine ran" in out  # the wizard went on past the broken app
-    assert "these app steps did not run" in out and "a-broken: setup step failed" in out
-    assert "Done!" not in out
+    summary = err[err.index("Setup did not finish: 1 step failed.") :]
+    assert "❌ App a-broken: setup step failed — RuntimeError: boom" in summary
+    assert "Run it again: personalclaw setup --app a-broken" in summary
+    assert "Done!" not in out + err
 
 
 # ── SetupContext.delete_credential ──────────────────────────────────────────────
@@ -406,8 +410,8 @@ def test_a_setup_step_cannot_delete_a_key_a_setting_owns(_isolate, capsys):
         module_body=f"def run(ctx):\n    ctx.delete_credential({owned!r})\n",
         cli={"setup": "cli_setup:run"},
     )
-    failures = app_cli.run_app_setup_steps(only_app="grabby")
-    assert failures and "owned by a settings record" in failures[0]
+    [(app, why)] = app_cli.run_app_setup_steps(only_app="grabby")
+    assert app == "grabby" and "owned by a settings record" in why
     assert get_credential(owned) == "theirs"
 
 

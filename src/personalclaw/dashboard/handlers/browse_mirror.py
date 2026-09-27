@@ -48,9 +48,8 @@ async def api_browse_status(request: web.Request) -> web.Response:
     on a ``GET /api/browse/grants`` of their own: a second read of the same store is how the two
     drift, and the panel already refetches THIS one on reconnect and on every browse signal.
 
-    Values never cross this boundary — ``expired`` carries site slugs and a key-PRESENCE boolean,
-    never the profile-encryption key itself; a grant carries its task label, host scope and the
-    fail-closed deadline, never a credential, cookie or token (§5.2).
+    Values never cross this boundary — ``expired`` carries site slugs; a grant carries its task
+    label, host scope and the fail-closed deadline, never a credential, cookie or token (§5.2).
     """
     from personalclaw.browse import killswitch
     from personalclaw.browse.grant import pending_grants

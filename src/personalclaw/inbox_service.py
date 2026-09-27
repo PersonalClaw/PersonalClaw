@@ -39,6 +39,7 @@ mutated only on the thread that owns it, never from the engine's worker thread.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 import uuid
@@ -84,6 +85,37 @@ SOURCE_POLL_TIMEOUT_SECS = 300.0
 _MAX_MESSAGE_CHARS = 6000
 _MAX_THREAD_TURNS = 12
 _MAX_DIGEST_MESSAGES = 60
+
+
+def polled_item_id(source_name: str, message: "IncomingMessage") -> str:
+    """The id of the row a polled message becomes: ``{source}_{key}_{timestamp}``.
+
+    ``key`` is the message's own id at its source (a mail's Message-ID, a chat message's ts),
+    hashed with the source and the channel it was read from; a message with no id of its own is
+    keyed by its content (channel, sender, time, thread and text). The id used to be
+    ``{channel}_{timestamp}``: every row of a mailbox shares one channel, the receiving address,
+    and a mail's Date counts whole seconds, so a second mail sent in the same second as another
+    got the first one's id and was dropped as a duplicate of it.
+
+    Hashed rather than spelled out because the id is a path segment of every item route, and a
+    Message-ID may hold a ``/``. The trailing ``_{timestamp}`` is ``InboxItem.ts``, which sorting
+    and retention read.
+    """
+    own = str(message.id or "")
+    basis = (
+        [source_name, message.channel_id, own]
+        if own
+        else [
+            source_name,
+            message.channel_id,
+            message.sender_id,
+            repr(float(message.timestamp or 0.0)),
+            str(message.thread_id or ""),
+            message.text,
+        ]
+    )
+    key = hashlib.sha256("\0".join(basis).encode("utf-8")).hexdigest()[:16]
+    return f"{source_name}_{key}_{message.timestamp}"
 
 
 def digest_item_id(channel_id: str, ts: float) -> str:
@@ -358,7 +390,7 @@ class InboxService:
         can_reply = source_name != "filesystem"
         count = 0
         for m in messages:
-            item_id = f"{m.channel_id}_{m.timestamp}"
+            item_id = polled_item_id(source_name, m)
             if item_id in self.inbox.items or item_id in self.state.dismissed:
                 continue
             if m.thread_id and m.thread_id in self.state.muted_threads:

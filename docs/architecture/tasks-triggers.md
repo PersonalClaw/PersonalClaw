@@ -96,7 +96,10 @@ relative to `PersonalClaw/src/personalclaw/`.
   it, `tools.legacy_mcp_settings`).
 - **Grants** (`triggers/grants.py`) — a trigger runs only what its frozen
   `capabilities` block allows: a read-only action needs nothing, and every
-  other one needs its provider listed (`screen.ungranted_providers`). Both
+  other one needs its provider listed (`screen.ungranted_providers`). An
+  action is read-only by what it declares (`ActionProvider.effect`), never
+  by its name: `call-app-route` reads only when the app declares the route
+  `readOnly`, and an action that declares nothing is a change. Both
   dispatches check it — the attended one (`_dispatch_store_action`: Run now,
   the restart review's Run now, a view refresh, a webhook fire) and the
   unattended one (`gateway._fire_store_trigger`: clock, event, file,
@@ -144,9 +147,22 @@ relative to `PersonalClaw/src/personalclaw/`.
   seal), so a callback registered again with other context waits again. A post
   naming a callback the owner has not allowed answers `403 not_allowed`; a
   session key nobody registered is the owner's own integration.
-- **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
-  one-shot LLM call, **validated with croniter before use** (a hallucinated
-  expression never reaches the store).
+- **A `when` is one time or a cadence, never a cron for one time**
+  (`triggers/tools._read_when`). An explicit time — "at 5pm", "in 20 minutes",
+  "tomorrow at 9am", "2026-10-01 14:00", "at 9am Europe/London" — is read with
+  no model by `triggers/when.py`, in the owner's zone (`timezones`), into a
+  one-time `at` trigger that runs once at that time and then switches itself
+  off. Only a phrase that leaves the time to judgement ("tomorrow morning",
+  "later today") goes to **`nl_to_cron.py`**, which hands the model the clock
+  and the zone and reads its answer as either a 5-field cron expression,
+  **validated with croniter before use**, or `ONCE <local time>`, which must be
+  still to come (a hallucinated answer never reaches the store). Each chat
+  tool keeps its promise: `set_onetime_task` refuses a cadence and
+  `set_recurring_task` refuses one time, each naming the tool that fits, and
+  `automation_create` takes either. The created message says what the time
+  was read as ("read as one time: today, 5:00 PM PDT"). An agent's one-time
+  task expires a day after its own time at the earliest, so one set further
+  out than the week-long default still runs.
 
 ### Action providers
 
@@ -155,6 +171,13 @@ relative to `PersonalClaw/src/personalclaw/`.
 `run_workflow`, `send_message` (each `*_provider.py`, with `base.py` +
 `registry.py`). Template variables are exported as environment variables for
 the bash action.
+
+**`run-prompt` runs its saved Prompt, else its own message, else `loop.md`.**
+An automation the chat makes carries its instruction as the action's `message`
+(`tools.create`), and the provider runs it, framed as an unattended turn; the
+Triggers page shows it as the action's Prompt and lets you edit it as
+**Message**. Before, the provider read no `message`, so every automation made in
+chat failed on its first fire, or ran the owner's `loop.md` in its place.
 
 **A trigger dry run executes nothing and records nothing.** `POST
 /api/triggers/{id}/run {"dry_run": true}` (the **Dry run** button) answers with
@@ -169,7 +192,27 @@ row's summary as the sentence the action wrote for a person
 (`ActionResult.summary`, `schedule_history.summary_for_result`), else what it
 printed, which stays the row's trace. A browse run prints its whole account as
 JSON for the workflow engine to bind, and says "Browse finished in 3 steps at
-example.com. Noted: …" for its row.
+example.com. Noted: …" for its row. The other providers whose `stdout` is JSON
+write one too: run-workflow says what it started, queued or skipped and why
+("Started “triage-inbox” as run 3f2a91c0."), net-fetch how much it read and from
+where ("Fetched 1,234 characters from example.com (HTTP 200, text/html)."), and
+inbox-op what it did to which message ("Archived the message from alice in
+#general."). A sentence names a site by `host[:port]` and a message by who sent
+it and where, and quotes nothing either of them said. The row's line flattens
+markdown (an agent's reply is markdown) but strips markup only where it is
+markup (`scheduleMeta.mdToPlain`), so the `#`, `-` and `_` a name is spelled with
+survive; and since the line is cut to the panel's width, an opened row says the
+whole sentence above the trace.
+
+**A Run button says what its run recorded.** `POST /api/triggers/{id}/run`
+answers `status`, the status the run recorded (`last_run_status` on the list row
+reads the same record), and its `result` is the row's own line for a run that
+stopped for you ("Waiting for you. Sign in to …") rather than "ran". So the
+schedule panel's button flashes "Waiting for you", "Launched" or "Queued" where
+that is what happened, and "Run finished" only for a run that did its work; the
+automation panel and the restart review's Run now say the same. The flash used
+to read the trigger's health rollup, which says how the automation has been
+going and nothing about this run.
 
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.
@@ -270,9 +313,11 @@ stops for you. Then both call `parks.settle`:
 
 The park holds the trigger's id and the card, never the action's config:
 Approve re-reads the trigger, so a secret the config names is resolved at run
-time and never written to the park. The answer route is the owner's alone
-(`apps/permissions.ROUTE_AUTHZ`, for the reason Run now's is), and
-`trigger_parks/` is in the durability inventory's `IGNORED`: the question is
+time and never written to the park. The answer route is the owner's alone. It is refused to an
+app (`apps/permissions.ROUTE_AUTHZ`, for the reason Run now's is) and to an agent's tool, which
+reaches `/api/triggers` with the gateway's internal secret for `/run`. That refusal is a `403
+approval_owner_only` with an audit row, given before anything about the trigger is read
+(`approval_answer`). `trigger_parks/` is in the durability inventory's `IGNORED`: the question is
 about a sign-in in this machine's browser profile, which no snapshot carries
 either, so a restored copy could only ask again.
 
@@ -286,7 +331,10 @@ so it is listed with the other automations, with its runs, and switched off
 or slowed there. The boot reconcile converges only its action, never its
 switch or its cadence. Each task still runs as the gateway's heartbeat turn
 (`heartbeat.set_task_runner`), and `HEARTBEAT_KEEP` keeps an unfinished task
-for the next pass. A pass over an empty queue reports `skip`, which the run
+for the next pass. A task runs in a session of its own
+(`cron:system:heartbeat-tasks:<run>`), as the owner's agent with its tools, and
+that session ends with the task; it never shares the background chores'
+session, whose lite agent has no tools. A pass over an empty queue reports `skip`, which the run
 history records as the inert `skipped_noop` (`schedule_history
 .status_for_result`, the one status rule the fire path and the Run button
 share), so it folds out of the default history. The heartbeat loop itself no
@@ -304,10 +352,8 @@ never for an app's write), and any other is listed on the Heartbeat tasks
 trigger's panel with **Allow** (`GET /api/heartbeat/tasks`,
 `POST /api/heartbeat/tasks/allow`, which asks first and is owner-only). An edit
 to a task is a new task, and a finished task takes its yes with it. Not
-"read-only until allowed": the read-only posture an unattended run gets is the
-task-mode classifier, which reads a tool it has no declaration for by its name,
-and 75 of the agent's 115 tools pass it — `computer_click`, `workflow_start`
-and `memory_remember` among them.
+"read-only until allowed": a waiting task does not run at all, so what it would
+do is never the question — only the owner's yes is.
 
 ### App-manifest crons
 

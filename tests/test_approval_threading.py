@@ -60,8 +60,12 @@ def _make_gateway():
     return gateway
 
 
-def _make_event(request_id: str = "req1", title: str = "shell: ls") -> LLMEvent:
-    return LLMEvent(kind="permission_request", request_id=request_id, title=title)
+def _make_event(
+    request_id: str = "req1", title: str = "shell: ls", risk_level: str = ""
+) -> LLMEvent:
+    return LLMEvent(
+        kind="permission_request", request_id=request_id, title=title, risk_level=risk_level
+    )
 
 
 # ── Tests: _interactive_approval delegates to the channel delivery seam ──
@@ -263,7 +267,7 @@ class TestApprovalModeSelAudit:
 
     @pytest.mark.asyncio
     async def test_reads_emits_sel_audit_on_read_only_tool(self) -> None:
-        """`--approval reads` records the decision when the tool is read-only."""
+        """`--approval reads` records the decision when the tool DECLARES it only reads."""
         gateway = _make_gateway()
         gateway._approval_mode = "reads"
 
@@ -274,7 +278,7 @@ class TestApprovalModeSelAudit:
             patch("personalclaw.trust_mode.is_yolo_active", return_value=False),
         ):
             approve_fn = gateway._interactive_approval("subagent")
-            result = await approve_fn(_make_event(title="read /tmp/foo.txt"), "")
+            result = await approve_fn(_make_event(title="read_file", risk_level="safe"), "")
 
         assert result == ToolDecision(True, "auto_approved", "cli")
         mock_sel.log_api_access.assert_called_once()

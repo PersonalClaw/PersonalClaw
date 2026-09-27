@@ -13,19 +13,20 @@ Three gaps, and the reason each one needed a different shape of fix:
   path resolution, a disk read. None of that transfers to a CLI whose edit tool is named
   and shaped however its vendor chose. An ACP ``diff`` content block states path, old
   text and new text outright, so the chip is built from the declaration alone.
-* **gap 8, declared risk.** Measured, and it needed NO plumbing: for every dict-defined
-  core tool the "declaration" IS the name inference (``agents/native/tools.py`` uses
-  ``infer_risk_from_name`` when the dict carries no explicit ``risk_level``, and none
-  does), so threading a declared level through the MCP listing would compute the same
-  answer twice. The rail below pins that equivalence instead, so the day a core tool
-  declares an explicit level, the divergence fails here rather than silently mislabeling
-  an approval card.
+* **gap 8, declared risk.** An ACP CLI declares nothing about its own tools, so a call from
+  one carries no declaration and is treated as a change. The ``personalclaw-core`` server is
+  the exception — the host serves it and its tools declare what they do — so a call to one of
+  them carries that tool's declaration (``acp.mcp_servers.core_tool_declaration``), and the
+  ACP card, Ask mode and Trust reads answer for ``artifact_delete`` what the native path does.
+  It used to be the same NAME inference on both paths, which is why no plumbing was needed;
+  inference from a name is gone, so the declaration has to travel.
 
-The three tool-name renderings exercised here are the ones MEASURED live on 2026-08-24
-during the reachability drive — codex renders ``mcp.personalclaw-core.notify``,
-claude-code ``mcp__personalclaw-core__notify`` and kiro-cli ``@personalclaw-core/notify``
-for the same server. A risk resolver that only handles one dialect mislabels two thirds
-of the fleet, so every risk assertion runs over all three.
+The three wire shapes exercised here are the ones each adapter really sends: claude-code
+``mcp__personalclaw-core__notify`` (kind ``other``), codex ``mcp.personalclaw-core.notify``
+(kind ``execute``, with a structured ``{server, tool, arguments}`` input) and kiro-cli
+``Running: @personalclaw-core/notify`` (the tool line the unattended drive recorded).
+A lookup that only handles one of them mislabels two thirds of the fleet, so every risk
+assertion runs over all three.
 """
 
 from __future__ import annotations
@@ -36,7 +37,9 @@ from types import SimpleNamespace
 import pytest
 
 from personalclaw.acp.adapter import acp_event_to_agent_event
+from personalclaw.acp.dialect import DefaultDialect
 from personalclaw.acp.translate import (
+    build_permission_event,
     extract_tool_event,
     extract_tool_update_events,
 )
@@ -45,15 +48,11 @@ from personalclaw.dashboard.chat_runner import (
     _capture_declared_file_change,
     _redact_tool_input_obj,
 )
-from personalclaw.task_modes import infer_risk_from_name, resolve_effective_risk
+from personalclaw.llm.events import AgentEvent
+from personalclaw.task_modes import resolve_effective_risk
+from personalclaw.tool_providers.base import risk_from_annotations
 
 # ── frames a real CLI puts on the wire ───────────────────────────────────────
-
-_DIALECTS = (
-    "mcp.personalclaw-core.{name}",  # codex
-    "mcp__personalclaw-core__{name}",  # claude-code
-    "@personalclaw-core/{name}",  # kiro-cli
-)
 
 
 def _call_frame(raw_input: object, *, title: str = "Read", kind: str = "read") -> JsonRpcMessage:
@@ -141,7 +140,7 @@ class TestStructuredInputSurvivesToTheRenderer:
         dict, because ``_redact_tool_input_obj`` is the single redaction+cap point for
         the structured shape. So prove the secret does not survive that point."""
         ev = extract_tool_event(
-            _call_frame({"cmd": "curl -H 'Authorization: Bearer sk-ant-api03-SECRETVALUE'"}),
+            _call_frame({"cmd": "curl -H 'Authorization: Bearer fake-anthropic-1'"}),
             {},
             {},
             [],
@@ -149,7 +148,7 @@ class TestStructuredInputSurvivesToTheRenderer:
         assert ev is not None
         rendered = _redact_tool_input_obj(acp_event_to_agent_event(ev).tool_input_obj)
         assert rendered is not None
-        assert "sk-ant-api03-SECRETVALUE" not in json.dumps(rendered)
+        assert "fake-anthropic-1" not in json.dumps(rendered)
 
 
 # ── gap 7b: a declared edit becomes a chip ───────────────────────────────────
@@ -373,75 +372,179 @@ class TestTheDiffBlockIsNotACodexOnlyShape:
         assert chip is None
 
 
-# ── gap 8: the declared level and the inferred level are ONE function ────────
+# ── gap 8: a call to one of our own tools carries that tool's declaration ────
+
+_CORE = "personalclaw-core"
+_CLIS = ("claude-code", "codex", "kiro-cli")
 
 
+class _Turn:
+    """One turn's correlation caches, owned exactly as ``AcpSession`` owns them."""
+
+    def __init__(self) -> None:
+        self.inputs: dict[str, str] = {}
+        self.seen: dict = {}
+        self.stats: list[tuple[str, str]] = []
+
+    def tool_call(self, update: dict) -> AgentEvent:
+        frame = {"sessionUpdate": "tool_call", "toolCallId": "c1", **update}
+        msg = JsonRpcMessage(method="session/update", params={"update": frame})
+        ev = extract_tool_event(msg, self.inputs, self.seen, self.stats)
+        assert ev is not None
+        return acp_event_to_agent_event(ev)
+
+    def permission(self, tool_call: dict) -> AgentEvent:
+        msg = JsonRpcMessage(
+            id=7,
+            method="session/request_permission",
+            params={"toolCall": {"toolCallId": "c1", **tool_call}, "options": []},
+        )
+        return acp_event_to_agent_event(
+            build_permission_event(msg, DefaultDialect(), self.inputs, self.seen, {})
+        )
+
+
+def _drive(cli: str, bare: str, args: dict, *, kind: str = "execute") -> list[AgentEvent]:
+    """The ``tool_call`` event and the permission event one CLI's call to *bare* produces.
+
+    Each shape is the adapter's own: claude-code titles an MCP call with the tool's name and
+    kind ``other`` and repeats both on its approval; codex's approval carries only the id and
+    kind ``execute``, so the host fills the title and input in from the opening frame; kiro-cli
+    titles the call ``Running: @server/tool``. kiro's KIND for an MCP call was never recorded,
+    so ``kind`` lets a rail show that nothing below depends on it.
+    """
+    turn = _Turn()
+    if cli == "claude-code":
+        title = f"mcp__{_CORE}__{bare}"
+        return [
+            turn.tool_call({"title": title, "kind": "other", "rawInput": args}),
+            turn.permission({"title": title, "kind": "other", "rawInput": args}),
+        ]
+    if cli == "codex":
+        raw = {"server": _CORE, "tool": bare, "arguments": args}
+        return [
+            turn.tool_call({"title": f"mcp.{_CORE}.{bare}", "kind": "execute", "rawInput": raw}),
+            turn.permission({"kind": "execute", "status": "pending"}),
+        ]
+    title = f"Running: @{_CORE}/{bare}"
+    return [
+        turn.tool_call({"title": title, "kind": kind, "rawInput": args}),
+        turn.permission({"title": title}),
+    ]
+
+
+def _risk(ev: AgentEvent) -> str:
+    """What the card, Trust reads and ``--approval reads`` act on for this event."""
+    return resolve_effective_risk(ev.risk_level, ev.title, ev.tool_kind, ev.tool_input)
+
+
+#: A core tool per declaration, each confirmed against its own definition below.
 _CORE_TOOL_RISK = {
     "artifact_delete": "destructive",
     "memory_forget": "destructive",
     "notify": "caution",
-    "knowledge_search": "safe",
+    "memory_remember": "caution",
+    "memory_recall": "safe",
+    "get_context": "safe",
 }
 
 
-class TestDeclaredRiskNeedsNoPlumbing:
+class TestACoreToolCarriesItsDeclaration:
+    def test_the_premise_is_what_each_tool_declares(self):
+        """The table below is not hand-rated: each entry is what the tool's own definition
+        declares, so a tool that changes its declaration changes this test's answer."""
+        from personalclaw import mcp_core
+
+        for bare, expected in _CORE_TOOL_RISK.items():
+            tool = mcp_core.own_tool(bare)
+            assert tool is not None, f"{bare} is not on the personalclaw-core surface"
+            assert risk_from_annotations(tool["annotations"], trusted=True).value == expected
+
     @pytest.mark.parametrize("bare,expected", sorted(_CORE_TOOL_RISK.items()))
-    @pytest.mark.parametrize("dialect", _DIALECTS)
-    def test_every_dialect_infers_the_same_risk_as_the_bare_name(self, dialect, bare, expected):
-        """§2.5 gap 8 measured: the ACP-rendered name does NOT break inference, in any of
-        the three dialects a live drive observed. This is why no name-normalizing
-        resolver was added — it would have returned the same value it was handed."""
-        assert infer_risk_from_name(dialect.format(name=bare)) == expected
+    @pytest.mark.parametrize("cli", ["claude-code", "codex"])
+    def test_every_frame_carries_the_tools_own_declaration(self, cli, bare, expected):
+        """Both frames — the opening one the audit row is written from, and the approval the
+        gate acts on — so the card and the gate cannot disagree about the same call."""
+        for ev in _drive(cli, bare, {}):
+            assert ev.risk_level == expected, (cli, ev.kind, ev.title)
+            assert _risk(ev) == expected
 
-    @pytest.mark.parametrize("dialect", _DIALECTS)
-    def test_a_destructive_core_tool_resolves_destructive_through_the_acp_path(self, dialect):
-        """The clause that matters on screen: the approval card for a destructive core
-        tool must show destructive, with the empty ``declared`` an ACP event carries."""
-        name = dialect.format(name="artifact_delete")
-        assert resolve_effective_risk("", name, "other", "") == "destructive"
+    @pytest.mark.parametrize("cli", ["claude-code", "codex"])
+    def test_a_build_mode_producer_and_a_proposal_carry_their_flags(self, cli):
+        saved = _drive(cli, "artifact_save", {})
+        proposed = _drive(cli, "propose_template_diff", {})
+        assert all(ev.builds and not ev.proposes for ev in saved)
+        assert all(ev.proposes and not ev.builds for ev in proposed)
 
-    def test_a_declaration_still_wins_when_one_exists(self):
-        """The plumbing would only ever matter for a tool that declares a level the name
-        does not imply. Prove the resolver already honours that, so the day a core tool
-        does declare one, passing it through is the whole change."""
-        assert resolve_effective_risk("destructive", "knowledge_search", "other", "") == (
-            "destructive"
+    @pytest.mark.parametrize("kind", ["execute", "other", ""])
+    def test_kiro_takes_only_a_destructive_declaration(self, kind):
+        """kiro-cli titles its shell calls ``Running: <command>``, so a command that reads
+        ``@personalclaw-core/memory_recall`` produces this title too. A read, a Build mode
+        producer or a proposal taken from it would let that shell call through; a destructive
+        declaration only adds a question, so it is the one part the host takes."""
+        for ev in _drive("kiro-cli", "artifact_delete", {}, kind=kind):
+            assert ev.risk_level == "destructive" and _risk(ev) == "destructive"
+        for bare in ("memory_recall", "notify", "artifact_save", "propose_template_diff"):
+            for ev in _drive("kiro-cli", bare, {}, kind=kind):
+                assert (ev.risk_level, ev.builds, ev.proposes) == ("", False, False), bare
+                assert _risk(ev) == "caution", bare
+
+
+class TestNothingElseCanWearTheName:
+    """Each of these is a call whose title the MODEL writes, or another server's tool: none
+    may carry a core tool's declaration, least of all a read."""
+
+    def test_a_shell_approval_titled_with_a_core_tool_name(self):
+        """claude-code titles a Bash approval with the model's description of the command."""
+        turn = _Turn()
+        ev = turn.permission(
+            {
+                "title": f"mcp__{_CORE}__memory_recall",
+                "kind": "execute",
+                "rawInput": {"command": "rm -rf build", "description": "x"},
+            }
         )
+        assert ev.risk_level == ""
+        assert _risk(ev) == "destructive"
 
-    def test_no_core_tool_dict_declares_an_explicit_risk_level(self):
-        """The census this conclusion rests on, as a rail. If a core tool ever sets
-        ``risk_level`` explicitly, the equivalence above stops holding and the ACP path
-        starts showing an inferred level where a declared one exists — so fail HERE,
-        loudly, rather than mislabeling an approval card.
-
-        Scoped to ``mcp_core`` and the category modules it aggregates; ``llm/scripted.py``
-        (a scripted test backend) and ``browse/cdp.py`` (its own outcome shape) are
-        legitimate writers of that key and are not core tool dicts."""
-        import importlib
-        import pathlib
-
-        from personalclaw.mcp_core import _AGGREGATED_CATEGORY_MODULES
-
-        # Resolved through the import system, not by joining the last dotted segment onto
-        # the package root. That shortcut was silently wrong for a NESTED category module and
-        # its own vacuity floor is what caught it: `personalclaw.computer_use.tools`
-        # reduced to `tools.py`, pointing the census at an unrelated top-level module. Asking
-        # the module where it lives cannot drift from where it actually lives.
-        modules = ["personalclaw.mcp_core", *_AGGREGATED_CATEGORY_MODULES]
-        paths = [pathlib.Path(importlib.import_module(m).__file__ or "") for m in modules]
-        # Vacuity floor: a mistyped path would scan nothing and pass. Assert the sweep
-        # actually opened the modules, and enough of them to be the real set.
-        assert all(p.is_file() for p in paths), [str(p) for p in paths if not p.is_file()]
-        assert len(paths) >= 6, len(paths)
-        offenders = []
-        for path in paths:
-            for num, line in enumerate(path.read_text().splitlines(), 1):
-                if '"risk_level"' in line and not line.lstrip().startswith("#"):
-                    offenders.append(f"{path.name}:{num}")
-        assert offenders == [], (
-            "a core tool dict now declares an explicit risk_level; the ACP path passes "
-            f"declared='' and would show the INFERRED level instead: {offenders}"
+    def test_a_question_titled_with_a_core_tool_name(self):
+        """claude-code titles its question tool with the question, kind ``other`` — the kind
+        its MCP calls carry. The arguments are what give it away."""
+        turn = _Turn()
+        ev = turn.permission(
+            {
+                "title": f"mcp__{_CORE}__memory_recall",
+                "kind": "other",
+                "rawInput": {"questions": [{"question": f"mcp__{_CORE}__memory_recall"}]},
+            }
         )
+        assert ev.risk_level == ""
+
+    def test_a_shell_call_titled_like_a_codex_mcp_call(self):
+        """codex's MCP calls are kind ``execute`` too; its shell calls never carry the
+        structured ``{server, tool, arguments}`` input."""
+        ev = _Turn().tool_call(
+            {
+                "title": f"mcp.{_CORE}.memory_recall",
+                "kind": "execute",
+                "rawInput": {"command": ["bash", "-lc", "rm -rf build"]},
+            }
+        )
+        assert ev.risk_level == ""
+
+    def test_another_servers_tool_of_the_same_name(self):
+        for title, raw in (
+            ("mcp__acme__memory_recall", {}),
+            ("mcp.acme.memory_recall", {"server": "acme", "tool": "memory_recall"}),
+        ):
+            ev = _Turn().tool_call({"title": title, "kind": "other", "rawInput": raw})
+            assert ev.risk_level == "", title
+            assert _risk(ev) == "caution", title
+
+    def test_a_name_the_server_does_not_serve(self):
+        for ev in _drive("claude-code", "memory_recall_everything", {}):
+            assert ev.risk_level == ""
+            assert _risk(ev) == "caution"
 
 
 # ── gap 8: WHICH tools clause 3 can be about, and the no-downgrade rail ──────
@@ -497,60 +600,60 @@ class TestClauseThreeCanOnlyBeAboutTheAcpSurface:
         present = [n for n in _PLATFORM_ONLY_TOOLS if n in names]
         assert present == [], (
             "a native-only workspace tool is now on the personalclaw-core ACP surface: "
-            f"{present}. These DO declare explicit risk levels, so clause 3's plumbing "
-            "question becomes live the moment one of them is reachable over ACP."
+            f"{present}. The platform shell is the one declared tool whose command decides "
+            "its risk, so reaching it over ACP needs its own look first."
         )
 
+    def test_a_core_tool_declares_its_effect_in_one_place(self):
+        """``annotations`` is the declaration both paths read (the native provider and the
+        ACP lookup). A ``risk_level`` key beside it would be a second one that nothing
+        reads, and the two could only ever disagree."""
+        surface = _acp_core_surface()
+        assert len(surface) >= 50, f"vacuity floor: {len(surface)}"
+        assert [t["name"] for t in surface if "risk_level" in t] == []
+
     def test_no_tool_on_the_acp_surface_is_labelled_LOWER_than_its_native_answer(self):
-        """The clause's observable, over the real surface and every dialect.
+        """The clause's observable, over the real surface, every CLI, and both frames.
 
         For each tool an ACP CLI can actually name, compare the level the ACP path produces
-        (``declared=''``, which is what ``AcpEvent`` carries) against the level the native
-        path produces (the tool's own declared-or-inferred level). A DOWNGRADE — the ACP card
-        showing less risk than the native card for the same tool — is what clause 3 forbids,
-        and it is what the plumbing would fix. An UPGRADE is permitted and does occur: a core
-        read floors at ``caution`` over ACP where native says ``safe``, which is friction, not
-        a security hole, and relaxing it means trusting an unauthenticated wire name.
+        (real frames through ``translate`` and the adapter) against the level the native path
+        produces (the tool's own declaration, exactly what ``InProcessMcpToolProvider`` hands
+        the native gate). A DOWNGRADE — the ACP card showing less risk than the native card for
+        the same tool — is what clause 3 forbids. An UPGRADE is permitted and occurs only on
+        kiro-cli, whose reads floor at ``caution`` because its title is not proof of a tool.
         """
         surface = _acp_core_surface()
         assert len(surface) >= 50, f"vacuity floor: {len(surface)}"
-        downgrades = []
+        downgrades, unequal = [], []
         compared = 0
         for tool in surface:
             bare = tool["name"]
-            # The native answer uses the tool's own declaration when it has one, and the
-            # inference the in-process provider applies when it does not — i.e. exactly what
-            # `InProcessMcpToolProvider` hands the native gate.
-            native_declared = tool.get("risk_level") or infer_risk_from_name(bare)
-            for dialect in _DIALECTS:
-                wire = dialect.format(name=bare)
-                acp = resolve_effective_risk("", wire, "other", "")
-                native = resolve_effective_risk(native_declared, wire, "other", "")
-                compared += 1
-                if _ASCENDING.index(acp) < _ASCENDING.index(native):
-                    downgrades.append(f"{wire}: acp={acp} < native={native}")
-        assert compared >= 150, f"vacuity floor: only {compared} comparisons"
+            native = risk_from_annotations(tool.get("annotations"), trusted=True).value
+            for cli in _CLIS:
+                for ev in _drive(cli, bare, {}):
+                    acp = _risk(ev)
+                    compared += 1
+                    if _ASCENDING.index(acp) < _ASCENDING.index(native):
+                        downgrades.append(f"{cli} {ev.kind} {bare}: acp={acp} < native={native}")
+                    if cli != "kiro-cli" and acp != native:
+                        unequal.append(f"{cli} {ev.kind} {bare}: acp={acp} native={native}")
+        assert compared >= 300, f"vacuity floor: only {compared} comparisons"
         assert downgrades == [], (
-            "the ACP approval card now under-states risk for a reachable core tool — this is "
-            "clause 3's defect and the declared level must be carried onto AcpEvent: "
-            f"{downgrades}"
+            "the ACP approval card now under-states risk for a reachable core tool — the "
+            f"tool's declaration no longer reaches the ACP event: {downgrades}"
         )
+        assert unequal == [], unequal
 
     def test_that_no_downgrade_rail_can_actually_fail(self):
         """The failable control for the rail above — its green is otherwise unfalsifiable.
 
-        Today no surface tool declares a level its name does not imply (the census rail
-        above), so the comparison is green because the two answers are ONE function. Prove
-        the comparison detects a real divergence by synthesising the tool clause 3 is about:
-        a core tool declaring DESTRUCTIVE behind a read-verb name. This is the shape whose
-        arrival makes the plumbing necessary.
+        The same comparison on an event that carries no declaration — what every call was
+        before the lookup, and what one becomes if the lookup stops matching — must detect a
+        downgrade for a destructive core tool on every CLI.
         """
-        bare, declared = "knowledge_search", "destructive"
-        assert infer_risk_from_name(bare) == "safe", "premise: the name implies a read"
-        for dialect in _DIALECTS:
-            wire = dialect.format(name=bare)
-            acp = resolve_effective_risk("", wire, "other", "")
-            native = resolve_effective_risk(declared, wire, "other", "")
-            assert _ASCENDING.index(acp) < _ASCENDING.index(
-                native
-            ), f"{wire}: expected a detectable downgrade, got acp={acp} native={native}"
+        for cli in _CLIS:
+            for ev in _drive(cli, "artifact_delete", {}):
+                bare_event = resolve_effective_risk("", ev.title, ev.tool_kind, ev.tool_input)
+                assert _ASCENDING.index(bare_event) < _ASCENDING.index(
+                    "destructive"
+                ), f"{cli}: expected a detectable downgrade, got {bare_event}"

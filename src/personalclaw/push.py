@@ -57,6 +57,7 @@ import base64
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import urllib.error
@@ -244,6 +245,109 @@ def vapid_public_key() -> str:
     return keys[0] if keys else ""
 
 
+# ── Which sign-in a push destination belongs to ──────────────────────────────
+#
+# A push destination — a browser's subscription, a store app's relay token — is registered by a
+# device that is signed in, and it is that device's for exactly as long as the sign-in lasts. Each
+# row records its sign-in: ``session``, the row the sign-in has in Settings → Devices, and
+# ``until``, when it ends (a sign-in's end is fixed when it is made). A sign-in that ends early
+# ends its rows with it (:func:`revoke_for_sessions`, from ``token_auth.sign_out``); one that
+# runs out stops being woken at ``until``. Without this, signing a phone out left its push
+# destination behind and the phone kept being woken. ``session`` is ``""`` for a row registered
+# on no sign-in at all (a gateway that signs nobody in): nothing can end it but turning push off.
+# A row with no ``session`` is from before this was recorded, and nothing says its device is still
+# signed in, so it is woken no more; the device turns push on again.
+
+
+def _sign_in_fields(session: str, until: float) -> dict[str, Any]:
+    """The ``session``/``until`` pair a row is stored with."""
+    session = str(session or "")
+    return {"session": session, "until": float(until or 0.0) if session else 0.0}
+
+
+def _deliverable(row: dict[str, Any], now: float) -> bool:
+    """Whether a push may still wake *row*'s device: while the sign-in that registered it lasts."""
+    if "session" not in row:
+        return False
+    if not row.get("session"):
+        return True
+    try:
+        return float(row.get("until") or 0.0) > now
+    except (TypeError, ValueError):
+        return False
+
+
+def _audit_revoked(what: str, device_id: str, session: str, reason: str) -> None:
+    """One SEL row per push destination a sign-out ended. Names the push id and the sign-in's row,
+    never the endpoint or the token: each is a capability to wake the device.
+
+    The operation names the act and the outcome is its verdict, ``ok``, as for the sign-out's own
+    ``device_revoked`` row: the Audit log's Succeeded filter returns the two together. The
+    outcome was ``revoked``, a word no filter family holds, so no filter returned the row."""
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller="push",
+            operation=f"push_revoked:{what}",
+            outcome="ok",
+            resources=f"device={device_id} sign_in={session} reason={reason}",
+        )
+    except Exception:
+        logger.debug("SEL audit failed for a revoked push destination", exc_info=True)
+
+
+def revoke_for_sessions(sessions: set[str], *, reason: str) -> int:
+    """End every push destination registered on one of *sessions* (their rows in Settings →
+    Devices): the web-push subscriptions and the relay tokens alike. Returns how many ended.
+
+    Called when those sign-ins end early — a device signed out, all the others signed out,
+    ``personalclaw logout``, the per-kind limit — so a signed-out device is not woken again.
+    """
+    ended = {str(s) for s in sessions if s}
+    if not ended:
+        return 0
+    count = 0
+    for what, load, save in (
+        ("webpush", load_subscriptions, _save_subscriptions),
+        ("relay", load_relay_tokens, _save_relay_tokens),
+    ):
+        rows = load()
+        gone = {k: v for k, v in rows.items() if str(v.get("session") or "") in ended}
+        if not gone:
+            continue
+        save({k: v for k, v in rows.items() if k not in gone})
+        for device_id, row in gone.items():
+            _audit_revoked(what, device_id, str(row.get("session") or ""), reason)
+        count += len(gone)
+    return count
+
+
+def move_to_session(old: str, new: str, *, until: float) -> int:
+    """Move the push destinations of sign-in *old* to *new*, which ends at *until*.
+
+    For a browser that signs in again with a newer link: the gateway opens a fresh link in the
+    default browser at every start, the browser swaps its sign-in for it, and it is the same
+    browser, still subscribed. Returns how many moved.
+    """
+    if not old or not new or old == new:
+        return 0
+    count = 0
+    for load, save in (
+        (load_subscriptions, _save_subscriptions),
+        (load_relay_tokens, _save_relay_tokens),
+    ):
+        rows = load()
+        moved = {k for k, v in rows.items() if str(v.get("session") or "") == old}
+        if not moved:
+            continue
+        for key in moved:
+            rows[key].update(_sign_in_fields(new, until))
+        save(rows)
+        count += len(moved)
+    return count
+
+
 # ── Per-device subscriptions ────────────────────────────────────────────────
 
 
@@ -276,12 +380,13 @@ def _save_subscriptions(rows: dict[str, dict[str, Any]]) -> None:
         logger.debug("could not tighten %s to 0600", path, exc_info=True)
 
 
-def subscribe(device_id: str, subscription: dict[str, Any]) -> None:
-    """Store one W3C ``PushSubscription`` JSON against *device_id*.
+def subscribe(device_id: str, subscription: dict[str, Any], *, session: str, until: float) -> None:
+    """Store one W3C ``PushSubscription`` JSON against *device_id*, for the sign-in *session*
+    (its row in Settings → Devices, ``""`` for none) that lasts until *until*.
 
-    Only the three fields a sender needs are kept (``endpoint`` + the two keys). A
-    browser's ``toJSON()`` also carries ``expirationTime`` and whatever a future spec
-    adds; storing the whole blob would persist fields we never read and cannot reason
+    Only the three fields a sender needs are kept (``endpoint`` + the two keys), with the sign-in
+    it belongs to. A browser's ``toJSON()`` also carries ``expirationTime`` and whatever a future
+    spec adds; storing the whole blob would persist fields we never read and cannot reason
     about. Re-subscribing the same device REPLACES its row — a browser re-subscribes with
     a new endpoint whenever the old one is invalidated, and keeping both would send every
     push twice.
@@ -306,6 +411,7 @@ def subscribe(device_id: str, subscription: dict[str, Any]) -> None:
         "endpoint": endpoint,
         "keys": {"p256dh": p256dh, "auth": auth},
         "created_at": time.time(),
+        **_sign_in_fields(session, until),
     }
     _save_subscriptions(rows)
 
@@ -344,19 +450,27 @@ def load_relay_tokens() -> dict[str, dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         logger.warning("push: relay token store unreadable — treating as empty", exc_info=True)
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict)}
 
 
 def _save_relay_tokens(rows: dict[str, dict[str, Any]]) -> None:
+    """Owner-only, like the subscriptions: a relay token is a capability to wake the device."""
     path = relay_tokens_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(rows, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write(path, json.dumps(rows, indent=1) + "\n")
+    try:
+        os.chmod(path, FILE_MODE)
+    except OSError:
+        logger.debug("could not tighten %s to 0600", path, exc_info=True)
 
 
-def register_relay_token(device_id: str, platform: str, token: str) -> None:
-    """Store one Apple/Google push-service device token against *device_id*.
+def register_relay_token(
+    device_id: str, platform: str, token: str, *, session: str, until: float
+) -> None:
+    """Store one Apple/Google push-service device token against *device_id*, for the sign-in
+    *session* that lasts until *until* (as :func:`subscribe`).
 
     Mirrors :func:`subscribe`'s discipline: only the two fields a sender needs are kept,
     and re-registering the same device REPLACES its row (platforms rotate tokens, and
@@ -370,7 +484,12 @@ def register_relay_token(device_id: str, platform: str, token: str) -> None:
         raise ValueError("relay registration needs a device token")
 
     rows = load_relay_tokens()
-    rows[str(device_id)] = {"platform": platform, "token": token, "created_at": time.time()}
+    rows[str(device_id)] = {
+        "platform": platform,
+        "token": token,
+        "created_at": time.time(),
+        **_sign_in_fields(session, until),
+    }
     _save_relay_tokens(rows)
 
 
@@ -487,6 +606,9 @@ def send_webpush(device_id: str, payload: dict[str, str]) -> bool:
     row = load_subscriptions().get(str(device_id))
     if row is None:
         logger.debug("push: no subscription for device %s", device_id)
+        return False
+    if not _deliverable(row, time.time()):
+        logger.debug("push: device %s is not signed in any more", device_id)
         return False
     body = payload_bytes(payload)
     try:
@@ -640,13 +762,15 @@ def deliver(kind: str, item_id: str) -> int:
         if not url:
             logger.debug("push: backend is relay but mobile.relay_url is empty")
             return 0
+        now = time.time()
         delivered = sum(
             1
             for row in load_relay_tokens().values()
-            if send_relay(payload, url, str(row.get("platform", "")), str(row.get("token", "")))
+            if _deliverable(row, now)
+            and send_relay(payload, url, str(row.get("platform", "")), str(row.get("token", "")))
         )
     elif backend == "webpush":
-        delivered = sum(1 for device in list(load_subscriptions()) if send_webpush(device, payload))
+        delivered = sum(1 for device in signed_in_devices() if send_webpush(device, payload))
     else:
         logger.warning("push: unknown backend %r — nothing sent", backend)
         return 0
@@ -718,7 +842,7 @@ def push_cmd(args: Any) -> int:
         payload = content_free_payload(kind, item_id)
         print(f"backend={push_backend()} delivered={sent} payload={json.dumps(payload)}")
         if not sent:
-            print("Nothing was delivered — check `personalclaw push status`.")
+            print("Nothing was delivered — check `personalclaw push status`.", file=sys.stderr)
             return 1
         return 0
 
@@ -749,18 +873,35 @@ def approval_targeted() -> bool:
         return False
 
 
+def signed_in_devices() -> list[str]:
+    """The push ids of the web-push subscriptions a push may still wake, sorted: each one's
+    sign-in still lasts (:func:`_deliverable`)."""
+    now = time.time()
+    return sorted(k for k, row in load_subscriptions().items() if _deliverable(row, now))
+
+
+def signed_in_relay_devices() -> list[str]:
+    """The push ids of the relay tokens a push may still wake, sorted."""
+    now = time.time()
+    return sorted(k for k, row in load_relay_tokens().items() if _deliverable(row, now))
+
+
 def push_status() -> dict[str, Any]:
-    """What the settings surface and the phone need to know. Never includes a secret."""
+    """What the settings surface and the phone need to know. Never includes a secret.
+
+    A device is listed while a push can wake it: a device whose sign-in ended reads as not
+    subscribed, so its page offers to turn push on again rather than saying it is on.
+    """
     backend = push_backend()
-    subs = load_subscriptions()
+    devices = signed_in_devices()
     return {
         "backend": backend,
         "vapid_public_key": vapid_public_key() if backend == "webpush" else "",
         "vapid_ready": vapid_keys() is not None,
         "ntfy_configured": bool(ntfy_topic_url()),
         "relay_configured": bool(relay_url()),
-        "relay_devices": sorted(load_relay_tokens()),
+        "relay_devices": signed_in_relay_devices(),
         "approval_targeted": approval_targeted(),
-        "devices": sorted(subs),
-        "subscribed": len(subs),
+        "devices": devices,
+        "subscribed": len(devices),
     }

@@ -66,7 +66,7 @@ def summarizer(monkeypatch):
     """The background model, replaced by a deterministic stand-in that counts its calls."""
     calls: list[str] = []
 
-    async def _fake(text, *, cap=2000, raw_ref=""):
+    async def _fake(text, *, cap=2000, raw_ref="", usage=None):
         calls.append(text)
         return f"{_SUMMARY_MARK} ({len(text)} chars of earlier conversation)"
 

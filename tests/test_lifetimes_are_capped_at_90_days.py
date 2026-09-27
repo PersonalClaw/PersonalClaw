@@ -78,17 +78,18 @@ def test_the_limit_is_90_days_for_the_core_and_for_apps():
     assert channel.MAX_SESSION_TTL_SECS == LIMIT, "apps read the limit through the SDK"
 
 
-def test_an_app_asking_for_longer_is_refused_with_the_sentence():
-    """``generate_token`` is the SDK's door: an app that asks for a year gets the sentence to
-    show its user, and no token."""
-    from personalclaw.sdk.channel import generate_token
+def test_an_app_asking_for_longer_is_refused_with_the_sentence(monkeypatch):
+    """``owner_sign_in_token`` is the SDK's door, the one mint an app has: an app that asks for
+    a year for its owner gets the sentence to show them, and no token."""
+    from personalclaw.sdk.channel import owner_id_credential, owner_sign_in_token
 
+    monkeypatch.setenv(owner_id_credential("slack"), "U0OWNER")
     before = set(ss.load_session_records())
     with pytest.raises(ValueError) as refused:
-        generate_token("slack-user", 365 * 86400)
+        owner_sign_in_token("slack", "U0OWNER", 365 * 86400)
     _says_the_limit_and_why(str(refused.value), "365 days")
     assert set(ss.load_session_records()) == before, "nothing was minted"
-    assert _claims(generate_token("slack-user", LIMIT))["session_exp"] > time.time()
+    assert _claims(owner_sign_in_token("slack", "U0OWNER", LIMIT))["session_exp"] > time.time()
 
 
 def test_a_lifetime_is_read_in_minutes_hours_or_days_and_never_clamped():

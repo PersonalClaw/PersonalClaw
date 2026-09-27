@@ -343,7 +343,7 @@ def test_switching_a_servers_transport_leaves_nothing_of_the_old_one(home) -> No
     def owned() -> set[str]:
         return {k for k in credential_names() if k.startswith(mcp_server_prefix(NAME))}
 
-    resp = _call("PUT", {"command": "echo", "env": {"GITHUB_TOKEN": "ghp_fixtureSwitch0123456789"}})
+    resp = _call("PUT", {"command": "echo", "env": {"GITHUB_TOKEN": "fake-github-token-1"}})
     assert resp.status == 200, resp.text
     env_keys = owned()
     assert env_keys, "precondition: the variable was stored"

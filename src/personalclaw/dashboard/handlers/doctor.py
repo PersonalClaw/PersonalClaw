@@ -270,9 +270,9 @@ _SECRET_MASK = "«secret:{key} — not resolved by a preview»"
 def _redact_leaf(value: Any) -> Any:
     """One config leaf, screened for credentials.
 
-    Screens each leaf ONCE, at entry, rather than redacting a composed line later:
-    `redact_credentials` is not idempotent over concatenated text, and a trailing chokepoint
-    over a joined `key=value` line destroys the field NAME as well as the value.
+    Screens each leaf ONCE, at entry, rather than redacting a composed line later: over a
+    joined `key=value` line, the assignment pattern takes the field NAME into its mask along with
+    the value, and screening the leaf first keeps the name readable.
     """
     from personalclaw.security import redact_credentials
     from personalclaw.triggers.secrets import SECRET_REF_RE
@@ -337,6 +337,10 @@ def _action_config_fact(trigger: Any) -> dict[str, Any]:
     }
     if provider_name == "run-prompt":
         prompt_id = str(config.get("prompt_id") or "").strip()
+        message = str(config.get("message") or "").strip()
+        if not prompt_id and message:
+            # What the provider runs when no saved prompt is named: the action's own message.
+            fact["rendered"] = _redact_leaf(message)
         if prompt_id:
             from personalclaw.action_providers.run_prompt_provider import render_saved_prompt
 
@@ -380,6 +384,7 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
     "nothing permitted" would send users widening allowlists they never needed.
     """
     from personalclaw.triggers.screen import (
+        action_config,
         provider_is_read_only,
         requested_capabilities,
         unfenced_actions,
@@ -388,8 +393,9 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
     declared = getattr(trigger, "capabilities", None)
     declared = dict(declared) if isinstance(declared, dict) else {}
     requested = requested_capabilities(trigger)
+    config = action_config(trigger)
     needs_fence = {
-        key: [v for v in values if not (key == "providers" and provider_is_read_only(v))]
+        key: [v for v in values if not (key == "providers" and provider_is_read_only(v, config))]
         for key, values in requested.items()
     }
     needs_fence = {k: v for k, v in needs_fence.items() if v}

@@ -20,11 +20,11 @@ Two shapes, one spec:
 * the ACP ``session/new`` shape is an **array** of objects that each carry their
   own ``name``, and whose ``env`` is an array of ``{"name", "value"}`` pairs.
 
-Env is declared explicitly rather than relied upon by inheritance. The CLI
-inherits the gateway's environment (``transport.py`` spawns with ``{**os.environ}``)
-and its MCP children would normally inherit that in turn, but a CLI is free to
-spawn MCP servers with a filtered environment. Two variables decide whether the
-server answers correctly at all, so neither may be left to inheritance:
+Env is declared explicitly rather than relied upon by inheritance. The CLI starts
+from the child allowlist (``transport.py``, ``sandbox.build_child_env``) and its MCP
+children would normally inherit that in turn, but a CLI is free to spawn MCP servers
+with a filtered environment. Two variables decide whether the server answers
+correctly at all, so neither may be left to inheritance:
 
 ``PERSONALCLAW_HOME``
     ``mcp_core`` resolves ``config_dir()`` for the IPC secret, the gateway port
@@ -40,12 +40,117 @@ server answers correctly at all, so neither may be left to inheritance:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 CORE_SERVER_NAME = "personalclaw-core"
+
+#: The kinds an ACP CLI gives a call to an MCP server's tool when it titles the call with the
+#: tool's own name: claude-code's ``other``, or no kind at all. A call of any other kind is one
+#: of the CLI's own tools, and its title is whatever the CLI chose — claude-code titles a shell
+#: call's approval with the model's own description of the command — so only on one of these
+#: kinds can a title be a tool name rather than prose.
+_NAME_TITLED_KINDS = frozenset({"", "other"})
+
+
+def _arguments(tool_input: object) -> dict[str, Any] | None:
+    """A call's input as an object: ``{}`` when it carries none, ``None`` when it is unreadable.
+
+    The permission frame carries the input as the JSON text the ``tool_call`` frame cached, the
+    ``tool_call`` frame as the object itself; an edit tool's cached input is a unified diff.
+    """
+    if isinstance(tool_input, dict):
+        return tool_input
+    if not tool_input:
+        return {}
+    if isinstance(tool_input, str):
+        try:
+            value = json.loads(tool_input)
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) else None
+    return None
+
+
+def _core_call(title: str, tool_kind: str, tool_input: object) -> tuple[str, Any, bool]:
+    """``(tool, arguments, exact)`` for a call that names a ``personalclaw-core`` tool.
+
+    The three wire shapes, read from the adapters' own sources and the ``AAP-4`` drive:
+
+    * claude-code — ``mcp__personalclaw-core__<tool>``, kind ``other``, the input is the
+      tool's arguments;
+    * codex — ``mcp.personalclaw-core.<tool>``, kind ``execute``, and the input is the
+      structured ``{server, tool, arguments}`` codex builds for an MCP call, which a shell
+      call never carries;
+    * kiro-cli — ``Running: @personalclaw-core/<tool>``. Not ``exact``: kiro titles its shell
+      calls ``Running: <command>``, so a command that happens to read
+      ``@personalclaw-core/<tool>`` produces the same title.
+
+    ``("", None, False)`` when the call names none of them.
+    """
+    title = title or ""
+    kind = (tool_kind or "").lower()
+    args = _arguments(tool_input)
+    claude = f"mcp__{CORE_SERVER_NAME}__"
+    if kind in _NAME_TITLED_KINDS and title.startswith(claude):
+        return title[len(claude) :], args, True
+    if kind == "execute" and args is not None and args.get("server") == CORE_SERVER_NAME:
+        tool = args.get("tool")
+        if isinstance(tool, str) and title == f"mcp.{CORE_SERVER_NAME}.{tool}":
+            inner = args.get("arguments")
+            return tool, ({} if inner is None else inner), True
+    kiro = f"Running: @{CORE_SERVER_NAME}/"
+    if title.startswith(kiro):
+        return title[len(kiro) :], args, False
+    return "", None, False
+
+
+def core_tool_declaration(title: str, tool_kind: str, tool_input: object) -> tuple[str, bool, bool]:
+    """``(risk_level, builds, proposes)`` for an ACP call to one of PersonalClaw's own tools.
+
+    An ACP CLI declares nothing about its tools, so a call from one carries no declaration and
+    is treated as a change. The exception is a call to the ``personalclaw-core`` server the
+    host serves itself: those tools declare exactly what they do, so the call can carry the
+    same declaration a native call does, and Ask mode, Trust reads and the card treat
+    ``memory_recall`` as the read it is and ``artifact_delete`` as the delete.
+
+    The lookup is exact — the tool's own name, on the one server — and it takes the
+    declaration only when the call cannot be something else wearing the name:
+
+    * the call's arguments must all be ones the tool takes. A CLI tool whose title the model
+      writes (claude-code's question tool titles itself with the question) cannot pass as
+      ours by choosing its text;
+    * on kiro-cli's title, which one of its shell calls can also produce, only a
+      ``destructive`` declaration is taken. That one only adds a question; a read, a Build
+      mode producer or a proposal would let the shell call through.
+
+    ``("", False, False)`` for every other call.
+    """
+    from personalclaw import mcp_core
+    from personalclaw.tool_providers.base import (
+        BUILDS_META_KEY,
+        PROPOSES_META_KEY,
+        RiskLevel,
+        risk_from_annotations,
+    )
+
+    name, args, exact = _core_call(title, tool_kind, tool_input)
+    tool = mcp_core.own_tool(name) if name else None
+    if tool is None:
+        return "", False, False
+    risk = risk_from_annotations(tool.get("annotations"), trusted=True)
+    if not exact:
+        return (risk.value if risk is RiskLevel.DESTRUCTIVE else ""), False, False
+    schema = tool.get("inputSchema")
+    takes = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(args, dict) or not set(args) <= set(takes if isinstance(takes, dict) else ()):
+        return "", False, False
+    meta = tool.get("_meta")
+    meta = meta if isinstance(meta, dict) else {}
+    return risk.value, meta.get(BUILDS_META_KEY) is True, meta.get(PROPOSES_META_KEY) is True
 
 
 def core_mcp_servers(*, session_key: str | None = None) -> list[dict[str, Any]]:

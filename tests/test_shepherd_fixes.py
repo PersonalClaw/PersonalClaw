@@ -65,7 +65,7 @@ class TestEnvPermissions:
 
         tmp = Path(str(tmp_path))
         env_file = tmp / ".env"
-        env_file.write_text("SLACK_BOT_TOKEN=xoxb-test\n")
+        env_file.write_text("SLACK_BOT_TOKEN=fake-bot-token-test\n")
         env_file.chmod(0o644)
 
         with patch("personalclaw.config.loader.env_path", return_value=env_file):
@@ -211,8 +211,8 @@ class TestLoadCredentialsEnvPropagation:
         tmp = Path(str(tmp_path))
         env_file = tmp / ".env"
         env_file.write_text(
-            "SLACK_BOT_TOKEN=xoxb-test\n"
-            "SLACK_APP_TOKEN=xapp-test\n"
+            "SLACK_BOT_TOKEN=fake-bot-token-test\n"
+            "SLACK_APP_TOKEN=fake-app-token-test\n"
             "PERSONALCLAW_OWNER_ID=U123\n"
         )
         env_file.chmod(0o600)
@@ -221,8 +221,8 @@ class TestLoadCredentialsEnvPropagation:
             cfg = AppConfig.__new__(AppConfig)
             cfg.load_credentials()
 
-        assert os.environ.get("SLACK_BOT_TOKEN") == "xoxb-test"
-        assert os.environ.get("SLACK_APP_TOKEN") == "xapp-test"
+        assert os.environ.get("SLACK_BOT_TOKEN") == "fake-bot-token-test"
+        assert os.environ.get("SLACK_APP_TOKEN") == "fake-app-token-test"
         assert os.environ.get("PERSONALCLAW_OWNER_ID") == "U123"
 
     def test_existing_env_value_preserved(self, tmp_path: object, monkeypatch) -> None:
@@ -233,11 +233,11 @@ class TestLoadCredentialsEnvPropagation:
 
         from personalclaw.config.loader import AppConfig
 
-        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-from-systemd")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "fake-bot-token-from-systemd")
 
         tmp = Path(str(tmp_path))
         env_file = tmp / ".env"
-        env_file.write_text("SLACK_BOT_TOKEN=xoxb-from-file\n")
+        env_file.write_text("SLACK_BOT_TOKEN=fake-bot-token-from-file\n")
         env_file.chmod(0o600)
 
         with patch("personalclaw.config.loader.env_path", return_value=env_file):
@@ -245,9 +245,9 @@ class TestLoadCredentialsEnvPropagation:
             creds = cfg.load_credentials()
 
         # creds dict reflects env override semantics (env wins)…
-        assert creds["SLACK_BOT_TOKEN"] == "xoxb-from-systemd"
+        assert creds["SLACK_BOT_TOKEN"] == "fake-bot-token-from-systemd"
         # …and the env var is unchanged (setdefault is a no-op when set).
-        assert os.environ["SLACK_BOT_TOKEN"] == "xoxb-from-systemd"
+        assert os.environ["SLACK_BOT_TOKEN"] == "fake-bot-token-from-systemd"
 
     def test_empty_env_file_does_not_clobber_environ(self, tmp_path: object, monkeypatch) -> None:
         """When ~/.personalclaw/.env is bind-mounted empty inside a sandbox child,
@@ -258,7 +258,7 @@ class TestLoadCredentialsEnvPropagation:
 
         from personalclaw.config.loader import AppConfig
 
-        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-from-parent")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "fake-bot-token-from-parent")
 
         tmp = Path(str(tmp_path))
         env_file = tmp / ".env"
@@ -269,5 +269,5 @@ class TestLoadCredentialsEnvPropagation:
             cfg = AppConfig.__new__(AppConfig)
             creds = cfg.load_credentials()
 
-        assert creds["SLACK_BOT_TOKEN"] == "xoxb-from-parent"
-        assert os.environ["SLACK_BOT_TOKEN"] == "xoxb-from-parent"
+        assert creds["SLACK_BOT_TOKEN"] == "fake-bot-token-from-parent"
+        assert os.environ["SLACK_BOT_TOKEN"] == "fake-bot-token-from-parent"

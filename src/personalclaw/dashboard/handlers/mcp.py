@@ -15,7 +15,7 @@ from personalclaw.atomic_write import atomic_json_write
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
-from personalclaw.request_validation import require_string
+from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import (
     MaskConflict,
@@ -1545,12 +1545,7 @@ async def api_mcp_server_sign_in(request: web.Request) -> web.Response:
         )
         return web.json_response({"ok": True, "name": name, "signedOut": removed})
 
-    try:
-        body = await request.json() if request.can_read_body else {}
-    except Exception:
-        body = None
-    if not isinstance(body, dict):
-        return json_error("invalid_sign_in", message="The body must be a JSON object.", status=400)
+    body = await json_object_body(request)
     client_id, client_secret = body.get("clientId", ""), body.get("clientSecret", "")
     if not isinstance(client_id, str) or not isinstance(client_secret, str):
         return json_error(

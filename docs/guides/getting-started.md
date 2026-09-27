@@ -300,6 +300,49 @@ scheduled check, no release probe. `personalclaw update` still works when you ru
 hand. This is a separate switch from `updates.auto`: one governs whether PersonalClaw
 *looks*, the other whether it *installs*.
 
+### Upgrading from 0.1.x
+
+0.2.0 is a pre-1.0 clean break: state shapes changed with no automatic migration, several
+defaults flipped, and some routes refuse input they used to accept. Run
+`personalclaw snapshot` first, then update. What changes for you:
+
+- **Updates.** `auto_update` and `dashboard.update_dev_mode` are retired, along with
+  `POST /api/update/auto` and `POST /api/update/dev-mode`. One legacy mapping applies once
+  on load: `auto_update: true` becomes `updates.channel=stable` + `updates.auto=staged`,
+  `auto_update: false` becomes `updates.auto=off`, and `dashboard.update_dev_mode: true`
+  becomes `updates.channel=nightly`. Nothing else in your config is touched. The four
+  fields to know are `updates.channel`, `updates.pin`, `updates.auto` and
+  `updates.check_enabled` (above), and `git reset --hard` is gone from every apply path.
+- **Timed triggers change the hour they fire.** A trigger with no explicit timezone uses
+  local wall-clock time, not UTC. If you left the field blank to mean UTC, declare `UTC`.
+- **Existing automations honour the action denylist.** Scheduled, file-watch, webhook and
+  chained automations never did. Adjust the command rather than the guardrail.
+- **Hooks, cron scripts and app backends no longer inherit PersonalClaw's environment.**
+  Use `sandbox.env_passthrough`; credential-shaped names stay refused even if declared.
+- **Python 3.14 is refused at install time**: `requires-python` is `>=3.12,<3.14`.
+- **Config fields removed** (a stored value is ignored on load): `workflows.max_active_runs`,
+  `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`,
+  `learning.min_session_score`, `knowledge.idempotent_persist`,
+  `workflows.max_concurrent_nodes` and `agent.sandbox`.
+- **`inbound` is renamed `external_access`.** The master switch `external_access.enabled`
+  must also be on, and surface tokens move to the credential store, so re-mint an MCP token
+  with `personalclaw inbound token create mcp`.
+- **API breaks.** `GET /api/inbox/pending` is `GET /api/inbox/open`, and
+  `/api/inbox/status` carries `open_count` instead of `pending_count`. Consent is the JSON
+  literal `true` only: the string `"true"`, `1` and `yes` are refused. Three destructive
+  routes require `confirm: true`, a destructive `POST /api/tools/invoke` needs
+  `"confirm_risk": "destructive"`, six orphaned `/api/memory/*` embedding endpoints are
+  gone, and workflow `rewind`/`run-from` require `confirm_cascade=true`.
+- **State shapes changed with no migration.** `sessions.json` rows in the old shape are
+  discarded on read (one `personalclaw token` re-mint); loop rows written before
+  `stop_reason` read as completed; the `runs` table no longer declares `task_list_id`; and
+  a knowledge library written earlier reports that a re-index is due.
+- **SDK breaks for app authors.** `run_chat` is no longer exported from
+  `personalclaw.sdk.channel`, and `register_acp_cli_entry` no longer accepts
+  `agent_config_dir`: both fail at import. The `kiro` runner id is now `kiro-cli`. Update
+  installed apps alongside the core upgrade.
+- **Chat's Activity → Index tab is gone.** The Session Map is the session's index.
+
 ## Where to go next
 
 - **Explore the platform** — Skills, Agents, Tasks, goal Loops, Knowledge,

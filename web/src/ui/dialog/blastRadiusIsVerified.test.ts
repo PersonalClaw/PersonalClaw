@@ -157,6 +157,11 @@ describe('no destructive dialog names its subject NOWHERE', () => {
       file: 'pages/settings/SecurityPanel.tsx',
       title: "'Allow egress to all private networks?'",
     },
+    {
+      // One key signs every sign-in to the gateway: the key is the subject, not one of a list.
+      file: 'pages/settings/SecurityPanel.tsx',
+      title: "'Replace the sign-in key?'",
+    },
   ]
 
   const walk = (d: string): string[] =>
@@ -196,11 +201,12 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // re-making by a person.
     //
     // Fixed settings controls are different from list rows: "password sign-in", "the 2FA
-    // requirement", and "all private networks" are the subjects themselves, not placeholders for
-    // one item selected from a collection. Keep their exact literal titles in a counted inventory
-    // instead of requiring fake interpolation merely to satisfy this source scan. `ToggleRow` is a
-    // typed forwarding boundary; its callers supply the required title/body, and the dedicated
-    // confirmWeakeningToggles suite verifies the two consumers introduced with that boundary.
+    // requirement", "all private networks" and "the sign-in key" are the subjects themselves, not
+    // placeholders for one item selected from a collection. Keep their exact literal titles in a
+    // counted inventory instead of requiring fake interpolation merely to satisfy this source scan.
+    // `ToggleRow` is a typed forwarding boundary; its callers supply the required title/body, and
+    // the dedicated confirmWeakeningToggles suite verifies the two consumers introduced with that
+    // boundary.
     // (The file viewer was the third: its one dialog was "File changed on disk — overwrite?", which
     // left when the gateway began refusing a stale save instead (`lib/staleWrite.ts`). With no
     // dialog it needs no exemption, so it is back in the census like any other file.)
@@ -281,8 +287,12 @@ describe('two more bodies: one corrected, one confirmed', () => {
     expect(ui, 'the whole sentence').toContain(
       'There is no undo — but they stay readable under Handled.',
     )
+    // The Handled filter reads the one settled set, which the detail panel's settled state reads too.
     expect(ui, "and the filter that makes the second half true").toMatch(
-      /filter === 'handled' \? \(it\.status === 'handled' \|\| it\.status === 'sent' \|\| it\.status === 'dismissed'\)/,
+      /filter === 'handled' \? isSettled\(it\.status\)/,
+    )
+    expect(web('pages/inbox/inboxMeta.ts'), 'whose set holds the dismissed').toMatch(
+      /SETTLED_STATUSES: readonly InboxItemStatus\[\] = \['handled', 'sent', 'dismissed'\]/,
     )
     // 🪤 A THIRD half arrived with issue 409: dismissing a proposal row also REJECTS the proposal,
     // which deletes its record — so for those rows "they stay readable under Handled" is not the

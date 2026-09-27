@@ -40,17 +40,22 @@ def classify_origin(session_key: str) -> str:
     conventions (see PLATFORM-RESILIENCE §6.3):
 
     * ``loop-<id>`` / ``loop-plan-…``          → ``loop``
+    * ``cron:system:heartbeat-tasks:<run>``    → ``heartbeat``
     * ``cron:<job>``                           → ``cron``
     * ``subagent:<id>``                        → ``subagent``
-    * ``_bg`` (heartbeat background)           → ``heartbeat``
+    * ``_bg`` (the background chores)          → ``background``
     * ``dashboard:<session>`` or a bare webui  → ``webui``
     * anything else                            → ``other`` (treated non-interactive)
 
     A channel transport turn is tagged ``channel:<name>`` by the caller (the inbound
     path knows the transport), not derivable from the key here.
     """
+    from personalclaw.action_providers.heartbeat_tasks_provider import TASK_SESSION_PREFIX
+
     key = session_key or ""
     if key == "_bg":
+        return "background"
+    if key.startswith(TASK_SESSION_PREFIX):
         return "heartbeat"
     if key.startswith("loop-"):
         return "loop"

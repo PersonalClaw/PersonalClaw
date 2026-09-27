@@ -32,6 +32,7 @@ from test_pending_approval_every_surface import (  # the real chat runner + live
     _until,
 )
 
+from personalclaw.approval_answer import YOU
 from personalclaw.dashboard.chat import run_chat
 from personalclaw.inbox import OPEN_STATUSES
 from personalclaw.llm.base import (
@@ -151,7 +152,7 @@ async def test_the_note_names_the_window_it_waited(world, monkeypatch):  # noqa:
 async def test_an_answered_or_stopped_approval_leaves_no_note(world, monkeypatch):  # noqa: F811
     task = asyncio.create_task(world.state.request_approval("sub-3", "subagent", "Bash"))
     await _until(lambda: "sub-3" in world.state._pending_approvals, "registered")
-    world.state.resolve_approval("sub-3", False)
+    world.state.resolve_approval("sub-3", False, by=YOU)
     assert await asyncio.wait_for(task, timeout=5) is False
     stopped = asyncio.create_task(world.state.request_approval("sub-4", "subagent", "Bash"))
     await _until(lambda: "sub-4" in world.state._pending_approvals, "registered")

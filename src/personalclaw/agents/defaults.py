@@ -334,7 +334,9 @@ def make_code_planner_profile(profile_cls: type) -> Any:
 # chores — chat-title generation, suggestions, memory consolidation, prompt
 # optimization). It carries no model of its own (inherits the
 # chat binding via the fallback resolver), no tools, and no skills: these are
-# short single-shot text turns, not tool-using agent loops.
+# short single-shot text turns, not tool-using agent loops. "No tools" is not
+# only this profile's empty list: its native runtime is built with no tool
+# provider at all (`provider_bridge._build_native_runtime`).
 # ---------------------------------------------------------------------------
 
 LITE_AGENT_NAME = "personalclaw-lite"

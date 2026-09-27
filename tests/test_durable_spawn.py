@@ -88,23 +88,44 @@ root = os.environ["PCLAW_SHIM_SESSIONS"]
 
 
 def live():
-    """(name, pid, cwd) for every registered session whose pid is ALIVE right now."""
+    """(name, pid, cwd, kind) for every registered session whose pid is ALIVE right now."""
     out = []
     for name in sorted(os.listdir(root)):
-        pid, _, cwd = open(os.path.join(root, name)).read().partition("\\t")
+        pid, cwd, kind = (open(os.path.join(root, name)).read().split("\\t") + ["", ""])[:3]
         try:
             os.kill(int(pid), 0)          # the kernel is the only source of truth here
         except (OSError, ValueError):
             continue
-        out.append((name, int(pid), cwd))
+        out.append((name, int(pid), cwd, kind))
     return out
+
+
+def commands(args):
+    """tmux's own reading of an argv: an argument ending in `;` ends a command, unless that
+    `;` is escaped with a backslash, which leaves a literal `;`."""
+    out, current = [], []
+    for arg in args:
+        if arg.endswith(";"):
+            arg = arg[:-1]
+            if arg.endswith("\\\\"):
+                current.append(arg[:-1] + ";")
+                continue
+            if arg:
+                current.append(arg)
+            out.append(current)
+            current = []
+            continue
+        current.append(arg)
+    out.append(current)
+    return [c for c in out if c]
 
 
 if sub == "new-session":
     if os.environ.get("PCLAW_SHIM_FAIL_NEW"):
         sys.exit(1)                       # the "tmux refused" leg for the fallback tests
-    args = argv[1:]
-    name = cwd = ""
+    first, *rest = commands(argv)
+    args = first[1:]
+    name = cwd = kind = ""
     env = dict(os.environ)
     i = 0
     while i < len(args):
@@ -121,18 +142,21 @@ if sub == "new-session":
     command = args[i:]
     if not name or not command:
         sys.exit(1)
-    if any(n == name for n, _, _ in live()):
+    if any(n == name for n, _, _, _ in live()):
         sys.exit(1)                       # duplicate session: real tmux refuses too
+    for cmd in rest:                      # the chained `set-option`s new_session sends
+        if cmd[:1] == ["set-option"] and cmd[-2:-1] == ["@pclaw_kind"]:
+            kind = cmd[-1]
     proc = subprocess.Popen(
         command, cwd=cwd or None, env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,           # its own group; this shim exits and init reaps
     )
-    open(os.path.join(root, name), "w").write(str(proc.pid) + "\\t" + cwd)
+    open(os.path.join(root, name), "w").write(str(proc.pid) + "\\t" + cwd + "\\t" + kind)
     sys.exit(0)
 if sub == "kill-session":
     want = argv[argv.index("-t") + 1].lstrip("=")
-    for n, pid, _ in live():
+    for n, pid, _, _ in live():
         if n == want:
             try:
                 os.killpg(pid, signal.SIGKILL)
@@ -144,16 +168,21 @@ if sub == "kill-session":
                 pass
             sys.exit(0)
     sys.exit(1)
-if sub == "has-session":
+if sub == "list-panes" and "-t" in argv:
+    # `list-panes -s -t =<name> -F '#{{pane_dead}}'`: a session whose command exited is gone
+    # from the server (new_session turns `remain-on-exit` off), so "not listed" is the answer
     want = argv[argv.index("-t") + 1].lstrip("=")
-    sys.exit(0 if any(n == want for n, _, _ in live()) else 1)
+    if not any(n == want for n, _, _, _ in live()):
+        sys.exit(1)
+    print("0")
+    sys.exit(0)
 if sub == "list-panes":
-    for n, _, cwd in live():
-        print(n + "\\t" + cwd)
+    for n, _, cwd, _ in live():
+        print(n + "\\t" + cwd + "\\t0")
     sys.exit(0)
 if sub == "list-sessions":
-    for n, _, _ in live():
-        print(n)
+    for n, _, _, kind in live():
+        print(n + "\\t" + kind)
     sys.exit(0)
 sys.exit(0)
 '''
@@ -301,7 +330,8 @@ class TestNewSession:
 
     async def test_env_entries_ride_into_the_worker(self, tmux_shim, tmp_path):
         """The `-e K=V` plumbing: what run_step forwards (PATH/PYTHONPATH/step env) must
-        actually reach the worker's environment."""
+        actually reach the worker's environment. The worker stays up after writing its mark:
+        `new_session` answers True only for a command still running when it asks."""
         ws = tmp_path / "envws"
         ws.mkdir()
         ok = await tmux_substrate.new_session(
@@ -310,13 +340,15 @@ class TestNewSession:
             command=[
                 sys.executable,
                 "-c",
-                "import os; open('mark', 'w').write(os.environ.get('PCLAW_MARK', ''))",
+                "import os, time; open('mark', 'w').write(os.environ.get('PCLAW_MARK', ''));"
+                " time.sleep(60)",
             ],
             env={"PCLAW_MARK": "42"},
         )
         assert ok
         await _wait_for(lambda: (ws / "mark").exists(), what="the env-marker file")
         assert (ws / "mark").read_text(encoding="utf-8") == "42"
+        await tmux_substrate.kill_session("pclaw-envtest")
 
 
 # ── the run-worker launch seam (run_step's durable branch) ──────────────────────────────
@@ -569,8 +601,9 @@ class TestSC5SpawnToReattach:
         name = containers.durable_worker_name(run)
         ws = tmp_path / "ws"
         ws.mkdir()
+        # Alive when `new_session` asks, gone a moment later.
         assert await tmux_substrate.new_session(
-            name, workspace=str(ws), command=[sys.executable, "-c", "pass"]
+            name, workspace=str(ws), command=[sys.executable, "-c", "import time; time.sleep(1)"]
         )
         await _wait_for(lambda: not tmux_substrate.has_session_sync(name), what="the worker to die")
         wd = WorkflowWatchdog(None, EngineServices())

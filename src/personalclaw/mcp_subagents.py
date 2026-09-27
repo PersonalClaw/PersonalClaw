@@ -11,7 +11,6 @@ so a spawn's completions inject back into the parent session — plus ``_get`` /
 is owned by ``mcp_core`` and reused here.
 """
 
-import os
 import re
 import time
 from typing import Any
@@ -23,18 +22,17 @@ from personalclaw.workflows.batch_compile import Capability, LeafTask
 
 
 def _wf_depth() -> int:
-    """This process's workflow depth, from the env `lineage_env` threads into a leaf.
+    """The workflow depth of the leaf this call runs for, from the lineage `lineage_env` writes.
 
-    Read from the environment rather than passed as a tool argument on purpose: a depth the
+    Read from the leaf's lineage rather than passed as a tool argument on purpose: a depth the
     CALLER supplies is a depth a leaf can understate, and `depth_lint` refusing a nested batch
-    would then be advisory. The engine writes it (``engine.WF_DEPTH_KEY``); a leaf inherits it.
+    would then be advisory. The engine writes it (``engine.WF_DEPTH_KEY``); a leaf inherits it —
+    through its tool server's environment, or the native runtime's binding
+    (`mcp_shared.leaf_depth`).
     """
-    from personalclaw.workflows.engine import WF_DEPTH_KEY
+    from personalclaw.mcp_shared import leaf_depth
 
-    try:
-        return int(os.environ.get(WF_DEPTH_KEY, "0") or "0")
-    except ValueError:
-        return 0
+    return leaf_depth()
 
 
 def _leaf_specs(tasks: list[Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -180,6 +178,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "subagent_run",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Spawn subagent(s) to run tasks in the background. "
                 "Returns immediately — results arrive as [Subagent completion event] "
@@ -227,6 +226,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "best_of_n",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Sample N candidate answers to the SAME prompt in parallel (each at a "
                 "different temperature), have a judge score them against your criteria, "
@@ -259,11 +259,13 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "subagent_list",
+            "annotations": {"readOnlyHint": True},
             "description": "List all running and completed subagents (read-only, no commands executed)",  # noqa: E501
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "subagent_status",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Call with the agent ID from a subagent completion event "
                 "to retrieve the full output in the event of truncation."

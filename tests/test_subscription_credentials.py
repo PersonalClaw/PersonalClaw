@@ -55,7 +55,7 @@ from personalclaw.sdk.provider_helpers import (
     register_subscription_source,
 )
 
-SECRET = "sk-subscription-TOKEN-do-not-leak-9f3a"
+SECRET = "fake-key-1"
 
 
 class _FakeAsyncAnthropic:
@@ -356,7 +356,7 @@ def test_an_absent_credential_file_is_not_signed_in_with_the_apps_login_hint(
 @pytest.mark.parametrize(
     "raw",
     [
-        '{"oauth": {"accessToken": "sk-half',  # truncated mid-write
+        '{"oauth": {"accessToken": "fake-key-half',  # truncated mid-write
         "",  # zero-length (created but not yet written)
         "not json at all",
         "[]",  # valid JSON, wrong shape
@@ -560,7 +560,7 @@ def test_an_EXPIRED_store_is_not_refreshed_or_rewritten(tmp_path: Path) -> None:
 
 def test_a_malformed_store_is_not_repaired(tmp_path: Path) -> None:
     """The other tempting write: 'fixing' a half-written file. Same answer."""
-    path = _store(tmp_path, '{"oauth": {"accessToken": "sk-half')
+    path = _store(tmp_path, '{"oauth": {"accessToken": "fake-key-half')
     _source(path)
     before_bytes, before = path.read_bytes(), path.stat()
 

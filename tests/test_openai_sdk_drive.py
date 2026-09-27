@@ -244,7 +244,7 @@ async def test_sdk_raises_authentication_error_on_a_bad_key(monkeypatch):
     server, _, _ = await _serve(monkeypatch)
     auth.create_surface_token(dialect.OPENAI_SURFACE)
     monkeypatch.setattr(dialect, "_lookup_client", lambda presented: None)
-    client = _sdk(server, "sk-definitely-not-the-token")
+    client = _sdk(server, "fake-key-definitely-not-the-token")
     try:
 
         def _drive():

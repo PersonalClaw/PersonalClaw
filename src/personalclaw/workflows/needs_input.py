@@ -68,16 +68,18 @@ OUTCOME_ABSENT = "outcome not recorded"
 
 
 class BlockKind(str, Enum):
-    """Why the run stopped. Four kinds, because they need four different user actions.
+    """Why the run stopped. Five kinds, because they need five different user actions.
 
     `TRANSIENT` is the one worth separating hardest: a rate limit resolves itself, so a card asking
-    the user to decide about one is a card asking them to do the system's waiting.
+    the user to decide about one is a card asking them to do the system's waiting. `EVENT` is its
+    sibling: the run waits for something to happen, and the user may wake it but need not.
     """
 
     NEEDS_INPUT = "needs_input"  # a genuine decision only the user can make
     CAPABILITY = "capability"  # a missing tool, credential or permission
     TRANSIENT = "transient"  # a retryable condition (rate limit, network)
     APPROVAL = "approval"  # the work is done and wants a yes
+    EVENT = "event"  # parked until something wakes it (an `event` gate)
 
 
 #: The ENGINE's own failure classes that mean "the user has to grant or install something". Taken
@@ -95,7 +97,7 @@ _TRANSIENT_CLASSES = frozenset({"transient", "network", "timeout"})
 #: Block kinds a user must actually act on. A transient block is the system's problem —
 #: surfacing it
 #: as a decision trains the user to click through cards, which is how a real approval gets clicked
-#: through too.
+#: through too. A parked run (EVENT) is not the user's either: it wakes on its own.
 USER_ACTIONABLE = frozenset({BlockKind.NEEDS_INPUT, BlockKind.CAPABILITY, BlockKind.APPROVAL})
 
 
@@ -227,7 +229,8 @@ def classify_block(ask: dict[str, Any] | None, failure: dict[str, Any] | None) -
     An APPROVAL ask is checked first and unconditionally: it is the one kind where the work is
     already
     done, and misfiling it as a generic decision loses the "just say yes" affordance that makes it
-    cheap to answer.
+    cheap to answer. An EVENT ask is the same kind of certainty: an `event` gate's run is parked
+    until something wakes it, whatever else the card says.
 
     A failure's own class decides the rest. A PERMISSION or dependency failure is a CAPABILITY
     block —
@@ -238,6 +241,10 @@ def classify_block(ask: dict[str, Any] | None, failure: dict[str, Any] | None) -
     kind = str((ask or {}).get("kind") or "").strip().lower()
     if kind == "approval":
         return BlockKind.APPROVAL
+    if kind == "event":
+        # An `event` gate asks nobody anything, so its card is not a decision: it wakes the run
+        # now, or leaves it to what it waits for.
+        return BlockKind.EVENT
     fail_class = str((failure or {}).get("failure_class") or "").strip().lower()
     if fail_class in _CAPABILITY_CLASSES:
         return BlockKind.CAPABILITY

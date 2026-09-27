@@ -232,9 +232,9 @@ def test_window_narrows_to_the_reference_day(tmp_path, stub_rates):
 
 
 def test_a_guarded_attempt_is_censused_never_summed(tmp_path, stub_rates):
-    """The design decision this change turns on. A guarded ``complete()`` attempt must appear in the
-    census and NOWHERE in the money totals: its `loops` rows overlap the ledger's `source="loop"`
-    turns for the same inference, and no shared id exists to dedupe them."""
+    """The design decision this change turns on. A guarded attempt must appear in the census and
+    NOWHERE in the money totals. The fixture's turns name none of these attempts (no
+    ``audit_ids``), so all twelve are calls no row counts."""
     fold = _rebuild(tmp_path, attempts=_fixture_attempts())
 
     assert fold["uncounted"] == EXPECTED_UNCOUNTED
@@ -248,6 +248,19 @@ def test_a_guarded_attempt_is_censused_never_summed(tmp_path, stub_rates):
     assert got["uncounted"]["calls"] == 12
     assert got["uncounted"]["total_dollars_est"] == 4.0
     assert got["uncounted"]["by_use_case"] == {"reasoning": 8, "loops": 4}
+
+
+def test_an_attempt_a_turn_names_is_counted_by_the_turn_not_the_census(tmp_path, stub_rates):
+    """🔴 Red on integration: a loop turn's row held its inferences' cost and the census stated
+    them as not included too. A row that names its calls (``audit_ids``) takes them out of it."""
+    turns = _fixture_turns()
+    loop_turn = next(t for t in turns if t["source"] == "loop")
+    loop_turn["audit_ids"] = [f"loops-{i}" for i in range(4)]
+    fold = _rebuild(tmp_path, turns=turns, attempts=_fixture_attempts())
+
+    assert fold["uncounted"]["calls"] == 8
+    assert fold["uncounted"]["by_use_case"] == {"reasoning": 8}
+    assert fold["days"] == EXPECTED_DAYS, "and the money the fold sums is the same"
 
 
 def test_the_census_is_empty_when_no_attempts_were_recorded(tmp_path, stub_rates):
@@ -426,8 +439,8 @@ def test_usage_recap_renders_verbatim_predictable(tmp_path, stub_rates):
         " Biggest line item: anthropic:claude-x (~$1.02)."
         " Every dollar here is an estimate, not a provider-reported charge."
         " 5 turns ran on a model with no price row and counted as $0, so the total is a floor."
-        " Separately, 12 unattended model calls were recorded this month but are not included"
-        " above — they cannot be merged with turns without double-counting loops."
+        " Separately, 12 unattended model calls this month wrote no usage row, so they are not"
+        " included above."
     )
     # Deterministic: same fold in, same sentence out (no LLM, no clock).
     assert U.usage_recap("2026-08", fold=fold) == U.usage_recap("2026-08", fold=fold)

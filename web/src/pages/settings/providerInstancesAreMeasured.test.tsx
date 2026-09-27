@@ -115,9 +115,9 @@ describe('the edit form is the type\'s own settings form', () => {
 
   it('adds a key to a keyless instance, written to options.api_key', async () => {
     const key = await openEdit()
-    fireEvent.change(key, { target: { value: 'sk-new-NOT-A-REAL-KEY' } })
+    fireEvent.change(key, { target: { value: 'fake-key-1' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
-    expect(calls.update).toEqual([['my-openai', { options: { api_key: 'sk-new-NOT-A-REAL-KEY' } }]])
+    expect(calls.update).toEqual([['my-openai', { options: { api_key: 'fake-key-1' } }]])
   })
 
   it('a saved key is never handed to the form, and a blank key is kept', async () => {

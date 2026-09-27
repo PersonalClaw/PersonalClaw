@@ -15,8 +15,9 @@ Both halves now fire from the controller, and the placement is the whole design:
 * **RESOLVED fires AFTER the claim is won and the epoch checked.** Emitting earlier would log an
   approval for a race the caller LOST, and the audit would show two people approving one gate.
 
-The id is derived from `(run, gate, epoch)` and which ask of that step it is, via the shipped
-`confirmation.request_id`, never from the resume token — and minted ONCE, with the ask, and carried
+The id is derived from `(run, step, epoch)` — the step being its instance path, which names a loop's
+cycle — and which ask of that step it is, via the shipped `confirmation.request_id`, never from the
+resume token — and minted ONCE, with the ask, and carried
 on its continuation, so the resolving half cites the id the pending half was written with rather
 than deriving one again (`test_workflows_each_ask_keeps_its_own_record` drives the second ask).
 """
@@ -25,6 +26,7 @@ import asyncio
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.ledger import outcomes
 from personalclaw.workflows import gate_answers
 from personalclaw.workflows.confirmation import ConfirmationType, request_id
@@ -169,7 +171,7 @@ def test_answering_a_gate_emits_a_PAIRED_resolution():
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        controller.resume(conts[0].token, True, responder="dashboard:chat-1")
+        controller.resume(conts[0].token, True, by=YOU)
 
     asyncio.run(go())
     pending = _rows(CONFIRMATION_PENDING)[0]
@@ -182,13 +184,13 @@ def test_an_APPROVAL_records_the_verb_the_boolean_and_the_RESOLVER():
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        controller.resume(conts[0].token, True, responder="dashboard:chat-1")
+        controller.resume(conts[0].token, True, by=YOU)
 
     asyncio.run(go())
     row = _rows(CONFIRMATION_RESOLVED)[0]
     assert row["verb"] == "approve"
     assert row["approved"] is True
-    assert row["resolved_by"] == "dashboard:chat-1"
+    assert row["resolved_by"] == "you"
 
 
 def test_a_DENIAL_records_reject_and_false():
@@ -197,7 +199,7 @@ def test_a_DENIAL_records_reject_and_false():
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        controller.resume(conts[0].token, False, responder="prober")
+        controller.resume(conts[0].token, False, by=YOU)
 
     asyncio.run(go())
     row = _rows(CONFIRMATION_RESOLVED)[0]
@@ -205,16 +207,17 @@ def test_a_DENIAL_records_reject_and_false():
     assert row["approved"] is False
 
 
-def test_an_UNATTRIBUTED_resolution_says_dashboard_not_empty():
-    """An empty resolver reads as "no resolver", indistinguishable from an unrecorded one. An HTTP
-    caller is already authenticated by the gateway, so `dashboard` is the honest default."""
+def test_a_resolution_on_a_channel_names_the_channel():
+    """Every answer names who gave it (`approval_answer`): you, or you on a named channel. An
+    empty resolver would read as "no resolver", indistinguishable from an unrecorded one."""
+    from personalclaw.approval_answer import on_channel
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        controller.resume(conts[0].token, True)
+        controller.resume(conts[0].token, True, by=on_channel("telegram"))
 
     asyncio.run(go())
-    assert _rows(CONFIRMATION_RESOLVED)[0]["resolved_by"] == "dashboard"
+    assert _rows(CONFIRMATION_RESOLVED)[0]["resolved_by"] == "channel:telegram"
 
 
 def test_a_LOST_race_emits_NO_resolution():
@@ -223,8 +226,8 @@ def test_a_LOST_race_emits_NO_resolution():
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        first = controller.resume(conts[0].token, True, responder="a")
-        second = controller.resume(conts[0].token, True, responder="b")
+        first = controller.resume(conts[0].token, True, by=YOU)
+        second = controller.resume(conts[0].token, True, by=YOU)
         return first, second
 
     first, second = asyncio.run(go())
@@ -290,7 +293,7 @@ def test_ANSWERING_the_gate_MEASURES_the_escalation_outcome():
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        controller.resume(conts[0].token, True, responder="dashboard:chat-1")
+        controller.resume(conts[0].token, True, by=YOU)
         return ledger("r-1")
 
     events = asyncio.run(go())
@@ -305,7 +308,7 @@ def test_a_DENIED_gate_measures_as_a_LOST_bet_not_an_unreadable_one():
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        controller.resume(conts[0].token, False, responder="prober")
+        controller.resume(conts[0].token, False, by=YOU)
         return ledger("r-1")
 
     events = asyncio.run(go())
@@ -359,7 +362,7 @@ def test_the_resolution_cites_the_id_the_ask_was_minted_with():
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
         minted = conts[0].confirmation_id
-        controller.resume(conts[0].token, True, responder="a")
+        controller.resume(conts[0].token, True, by=YOU)
         return minted
 
     minted = asyncio.run(go())

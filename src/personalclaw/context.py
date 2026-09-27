@@ -24,7 +24,7 @@ from personalclaw.hooks import (
 )
 from personalclaw.memory import MemoryStore
 from personalclaw.schedule import get_local_tz
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import redact_for_model
 from personalclaw.skills import SkillsLoader
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
@@ -798,14 +798,17 @@ def build_cancelled_turn_preamble(
         return ""
     # Collect any assistant text between user_idx and the boundary.
     boundary = stop_idx if stop_idx >= 0 else len(recent)
-    user_text = (recent[user_idx].get("content") or "").strip()
+    # A turn read back, and it goes in front of the next request, which is sent as typed, so no
+    # later part masks it. Masked here (`redact_for_model`), before the caps below cut it: a cut
+    # first could leave the front of a key, which no pattern recognises.
+    user_text = redact_for_model((recent[user_idx].get("content") or "").strip())
     assistant_parts: list[str] = []
     for i in range(user_idx + 1, boundary):
         if recent[i].get("role") == "assistant":
             t = (recent[i].get("content") or "").strip()
             if t:
                 assistant_parts.append(t)
-    assistant_text = "\n".join(assistant_parts)
+    assistant_text = redact_for_model("\n".join(assistant_parts))
     if len(user_text) > user_cap:
         user_text = user_text[:user_cap] + "… [truncated]"
     if len(assistant_text) > assist_cap:
@@ -838,7 +841,8 @@ async def compress_thread_history(
     which buffered message is in flight (see ``chat_persistence.prior_turns_transcript``).
     Reading the log here instead replayed the in-flight message as history whenever
     the flush loop had already persisted it. ``session_key`` names the session for the
-    ``ContextCompact`` lifecycle event only.
+    ``ContextCompact`` lifecycle event and for the compression's usage row (``source:
+    background``, the lite agent), which is written through the seam every turn's row takes.
 
     Returns the compressed summary string, or None on failure (callers
     fall back to raw truncation).  This is the ONLY async function in
@@ -855,9 +859,11 @@ async def compress_thread_history(
     in place of its oldest span, which the window below keeps first. Such a chat arrives
     here short — often short enough that this function makes no model call of its own.
     """
+    from personalclaw.agents.defaults import LITE_AGENT_NAME
     from personalclaw.history import MODEL_VIEW_ROLES, model_window  # circular import
     from personalclaw.llm_helpers import stream_and_collect  # circular import
     from personalclaw.session import BACKGROUND_KEY  # circular import
+    from personalclaw.usage_ledger import Attribution, recorder
 
     # #3599 changed this parameter from a ConversationLog to the turns themselves and kept its
     # place, so an old call still binds and used to fail on the first line below, inside an
@@ -880,14 +886,13 @@ async def compress_thread_history(
     lines: list[str] = []
     for m in recent:
         # Compression path: no per-message cap, no code stripping.
-        # The LLM compressor sees full content and decides what to keep.
-        lines.append(f"{m['role'].title()}: {m['content']}")
+        # The LLM compressor sees full content and decides what to keep. Masked as each line is
+        # read (`redact_for_model`): the transcript is the compressor's own prompt, and its head
+        # and tail go into the result verbatim.
+        lines.append(f"{m['role'].title()}: {redact_for_model(str(m['content']))}")
     transcript = "\n".join(lines)
 
     if len(transcript) <= _COMPRESSED_HISTORY_CAP:
-
-        transcript, _ = redact_exfiltration_urls(transcript)
-        transcript, _ = redact_credentials(transcript)
         return transcript.translate(_MULTIBYTE_TABLE)
 
     head_lines = lines[:_HEAD_TAIL_MESSAGES]
@@ -909,22 +914,26 @@ async def compress_thread_history(
     acquired = False
     try:
         client, _is_new, _resumed = await sessions.get_or_create(
-            BACKGROUND_KEY, agent="personalclaw-lite"
+            BACKGROUND_KEY, agent=LITE_AGENT_NAME
         )
         acquired = True
-        result = await stream_and_collect(client, prompt)
+        # One usage row for the compression, under the chat it was made for: a background chore
+        # on the Background model, so Settings → Usage counts it and the chat's total holds it.
+        who = Attribution(source="background", session_key=session_key, agent=LITE_AGENT_NAME)
+        result = await stream_and_collect(client, prompt, on_complete=recorder(client, who))
         if not result:
             return None
 
         parts: list[str] = []
         if head_lines:
             parts.append("## Thread start (verbatim)\n" + "\n".join(head_lines))
-        parts.append("## Compressed history\n" + result[:_COMPRESSED_HISTORY_CAP])
+        # The summary is a model's answer, and it is handed to the next prompt as it stands: an
+        # app calls this through the SDK, outside `_Parts.add`. Masked like the lines around it,
+        # before the cap cuts it.
+        parts.append("## Compressed history\n" + redact_for_model(result)[:_COMPRESSED_HISTORY_CAP])
         if tail_lines:
             parts.append("## Recent exchanges (verbatim)\n" + "\n".join(tail_lines))
         final = "\n\n".join(parts)
-        final, _ = redact_exfiltration_urls(final)
-        final, _ = redact_credentials(final)
         # `ContextCompact` (AUTO crit 5): declared, selectable in the hook UI, and fired by nothing
         # until now. Emitted HERE, not at the early return above: that path returns the transcript
         # untouched because it already fits the cap, so announcing a compaction there would report
@@ -967,6 +976,11 @@ class _Parts:
     system prompt, the user's own request, and the session-context block (which carries the
     user's lessons and preferences). Quietly cutting the user's rules in half is precisely
     the silent drop the contract forbids.
+
+    Every piece but the request is text read from somewhere — memory, lessons, history, a
+    skill, a channel, a hook — so each is masked as it is added (``security.redact_for_model``):
+    this is where stored text becomes a prompt, for the native loop and an ACP agent alike. The
+    request is what the person typed this turn, and it goes as typed (``is_request``).
     """
 
     __slots__ = ("_items",)
@@ -983,6 +997,8 @@ class _Parts:
         content_type: str = "",
         is_request: bool = False,
     ) -> None:
+        if text and not is_request:
+            text = redact_for_model(text)
         if text:
             self._items.append(
                 Component(
@@ -1293,6 +1309,11 @@ class ContextBuilder:
         For custom agents (non-personalclaw), skills and workspace identity
         are skipped — the agent loads its own. Memory,
         lessons, critical rules, and hooks are injected for all agents.
+
+        Returned as stored, UNMASKED: memory, lessons and history all hold what someone wrote,
+        so the text is masked where it becomes a prompt, once — ``build_message``'s parts
+        (``_Parts.add``) — and a caller that hands it to a model any other way masks it
+        itself (``security.redact_for_model``).
         """
         is_custom = bool(agent) and not is_default_agent(agent)
         parts: list[str] = []
@@ -1367,9 +1388,6 @@ class ContextBuilder:
         if session_key and not resumed and (prior_transcript is not None or self.conversation_log):
             _history_header = render_snippet_block("thread-history-header") + "\n"
             if compressed_history:
-
-                compressed_history, _ = redact_exfiltration_urls(compressed_history)
-                compressed_history, _ = redact_credentials(compressed_history)
                 compressed_history = _MODE_IDENTITY_RE.sub("", compressed_history)
                 logger.info(
                     "🔍 build_session_context: session_key=%s LLM-compressed " "history (%d chars)",
@@ -1415,8 +1433,6 @@ class ContextBuilder:
                     if history_lines:
                         history_lines.reverse()
                         history_block = "\n".join(history_lines)
-                        history_block, _ = redact_exfiltration_urls(history_block)
-                        history_block, _ = redact_credentials(history_block)
                         parts.append(
                             _history_header + history_block + "\n[End of thread history]\n\n"
                         )

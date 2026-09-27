@@ -177,6 +177,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
     "device_unknown": "No such paired device.",
+    # Settings → Devices → Integrations: the token was already revoked, or was replaced.
+    "integration_unknown": (
+        "That integration token is no longer listed: it was already revoked, or replaced."
+    ),
     # ── browse user-browser connector (handlers/browse_connector.py) ──
     # The connector is the operator's own browser on THIS machine, so all three are
     # distinct because their remedies differ: `loopback_only` is "you reached a
@@ -376,6 +380,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "action_not_bound": "The calling client's bindings do not include this action.",
     "action_failed": "The control-bridge action raised while running.",
     "confirm_token_invalid": "The confirmation token is unknown, already used, or expired.",
+    # A 409 on the owner's answer to a control-bridge confirmation: the client that asked for it
+    # has been revoked or switched off since, so its request is not run.
+    "bridge_client_gone": (
+        "The control-bridge client that asked for this has been revoked or switched off."
+    ),
     # ── OpenAI-compatible inbound dialect (inbound/openai_dialect.py) ──
     #
     # ADMISSION reuses the generic rows for the same reason the MCP surface below does: a
@@ -789,11 +798,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_owner_ended": (
         "The work that asked for this approval has ended, so it was cancelled and nothing ran."
     ),
-    # 403 (dashboard/handlers/sessions.py): an app tried to answer an approval raised in a
-    # conversation the app itself started. The person the app works for answers it, not the app.
+    # A 403: the caller may not answer this approval (`approval_answer.refusal`). Only the owner
+    # answers one, from a signed-in session or on their paired channel. An app, an agent's tool,
+    # a trigger, a run and a control-bridge client answer nothing, and neither does the party
+    # that asked. The approval stays pending and the attempt is audited.
     "approval_owner_only": (
-        "An approval raised in a conversation this app started is the owner's to answer, not "
-        "the app's."
+        "Only the owner answers an approval, in PersonalClaw or on their paired chat channel."
     ),
     # A 409 refusal of a standing grant (a chat's Trust, Trust reads, YOLO, "Always allow for
     # this agent"): the operator ceiling (`governance/ceiling.json`, `approval`) says every call
@@ -839,8 +849,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # ── signing in to an MCP server at a URL (mcp_oauth.py; dashboard/handlers/mcp.py —
     #    POST /api/mcp/servers/{name}/sign-in, and the callback's own page) ──
-    # `invalid_sign_in` (400) — the request is not one: not a server's name, a body that is not an
-    # object, a client id or secret that is not a string, or a secret without an id.
+    # `invalid_sign_in` (400) — the request is not one: not a server's name, a client id or secret
+    # that is not a string, or a secret without an id. A body that is not a JSON object is
+    # `invalid_json` / `invalid_body`, from `request_validation.json_object_body`.
     # `mcp_sign_in_unsupported` (409) — the server is started with a command; only one at a URL
     # signs in. `mcp_sign_in_not_offered` (409) — the server answered without asking for sign-in,
     # asks for a kind PersonalClaw does not do, or publishes no OAuth metadata.
@@ -904,6 +915,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
         'A model in the chain names no model; name each as "provider:model", or choose one in '
         "Settings → Models."
     ),
+    # ── opening a terminal in a sandbox tier (dashboard/handlers/terminal.py —
+    #    POST /api/terminal/sessions) ──
+    # 409: the tier the request names is not installed or is turned off. The terminal is not
+    # opened on this computer's own shell instead: that is the one place the request asked not
+    # to be.
+    "sandbox_tier_unavailable": (
+        "The sandbox this terminal was asked to open in is not installed or is turned off, so no "
+        "terminal was opened."
+    ),
 }
 
 
@@ -944,6 +964,11 @@ def json_error(
     return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
 
 
+#: Marks a response as the owner's consent question (:func:`consent_required`), so
+#: `dashboard.consent_ask` can answer it as a question to a client that asks one.
+CONSENT_QUESTION = "personalclaw.consent_question"
+
+
 def consent_required(field: str, consent: str, *, title: str) -> web.Response:
     """The ``400 confirmation_required`` a write that needs the owner's yes answers when it did
     not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
@@ -952,10 +977,15 @@ def consent_required(field: str, consent: str, *, title: str) -> web.Response:
     ``error.detail``. *consent* is the sentence the dialog shows and *title* is its heading, and
     both are product copy: the title names the question being asked, so a grant question never
     reads "Loosen a security setting?" (``config/edit_spec.LOOSEN_TITLE``), which is the heading
-    of a loosening alone."""
-    return json_error(
+    of a loosening alone.
+
+    A client that says it asks (`dashboard.consent_ask`) receives the same body as a ``200``:
+    the question, not a failure. Every other client keeps the ``400``."""
+    response = json_error(
         "confirmation_required",
         message=f'send {{"confirm": true}} to confirm — {consent}',
         status=400,
         error_extra={"detail": {"field": field, "consent": consent, "title": title}},
     )
+    response[CONSENT_QUESTION] = True
+    return response

@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.tool_providers.base import RiskLevel
 
 
 class CallAppRouteActionProvider(ActionProvider):
@@ -33,6 +34,17 @@ class CallAppRouteActionProvider(ActionProvider):
     @property
     def display_name(self) -> str:
         return "Call App Route"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """The declared effect of the route it drives (`app_routes.route_risk`): a read only when
+        the app declares that route ``readOnly``, destructive for a ``DELETE``, a change
+        otherwise — and a change for an op the app does not declare agent-callable."""
+        from personalclaw.tool_providers.app_routes import declared_route, route_risk
+
+        app = str((action_config or {}).get("app", "") or "").strip()
+        op = str((action_config or {}).get("op", "") or "").strip()
+        route = declared_route(app, op) if app and op else None
+        return route_risk(route) if route is not None else RiskLevel.CAUTION
 
     async def execute(
         self,

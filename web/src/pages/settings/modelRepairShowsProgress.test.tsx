@@ -119,8 +119,8 @@ describe('a Repair started from a Models-page chip shows its progress where it w
     expect(revealed).toContain(row)
     // The chip says the repair is under way instead of offering it again.
     expect(screen.getByRole('button', { name: /repairing…/ })).toHaveProperty('disabled', true)
-    // One row's Repair reads no download list: every row holds its own tracker.
-    expect(modelDownloads).not.toHaveBeenCalled()
+    // The page reads the download list once, for every row; the Repair reads none of its own.
+    expect(modelDownloads).toHaveBeenCalledTimes(1)
   })
 
   it('lands: the page re-reads and the truncated chip clears', async () => {

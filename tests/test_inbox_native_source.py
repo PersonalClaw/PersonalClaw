@@ -125,8 +125,9 @@ def test_send_routes_native_reply_to_live_session(state, monkeypatch):
     body = json.loads(resp.body)
     assert body["delivered_to_session"] is True
     session.enqueue_or_run_prompt.assert_called_once()
-    # item marked handled
+    # item marked handled, and when it was answered is recorded (the open panel shows it as sent)
     assert state._inbox_store.items[item.id].status == ItemStatus.HANDLED.value
+    assert state._inbox_store.items[item.id].replied_at > 0
 
 
 def test_send_rejects_non_replyable(state):

@@ -38,7 +38,12 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
 from personalclaw.config import loader as config_loader
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    MaskConflict,
+    keep_masked_lines,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY
 from personalclaw.skills import AutoSkillProvenance
@@ -1186,6 +1191,21 @@ def _session_touched_sensitive(messages: list[dict]) -> bool:
     return False
 
 
+def _kept_lines(rewrite: object, stored: str) -> str:
+    """*rewrite* of the *stored* markdown with each hidden value kept, or "" to leave it.
+
+    "" when there is no rewrite, and when it would move, copy or rewrite a line holding a value
+    the model was shown as a marker (``keep_masked_lines``): the file stays as stored.
+    """
+    if not isinstance(rewrite, str) or not rewrite:
+        return ""
+    try:
+        return keep_masked_lines(rewrite, stored)
+    except MaskConflict:
+        logger.info("Consolidation rewrite would move a hidden value; left as stored")
+        return ""
+
+
 class HistoryConsolidator:
     """Summarize old messages into structured memory via LLM.
 
@@ -1545,13 +1565,15 @@ class HistoryConsolidator:
                 await self._form_semantic_memory(result, key)
                 self._write_episodic_memory(result, key)
 
-            # Markdown writes (skipped when migrated to structured memory)
+            # Markdown writes (skipped when migrated to structured memory). The model read both
+            # files masked (the background session masks its prompts), so a rewrite keeps each
+            # hidden value on the line it kept, and one that moves or rewrites one is not applied.
             if not self._migrated:
-                if prefs := result.get("preferences_update"):
+                if prefs := _kept_lines(result.get("preferences_update"), current_prefs):
                     if prefs.strip() != current_prefs.strip():
                         memory.write_preferences(prefs)
 
-                if projects := result.get("projects_update"):
+                if projects := _kept_lines(result.get("projects_update"), current_projects):
                     if projects.strip() != current_projects.strip():
                         memory.write_projects(projects)
 

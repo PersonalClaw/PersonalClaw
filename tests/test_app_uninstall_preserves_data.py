@@ -45,6 +45,14 @@ _GIT_DIRNAME = ".git"
 # `data/` — the same shape as the `notes` bundle whose measured cycle opened #2541. If
 # this were a `Path.write_text` in the test body it would prove the test can write files,
 # not that an app's data survives the lifecycle.
+#
+# Its repo runs no auto-maintenance. `git commit` otherwise ends by spawning a DETACHED
+# `git maintenance run --auto`, and that child's last act, whenever it gets to run, is to
+# unlink `.git/objects/maintenance.lock` — whoever wrote the file there by then. The racing
+# tests below stage exactly that lock themselves (`_racing_copytree`), so a real child is a
+# second, unsynchronised writer of their path. Under parallel load it outlived the
+# note tool, deleted the lock the wrapper had just rewritten before the walk listed it, and a
+# tree that "never settles" copied cleanly (`assert True is False`).
 NOTE_TOOL = """\
 import subprocess, sys
 from pathlib import Path
@@ -55,6 +63,7 @@ if not (book / ".git").is_dir():
     subprocess.run(["git", "init", "-q"], cwd=book, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=book, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=book, check=True)
+    subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=book, check=True)
 
 title, body = sys.argv[1], sys.argv[2]
 (book / f"{title}.md").write_text(body + "\\n", encoding="utf-8")
@@ -1171,7 +1180,8 @@ def _racing_copytree(lock: Path, *, forever: bool, calls: list[int]):
     --auto --quiet --detach``, that DETACHED child outlives the commit the app waited
     for, and it holds ``.git/objects/maintenance.lock`` — listed by our walk, gone by the
     time the walk copies it. ``_content_files`` above documents the same writer from the
-    other side, where it corrupts a file census.
+    other side, where it corrupts a file census. The fixture's own repo runs no
+    auto-maintenance (``NOTE_TOOL``), so this wrapper is the only writer of that path.
     """
     real_copytree = app_manager.shutil.copytree
     real_copy2 = app_manager.shutil.copy2

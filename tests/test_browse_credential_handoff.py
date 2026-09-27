@@ -50,14 +50,11 @@ from personalclaw.browse.handoff import (
     SESSION_ABSENT,
     SESSION_EXPIRED,
     SESSION_FRESH,
-    ensure_profile_key,
     expired_sites,
-    has_profile_key,
     load_meta,
     looks_like_login_url,
     mark_expired,
     profile_dir,
-    profile_key_name,
     profiles_root,
     record_login,
     request_login,
@@ -785,68 +782,43 @@ class TestTheProfileNeverTravels:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# The per-site profile-encryption key lives in the credential store,
-#        NEVER in the profile dir, and is hidden from the user's vault.
+# The per-site "profile-encryption key" is gone. A login minted one into the
+# credential store and nothing ever encrypted with it — its one reader was a presence check
+# behind a banner sentence. So a login mints nothing, and a key an earlier release left is
+# deleted at start, because the Secrets page would list it and could not delete it.
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class TestTheProfileEncryptionKey:
-    def test_a_recorded_login_puts_the_profile_key_in_the_credential_store(self):
+class TestNoProfileKey:
+    def test_a_recorded_login_puts_nothing_in_the_credential_store(self):
+        """🔴 Red on main: every login stored `BROWSE_PROFILE_KEY_<site>`, which nothing read."""
         from personalclaw.config.credentials import credential_names
 
-        assert not has_profile_key(HOME_URL)
+        before = set(credential_names())
         record_login(HOME_URL)
-        assert has_profile_key(HOME_URL)
-        assert profile_key_name(HOME_URL) in credential_names()
-        assert profile_key_name(HOME_URL) == "BROWSE_PROFILE_KEY_bank.test"
+        assert set(credential_names()) == before
 
-    def test_the_key_is_generated_once_and_not_rotated(self):
-        """Idempotent: a re-login must not rotate the key out from under a profile it encrypts."""
-        first = ensure_profile_key(HOME_URL)
-        second = ensure_profile_key(HOME_URL)
-        assert first and first == second
-
-    def test_the_key_value_is_never_written_into_the_profile_dir(self):
-        """The whole point: a key that sat beside the cookies it protects protects nothing.
-        Build a real profile with a session file, then sweep every byte under the profile dir."""
-        key = ensure_profile_key(HOME_URL)
-        pdir = profile_dir(HOME_URL)
-        (pdir / "Default").mkdir(parents=True, exist_ok=True)
-        (pdir / "Default" / "Cookies").write_text("session=abc", encoding="utf-8")
-        for path in pdir.rglob("*"):
-            if path.is_file():
-                assert key not in path.read_text(
-                    encoding="utf-8", errors="ignore"
-                ), f"the profile key leaked into {path}"
-
-    def test_the_profile_key_is_hidden_from_the_users_secrets_vault(self):
-        """It is machine-managed key material, not a secret the user typed — so it must never
-        appear as a vault row they could see or DELETE (which would break the profile)."""
-        from personalclaw.secrets_vault import is_reserved_key, list_presence
-
-        record_login(HOME_URL)
-        assert is_reserved_key(profile_key_name(HOME_URL))
-        rows = list_presence()
-        assert not any(r.name.startswith("BROWSE_PROFILE_KEY_") for r in rows)
-
-    def test_an_ordinary_secret_still_appears_in_the_vault(self):
-        """CONTROL for the test above: the SAME vault read DOES surface an ordinary user secret, so
-        the profile key's absence is the exclusion working, not `list_presence` being empty."""
-        from personalclaw.config.credentials import save_credential
-        from personalclaw.secrets_vault import list_presence
-
-        record_login(HOME_URL)  # also writes the (hidden) profile key
-        save_credential("MY_API_TOKEN", "value")
-        names = {r.name for r in list_presence()}
-        assert "MY_API_TOKEN" in names
-        assert not any(n.startswith("BROWSE_PROFILE_KEY_") for n in names)
-
-    def test_expired_sites_reports_key_presence(self):
+    def test_an_expired_site_is_reported_by_its_name_alone(self):
         record_login(HOME_URL)
         mark_expired(HOME_URL)
-        rows = expired_sites()
-        row = next((r for r in rows if r["site"] == "bank.test"), None)
-        assert row is not None and row["key_present"] is True
+        assert {"site": "bank.test"} in expired_sites()
+
+    def test_a_key_an_earlier_release_left_is_deleted(self):
+        from personalclaw.browse.handoff import forget_unused_profile_keys
+        from personalclaw.config.credentials import credential_names, save_credential
+        from personalclaw.secrets_vault import list_presence
+
+        save_credential("BROWSE_PROFILE_KEY_bank.test", "x" * 43)
+        save_credential("MY_API_TOKEN", "value")
+        assert forget_unused_profile_keys() == 1
+        names = set(credential_names())
+        assert "BROWSE_PROFILE_KEY_bank.test" not in names
+        # CONTROL: the sweep is the prefix and nothing else — an ordinary secret survives it, and
+        # the vault (which no longer hides the prefix) shows it and nothing of the old keys.
+        assert "MY_API_TOKEN" in names
+        assert {r.name for r in list_presence()} >= {"MY_API_TOKEN"}
+        assert not any(r.name.startswith("BROWSE_PROFILE_KEY_") for r in list_presence())
+        assert forget_unused_profile_keys() == 0, "the sweep must be idempotent"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

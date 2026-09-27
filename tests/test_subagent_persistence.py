@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from personalclaw import subagent_orphans as orphans
 from personalclaw.subagent_persistence import (
     create_agent_folder,
     delete_agent_folder,
@@ -777,8 +778,8 @@ class TestOrphanReconciliation:
 
         update_state("orphan1", pid=99999)  # dead PID
 
-        with patch.object(manager, "_is_pid_alive", return_value=False):
-            await manager._reconcile_orphans()
+        with patch.object(orphans, "is_pid_alive", return_value=False):
+            await orphans.reconcile_orphans(manager._agents)
 
         ts = json.loads((agent_root / "orphan1" / "tombstone.json").read_text())
         assert ts["cause"] == "gateway_restart"
@@ -797,8 +798,8 @@ class TestOrphanReconciliation:
         create_agent_folder("orphan2", task="old task")
         update_state("orphan2", pid=99999)
 
-        with patch.object(manager, "_is_pid_alive", return_value=False):
-            await manager._reconcile_orphans()
+        with patch.object(orphans, "is_pid_alive", return_value=False):
+            await orphans.reconcile_orphans(manager._agents)
 
         ts = json.loads((agent_root / "orphan2" / "tombstone.json").read_text())
         assert ts["cause"] == "gateway_restart"
@@ -818,11 +819,11 @@ class TestOrphanReconciliation:
         update_state("orphan3", pid=99999)
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=True),
-            patch.object(manager, "_is_orphan_process", return_value=True),
-            patch.object(manager, "_kill_orphan_pid") as mock_kill,
+            patch.object(orphans, "is_pid_alive", return_value=True),
+            patch.object(orphans, "is_orphan_process", return_value=True),
+            patch.object(orphans, "kill_orphan_pid") as mock_kill,
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         mock_kill.assert_called_once_with(99999)
         ts = json.loads((agent_root / "orphan3" / "tombstone.json").read_text())
@@ -843,11 +844,11 @@ class TestOrphanReconciliation:
         update_state("recycled1", pid=99999)
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=True),
-            patch.object(manager, "_is_orphan_process", return_value=False),
-            patch.object(manager, "_kill_orphan_pid") as mock_kill,
+            patch.object(orphans, "is_pid_alive", return_value=True),
+            patch.object(orphans, "is_orphan_process", return_value=False),
+            patch.object(orphans, "kill_orphan_pid") as mock_kill,
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         mock_kill.assert_not_called()
         ts = json.loads((agent_root / "recycled1" / "tombstone.json").read_text())
@@ -868,11 +869,11 @@ class TestOrphanReconciliation:
         update_state("orphan_ts", pid=88888, pid_recorded_at=1234567890.5)
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=True),
-            patch.object(manager, "_is_orphan_process", return_value=True) as mock_check,
-            patch.object(manager, "_kill_orphan_pid"),
+            patch.object(orphans, "is_pid_alive", return_value=True),
+            patch.object(orphans, "is_orphan_process", return_value=True) as mock_check,
+            patch.object(orphans, "kill_orphan_pid"),
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         mock_check.assert_called_once_with(88888, 1234567890.5)
 
@@ -889,7 +890,7 @@ class TestOrphanReconciliation:
         write_tombstone("already_dead", cause="timeout", recovery_action="delivered")
 
         # Should not re-tombstone
-        await manager._reconcile_orphans()
+        await orphans.reconcile_orphans(manager._agents)
         ts = json.loads((agent_root / "already_dead" / "tombstone.json").read_text())
         assert ts["cause"] == "timeout"  # unchanged
 
@@ -906,7 +907,7 @@ class TestOrphanReconciliation:
         # Simulate this agent being tracked in current run
         manager._agents["tracked1"] = SubagentInfo(id="tracked1", task="t")
 
-        await manager._reconcile_orphans()
+        await orphans.reconcile_orphans(manager._agents)
         # No tombstone — it's tracked
         assert not (agent_root / "tracked1" / "tombstone.json").exists()
 
@@ -935,10 +936,10 @@ class TestOrphanNotification:
         update_state("notif1", pid=99999)
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=False),
-            patch.object(manager, "_notify_orphan", new_callable=AsyncMock) as mock_notify,
+            patch.object(orphans, "is_pid_alive", return_value=False),
+            patch.object(orphans, "notify_orphan", new_callable=AsyncMock) as mock_notify,
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         mock_notify.assert_awaited_once()
         call_args = mock_notify.call_args
@@ -959,10 +960,10 @@ class TestOrphanNotification:
         update_state("notif2", pid=99999)
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=False),
-            patch.object(manager, "_notify_orphan", new_callable=AsyncMock) as mock_notify,
+            patch.object(orphans, "is_pid_alive", return_value=False),
+            patch.object(orphans, "notify_orphan", new_callable=AsyncMock) as mock_notify,
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         mock_notify.assert_awaited_once()
         call_args = mock_notify.call_args
@@ -972,12 +973,9 @@ class TestOrphanNotification:
     @pytest.mark.asyncio
     async def test_slack_dm_fallback_called(self, agent_root):
         """When injection returns False, Slack DM fallback is called."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, patch
 
-        from personalclaw.subagent import SubagentManager
         from personalclaw.subagent_persistence import create_agent_folder, write_result_chunk
-
-        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
 
         create_agent_folder("notif3", task="fallback task", parent_session="dashboard:default")
         write_result_chunk("notif3", "result data")
@@ -986,14 +984,14 @@ class TestOrphanNotification:
 
         with (
             patch.object(
-                manager,
-                "_try_inject_orphan_notification",
+                orphans,
+                "try_inject_orphan_notification",
                 new_callable=AsyncMock,
                 return_value=False,
             ),
-            patch.object(manager, "_send_orphan_channel_dm", new_callable=AsyncMock) as mock_dm,
+            patch.object(orphans, "send_orphan_channel_dm", new_callable=AsyncMock) as mock_dm,
         ):
-            await manager._notify_orphan("notif3", state, "delivered", True)
+            await orphans.notify_orphan("notif3", state, "delivered", True)
 
         mock_dm.assert_awaited_once()
         msg = mock_dm.call_args[0][0]
@@ -1002,13 +1000,11 @@ class TestOrphanNotification:
 
     @pytest.mark.asyncio
     async def test_msg_redacted_before_injection_path(self, agent_root):
-        """msg must be redacted before _try_inject_orphan_notification (not just Slack DM)."""
-        from unittest.mock import MagicMock, patch
+        """msg must be redacted before try_inject_orphan_notification (not just Slack DM)."""
+        from unittest.mock import patch
 
-        from personalclaw.subagent import SubagentManager
         from personalclaw.subagent_persistence import create_agent_folder, write_result_chunk
 
-        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
         create_agent_folder("notif_redact", task="secret task")
         write_result_chunk("notif_redact", "result")
 
@@ -1022,12 +1018,12 @@ class TestOrphanNotification:
             return True
 
         with (
-            patch.object(manager, "_try_inject_orphan_notification", side_effect=_capture_inject),
+            patch.object(orphans, "try_inject_orphan_notification", side_effect=_capture_inject),
             patch(
-                "personalclaw.subagent._redact", side_effect=lambda m: f"[REDACTED]{m}"
+                "personalclaw.subagent_orphans._redact", side_effect=lambda m: f"[REDACTED]{m}"
             ) as mock_redact,
         ):
-            await manager._notify_orphan("notif_redact", state, "delivered", True)
+            await orphans.notify_orphan("notif_redact", state, "delivered", True)
 
         # _redact must have been called before injection
         mock_redact.assert_called()
@@ -1056,10 +1052,10 @@ class TestOrphanNotification:
                 raise RuntimeError("notification failed")
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=False),
-            patch.object(manager, "_notify_orphan", side_effect=_failing_notify),
+            patch.object(orphans, "is_pid_alive", return_value=False),
+            patch.object(orphans, "notify_orphan", side_effect=_failing_notify),
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         # Both orphans should be tombstoned despite notification failure
         assert (agent_root / "notif4" / "tombstone.json").exists()

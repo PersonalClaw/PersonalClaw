@@ -4,6 +4,7 @@
  "description": "Watch a goal that outside events move — check it, then PARK until a self-scheduled wake instead of burning cycles. Between checks the run costs nothing and survives gateway restarts; the next check is a clock trigger the run created for itself.",
  "source": "bundled",
  "provenance": "bundled",
+ "document": "",
  "tags": [
   "loop",
   "goal",
@@ -117,7 +118,7 @@
        "config": {
         "kind": "event",
         "timeout_secs": 172800,
-        "message": "This monitor is parked between checks. It wakes when its self-scheduled trigger fires (visible under Automations, created_by: agent, with an expiry). If it has been parked unusually long, the trigger may have expired or been deleted — answer this gate to force a check now, or cancel the run to stop monitoring."
+        "message": "This monitor is parked between checks. It wakes when the trigger it scheduled for itself fires (listed on the Triggers page, with an expiry). If it has been parked unusually long, the trigger may have expired or been deleted — wake it now to force a check, or cancel the run to stop monitoring."
        }
       },
       {
@@ -146,7 +147,7 @@
     "label": "Close out the watch",
     "config": {
      "timeout_stall_secs": 600,
-     "prompt": "The monitor's goal is met. Write the close-out report.\n\nGoal:\n{{inputs.task}}\n\nBaseline:\n{{nodes.intake.output.baseline_summary}}\n\nFinal check's finding:\n{{last.output.summary | default(\"(the goal was met at baseline confirmation)\")}}\n\nEvidence it is met:\n{{last.output.evidence | default(\"\")}}\n\nSummarize the arc briefly: what was watched, roughly how long and how many checks it took, what changed along the way, and the observation that ended it. Quote the evidence rather than paraphrasing it. If any self-scheduled trigger might still be outstanding, say so — an expired one cleans itself up, but the reader should know.\n\nReturn JSON: {\"report\": string, \"goal_evidence\": string}",
+     "prompt": "The monitor's goal is met. Write the close-out report.\n\nGoal:\n{{inputs.task}}\n\nBaseline:\n{{nodes.intake.output.baseline_summary}}\n\nFinal check's finding:\n{{nodes.check.output.summary}}\n\nEvidence it is met:\n{{nodes.check.output.evidence | default(\"\")}}\n\nSummarize the arc briefly: what was watched, roughly how long and how many checks it took, what changed along the way, and the observation that ended it. Quote the evidence rather than paraphrasing it. If any self-scheduled trigger might still be outstanding, say so — an expired one cleans itself up, but the reader should know.\n\nReturn JSON: {\"report\": string, \"goal_evidence\": string}",
      "schema": {
       "report": "string",
       "goal_evidence": "string"

@@ -14,9 +14,11 @@ Three checks, over a checkout of PersonalClawApps:
    against the base ref's); one on an unchanged symbol is an app's own, reported and not charged —
    a rail that scans the apps must not make one app's bug every core PR's red. A problem that maps
    to no SDK symbol at all is charged: nothing shows it is pre-existing.
-2. **An SDK change names the apps it affects in the CHANGELOG** — the apps that import a symbol
-   the change removed or changed in a way an old caller can notice. Additions affect no app, but
-   still need an entry. The same rule CONTRIBUTING.md#sdk-changes states for reviewers.
+2. **An SDK change names the apps it affects in its CHANGELOG headline** — the apps that import
+   a symbol the change removed or changed in a way an old caller can notice, each by its bundle
+   name in backticks or by a backticked family glob that matches only affected apps. Additions
+   affect no app, but still need an entry. The same rule CONTRIBUTING.md#changelog states for
+   reviewers.
 3. **Each bundle's own contract test** (``<bundle>/tests/test_sdk_contract.py``, the convention
    #124 started) runs against this core, with the bundle's declared dependencies installed when
    ``--install-deps`` is given. Not each app's whole suite: the contract only.
@@ -31,8 +33,10 @@ from __future__ import annotations
 import argparse
 import collections
 import dataclasses
+import fnmatch
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -156,32 +160,64 @@ def affected_apps(apps_dir: Path, testkit: Any, symbols: set[str]) -> dict[str, 
 
 # ── the CHANGELOG rule ───────────────────────────────────────────────────────────────────────
 
+#: An entry line and its headline: the CHANGELOG is headline-only, ``- **<headline>**``.
+_HEADLINE = re.compile(r"^- \*\*(.+)\*\*$")
+#: A code span in a headline — how an app is named: `slack-channel`.
+_CODE_SPAN = re.compile(r"`([^`\n]+)`")
+#: A code span that is a family glob over bundle names — the compact form of a long list:
+#: `*-channel` names every bundle whose name ends in `-channel`.
+_APP_GLOB = re.compile(r"[a-z0-9-]*[*?][a-z0-9*?-]*")
 
-def added_changelog_lines(base_text: str | None) -> list[str]:
-    """Lines the working tree's CHANGELOG.md has that the base's does not (a multiset difference:
-    an entry is one long line, and a line-diff of a megabyte file is minutes of CPU for this)."""
+
+def added_headlines(base_text: str | None) -> list[str]:
+    """The headlines of the entries the working tree's CHANGELOG.md has that the base's does not
+    (a multiset difference of lines: an entry is one line)."""
     head = collections.Counter((REPO / "CHANGELOG.md").read_text(encoding="utf-8").splitlines())
     base = collections.Counter((base_text or "").splitlines())
-    return [line for line in (head - base).elements() if line.strip()]
+    return [match.group(1) for line in (head - base).elements() if (match := _HEADLINE.match(line))]
 
 
 def changelog_violations(
-    changes: list[snap.Change], affected: dict[str, list[str]], added: list[str]
+    changes: list[snap.Change],
+    affected: dict[str, list[str]],
+    headlines: list[str],
+    apps: Iterable[str],
 ) -> list[str]:
+    """What the new CHANGELOG headlines fail to say about an SDK change.
+
+    An app is named by its bundle name in backticks (`slack-channel`), or by a backticked glob
+    over bundle names (`*-channel`). A glob is an exact list written short, so it may match only
+    apps the change affects: one that also matches an unaffected app, or no app at all, is
+    refused. Only headlines count: the CHANGELOG has no bodies.
+    """
     if not changes:
         return []
-    if not added:
+    if not headlines:
         return [
-            f"the SDK changed ({len(changes)} symbol(s)) and CHANGELOG.md has no new entry; "
-            f"{snap.REGENERATE}"
+            f"the SDK changed ({len(changes)} symbol(s)) and CHANGELOG.md has no new entry "
+            f"(a `- **<headline>**` line); {snap.REGENERATE}"
         ]
-    text = "\n".join(added)
-    return [
-        f"the CHANGELOG entry does not name {app}, which uses what changed at "
-        f"{', '.join(sites[:3])}{' …' if len(sites) > 3 else ''}"
+    spans = {span for headline in headlines for span in _CODE_SPAN.findall(headline)}
+    globs = sorted(span for span in spans if _APP_GLOB.fullmatch(span))
+    known = sorted(set(apps) | set(affected))
+    out = [
+        f"no new CHANGELOG headline names `{app}`, which uses what changed at "
+        f"{', '.join(sites[:3])}{' …' if len(sites) > 3 else ''}; name it in backticks, or "
+        "with a backticked glob such as `*-channel` for a family of apps"
         for app, sites in sorted(affected.items())
-        if app not in text
+        if app not in spans and not any(fnmatch.fnmatchcase(app, glob) for glob in globs)
     ]
+    for glob in globs:
+        matched = [app for app in known if fnmatch.fnmatchcase(app, glob)]
+        extra = [app for app in matched if app not in affected]
+        if not matched:
+            out.append(f"the CHANGELOG headline's `{glob}` names no app in the apps checkout")
+        elif extra:
+            out.append(
+                f"the CHANGELOG headline's `{glob}` also names {', '.join(extra)}, which "
+                "use(s) nothing that changed; a glob may match only the apps the change affects"
+            )
+    return out
 
 
 # ── each bundle's own contract test ──────────────────────────────────────────────────────────
@@ -281,7 +317,10 @@ def main(argv: list[str] | None = None) -> int:
         failures += [
             f"❌ {v}"
             for v in changelog_violations(
-                changes, affected, added_changelog_lines(git_show(args.base_ref, "CHANGELOG.md"))
+                changes,
+                affected,
+                added_headlines(git_show(args.base_ref, "CHANGELOG.md")),
+                [app.name for app in bundles(apps_dir)],
             )
         ]
     failures += [f"❌ {f}" for f in run_contract_tests(apps_dir, install_deps=args.install_deps)]

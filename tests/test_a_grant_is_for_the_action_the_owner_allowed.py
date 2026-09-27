@@ -389,7 +389,11 @@ def test_the_switch_on_question_claims_nothing_it_cannot_know(home):
 @pytest.fixture
 def cadence(monkeypatch):
     """The NL cadence converter, answered without a model."""
-    monkeypatch.setattr(Tools, "_default_cadence_to_cron", lambda cadence: ("0 9 * * 1-5", ""))
+    from personalclaw.nl_to_cron import Schedule
+
+    monkeypatch.setattr(
+        Tools, "_default_cadence_to_cron", lambda cadence: Schedule(expr="0 9 * * 1-5")
+    )
 
 
 @pytest.mark.parametrize(

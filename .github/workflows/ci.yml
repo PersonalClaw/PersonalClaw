@@ -164,10 +164,11 @@ jobs:
     # nothing here noticing: #3599 changed `compress_thread_history`'s parameter type, every
     # import still resolved and every call still bound, and Slack lost every restored thread's
     # history. This checks out PersonalClawApps' main and runs, over every bundle, the testkit's
-    # static rails (imports published, calls bind), the CHANGELOG rule (an SDK change names the
-    # apps it affects), and each bundle's own tests/test_sdk_contract.py — the contract checks,
-    # not every app's suite. A problem on an SDK symbol this change did not touch is the app's
-    # own and is reported, not charged, so one app's bug cannot red every core PR.
+    # static rails (imports published, calls bind), the CHANGELOG rule (an SDK change's headline
+    # names the apps it affects), and each bundle's own tests/test_sdk_contract.py — the
+    # contract checks, not every app's suite. A problem on an SDK symbol this change did not
+    # touch is the app's own and is reported, not charged, so one app's bug cannot red every
+    # core PR.
     needs: [changes]
     if: ${{ needs.changes.outputs.sdk == 'true' }}
     runs-on: ubuntu-latest

@@ -12,6 +12,10 @@ import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
 import { notify } from '../../app/appSdk'
+import { repoDocUrl } from '../../lib/repoDocs'
+
+/** Where an update's upgrade steps live: the CHANGELOG is headline-only, so they are in the docs. */
+export const UPGRADE_NOTES_DOC = 'docs/guides/getting-started.md#updating'
 
 /** Updates — the whole release-tracking surface: which line this install follows, whether it
  *  applies on its own, whether it phones GitHub at all, and how to get back to the version
@@ -54,22 +58,67 @@ import { notify } from '../../app/appSdk'
  *  peer of the page's furniture. Demoting by one puts the release under the section that introduces it:
  *  h1 Updates › h2 Changelog › h3 Unreleased › h4 Added.
  *
+ *  The CHANGELOG is headline-only — one line per entry, `- **<headline>**` — so two more things the
+ *  card used to get from the document are wrong for it, and both are reshaped here:
+ *  · THE BOLD. It separated a headline from the paragraphs under it. With no paragraphs it marks
+ *    nothing, and measured on the card, 926 of 962 items rendered bold (weight 600) under an `Added`
+ *    heading drawn lighter than the items it heads. An entry that is one bold span is shown plain; an
+ *    entry with bold INSIDE its sentence keeps it, since there the bold picks out a word.
+ *  · THE GAPS. Sections that separate entries with blank lines parse as "loose" lists, which wrap
+ *    every item in a paragraph: the gap between two items read 6px in one section and 36px in the
+ *    next. A blank line between two entries carries nothing now, so it is dropped.
+ *
  *  Two deliberate refusals:
- *  · Headings inside fenced code are left alone. There are none today (2 fence markers, 0 `#` lines
- *    inside them) — which is exactly why the guard is asserted synthetically in the rail rather than
- *    trusted to a green run.
+ *  · Fenced code is left alone — headings, bullets and blank lines inside it. The CHANGELOG has no
+ *    fence today, which is exactly why the guard is asserted synthetically in the rail rather than
+ *    trusted to a green run; the release notes this also renders can have one.
  *  · A document with no `## ` release heading is returned UNCHANGED. Hiding everything because a parse
  *    found nothing is the worse failure: an empty "what's new" reads as "nothing has changed". */
 export function changelogBody(md: string): string {
   const lines = md.split('\n')
   const first = lines.findIndex((l) => l.startsWith('## '))
   if (first < 0) return md
+  const out: string[] = []
   let fenced = false
-  return lines.slice(first).map((l) => {
-    if (l.trimStart().startsWith('```')) { fenced = !fenced; return l }
-    if (fenced) return l
-    return /^#{1,5} /.test(l) ? `#${l}` : l
-  }).join('\n')
+  for (let i = first; i < lines.length; i++) {
+    const l = lines[i]
+    if (l.trimStart().startsWith('```')) { fenced = !fenced; out.push(l); continue }
+    if (fenced) { out.push(l); continue }
+    if (/^#{1,5} /.test(l)) { out.push(`#${l}`); continue }
+    if (!l.trim() && out.length > 0 && out[out.length - 1].startsWith('- ')) {
+      let next = i + 1
+      while (next < lines.length && !lines[next].trim()) next++
+      if (next < lines.length && lines[next].startsWith('- ')) { i = next - 1; continue }
+    }
+    out.push(plainHeadline(l))
+  }
+  return out.join('\n')
+}
+
+/** A headline-only entry, `- **<headline>**`, as the card shows it: without the bold.
+ *
+ *  The bold span is read the way the CHANGELOG is written (`tests/test_changelog_headline_only.py`):
+ *  it closes at the first `**` after a non-space that is not followed by a word character, a backtick
+ *  or `*`, and that leaves the bold inside it balanced. Only an entry that is ONE such span loses it:
+ *  `- **A → **B** C**` becomes `- A → **B** C`, and `- **A** and **B**` is left as written. */
+export function plainHeadline(line: string): string {
+  if (!line.startsWith('- **')) return line
+  const text = line.slice(2)
+  for (const close of text.matchAll(/(?<=\S)\*\*(?![\w`*])/g)) {
+    const at = close.index ?? 0
+    if (at < 2) continue
+    if ((text.slice(2, at).match(/\*\*/g) ?? []).length % 2 !== 0) continue
+    return at + 2 === text.length ? `- ${text.slice(2, at)}` : line
+  }
+  return line
+}
+
+/** The entries an update brings, from the CHANGELOG lines the git check found added upstream
+ *  (`changes`): the entry lines only, one list, shown plain like the card below. The headings in the
+ *  diff (a release cut's `## [X.Y.Z]`) name no change, so they are left out. Empty when the diff
+ *  added no entry. */
+export function updateEntries(changes: string): string {
+  return changes.split('\n').filter((l) => l.startsWith('- ')).map(plainHeadline).join('\n')
 }
 
 export function UpdatesPanel() {
@@ -223,6 +272,13 @@ export function UpdatesPanel() {
   const rollbackTo = info.last_version ?? ''
   const canRollBack = Boolean(rollbackTo) && rollbackTo !== (info.current ?? '')
   const releaseNotes = info.release_notes ?? ''
+  const newEntries = updateEntries(info.changes ?? '')
+  // Each CHANGELOG entry is a headline and nothing else, so what a breaking change asks of you — a
+  // field to set, a token to re-mint — is not under it any more: it is in the Updating guide.
+  const upgradeNotes = (
+    <TextLink href={repoDocUrl(UPGRADE_NOTES_DOC)} external size="sm" ink="emphasis" icon={ExternalLink}
+      iconPosition="trailing" aria-label="Open the upgrade notes: what an update asks of you">Upgrade notes</TextLink>
+  )
   const channelName = { stable: 'Stable', beta: 'Beta', nightly: 'Developer' }[channel] ?? channel
   const verdict = updateVerdict(info)
   return (
@@ -237,10 +293,19 @@ export function UpdatesPanel() {
               {verdict === 'available' ? (
                 <>
                   <div data-type="title-m" className="text-on-surface" style={fvs(550)}>{updateVerdictLabel(info)}</div>
+                  {/* `changes` is the CHANGELOG lines the git check found added upstream. It was printed
+                      as caption text, so its entries showed their `- **` marks and ran together into
+                      one line; they are headline-only now, so they render as the list they are. */}
                   <div data-type="caption" className="text-on-surface-low">
-                    {info.changes || 'A new version is ready to install.'}
+                    {newEntries ? 'What the update brings:' : 'A new version is ready to install.'}
                     {isGit && typeof info.commits_behind === 'number' && info.commits_behind > 0 ? ` (${info.commits_behind} commit${info.commits_behind === 1 ? '' : 's'} behind)` : ''}
                   </div>
+                  {newEntries && (
+                    <div data-type="body-s" tabIndex={0} role="group" aria-label="What the update brings"
+                      className="mt-xs max-h-40 overflow-auto">
+                      <Markdown>{newEntries}</Markdown>
+                    </div>
+                  )}
                 </>
               ) : (
                 // The verdict every non-available state gets, from `updateVerdict` — the same words the
@@ -417,7 +482,7 @@ export function UpdatesPanel() {
             </p>}
       </Section>
 
-      <Section title="Changelog" hint="What's changed recently.">
+      <Section title="Changelog" hint="What's changed recently." right={upgradeNotes}>
         {changelog.trim()
           // CHANGELOG.md is markdown — render it (headings/lists/links), not a raw <pre>.
           ? <div data-type="body-s" className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3">

@@ -20,13 +20,11 @@ Memoh's answer to "a sandboxed agent still needs tools" is an in-container HTTP 
   after the request arrives and before the tool is looked up. A research-class profile
   (``tool_grants="read"``) is refused every write-class tool.
 
-This is ONE of three enforcement points for ``SafetyProfile.tool_grants``, and the only one
-that carries a declared ``kind`` per tool. The tier algebra it shares with the two host-side
-seams (``mcp_shared.leaf_tool_denial``, ``subagent._run_inner``) lives in
-:func:`personalclaw.guardrails.policy.tool_grant_denial`; what is local here is the
-classification, answered by :func:`personalclaw.task_modes.task_mode_denies` — the
-deny-by-default classifier that is already the only read-only posture in this codebase that
-actually holds — reading the declared kind rather than guessing from the name.
+This is ONE of the enforcement points for ``SafetyProfile.tool_grants``. The tier algebra it
+shares with the host-side seams (``mcp_shared.leaf_tool_denial``, ``subagent._run_inner``) lives
+in :func:`personalclaw.guardrails.policy.tool_grant_denial`; the classification is
+:func:`personalclaw.task_modes.task_mode_denies` over what each surface tool DECLARES (its
+``risk_level``), the same declaration every other tool carries.
 """
 
 from __future__ import annotations
@@ -40,6 +38,7 @@ from typing import Any, Callable, Mapping
 from personalclaw.guardrails.policy import TOOL_READ, SafetyProfile, tool_grant_denial
 from personalclaw.security import redact
 from personalclaw.task_modes import task_mode_denies
+from personalclaw.tool_providers.base import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +63,15 @@ _GRANT_TO_TASK_MODE = {TOOL_READ: "ask", "read_write": "agent"}
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """One tool the gateway can serve, and enough about it to classify the request.
+    """One tool the gateway can serve, and what it declares a call does.
 
-    ``kind`` is a :mod:`personalclaw.task_modes` tool kind (``read``/``search``/``edit``/…) — the
+    ``risk_level`` is the tool's declaration (``RiskLevel``; ``SAFE`` is the read-only one) — the
     input to the shared read/write classifier, so a tool's class is declared once, here, and not
     re-guessed at each policy check.
     """
 
     name: str
-    kind: str
+    risk_level: RiskLevel
     handler: Callable[[dict[str, Any], "ToolContext"], str]
     summary: str = ""
 
@@ -129,19 +128,19 @@ def _memory_remember(args: dict[str, Any], ctx: ToolContext) -> str:
 DEFAULT_SURFACE: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="memory_recall",
-        kind="search",
+        risk_level=RiskLevel.SAFE,
         handler=_memory_recall,
         summary="Full-text search over the workspace's memory index.",
     ),
     ToolSpec(
         name="memory_read",
-        kind="read",
+        risk_level=RiskLevel.SAFE,
         handler=_memory_read,
         summary="Read the recorded preferences.",
     ),
     ToolSpec(
         name="memory_remember",
-        kind="edit",
+        risk_level=RiskLevel.CAUTION,
         handler=_memory_remember,
         summary="Append one preference line to memory (write-class).",
     ),
@@ -184,12 +183,11 @@ class ToolGateway:
         The tier algebra is :func:`~personalclaw.guardrails.policy.tool_grant_denial` — shared
         with the two host-side seams that enforce the same field (the in-process MCP handler and
         the spawn approval loop), so ``custom``'s allowlist matching and the fail-closed unknown
-        tier are answered once. What stays HERE is the write/read classification, because this
-        surface has something the other seams do not: a DECLARED ``kind`` per tool, which
-        ``task_mode_denies`` reads directly instead of guessing from the name.
+        tier are answered once. What stays HERE is the write/read classification over each
+        surface tool's own declaration (``risk_level``).
         """
         mode = _GRANT_TO_TASK_MODE.get(self._profile.tool_grants, "ask")
-        deny = task_mode_denies(mode, spec.name, spec.kind, {})
+        deny = task_mode_denies(mode, spec.risk_level, spec.name, "", {})
         return tool_grant_denial(
             self._profile, spec.name, write_class=bool(deny), detail=deny or ""
         )

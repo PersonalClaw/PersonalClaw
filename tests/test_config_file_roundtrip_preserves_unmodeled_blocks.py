@@ -13,7 +13,7 @@ round-trip that destroys more than the original single-key write did:
   2. `config set --file` wrote that document back WHOLESALE.
 
 So the loop the docs describe handed the operator an incomplete file and then trusted it as
-complete. Driven on `origin/main` @ `49b9ae4c8` against a home holding `sk-REAL-KEY-1`, all four
+complete. Driven on `origin/main` @ `49b9ae4c8` against a home holding `fake-key-1`, all four
 blocks were gone afterwards and the command printed `✅ Config loaded from …` and exited 0.
 
 The fix is one primitive shared by every write, and preservation is DERIVED rather than
@@ -32,7 +32,7 @@ import pytest
 
 from personalclaw.apps.secret_fields import SECRET_MASK
 
-_REAL_KEY = "sk-REAL-KEY-DO-NOT-LOSE"
+_REAL_KEY = "fake-key-2"
 
 
 def _seed(home: Path) -> Path:
@@ -47,7 +47,7 @@ def _seed(home: Path) -> Path:
                     {"name": "openrouter", "type": "openai_compatible", "api_key": _REAL_KEY}
                 ],
                 "use_cases": {"chat": "openrouter"},
-                "slack": {"bot_token": "xoxb-REAL"},
+                "slack": {"bot_token": "fake-bot-token-1"},
                 "meta": {"created": "2026-01-01"},
                 "some_future_app_block": {"opaque": True},
             },
@@ -168,7 +168,7 @@ def test_config_get_withholds_every_credential_in_the_whole_document(tmp_path, m
     cli_config._config_cmd(_args("get", key=None))
     captured = capsys.readouterr()
     assert _REAL_KEY not in captured.out
-    assert "xoxb-REAL" not in captured.out
+    assert "fake-bot-token-1" not in captured.out
     dumped = json.loads(captured.out)
     assert dumped["providers"][0]["api_key"] == SECRET_MASK
     assert dumped["slack"]["bot_token"] == SECRET_MASK
@@ -292,7 +292,7 @@ def test_the_documented_roundtrip_no_longer_deletes_providers(tmp_path, monkeypa
     for block in ("providers", "use_cases", "slack", "meta", "some_future_app_block"):
         assert block in after, f"the round-trip deleted {block}"
     assert after["providers"][0]["api_key"] == _REAL_KEY
-    assert after["slack"]["bot_token"] == "xoxb-REAL"
+    assert after["slack"]["bot_token"] == "fake-bot-token-1"
     assert SECRET_MASK not in cfg.read_text(encoding="utf-8"), "a mask must never reach disk"
 
 
@@ -311,7 +311,7 @@ def test_a_reveal_sourced_roundtrip_is_also_lossless(tmp_path, monkeypatch, caps
 
     after = json.loads(cfg.read_text(encoding="utf-8"))
     assert after["providers"][0]["api_key"] == _REAL_KEY
-    assert after["slack"]["bot_token"] == "xoxb-REAL"
+    assert after["slack"]["bot_token"] == "fake-bot-token-1"
 
 
 def test_an_edit_beside_a_masked_credential_still_applies(tmp_path, monkeypatch, capsys):
@@ -338,7 +338,7 @@ def test_an_edit_beside_a_masked_credential_still_applies(tmp_path, monkeypatch,
     assert after["agent"]["log_level"] == "DEBUG", "the operator's edit must still apply"
     assert after["slack"]["command"] == "pclaw"
     assert after["providers"][0]["api_key"] == _REAL_KEY
-    assert after["slack"]["bot_token"] == "xoxb-REAL"
+    assert after["slack"]["bot_token"] == "fake-bot-token-1"
 
 
 def test_set_file_refuses_a_mask_it_cannot_resolve(tmp_path, monkeypatch, capsys):
@@ -442,7 +442,7 @@ def test_the_intact_roundtrip_is_still_accepted(tmp_path, monkeypatch, capsys):
     assert "✅" in capsys.readouterr().out
     after = json.loads(cfg.read_text(encoding="utf-8"))
     assert after["providers"][0]["api_key"] == _REAL_KEY
-    assert after["slack"]["bot_token"] == "xoxb-REAL"
+    assert after["slack"]["bot_token"] == "fake-bot-token-1"
 
 
 # ── `config unset` — the removal path that did not exist ──────────────────────────────────────
@@ -461,7 +461,9 @@ def test_unset_actually_removes_the_credential_block_from_disk(tmp_path, monkeyp
     assert "✅" in capsys.readouterr().out
     after = json.loads(cfg.read_text(encoding="utf-8"))
     assert "slack" not in after, "the block the operator removed is still on disk"
-    assert "xoxb-REAL" not in cfg.read_text(encoding="utf-8"), "the token survived its own removal"
+    assert "fake-bot-token-1" not in cfg.read_text(
+        encoding="utf-8"
+    ), "the token survived its own removal"
     # Removal is SURGICAL: the sibling unmodeled blocks are the ones #951 destroyed.
     assert after["providers"][0]["api_key"] == _REAL_KEY
     assert after["some_future_app_block"] == {"opaque": True}
@@ -576,7 +578,7 @@ def test_save_preserves_a_block_the_retired_tuple_never_named(tmp_path, monkeypa
     assert after["some_future_app_block"] == {"opaque": True}
     assert after["providers"][0]["api_key"] == _REAL_KEY
     assert after["use_cases"] == {"chat": "openrouter"}
-    assert after["slack"] == {"bot_token": "xoxb-REAL"}
+    assert after["slack"] == {"bot_token": "fake-bot-token-1"}
 
 
 def test_save_still_stamps_its_own_meta_over_the_existing_one(tmp_path, monkeypatch):

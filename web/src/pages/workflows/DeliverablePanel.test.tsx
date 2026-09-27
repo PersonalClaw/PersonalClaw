@@ -105,6 +105,30 @@ describe('absent renders as absent — not an empty document, not an error', () 
     expect(screen.queryByText(ABSENT_COPY.not_written)).toBeNull()
   })
 
+  it('a template that states it keeps no document is named as the one that said so', async () => {
+    // The monitor's own statement, not its kind's: the goal kind's monitor variant still names a
+    // log for the legacy monitor loop, and crediting it here would name a document nobody keeps.
+    payload = () =>
+      Promise.resolve(
+        body({
+          workflow: 'goal-pursuit-monitor',
+          report: absent(null, 'kind_has_no_document'),
+          derivation: {
+            name: null,
+            reason: 'kind_has_no_document',
+            declared_by: { template: 'goal-pursuit-monitor', name: '' },
+          },
+          instructed: null,
+        }),
+      )
+    render(<DeliverablePanel runId="r1" />)
+    await waitFor(() => expect(screen.getByText(ABSENT_COPY.kind_has_no_document)).toBeTruthy())
+    const caption = screen.getByText(/declared by the/).closest('p')
+    expect(caption?.textContent).toBe('— — declared by the goal-pursuit-monitor template')
+    expect(screen.queryByText(/Waiting will not produce it/)).toBeNull()
+    expect(screen.queryByText(/MONITOR_LOG/)).toBeNull()
+  })
+
   it('renders a distinct sentence for every reason the backend can send', async () => {
     // The vocabulary rail: five DIFFERENT facts, five DIFFERENT sentences. A shared string would
     // pass every test above and lose the whole distinction.

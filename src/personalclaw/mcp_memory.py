@@ -20,6 +20,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "memory_remember",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Save a learned correction or preference that persists across all "
                 "future sessions. MUST be called when the user corrects you, says "
@@ -54,11 +55,13 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "memory_list",
+            "annotations": {"readOnlyHint": True},
             "description": "List all saved lessons and corrections",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "memory_forget",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             "description": "Remove lessons whose rule contains the given substring",
             "inputSchema": {
                 "type": "object",
@@ -70,6 +73,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "memory_recall",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Look up your persistent memory on demand — query-relevant facts "
                 "and past conversation fragments. Your always-on context only "
@@ -95,14 +99,16 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "triage_rules",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "List, add, or revoke the triage approval rules — what the proactive "
                 "digest may do without asking again. action='list' shows every rule "
                 "with its hit count and where it came from; action='add' needs a "
-                "pattern (like 'archive:sender:noreply.github.com') and a verdict "
-                "('approve' or 'deny'); action='revoke' needs the rule id from list. "
-                "A deny rule always beats an approve rule, so adding a deny is the "
-                "safe way to stop a class of proposal."
+                "pattern (like 'archive:sender:noreply.github.com') and the verdict "
+                "'deny'; action='revoke' needs the rule id from list. A deny rule "
+                "always beats an approve rule, so adding a deny is the safe way to stop "
+                "a class of proposal. Only the owner teaches an approve rule, by "
+                "answering the digest: an agent cannot approve work ahead of time."
             ),
             "inputSchema": {
                 "type": "object",
@@ -121,8 +127,8 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "verdict": {
                         "type": "string",
-                        "enum": ["approve", "deny"],
-                        "description": "approve = auto-execute, deny = silently skip (add only)",
+                        "enum": ["deny"],
+                        "description": "deny = silently skip matching proposals (add only)",
                     },
                     "id": {
                         "type": "string",
@@ -261,8 +267,15 @@ def _triage_rules(args: dict[str, Any]) -> str:
         verdict = str(args.get("verdict") or "").strip().lower()
         if not pattern:
             return tool_failure("pattern is required to add a rule")
-        if verdict not in ("approve", "deny"):
-            return tool_failure("verdict must be 'approve' or 'deny'")
+        if verdict == "approve":
+            # Refused here rather than left to the route's 403, so the reason reaches the agent
+            # in words whatever the auth mode (`approval_answer`).
+            return tool_failure(
+                "only the owner teaches an approve rule, by answering the digest: an agent "
+                "cannot approve the digest's work ahead of time. Add a deny rule, or ask them."
+            )
+        if verdict != "deny":
+            return tool_failure("verdict must be 'deny'")
         payload: dict[str, Any] = {
             "pattern": pattern,
             "verdict": verdict,

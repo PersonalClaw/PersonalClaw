@@ -60,7 +60,7 @@ from personalclaw.apps.secret_fields import SECRET_MASK
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
-_SECRET = "sk-proj-NOT-A-REAL-KEY-just-a-fixture"
+_SECRET = "fake-openai-project-1"
 
 _SCHEMA = {
     "type": "object",
@@ -281,9 +281,9 @@ async def test_a_real_rotated_key_still_overwrites(tmp_path):
     """Masking must not make a credential unchangeable."""
     async with _client(tmp_path) as client:
         instance_id, _ = await _create(client, api_key=_SECRET)
-        r = await _save(client, instance_id, {"api_key": "sk-ROTATED-fixture"})
+        r = await _save(client, instance_id, {"api_key": "fake-key-1"})
         assert r.status == 200, await r.text()
-        assert _stored(tmp_path, instance_id)["api_key"] == "sk-ROTATED-fixture"
+        assert _stored(tmp_path, instance_id)["api_key"] == "fake-key-1"
 
 
 @pytest.mark.asyncio

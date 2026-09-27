@@ -15,6 +15,12 @@
   invariant in a directory they all share, and the failure they would trade for is a
   half-written artifact a later run treats as complete.
 
+- ``child_process_env(extra, installer=...)`` — the environment for any other child process an
+  app's provider starts: a binary it runs, an ``npx`` tool. A provider runs inside the gateway, and
+  the gateway's environment holds every secret saved in PersonalClaw, so a child started with
+  ``env`` left out inherits all of them. This is the child allowlist (PATH, home, locale, proxy
+  and CA settings, and what the owner passed through by name), *extra* over it, and with
+  ``installer="npm"`` or ``"pip"`` that installer's own settings.
 - ``app_packages_env()`` — the environment for a child process that must import the
   packages apps declare (``<home>/app-python``): an app running one of its declared packages
   as ``python -m <package>``. The child allowlist (PATH, home, locale, proxy and CA settings),
@@ -31,6 +37,7 @@ wrong (promote the need to a proper SDK submodule, or vendor it into the app).
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from personalclaw.apps.app_python import app_packages_env  # noqa: F401
@@ -90,6 +97,22 @@ def shared_app_data_dir(name: str) -> Path | None:
     return _ReadOnlyPath(raw)
 
 
+def child_process_env(
+    extra: Mapping[str, str] | None = None, *, installer: str = ""
+) -> dict[str, str]:
+    """The environment for a child process an app's provider starts, as ``env=`` to its spawn.
+
+    The child allowlist (``PATH``, the home, locale, proxy and certificate settings, and the names
+    the owner passed through in Settings → Security → Child environment passthrough), never a copy
+    of the gateway's environment: a provider runs inside the gateway, whose environment holds every
+    secret saved in PersonalClaw. *extra* goes over it (a credential-shaped name in it is refused).
+    ``installer="npm"`` or ``"pip"`` adds that installer's own settings, for an ``npx`` or ``pip``
+    run. A child that must import the packages apps declare wants :func:`app_packages_env`."""
+    from personalclaw.sandbox import build_child_env
+
+    return build_child_env(site="app-child", extra=dict(extra or {}), installer=installer)
+
+
 def outside_home_path(place: str) -> Path | None:
     """A READ-ONLY handle to the place outside the home named ``place``, or ``None``.
 
@@ -112,6 +135,7 @@ __all__ = [
     "sandbox_wrap_argv",
     "atomic_write",
     "single_flight",
+    "child_process_env",
     "app_packages_env",
     "outside_home_path",
 ]

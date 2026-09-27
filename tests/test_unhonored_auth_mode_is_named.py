@@ -1,12 +1,11 @@
 """An auth mode the runtime cannot honor must be NAMED, not silently downgraded.
 
 `AuthConfig.from_env()` honors exactly one override — `none` — and returns the
-`local_token` default for everything else. `api_key` and `oauth2` are declared on
-`AuthMode` and their request-side halves are built (`dashboard/token_auth.py`
-validates a Bearer key, `auth/oidc.py` verifies an OIDC JWT), but nothing
-populates the per-mode fields, so no configuration can select them. An operator
-who sets `PERSONALCLAW_AUTH_MODE=oauth2` believes they enforced IdP SSO and is in
-fact on a shared bearer token — and before this change the runtime said NOTHING.
+`local_token` default for everything else. `api_key` and `oauth2` were declared on
+`AuthMode` with no configuration able to select them, and were deleted (ledger 317b), so
+they are now two more values that are not a mode. An operator who sets
+`PERSONALCLAW_AUTH_MODE=oauth2` believes they enforced IdP SSO and is in fact on a local
+token — and before this change the runtime said NOTHING.
 
 **This change changes no admission decision.** The effective `AuthMode` for every
 input string, and `effective_bind` for every mode, are byte-identical to the
@@ -16,7 +15,7 @@ warning log line at startup plus a `personalclaw doctor` row, each naming which
 mode was requested, that it was NOT applied, and which mode is in force.
 
 The vacuity floor: an assertion that merely greps for the word "oauth2" in the
-output would pass on the pre-SL-8 tree too (the mode name appears in docstrings
+output would pass on the pre-SL-8 tree too (the mode name appeared in docstrings
 and in the mode enum). So every assertion here demands all THREE facts together —
 the requested value, an explicit not-applied statement, and the effective mode —
 from a real emitted record or real captured stdout.
@@ -32,7 +31,6 @@ import pytest
 
 from personalclaw.auth.modes import (
     SELECTABLE_MODES,
-    UNSELECTABLE_MODES,
     AuthConfig,
     AuthMode,
     classify_auth_mode_request,
@@ -60,7 +58,7 @@ def _names_all_three(text: str, *, requested: str, effective: str) -> bool:
 
 
 @pytest.mark.parametrize("requested", ["oauth2", "api_key"])
-def test_declared_but_unselectable_mode_warns(requested, monkeypatch, caplog):
+def test_a_deleted_mode_warns(requested, monkeypatch, caplog):
     """REDS on the pre-SL-8 tree: `from_env()` returned LOCAL_TOKEN and emitted nothing."""
     _clear_auth_env(monkeypatch)
     monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", requested)
@@ -94,7 +92,7 @@ def test_unknown_mode_string_warns(monkeypatch, caplog):
     warnings = [r.getMessage() for r in caplog.records if r.name == _MODES_LOGGER]
     assert any(
         _names_all_three(msg, requested="banana", effective="local_token") for msg in warnings
-    ), f"an unrecognised mode must be named too, not just the declared-but-unwired: {warnings}"
+    ), f"an unrecognised mode must be named too, not just a deleted one: {warnings}"
 
 
 @pytest.mark.parametrize("requested", ["", "none", "local_token", "  NONE  ", "Local_Token"])
@@ -143,22 +141,24 @@ def test_classifier_matches_from_env_for_every_input(raw, effective, unhonored, 
     )
 
 
-def test_every_declared_mode_is_classified_exactly_once():
-    """A 5th `AuthMode` added without a wired selector must not slip through.
-
-    An unclassified mode would silently take the `_UNKNOWN_REASON` path and be
-    reported as "not a known auth mode" — wrong and confusing, since the enum
-    does declare it. Force the author to put it in one bucket or the other.
-    """
+def test_every_declared_mode_is_selectable():
+    """An `AuthMode` nothing can select is the defect ledger 317b deleted — `api_key` and
+    `oauth2` sat in the enum with their request halves built and no way in. A mode added
+    to the enum must be added to the selector in the same change, or this reds."""
     declared = {m.value for m in AuthMode}
-    classified = set(SELECTABLE_MODES) | set(UNSELECTABLE_MODES)
-    assert declared == classified, (
-        "every AuthMode must be either selectable or explicitly unselectable; "
-        f"unclassified: {sorted(declared - classified)}"
-    )
-    assert not (set(SELECTABLE_MODES) & set(UNSELECTABLE_MODES)), "a mode cannot be both"
+    assert declared == set(
+        SELECTABLE_MODES
+    ), f"every AuthMode must be selectable; unreachable: {sorted(declared - set(SELECTABLE_MODES))}"
     for value, mode in SELECTABLE_MODES.items():
         assert mode.value == value, f"{value!r} maps to the wrong mode: {mode}"
+    assert {m.value for m in AuthMode} == {"none", "local_token"}
+
+
+@pytest.mark.parametrize("removed", ["api_key", "oauth2"])
+def test_a_deleted_mode_is_reported_as_not_a_mode(removed):
+    request = classify_auth_mode_request(removed)
+    assert request.effective is AuthMode.LOCAL_TOKEN
+    assert request.unhonored_reason == "not a known auth mode"
 
 
 def test_classifier_reads_the_environment_when_raw_is_omitted(monkeypatch):

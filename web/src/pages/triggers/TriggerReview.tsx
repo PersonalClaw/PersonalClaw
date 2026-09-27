@@ -46,6 +46,9 @@ export function TriggerReview({ cards, error, onRetry, onDecided, onOpen }: {
       const res = await api.decideTriggerReview({ trigger_id: card.trigger_id, kind: card.kind, action })
       if (res.refused) notify(`${card.name} was not run: ${res.refused}`, 'error')
       else if (action === 'dismiss') notify(`Dismissed. ${card.name}'s history records that you chose not to run it.`, 'success')
+      // A run that stopped for you did not "run now": it says what its history row says — the
+      // question, which waits in the Inbox.
+      else if (res.ok && res.status === 'waiting') notify(`${card.name}: ${res.result}`, 'info')
       // "Notes", not "records as": the row's status is what the action reported (a workflow it
       // only started reads `launched`), and its summary is what says the run stood in for another.
       else if (res.ok) {

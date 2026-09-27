@@ -25,8 +25,8 @@ from mcp_owner_allowed import confirmed
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
 
-TOKEN = "ghp_fixtureDeleteMeToken00112233445566"
-KEPT_TOKEN = "ghp_fixtureNeighbourToken99887766554433"
+TOKEN = "fake-github-token-1"
+KEPT_TOKEN = "fake-github-token-2"
 
 
 @pytest.fixture

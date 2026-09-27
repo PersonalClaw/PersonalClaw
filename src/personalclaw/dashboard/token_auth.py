@@ -9,12 +9,8 @@ tracking, and aiohttp middleware for channel-gated dashboard access.
 * ``NONE``        — passes all requests through (loopback enforced by
                     ``effective_bind`` before the server starts).
 * ``LOCAL_TOKEN`` — delegates to ``token_auth_middleware``.
-* ``API_KEY``     — validates ``Authorization: Bearer <key>`` against
-                    ``os.environ[auth_cfg.api_key_env]``.
-* ``OAUTH2``      — verifies a bearer JWT via :mod:`personalclaw.auth.oidc`.
 
-On any authentication failure the middleware returns HTTP 401 with a
-JSON body that does NOT echo request headers, cookies, or tokens.
+A refusal never echoes request headers, cookies, or tokens.
 """
 
 import base64
@@ -23,6 +19,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -32,12 +29,14 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.auth.lifetimes import (
+from personalclaw.auth.lifetimes import (  # noqa: F401 — duration_words is re-exported
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     MAX_LIFETIME_SECS,
     configured_lifetime,
+    duration_words,
     lifetime_seconds,
     too_long,
+    when_words,
 )
 from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.dashboard.origin import is_loopback, is_private_network
@@ -48,6 +47,7 @@ from personalclaw.dashboard.owner_token_url import script_tag as owner_token_scr
 # FUNCTIONS are imported where they are called, so a test that patches one is honoured.
 from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported doors, see above
     END_EXPIRED,
+    END_KEY_REPLACED,
     END_LIMIT,
     END_REASONS,
     END_REPLACED,
@@ -405,7 +405,31 @@ _BYPASS_EXACT.add("/mcp")
 # session token first and both routes were unreachable: an inert surface.
 # Enumerated EXACTLY rather than prefix-exempting `/capture/v1/`, so a route added under
 # that prefix later does not inherit the exemption without its author choosing it.
-_BYPASS_EXACT.update({"/capture/v1/chat/completions", "/capture/v1/messages"})
+# `/capture/import` is the third capture route, and it runs the same `_admit`: it was missing
+# here, so the import an agent that cannot be proxied is told to use answered every request
+# with the dashboard's sign-in refusal.
+_BYPASS_EXACT.update({"/capture/v1/chat/completions", "/capture/v1/messages", "/capture/import"})
+# The two other inbound surfaces that authenticate THEMSELVES, and they were not here either, so
+# both were unreachable from any client they exist for: every request was refused before its own
+# gate ran. `/v1/*` (inbound/openai_dialect.py) and `/a2a/*` (inbound/a2a.py) each run
+# `_admit` — surface enablement (404), the peer rail (403), then a constant-time check of the
+# surface's own bearer or a registered client's (401) — before they read a body, and they read
+# no dashboard cookie. Every route exactly, for the same reason as capture's.
+_BYPASS_EXACT.update(
+    {
+        "/v1/chat/completions",
+        "/v1/models",
+        "/v1/audio/speech",
+        "/v1/audio/transcriptions",
+        "/v1/audio/voices",
+        "/a2a/agent-card",
+        "/a2a/tasks",
+    }
+)
+#: Self-authenticating routes with a path parameter, which no exact entry can name: matched whole,
+#: one segment where the route has one. Only `/a2a/tasks/{task_id}` (a task poll), matched the way
+#: aiohttp matches ``{task_id}`` itself, so a deeper path or a sibling does not inherit it.
+_BYPASS_TEMPLATES: tuple[re.Pattern[str], ...] = (re.compile(r"/a2a/tasks/[^{}/]+"),)
 
 # The login front door. These three MUST be reachable without a
 # session, because they are how a remote browser gets one — gating them behind the session
@@ -751,6 +775,32 @@ def generate_token(user_id: str, ttl_seconds: int = 3600, *, app: str = "") -> s
     ).token
 
 
+#: What a channel says to anyone but its owner who asks for a dashboard link.
+NOT_THE_OWNER_SENTENCE = (
+    "Only this channel's owner can get a dashboard link: the link signs in as the owner, so "
+    "nobody else is sent one."
+)
+
+
+def owner_sign_in_token(provider: str, user_id: str, ttl_seconds: int = 3600) -> str:
+    """A dashboard sign-in token for *user_id*, minted only when that is *provider*'s owner.
+
+    The one mint a channel's "open the dashboard" link uses. A token opens the whole dashboard as
+    the owner, whatever id it names, so it may reach nobody else: *user_id* must be the owner id
+    this channel keeps (``owner_id_for(provider)``, the id its owner pairing stored). Anyone else
+    — an allowed correspondent, a group member, a stranger — is refused with ``ValueError``
+    carrying :data:`NOT_THE_OWNER_SENTENCE`, which is what the channel tells them, and so is a
+    channel that knows no owner. A lifetime over :data:`MAX_SESSION_TTL_SECS` is refused with
+    :func:`generate_token`'s own sentence.
+    """
+    from personalclaw.config.credentials import owner_id_for
+
+    owner = owner_id_for(provider)
+    if not owner or str(user_id or "") != owner:
+        raise ValueError(NOT_THE_OWNER_SENTENCE)
+    return generate_token(owner, ttl_seconds)
+
+
 #: ``(user, app)`` → ``(token, nonce, expires_at)``: the app-scoped token each app is using.
 _APP_TOKENS: dict[tuple[str, str], tuple[str, str, float]] = {}
 _APP_TOKENS_LOCK = threading.Lock()
@@ -918,42 +968,6 @@ REFUSED_LINK_USED = "link_used"
 REFUSED_ENDED = "ended"
 
 
-def duration_words(secs: float) -> str:
-    """``30 days`` / ``20 hours`` / ``1 hour`` / ``45 minutes`` / ``1 second`` — how every
-    surface that states a session's lifetime words it (the gateway banner, `personalclaw
-    token`, the signed-out sentence)."""
-    secs = max(0, round(secs))
-    # Days from two days up (a day is "24 hours", which is how a link window reads); hours and
-    # minutes from two of them up, or exactly one.
-    if secs >= 2 * 86400:
-        count = round(secs / 86400)
-        return f"{count} days"
-    for unit, size in (("hour", 3600), ("minute", 60)):
-        if secs >= 2 * size or secs == size:
-            count = round(secs / size)
-            return f"{count} {unit}{'' if count == 1 else 's'}"
-    return f"{secs} second{'' if secs == 1 else 's'}"
-
-
-def _when_words(ts: float, now: float | None = None) -> str:
-    """``today at 09:14`` / ``yesterday at 09:14`` / ``on 27 September at 09:14``.
-
-    In this machine's local time — the gateway's owner is the reader, on the same machine or
-    the same network — and absolute, so the sentence stays true however long it is read after.
-    """
-    now = time.time() if now is None else now
-    moment = time.localtime(ts)
-    clock = time.strftime("%H:%M", moment)
-    today = time.localtime(now)
-    if (moment.tm_year, moment.tm_yday) == (today.tm_year, today.tm_yday):
-        return f"today at {clock}"
-    yesterday = time.localtime(now - 86400)
-    if (moment.tm_year, moment.tm_yday) == (yesterday.tm_year, yesterday.tm_yday):
-        return f"yesterday at {clock}"
-    year = f" {moment.tm_year}" if moment.tm_year != today.tm_year else ""
-    return f"on {moment.tm_mday} {time.strftime('%B', moment)}{year} at {clock}"
-
-
 #: How a device that has no sign-in gets one, when nothing is known about what it was.
 _PAIR_THIS_DEVICE = "pair this device from Settings → Devices on a device that is signed in"
 
@@ -1004,19 +1018,41 @@ def _how_to_sign_in_with_a_new_link() -> str:
 
 
 def _verified_claims(token: str) -> dict[str, Any] | None:
-    """*token*'s claims when THIS gateway's key signed it, else *None* — never raises."""
+    """*token*'s claims when THIS gateway signed it — with its key, or with the key its last
+    rotation replaced — else *None*. Never raises.
+
+    For EXPLAINING a refusal only (:func:`signed_out_notice`, :func:`refusal_notice`), which is
+    why the replaced key may answer here: every session it signed was ended when it was replaced
+    (``session_store.retire_key``), so recognising one of its tokens can only ever find out why
+    that session ended. Nothing that admits a request calls this.
+    """
     parts = (token or "").split(".", 1)
     if len(parts) != 2:
         return None
     encoded_payload, sig = parts
     try:
         payload_bytes = _b64url_decode(encoded_payload)
-        if not sig.isascii() or not hmac.compare_digest(sig, _sign(payload_bytes)):
+        if not sig.isascii():
+            return None
+        if not hmac.compare_digest(sig, _sign(payload_bytes)) and not _signed_by_replaced_key(
+            payload_bytes, sig
+        ):
             return None
         data = json.loads(payload_bytes)
     except Exception:  # noqa: BLE001 — anything unverifiable gets no explanation
         return None
     return data if isinstance(data, dict) else None
+
+
+def _signed_by_replaced_key(payload: bytes, sig: str) -> bool:
+    """Whether *sig* is the signature the key the last rotation replaced gave *payload*."""
+    from personalclaw.dashboard.session_store import retired_key
+
+    key = retired_key()
+    if not key:
+        return False
+    expected = _b64url_encode(hmac.new(key, payload, hashlib.sha256).digest())
+    return hmac.compare_digest(sig, expected)
 
 
 def not_signed_in_notice() -> SignedOutNotice:
@@ -1064,7 +1100,7 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
     kind = ended.kind if ended is not None else ""
     device = "This browser" if kind == "browser" else "This device"
     if ended is not None and ended.reason != END_EXPIRED:
-        when = _when_words(ended.at)
+        when = when_words(ended.at)
         pool = _pool_of_ended(ended)
         why = {
             END_SIGNED_OUT: f"{device} signed out {when}.",
@@ -1077,6 +1113,10 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
             ),
             END_SIGNED_OUT_EVERYWHERE: (
                 f"Every device was signed out {when}, from the computer running PersonalClaw."
+            ),
+            END_KEY_REPLACED: (
+                f"Every device was signed out {when}, when the key PersonalClaw signs sign-ins "
+                "with was replaced."
             ),
             END_REPLACED: (
                 f"This browser signed in again {when} with a newer link, which ended this "
@@ -1103,7 +1143,7 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
             at=deadline,
             message=(
                 f"Your sign-in on this device lasted {duration_words(deadline - issued)} and "
-                f"ended {_when_words(deadline)}. {_how_to_sign_back_in(via, kind)}"
+                f"ended {when_words(deadline)}. {_how_to_sign_back_in(via, kind)}"
             ),
         )
     return None
@@ -1153,7 +1193,7 @@ def refusal_notice(token: str, *, source: str) -> SignedOutNotice:
             reason=REFUSED_LINK_EXPIRED,
             at=open_until,
             message=(
-                f"This sign-in link could be opened until {_when_words(open_until)}, and that "
+                f"This sign-in link could be opened until {when_words(open_until)}, and that "
                 f"has passed. {_how_to_sign_in_with_a_new_link()}"
             ),
             heading="This link has expired",
@@ -1202,6 +1242,16 @@ def _issued_at(token: str) -> float:
         return 0.0
     try:
         return float(data.get("iat") or 0.0) if isinstance(data, dict) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _session_end(token: str) -> float:
+    """When the session of a token the caller has VALIDATED ends (:func:`_session_deadline`), or
+    0 when it cannot be read."""
+    try:
+        data = json.loads(_b64url_decode(token.split(".")[0]))
+        return _session_deadline(data) if isinstance(data, dict) else 0.0
     except (TypeError, ValueError):
         return 0.0
 
@@ -1444,31 +1494,32 @@ def _audit_session(
     kind: str,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    """One SEL row for a session's start or end. Never the nonce or the token — the public
-    handle is what names it, the same one Settings → Devices shows. Never raises."""
-    metadata: dict[str, Any] = {"session": session_id, "issuer": issuer, "kind": kind}
-    metadata.update(extra or {})
-    detail = f" reason={metadata['reason']}" if "reason" in metadata else ""
-    try:
-        _sel_fn().log_api_access(
-            caller=caller or "system",
-            operation=operation,
-            outcome="ok",
-            source="token_auth",
-            resources=f"session={session_id} issuer={issuer}{detail}",
-            metadata=metadata,
-        )
-    except Exception:  # noqa: BLE001 — the audit must not break a sign-in or a sign-out
-        logger.warning("could not record a session event in the SEL", exc_info=True)
+    """One SEL row for a session's start or end, in the one shape every credential shares
+    (``auth.signins``). Never the nonce or the token — the public handle is what names it, the
+    same one Settings → Devices shows. Never raises."""
+    from personalclaw.auth import signins
+
+    signins.record(
+        operation,
+        caller=caller,
+        session_id=session_id,
+        issuer=issuer,
+        kind=kind,
+        source="token_auth",
+        extra=extra,
+    )
 
 
 def _signed_out(ended: Any, reason: str, *, actor: str) -> int:
     """Finish ending *ended* (``(nonce, record)`` pairs the store already ended): drop each
-    from memory, and record each in the SEL — except app tokens, which are not sign-ins."""
+    from memory, record each in the SEL — except app tokens, which are not sign-ins — and end
+    the pushes each one registered, so a device signed out is not woken again."""
     count = 0
+    ended_rows: set[str] = set()
     for nonce, record in ended:
         _state.revoke_nonce(nonce)
         count += 1
+        ended_rows.add(record.device.id)
         if record.issuer == ISSUER_APP:
             continue
         _audit_session(
@@ -1479,7 +1530,28 @@ def _signed_out(ended: Any, reason: str, *, actor: str) -> int:
             kind=record.device.kind,
             extra={"reason": reason},
         )
+    try:
+        from personalclaw import push
+
+        push.revoke_for_sessions(ended_rows, reason=reason)
+    except Exception:  # noqa: BLE001 — the sign-out stands; say its pushes could not be ended
+        logger.warning("could not end the pushes of the signed-out devices", exc_info=True)
     return count
+
+
+def _keep_the_browser_s_pushes(previous_nonce: str, nonce: str) -> None:
+    """A browser that swaps its sign-in for a newer link is the same browser: the pushes it
+    turned on move to its new sign-in, before the old one is signed out and ends them."""
+    try:
+        from personalclaw import push
+        from personalclaw.dashboard.session_store import load_session_records
+
+        records = load_session_records()
+        old, new = records.get(previous_nonce), records.get(nonce)
+        if old is not None and new is not None:
+            push.move_to_session(old.device.id, new.device.id, until=new.expiry)
+    except Exception:  # noqa: BLE001 — the browser turns push on again; say why it has to
+        logger.warning("could not move the browser's pushes to its new sign-in", exc_info=True)
 
 
 def sign_out(nonces: list[str], reason: str, *, actor: str) -> int:
@@ -1530,6 +1602,49 @@ def revoke_all_sessions() -> None:
     _state.clear_all()
     with _APP_TOKENS_LOCK:
         _APP_TOKENS.clear()
+
+
+def rotate_signing_key(*, actor: str) -> int:
+    """Replace the key every session is signed with, signing every session out. Returns how many.
+
+    The owner's answer to "the key, or a sign-in, may have been copied": ending sessions one by
+    one leaves the key that could mint new ones, and this replaces it. Every browser, paired
+    device and token stops working at once — the caller's own included — and each is told on its
+    next request that the key was replaced, when, and how to sign back in (``END_KEY_REPLACED``).
+    Integration tokens are separate credentials, and keep working.
+
+    In order: the sessions are ended and the old key kept beside those endings, to recognise the
+    tokens it signed (``session_store.retire_key``); then the new key is written — or, on an
+    ephemeral key (tests, ``--test-mode``), a new one is drawn; then this process forgets
+    everything it cached under the old one. Written to the SEL, per session and once for the key.
+    """
+    global _EPHEMERAL_SECRET
+    from personalclaw.dashboard.session_store import retire_key, write_new_key
+
+    ended = retire_key(_secret())
+    if _EPHEMERAL_SECRET is not None:
+        _EPHEMERAL_SECRET = os.urandom(32)
+    else:
+        write_new_key()
+    reset_secret_cache()
+    count = _signed_out(ended, END_KEY_REPLACED, actor=actor)
+    _state.clear_all()
+    with _APP_TOKENS_LOCK:
+        _APP_TOKENS.clear()
+    _sel_fn().log_api_access(
+        caller=actor,
+        operation="session_key_replaced",
+        outcome="success",
+        source="token_auth",
+        resources=f"sessions_signed_out={count}",
+    )
+    return count
+
+
+def ended_notice(nonce: str) -> SignedOutNotice | None:
+    """What the device that held the session *nonce* is told about its ending, or *None* when no
+    ending is remembered — the same sentence its next refused request carries."""
+    return _ended_notice({"nonce": nonce}) if nonce else None
 
 
 def secure_cookies() -> bool:
@@ -1689,10 +1804,15 @@ def token_auth_middleware(
         The client is noted here too (:func:`note_session_client`) — where it was seen from and
         what it is — because this is the one place that has both an authorized session and
         the request it came on.
+
+        ``session_expires_at`` is when that session ends — its signed ``session_exp``, capped
+        the way validation caps it (:func:`_session_deadline`) — which is what
+        ``/api/auth-status`` tells the browser as its sign-in's remaining minutes.
         """
         request["user"] = credentials.user_id
         request["app"] = credentials.app
         request["session_nonce"] = token_nonce(credentials.token)
+        request["session_expires_at"] = _session_end(credentials.token)
         note_session_client(
             request["session_nonce"],
             request,
@@ -1737,6 +1857,7 @@ def token_auth_middleware(
         valid, _user, _reason, app = validate_token_with_app(previous, use_session_exp=True)
         previous_nonce = token_nonce(previous)
         if valid and not app and previous_nonce and previous_nonce != token_nonce(token):
+            _keep_the_browser_s_pushes(previous_nonce, token_nonce(token))
             sign_out([previous_nonce], END_REPLACED, actor=user_id or "owner")
 
     @web.middleware
@@ -1923,7 +2044,7 @@ def token_auth_middleware(
         # Bypass static assets
         if any(path.startswith(p) for p in _BYPASS_PREFIXES):
             return await handler(request)  # type: ignore[operator]
-        if path in _BYPASS_EXACT:
+        if path in _BYPASS_EXACT or any(t.fullmatch(path) for t in _BYPASS_TEMPLATES):
             return await handler(request)  # type: ignore[operator]
         credentials = _select_request_credentials(request, port)
         if not credentials.valid:
@@ -1999,20 +2120,13 @@ def auth_middleware(
 ) -> Callable[..., Any]:
     """Factory returning aiohttp middleware dispatched by ``auth_cfg.mode``.
 
-    Dispatches to the appropriate auth strategy based on ``AuthMode``:
-
     * ``NONE``        — passthrough (loopback invariant enforced at bind time).
     * ``LOCAL_TOKEN`` — delegates to :func:`token_auth_middleware`.
-    * ``API_KEY``     — validates ``Authorization: Bearer`` against
-                        ``os.environ[auth_cfg.api_key_env]``.
-    * ``OAUTH2``      — verifies bearer JWT via :mod:`personalclaw.auth.oidc`.
 
-    Failures always return HTTP 401 JSON with a generic message — request
-    headers, cookies, and tokens are never echoed.
-
-    The returned middleware carries the ``_is_token_auth = True`` sentinel
-    so the ``server.py`` security invariant check still passes for all modes
-    except ``NONE`` (where auth is intentionally absent).
+    The returned middleware carries the ``_is_token_auth`` sentinel the ``server.py``
+    security invariant check reads: True for ``LOCAL_TOKEN``, False for ``NONE`` (where
+    auth is intentionally absent). A mode that is neither cannot be served at all: it
+    raises here, at startup, rather than answering every request with a refusal.
     """
     from personalclaw.auth.modes import AuthMode
 
@@ -2036,90 +2150,7 @@ def auth_middleware(
             local_only=local_only,
         )
 
-    if mode == AuthMode.API_KEY:
-        api_key_env: str = auth_cfg.api_key_env or ""
-
-        @web.middleware
-        async def _api_key_mw(request: web.Request, handler: object) -> web.StreamResponse:
-            path = request.path
-            # Static assets bypass (same set as LOCAL_TOKEN for consistency)
-            if any(path.startswith(p) for p in _BYPASS_PREFIXES):
-                return await handler(request)  # type: ignore[operator]
-            if path in _BYPASS_EXACT:
-                return await handler(request)  # type: ignore[operator]
-
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer "):
-                logger.debug("api_key_mw: missing Bearer header for %s", path)
-                return _deny_401(request, "Unauthorized")
-            provided = auth_header[len("Bearer ") :]
-            if not api_key_env:
-                logger.warning("api_key_mw: api_key_env not configured")
-                return _deny_401(request, "Unauthorized")
-            expected = os.environ.get(api_key_env, "")
-            if not expected:
-                logger.warning("api_key_mw: env var %r is not set", api_key_env)
-                return _deny_401(request, "Unauthorized")
-            if not hmac.compare_digest(provided, expected):
-                logger.debug("api_key_mw: invalid API key for %s", path)
-                return _deny_401(request, "Unauthorized")
-            request["user"] = "api_key"
-            return await handler(request)  # type: ignore[operator]
-
-        _api_key_mw._is_token_auth = True  # type: ignore[attr-defined]
-        return _api_key_mw
-
-    if mode == AuthMode.OAUTH2:
-        oauth2_issuer: str = auth_cfg.oauth2_issuer or ""
-        oauth2_audience: str = auth_cfg.oauth2_audience or ""
-        oauth2_client_id: str | None = auth_cfg.oauth2_client_id
-
-        from personalclaw.auth.oidc import OidcVerificationError, OidcVerifier
-
-        _verifier = OidcVerifier(
-            oauth2_issuer,
-            oauth2_audience,
-            client_id=oauth2_client_id,
-        )
-
-        @web.middleware
-        async def _oauth2_mw(request: web.Request, handler: object) -> web.StreamResponse:
-            path = request.path
-            if any(path.startswith(p) for p in _BYPASS_PREFIXES):
-                return await handler(request)  # type: ignore[operator]
-            if path in _BYPASS_EXACT:
-                return await handler(request)  # type: ignore[operator]
-
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer "):
-                logger.debug("oauth2_mw: missing Bearer header for %s", path)
-                return _deny_401(request, "Unauthorized")
-            token = auth_header[len("Bearer ") :]
-            try:
-                claims = _verifier.verify(token)
-            except OidcVerificationError as exc:
-                logger.debug("oauth2_mw: JWT verification failed for %s: %s", path, exc)
-                return _deny_401(request, "Unauthorized")
-            request["user"] = claims.get("sub", "")
-            return await handler(request)  # type: ignore[operator]
-
-        _oauth2_mw._is_token_auth = True  # type: ignore[attr-defined]
-        return _oauth2_mw
-
-    # Unknown mode — fail closed
-    logger.error("auth_middleware: unknown AuthMode %r; denying all requests", mode)
-
-    @web.middleware
-    async def _deny_all(request: web.Request, handler: object) -> web.StreamResponse:
-        return _deny_401(request, "Unauthorized")
-
-    _deny_all._is_token_auth = True  # type: ignore[attr-defined]
-    return _deny_all
-
-
-def _deny_401(request: web.Request, reason: str) -> web.Response:
-    """Return HTTP 401 with a generic JSON body; never echoes request data."""
-    return web.json_response({"error": reason}, status=401)
+    raise ValueError(f"auth_middleware: unknown AuthMode {mode!r}")
 
 
 def _login_offered() -> bool:

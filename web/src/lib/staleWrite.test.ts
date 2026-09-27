@@ -135,7 +135,7 @@ describe('showing the difference', () => {
   it('shows a stored secret as saved and never shows a typed one', () => {
     const present = presentSecrets((k) => k === 'api_key' || k === 'token', ['api_key'])
     // The form holds a stored secret BLANK, meaning "keep it" — the review read it as emptied.
-    expect(present({ endpoint: 'e1', api_key: '', token: 'sk-typed-now' })).toEqual({
+    expect(present({ endpoint: 'e1', api_key: '', token: 'fake-key-typed-now' })).toEqual({
       endpoint: 'e1', api_key: '(saved, unchanged)', token: '(new value, hidden)',
     })
     expect(present({ token: '' }), 'a secret field with nothing stored and nothing typed').toEqual({ token: '' })

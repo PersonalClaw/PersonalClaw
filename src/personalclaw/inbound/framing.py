@@ -47,16 +47,21 @@ def fence_payload(
     detail: str = "",
     caps: caps_mod.Caps | None = None,
 ) -> str:
-    """Cap, then fence, one outbound text payload. The single choke point.
+    """Mask, cap, then fence, one outbound text payload. The single choke point.
+
+    Masked first (``security.redact_for_model``): every payload here is text a model will read,
+    another agent's through a tool result, an artifact or a bridge answer, or one of
+    PersonalClaw's own through a webhook's body. First, so the cap can only cut a
+    ``[REDACTED: …]`` marker, never a key.
 
     Capping happens BEFORE fencing so the fence markers themselves are never the
     thing truncated away — a result clipped mid-fence would hand the model an
     unterminated `<untrusted_content>` span, which is a fence break produced by our
     own size limit rather than by an attacker.
     """
-    from personalclaw.security import fence_untrusted
+    from personalclaw.security import fence_untrusted, redact_for_model
 
-    capped = caps_mod.clamp_text(text or "", caps or caps_mod.DEFAULT_CAPS)
+    capped = caps_mod.clamp_text(redact_for_model(text or ""), caps or caps_mod.DEFAULT_CAPS)
     return fence_untrusted(
         f"{PREAMBLE}\n\n{capped}",
         source=fence_source(surface, client_id, detail),

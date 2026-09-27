@@ -290,7 +290,7 @@ def test_openai_adapter_declares_automatic(fake_openai_module):
     assert OpenAIProvider.prompt_cache is PromptCache.AUTOMATIC
     inst = OpenAIProvider(
         model="gpt-4o",
-        credential=Credential(name="x", kind="api_key", secret="sk-test", source="env"),
+        credential=Credential(name="x", kind="api_key", secret="fake-key-test", source="env"),
     )
     assert getattr(inst, "prompt_cache", PromptCache.NONE) is PromptCache.AUTOMATIC
 

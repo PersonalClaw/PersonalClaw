@@ -31,10 +31,10 @@ from personalclaw.llm.registry import get_default_registry
 from personalclaw.providers.settings import ProviderSettings
 from personalclaw.sdk.provider_helpers import register_branded_app
 
-PROVIDER_KEY = "sk-fixture-snapshot-provider-7c6b5a49"
-APP_TOKEN = "xoxb-fixture-snapshot-app-3e2d1c0b"
-VAULT_VALUE = "ghp_fixturesnapshotvault0123456789ab"
-DESCRIPTOR_VALUE = "sk-fixture-snapshot-descriptor-5b4a3928"
+PROVIDER_KEY = "fake-key-fixture-snapshot-provider-7c6b5a49"
+APP_TOKEN = "fake-bot-token-fixture-snapshot-app-3e2d1c0b"
+VAULT_VALUE = "fake-github-token-1"
+DESCRIPTOR_VALUE = "fake-key-1"
 LOCAL_SECRET = "fixture-local-secret-2f1e0d9c8b7a"
 APP_PROXY_SECRET = "fixture-app-proxy-secret-1d0c9b8a7f6e"
 

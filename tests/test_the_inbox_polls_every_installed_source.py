@@ -388,6 +388,8 @@ async def test_a_reply_goes_to_its_source_and_closes_the_row_once_sent(tmp_path)
     ], "the reply was not addressed with the mail's own id"
     assert store.items[item.id].status == ItemStatus.HANDLED.value
     assert store.items[item.id].draft == "Final abstract attached."
+    # When it was sent: what lets the open panel say "Sent" of this text and offer no Send.
+    assert store.items[item.id].replied_at > 0
 
 
 class _KeptAsDraft:
@@ -413,6 +415,7 @@ async def test_a_reply_the_source_did_not_send_says_why_and_keeps_the_text(tmp_p
     )
     assert store.items[item.id].status != ItemStatus.HANDLED.value
     assert store.items[item.id].draft == "Final abstract attached.", "the owner's text was lost"
+    assert store.items[item.id].replied_at == 0, "a reply that was not sent is not a reply"
 
 
 @pytest.mark.asyncio

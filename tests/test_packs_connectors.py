@@ -131,7 +131,10 @@ def test_configure_saves_credential_and_writes_server(importer_home):
     seed_catalog(importer_home)
     decl = {"name": "web-search", "category": "search"}
     res = resolve_connector(
-        decl, mode="configure", credentials={"SEARCH_API_KEY": "sk-secret-123"}, home=importer_home
+        decl,
+        mode="configure",
+        credentials={"SEARCH_API_KEY": "fake-key-secret-123"},
+        home=importer_home,
     )
     assert res.mode == "configure"
     assert res.server_name == "web-search"
@@ -146,7 +149,7 @@ def test_configure_saves_credential_and_writes_server(importer_home):
     from personalclaw.llm.credentials import CredentialStore
 
     assert "SEARCH_API_KEY" in credential_names()
-    assert CredentialStore(importer_home).resolve("SEARCH_API_KEY").secret == "sk-secret-123"
+    assert CredentialStore(importer_home).resolve("SEARCH_API_KEY").secret == "fake-key-secret-123"
 
 
 def test_configure_refuses_without_credential_value(importer_home):
@@ -166,20 +169,20 @@ def test_credential_never_lands_in_config_or_pack(importer_home):
     resolve_connector(
         {"name": "web-search", "category": "search"},
         mode="configure",
-        credentials={"SEARCH_API_KEY": "sk-canary-XYZ"},
+        credentials={"SEARCH_API_KEY": "fake-key-1"},
         home=importer_home,
     )
     # The secret is NOT in config.json…
     cfg = importer_home / "config.json"
     if cfg.exists():
-        assert "sk-canary-XYZ" not in cfg.read_text()
+        assert "fake-key-1" not in cfg.read_text()
     # …NOT in the mcp.json server spec (only an env-var REFERENCE rides there)…
-    assert "sk-canary-XYZ" not in (importer_home / "mcp.json").read_text()
+    assert "fake-key-1" not in (importer_home / "mcp.json").read_text()
     # …no second store is written for it…
     assert not (importer_home / "credentials.json").exists()
     # …it lives ONLY in the 0o600 credential-store .env sink.
     env = importer_home / ".env"
-    assert "sk-canary-XYZ" in env.read_text()
+    assert "fake-key-1" in env.read_text()
     import stat
 
     assert stat.S_IMODE(env.stat().st_mode) == 0o600
@@ -243,7 +246,10 @@ def test_import_configures_connector_from_choice(built_pack, importer_home):
     plan = import_pack(
         built_pack,
         connector_choices={
-            "web-search": {"mode": "configure", "credentials": {"SEARCH_API_KEY": "sk-live-1"}}
+            "web-search": {
+                "mode": "configure",
+                "credentials": {"SEARCH_API_KEY": "fake-key-live-1"},
+            }
         },
     )
     modes = {r["name"]: r["mode"] for r in plan.connector_resolutions}
@@ -251,7 +257,7 @@ def test_import_configures_connector_from_choice(built_pack, importer_home):
     assert "web-search" in json.loads((importer_home / "mcp.json").read_text())["mcpServers"]
     from personalclaw.llm.credentials import CredentialStore
 
-    assert CredentialStore(importer_home).resolve("SEARCH_API_KEY").secret == "sk-live-1"
+    assert CredentialStore(importer_home).resolve("SEARCH_API_KEY").secret == "fake-key-live-1"
 
 
 def test_import_bad_configure_degrades_to_skip_marker(built_pack, importer_home):

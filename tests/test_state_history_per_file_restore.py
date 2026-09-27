@@ -53,14 +53,14 @@ def _isolate(tmp_path, monkeypatch):
 def _fresh(tmp_path: Path, name: str) -> tuple[Path, Path]:
     """An independent (home, workspace) pair, so two runs can be compared."""
     home = tmp_path / name / "home"
-    ws = tmp_path / name / "ws"
+    ws = home / "workspace"  # the home's memory folder, where every memory tree is written
     home.mkdir(parents=True, exist_ok=True)
     ws.mkdir(parents=True, exist_ok=True)
     return home, ws
 
 
 def _root(home: Path, ws: Path, root_id: str) -> sh.HistoryRoot:
-    root = next(r for r in sh.roots(home=home, workspace=ws) if r.id == root_id)
+    root = next(r for r in sh.roots(home=home) if r.id == root_id)
     sh.ensure_repo(root, home=home)
     return root
 
@@ -483,7 +483,7 @@ class TestSecretsSurviveASubsetRestore:
     def test_a_gitignored_secret_in_the_memory_tree_keeps_its_bytes(self, tmp_path):
         root, home, ws, target = _memory_fixture(tmp_path, "subset-secret")
         secret = ws / "memory" / ".env"
-        secret.write_text("OPENAI_API_KEY=sk-keep-me")
+        secret.write_text("OPENAI_API_KEY=fake-key-keep-me")
         before = secret.read_bytes()
 
         sh.rollback(root, target, paths=["memory/a.md"], home=home)

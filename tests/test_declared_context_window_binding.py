@@ -33,7 +33,7 @@ pytestmark = pytest.mark.asyncio
 
 
 def _cred() -> Credential:
-    return Credential(name="x", kind="api_key", secret="sk-test", source="env")
+    return Credential(name="x", kind="api_key", secret="fake-key-test", source="env")
 
 
 # ── openai: request kwargs come from chat.completions.create ───────────────────

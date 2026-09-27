@@ -407,7 +407,21 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     # above and the event-trigger `/test` already follow.
     ran, note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
     paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
-    return web.json_response({"ok": ran, "name": row.trigger.name, "result": note + paused_note})
+    from personalclaw.dashboard.handlers.triggers import _last_run_status_for
+
+    return web.json_response(
+        {
+            "ok": ran,
+            "name": row.trigger.name,
+            "result": note + paused_note,
+            # The status the run recorded — "waiting" for one that stopped for you, "launched" for
+            # one that only started work — so a Run button says what the run's history row says,
+            # not "finished" for every run that did not fail. Read back as the list row reads its
+            # `last_run_status`: the dispatch awaited its recorder, so the newest row is this run's.
+            # Empty when nothing ran, since no row was recorded.
+            "status": _last_run_status_for(raw) if ran else "",
+        }
+    )
 
 
 async def api_trigger_answer(request: web.Request) -> web.Response:
@@ -420,13 +434,23 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
     action you confirmed a sign-in for goes on to the run. Deny closes the question; the trigger
     asks again the next time its action stops. The refusals a Run button honours are read BEFORE
     the token is spent, so a refused answer leaves the question answerable.
+
+    Only you answer it (`approval_answer`). An agent's tool reaches this route with the gateway's
+    internal secret (`/api/triggers` is a mixed internal path, for `/run`), and it is refused 403
+    `approval_owner_only` with an audit row, before anything about the trigger is read.
     """
 
+    from personalclaw import approval_answer
     from personalclaw.dashboard.handlers.triggers import _split_id, _trigger_store
     from personalclaw.triggers import parks
     from personalclaw.triggers import tools as T
 
     _kind, raw = _split_id(request.match_info["id"])
+    refused = approval_answer.forbidden(
+        request, what=f"park:{raw}", asked_by=approval_answer.trigger(raw).label
+    )
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     answer = body.get("answer")
     if not isinstance(answer, bool):
@@ -583,6 +607,12 @@ async def _dispatch_store_action(
     if result is not None and not bool(getattr(result, "success", True)):
         note = str(getattr(result, "error", "") or "") or "the action reported failure"
         return False, f"failed: {note}"
+    from personalclaw.triggers import parks
+
+    if parks.parked(result):
+        # It ran and stopped for you. Every caller reports this note — the MCP `automation_run`,
+        # the restart review's Run now — and "ran" read as done, so it is the row's own line.
+        return True, parks.waiting_line(result)
     return True, "ran"
 
 

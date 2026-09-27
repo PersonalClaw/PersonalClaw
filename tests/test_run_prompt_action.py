@@ -165,6 +165,49 @@ def test_success_spawns_auto_approved_with_framing(monkeypatch):
     assert spawn_sink.get("approval_mode") == "auto"
 
 
+def _run_message(monkeypatch, config: dict) -> tuple[object, dict]:
+    import personalclaw.action_providers.run_prompt_provider as mod
+
+    spawn_sink: dict = {}
+    scheduled: list = []
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
+    monkeypatch.setattr(mod, "resolve_loop_md", lambda cwd: ("LOOP body", "user"))
+
+    async def go():
+        res = await RunPromptActionProvider().execute(config, _ctx())
+        await asyncio.sleep(0.05)
+        return res
+
+    return asyncio.run(go()), spawn_sink
+
+
+def test_a_message_is_the_prompt_when_no_saved_prompt_is_named(monkeypatch):
+    """🔴 Red on main. An automation the chat makes — "remind me at 5pm" — is a Run Prompt action
+    whose instruction is its `message`. This provider read no `message`, so the first fire failed
+    with "no prompt_id and no loop.md", or ran the owner's loop.md instead."""
+    res, spawned = _run_message(monkeypatch, {"message": "Remind the owner to stretch."})
+    assert res.success is True, res.error
+    assert "Remind the owner to stretch." in spawned.get("task", "")
+    assert "LOOP body" not in spawned.get("task", "")
+    assert "AUTONOMOUS RUN" in spawned.get("task", ""), "framed like every other unattended turn"
+    assert spawned.get("approval_mode") == "auto"
+
+
+def test_a_saved_prompt_still_wins_over_a_message(monkeypatch):
+    import personalclaw.action_providers.run_prompt_provider as mod
+
+    monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: f"SAVED {pid}")
+    res, spawned = _run_message(monkeypatch, {"prompt_id": "standup", "message": "not this"})
+    assert res.success is True
+    assert "SAVED standup" in spawned["task"] and "not this" not in spawned["task"]
+
+
+def test_with_neither_it_is_still_loop_md(monkeypatch):
+    res, spawned = _run_message(monkeypatch, {"message": "   "})
+    assert res.success is True
+    assert "LOOP body" in spawned["task"]
+
+
 def test_session_opt_in_pins_parent_session(monkeypatch):
     import personalclaw.action_providers.run_prompt_provider as mod
 

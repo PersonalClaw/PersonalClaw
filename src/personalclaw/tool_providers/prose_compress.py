@@ -20,6 +20,10 @@ chokepoint (breaker/metering) for free — no bespoke resilience built here.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from personalclaw.usage_ledger import Attribution
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +58,16 @@ async def compress_prose(
     *,
     cap: int = DEFAULT_SUMMARY_CAP,
     raw_ref: str = "",
+    usage: "Attribution | None" = None,
 ) -> str:
     """Compress long prose via the background model; degrade to the ``log``
     projector on any failure. Small input passes through untouched.
 
     ``raw_ref``, when given, is appended as a recovery line naming
     ``tool_result_get`` — every lossy step keeps the road back to the raw bytes.
+
+    ``usage`` names whose spend the model call is, and writes its usage row
+    (``one_shot_completion(usage=…)``).
     """
     if len(text) <= cap:
         return text
@@ -75,7 +83,7 @@ async def compress_prose(
             body = body[:head] + "\n…[middle elided for summarization]…\n" + body[-tail:]
         summary = (
             await one_shot_completion(
-                _PROMPT.format(max_chars=cap, body=body), use_case="background"
+                _PROMPT.format(max_chars=cap, body=body), use_case="background", usage=usage
             )
         ).strip()
     except Exception:  # noqa: BLE001 — the fallback IS the contract

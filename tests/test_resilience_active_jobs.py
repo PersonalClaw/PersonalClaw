@@ -30,7 +30,8 @@ from personalclaw.resilience.active_jobs import (
         ("cron:daily-digest", "cron"),
         ("cron:job:agent", "cron"),
         ("subagent:xyz", "subagent"),
-        ("_bg", "heartbeat"),
+        ("cron:system:heartbeat-tasks:1a2b3c4d", "heartbeat"),
+        ("_bg", "background"),
     ],
 )
 def test_classify_origin(key, expected):
@@ -40,7 +41,7 @@ def test_classify_origin(key, expected):
 def test_only_interactive_origins_are_cancellable():
     assert is_cancellable_origin("webui") is True
     assert is_cancellable_origin("channel:slack") is True
-    for unattended in ("loop", "cron", "subagent", "heartbeat", "other"):
+    for unattended in ("loop", "cron", "subagent", "heartbeat", "background", "other"):
         assert is_cancellable_origin(unattended) is False, unattended
 
 

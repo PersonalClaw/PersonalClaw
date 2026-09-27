@@ -251,9 +251,7 @@ class TestPrompt:
 
         assert state_history.git_available(), "time travel needs git; this test must not skip"
         home = config_dir()
-        root = next(
-            r for r in state_history.roots(home=home, workspace=tmp_path) if r.id == "prompts"
-        )
+        root = next(r for r in state_history.roots(home=home) if r.id == "prompts")
         _seed_prompt(prompts, content="version one")
         first = state_history.commit(root, reason="seed", home=home)
         assert first

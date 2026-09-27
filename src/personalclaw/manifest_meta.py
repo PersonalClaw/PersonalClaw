@@ -611,14 +611,9 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "examples": [{"summary": "Pause a run", "args": {"run_id": "a1b2c3d4"}}],
     },
     "workflow_resume": {
-        "response_type": "workflow.gate.resolved",
+        "response_type": "workflow.run.resumed",
         "error_codes": [],
-        "examples": [
-            {
-                "summary": "Approve a waiting gate",
-                "args": {"run_id": "a1b2c3d4", "answer": "true"},
-            },
-        ],
+        "examples": [{"summary": "Lift a run's pause", "args": {"run_id": "a1b2c3d4"}}],
     },
     "workflow_cancel": {
         "response_type": "workflow.run.cancelled",

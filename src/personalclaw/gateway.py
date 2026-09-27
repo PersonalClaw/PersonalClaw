@@ -21,7 +21,6 @@ import functools
 import json
 import logging
 import os
-import re
 import signal
 import sys
 import time
@@ -31,7 +30,13 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from personalclaw import approval_grants, gateway_base, notification_kinds, shutdown_event
+from personalclaw import (
+    approval_answer,
+    approval_grants,
+    gateway_base,
+    notification_kinds,
+    shutdown_event,
+)
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.approval_grants import ToolDecision
@@ -83,7 +88,7 @@ from personalclaw.memory import MemoryStore
 from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY, SessionManager
+from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.subagent import (
     INJECTION_TIMEOUT,
@@ -94,6 +99,7 @@ from personalclaw.subagent import (
     approval_subagent_id,
     resolve_max_subagents,
 )
+from personalclaw.task_modes import resolve_effective_risk
 from personalclaw.triggers.models import Outcome
 from personalclaw.triggers.nudge import (
     AutoNudgeService,
@@ -202,63 +208,6 @@ _REFUSAL_STATUSES: tuple[str, ...] = (
 )
 
 
-# Tool-name prefixes treated as read-only by the --approval reads flag.
-# Matched against the leading verb token of an event.title (e.g. "Read foo.txt"
-# -> "read"). Conservative list — anything not on it falls through to the
-# standard approval flow.
-_READ_ONLY_TOOL_PREFIXES = (
-    "read",
-    "list",
-    "get",
-    "search",
-    "find",
-    "describe",
-    "show",
-    "view",
-    "fetch",
-    "query",
-    "grep",
-    "ls",
-    "cat",
-    "head",
-    "tail",
-)
-
-# Tokens that disqualify a tool from auto-approval even if its leading
-# verb is in _READ_ONLY_TOOL_PREFIXES. After splitting the title on
-# whitespace/punctuation/underscore/dash, any resulting token that exactly
-# matches one of these entries causes rejection. Catches compound names
-# a third-party MCP author might pick (e.g. read_or_write, find_and_replace,
-# get_or_create) where the read prefix masks a write capability. Fail
-# closed on ambiguity.
-_WRITE_INDICATORS = (
-    "write",
-    "delete",
-    "create",
-    "destroy",
-    "remove",
-    "update",
-    "modify",
-    "replace",
-    "set",
-    "put",
-    "post",
-    "exec",
-    "execute",
-    "run",
-    "rm",
-    "rmdir",
-    "drop",
-    "patch",
-    "send",
-    "publish",
-    "save",
-    "edit",
-    "kill",
-    "terminate",
-)
-
-
 def mint_startup_token(issuer: str, auth_cfg: Any) -> MintedSession:
     """The token the gateway hands out at startup: the dashboard link it prints (and opens),
     or the ``--json-ready`` line's token for a test harness.
@@ -288,42 +237,6 @@ def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
         "home": str(home),
     }
     return f"PERSONALCLAW_READY:{json.dumps(payload)}"
-
-
-def _is_read_only_tool(event_title: str) -> bool:
-    """Return True if event_title looks like a read-only tool invocation.
-
-    Used by --approval reads to auto-approve a conservative set of read
-    verbs while still gating writes. Two-stage check:
-
-    1. Leading token (before any whitespace/punctuation) must be in
-       _READ_ONLY_TOOL_PREFIXES.
-    2. After splitting the title on whitespace/punctuation/underscore/dash,
-       no resulting token may exactly match one in _WRITE_INDICATORS — catches
-       compound names like read_or_write, find_and_replace, get_or_create.
-       Exact token equality, not substring containment: ``setter`` does not
-       match ``set``.
-
-    Fails closed on ambiguity.
-    """
-    if not event_title:
-        return False
-    lowered = event_title.strip().lower()
-    if not lowered:
-        return False
-    # Tokenize on whitespace, underscores, dashes, and common punctuation
-    # so compound names like read_or_write break into ["read", "or", "write"].
-    tokens = [t for t in re.split(r"[\s_\-:()/.,]+", lowered) if t]
-    if not tokens:
-        return False
-    leading = tokens[0]
-    if leading not in _READ_ONLY_TOOL_PREFIXES:
-        return False
-    # Reject if any token (other than the leading verb itself) is a known
-    # write indicator. Catches read_or_write, find_and_replace, etc.
-    if any(token in _WRITE_INDICATORS for token in tokens):
-        return False
-    return True
 
 
 def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
@@ -662,18 +575,22 @@ class GatewayOrchestrator:
                     session_resolver(request_id) if session_resolver else resolved_session
                 )
                 origin = self.dashboard_state.channel_provider_for(parent) if parent else ""
-            asker = approval_delivery(origin)
-            if asker is not None:
+            asking = approval_delivery(origin)
+            if asking is not None:
+                provider, asker = asking
                 try:
                     dashboard_future = None
                     approved: "bool | None" = None
+                    # How core closed the channel's prompt, when it did (not a press there).
+                    told: dict[str, str] = {}
 
                     def _on_prompted(pending: Any) -> None:
                         nonlocal dashboard_future
-                        if not self.dashboard_state:
+                        registry = self.dashboard_state
+                        if not registry:
                             return
                         dashboard_future = asyncio.ensure_future(
-                            self.dashboard_state.request_approval(
+                            registry.request_approval(
                                 request_id,
                                 source,
                                 event.title,
@@ -681,18 +598,27 @@ class GatewayOrchestrator:
                                 tool_purpose=event.tool_purpose,
                                 session=asked_in,
                                 trigger=asked_by,
-                                # This channel is already asking: the `channel_dm` target
-                                # must not ask a second time.
+                                # This channel is already asking: the registry must not ask
+                                # a channel a second time.
                                 asked_on_channel=True,
+                                risk_level=event.risk_level,
                             )
                         )
 
                         def _on_dashboard_done(fut: "asyncio.Future") -> None:  # type: ignore[type-arg]  # noqa: E501
-                            if fut.cancelled() or fut.exception():
+                            # The channel's prompt is told how the approval ended, as the
+                            # registry recorded it: an expiry or a cancelled ask is not a Deny.
+                            # A dashboard copy that was cancelled or broke ends it unanswered,
+                            # so the prompt, and the work waiting on it, are not left open.
+                            if pending.future.done():
                                 return
-                            result = "approved" if fut.result() else "rejected"
-                            if not pending.future.done():
-                                pending.future.set_result(result)
+                            if fut.cancelled() or fut.exception():
+                                told["outcome"] = "cancelled"
+                            else:
+                                told["outcome"] = registry.ended_as(request_id) or (
+                                    "approved" if fut.result() else "rejected"
+                                )
+                            pending.future.set_result(told["outcome"])
 
                         dashboard_future.add_done_callback(_on_dashboard_done)
 
@@ -718,12 +644,17 @@ class GatewayOrchestrator:
                         # row and a "denied" card for a decision nobody made. Cancelling the
                         # dashboard waiter instead ends its approval as `cancelled`.
                         if self.dashboard_state and approved is not None:
-                            self.dashboard_state.resolve_approval(request_id, approved)
+                            # The channel's app checked the press is its paired owner's.
+                            self.dashboard_state.resolve_approval(
+                                request_id, approved, by=approval_answer.on_channel(provider)
+                            )
                         if dashboard_future and not dashboard_future.done():
                             dashboard_future.cancel()
 
                     if approved is not None:
-                        return self._asked_decision(request_id, approved)
+                        return self._asked_decision(
+                            request_id, approved, closed_as=told.get("outcome", "")
+                        )
                 except Exception:
                     logger.debug(
                         "Channel approval failed, falling back to dashboard", exc_info=True
@@ -739,6 +670,7 @@ class GatewayOrchestrator:
                     tool_purpose=event.tool_purpose,
                     session=asked_in,
                     trigger=asked_by,
+                    risk_level=event.risk_level,
                 )
                 return self._asked_decision(request_id, answered)
             # Nowhere to ask (no dashboard, no channel). Approving was always the answer here, and
@@ -782,10 +714,16 @@ class GatewayOrchestrator:
             return approval_grants.SOURCE, None
 
         # CLI --approval flag override (composable test mode).
-        # 'yolo' auto-approves all; 'reads' auto-approves read-only tools;
-        # 'interactive' falls through to the standard flow.
+        # 'yolo' auto-approves all; 'reads' auto-approves a call that only reads — its
+        # effective risk is SAFE, the same answer Trust reads acts on: a tool that DECLARES it
+        # only reads, or a read-only shell command. 'interactive' falls through to the
+        # standard flow.
         if self._approval_mode == "yolo" or (
-            self._approval_mode == "reads" and _is_read_only_tool(event.title or "")
+            self._approval_mode == "reads"
+            and resolve_effective_risk(
+                event.risk_level, event.title or "", event.tool_kind, event.tool_input
+            )
+            == "safe"
         ):
             return approval_grants.CLI, {
                 "caller": f"cli:approval={self._approval_mode}",
@@ -890,14 +828,18 @@ class GatewayOrchestrator:
             )
         return "", None
 
-    def _asked_decision(self, request_id: str, approved: bool) -> ToolDecision:
+    def _asked_decision(
+        self, request_id: str, approved: bool, *, closed_as: str = ""
+    ) -> ToolDecision:
         """An ASKED approval's answer as a decision: how it ended, from the registry that held it.
 
         The waiter's ``bool`` cannot tell a Deny from nobody answering in time, which is what the
         subagent's audit row must say (`approval_grants.ToolDecision`). An approval the registry
-        never held (a channel's own answer) is a person's.
+        never held is a person's answer on the channel, unless core closed the channel's prompt
+        itself (*closed_as*): its copy in the registry could not be listed, which is no answer.
         """
         ended = self.dashboard_state.ended_as(request_id) if self.dashboard_state else ""
+        ended = ended or closed_as
         if ended in ("expired", "cancelled"):
             return ToolDecision(False, ended, approval_grants.NOBODY)
         if ended in ("approved", "rejected"):
@@ -1414,8 +1356,13 @@ class GatewayOrchestrator:
         # At DISPATCH, never at save: the stored config keeps the placeholder, so the secret is not
         # on disk. An unresolved key REFUSES rather than substituting "" — an empty Authorization
         # header produces a remote 401 nobody can trace back to a missing credential.
+        #
+        # Except in an action that IS a model turn (`hands_config_to_a_model`): its config is what
+        # an agent's model is handed, so a reference there stays the name and the agent's tools
+        # fill it when they run. Resolved here it would put the value in the model's context.
         try:
-            config = _trigger_secrets.resolve(config)
+            if not getattr(provider, "hands_config_to_a_model", False):
+                config = _trigger_secrets.resolve(config)
         except _trigger_secrets.UnresolvedSecret as exc:
             logger.warning("trigger %s: %s", trigger.id, exc)
             self._push_trigger_refresh()
@@ -2786,21 +2733,35 @@ class GatewayOrchestrator:
         so a task keeps the background prompt, the unattended approval policy, and delivery to its
         `<!-- deliver:… -->` target. A task still unfinished (`HEARTBEAT_KEEP`) delivers nothing, so
         a task retried every pass does not notify every pass.
+
+        Each task runs in a session of its own, as the owner's agent with its tools: that is what
+        the owner allowed (`heartbeat.consent`). The Background model binding still serves it. It
+        used to run on the chores' session, so a title turn and a heartbeat task shared one tool
+        surface, and making the chores toolless would have taken the tools from the task too.
         """
         assert self.sessions is not None
         assert self.ctx_builder is not None
-        session_key = BACKGROUND_KEY
+        from personalclaw.action_providers.heartbeat_tasks_provider import task_session_key
+
+        session_key = task_session_key()
         _acquired = False
         try:
-            client, is_new, _resumed = await self.sessions.get_or_create(session_key)
+            client, is_new, _resumed = await self.sessions.get_or_create(
+                session_key, model_axis="background"
+            )
             _acquired = True
             from personalclaw.context_headroom import resolve_window
 
             # Named, not derived: this call passes no session key, and a keyless build
             # derives the CHAT use case — so a heartbeat ran on the interactive-chat
             # prompt while Settings → Prompts promised it the Background one.
+            #
+            # The task is read from HEARTBEAT.md, not typed into this turn, so it is masked as
+            # every other stored text a prompt is built from is (`redact_for_model`).
+            from personalclaw.security import redact_for_model
+
             full_message, _ = self.ctx_builder.build_message(
-                task_text,
+                redact_for_model(task_text),
                 is_new,
                 prompt_use_case="background",
                 window=await resolve_window(serving=client),
@@ -2808,7 +2769,7 @@ class GatewayOrchestrator:
 
             # Heartbeat is a pure UNATTENDED background loop — no user present.
             # The approval policy is DERIVED from the session's SafetyProfile, not
-            # hardcoded: `_bg` classifies as unattended, so `profile_for_session`
+            # hardcoded: a `cron:` key classifies as unattended, so `profile_for_session`
             # resolves to HEADLESS and its approval ("hook_based") maps to
             # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
             # construction (AUTONOMY-GUARDRAILS Success Criterion #7). This is
@@ -2847,7 +2808,14 @@ class GatewayOrchestrator:
         finally:
             if _acquired:
                 self.sessions.release(session_key)
-                await self.sessions.recycle_background()
+            # The task's session ends with it, unless a subagent it started is still running or
+            # reporting back: that one answers into this session, and the cron path resets it
+            # after the last one.
+            children = self.subagent_mgr is not None and any(
+                a.parent_session_key == session_key for a in self.subagent_mgr.running
+            )
+            if not children and not self._cron_injecting.get(session_key):
+                await self.sessions.reset(session_key)
 
         result_safe, _ = redact_exfiltration_urls(result_text)
         result_safe, _ = redact_credentials(result_safe)
@@ -4893,27 +4861,17 @@ class GatewayOrchestrator:
             logger.info("Auto-update: rebuild complete, restarting")
             print("Update applied — restarting gateway…")
             if self.dashboard_state:
-                # Same proven restart path as the manual /api/update pipeline:
-                # pushes the 'restarting' step, saves history, closes sessions,
-                # drains frames, then os.execve's a fresh gateway in-place.
-                # (Replaces a dead importlib.reload tail whose NameError was
-                # swallowed — the new code was built but NEVER exec'd.)
+                # Same restart as the manual /api/update pipeline: the 'restarting' step, then
+                # this gateway's own full stop, then the fresh image (`restart_request`).
                 self.dashboard_state.push_update_progress("restarting", "Restarting server…")
                 from personalclaw.dashboard.handlers.updates import _graceful_reexec
 
                 await _graceful_reexec(self.dashboard_state)
                 return
-            # Headless (no dashboard state): close sessions and re-exec directly.
-            if self.sessions:
-                await self.sessions.close_all()
-            # As `_graceful_reexec` does: the new image keeps this PID, so an app process left
-            # running would stay its child, unsupervised and never reaped.
-            from personalclaw.apps.app_runtime import stop_processes
+            # Headless (no dashboard state): the same stop-then-start, with nothing to tell.
+            from personalclaw.restart_request import request_restart
 
-            await asyncio.to_thread(stop_processes)
-            # Use -m personalclaw instead of sys.argv[0] because build artifacts
-            # clean may have deleted the original __main__.py path.
-            os.execv(sys.executable, [sys.executable, "-m", "personalclaw"] + sys.argv[1:])
+            request_restart()
         except Exception:
             logger.warning("Auto-update failed", exc_info=True)
 
@@ -5085,7 +5043,10 @@ class GatewayOrchestrator:
                     pass
                 os._exit(0)
             _shutting_down = True
-            shutdown_event.set()
+            # A stop — even one that arrives while a restart is shutting down — stops.
+            from personalclaw.restart_request import request_stop
+
+            request_stop()
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, _on_signal)
@@ -5171,15 +5132,31 @@ class GatewayOrchestrator:
         # Block until shutdown
         await shutdown_event.wait()
         print("Shutting down…")
+        await self._finish()
+
+    async def _finish(self) -> None:
+        """Stop every service, then exit — or, when a restart was asked for, start a fresh image.
+
+        The ONE stop path. A restart (the dashboard's Restart, an applied update) is this same
+        shutdown with a different last step (:mod:`personalclaw.restart_request`), so everything a
+        stop saves and stops — time travel's pending commits, the durability loop, the search
+        indexer, every ``on_cleanup`` hook — is saved and stopped before the new image starts.
+        """
+        from personalclaw import restart_request
+        from personalclaw.session import cleanup_orphaned_sessions
 
         try:
             await asyncio.wait_for(self._shutdown(), timeout=10.0)
         except (asyncio.TimeoutError, Exception):
             logger.warning("Graceful shutdown timed out — force exiting")
 
-        print("Goodbye!")
         # Kill any ACP agent processes that survived graceful shutdown
         cleanup_orphaned_sessions()
+        restart = restart_request.pending()
+        if restart is not None:
+            print("Restarting…")
+            restart_request.start(restart)
+        print("Goodbye!")
         os._exit(0)
 
 

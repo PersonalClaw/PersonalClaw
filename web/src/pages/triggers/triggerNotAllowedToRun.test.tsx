@@ -80,6 +80,31 @@ describe('a store trigger it is not allowed to run', () => {
     await waitFor(() => expect(API.toggleStoreTrigger).toHaveBeenCalledWith('event:deploy', true))
   })
 
+  // The inspector has ONE busy flag for Allow, the switch, Run now, Dry run and Delete. Allow used to
+  // take only that flag, as `disabled`, so its own request announced nothing (`aria-busy` comes from
+  // `loading`), and fed to `loading` instead it would claim every sibling's request as its own.
+  it('Allow says it is working while its own request is out, and not while the switch is', async () => {
+    API.storeTriggers.mockImplementation(() => Promise.resolve([storeRow()]))
+    await mountTriggers({ open: 'store:event:deploy' })
+    const allow = () => screen.getByRole('button', { name: 'Allow' })
+    await waitFor(() => expect(allow()).toBeInTheDocument())
+    expect(allow()).not.toHaveAttribute('aria-busy')
+
+    let release: (v: { ok: boolean }) => void = () => {}
+    API.toggleStoreTrigger.mockImplementationOnce(() => new Promise((r) => { release = r }))
+    fireEvent.click(allow())
+    await waitFor(() => expect(allow()).toHaveAttribute('aria-busy', 'true'))
+    release({ ok: true })
+    await waitFor(() => expect(allow()).not.toHaveAttribute('aria-busy'))
+
+    API.toggleStoreTrigger.mockImplementationOnce(() => new Promise((r) => { release = r }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }))
+    await waitFor(() => expect(allow()).toHaveAttribute('aria-disabled', 'true'))
+    expect(allow(), 'held by the switch, which is not Allow working').not.toHaveAttribute('aria-busy')
+    release({ ok: true })
+    await waitFor(() => expect(allow()).not.toHaveAttribute('aria-disabled'))
+  })
+
   it('off: the switch is the control, so there is no Allow button', async () => {
     API.storeTriggers.mockImplementation(() => Promise.resolve([storeRow({ enabled: false })]))
     await mountTriggers({ open: 'store:event:deploy' })

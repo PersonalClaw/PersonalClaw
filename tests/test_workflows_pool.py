@@ -418,7 +418,7 @@ def test_a_handoff_carries_ONLY_declared_fields():
     credentials and artifacts into a new run's inputs, and a hand-off is exactly the seam where
     nobody would look for that."""
     edge = HandOff(target_def="bug-fix", context_fields=["incident_id"])
-    carried = carry_context(edge, {"incident_id": "i-1", "api_key": "sk-live-secret"})
+    carried = carry_context(edge, {"incident_id": "i-1", "api_key": "fake-key-live-secret"})
     assert carried == {"incident_id": "i-1"}
 
 

@@ -156,8 +156,7 @@ def _redact_pii(text: str) -> str:
     # character from the candidate class, so a second application finds no new candidate and
     # re-derives the same spared spans: this pass is idempotent, and does not rely on the
     # model-call seam applying it exactly once (`security.redact_credentials`, composed into the
-    # same ladder, is NOT idempotent over a composed line — so that is a live hazard here, not a
-    # theoretical one).
+    # same ladder, is idempotent too: none of its passes matches one of its own masks).
     out: list[str] = []
     prev = 0
     for start, end in spans:

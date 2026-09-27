@@ -42,10 +42,7 @@ _SLACK_PATH = "services/T0EXAMPLE01/B0EXAMPLE01/9Xq2LmVb7TzR4wKpN8sYc1Df"
 SLACK_WEBHOOK = "https://hooks.slack.com/" + _SLACK_PATH
 
 #: Credentials the fixture carries, fake and real-shaped.
-_GITHUB_PAT = (
-    "github_pat_11BKQ7T3A0x9QmTz4LpW2e_R8vYc3NfK6hJd1Sa5GqUo7XbM2iEw9"
-    "PzLt4VnC8rDy0HsJf3AkWm6QeTg1BZx"
-)
+_GITHUB_PAT = "github_pat_11FIXTURE0NOT0A0REAL0TOKEN0000_forTestsOnly"
 _CONTEXT7_KEY = "ctx7sk-9b2e4f61-7a3c-4d8e-b5f0-1c6a2d9e3f47"
 _GRAFANA_TOKEN = "glsa_Q3v8Tn2Lk9Wx4Rb7Zc1Ym6Hd0Fp5Js_2e7a9c1b"
 #: Inside ``FEEDSMITH_DEV_DATABASE_URL`` in Claude Code's ``settings.json`` ``env``: a name that

@@ -18,6 +18,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import approval_answer
 from personalclaw.config.loader import AppConfig
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
@@ -633,7 +634,10 @@ async def _run_backed_action(request: web.Request, run: Any, action: str) -> web
     if action == "pause":
         result = workflows.pause_run(run.id, supervisor=supervisor)
     elif action == "resume":
-        result = workflows.resume_run(run.id, supervisor=supervisor)
+        # Clears the pause; it answers no gate (no token, no answer).
+        result = workflows.resume_run(
+            run.id, by=approval_answer.of_request(request), supervisor=supervisor
+        )
     elif action == "stop":
         result = workflows.cancel_run(run.id, supervisor=supervisor)
     else:

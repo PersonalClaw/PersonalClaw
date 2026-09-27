@@ -140,7 +140,7 @@
         "id": "accept_plan",
         "config": {
           "kind": "approval",
-          "prompt": "The plan is drafted and reviewed. Approve to accept it, or deny to send it back with your notes."
+          "prompt": "The plan is drafted and reviewed. Approve to accept it. Deny ends the run without accepting it."
         }
       }
     ]

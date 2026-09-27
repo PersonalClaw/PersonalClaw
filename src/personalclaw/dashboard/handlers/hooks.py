@@ -440,13 +440,19 @@ async def _run_hook_agent(
     ``hook_register``, the owner allows it, and this injects it into the next fresh session.
     """
     from personalclaw import webhook_callbacks
-    from personalclaw.security import redact_credentials, redact_exfiltration_urls  # noqa: F811
+    from personalclaw.security import (  # noqa: F811
+        redact_credentials,
+        redact_exfiltration_urls,
+        redact_for_model,
+    )
 
     saved_context = webhook_callbacks.context_for_turn(callback) if callback is not None else ""
     if saved_context:
+        # Read back from a prior session and put in front of the webhook's own message, which is
+        # sent as it came: masked here, as a chat turn's read-back is.
         message = (
             f"=== Restored Context (from prior session) ===\n"
-            f"{saved_context}\n"
+            f"{redact_for_model(saved_context)}\n"
             f"=== End Restored Context ===\n\n"
             f"{message}"
         )

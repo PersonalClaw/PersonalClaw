@@ -854,7 +854,7 @@ class TestCriterion7SecretsNeverTransported:
             p = home / rel
             if p.suffix or "." in p.name:
                 p.parent.mkdir(parents=True, exist_ok=True)
-                token = f"sk-ant-CANARY-{rel.replace('/', '-')}"
+                token = f"fake-anthropic-1{rel.replace('/', '-')}"
                 p.write_text(f"SECRET={token}\n")
                 planted.append(token)
         assert planted, "no secret paths were planted — the proof would be vacuous"

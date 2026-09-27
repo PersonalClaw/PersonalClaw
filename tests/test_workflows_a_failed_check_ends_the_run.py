@@ -358,7 +358,6 @@ def test_the_census_found_every_check_gate_in_the_library() -> None:
         ("market-monitor", "check-quoted-evidence", "judge"),
         ("optimize-harness", "verify_scope", "expression"),
         ("paper-ingest", "check-claims-against-the-paper", "judge"),
-        ("produce-and-audit", "quality_gate", "expression"),
         ("publish-article", "accuracy-held", "judge"),
         ("rich-ingest", "grounded-in-transcript", "judge"),
         ("thesis-tracker", "falsifiable", "judge"),

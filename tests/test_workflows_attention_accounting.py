@@ -19,6 +19,7 @@ import time
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import introspection as intro
 from personalclaw.workflows import journal as J
@@ -38,7 +39,7 @@ async def test_a_human_answer_journals_its_dwell(tmp_path, monkeypatch):
     # Backdate the ask so the dwell is unambiguously positive.
     cont.created_at = time.time() - 30.0
     HI.save_continuation(cont)
-    c.resume(cont.token, True)
+    c.resume(cont.token, True, by=YOU)
     resolved = [e for e in J.ledger(c.run.id) if e.get("kind") == J.GATE_RESOLVED]
     assert len(resolved) == 1
     dwell = resolved[0].get("resolved_after_secs")

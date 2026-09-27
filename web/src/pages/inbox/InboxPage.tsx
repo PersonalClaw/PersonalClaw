@@ -19,7 +19,7 @@ import { ForeignBadge } from './ForeignContent'
 import { rowSubject } from '../../lib/rowSubject'
 import { previewText } from '../../lib/previewText'
 import { Segmented } from '../../ui/Segmented'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isForeignItem, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isSettled, isForeignItem, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ComposeNoteModal } from './ComposeNoteModal'
@@ -115,7 +115,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       // `favorites` is a CURATION view, not a status one: it cuts across open/handled
       // deliberately, because a starred item the user then handled is still the thing they
       // starred. Same predicate Knowledge uses for the same field (issue 620).
-      .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
+      .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? isSettled(it.status) : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
       .filter((it) => !kind || (it.item_kind || 'message') === kind)
       .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
   }, [items, filter, kind, q, ownerFilter, me])
@@ -263,7 +263,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     const scoped = items.filter(inKind)
     if (key === 'all') return scoped.length
     if (key === 'open') return scoped.filter((it) => isOpen(it.status)).length
-    if (key === 'handled') return scoped.filter((it) => it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed').length
+    if (key === 'handled') return scoped.filter((it) => isSettled(it.status)).length
     if (key === 'filtered') return scoped.filter((it) => it.status === 'filtered').length
     // Counted across every status, matching the predicate above — a count that only saw open
     // items would disagree with the list it labels the moment a starred item is handled.

@@ -40,8 +40,8 @@ def test_the_cli_loads_named_credentials_and_never_an_owned_one(tmp_path, cwd_is
     home = tmp_path / "pclaw-home"
     home.mkdir()
     (home / ".env").write_text(
-        "PCSECRET_MCP_GH_ABCD1234__ENV__GITHUB_TOKEN_EF567890=ghp_ownedMcpTokenFixture01234\n"
-        "PCSECRET_PROVIDER_WORK_12345678__API_KEY=sk-ownedProviderKeyFixture5678\n"
+        "PCSECRET_MCP_GH_ABCD1234__ENV__GITHUB_TOKEN_EF567890=fake-github-token-1\n"
+        "PCSECRET_PROVIDER_WORK_12345678__API_KEY=fake-key-1\n"
         "NAMED_FIXTURE_KEY=named-value-the-children-inherit\n",
         encoding="utf-8",
     )

@@ -21,6 +21,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from personalclaw import subagent_orphans as orphans
 from personalclaw.llm.cleanup import _is_safe_path
 from personalclaw.subagent_persistence import (
     _cleanup_session_files_sync,
@@ -583,10 +584,10 @@ class TestStartupSweep:
         manager = SubagentManager(sessions=sessions, ctx_builder=MagicMock())
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=False),
-            patch("personalclaw.subagent._cleanup_session_files_sync") as mock_cleanup,
+            patch.object(orphans, "is_pid_alive", return_value=False),
+            patch("personalclaw.subagent_orphans._cleanup_session_files_sync") as mock_cleanup,
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         # Verify cleanup was called for each session_id
         called_sids = [call[0][0] for call in mock_cleanup.call_args_list]
@@ -616,13 +617,13 @@ class TestStartupSweep:
                 raise OSError("disk error")
 
         with (
-            patch.object(manager, "_is_pid_alive", return_value=False),
+            patch.object(orphans, "is_pid_alive", return_value=False),
             patch(
-                "personalclaw.subagent._cleanup_session_files_sync",
+                "personalclaw.subagent_orphans._cleanup_session_files_sync",
                 side_effect=_failing_cleanup,
             ),
         ):
-            await manager._reconcile_orphans()
+            await orphans.reconcile_orphans(manager._agents)
 
         # Both should have been attempted despite the first one failing
         assert call_count == 2

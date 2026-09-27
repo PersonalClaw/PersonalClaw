@@ -645,8 +645,9 @@ def test_the_PARENT_is_not_restricted(monkeypatch):
 
 
 def test_a_RESEARCH_leaf_is_denied_write_tools(monkeypatch):
-    """The capability class, enforced. `is_write_tool` owns the classification — restating it here
-    would create a second policy that drifts from the one the compiler linted against."""
+    """The capability class, enforced. What each tool DECLARES owns the classification
+    (`task_modes.read_grant_admits`) — restating it here would create a second policy that
+    drifts from the one the seam enforces."""
     from personalclaw import mcp_shared
     from personalclaw.workflows.engine import WF_DEPTH_KEY
 
@@ -701,7 +702,7 @@ def test_the_leaf_ENV_is_secret_filtered():
         {
             "PATH": "/usr/bin",
             "HOME": "/home/u",
-            "OPENAI_API_KEY": "sk-live",
+            "OPENAI_API_KEY": "fake-key-live",
             "GITHUB_TOKEN": "ghp_x",
             "DB_PASSWORD": "hunter2",
         },
@@ -736,8 +737,8 @@ def test_a_leaf_keeps_its_native_library_search_path_and_loses_a_PAT():
             "DYLD_FRAMEWORK_PATH": "/Library/Frameworks",
             "RE_PATTERN": "^a.*z$",
             "COMPAT_MODE": "legacy",
-            "GITHUB_PAT": "ghp_should_not_travel",
-            "GH_PAT": "ghp_nor_this_one",
+            "GITHUB_PAT": "fake-github-token-should_not_travel",
+            "GH_PAT": "fake-github-token-nor_this_one",
         },
         {"__wf_depth": "1"},
     )

@@ -66,6 +66,28 @@ def options_sandbox_mode(options: dict) -> str:
     return str(options.get("sandbox_mode") or "auto")
 
 
+def options_env(options: dict) -> dict[str, str]:
+    """What an ``acp:<cli>`` entry adds to its CLI's environment.
+
+    The values its app computed (``env``: a config folder, an engine path) and, from the
+    gateway's own environment, each variable its app declared the CLI reads to pick a provider,
+    a region or a model (``env_passthrough``), when it is set; a computed value wins over the
+    gateway's for the same name. Never a credential (`sandbox.declared_env`). Read through here
+    by every path that spawns the CLI from an entry, like :func:`options_sandbox_mode`: the
+    readiness probe, agent discovery, the runtime factory and a concurrent session's shared
+    connection.
+    """
+    from personalclaw.sandbox import declared_env
+
+    raw = options.get("env") or {}
+    env = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+    names = options.get("env_passthrough") or []
+    if isinstance(names, (list, tuple)):
+        passed = declared_env([str(n) for n in names], site="acp-agent")
+        env = {**passed, **env}
+    return env
+
+
 class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
     """Generic ACP-over-stdio agent runtime.
 
@@ -201,7 +223,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         provider = cls(
             command=command,
             cwd=options.get("cwd"),
-            env=options.get("env") or {},
+            env=options_env(options),
             # The probe MUST use the configured dialect — otherwise it handshakes
             # with the default protocol shape and an adapter expecting a
             # different one (e.g. claude/codex int protocolVersion) rejects it
@@ -366,7 +388,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
                     command=command,
                     work_dir=work_dir,
                     dialect=dialect,
-                    extra_env=options.get("env") or {},
+                    extra_env=options_env(options),
                     # Same reason as the readiness probe: discovery spawns the CLI
                     # for real, so a declared mode has to reach this spawn too or a
                     # self-sandboxing runtime discovers zero agents.
@@ -907,6 +929,8 @@ def _factory(
     * ``command`` — required, the full launch argv (R5.6).
     * ``cwd`` — optional working directory.
     * ``env`` — optional extra environment variables.
+    * ``env_passthrough`` — optional names of the gateway's variables the CLI reads to pick
+      its provider, region or model (:func:`options_env`).
     * ``agent_name`` — optional ACP agent/persona (the session/set_mode
       modeId), set by the per-session ``agent`` kwarg. Empty (the default)
       means no activation message — the CLI uses its own built-in default.
@@ -940,10 +964,7 @@ def _factory(
     cwd_value = str(kwargs.get("cwd") or "").strip() or options.get("cwd")
     cwd: Path | None = Path(str(cwd_value)) if cwd_value else None
 
-    env_value = options.get("env") or {}
-    env: dict[str, str] = (
-        {str(k): str(v) for k, v in env_value.items()} if isinstance(env_value, dict) else {}
-    )
+    env = options_env(options)
 
     # Agent selection is PER SESSION, not a property of the global acp:<cli>
     # runtime entry. The provider bridge passes the user's chosen agent as the

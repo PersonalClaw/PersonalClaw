@@ -48,6 +48,7 @@ def register_acp_cli_entry(
     login_command: list[str] | None = None,
     requires_executable: dict[str, str] | None = None,
     self_sandboxing: bool = False,
+    env_passthrough: list[str] | None = None,
 ) -> ProviderEntry | None:
     """Register (idempotently) an ``acp_agent`` entry named ``acp:<cli>``.
 
@@ -68,6 +69,16 @@ def register_acp_cli_entry(
     env:
         Optional extra environment variables forwarded to the spawned process
         (e.g. ``CLAUDE_CONFIG_DIR`` isolation, ``CLAUDE_CODE_EXECUTABLE``).
+    env_passthrough:
+        Optional names of variables the CLI reads to pick its provider, its region or its
+        model (e.g. ``CLAUDE_CODE_USE_BEDROCK``, ``AWS_PROFILE``, ``AWS_REGION``,
+        ``ANTHROPIC_MODEL``), handed to it from the gateway's environment when set there. A CLI
+        gets no other variable of the gateway's (`sandbox.build_child_env`), so without the
+        declaration an owner's provider selection never reaches it. Never a credential: a
+        credential-shaped name is refused here with a warning, and again at every spawn
+        (`sandbox.app_env_name_refusal`), because the CLI reads its keys from its own config or
+        credential files. Which variables a CLI reads is vendor knowledge, so the list lives
+        ONLY in the bundle.
     session_files_dir:
         Optional on-disk session-files directory for agents that persist tool
         results to JSONL.
@@ -149,6 +160,9 @@ def register_acp_cli_entry(
     options: dict[str, object] = {"command": list(command), "dialect": dialect}
     if env:
         options["env"] = dict(env)
+    passthrough = _passthrough_names(cli, env_passthrough)
+    if passthrough:
+        options["env_passthrough"] = passthrough
     if session_files_dir:
         # A declared directory is PROVISIONED here, not merely recorded: the readers
         # (``AcpClient``'s ``_meta`` session-file hint, ``AcpSession``'s JSONL
@@ -202,6 +216,26 @@ def register_acp_cli_entry(
     logger.info("acp:%s bundle: registered AgentProvider (dialect=%s)", cli, dialect)
 
     return entry
+
+
+def _passthrough_names(cli: str, names: list[str] | None) -> list[str]:
+    """*names* as the entry keeps them: sorted, once each, and none an app may not declare."""
+    from personalclaw.sandbox import app_env_name_refusal
+
+    kept: set[str] = set()
+    for raw in names or []:
+        name = str(raw).strip()
+        why = app_env_name_refusal(name)
+        if why:
+            logger.warning(
+                "acp:%s bundle: env_passthrough names %r, which is %s; it is not passed",
+                cli,
+                name,
+                why,
+            )
+            continue
+        kept.add(name)
+    return sorted(kept)
 
 
 def _forget(entry: ProviderEntry) -> None:

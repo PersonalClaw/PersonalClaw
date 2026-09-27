@@ -210,7 +210,7 @@ def test_spawn_reports_not_running_only_when_the_gateway_is_actually_absent(monk
     with pytest.raises(SystemExit):
         cli_commands._spawn(_spawn_args(action="list", port=10884))
 
-    assert "gateway not running" in capsys.readouterr().out
+    assert "gateway not running" in capsys.readouterr().err
 
 
 def test_spawn_mint_failure_is_reported_as_itself_not_as_not_running(monkeypatch, capsys):
@@ -227,6 +227,6 @@ def test_spawn_mint_failure_is_reported_as_itself_not_as_not_running(monkeypatch
     with pytest.raises(SystemExit):
         cli_commands._spawn(_spawn_args(action="list", port=10884))
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "gateway not running" not in out
     assert "different PERSONALCLAW_HOME" in out

@@ -7,7 +7,7 @@ core CLI commands without living in core:
   For each installed + enabled app whose manifest declares ``cli.setup``
   (``"module:function"``), it imports the function from the app's own dir and
   calls it with a :class:`personalclaw.sdk.cli.SetupContext`. A failing step
-  prints a warning and setup continues — one broken app never aborts the wizard —
+  says so on stderr and setup continues — one broken app never aborts the wizard —
   and the step is returned, so the command can exit non-zero naming it.
 
 - ``run_app_doctor_probes`` — called by ``personalclaw doctor``. For each such
@@ -26,6 +26,7 @@ supply-chain scan.
 """
 
 import logging
+import sys
 import threading
 from typing import Any, Callable
 
@@ -112,13 +113,13 @@ def _scoped_delete_credential(app_name: str) -> Callable[[str], bool]:
     return _delete
 
 
-def run_app_setup_steps(only_app: str = "") -> list[str]:
+def run_app_setup_steps(only_app: str = "") -> list[tuple[str, str]]:
     """Run each installed + enabled app's ``cli.setup`` step (alphabetical).
 
     ``only_app`` restricts the run to that one app (``personalclaw setup --app``).
-    A step that cannot be loaded or that raises prints ``⚠️ <app>: <why>`` and setup
-    continues. Returns one ``"<app>: <why>"`` line per step that did not complete — and
-    one for an ``only_app`` that declares no step — so the command can exit non-zero.
+    A step that cannot be loaded or that raises prints ``❌ <app>: <why>`` on stderr and setup
+    continues. Returns one ``(app, why)`` per step that did not complete — and one for an
+    ``only_app`` that declares no step — so the command can exit non-zero naming each app.
     """
     from personalclaw.config.credentials import get_credential, save_credential
     from personalclaw.providers.settings import ProviderSettings
@@ -129,8 +130,8 @@ def run_app_setup_steps(only_app: str = "") -> list[str]:
         steps = [(n, r) for (n, r) in steps if n == only_app]
         if not steps:
             why = f"no installed+enabled app named {only_app!r} declares a cli.setup step"
-            print(f"  ⚠️  {why[0].upper()}{why[1:]}.")
-            return [f"{only_app}: {why}"]
+            print(f"  ❌ {why[0].upper()}{why[1:]}.", file=sys.stderr)
+            return [(only_app, why)]
 
     def _safe_input(prompt: str) -> str:
         """Prompt, but return "" on a non-interactive run (closed/empty stdin)
@@ -143,15 +144,15 @@ def run_app_setup_steps(only_app: str = "") -> list[str]:
             print()  # close the dangling prompt line
             return ""
 
-    failures: list[str] = []
+    failures: list[tuple[str, str]] = []
     for app_name, ref in steps:
         base = app_dir(app_name)
         try:
             fn = _import_app_callable(app_name, ref)
         except Exception as exc:  # noqa: BLE001 — one bad app must not abort setup
             why = f"setup step unavailable — {_reason(exc)}"
-            print(f"  ⚠️  {app_name}: {why}")
-            failures.append(f"{app_name}: {why}")
+            print(f"  ❌ {app_name}: {why}", file=sys.stderr)
+            failures.append((app_name, why))
             sel().log_api_access(
                 caller="cli:setup",
                 operation=f"app_cli_setup:{app_name}",
@@ -179,8 +180,8 @@ def run_app_setup_steps(only_app: str = "") -> list[str]:
             )
         except Exception as exc:  # noqa: BLE001
             why = f"setup step failed — {_reason(exc)}"
-            print(f"  ⚠️  {app_name}: {why}")
-            failures.append(f"{app_name}: {why}")
+            print(f"  ❌ {app_name}: {why}", file=sys.stderr)
+            failures.append((app_name, why))
             sel().log_api_access(
                 caller="cli:setup",
                 operation=f"app_cli_setup:{app_name}",

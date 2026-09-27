@@ -44,6 +44,16 @@ against core protocols). Paths are relative to
   were not there. A reply to a polled row goes to the source it came from
   (`api_inbox_send` → `send_reply`); only a reply the source sent closes the row, and
   one it did not send comes back as a 409 with its reason, the text kept as the draft.
+  A sent reply stamps the row's `replied_at`, which is how the open item says "Sent".
+  **A polled row's id** is `inbox_service.polled_item_id`: `{source}_{key}_{ts}`, the key
+  the message's own id at its source (`IncomingMessage.id`: a Message-ID, a Slack ts)
+  hashed with the source and channel, or its content when it has none. It was
+  `{channel}_{ts}`, and two mails to one address in the same second shared it. Muting a
+  row's thread writes `InboxItem.thread_key`: its thread id, or for the first message of
+  a thread its own id at the source, which is what the replies name as their thread.
+  **Watched channels.** Every source's `poll` is handed `inbox.watched_channels`; a source
+  that reads it sets `watches_channels = True` (Slack's), and Settings → Inbox shows the
+  list ("Channels to read"), named by those sources, while one is polled.
 - **Settings** live solely in
   `~/.personalclaw/entity_settings/inbox.json` (`auto_cleanup_enabled`,
   `retention_days`) with type- and range-guarded PUTs in
@@ -156,6 +166,12 @@ emitter stamped (`workflow`, `trigger_park`, `loop`, the control bridge). An Inb
 is its notification pair's source, which is `loop` for a workflow's gate, a trigger's question
 and the control bridge's confirm alike, so it is shown only when the refs name no work.
 
+A control-bridge action that needs confirming is answered in the Inbox: its row
+(`refs.source: control_bridge`, `refs.confirmation`) names the action, what it was asked with and
+the client that asked, and Approve runs it once while Deny drops it
+(`POST /api/external-access/bridge/confirmations/{id}`). Only you answer it: the client that asked
+cannot, and the bridge's own `/confirm` refuses every client.
+
 **The registry id is not the chat's id.** A chat's `request_id` is unique only inside that chat —
 an ACP agent's permission request carries the agent's JSON-RPC message id, counted from the same
 small integers on every connection — so the registry keys a chat approval
@@ -169,6 +185,15 @@ row, and the same waiting runner — whose refusal handling (the rest of a refus
 rather than re-asked, so a Deny cannot be routed around with a second call) is therefore the same
 for every door.
 
+**Only you answer.** Each entry records who asked it (`asked_by`: the chat's agent, the app that
+started the chat, a subagent, the run whose step asked, the trigger), and `resolve_approval` and
+`decide_session_approval` take who is answering (`by`) and hold it to `approval_answer`: you, from
+a signed-in session, or you on your paired channel, and never the party that asked. An app's token
+answers nothing, not even to relay your answer. The menu-bar companion and the phone answer with
+your own sign-in. An agent's tool is refused too. A refusal leaves the approval pending, writes an
+`approval.answer_refused` row and answers `403 approval_owner_only`. A decision's
+`approval_decision` row names who answered: `you`, or `channel:<provider>`.
+
 **Every end goes through `withdraw_approval`.** An answer, an expiry, a torn-down turn: the entry
 leaves the registry, its Inbox row is closed through `resolve_attention_items` on the live store,
 and one `approval_resolved` frame (`id`, `request_id`, `session`, `approved`, `outcome`) tells
@@ -177,19 +202,23 @@ so a card can say "cancelled" for a stopped turn instead of reading it as a Deny
 survives a restart, so `close_orphaned_approval_rows` closes, at boot, any row still asking for
 one.
 
-**Which chat channel asks.** An approval asks on a chat channel when the `approval/requested`
-rule has the `channel_dm` target (`_ask_on_a_channel`, then a link when the channel has no
-Approve/Deny), and a subagent's request to start always does (`GatewayOrchestrator._interactive_approval`).
-Both resolve the order once, in `channel_delivery`. `approval_providers(origin)` puts the channel
-the chat started on FIRST (`DashboardState.channel_provider_for`), and it asks in that chat, since the
-person asking is there. After it comes the owner's **Send approvals to** (`agent.approval_channel`,
-Settings → Notifications), which is all that decides for a turn with no channel origin (a chat in
-PersonalClaw, an unattended run, a trigger): the chosen channel alone — and none while it is not
-connected, so no other channel stands in and the approval waits in the dashboard — or, left empty,
-every connected channel in name order. `approval_delivery(origin)` is the first of those that knows
-the owner and can prompt. Before the setting, the order was the only rule, so with Discord paired
-every approval asked on Discord, a Telegram chat's included. A press on the channel and an answer in
-the dashboard resolve the same entry.
+**Which chat channel asks.** A chat that started on a chat channel is asked in that chat, whatever
+the `approval/requested` rule says (`_asking_channels`, the channel from
+`DashboardState.channel_provider_for`): the person asking is there, and its prompt is that chat's
+approval card, which PersonalClaw shows for a chat of its own under any rule too. It used to wait for
+the rule's `channel_dm` target, which the default rule does not have, so a chat started on Telegram
+asked nobody on Telegram. The rule's `channel_dm` target (off under `never`) adds the owner's **Send
+approvals to** (`agent.approval_channel`, Settings → Notifications): it asks an approval with no
+channel origin (a chat in PersonalClaw, an unattended run, a trigger), and is tried after a chat's
+own channel that cannot ask. Without the target no other channel stands in, and the approval waits in
+the dashboard. A subagent's request to start always asks (`GatewayOrchestrator._interactive_approval`).
+Both askers resolve the order in `channel_delivery`: `approval_providers(origin)` puts the chat's own
+channel first, then the chosen channel alone (none while it is not connected, so no other channel
+stands in) or, left empty, every connected channel in name order, and `approval_delivery(origin)` is
+the first of those that knows the owner and can prompt. A channel that cannot prompt is sent a link
+to answer it instead. A press on the channel and an answer in the dashboard resolve the same entry,
+and however the approval ends, the channel's prompt is told how (`approved`, `rejected`, `expired`,
+`cancelled`), so it says so and takes its buttons off (`ChannelDelivery.request_approval`).
 
 **How long it waits, and what a denial without an answer leaves.** Every approval that waits
 waits one window, the owner's `agent.approval_timeout_minutes` (Settings → Agent defaults →
@@ -333,8 +362,8 @@ to a rule:
   desktop shell reports the capability; `push` sends a content-free `{kind, item_id}`
   ping to a registered device; `channel_dm` sends the note to the owner's DM on the first
   connected chat channel that reaches them (`channel_delivery.reach_owner`, from `notify()`),
-  and on the `approval/requested` row it asks the approval on a channel — see *Which chat
-  channel asks* below.
+  and on the `approval/requested` row it asks the approval on "Send approvals to" — see *Which
+  chat channel asks* above (a chat that started on a channel is asked there without it).
 - **conditions** — keywords / name-mention that **escalate** a quieter mode to
   `immediate`. Escalation is capped at `immediate` and never adds targets the
   user didn't choose. Name-mention matches the **user's** name (Settings →

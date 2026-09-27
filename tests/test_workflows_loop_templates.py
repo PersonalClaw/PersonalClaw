@@ -762,3 +762,49 @@ def test_last_refs_carry_a_default(name: str) -> None:
         "loses its input, or the loop stops on `condition_unresolvable`, instead of saying so. "
         "Add a default naming what to use when the previous iteration did not supply the field."
     )
+
+
+#: A read of a prior cycle's value: `{{last.…}}` or `{{previous.…}}`, with or without pipes.
+_PRIOR_CYCLE_REF = re.compile(r"\{\{\s*(?:last|previous)\.[^}]*\}\}")
+
+
+def _prior_cycle_refs_outside_a_loop(node: object, in_loop: bool = False) -> list[str]:
+    """Every `{{last.…}}` / `{{previous.…}}` in a node that no loop encloses.
+
+    A loop's own `config` counts as inside it: its `condition` reads `last` as the iteration the
+    loop just ran.
+    """
+    found: list[str] = []
+    if isinstance(node, list):
+        for item in node:
+            found += _prior_cycle_refs_outside_a_loop(item, in_loop)
+        return found
+    if not isinstance(node, dict):
+        return found
+    inside = in_loop or node.get("kind") == "loop"
+    if not inside:
+        found += _PRIOR_CYCLE_REF.findall(json.dumps(node.get("config") or {}))
+    for key, value in node.items():
+        if key != "config":
+            found += _prior_cycle_refs_outside_a_loop(value, inside)
+    return found
+
+
+@pytest.mark.parametrize("name", sorted(template_names()))
+def test_a_prior_cycle_is_read_only_inside_a_loop(name: str) -> None:
+    """`last` and `previous` name a prior cycle of the loop a node is IN, so outside one they
+    name nothing, and a `default(...)` does not save the read.
+
+    Measured on `goal-pursuit-monitor`: its close-out, after the watch loop, bound
+    `{{last.output.summary | default(…)}}`. `bindings` raises `unresolved reference at 'last'` for
+    a `last` read outside a loop body whatever its pipes say (an authoring error nothing will ever
+    supply), so every monitor that met its goal ended `failed` at the report. The rail above passed
+    it, because it asks only whether a default is PRESENT. A `previous` read outside a loop does not
+    raise; it quietly renders its default, a prompt missing its input. A node after a loop reads
+    the loop's last result through the producing node (`{{nodes.<id>.output…}}`).
+    """
+    refs = _prior_cycle_refs_outside_a_loop(_spec(name).get("root"))
+    assert not refs, (
+        f"{name} reads {sorted(set(refs))} outside any loop. There is no prior cycle there: read "
+        "the value from the node that produced it (`{{nodes.<id>.output…}}`)."
+    )

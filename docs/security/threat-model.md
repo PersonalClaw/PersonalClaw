@@ -334,6 +334,41 @@ Data leaving the running system:
   secret shown as `••••••••` works the same way: an app, provider or MCP save that sends the mask
   back keeps the stored value, and the credential store refuses the mask as a value
   (`secret_refs._move_into_store`).
+- **What an agent's model is handed is masked, and a credential it needs is named, not shown**
+  (`security.redact_for_model`, the display mask). A tool's answer becomes model context at one
+  place per runtime, and each masks it: the native loop's `format_tool_result`, for every provider
+  it calls (the platform file and shell tools, the in-process categories, an app's tools, a remote
+  MCP server's); the MCP server an ACP agent's calls to PersonalClaw's tools reach
+  (`mcp_shared.run_mcp_stdio_loop`); and the one wrapper every inbound surface answers another
+  agent through (a tool result, an A2A artifact, a bridge answer), which a webhook's body also
+  passes on its way into a trigger (`inbound/framing.fence_payload`). So a tool is masked
+  without opting in, `workflow_status`, `workflow_output`, `memory_recall` and `triage_rules`
+  among them. A prompt is masked where it is
+  assembled (`context._Parts.add`: memory, lessons, history, skills, channel history, episodic
+  recall, active workflows), and so is what a chat turn puts in front of the request, which goes
+  as typed: a stopped turn read back, an app's background context, a subagent's failure notice,
+  the project's record, a loop's current phase and a hook's output
+  (`chat_runner._ahead_of_the_request`), and a webhook callback's saved context. A
+  spawned agent's task, a heartbeat task, an attached file's extracted text and a compressed
+  thread's summary are masked too; the only text sent as written is what the person typed this
+  turn. PersonalClaw's own chores run in the background session (a title, follow-ups,
+  suggestions, memory consolidation), which no person types into, so every prompt it is handed
+  is masked there (`NativeAgentRuntime.stream`), and consolidation's writes put each hidden value
+  back from the fact it read (`memory_formation._as_stored`, `history._kept_lines`). A one-shot
+  model call with no agent behind it (a workflow's infer, judge and visualize steps, a knowledge
+  digest) passes the outbound scan at the model-call guard instead (`guardrails.scan_mode`). The
+  mask is idempotent (a value that is already a mask is not taken for a credential), so a read
+  already masked for a UI passes unchanged. A projection or a `tool_result_get` slice is cut from
+  the masked text (`project_and_retain`), so it never splits a key. The agent's file tools keep a
+  hidden value where it stands (`masked_edit`, `keep_masked_lines`): an edit keeps every stored
+  byte outside the text it replaces, and a change that would move, copy or rewrite a hidden value
+  is refused. A tool that needs a credential takes `{{secret:NAME}}`: `bash` fills in a credential
+  the owner stored in Settings → Secrets as the command runs (never the gateway's environment,
+  never a setting's own key) and masks every value it handed the command out of what the command
+  prints (`redact_known_values`). Text handed to a model keeps the reference as the name: a
+  trigger whose action is a model turn (`ActionProvider.hands_config_to_a_model`) and a workflow's
+  stage, infer and visualize steps do not fill it in, so the agent's tools do. What this cannot
+  cover is in [limitations §11](limitations.md#11-what-reaches-a-model-is-masked-by-shape-and-an-agent-clis-own-tools-are-outside-it).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.
 - **Secret settings held by reference** (`config/secret_refs.py`): a provider key, every

@@ -50,7 +50,7 @@ const LEDGER: AlwaysOnItem = {
   read_only_reason: 'Append-only history — a ledger records what happened.',
   project_id: 'p-1', preview: 'Chose a standing-seam roof.',
 }
-const VERBATIM = 'The deck is stripped. token: sk-ant-REAL-SECRET-VALUE'
+const VERBATIM = 'The deck is stripped. token: fake-anthropic-1'
 
 const response = (items: AlwaysOnItem[]): AlwaysOnResponse => ({
   items,

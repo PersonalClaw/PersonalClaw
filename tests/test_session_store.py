@@ -69,17 +69,21 @@ def test_a_truncated_key_is_regenerated_not_used(home, caplog):
 
 def test_rotation_changes_the_key(home):
     first = ss.load_or_create_key()
-    second = ss.rotate_key()
+    second = ss.write_new_key()
     assert first != second
     assert ss.load_or_create_key() == second
 
 
-def test_rotation_clears_the_session_records(home):
-    """A nonce whose signature can no longer verify is noise, not a session."""
-    ss.load_or_create_key()
+def test_retiring_the_key_ends_every_session_and_remembers_why(home):
+    """A nonce whose signature can no longer verify is not a session — but its holder is owed the
+    reason, so the ending is remembered, with the key that can recognise its token."""
+    old = ss.load_or_create_key()
     ss.remember_session("n1", time.time() + 3600)
-    ss.rotate_key()
+    ended = ss.retire_key(old)
+    assert [nonce for nonce, _record in ended] == ["n1"]
     assert ss.load_sessions() == {}
+    assert ss.ended_session("n1").reason == ss.END_KEY_REPLACED
+    assert ss.retired_key() == old
 
 
 # ── Session records ─────────────────────────────────────────────────────
@@ -305,9 +309,10 @@ class TestSurvivesRestart:
         """The panic button must actually work."""
         ta = self._fresh_process(monkeypatch, tmp_path)
         token = ta.generate_token("user1", ttl_seconds=3600)
-        ss.rotate_key()
-        ta.reset_secret_cache()
-        ta._state.clear_all()
+        ta.rotate_signing_key(actor="owner")
+        assert ta.validate_token(token)[0] is False
+        # …and across a restart too: the new key is the one on disk.
+        ta = self._fresh_process(monkeypatch, tmp_path)
         assert ta.validate_token(token)[0] is False
 
     def test_revoke_survives_a_restart(self, tmp_path, monkeypatch):

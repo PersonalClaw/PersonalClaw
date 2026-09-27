@@ -89,8 +89,15 @@ export function isTransientFailure(e: unknown): boolean {
   return e.status >= 500 || e.status === 429
 }
 
+/** Every write below says it will ask the owner when the gateway asks for their yes
+ *  (`dashboard/consent_ask.py`). The question then comes back as a 200 marked
+ *  `X-PersonalClaw-Consent-Asked` rather than a 400 the browser logs as a failed request, and `j`
+ *  hands it on as the same `ApiError` (`confirmation_required`, the question in `.detail`) that
+ *  `withSecurityConsent` answers. Nothing was written: the question is not a success. */
+const ASKS_FOR_CONSENT = { 'X-PersonalClaw-Consent': 'ask' }
+
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw await apiError(r)
+  if (!r.ok || r.headers?.get?.('X-PersonalClaw-Consent-Asked') === '1') throw await apiError(r)
   return r.json() as Promise<T>
 }
 
@@ -98,11 +105,11 @@ const get = <T>(p: string) => refuseIfSignedOut() ?? fetch(p, { headers: { ...SK
 // `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
 // (`lib/staleWrite.ts`) — and nothing else rides it.
 const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const del = (p: string) => refuseIfSignedOut() ?? fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
 /** App install/update: POST that returns the parsed body on ANY HTTP status.
@@ -113,6 +120,14 @@ async function _installReq(p: string, body: unknown): Promise<AppInstallResult> 
   try {
     const r = await fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify(body) })
     const data = await r.json().catch(() => null)
+    // A request refused at the door (a `source` that is missing or not a string) answers the one
+    // wire envelope, `{error: {code, message}}`: its sentence is the result's error, like every
+    // other refusal the Store shows — never the object itself.
+    const refused = data && typeof data === 'object' ? (data as { error?: unknown }).error : undefined
+    if (refused && typeof refused === 'object') {
+      const { message, code } = refused as { message?: unknown; code?: unknown }
+      return { ok: false, name: '', error: String(message || code || `HTTP ${r.status}`), needs_consent: false, scan: null }
+    }
     if (data && typeof data === 'object') return data as AppInstallResult
     return { ok: false, name: '', error: `HTTP ${r.status}`, needs_consent: false, scan: null }
   } catch (e) {
@@ -173,6 +188,12 @@ export interface CallerHealth {
   dollars_est: number
 }
 
+/** An action provider's registry name: what a trigger or hook DISPATCHES, and the key the
+ *  autonomy ladder declares a rung under. Its own type because a tool can have the very same
+ *  name — `bash` is the chat's shell tool and also an action provider — and a tool's name must
+ *  not be usable where a provider is meant (`lib/rungs.providerRungIndex`). */
+export type ActionProviderName = string & { readonly __actionProvider: true }
+
 // The earned-autonomy ladder (AUTONOMY-GUARDRAILS §5-§6). One row per DECLARED action
 // type: the rung it resolves at, where that rung came from (`authority`), the recomputed
 // track record, and whether the next rung has been earned. Nothing here is editable in
@@ -182,7 +203,7 @@ export interface AutonomyType {
   floor: string
   ceiling: string
   leaves_machine: boolean
-  providers: string[]
+  providers: ActionProviderName[]
   resolved_rung: string
   granted_rung: string
   /** Granted higher than it currently resolves, because the incident kill switch is on. */
@@ -228,6 +249,12 @@ export interface ExternalAccessSurface {
   token_configured: boolean
   /** WHY the token is unusable, when it is — the mount refusal's own reason string. */
   token_problem: string
+  /** Whether the configured token still works: `expired` / `revoked` / `replaced` refuse THAT
+   *  token while the surface stays on for registered clients, and `unavailable` means the record
+   *  of token lifetimes can't be read, so every surface token is refused. Absent with no token. */
+  token_state?: 'live' | 'expired' | 'revoked' | 'replaced' | 'unavailable'
+  /** When the configured token stops working (epoch seconds; 0 when unknown). */
+  token_expires_at?: number
   /** True for the control bridge, which ignores `allow_remote` by construction. */
   loopback_only: boolean
 }
@@ -243,6 +270,8 @@ export interface ExternalAccessClient {
   disabled: boolean
   created_at: string
   last_seen_at: string
+  /** When its token stops working (epoch seconds): at most 90 days after it was issued. */
+  expires_at: number
   /** Derived from `inbound_audit.jsonl`, not a stored counter. */
   requests_seen: number
   refusals_seen: number
@@ -639,6 +668,9 @@ export interface ChannelOwnerStatus {
   owner_id: string
   source: ChannelOwnerRef['source']
   pairing_supported: boolean
+  /** How the owner sends the code on this channel when it is not a DM to the bot (a mail to the
+   *  mailbox, say), in the channel's words; absent or "" for the page's own sentence. */
+  pairing_hint?: string
   pairing: ChannelOwnerPairing
 }
 /** One approved sender on a channel. `provider` is an opaque runtime key the transport
@@ -840,6 +872,26 @@ export interface DeviceRec {
   pool: 'device' | 'browser' | 'token'
   expires_at: number
   current: boolean
+}
+/** One row of Settings → Devices → Integrations: a token an external agent reaches an inbound
+ *  surface with. `kind: 'surface'` is a surface's own token (`personalclaw inbound token create`);
+ *  `'client'` is a registered client's. Times are epoch seconds, and `last_seen` 0 means never used.
+ *  `found` marks a surface token first recorded when it was first SEEN (made before lifetimes
+ *  existed, or set outside the CLI), so its `issued_at` is that moment. `renew` is the command that
+ *  makes a new surface token (`''` for a client). Never a token or a hash. */
+export interface IntegrationRec {
+  id: string
+  kind: 'surface' | 'client'
+  name: string
+  surfaces: string[]
+  /** `surfaces` in the words the owner knows them by (`MCP`, `capture proxy`). */
+  surface_names: string[]
+  issued_at: number
+  expires_at: number
+  last_seen: number
+  found: boolean
+  state: 'live' | 'expired' | 'revoked' | 'replaced' | 'disabled'
+  renew: string
 }
 /** `pair/start`'s reply. `code` arrives pre-grouped (`XXXX-XXXX`) for reading out loud, and
  *  `pairing_url` already contains it, so the URL is actionable on its own — which is what makes
@@ -2379,11 +2431,12 @@ export interface WorkflowRunDeliverable {
   // serves as `log`.
   log: WorkflowDeliverableDoc
   // How the filename was decided. `declared_by` names the loop kind and variant whose strategy
-  // produced it, so a reader can tell a DERIVED name from a hard-coded one.
+  // produced it, so a reader can tell a DERIVED name from a hard-coded one — or the template, when
+  // the template states its own document (`"document"` in its spec; `""` says it keeps none).
   derivation: {
     name: string | null
     reason: WorkflowDeliverableAbsence | null
-    declared_by: { kind: string; variant: string; name: string } | null
+    declared_by: { kind: string; variant: string; name: string } | { template: string; name: string } | null
   }
   // Where the backend looked, in order — workspace first, then the run dir.
   roots: Array<{ kind: 'workspace' | 'run_dir'; path: string; exists: boolean }>
@@ -2864,6 +2917,9 @@ export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEven
 // the kill-switch reason when incident mode suspended the fire.
 export interface TriggerRunResult {
   ok: boolean; name?: string; result?: unknown; refused?: string; running?: boolean
+  /** The status the run recorded, as its history row reads it (`waiting`, `launched`, `success`, …),
+   *  or '' when nothing ran. A Run button says what that row says. */
+  status?: string
   /** A DRY run's whole outcome, because nothing else records one: the action a real run would
    *  dispatch (`{}` when the row names none — a resume target, a workflow ref). */
   would_run?: Partial<TriggerAction>
@@ -3955,6 +4011,8 @@ export interface InboxItem {
   // which source produced it (native / filesystem / slack / …) + whether the
   // source supports a reply (drives the Send gate). reply_target is native-only.
   source?: string; can_reply?: boolean; reply_target?: string
+  /** When the reply in `draft` was sent, epoch seconds; absent or 0 while none was. */
+  replied_at?: number
   // P11: user-favorited (a strong engagement signal + a star in the UI).
   favorited?: boolean
   // Feedback Signal: per-judgment producer meta the thumbs attribute to.
@@ -4005,7 +4063,9 @@ export interface InboxOwnerCount { username: string; total: number; open: number
 /** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
  *  unattributed rows) — the same number `InboxStatus.my_open_count` reports. */
 export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
-export interface InboxProvider { name: string; display_name: string; source_name: string; polled?: boolean }
+/** A source the inbox knows. `watches_channels`: it reads the channels in `inbox.watched_channels`,
+ *  which Settings → Inbox lists while such a source is `polled`. */
+export interface InboxProvider { name: string; display_name: string; source_name: string; polled?: boolean; watches_channels?: boolean }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
 /** One source the inbox knows. A poll source is `active` while it is polled (an installed inbox
  *  app's always is; the drop folder only while `inbox.enabled` is on), and `error` is the sentence
@@ -4013,6 +4073,7 @@ export interface InboxHealth { running: boolean; last_poll_at?: number; last_pol
 export interface InboxSourceHealth {
   name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean
   label?: string; ok?: boolean; error?: string; last_poll_at?: number; last_ok_at?: number
+  watches_channels?: boolean
 }
 export interface InboxStatus {
   enabled: boolean; user_id?: string
@@ -4134,14 +4195,9 @@ export interface ComputerUseLiveView {
 // The read model the live BrowseMirror panel polls: the kill-switch state and the sites whose
 // saved session has EXPIRED. One GET so the kill button and the persistent auth banner cannot show
 // a stale pair (see dashboard/handlers/browse_mirror.py:api_browse_status). Values never carry a
-// credential — `expired` is site slugs + a key-PRESENCE boolean, never the profile-encryption key.
+// credential — `expired` is site slugs.
 export interface BrowseKillState { active: boolean; reason: string; started_at: string }
-export interface BrowseExpiredSite {
-  site: string
-  /** True when the site's profile-encryption key is in the credential store, so the panel can say
-   *  re-auth will REUSE the existing profile rather than establish a new one. */
-  key_present: boolean
-}
+export interface BrowseExpiredSite { site: string }
 /** One per-task browse grant awaiting a human answer. The `user_browser` target drives the
  *  operator's OWN already-logged-in browser, so it cannot start on the autonomy ladder's say-so: it
  *  needs a fresh grant naming the sites it will touch, and nobody answering is a REJECT.
@@ -4219,7 +4275,12 @@ export interface DurabilityImportResult {
   ok: boolean
   applied?: boolean
   error?: { code: string; message: string }
-  summary?: { mode: string; items: string[]; refused?: string[]; pre_restore?: string }
+  /** A replace names its backup folder, the apps that kept the engine they had here
+   *  (`engines_kept`) and each engine left in that folder with an app the archive does not have. */
+  summary?: {
+    mode: string; items: string[]; refused?: string[]; pre_restore?: string
+    engines_kept?: string[]; engines_set_aside?: Array<{ app: string; bytes: number }>
+  }
   manifest?: PortabilityManifest
 }
 export interface DurabilityRestoreResult {
@@ -4889,7 +4950,7 @@ export interface SystemInfo {
   // NOTE: backend also returns ollama_* fields — intentionally NOT typed/surfaced
   // here (vendor leakage).
 }
-export interface AuthStatus { mode: string; bind_host: string; valid: boolean; minutes_remaining?: number; oauth2_issuer?: string }
+export interface AuthStatus { mode: string; bind_host: string; valid: boolean; minutes_remaining?: number }
 
 // A pending tool approval — ONE registry entry (state._pending_approvals) that every surface
 // reads: GET /api/approvals and the `approval` WS event carry the SAME shape, for a chat's
@@ -4919,6 +4980,9 @@ export interface PendingApproval {
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */
   trigger_name?: string
+  /** Who asked, as `kind:name` (`agent:dashboard:…`, `app:…`, `run:…`, `trigger:…`). Only you
+   *  answer an approval, and never the party that asked it (`approval_answer`). */
+  asked_by?: string
 }
 
 // GET /api/push — what a browser needs to subscribe, plus what already has.
@@ -6247,10 +6311,10 @@ export interface UsageFoldRow {
 
 /** `GET /api/usage` — grouped rows + the window total + the per-day series behind the chart.
  *
- *  · `uncounted` — guarded `complete()` spend (`model_calls.jsonl`) that is deliberately NOT in any
- *    figure above. A loop's inner inference is recorded in both records and they share no id, so
- *    summing them would double-count with no way to detect it. Render it as a stated exclusion; a
- *    surface that omits it silently is claiming a completeness the data does not have.
+ *  · `uncounted` — guarded model-call spend (`model_calls.jsonl`) that is NOT in any figure above:
+ *    the calls no usage row names (a row keeps the `audit_id` of each call it counts, so a loop's
+ *    inferences and a room's summaries are counted once, in the rows). Render it as a stated
+ *    exclusion; a surface that omits it silently is claiming a completeness the data lacks.
  *  · `app_sources` — which app names produced `app` turns (a census, not an error).
  *  · `unmapped` — rows that could not be attributed to a day at all; counted, never dropped.
  *  · `reachable_purposes` — the subset of the vocabulary a writer can produce today, so a UI can
@@ -6765,6 +6829,22 @@ export const api = {
   // Settings → Devices does.
   devicesRevokeOthers: () =>
     post<{ ok: boolean; revoked: number }>('/api/devices/revoke-others', { confirm: true }),
+  // Replaces the key every sign-in is signed with: every browser, paired device and token is
+  // signed out, THIS one included. Refused without `confirm: true`, so call it only from the
+  // owner's confirmation (Settings → Security does). `notice` is the sentence this browser's
+  // ended session is told — the one its next request would carry.
+  rotateSigningKey: () =>
+    post<{ ok: boolean; signed_out: number; notice: { code: string; reason: string; message: string } | null }>(
+      '/api/auth/rotate-key', { confirm: true },
+    ),
+  // The tokens external agents reach the inbound surfaces with — each surface's own and each
+  // registered client's — with when each stops working. `problem` is the sentence to show when
+  // the record of their lifetimes can't be read (every surface token is refused until it can).
+  deviceIntegrations: () =>
+    get<{ integrations: IntegrationRec[]; problem: string }>('/api/devices/integrations'),
+  // Revokes one at once; whatever still presents it is refused, and told it was revoked.
+  deviceIntegrationRevoke: (id: string) =>
+    post<{ ok: boolean; revoked: string }>(`/api/devices/integrations/${encodeURIComponent(id)}/revoke`, {}),
 
   // ── Packs ──
   // The installed-pack ledger (each pack's components, connector resolutions +
@@ -6852,6 +6932,14 @@ export const api = {
     post<{ ok: boolean; client_id: string; disabled: boolean }>(
       `/api/external-access/clients/${encodeURIComponent(clientId)}/disabled`,
       { disabled },
+    ),
+  /** Your answer to a control-bridge action waiting in the Inbox (`refs.confirmation`):
+   *  `confirm: true` runs it once, `false` drops it. Only you answer it; the agent that asked
+   *  cannot. `status: 'ok'` carries the action's result, `'declined'` means nothing ran. */
+  answerBridgeConfirmation: (confirmation: string, confirm: boolean) =>
+    post<{ status: 'ok' | 'declined'; action?: string; result?: unknown }>(
+      `/api/external-access/bridge/confirmations/${encodeURIComponent(confirmation)}`,
+      { confirm },
     ),
 
   // ── Guardrails: incident kill switch + derived provider health ──
@@ -8362,7 +8450,9 @@ export const api = {
   // `persist_available` = a tmux binary exists on the HOST. Optional because an older backend does
   // not send it, and absent must mean "no capability claim" rather than a default either way — the
   // persistence promise is only true when the config flag AND this are both on (issue 545).
-  terminalSessions: () => get<{ enabled?: boolean; persist_available?: boolean; sessions: Array<{ session_id: string; pid?: number; alive?: boolean; cols?: number; rows?: number; connected?: boolean; cwd?: string; shell?: string; label?: string }> }>('/api/terminal/sessions'),
+  // `sandbox` is the tier a session was opened in (`''` = this computer's own shell); it is part of
+  // the session id, so a restored tab reopens and restarts in it.
+  terminalSessions: () => get<{ enabled?: boolean; persist_available?: boolean; sessions: Array<{ session_id: string; pid?: number; alive?: boolean; cols?: number; rows?: number; connected?: boolean; cwd?: string; shell?: string; label?: string; sandbox?: string }> }>('/api/terminal/sessions'),
   deleteTerminal: (id: string) => del(`/api/terminal/sessions/${encodeURIComponent(id)}`),
 
   // lifecycle triggers (projected onto the legacy HookItem shape the shared
@@ -8375,7 +8465,7 @@ export const api = {
   /** Decide one card: `run_now` runs the automation once, now, and records the run as late;
    *  `dismiss` records that you chose not to. */
   decideTriggerReview: (body: { trigger_id: string; kind: TriggerReviewCard['kind']; action: 'run_now' | 'dismiss' }) =>
-    post<{ ok: boolean; outcome?: string; reason?: string; result?: string; refused?: string }>('/api/triggers/review', body),
+    post<{ ok: boolean; outcome?: string; reason?: string; result?: string; refused?: string; status?: string }>('/api/triggers/review', body),
   createHook: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
       trigger_type: 'lifecycle', name: body.name, event: body.event, matcher: body.matcher,
@@ -8970,6 +9060,16 @@ export const api = {
     api.patchConfigItem('security.mcp_elicitation_servers', 'add', server, confirmed),
   revokeMcpElicitation: (server: string) =>
     api.patchConfigItem('security.mcp_elicitation_servers', 'remove', server),
+  // Which MCP servers' READ-ONLY labels you trust (`readOnlyHint`). Per server, like the
+  // elicitation grant: an absent server's tools are all treated as changes, so they ask. Read
+  // from the config blob for the same reason; `confirmed` is the Tools page's own dialog.
+  mcpReadOnlyServers: () =>
+    get<Record<string, any>>('/api/config/personalclaw').then(
+      (c) => (c?.security?.mcp_read_only_servers ?? []) as string[]),
+  trustMcpReadOnly: (server: string, confirmed = false) =>
+    api.patchConfigItem('security.mcp_read_only_servers', 'add', server, confirmed),
+  distrustMcpReadOnly: (server: string) =>
+    api.patchConfigItem('security.mcp_read_only_servers', 'remove', server),
   // The secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",

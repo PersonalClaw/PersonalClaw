@@ -351,7 +351,7 @@ class TestSecretDetection:
     def test_the_secret_binding_is_recognized(self) -> None:
         assert secrets.is_secret_binding("{{secret:OPENAI_KEY}}")
         assert secrets.is_secret_binding("Bearer {{ secret:TOKEN }}")
-        assert not secrets.is_secret_binding("sk-plainvalue")
+        assert not secrets.is_secret_binding("fake-key-plainvalue")
 
     def test_referenced_secret_names_are_collected_for_preflight(self) -> None:
         spec = {
@@ -392,7 +392,7 @@ class TestSecretDetection:
 
 class TestStripAndReinject:
     def test_a_secret_value_strips_to_a_presence_flag(self) -> None:
-        spec = {"id": "n", "config": {"api_key": "sk-real-value", "url": "https://x"}}
+        spec = {"id": "n", "config": {"api_key": "fake-key-real-value", "url": "https://x"}}
         stripped = secrets.strip_secrets(spec)
         assert stripped["config"]["_has_api_key"] is True
         assert "api_key" not in stripped["config"]
@@ -405,10 +405,10 @@ class TestStripAndReinject:
         assert secrets.strip_secrets(spec)["config"]["api_key"] == "{{secret:KEY}}"
 
     def test_reinject_restores_by_node_id(self) -> None:
-        stored = {"root": {"children": [{"id": "a", "config": {"api_key": "sk-stored"}}]}}
+        stored = {"root": {"children": [{"id": "a", "config": {"api_key": "fake-key-stored"}}]}}
         incoming = {"root": {"children": [{"id": "a", "config": {"_has_api_key": True}}]}}
         merged = secrets.reinject_secrets(incoming, stored)
-        assert merged["root"]["children"][0]["config"]["api_key"] == "sk-stored"
+        assert merged["root"]["children"][0]["config"]["api_key"] == "fake-key-stored"
         assert "_has_api_key" not in merged["root"]["children"][0]["config"]
 
     def test_reinject_survives_a_node_moving_in_the_tree(self) -> None:
@@ -436,18 +436,20 @@ class TestStripAndReinject:
         assert merged["root"]["children"][1]["config"]["token"] == "t-1"
 
     def test_an_explicit_new_value_wins_over_the_stored_one(self) -> None:
-        stored = {"root": {"children": [{"id": "a", "config": {"api_key": "sk-old"}}]}}
+        stored = {"root": {"children": [{"id": "a", "config": {"api_key": "fake-key-old"}}]}}
         incoming = {
             "root": {
-                "children": [{"id": "a", "config": {"api_key": "sk-new", "_has_api_key": True}}]
+                "children": [
+                    {"id": "a", "config": {"api_key": "fake-key-new", "_has_api_key": True}}
+                ]
             }
         }
         merged = secrets.reinject_secrets(incoming, stored)
-        assert merged["root"]["children"][0]["config"]["api_key"] == "sk-new"
+        assert merged["root"]["children"][0]["config"]["api_key"] == "fake-key-new"
 
     def test_a_false_flag_clears_the_credential(self) -> None:
         """How a user removes a credential without a separate endpoint."""
-        stored = {"root": {"children": [{"id": "a", "config": {"api_key": "sk-old"}}]}}
+        stored = {"root": {"children": [{"id": "a", "config": {"api_key": "fake-key-old"}}]}}
         incoming = {"root": {"children": [{"id": "a", "config": {"_has_api_key": False}}]}}
         merged = secrets.reinject_secrets(incoming, stored)
         assert "api_key" not in merged["root"]["children"][0]["config"]
@@ -456,7 +458,7 @@ class TestStripAndReinject:
         original = {
             "root": {
                 "children": [
-                    {"id": "a", "config": {"api_key": "sk-secret", "model": "opus"}},
+                    {"id": "a", "config": {"api_key": "fake-key-secret", "model": "opus"}},
                     {"id": "b", "config": {"prompt": "hello"}},
                 ]
             }
@@ -513,7 +515,7 @@ class TestInlineSecretLint:
     def test_a_finding_never_carries_the_value_itself(self) -> None:
         """An error message that quotes the credential leaks it into the logs that render
         the message."""
-        found = secrets.find_inline_secrets({"config": {"api_key": "sk-supersecret-value"}})
+        found = secrets.find_inline_secrets({"config": {"api_key": "fake-key-supersecret-value"}})
         assert found
         assert "supersecret" not in found[0].to_dict()["hint"]
         assert "supersecret" not in str(found[0].to_dict())

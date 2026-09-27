@@ -2,11 +2,12 @@
  * #565 — a failed run now explains itself.
  *
  * Measured server-side (`tests/test_workflow_escalation_is_reported.py`): a run whose node
- * exhausts its retries reports `error: ''` — `_finish(status)` takes no `error` on that path — and
- * the escalation on `attention` holds the reason, the cause and the per-attempt evidence. The run
- * page's one explanation slot is `run.error && <p>`, so that run rendered a failed run with a
- * completely blank reason. 13 of 16 terminal-failed runs on the reporter's instance were in this
- * state.
+ * exhausts its retries used to report `error: ''` — the completion path's terminal write took no
+ * `error` — while the escalation on `attention` held the reason, the cause and the per-attempt
+ * evidence. The run page's one explanation slot is `run.error && <p>`, so that run rendered a
+ * failed run with a completely blank reason. 13 of 16 terminal-failed runs on the reporter's
+ * instance were in this state. The line now names the failed step and its cause, and a run
+ * recorded before that still carries `error: ''`, so the panel must explain it on its own.
  *
  * These drive the real components against that real payload. The load-bearing pair:
  *
@@ -93,6 +94,19 @@ describe('the panel', () => {
     cleanup()
     render(<EscalationPanel reads={[read()]} runStatus="failed" runError="" />)
     // The standalone detail line is back: 2 attempts + 1 detail.
+    expect(screen.getAllByText('ConnectionError: network down')).toHaveLength(3)
+  })
+
+  it('does not print the cause twice when the run’s own ending already quotes it', () => {
+    // A run that ran to its end past a failed step names that step and its cause in its error
+    // line, and the escalation's detail is that same cause. Hidden only when the line carries the
+    // WHOLE cause: a different one still shows.
+    render(<EscalationPanel reads={[read()]} runStatus="failed"
+      runError="The run continued past “consume”, which failed: ConnectionError: network down." />)
+    expect(screen.getAllByText('ConnectionError: network down')).toHaveLength(2)
+    cleanup()
+    render(<EscalationPanel reads={[read()]} runStatus="failed"
+      runError="“publish” failed: HTTP 500 from example.com." />)
     expect(screen.getAllByText('ConnectionError: network down')).toHaveLength(3)
   })
 

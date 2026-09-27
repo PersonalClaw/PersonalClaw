@@ -14,39 +14,28 @@ tamper-evident audit log. Paths are relative to
 
 ## Auth modes
 
-`auth/modes.py` defines four modes, but **only two are selectable today**.
-`AuthConfig.from_env()` recognises `PERSONALCLAW_AUTH_MODE=none` and otherwise
-returns the `local_token` default — so `api_key` and `oauth2` cannot be reached
-from configuration even though their request-side halves are built.
+`auth/modes.py` defines two modes, and `AuthConfig.from_env()` selects between them:
+`PERSONALCLAW_AUTH_MODE=none`, or the `local_token` default for anything else.
 
-| Mode | Selectable | Behavior |
-|---|---|---|
-| `none` | ✅ | No token auth — **bind is forced to loopback** by `effective_bind` (an unauthenticated gateway must never leave the host). Dev convenience. |
-| `local_token` | ✅ | The default: token auth with a login page; static assets bypass the check (the real asset surface only — `dashboard/token_auth.py`). An opt-in, IP-gated local-network bypass exists. |
-| `api_key` | ❌ **not selectable** | Header key auth. Validation is implemented (`dashboard/token_auth.py` checks `Authorization: Bearer` against the configured key) but no env value reaches it. |
-| `oauth2` | ❌ **not selectable** | OIDC JWT verification is implemented (`auth/oidc.py`, imported lazily only in this mode) but no env value reaches it. |
+| Mode | Behavior |
+|---|---|
+| `none` | No token auth — **bind is forced to loopback** by `effective_bind` (an unauthenticated gateway must never leave the host). Dev convenience. |
+| `local_token` | The default: token auth with a login page; static assets bypass the check (the real asset surface only — `dashboard/token_auth.py`). An opt-in, IP-gated local-network bypass exists. |
 
-**What that means in practice.** Setting `PERSONALCLAW_AUTH_MODE=api_key` leaves
-the gateway on `local_token` and ignores `PERSONALCLAW_API_KEY`. It fails
-**closed** — a client presenting `Authorization: Bearer <that key>` is refused, not
-admitted — so the cost is lost access, not weakened auth. But it is a configuration
-that reads as working and is not, which is why it is stated here rather than left to
-be discovered.
+`api_key` and `oauth2` used to be declared here too, with their request-side halves built
+(a Bearer-key check and an OIDC JWT verifier) and no configuration able to select either.
+They were deleted: an authentication path nothing can reach still has to be read, audited
+and kept secure, and it misleads whoever finds it. A browser SSO sign-in, if it is ever
+built, is one more issuer of the existing session (see
+[`sso-oidc-integration.md`](sso-oidc-integration.md)), not a mode.
 
-**The runtime says so out loud.** A mode it cannot honor — `api_key`, `oauth2`, or
-any unrecognised string — is not applied *silently*: `classify_auth_mode_request()`
-in `auth/modes.py` describes the request, `AuthConfig.from_env()` logs a warning
-naming the requested mode, that it was not applied, and the mode actually in force,
-and `personalclaw doctor` prints the same sentence as an `auth mode:` row. This is
-legibility only — it changes no admission decision, and `doctor`'s exit status is
-unaffected.
-
-Wiring the selector is tracked as roadmap scope, and it carries one design question
-worth settling deliberately rather than in passing: whether an unhonourable mode
-should **refuse at startup** or fall back. Refusing is the honest posture for a
-security control, but `from_env()` is also called as a fallback inside a request path
-(`dashboard/origin.py`), so a naive raise would turn a misconfiguration into a 500
-rather than a clean boot failure. The fix belongs with that change, not in a doc change.
+**The runtime says so out loud.** A value that is not a mode — `api_key`, `oauth2` or any
+other string — is not ignored *silently*: `classify_auth_mode_request()` in `auth/modes.py`
+describes the request, `AuthConfig.from_env()` logs a warning naming the requested value,
+that it was not applied, and the mode actually in force, and `personalclaw doctor` prints
+the same sentence as an `auth mode:` row. It fails **closed** — `local_token` stays in
+force, so the cost of a typo is lost access, not weakened auth. This is legibility only: it
+changes no admission decision, and `doctor`'s exit status is unaffected.
 
 ### The `AUTH_MODE=none` sandbox fix
 
@@ -79,8 +68,10 @@ permission model holds in every auth mode.
   proxy's `Basic` login) is ignored, not refused.
 - `mint_session(user_id, ttl, issuer=...)` mints every session, naming the door it came
   through (the startup link, the harness token, `personalclaw token`, a password, a device
-  code, a pairing, an app); `generate_token(user_id, ttl_seconds, app=...)` is the published
-  mint for the `token` door, with an optional **`app` claim**. App-scoped tokens bound a
+  code, a pairing, an app); `generate_token(user_id, ttl_seconds, app=...)` is core's mint for
+  the `token` door, with an optional **`app` claim**. A channel app mints only its owner's
+  "open the dashboard" link, with `personalclaw.sdk.channel.owner_sign_in_token`, which refuses
+  anyone else; the SDK publishes no mint for an arbitrary id. App-scoped tokens bound a
   request to that app's declared permissions. In the Bearer header an app token only narrows
   the owner session it is presented beside, for the same user.
 - App backends never see the owner's credential: the reverse proxy strips
@@ -89,7 +80,8 @@ permission model holds in every auth mode.
 - No session, link or token lasts longer than 90 days (`MAX_SESSION_TTL_SECS`): a long-lived
   credential is replaced at least every 90 days, because the longer a link or token keeps
   working, the longer anyone who copies it can use the dashboard. A request for longer — `personalclaw token --ttl`, `?ttl=` on
-  `/api/token/local`, `auth.session_ttl`, an app's `generate_token` — is refused with a sentence
+  `/api/token/local`, `auth.session_ttl` (Settings → Security sets it, and offers nothing longer),
+  a channel's `owner_sign_in_token` — is refused with a sentence
   naming the limit and why, never shortened; a config file that already says longer is applied
   as 90 days and `personalclaw doctor` says so; and a token minted longer before the limit
   existed stops 90 days after it was issued. Browser sign-ins last `auth.session_ttl`, 30 days by
@@ -101,6 +93,20 @@ permission model holds in every auth mode.
   how to sign in (`session_signed_out`, `session_expired`, `session_required`); a request that
   presents garbage, or a token another key signed, reads exactly what presenting nothing reads.
   A script's Bearer keeps the one uniform `auth_bearer_invalid`.
+- **An integration's token is under the same limit** (`inbound/tokens.py`). The token an external
+  agent reaches an inbound surface with — a surface's own (`personalclaw inbound token create
+  <surface> --ttl`) or a registered client's (`POST /api/external-access/clients` with a `ttl`) —
+  lasts at most 90 days, and a request for longer is refused. A surface token's lifetime is
+  recorded by the token's SHA-256 in `inbound_tokens.json`, never the token itself: one from
+  before lifetimes existed, or set outside the CLI, lasts 90 days from the first time the gateway
+  sees it, and a client registered before them lasts 90 days from its registration. A configured
+  value that briefly cannot be read (a locked keychain) keeps the lifetime it had, a revoked token
+  stays refused for as long as it is configured, and a registry that cannot be read refuses every
+  surface token rather than give each a fresh 90 days. Settings → Devices lists every integration
+  token with when it stops working, and revokes any of them at once; each start and end is a
+  `session_signed_in` / `session_signed_out` row. A token that expired, was revoked or was
+  replaced is told which, and when, under the same `unauthorized` code every other inbound refusal
+  carries; a token the gateway never issued is told nothing more.
 
 ### Webhook auth
 
@@ -140,9 +146,25 @@ environment-variable denylist (credential env vars like `SLACK_BOT_TOKEN`
 never reach a sandboxed child).
 
 Child **environments** are built by allowlist, not inherited: `build_child_env`
-gives a hook, cron-script or bash-action child, and everything the gateway starts
-for an app (the pip and npm that install what it declares, its engine's venv and
-pip, its setup hooks, backend, worker, sidecar and MCP servers), a minimal base
+gives the native agent's bash commands, a hook, cron-script or bash-action child, a
+loop's check command and its worktree git, a workflow's setup and teardown steps (a
+durable step included: it starts under `env -i`, so the tmux server's own environment
+never reaches it) and effect teardowns, a runner CLI's version probe, every ACP agent
+CLI (plus the variables its app declares for it and the session it answers for), every
+git that reads or clones an app source (`net/git.py::source_git_env`, the guarded
+listing fetch included), and everything the gateway starts for an app (the pip and npm
+that install what it declares, its engine's venv and pip, its setup hooks, backend,
+worker, sidecar and MCP servers). An app's provider module runs inside the gateway, so
+the children IT starts get the same base only when it asks for it:
+`personalclaw.sdk.util.child_process_env(extra=None, *, installer="")` (or
+`app_packages_env()` for a Python child that imports the app packages), an SDK addition:
+`extra` is what that child needs beyond the base, and `installer` names a package manager
+whose own settings pass through. `tests/test_spawn_env_audit.py` classifies every spawn
+site by where its child's environment comes from; the ones that keep the gateway's
+environment, each with its reason there, are PersonalClaw's own processes, installs and
+updates, the owner's terminal and editor, an MCP server of the owner's own config, the
+container CLI talking to the owner's daemon, and fixed-argv host tools and probes. Each
+child listed above gets a minimal base
 (`PATH`, locale, home-equivalents, proxy/CA settings, and the three
 `PERSONALCLAW_*` vars) plus whatever names the operator declared in
 `sandbox.env_passthrough`. An install also gets its installer's own settings
@@ -172,7 +194,7 @@ it does not stop an agent from doing anything else.
 | It **does** | It does **not** |
 |---|---|
 | Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`, and the owner-only paths) |
-| Refuse writes to the owner-only paths at every level (macOS deny-writes; Linux read-only binds) | |
+| Refuse writes to the owner-only paths at every level (macOS deny-writes; Linux holds the home's entries — below) | |
 | Scrub credential env vars from the child, every mode | Restrict **network / egress** from the child |
 | Deny `~/.ssh` writes (macOS `strict` only) | Limit processes, CPU, or memory (no rlimits) |
 | Path-allowlist a subagent's cwd (advisory — the prompt tells the agent its scope) | Provide a filesystem **jail** or a real execution boundary |
@@ -192,10 +214,18 @@ starts, each a command it runs as the owner), `hooks/` (the scripts those hooks 
 wrote, `owner_grants.py`). An agent writes none of them, at three layers that each read
 `owner_only`:
 
-- **The fence**: the sandbox around the agent's shell denies the write — a Seatbelt
-  `deny file-write*` at every level; on Linux each is bind-mounted onto itself read-only (a missing
-  directory is made first; `config.json` only when it exists). This is the kernel refusing, so it
-  holds however the command spells the path.
+- **The fence**: the sandbox around the agent's shell denies the write. On macOS a Seatbelt
+  `deny file-write*` names each path at every level. On Linux the fence is the home's own entries,
+  not whichever files are there when the shell starts: the home is bound onto itself read-only, and
+  every entry already in it except these is bound back writable. A bind on one file holds that
+  inode — it cannot hold a name that does not exist yet, and the kernel dissolves it when the file
+  is replaced, which every config save does — so an owner-only name is refused whether it exists or
+  not, and however often it is replaced. The price, on Linux only: the shell cannot add, remove or
+  rename an entry at the top of the home, and a top-level file PersonalClaw replaces while the shell
+  runs is read-only in that shell until it restarts. On both, the home and every folder above it
+  the owner could rename are pinned (a Seatbelt literal on the folder's own entry; a mount point on
+  Linux), so the home cannot be moved aside, edited there and moved back. This is the kernel
+  refusing, so it holds however the command spells the path.
 - **The screen**: `HookManager.on_tool_call`, which every approval path consults before a card,
   an auto-approve pattern or an unattended default, and the native `bash` tool refuse a call that
   names one, with the reason. Defence in depth — a command can build the path out of pieces no
@@ -221,6 +251,56 @@ listed on the Tools page with Allow, which asks the same question first. The pro
 (`mcp_discovery.probe_server`) and the agents' connections (`mcp_client._personalclaw_mcp_specs`)
 both ask before they start anything. PersonalClaw's own server is defined by its code
 (`agent._MANAGED_MCP_SERVERS`), never read from `mcp.json`.
+
+### Every file tool stays in the workspace (`file_roots.admit`)
+
+The native file tools (`read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`,
+`repo_map`) and `code_map` resolve every path through the check the Files view and
+`/api/file-read` make: symlinks and `..` resolved; inside the session's folder or one of its extra
+roots; the PersonalClaw home reached only through a root inside it (`file_roots.within`); no
+protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
+`governance/`); and no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
+or `*.secret` file, nor any alias of one. A path that fails is refused with the reason. A `glob` or
+`grep` pattern that is absolute, starts at `~` or climbs with `..` is refused as a whole, and
+every match is checked one by one, so a listing, a search or a map leaves out what the tools
+could not open, including a file a link inside the workspace leads to outside it. `code_map`
+indexes the session's workspace, or a folder inside the places its file tools reach, and its
+index skips the same files (`codegraph.CodeGraphIndex`). A walk makes one `file_roots.Admission`
+and asks it for every path: the same answer as `admit`, with the protected locations resolved
+once.
+
+### A tool reads only when it declares so (`task_modes.py`)
+
+Every posture that runs a read without asking — Ask and Plan mode (and `personalclaw run` without
+`--allow`, which is Ask mode), Trust reads, `--approval reads`, a dry run (which executes reads for
+real) and the `read` tool grant of a research step, subagent or room critic — asks one question:
+does this call only read? The answer comes from what the tool DECLARES, never from its name, and
+from nothing else except a shell command's own text:
+
+- **The declaration is `RiskLevel.SAFE`** (`tool_providers/base.py`): "a call changes nothing but
+  the record that it was read". An in-process tool states it in its MCP-shaped dict
+  (`annotations.readOnlyHint`, true or false — `tests/test_research_class_tool_census.py` requires
+  every shipped tool to say one or the other); a `ToolDefinition` that states nothing is
+  `CAUTION`; an app's route reads only with `"readOnly": true` in its manifest (a `DELETE` is
+  destructive whatever it says).
+- **A tool that declares nothing is a change**, so it asks: an ACP CLI's own tools, and an
+  external MCP server's tools unless the owner trusts that server's labels. An MCP server may label
+  anything read-only, so `readOnlyHint` counts only for a server listed in
+  `security.mcp_read_only_servers` — per server, set on the Tools page, which asks first, and
+  refused to an app. Its `destructiveHint` counts from anyone, because it only adds a question.
+- **A shell call's command decides** (`is_read_only_bash`, an allowlist): for a declared call only
+  the platform's `bash` — a name the registry reserves — is a shell; for an ACP CLI's call, one it
+  reports as `execute`, a shell tool's name, or a `Running: ` title.
+- **Two more declarations ride beside the level**: `builds` (a Build-mode deliverable's producer,
+  which Build mode runs as long as it is not destructive) and `proposes` (its only effect is a
+  proposal the owner reviews: not a read — Ask mode and Trust reads treat it as the change it is —
+  but a research step's `read` grant admits it, because filing for review is what those steps do).
+- **Over ACP**, a call to PersonalClaw's own `personalclaw-core` tools carries that tool's
+  declaration (`acp.mcp_servers.core_tool_declaration`), matched by the exact name in the shape
+  each CLI sends it and only where the call cannot be something else wearing the name: its
+  arguments must be ones the tool takes, and on kiro-cli, whose shell calls share the title shape,
+  only a destructive declaration is taken. An ACP kind never admits a call; it only decides whether
+  an ungated one stops the turn (`REPORTED_READ_KINDS`).
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 
@@ -253,7 +333,8 @@ the ceiling did not bound.
   spawn's own `approval_mode: "auto"`, the global Auto-approve setting, the hook settings and
   patterns, a listed source, the `--approval` flag, a remembered or policy-approved workflow gate,
   the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
-  unattended ACP CLI approving its own calls, and a session policy that never asks. Under
+  unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
+  runner's allowlist of read-only tools. Under
   `{"approval": {"value": "ask"}}` none of them stands, and each refusal is audited
   (`approval.grant_refused`, naming the grant). A switch the owner presses (the chat's mode
   pill, a card's wider scope) is refused with `409 approval_grant_refused`, whose message names
@@ -268,6 +349,15 @@ the ceiling did not bound.
   (`NativeAgentRuntime.set_tool_grants`), and an unattended ACP CLI may approve its own calls only
   when the ceiling leaves the tools unrestricted. What that leaves for an ACP CLI is in
   [limitations §1](../security/limitations.md#1-acp-agents-under-auto-approve-yolo-rely-on-system-prompt-framing-not-rails).
+- **A workflow stage is a leaf to its own tools on every runtime.** A stage runs with its lineage
+  and posture — its run, its depth, whether it may write (`engine.leaf_spawn_env`) — and
+  `mcp_shared.leaf_tool_denial` refuses an orchestration tool to every leaf and holds a research
+  stage's in-process tools to `read`. An agent CLI's tool server gets the lineage as its
+  environment; the native runtime runs its tools in the gateway process, so it binds the stage's
+  lineage around each tool call instead (`mcp_shared.bind_leaf_lineage`), and every reader goes
+  through one accessor (`mcp_shared.leaf_value`). Before, a native stage read depth 0: its
+  `subagent_run` spawned, its research posture was not seen, and `resume_run_id: "self"` found no
+  run.
 - **Path matching** normalizes only the queried item (`~`/`$VAR`, then
   `abspath`) and **never** runs a pattern through `normpath`, which would
   collapse `/a/**/../b` to `/a/b` and silently drop the `**`
@@ -282,6 +372,56 @@ the ceiling did not bound.
   the operator. On a single-user machine that requires the file to live outside
   `$HOME`, owned by another uid and mode `0444` — which is what
   `PERSONALCLAW_CEILING_FILE` is for.
+
+## Who answers an approval (`approval_answer.py`)
+
+An approval is a question put to you: a tool call waiting for Allow, a workflow's gate, the
+question a trigger's action stopped on, a control-bridge action waiting to be confirmed, an app's
+proposal, the proactive digest's proposals. One rule decides who may answer any of them, and every
+door that applies an answer asks it (`approval_answer.refusal`):
+
+- **Only you answer.** That is a signed-in session of yours (the dashboard, a paired phone, the link
+  `personalclaw token` prints), or you on a paired chat channel. A channel's app checks that a press
+  is its paired owner's, which is the contract of `ChannelDelivery.request_approval`. The decision's
+  audit row names which: `you`, or `channel:<provider>`.
+- **Never the asker.** An approval records who asked it as it is asked (`asked_by`: the chat's agent,
+  the app that started the chat, a subagent, the run, the trigger, the bridge client), and an answer
+  from that principal is refused.
+- **Nobody else.** An app's token, an agent's tool, a trigger, a workflow run and a control-bridge
+  client answer nothing. An agent's tool is recognised by the gateway's internal secret, which only
+  the gateway's own tool servers and scripts present. That holds in `auth_mode=none` and under the
+  local-network bypass too, where the middleware treats every loopback caller as you.
+- **One exception: an `event` gate.** It parks a run until something happens, and asks nobody's
+  permission. The trigger it waits for (a monitor's self-scheduled wake, for example) answers it,
+  and you still can. A trigger answers no other gate, so a trigger an agent armed against its own
+  run cannot approve that run's approval gate. What it answers an event gate with is only a wake
+  ([workflows.md](workflows.md)): it cannot decline the run, rewrite one of its steps with a
+  `revise`, or leave an "always allow" behind.
+
+A refused answer decides nothing and leaves the approval pending. It writes one
+`approval.answer_refused` audit row naming who tried, what, and who asked. An HTTP door answers
+`403 approval_owner_only`; an agent's tool gets the same sentence as its result. What each door
+used to allow:
+
+- **Tool approvals.** `POST /api/approvals/{id}/{action}` relayed an app's answer for any chat but
+  the app's own. It and the chat card's route took an agent's tool as you wherever the gateway
+  admits every loopback caller as you (`auth_mode=none`, the local-network bypass).
+- **Workflow gates.** An agent's `workflow_resume` answered gates, its own run's included; it now
+  only lifts a pause. `POST /api/workflows/runs/{id}/confirm` was open to apps, and the resume route
+  took an agent's tool as you where every loopback caller is you.
+- **A trigger's question.** `POST /api/triggers/{id}/answer` accepted the internal secret, which
+  `/api/triggers` admits for an agent's `/run`.
+- **Control-bridge confirmations.** The client that asked redeemed its own token at `/confirm`, with
+  the bearer it asked with, and `personalclaw inbound confirm` did the same with the bridge's token.
+  A confirmation now waits in your Inbox, where you confirm or decline it
+  (`POST /api/external-access/bridge/confirmations/{id}`). `/confirm` refuses every client, and the
+  CLI verb is gone.
+- **The digest.** Its replies were open to apps. Where every loopback caller is you, an agent's
+  `triage_rules` tool could teach it an approve rule, which answers every matching proposal before
+  it is asked. Approve rules are now yours, and a deny rule, which only takes away, is anyone's.
+
+What this cannot tell apart: a process running as you on this machine
+([limitations §10](../security/limitations.md#10-a-process-running-as-you-can-answer-as-you)).
 
 ## Egress chokepoint (`net/`)
 
@@ -375,6 +515,22 @@ rules are load-bearing controls, not UX:
   CAPTCHA avoidance as a capability; any such effect is an incidental consequence of legitimate
   traffic from the user's own machine, never a feature.
 
+### A background chore runs with no tools (`provider_bridge._build_native_runtime`)
+
+The chores that run behind the chat — a chat's title and tags, its follow-up chips, the home
+suggestions, a folder's icon, history compression, memory consolidation and skill refinement, the
+prompt optimizer, a Slack thread's title — each answer in text from what their prompt carries, and
+that prompt quotes chats, pages and messages nobody vetted. They run as the lite agent
+(`personalclaw-lite`), whose runtime is built with no tool providers at all: its model is offered
+no tools, and a call it makes anyway names a tool that does not exist. The shared background
+session (`_bg`) is the lite agent whoever reaches it first and whatever agent it names
+(`SessionManager.get_or_create`). The one-shot completions (inbox triage, digests, re-tagging,
+schedule parsing) call the model directly and never carried tools.
+
+A heartbeat task is not a chore: the owner allowed it to run "with your agent's tools"
+(`heartbeat.consent`), so it runs as their agent in a session of its own that ends with the task
+(`cron:system:heartbeat-tasks:<run>`), never in the chores' session.
+
 ## Untrusted-content fencing
 
 `security.py::fence_untrusted` wraps third-party text in
@@ -404,6 +560,9 @@ recalled episodes (`dashboard/handlers/memory.py`; see
 
 ONE process-global YOLO (auto-approve) state: config-permanent vs TTL'd
 surface activation (`YOLO_CHANNEL_TTL_SECS`), with `on_disable` callbacks.
+Config-driven YOLO is read back from `agent.yolo` while it is on, by `is_yolo_active()` and by
+`yolo_from_config()` alike, so a channel asked "is YOLO permanent?" gets the config's answer, not
+a cached one.
 Dashboard and channel apps delegate to it — there is deliberately no second
 implementation. Task-mode tool-gating postures are hard-enforced at the
 permission prompt for the native runtime; ACP agents under YOLO rely on
@@ -433,9 +592,11 @@ runtime stamped on it (`llm.events.unasked_outcome`): `denied` by the gate that 
 `auto_approved` by the policy that waived its ask, `failed` or `cancelled` for one that never ran,
 or `invoked` for a tool that asks nobody. `metadata.decided_by` says who decided, in every runtime
 that hosts a turn: the chat (which a channel's turn also runs), the subagent manager (trigger
-agents and every workflow stage) and the background helper. Before this, the subagent manager and
-the background helper wrote `auto_approved` for every call and the chat wrote `invoked`, so a call
-the deny-list refused read as approved.
+agents and every workflow stage), the background helper and the eval runner, whose allowlist
+answers its asks (`eval_safe_tools`). Before this, the subagent manager and the background helper
+wrote `auto_approved` for every call and the chat wrote `invoked`, so a call the deny-list refused
+read as approved; the eval runner wrote `invoked` for every call as it appeared and then a second
+row for one that asked.
 
 **Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
 archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts

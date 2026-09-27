@@ -12,6 +12,8 @@ host at that moment, dials only an address the guard returned, and refuses every
 git may speak is pinned as well: HTTPS only (``GIT_ALLOW_PROTOCOL``), no saved credentials, no
 configuration from the owner's global or system files, and none of the environment that would send
 it around the tunnel (a proxy of the environment's own, ``NO_PROXY``, injected ``-c`` settings).
+Like every git that fetches an app source (:func:`source_git_env`), it starts from the child
+allowlist rather than from the gateway's environment.
 
 Only port 443. A registry listing's URL names no port (``apps/catalog.listing_repo_refusal``), so
 another port can only arrive in a redirect, which is the server's choice and not the owner's.
@@ -102,11 +104,29 @@ class GitHostUnreachable(GitEgressError):
         self.reason = reason
 
 
+def source_git_env(*, site: str) -> dict[str, str]:
+    """The environment a git that fetches an app source runs with: the Store's catalog reading a
+    source, an install cloning one, and the guarded fetch of a registry listing.
+
+    The child allowlist (``sandbox.build_child_env``), never a copy of the gateway's environment.
+    Git talks to a server someone else runs and starts helpers of its own (a remote helper, a
+    credential helper, an LFS filter), and the gateway's environment holds every secret saved in
+    PersonalClaw; a clone needs none of them. What it does need arrives: ``PATH``, the home its
+    configuration and credential helpers read, and the proxy and certificate settings. It also
+    leaves out an inherited ``GIT_DIR``, ``GIT_WORK_TREE`` or ``GIT_INDEX_FILE``, which would point
+    a clone or a ``git -C`` read at another repository. A clone never waits on a password prompt:
+    nobody is at the gateway's terminal to answer it.
+    """
+    from personalclaw.sandbox import build_child_env
+
+    return build_child_env(site=site, extra={"GIT_TERMINAL_PROMPT": "0"})
+
+
 def guarded_git_env() -> dict[str, str]:
     """The environment a guarded git runs with (see the module docstring for why each part)."""
     env = {
         k: v
-        for k, v in os.environ.items()
+        for k, v in source_git_env(site="app-listing-git").items()
         if k not in _SCRUBBED_ENV and not k.startswith(_SCRUBBED_ENV_PREFIXES)
     }
     env["GIT_CONFIG_NOSYSTEM"] = "1"

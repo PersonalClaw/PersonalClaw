@@ -159,7 +159,18 @@ chat, channel thread, loop worker, webhook, subagent).
    `Y` of `Y:gpt-4o` (`usage_ledger.answered_provider`); an ACP turn, which names
    none, keeps its runtime (`acp:claude-code`). A room member's turn writes its
    own row (`source: room`, under the member's session key and agent), so
-   Settings → Usage counts a room by source, by provider and by model. The next
+   Settings → Usage counts a room by source, by provider and by model. So does
+   the summary a member folds its context with (`source: room`, on the member's
+   own model), and a chat's history compression writes one too (`source:
+   background`, the lite agent, under the chat's key; the idle-chat pass in
+   `bg_compress` the same, with no agent): a one-shot call records itself with
+   `one_shot_completion(usage=Attribution(…))`. Every guarded call's
+   `EVENT_COMPLETE` names the call (`LLMEvent.audit_ids`, stamped by
+   `ModelCallGuard`, and summed over a turn's inferences by the native loop), and
+   the row keeps those ids, so the usage page's "Not included" census of
+   `model_calls.jsonl` leaves out a call a row already counts: it states only the
+   calls that wrote no row (a chat's title, a judge). `audit_ids` is an SDK
+   addition to `LLMEvent`, defaulted and last, which no app has to set. The next
    turn starts on X again. When every model fails, the error names each one and why (`NoModelAnswered`, in a
    room's words on a room). Only a caller that shows the line asks for this
    (`NativeAgentRuntime.announce_failover`: the chat runner, and a room through
