@@ -25,6 +25,9 @@ import stat
 from pathlib import Path
 
 import pytest
+from mcp_owner_allowed import allow
+
+from personalclaw import mcp_grants
 
 # ── 1. ~/.claude.json and PersonalClaw's own mcp.json ────────────────────────────────────────────
 
@@ -99,6 +102,7 @@ def test_set_scope_entry_still_works_on_a_readable_file(tmp_path: Path) -> None:
         json.dumps({"projects": {"/work": {"history": ["keep me"]}}, "mcpServers": {}}),
         encoding="utf-8",
     )
+    allow(mcp_grants.server_of("newsrv", {"command": "new"}))  # Claude Code starts what it holds
     outcome = m._set_scope_entry(p, "newsrv", enabled=True, spec={"command": "new"})
     assert outcome == "added"
     data = json.loads(p.read_text(encoding="utf-8"))
@@ -109,6 +113,7 @@ def test_set_scope_entry_still_works_on_a_readable_file(tmp_path: Path) -> None:
 def test_set_scope_entry_creates_an_absent_file(tmp_path: Path) -> None:
     m = _mcp()
     p = tmp_path / "nested" / "claude.json"
+    allow(mcp_grants.server_of("srv", {"command": "x"}))
     assert m._set_scope_entry(p, "srv", enabled=True, spec={"command": "x"}) == "added"
     assert json.loads(p.read_text(encoding="utf-8"))["mcpServers"]["srv"] == {"command": "x"}
 

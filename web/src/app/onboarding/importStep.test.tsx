@@ -193,7 +193,7 @@ describe('collapsed by default: a count and a ticked box per group', () => {
     // Where each group lands is on the row, so a tick is an informed choice — the values a
     // server sets included: they go where the Tools page's Import puts them.
     expect(screen.getByText(
-      'MCP server definitions, added to your MCP config. The values they set go to your credential store.',
+      'MCP server definitions, added to your MCP config. None runs until you allow it on the Tools page. The values they set go to your credential store.',
     )).toBeTruthy()
     // Collapsed means collapsed: no item is rendered until a group is opened.
     expect(screen.queryByRole('checkbox', { name: /^weather/ })).toBeNull()

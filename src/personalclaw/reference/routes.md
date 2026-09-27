@@ -477,6 +477,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
 - `GET /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
 - `PUT /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
+- `POST /api/mcp/servers/{name}/allow` — the owner's yes to a server that waits for it.
 - `DELETE /api/mcp/servers/{name}/sign-in` — sign in to a remote server, or sign out.
 - `POST /api/mcp/servers/{name}/sign-in` — sign in to a remote server, or sign out.
 - `POST /api/mcp/sync` — apply MCP config changes and restart sessions.

@@ -137,7 +137,7 @@ def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
     return registered
 
 
-def deregister_app_mcp_servers(app_name: str) -> int:
+def deregister_app_mcp_servers(app_name: str, *, forget: bool = True) -> int:
     """Remove every ``{app_name}:*`` MCP server from the live config AND the installed agent
     config, with the values it owns, and close their live connections. Returns how many
     servers were removed.
@@ -151,7 +151,11 @@ def deregister_app_mcp_servers(app_name: str) -> int:
 
     The connections close here too, not on the MCP client's next read: a server whose spec is
     unchanged by an update (the same command, the same args) would otherwise keep the process
-    it spawned, and that process runs the app's previous code."""
+    it spawned, and that process runs the app's previous code.
+
+    *forget* is for the app's removal: the owner's yes to each server goes too (`mcp_grants`). An
+    app switched off or updated keeps it, so a server that comes back running what the owner
+    allowed runs again, and one whose definition changed waits for a new yes."""
     from personalclaw.config.secret_refs import mcp_documents, remove_mcp_servers
     from personalclaw.mcp_client import close_servers
 
@@ -175,7 +179,7 @@ def deregister_app_mcp_servers(app_name: str) -> int:
                 for t in (listed if isinstance(listed, list) else [])
                 if isinstance(t, str) and t.startswith(f"@{prefix}")
             )
-    removed = remove_mcp_servers(names)
+    removed = remove_mcp_servers(names, keep_allowed=not forget)
     if removed:
         logger.info("app %s: deregistered MCP servers %s", app_name, removed)
     return len(removed)

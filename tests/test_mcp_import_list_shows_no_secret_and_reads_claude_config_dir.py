@@ -220,7 +220,8 @@ def test_claude_code_is_read_and_written_where_claude_config_dir_puts_it(world) 
     _write_claude(dir_file, {"dir-only": {"command": "echo", "args": ["dir"]}})
     home_before = home_file.read_bytes()
 
-    own = ["pc-own", {"command": "echo", "args": ["own"]}]
+    # Added on the Tools page, where the owner agreed to what it runs.
+    own = ["pc-own", {"command": "echo", "args": ["own"], "confirm": True}]
     out = _boot(
         world, {"own": own, "import": ["dir-only", "pc-own"]}, claude_config_dir=world["cc_dir"]
     )

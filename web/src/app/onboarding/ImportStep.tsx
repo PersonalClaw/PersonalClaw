@@ -92,7 +92,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 const CATEGORY_BLURB: Record<string, string> = {
   instructions: 'Your CLAUDE.md / AGENTS.md, rules and project instructions, saved as memories.',
   memories: 'Notes the other tool was already remembering for you.',
-  mcp_servers: 'MCP server definitions, added to your MCP config. The values they set go to your credential store.',
+  mcp_servers: 'MCP server definitions, added to your MCP config. None runs until you allow it on the Tools page. The values they set go to your credential store.',
   skills: 'Skills, copied in and re-scanned like a Store install.',
   agents: 'Subagents, added to your Agents page.',
   prompts: 'Slash commands and saved prompts, run in chat as @name.',

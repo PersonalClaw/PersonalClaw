@@ -28,6 +28,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from mcp_owner_allowed import allow
 
 from personalclaw import sandbox
 from personalclaw.apps import app_manager, app_python
@@ -292,6 +293,7 @@ async def test_an_apps_mcp_server_runs_without_the_gateways_secrets(tmp_path, mo
         server = mcp_discovery.McpServerInfo(
             name=name, command=sys.executable, args=[str(script)], env={"NOTES_DIR": "/notes"}
         )
+        allow(server)
         await mcp_discovery.probe_server(server)
         recorded[name] = _seen(record)
 

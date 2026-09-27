@@ -239,6 +239,7 @@ from personalclaw.dashboard.handlers.mcp import (  # noqa: E402, F401
     api_mcp_probe,
     api_mcp_probe_cached,
     api_mcp_probe_one,
+    api_mcp_server_allow,
     api_mcp_server_detail,
     api_mcp_server_sign_in,
     api_mcp_servers,

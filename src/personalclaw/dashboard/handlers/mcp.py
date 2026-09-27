@@ -13,9 +13,10 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.dashboard.state import DashboardState
-from personalclaw.http_errors import json_error
+from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import (
     MaskConflict,
     keep_masked_spans,
@@ -139,6 +140,29 @@ def _with_sign_in(row: dict[str, Any], server: Any) -> dict[str, Any]:
     state = sign_in_state(server.name, spec, str(row.get("status") or ""))
     if state is not None:
         row["auth"] = state
+    return row
+
+
+def _with_allow(row: dict[str, Any], server: Any) -> dict[str, Any]:
+    """``row`` with whether the owner allowed what ``server`` runs, as it is defined now
+    (`mcp_grants`). One that waits reads ``waiting``, with the sentence and no tools (any it
+    listed were a definition's that is gone), and carries the ``allowRevision`` its Allow names.
+
+    Asked at every read, not taken from a probe's cache: a yes given, or a definition changed,
+    after the last probe is what the row must say."""
+    from personalclaw import mcp_grants
+
+    allowed = mcp_grants.allowed(server)
+    row["allowed"] = allowed
+    if not allowed:
+        row["status"] = mcp_grants.WAITING
+        row["error"] = mcp_grants.WAITING_REASON
+        row["tools"] = []
+        row["allowRevision"] = mcp_grants.revision(server)
+    elif row.get("status") == mcp_grants.WAITING:
+        # A probe's row from before the yes: it no longer waits, and has not been probed since.
+        row["status"], row["error"] = "unknown", ""
+        row.pop("allowRevision", None)
     return row
 
 
@@ -295,7 +319,7 @@ async def _bg_mcp_probe() -> None:
                 s.error = str(r)[:200]
             else:
                 s = r
-            d = _with_sign_in(s.to_dict(), s)
+            d = _with_allow(_with_sign_in(s.to_dict(), s), s)
             spec = mcp_specs.get(s.name, {})
             d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
             if isinstance(spec, dict) and spec.get("disabledTools"):
@@ -324,7 +348,8 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
     now = time.time()
     should_reprobe = now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress
 
-    servers = list_servers()
+    # Switched-off servers too: this list is what the Tools page draws, switch included.
+    servers = list_servers(include_disabled=True)
 
     # Overlay handler-level probe cache (last successful probe results)
     # so that "outdated" from the expired discovery cache is replaced with
@@ -334,10 +359,11 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
 
     # Also re-probe if a new server appeared (e.g. fresh install from
     # marketplace) so status transitions from "Unknown" to "ok"/"error" on the
-    # next page refresh without waiting out the 30-min TTL.
+    # next page refresh without waiting out the 30-min TTL. A server switched off is not probed,
+    # so it is never a reason to.
     if not should_reprobe and not _mcp_probe_in_progress:
         for srv in servers:
-            if srv.name not in cached_by_name:
+            if srv.name not in cached_by_name and not srv.disabled:
                 should_reprobe = True
                 break
 
@@ -360,11 +386,11 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
             d["tools"] = cached.get("tools", d["tools"])
             d["error"] = cached.get("error", d["error"])
         spec = mcp_specs.get(s.name, {})
-        is_disabled = isinstance(spec, dict) and spec.get("disabled")
+        is_disabled = s.disabled or (isinstance(spec, dict) and bool(spec.get("disabled")))
         d["enabled"] = not is_disabled
         if is_disabled:
             d["status"] = "disabled"
-        result.append(as_agents_see_it(_with_sign_in(d, s)))
+        result.append(as_agents_see_it(_with_allow(_with_sign_in(d, s), s)))
     return web.json_response(result)
 
 
@@ -412,15 +438,14 @@ async def api_mcp_active(request: web.Request) -> web.Response:
         return web.json_response([])
 
     # Personalclaw / default: read from mcp.json
+    from personalclaw import mcp_grants
     from personalclaw.mcp_discovery import list_servers  # noqa: F811
 
-    mcp_specs = _read_mcp_json()
-    servers = list_servers()
-    result: list[dict] = []
-    for s in servers:
-        spec = mcp_specs.get(s.name, {})
-        enabled = not (isinstance(spec, dict) and spec.get("disabled"))
-        result.append({"name": s.name, "enabled": enabled})
+    # On only when it runs: switched on, and allowed as it is defined now (`mcp_grants`).
+    result: list[dict] = [
+        {"name": s.name, "enabled": not s.disabled and mcp_grants.allowed(s)}
+        for s in list_servers(include_disabled=True)
+    ]
     # Also include personalclaw-core (always enabled)
     names = {r["name"] for r in result}
     for builtin in ("personalclaw-core",):
@@ -443,7 +468,7 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     mcp_specs = _read_mcp_json()
     result: list[dict[str, Any]] = []
     for s in servers:
-        d = _with_sign_in(s.to_dict(), s)
+        d = _with_allow(_with_sign_in(s.to_dict(), s), s)
         spec = mcp_specs.get(s.name, {})
         d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
         if isinstance(spec, dict) and spec.get("disabledTools"):
@@ -465,7 +490,7 @@ async def _probe_and_cache_one(name: str) -> dict[str, Any] | None:
     info = await probe_one(name)
     if info is None:
         return None
-    d = _with_sign_in(info.to_dict(), info)
+    d = _with_allow(_with_sign_in(info.to_dict(), info), info)
     # Preserve the user's enable/disabledTools choices (mirror api_mcp_probe).
     spec = _read_mcp_json().get(name, {})
     d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
@@ -505,7 +530,7 @@ async def api_mcp_probe_one(request: web.Request) -> web.Response:
 async def api_mcp_probe_cached(request: web.Request) -> web.Response:
     """GET /api/mcp/probe — return cached probe results (non-blocking)."""
     global _mcp_probe_in_progress
-    from personalclaw.mcp_discovery import as_agents_see_it
+    from personalclaw.mcp_discovery import as_agents_see_it, list_servers
 
     now = time.time()
     if now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress:
@@ -514,7 +539,16 @@ async def api_mcp_probe_cached(request: web.Request) -> web.Response:
         task = asyncio.create_task(_bg_mcp_probe())
         state._background_tasks.add(task)
         task.add_done_callback(state._background_tasks.discard)
-    return web.json_response([as_agents_see_it(d) for d in _mcp_probe_cache])
+    # Whether each is allowed is asked now, not taken from the probe that cached the row.
+    known = {s.name: s for s in list_servers(include_disabled=True)}
+    return web.json_response(
+        [
+            as_agents_see_it(
+                _with_allow(dict(d), known[d["name"]]) if d.get("name") in known else d
+            )
+            for d in _mcp_probe_cache
+        ]
+    )
 
 
 async def api_mcp_pool_stats(request: web.Request) -> web.Response:
@@ -620,7 +654,7 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
                 list_servers as _ls,
             )
 
-            known = {s.name for s in _ls()}
+            known = {s.name for s in _ls(include_disabled=True)}
             if name not in known:
                 return web.json_response({"error": f"server {name!r} not found"}, status=404)
             servers[name] = {}
@@ -701,7 +735,7 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
                 list_servers as _ls,
             )
 
-            known = {s.name for s in _ls()}
+            known = {s.name for s in _ls(include_disabled=True)}
             if server not in known:
                 return web.json_response({"error": f"server {server!r} not found"}, status=404)
             servers[server] = {}
@@ -1143,13 +1177,20 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     ``disabledTools``, ``autoApprove``, ``cwd``) are kept, and the agent config's copy is rebuilt
     to match. The response carries the saved server's new ``revision``.
 
+    A new server, or an edit that changes what one runs, is the owner's yes to run it
+    (`mcp_grants`): without ``"confirm": true`` it is ``400 confirmation_required`` with the
+    sentence saying exactly what will run, and nothing is saved. With it, the server is saved and
+    allowed as it is saved. An edit that keeps what the server runs needs no confirmation.
+
     DELETE removes the server from ``mcp.json`` and the agent config and deletes the values it
     owns in the credential store (``secret_refs.remove_mcp_servers``, the one delete).
     """
+    from personalclaw import mcp_grants
     from personalclaw.config.secret_refs import (
         MCP_DEFINITION_KEYS,
         MCP_SIGN_IN,
         ForeignSecretReference,
+        check_mcp_spec,
         remove_mcp_servers,
         store_mcp_spec,
     )
@@ -1305,18 +1346,38 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             del entry[MCP_SIGN_IN]
         try:
             # STRICT: a value typed now that the store cannot hold is refused, not left inline.
-            entry = store_mcp_spec(name, entry, strict=True)
+            # Checked before the owner is asked below, about a save that would then be refused.
+            check_mcp_spec(name, entry)
         except ForeignSecretReference as exc:
             return json_error("secret_owned_elsewhere", message=str(exc), status=400)
         except ValueError as exc:
             if transport == "stdio":
                 return json_error("invalid_env", message=str(exc), status=400)
             return json_error("invalid_headers", message=str(exc), status=400)
+        # 🔴 THE OWNER SEES WHAT THIS SERVER RUNS BEFORE IT FIRST RUNS, AND SAYS YES. A new server,
+        # or an edit that changes what one runs, is asked about (`mcp_grants`) before anything is
+        # stored: no value reaches the credential store and nothing reaches `mcp.json` until the
+        # owner agrees. An edit that keeps what it runs, a replaced secret say, asks nothing.
+        would_run = mcp_grants.server_of(name, entry)
+        asked = not mcp_grants.allowed(would_run)
+        if asked and not confirm_granted(body):
+            return consent_required(
+                f"mcp.servers.{name}",
+                mcp_grants.consent(would_run, saving=True),
+                title=mcp_grants.title(would_run),
+            )
+        entry = store_mcp_spec(name, entry, strict=True)
         servers[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
         # Read back, so the revision handed out is the one the next GET of this server reports.
         saved = _definition_of(name)
         revision = revision_of(_definition_view(name, saved)) if saved is not None else ""
+        if asked and saved is not None:
+            # The yes is to what was asked about. Storing its values changes none of that (it
+            # replaces a value with a reference), so the saved definition is the one asked about.
+            stored = mcp_grants.server_of(name, saved)
+            if mcp_grants.definition(stored) == mcp_grants.definition(would_run):
+                mcp_grants.give(stored)
 
     # The agent config's copy: added if new (with its `@name` refs), then rebuilt from mcp.json,
     # so an edit reaches what `list_servers` lists and the Tools page probes.
@@ -1334,6 +1395,74 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         resources=name,
     )
     return web.json_response({"ok": True, "name": name, "revision": revision}, status=200)
+
+
+async def api_mcp_server_allow(request: web.Request) -> web.Response:
+    """POST /api/mcp/servers/{name}/allow — the owner's yes to a server that waits for it.
+
+    A server waits when nothing the owner said yes to covers what it runs now (`mcp_grants`): it
+    was imported, brought over from another tool, set up by a pack or an app, restored, written
+    into ``mcp.json`` by hand, or changed since. The body names ``revision``, the
+    ``allowRevision`` the Tools page read with the row, so a yes is never given to a definition
+    that changed after the page read it (``409 stale_write``). Without ``"confirm": true`` the
+    answer is ``400 confirmation_required`` with the sentence saying exactly what will run. With
+    it the server is allowed as it is, switched on, and probed again, so the page sees it run.
+    """
+    from personalclaw import mcp_grants
+    from personalclaw.mcp_discovery import list_servers
+
+    name = request.match_info["name"].strip()
+    if not _SERVER_NAME_RE.fullmatch(name):
+        return json_error("bad_request", message=f"{name!r} is not an MCP server name.", status=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+    async with _get_mcp_lock():
+        # Found the way the probe finds it, so the yes is to what the probe would run.
+        server = next((s for s in list_servers(include_disabled=True) if s.name == name), None)
+        if server is None:
+            return json_error(
+                "not_found", message=f"No MCP server named '{name}' is configured.", status=404
+            )
+        if not mcp_grants.exempt(server):
+            if body.get("revision") != mcp_grants.revision(server):
+                return json_error(
+                    "stale_write",
+                    message=(
+                        f"What “{name}” runs changed after this page read it, so nothing was "
+                        "allowed. Look at it again, then allow it."
+                    ),
+                    status=409,
+                )
+            if not confirm_granted(body):
+                return consent_required(
+                    f"mcp.servers.{name}",
+                    mcp_grants.consent(server),
+                    title=mcp_grants.title(server),
+                )
+            mcp_grants.give(server)
+        # Allowing it switches it on: an import that arrived switched off is the one to allow.
+        data = _load_json_for_update(_canonical_mcp_json())
+        entry = data.get("mcpServers", {}).get(name)
+        if isinstance(entry, dict) and entry.get("disabled"):
+            entry.pop("disabled", None)
+            _atomic_write(_canonical_mcp_json(), data)
+
+    from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
+
+    async with _get_agent_file_lock():
+        _sync_mcp_to_agent(name, True)
+    _forget_connections(request, name)
+    sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="mcp_server_allow",
+        outcome="completed",
+        resources=name,
+    )
+    return web.json_response({"ok": True, "name": name, "allowed": True})
 
 
 # ─── Signing in to a remote server (OAuth) ──────────────────────────────
@@ -1701,11 +1830,12 @@ def _atomic_write(path: Path, data: dict) -> None:
 def _find_server_spec_anywhere(name: str) -> dict | None:
     """Locate a server's full spec from any known source.
 
-    Search order matches the PersonalClaw merge: agent config → ~/.personalclaw/mcp.json
-    → claude-code global.  Returns a shallow copy with ``disabled`` stripped (the caller
-    decides whether to disable in its target scope).
+    ``mcp.json`` first, because it defines every server it holds: the agent config's copy of one
+    carries its command resolved to a path, which is not the definition the owner allowed
+    (`mcp_grants`). Then the agent config, then Claude Code's user scope. Returns a shallow copy
+    with ``disabled`` stripped (the caller decides whether to disable in its target scope).
     """
-    candidates = [_installed_agent_json(), _canonical_mcp_json(), _cc_global_json()]
+    candidates = [_canonical_mcp_json(), _installed_agent_json(), _cc_global_json()]
     for p in candidates:
         spec = _load_json_or_empty(p).get("mcpServers", {}).get(name)
         if isinstance(spec, dict) and (spec.get("command") or spec.get("url")):
@@ -1782,7 +1912,9 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
     which PersonalClaw does not own. See ``ConfigUnreadable``.
 
     Returns ``"refused"`` and writes nothing when copying the server into another tool's file
-    would resolve a credential its owner does not hold (``secret_refs.ForeignSecretReference``).
+    would resolve a credential its owner does not hold (``secret_refs.ForeignSecretReference``),
+    and ``"waiting"`` when the owner has not allowed what the server runs (`mcp_grants`): that
+    tool starts what its file names, so handing it one would run it before the owner's yes.
     """
     try:
         data = _load_json_for_update(path)
@@ -1809,6 +1941,11 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
             return "missing_spec"
         entry = {k: v for k, v in spec.items() if k != "disabled"}
         if not _is_personalclaw_document(path):
+            from personalclaw import mcp_grants
+
+            if not mcp_grants.allowed(mcp_grants.server_of(name, entry)):
+                logger.warning("mcp: not copying %r into %s — not allowed to run yet", name, path)
+                return "waiting"
             # Putting a server into another tool's scope is the user choosing to hand it over,
             # and that tool reads only its own file, so the values go with it — resolved from
             # the credential store, in the one form it understands, against the server's own
@@ -2039,6 +2176,11 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                     enabled=desired_cc,
                     spec=_find_server_spec_anywhere(name),
                 )
+                if outcome["actions"]["ccGlobal"] == "waiting":
+                    outcome["error"] = (
+                        f"'{name}' was not copied into Claude Code's file: it has not been allowed "
+                        "to run. Allow it on the Tools page first."
+                    )
 
             # ── Per-tool overrides (disabledTools in ~/.personalclaw/mcp.json) ──
             tool_overrides = change.get("toolOverrides")

@@ -2,6 +2,9 @@
 
 * ``config.json`` — among much else, the agent CLI's own hooks (``agent.agent_hooks``) and where
   they are imported from (``agent.agent_hooks_dir``).
+* ``mcp.json`` — the MCP servers PersonalClaw starts, each a command it runs as the owner. A
+  server runs only once the owner allowed what it runs (``mcp_grants``), so a definition written
+  here runs nothing on its own; the fence keeps the agent from changing or removing the owner's.
 * ``hooks/`` — the scripts those hooks import (``agent._autoimport_agent_hooks``).
 * ``agents/`` — the agent CLI's config, into which those hooks are merged (``agent.py``), and
   every agent definition.
@@ -41,7 +44,7 @@ import shlex
 from pathlib import Path
 
 #: The files, by name under the home.
-OWNER_ONLY_FILES: tuple[str, ...] = ("config.json",)
+OWNER_ONLY_FILES: tuple[str, ...] = ("config.json", "mcp.json")
 
 #: The directories, by name under the home: everything inside them is owner-only.
 OWNER_ONLY_DIRS: tuple[str, ...] = ("hooks", "agents", "grants")

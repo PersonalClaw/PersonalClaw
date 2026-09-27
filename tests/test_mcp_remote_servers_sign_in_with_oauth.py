@@ -33,6 +33,7 @@ import httpx
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from mcp_owner_allowed import allow_configured, confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential, save_credential
@@ -332,6 +333,8 @@ def _add(home: Path, remote: OAuthRemote) -> None:
     write_mcp_document(
         home / "mcp.json", {"mcpServers": {NAME: {"type": remote.transport, "url": remote.url}}}
     )
+    # The owner's yes to what it connects to (`mcp_grants`): the subject here is the sign-in.
+    allow_configured(NAME)
 
 
 def _gateway_app() -> web.Application:
@@ -384,10 +387,11 @@ class Gateway:
 
     async def edit(self, body: dict):
         """The Tools page's edit form saving the server: the definition replaces the one the form
-        read, so it names that read's revision (`If-Match`)."""
+        read, so it names that read's revision (`If-Match`), and it is resent once the owner
+        agreed to what the server connects to (`mcp_grants`)."""
         base = (await (await self.client.get(f"/api/mcp/servers/{NAME}")).json())["revision"]
         return await self.client.put(
-            f"/api/mcp/servers/{NAME}", json=body, headers={"If-Match": f'"{base}"'}
+            f"/api/mcp/servers/{NAME}", json=confirmed(body), headers={"If-Match": f'"{base}"'}
         )
 
     async def sign_in(self, **body) -> str:
@@ -640,6 +644,10 @@ def test_a_sign_in_is_never_sent_to_an_address_it_was_not_granted_for(home, http
         doc["mcpServers"][NAME]["url"] = moved
         (home / "mcp.json").write_text(json.dumps(doc), encoding="utf-8")
         http_remote.forget()
+        # A changed address is a new question: nothing connects until the owner allows it
+        # (`mcp_grants`). Once they do, the sign-in is still not sent to it.
+        assert NAME not in _personalclaw_mcp_specs()
+        allow_configured(NAME)
         ok, said = await _say_hello()
         assert not ok and "its URL has changed" in said, said
         assert all(token not in (r["authorization"] or "") for r in http_remote.events("mcp"))
