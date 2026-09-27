@@ -167,13 +167,23 @@ async function readAttention(): Promise<Attention> {
  *
  *  `choices` MAY be empty for a genuine question — a freeform gate. That is reported as what it
  *  is (see `QuestionActions`) rather than papered over with a text box this surface cannot
- *  honestly submit. */
+ *  honestly submit.
+ *
+ *  An APPROVAL is neither: it is a yes or a no (`block_kind: 'approval'` — an approval gate, or a
+ *  step that stopped for you, like a sign-in), and the run takes only a boolean for it. So it is
+ *  answered with Approve and Deny whatever prose choices its card carries. It rendered as "no
+ *  preset options — open the run", with no buttons at all, on exactly the card a person most
+ *  needs to answer from here. */
 export interface CardQuestion {
   runId: string
+  /** A trigger's action that stopped for you (`triggers.parks`): answered at the trigger, which
+   *  has no run. Empty for a run's question. */
+  triggerId: string
   nodeId: string
   resumeToken: string
   prompt: string
   choices: string[]
+  approval: boolean
 }
 
 export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | undefined): CardQuestion | null {
@@ -181,17 +191,31 @@ export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | un
   if (!refs || typeof refs !== 'object') return null
   const payload = refs.needs_input
   if (!payload || typeof payload !== 'object') return null
-  const runId = String(payload.run_id ?? refs.workflow ?? '')
-  if (!runId) return null // no run to resume ⇒ nothing this card could unblock
+  const runId = String(payload.run_id || refs.workflow || '')
+  const triggerId = typeof refs.trigger_park === 'string' ? refs.trigger_park : ''
+  // Nothing to resume ⇒ nothing this card could unblock.
+  if (!runId && !triggerId) return null
   const choices = (Array.isArray(payload.choices) ? payload.choices : [])
     .filter((c: unknown): c is string => typeof c === 'string' && c.length > 0)
   return {
     runId,
-    nodeId: String(payload.node_id ?? refs.workflow_node ?? ''),
-    resumeToken: String(payload.resume_token ?? refs.resume_token ?? ''),
+    triggerId,
+    nodeId: String(payload.node_id || refs.workflow_node || ''),
+    resumeToken: String(payload.resume_token || refs.resume_token || ''),
     prompt: String(payload.blocker ?? item?.message ?? ''),
     choices,
+    // A trigger's park asks Approve or Deny by construction (`parks._raise_row`).
+    approval: payload.block_kind === 'approval' || !!triggerId,
   }
+}
+
+/** What an answer did, in words, for the card's live region. */
+function answeredText(q: CardQuestion, value: string | boolean): string {
+  if (!q.approval) return `Answered “${String(value)}” — the run is moving again.`
+  if (q.triggerId) {
+    return value === true ? 'Approved — it is running again.' : 'Declined — it asks again the next time it stops.'
+  }
+  return value === true ? 'Approved — the run is moving again.' : 'Declined — the run ends here.'
 }
 
 // ── Per-card outcome ────────────────────────────────────────────────────────────────────────
@@ -291,13 +315,24 @@ export function MissionControl() {
     [mark, refresh],
   )
 
+  // A run's question resumes the run; a trigger's is answered at the trigger, which runs its
+  // action again on Approve (`POST /api/triggers/{id}/answer`).
   const answer = useCallback(
-    (cardKey: string, q: CardQuestion, choice: string) => {
+    (cardKey: string, q: CardQuestion, value: string | boolean) => {
       mark(cardKey, { state: 'busy' })
-      api
-        .resumeWorkflowRun(q.runId, { answer: choice, resume_token: q.resumeToken || undefined })
-        .then(() => {
-          mark(cardKey, { state: 'done', text: `Answered “${choice}” — the run is moving again.` })
+      const sent = q.triggerId
+        ? api.answerTriggerPark(q.triggerId, { resume_token: q.resumeToken, answer: value === true })
+        : api.resumeWorkflowRun(q.runId, { answer: value, resume_token: q.resumeToken || undefined })
+      sent
+        .then((res) => {
+          // A refusal the Run button honours (incident mode, the kill switch) answers 200 with
+          // `refused`, and leaves the question open: it is a failure to say, not an answer given.
+          const refused = res && typeof res === 'object' && 'refused' in res ? res.refused : ''
+          if (refused) {
+            mark(cardKey, { state: 'failed', text: failureText('send that answer', new Error(refused)) })
+            return
+          }
+          mark(cardKey, { state: 'done', text: answeredText(q, value) })
           refresh()
         })
         .catch((err) => mark(cardKey, { state: 'failed', text: failureText('send that answer', err) }))
@@ -368,7 +403,7 @@ function AttentionLaneSection({
   loading: boolean
   outcomes: Record<string, Outcome>
   onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
-  onAnswer: (cardKey: string, q: CardQuestion, choice: string) => void
+  onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
 }) {
   const headingId = `mission-control-lane-${lane}`
   return (
@@ -419,7 +454,7 @@ function AttentionCard({
   card: LaneCard
   outcome: Outcome | undefined
   onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
-  onAnswer: (cardKey: string, q: CardQuestion, choice: string) => void
+  onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
 }) {
   // Each verb's input comes off the card's own source object, reachable only once the union is
   // narrowed — so a card missing it is a compile error rather than a card with no buttons.
@@ -557,8 +592,36 @@ function QuestionActions({
   question: CardQuestion
   subject: string
   busy: boolean
-  onAnswer: (cardKey: string, q: CardQuestion, choice: string) => void
+  onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
 }) {
+  if (question.approval) {
+    // A yes or a no, sent as the boolean the run (or the trigger) takes. Deny is quiet, as on the
+    // run page: declining is a normal answer, not a destructive act.
+    return (
+      <>
+        {/* `loading`, not a bare `disabled`: while the answer is on its way the pair says so to
+            assistive tech (`aria-busy`), and neither can be sent twice. */}
+        <Button
+          size="xs"
+          variant="primary"
+          loading={busy}
+          ariaLabel={`Approve ${subject}`}
+          onClick={() => onAnswer(cardKey, question, true)}
+        >
+          <Check size={13} aria-hidden="true" /> Approve
+        </Button>
+        <Button
+          size="xs"
+          variant="secondary"
+          loading={busy}
+          ariaLabel={`Deny ${subject}`}
+          onClick={() => onAnswer(cardKey, question, false)}
+        >
+          <X size={13} aria-hidden="true" /> Deny
+        </Button>
+      </>
+    )
+  }
   if (question.choices.length === 0) {
     // The one card type that REQUIRES leaving this surface used to name the destination and
     // provide no way to get there — the card already knows the run id. The link carries the

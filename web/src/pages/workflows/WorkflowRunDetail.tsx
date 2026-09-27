@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, Play, RotateCcw, ScanSearch, Scale, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
@@ -400,98 +401,107 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
           {/* A run started as a loop is named by the loop (`title`), not by its template — the page
               read "general-project" for a loop the user had just named. */}
           {run && <PageTitle className="truncate">{run.title || run.workflow}</PageTitle>}
-          {/* FEED liveness, distinct from the RUN's status beside it. A live run whose stream has
-              dropped keeps showing "Running" while nothing arrives — indistinguishable from a run that
-              is simply quiet. Same dot-plus-WORD form `settings/DiagnosticsPanel` already ships for its
-              own SSE feed, so the vocabulary is not re-invented; the colour only confirms the word,
-              which is what keeps it clear of 1.4.1. Shown only while `live` — a terminal run has no
-              stream to be connected to. */}
-          {live && (
-            <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-on-surface-low">
-              <span className="inline-block size-1.5 rounded-pill"
-                style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
-              {connected ? 'Streaming' : 'Connecting…'}
-            </span>
-          )}
-          {look && StatusIcon && (
-            <span data-type="caption" className={`inline-flex shrink-0 items-center gap-1 ${look.tone}`}>
-              <StatusIcon size={13} className={look.spin ? 'animate-spin' : ''} /> {look.label}
-            </span>
-          )}
         </div>}
+        // The run's status and its feed's liveness sit UNDER the row, not in it (the TopBar's
+        // `below`): in the row they were `shrink-0` beside a truncating title, so a long title left
+        // them no room and "Needs you" painted over the Workspace button. Below, they can only wrap.
+        below={run && (live || (look && StatusIcon)) ? (
+          <>
+            {look && StatusIcon && (
+              <span data-type="caption" data-run-status className={`inline-flex shrink-0 items-center gap-1 ${look.tone}`}>
+                <StatusIcon size={13} className={look.spin ? 'animate-spin' : ''} /> {look.label}
+              </span>
+            )}
+            {/* FEED liveness, distinct from the RUN's status beside it. A live run whose stream has
+                dropped keeps showing "Running" while nothing arrives — indistinguishable from a run
+                that is simply quiet. Same dot-plus-WORD form `settings/DiagnosticsPanel` already ships
+                for its own SSE feed, so the vocabulary is not re-invented; the colour only confirms the
+                word, which is what keeps it clear of 1.4.1. Shown only while `live` — a terminal run
+                has no stream to be connected to. */}
+            {live && (
+              <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-on-surface-low">
+                <span className="inline-block size-1.5 rounded-pill"
+                  style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
+                {connected ? 'Streaming' : 'Connecting…'}
+              </span>
+            )}
+          </>
+        ) : undefined}
+        // The run's controls are the header's responsive cluster (`HeaderActions`): they shed
+        // their labels, then fall into a `…` menu, as the row narrows, so the title keeps room and
+        // nothing paints over anything. Eight labelled buttons in a fixed row took the whole band
+        // at 1280px on a live run: the title read one letter and the controls ran over it.
+        // The five panel toggles go into the menu first; the lifecycle actions stay.
         right={run ? (
-          <div className="flex items-center gap-xs">
+          <HeaderActions>
             {/* Workspace on BOTH sides of the terminal split, unlike Steer/Pause/Fork: reviewing
                 what a run changed is the one thing a user wants equally mid-run (is it touching
                 what I expected) and after (do I take this work). */}
-            <QuietButton onClick={() => setWorkspaceOpen((v) => !v)} ariaExpanded={workspaceOpen} title="Workspace — changed files and how to take this work">
-              <FolderGit2 size={13} /> Workspace
-            </QuietButton>
+            <HeaderControl icon={FolderGit2} label="Workspace" priority="low" ariaExpanded={workspaceOpen}
+              onClick={() => setWorkspaceOpen((v) => !v)}
+              title="Workspace — changed files and how to take this work" hint="Changed files and how to take this work" />
             {/* Artifacts, likewise on both sides of the terminal split: mid-run it answers "what has
                 it produced so far", and after, it is where the deliverable and its version diff
                 live. It is also the only surface that can hand a live run a file. */}
-            <QuietButton onClick={() => setOutboxOpen((v) => !v)} ariaExpanded={outboxOpen} title="Artifacts — what this run published, version diffs, and handing it files">
-              <Package size={13} /> Artifacts
-            </QuietButton>
+            <HeaderControl icon={Package} label="Artifacts" priority="low" ariaExpanded={outboxOpen}
+              onClick={() => setOutboxOpen((v) => !v)}
+              title="Artifacts — what this run published, version diffs, and handing it files" hint="What this run published, version diffs, and handing it files" />
             {/* Introspect, on both sides of the terminal split for the strongest reason of the
                 three: mid-run it answers "what will you do next if I say nothing", and after, it
                 is the Proof section that lets a user review unattended work without reading the
                 transcript (criteria 6 & 8). */}
-            <QuietButton onClick={() => setIntrospectOpen((v) => !v)} ariaExpanded={introspectOpen} title="Introspect — cost, latency, gates, timeline and proof">
-              <ScanSearch size={13} /> Introspect
-            </QuietButton>
+            <HeaderControl icon={ScanSearch} label="Introspect" priority="low" ariaExpanded={introspectOpen}
+              onClick={() => setIntrospectOpen((v) => !v)}
+              title="Introspect — cost, latency, gates, timeline and proof" hint="Cost, latency, gates, timeline and proof" />
             {/* Rails, on both sides of the terminal split like Introspect and for the neighbouring
                 reason: mid-run the findings rail is what each step has produced so far, and after,
                 it is the per-step cost and the judge trail behind the result. Separate from
                 Introspect because it answers about THIS run only — no cross-run scan. */}
-            <QuietButton onClick={() => setRailsOpen((v) => !v)} ariaExpanded={railsOpen} title="Rails — the per-step findings rail and the judge verdict/ROI rail from this run's ledger">
-              <Scale size={13} /> Rails
-            </QuietButton>
+            <HeaderControl icon={Scale} label="Rails" priority="low" ariaExpanded={railsOpen}
+              onClick={() => setRailsOpen((v) => !v)}
+              title="Rails — the per-step findings rail and the judge verdict/ROI rail from this run's ledger" hint="Per-step findings and the judge verdict/ROI rail" />
             {/* Review, likewise on both sides: mid-run an accepted finding is steered into the next
                 iteration, and on a finished run it is still where a reviewer's misses get recorded.
                 Nothing here writes to the code without an explicit accept. */}
-            <QuietButton onClick={() => setReviewOpen((v) => !v)} ariaExpanded={reviewOpen} title="Review — accept or reject this run's line-anchored findings">
-              <MessageSquareCode size={13} /> Review
-            </QuietButton>
+            <HeaderControl icon={MessageSquareCode} label="Review" priority="low" ariaExpanded={reviewOpen}
+              onClick={() => setReviewOpen((v) => !v)}
+              title="Review — accept or reject this run's line-anchored findings" hint="Accept or reject this run's line-anchored findings" />
             {/* Three lifecycle phases, not two — see the note beside `start` above. */}
             {isPrelaunch(run.status) ? (
               <>
-                <QuietButton onClick={start} title="Start this run — it has not executed yet">
-                  <Play size={13} /> Start
-                </QuietButton>
-                <QuietButton onClick={cancel} title="Cancel this run before it starts"><X size={13} /> Cancel</QuietButton>
+                <HeaderControl icon={Play} label="Start" priority="primary" onClick={start}
+                  title="Start this run — it has not executed yet" />
+                <HeaderControl icon={X} label="Cancel" onClick={cancel} title="Cancel this run before it starts" />
               </>
             ) : !isTerminal(run.status) ? (
               <>
-                <QuietButton onClick={() => setSteerOpen((v) => !v)} ariaExpanded={steerOpen} title="Steer this run — queue an instruction or accept a judge comment">
-                  <MessageSquarePlus size={13} /> Steer
-                </QuietButton>
+                <HeaderControl icon={MessageSquarePlus} label="Steer" ariaExpanded={steerOpen}
+                  onClick={() => setSteerOpen((v) => !v)}
+                  title="Steer this run — queue an instruction or accept a judge comment" />
                 {/* A pause STOPS the step in flight and re-queues it — the old "in-flight steps
                     finish" promise was a pause that paused nothing. It lands on the controller's
                     next step, so the gap between the click and that step says so instead of
                     looking ignored. A paused run is resumed here: it had no way forward on this
                     page. */}
                 {run.status === 'paused' ? (
-                  <QuietButton onClick={() => act('Resume', () => api.resumeWorkflowRun(runId, {}))} title="Resume — the step the pause stopped runs again">
-                    <Play size={13} /> Resume
-                  </QuietButton>
+                  <HeaderControl icon={Play} label="Resume" priority="primary"
+                    onClick={() => act('Resume', () => api.resumeWorkflowRun(runId, {}))}
+                    title="Resume — the step the pause stopped runs again" />
                 ) : run.pause_requested ? (
-                  <QuietButton disabled disabledReason="the step in flight is being stopped" title="Pausing">
-                    <Pause size={13} /> Pausing…
-                  </QuietButton>
+                  <HeaderControl icon={Pause} label="Pausing…" priority="primary" title="Pausing"
+                    disabled disabledReason="the step in flight is being stopped" />
                 ) : (
-                  <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — stops the step in flight; Resume runs it again">
-                    <Pause size={13} /> Pause
-                  </QuietButton>
+                  <HeaderControl icon={Pause} label="Pause" priority="primary"
+                    onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))}
+                    title="Pause — stops the step in flight; Resume runs it again" />
                 )}
-                <QuietButton onClick={cancel} title="Cancel this run"><X size={13} /> Cancel</QuietButton>
+                <HeaderControl icon={X} label="Cancel" onClick={cancel} title="Cancel this run" />
               </>
             ) : (
-              <QuietButton onClick={fork} title="Branch a new run from this one; the original is untouched">
-                <GitBranch size={13} /> Fork
-              </QuietButton>
+              <HeaderControl icon={GitBranch} label="Fork" priority="primary" onClick={fork}
+                title="Branch a new run from this one; the original is untouched" />
             )}
-          </div>
+          </HeaderActions>
         ) : undefined}
       />
 
@@ -515,8 +525,10 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 reads as a raw CSS hex. */}
             <RunToolApprovals runId={runId} />
 
+            {/* A declined run's line is why it ended, not a fault: it names the approval and who
+                said no, in the informational tone its status takes (`runLook('declined')`). */}
             {run.error && (
-              <p data-type="body-s" className="text-danger">{run.error}</p>
+              <p data-type="body-s" className={run.status === 'declined' ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
             )}
 
             {/* Beneath the error line, because it explains the same failure in more depth — and

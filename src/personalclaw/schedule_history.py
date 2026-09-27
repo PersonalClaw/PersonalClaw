@@ -128,6 +128,9 @@ _RESULT_STATUS: dict[str, str] = {
     "launched": "launched",
     "queued": "queued",
     "skip": "skipped_noop",
+    # The action stopped for a person — browse at a sign-in page. Not `success`: nothing it was
+    # asked to do happened yet, and the trigger's question is open (`triggers.parks`).
+    "needs_input": "waiting",
 }
 
 #: Every status `status_for_result` can return: the closed vocabulary `triggers/history.py`'s

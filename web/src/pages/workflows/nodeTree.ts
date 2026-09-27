@@ -37,7 +37,7 @@ export interface SubtreeSummary {
 
 const TERMINAL = new Set([
   'done', 'degraded', 'failed', 'skipped', 'no_change', 'scope_violation',
-  'discarded', 'escalated', 'blocked', 'cancelled',
+  'discarded', 'escalated', 'blocked', 'cancelled', 'declined',
 ])
 
 /** Build the tree rows from a flat, path-sorted node list.

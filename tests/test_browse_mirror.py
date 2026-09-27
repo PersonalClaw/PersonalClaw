@@ -7,7 +7,8 @@ vacuously:
   credential in the URL is screened on the relayed surface exactly as it is everywhere else;
 * the browse kill switch stops browse — a running loop parks, a new run refuses — and is DISTINCT
   from the incident switch (engaging one leaves the other alone);
-* the seam raises the banner + a needs_input inbox item at the expired write, and dedups per site.
+* the seam raises the banner at the expired write, and no Inbox row of its own: the question is
+  asked by what the park belongs to, where answering it runs the step again.
 
 The credential-handoff INVARIANT (§5.2) and the profile-encryption key live in
 ``test_browse_credential_handoff.py`` beside the rest of the handoff; this file is the mirror.
@@ -299,7 +300,9 @@ class TestTheSeam:
         frames = [payload for t, payload in st.ws if t == bmirror.WS_BROWSE_GRANT]
         assert frames == [{"pending": 2}]
 
-    def test_surface_auth_expired_raises_banner_and_needs_input(self):
+    def test_surface_auth_expired_raises_the_banner_and_no_row_of_its_own(self):
+        """The site-level "Sign-in needed" row resumed nothing: beside a run's own answerable row it
+        asked the same question twice, and a trigger's park has its own row (`triggers.parks`)."""
         st = _FakeState()
         bmirror.surface_auth_expired("https://bank.test/x", state=st)
         assert any(t == bmirror.WS_BROWSE_AUTH_EXPIRED for t, _ in st.ws), "no banner broadcast"
@@ -308,27 +311,7 @@ class TestTheSeam:
 
         store = InboxStore()
         store.load()
-        rows = [i for i in store.items.values() if i.refs.get("browse_auth") == "expired"]
-        assert rows, "no needs_input inbox row was raised for the expired site"
-        assert rows[0].item_kind == "needs_input"
-        assert rows[0].refs.get("site") == "bank.test"
-
-    def test_the_expired_inbox_row_is_deduped_per_site(self):
-        """A scheduled watcher re-hits the wall every tick; the row must not stack once per tick."""
-        st = _FakeState()
-        bmirror.surface_auth_expired("https://bank.test/x", state=st)
-        bmirror.surface_auth_expired("https://bank.test/other", state=st)  # same site slug
-
-        from personalclaw.inbox import InboxStore
-
-        store = InboxStore()
-        store.load()
-        rows = [
-            i
-            for i in store.items.values()
-            if i.refs.get("browse_auth") == "expired" and i.refs.get("site") == "bank.test"
-        ]
-        assert len(rows) == 1, f"expected one deduped row, got {len(rows)}"
+        assert [i for i in store.items.values() if i.refs.get("browse_auth") == "expired"] == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════

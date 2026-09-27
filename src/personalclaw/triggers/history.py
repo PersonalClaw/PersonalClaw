@@ -95,6 +95,10 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # mapping as "parked awaiting a human", which is exactly what a spent ceiling is — reversible,
     # not retried, and re-armed by the next day's key in `spend.json`.
     "needs_input": Outcome.DEFERRED.value,
+    # The action stopped for a person (`schedule_history.status_for_result`): browse at a sign-in
+    # page. DEFERRED's "parked awaiting a human" reading, as the day-budget pause above; the row's
+    # summary is the question, and the Inbox holds the answerable card (`triggers.parks`).
+    "waiting": Outcome.DEFERRED.value,
     # 🔴 A SUPPRESSED fire (WV-15). `service._record_suppression_row` persists the typed outcome in
     # BOTH `trigger` and `status` so criterion 8's "zero silent drops" is real — and every one of
     # them missed this table and projected as `failed`. A quiet-hours skip rendered as a red failure
@@ -236,6 +240,10 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         reason = reason or "action launched a background turn; outcome not yet known"
     elif status == "queued":
         reason = reason or "queued behind a run already in flight; it starts when that one ends"
+    elif status == "waiting":
+        # The recorders write the row's summary as `parks.waiting_line` ("Waiting for you. Sign in
+        # to …"); only a row that lost it needs the words supplied.
+        reason = reason or "Waiting for you."
     elif outcome == Outcome.BLOCKED_INJECTION.value:
         # `_record_blocked_fire` already writes the matched pattern class into `error`; this only
         # covers a row that lost it, because "blocked" with no reason reads as a bug in us.

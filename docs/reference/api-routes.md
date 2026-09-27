@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **875 registrations** over **707 distinct paths** — 868 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **876 registrations** over **708 distinct paths** — 869 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -34,8 +34,8 @@ The 127 families the surface divides into, largest first.
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
 | `/api/skills` | 19 | 15 |
+| `/api/triggers` | 19 | 16 |
 | `/api/mcp` | 18 | 14 |
-| `/api/triggers` | 18 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/projects` | 14 | 10 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 868 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 869 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -943,6 +943,7 @@ The 868 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/triggers/week` | the week-grid projection, from `?start=` (AUTO-A1 — S70). |
 | `DELETE` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
 | `PUT` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
+| `POST` | `/api/triggers/{id}/answer` | answer the question a trigger's action stopped on. |
 | `POST` | `/api/triggers/{id}/fire` | fire a `webhook` trigger from an EXTERNAL caller (WF2AUT-12). |
 | `GET` | `/api/triggers/{id}/history` | run records; other kinds answer `supported: false`. |
 | `GET` | `/api/triggers/{id}/history/{run_id}` | one full run record. |

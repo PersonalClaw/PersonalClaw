@@ -1,10 +1,11 @@
 """Applying mid-flight mutations (WF2-R2 / R20).
 
-`RunController.submit_mutation` validates a batch and QUEUES it; `drain_mutations` applies the queue
-under the lock, between scheduling steps — the designated safe point — re-verifying every batch
-against the state it now meets. A committed batch swaps in the candidate spec and applies its state
-effects: a rewind or `run_from` resets its binding closure, a skip marks a subtree, a fork branches
-a child run, and done nodes whose inputs changed are flagged stale.
+`RunController.submit_mutation` validates a batch and QUEUES it (`queue_mutation`, in memory and
+beside the run, so a restart does not lose it — `reload_mutations`); `drain_mutations` applies the
+queue under the lock, between scheduling steps — the designated safe point — re-verifying every
+batch against the state it now meets. A committed batch swaps in the candidate spec and applies its
+state effects: a rewind or `run_from` resets its binding closure, a skip marks a subtree, a fork
+branches a child run, and done nodes whose inputs changed are flagged stale.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store
 from personalclaw.workflows.bindings import node_deps
 from personalclaw.workflows.engine import release_execution_claim
-from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_STATES,
@@ -34,6 +34,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def queue_mutation(ctl: RunController, result: mutations.BatchResult, actor: str) -> None:
+    """Queue a validated batch for the drain point, in memory AND on disk (ledger 249).
+
+    On disk because the queue can outlive the controller: a PAUSED run applies its edits when it
+    is resumed (`submit_mutation` does not wake it), and a gateway restart in between took an
+    edit held only in the controller's memory with it — the run resumed without it and said
+    nothing. The record is the ops as submitted and who submitted them; a new controller prepares
+    them again against the spec it meets (`reload_mutations`), as the drain re-verifies anyway.
+    """
+    ctl._pending_mutations.append((result, actor))
+    _save_queue(ctl)
+
+
+def _save_queue(ctl: RunController) -> None:
+    store.write_pending_mutations(
+        ctl.run.id,
+        [
+            {"ops": [op.raw or op.to_dict() for op in result.ops], "actor": actor}
+            for result, actor in ctl._pending_mutations
+        ],
+    )
+
+
+def reload_mutations(ctl: RunController) -> list[tuple[mutations.BatchResult, str]]:
+    """The edits an earlier controller queued on this run and never applied, prepared against
+    the spec and state this one starts from. A batch that no longer prepares is kept, not
+    ok, so the drain journals it rejected rather than it vanishing."""
+    queued: list[tuple[mutations.BatchResult, str]] = []
+    for entry in store.read_pending_mutations(ctl.run.id):
+        ops = entry.get("ops")
+        if not isinstance(ops, list):
+            continue
+        result = mutations.prepare_batch(ops, ctl.spec, ctl.instances, effects=ctl._effects)
+        queued.append((result, str(entry.get("actor") or "user")))
+    return queued
+
+
 def drain_mutations(ctl: RunController) -> None:
     """Apply queued batches. Called under the lock, between scheduling steps.
 
@@ -41,12 +78,22 @@ def drain_mutations(ctl: RunController) -> None:
     preview, so a node that was pending at submit may be frozen by now. Re-validating
     against current state is the only way to catch that, and `validate_batch` is pure
     so running it twice costs nothing.
+
+    The queue on disk is cleared BEFORE any batch applies: an edit applies at most once, so a
+    crash mid-drain loses the batches not yet applied rather than applying a committed one again
+    on the next start.
     """
     if not ctl._pending_mutations:
         return
     queued = list(ctl._pending_mutations)
     ctl._pending_mutations.clear()
+    _save_queue(ctl)
     for result, actor in queued:
+        if not result.ok:
+            # Only a batch reloaded after a restart can arrive here not ok (a live submit refuses
+            # one): the spec it was written against has moved on. Rejected, and said so.
+            _reject(ctl, result, actor, result.issues)
+            continue
         try:
             root = Node.from_dict(ctl.spec.get("root") or {})
         except ValueError:
@@ -56,18 +103,24 @@ def drain_mutations(ctl: RunController) -> None:
         if issues:
             # The state moved under the preview. Rejected, and journaled as rejected —
             # a silently dropped batch is indistinguishable from an applied one.
-            ctl.journal.write(
-                journal_mod.MUTATION_REJECTED,
-                actor=actor,
-                ops=[o.to_dict() for o in result.ops],
-                issues=[i.to_dict() for i in issues],
-            )
-            ctl._publish(
-                "workflow_mutation_rejected",
-                {"issues": [i.to_dict() for i in issues], "actor": actor},
-            )
+            _reject(ctl, result, actor, issues)
             continue
         commit_mutation(ctl, result, actor)
+
+
+def _reject(
+    ctl: RunController, result: mutations.BatchResult, actor: str, issues: list[mutations.Issue]
+) -> None:
+    ctl.journal.write(
+        journal_mod.MUTATION_REJECTED,
+        actor=actor,
+        ops=[o.to_dict() for o in result.ops],
+        issues=[i.to_dict() for i in issues],
+    )
+    ctl._publish(
+        "workflow_mutation_rejected",
+        {"issues": [i.to_dict() for i in issues], "actor": actor},
+    )
 
 
 def commit_mutation(ctl: RunController, result: mutations.BatchResult, actor: str) -> None:
@@ -171,11 +224,15 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
         ctl._park_answers.pop(path, None)
         # A pending approval for a node about to re-run would resume a step that no
         # longer exists in that form (WF2-R7) — drop the token rather than let it land
-        # in the wrong epoch. The question is WITHDRAWN, so its Inbox row closes with it:
-        # left open, it offers the dropped token, and the re-ask's row dedupes onto it (same
-        # run, path and epoch) instead of carrying the live one. Reachable since a parked run
-        # applies a rewind at once; before, a rewind at a gate never ran while the gate waited.
-        if drop_continuations(ctl.run.id, instance_prefix=path) and node is not None and node.id:
+        # in the wrong epoch. The question is WITHDRAWN: its confirmation closes `withdrawn`
+        # (ledger 249), and its Inbox row closes with it — left open, it offers the dropped
+        # token, and the re-ask's row dedupes onto it (same run, path and epoch) instead of
+        # carrying the live one. Reachable since a parked run applies a rewind at once; before,
+        # a rewind at a gate never ran while the gate waited.
+        from personalclaw.workflows.gate_answers import withdraw_asks
+
+        withdrawn = withdraw_asks(ctl, reason="the step was rewound", instance_prefix=path)
+        if withdrawn and node is not None and node.id:
             attention.resolve_gate_item(ctl.services.attention_state, ctl.run.id, node.id)
 
 

@@ -237,6 +237,10 @@ def container_outcome(
     """
     if not child_states:
         return InstanceState.DONE
+    # A decline ends what holds it, whatever else is still live: nothing after an approval a
+    # person refused runs, so no join policy can outvote it (`gate_answers.end_at_gate`).
+    if InstanceState.DECLINED in child_states:
+        return InstanceState.DECLINED
     if any(
         st
         in (
@@ -269,6 +273,9 @@ def container_outcome(
 #: much a human needs to know about it: a cancel is a decision, a failure is a defect.
 _SEVERITY = (
     InstanceState.CANCELLED,
+    # Beside CANCELLED: both are a decision someone made, which is what a reader must be told
+    # first — a step that was never run because a person said no is not a defect to hunt for.
+    InstanceState.DECLINED,
     InstanceState.BLOCKED,
     InstanceState.ESCALATED,
     InstanceState.SCOPE_VIOLATION,
@@ -545,7 +552,12 @@ def _visit(
             )
             # A sequence admits exactly one unfinished child at a time. Stop at the
             # first child that has not reached a terminal state.
-            if not _is_terminal(_derive(child, cpath, states, edges, iterations, ctx)):
+            derived = _derive(child, cpath, states, edges, iterations, ctx)
+            if not _is_terminal(derived):
+                break
+            # A decline is not a failure `on_error` could continue past: nothing after an
+            # approval a person refused is ever visited, whatever the child declares.
+            if derived == InstanceState.DECLINED:
                 break
             if cst == InstanceState.FAILED and _on_error(child) == "fail_run":
                 break
@@ -719,9 +731,11 @@ def _ordering_satisfied(
       lets the join behind it proceed — and leaves the producer's own failure as the run's
       account of what went wrong.
 
-    Only a DATAFLOW edge can make a reader unreachable. A plain `needs` onto a skipped or
-    failed node is SATISFIED — that is precisely how a join stays off an untaken leg — and
-    treating it as unreachable instead would cascade a skip along every ordering edge in the run.
+    Only a DATAFLOW edge can make a reader unreachable — with one exception, a DECLINED
+    producer, whose every dependent is unreachable because nothing after a refused approval
+    runs. A plain `needs` onto a skipped or failed node is SATISFIED — that is precisely how a
+    join stays off an untaken leg — and treating it as unreachable instead would cascade a skip
+    along every ordering edge in the run.
     """
     deps = order.deps.get(spec)
     if not deps:
@@ -743,6 +757,11 @@ def _ordering_satisfied(
             else _state_of(states, ppath)
         )
         if carries_data and _is_terminal(pstate) and not _is_success(pstate):
+            _mark_unreachable(path, states, fr)
+            return False
+        # A DECLINED producer makes even a plain `needs` unreachable: "after" was the whole
+        # contract of that edge, but what comes after an approval a person refused never runs.
+        if pstate == InstanceState.DECLINED:
             _mark_unreachable(path, states, fr)
             return False
         if not _is_terminal(pstate):
@@ -1138,7 +1157,12 @@ def foreach_outcome(policy: ItemErrorPolicy, item_states: list[InstanceState]) -
     that was CANCELLED or BLOCKED outranks a failure in `_worst`'s severity order, and
     flattening "someone cancelled item 2" into "the fan-out failed" would throw away the more
     informative half of the verdict.
+
+    A DECLINED item is not an item error for any policy to tolerate: a person refused an approval
+    inside it, which ends the fan-out the way it ends every container (`container_outcome`).
     """
+    if InstanceState.DECLINED in item_states:
+        return InstanceState.DECLINED
     if policy == ItemErrorPolicy.HALT:
         # No terminal verdict is invented here. `advance_foreach` has already stopped starting
         # items, so the un-started ones are PENDING and this derives RUNNING; the run then

@@ -60,12 +60,10 @@ up shipped and inert.
 
 **Browser lifecycle is still NOT here**, and BA-4 does not change that. ``browse/transport.py``
 records the decision: core does not discover Chrome, does not own a ``--user-data-dir`` process and
-does not supervise one. So the handoff hands the caller the exact argv that binds a headful window
-to the site's persistent profile (:func:`~personalclaw.browse.handoff.chrome_launch_args`) instead
-of launching it — which keeps the profile choice unforgeable (a caller cannot accidentally open the
-login window against a different profile than the run will read) while leaving the process where it
-already lives. Absent a target the provider returns a typed, actionable failure rather than
-pretending to browse — an action that silently no-ops is worse than one that says it cannot run.
+does not supervise one — so it opens no sign-in window either. The person signs in in the browser
+the step drives (its ``cdp_url`` target), and answering the park runs the step again there. Absent
+a target the provider returns a typed, actionable failure rather than pretending to browse — an
+action that silently no-ops is worse than one that says it cannot run.
 """
 
 from __future__ import annotations
@@ -542,7 +540,6 @@ class BrowseActionProvider(ActionProvider):
         """
         from personalclaw.browse.handoff import (
             REASON_SESSION_EXPIRED,
-            chrome_launch_args,
             mark_expired,
             request_login,
         )
@@ -555,22 +552,16 @@ class BrowseActionProvider(ActionProvider):
         handoff = request_login(url, reason=reason, run_id=run_id, node_id=PROVIDER_NAME)
         if reason == REASON_SESSION_EXPIRED:
             mark_expired(url)
-            # BA-5 §(c): the moment auth_state=expired is written, SURFACE it — a persistent banner
-            # always, and a needs_input inbox item for a dispatch the workflow engine does not own
-            # (a schedule tick, a hook, a trigger's Test). Inside a run the engine raises the run's
-            # own row for this park, which is the one that can be answered; a second, site-level
-            # row would ask the same question again with nothing behind it. Best-effort.
+            # BA-5 §(c): the moment auth_state=expired is written, SURFACE it as a persistent
+            # banner. The question itself is asked by what the park belongs to — the workflow run's
+            # row, or the trigger's (`triggers.parks`) — where answering it runs this step again.
             from personalclaw.browse.mirror import surface_auth_expired
 
-            surface_auth_expired(url, inbox_item=not run_id)
-        payload = handoff.to_payload()
-        # The argv the caller needs to open the headful window on the RIGHT profile. Handed over
-        # rather than executed — see the module docstring on why core does not launch Chrome.
-        payload["headful_launch_args"] = chrome_launch_args(url, headful=True)
+            surface_auth_expired(url)
         return ActionResult(
             success=True,
             outcome=OUTCOME_NEEDS_INPUT,
-            stdout=json.dumps(payload),
+            stdout=json.dumps(handoff.to_payload()),
             stderr=handoff.sentence,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
