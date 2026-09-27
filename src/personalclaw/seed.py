@@ -241,6 +241,12 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
                 "Point it at a real directory.",
                 rail=SeedError.RAIL_SYMLINK_REPLACE,
             )
+        # The home's tmux server outlives its gateway, with its socket in the home: wiped under
+        # a live server, the socket goes and the server is orphaned, still running the old
+        # home's shells. So it is stopped while its socket is still there.
+        from personalclaw import tmux_substrate
+
+        tmux_substrate.kill_server(dst)
         shutil.rmtree(dst)
     elif dst.exists() and not dst.is_symlink():
         # Empty-but-existing dst is accepted (only non-empty needs

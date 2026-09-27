@@ -939,7 +939,7 @@ class GatewayOrchestrator:
         # Same installer resolution as the app installer and self-updater: a uv
         # venv has no pip module, and startup dep-repair silently failing there
         # left the gateway running without deps it had just decided it needed.
-        from personalclaw._installer import NoInstallerError, install_argv
+        from personalclaw._installer import NoInstallerError, install_argv, installer_env
 
         try:
             argv = install_argv(["--quiet", *missing])
@@ -953,6 +953,7 @@ class GatewayOrchestrator:
             cwd=proj,
             capture_output=True,
             timeout=300,
+            env=installer_env(),
         )
         if result.returncode == 0:
             # Invalidate import caches so the new packages are found
@@ -4826,6 +4827,8 @@ class GatewayOrchestrator:
             pkg_root = self_update.package_root(proj)
             if self.dashboard_state:
                 self.dashboard_state.push_update_progress("installing", "Installing package…")
+            from personalclaw._installer import installer_env
+
             pip_install = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
@@ -4837,6 +4840,7 @@ class GatewayOrchestrator:
                 cwd=pkg_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=installer_env(),
                 # Own group: pip forks build backends / compilers, all inheriting these
                 # pipes. Without it kill_timed_out CORRECTLY refuses to signal a group —
                 # this child would share the gateway's — and falls back to a single-pid

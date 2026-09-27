@@ -42,15 +42,35 @@ def test_an_explicit_cwd_still_wins(workspace: Path, tmp_path: Path) -> None:
     assert pb._native_session_cwd(str(mine)) == str(mine)
 
 
-def test_no_usable_workspace_is_a_private_scratch_not_the_process_cwd(
-    monkeypatch: pytest.MonkeyPatch,
+def test_no_usable_workspace_is_a_fresh_folder_inside_the_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """With no usable workspace a session gets a fresh, empty folder of its own, in the home's own
+    workspace, where the durability inventory claims it. On `main` it was a
+    `personalclaw-no-workspace-*` folder in the system temp folder that nothing removed: one per
+    session built in that state, outside the home."""
+    import tempfile
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.durability.inventory import claim_for
+
+    system_temp = tmp_path / "system-temp"
+    system_temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(system_temp))
     monkeypatch.setattr("personalclaw.config.loader.default_workspace_dir", lambda: "")
-    got = Path(pb._native_session_cwd(None))
-    assert got.is_dir() and not any(got.iterdir()), "the fallback is a fresh, empty directory"
-    assert got.resolve() != Path(os.getcwd()).resolve()
-    assert got.name.startswith("personalclaw-no-workspace-")
-    got.rmdir()
+
+    first = Path(pb._native_session_cwd(None)).resolve()
+    second = Path(pb._native_session_cwd(None)).resolve()
+
+    home = config_dir().resolve()
+    for got in (first, second):
+        assert got.is_dir() and not any(got.iterdir()), "the fallback is a fresh, empty directory"
+        assert got.is_relative_to(home), got
+        entry = claim_for(got.relative_to(home).as_posix())
+        assert entry is not None and entry.id == "workspace", got
+    assert first != second, "each session gets its own"
+    assert first != Path(os.getcwd()).resolve()
+    assert list(system_temp.iterdir()) == []
 
 
 class _Model:

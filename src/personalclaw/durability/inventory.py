@@ -1629,6 +1629,17 @@ IGNORED: tuple[str, ...] = (
     # GB), and a dependency may ship a `.db` file that is data, not a store this gateway holds
     # open — which the undeclared-database audit would otherwise report.
     "app-python",
+    # What the installers PersonalClaw runs keep (`_installer.installer_cache_env`): npm's cache,
+    # which npm cannot run without, and the temp folder pip, uv and npm run with. Kept in the home
+    # so none of it lands in the user's own `~/.npm` or temp folder, and ignored because it is a
+    # cache: a missing one is refilled on the next run, and restoring one is pointless. A specific
+    # name, not `cache`, because an ignored name is ignored at every depth and would hide a
+    # database in any folder called `cache`.
+    "installer-cache",
+    # The home's own tmux server socket (`tmux_substrate.server_flags`), which the home's
+    # persistent terminals and durable workers run in. MACHINE-LOCAL and process-scoped: a
+    # snapshot cannot carry a socket, and a restored home starts its own server on first use.
+    "tmux.sock",
     "update_check.json",  # last update check — regenerated on the next poll
     # RUM-2's releases-LIST cache, the direct twin of update_check.json above: the
     # ETag-cached, offline-tolerant releases view the channel/pin resolver reads,

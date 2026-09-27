@@ -78,9 +78,10 @@ SPEC = {
 
 _SHIM = '''#!{python}
 import os, signal, subprocess, sys
-# argv shape produced by tmux_substrate._argv: ["-L", <socket>, <subcommand>, ...]
+# argv shape produced by tmux_substrate._argv: ["-S", <socket path>, <subcommand>, ...], or
+# ["-L", <socket name>, ...] for a home whose path is too long for a socket
 argv = sys.argv[1:]
-if argv[:1] == ["-L"]:
+if argv[:1] in (["-S"], ["-L"]):
     argv = argv[2:]
 sub = argv[0] if argv else ""
 root = os.environ["PCLAW_SHIM_SESSIONS"]
@@ -648,6 +649,14 @@ class TestSC5RealTmux:
     now INSTALLS it and asserts `tmux -V` in the same step: on that job the skipif can no
     longer fire, so a regression here reds CI instead of vanishing into a skip count.
     """
+
+    @pytest.fixture(autouse=True)
+    def _the_test_homes_server_goes_with_it(self):
+        """Each home has a tmux server of its own, and a test home's path is too long for a
+        socket, so its socket is in tmux's own folder, where tmux leaves it when the server
+        exits. Every run of these tests would leave one there."""
+        yield
+        tmux_substrate.kill_server()
 
     async def test_live_reattaches_and_dead_tombstones_against_a_real_daemon(
         self, durable_on, tmp_path

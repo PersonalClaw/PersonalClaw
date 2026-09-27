@@ -958,25 +958,147 @@ class TestPersistence:
         monkeypatch.setattr(tmux_substrate.shutil, "which", lambda _b: None)
         assert terminal._persist_enabled(_make_request()) is False
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tier", ["", "fake-tier"])
+    async def test_a_persistent_shell_is_on_the_homes_server_and_never_a_client_in_a_tier(
+        self, monkeypatch, tmp_path, tier
+    ):
+        """With persistence on, the PTY runs a client of the HOME's tmux server. A shell opened
+        in a sandbox tier is wrapped itself instead: a tmux client in the tier would ask a server
+        outside it for the shell. On `main` the tier wrapped a client of the one machine-wide
+        server (`tmux -L personalclaw`)."""
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(
+            json.dumps(
+                {"dashboard": {"terminal": {"enabled": True, "persist": True, "shell": "/bin/sh"}}}
+            )
+        )
+        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
+        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        monkeypatch.setattr(tmux_substrate.shutil, "which", lambda _b: "/usr/bin/tmux")
+
+        class _Handle:
+            def __init__(self, argv):
+                self.argv = ["fake-tier-run", *argv]
+
+        class _Provider:
+            def wrap(self, _spec, argv):
+                return _Handle(argv)
+
+        monkeypatch.setattr(
+            "personalclaw.sandbox_providers.get_provider",
+            lambda name: _Provider() if name == "fake-tier" else None,
+        )
+        if tier:
+            monkeypatch.setitem(terminal._pending_sandbox, "tier-sess", tier)
+
+        captured: dict = {}
+        worker_fds: list[int] = []
+
+        class _FakeProcess:
+            def __init__(self):
+                self.pid = 4243
+                self.returncode = None
+                self._done = asyncio.Event()
+
+            async def wait(self):
+                await self._done.wait()
+                return self.returncode
+
+        async def _fake_spawn(*argv, **kwargs):
+            captured["argv"] = list(argv)
+            worker_fds.append(os.dup(kwargs["stdin"]))
+            return _FakeProcess()
+
+        def _fake_signal(sess, _sig):
+            sess.proc.returncode = 0
+            sess.proc._done.set()
+
+        monkeypatch.setattr("personalclaw.sandbox.create_subprocess_limited", _fake_spawn)
+        monkeypatch.setattr(terminal, "_signal_session", _fake_signal)
+        registry: dict = {}
+
+        from aiohttp.test_utils import TestClient, TestServer
+
+        try:
+            async with TestClient(TestServer(_make_app(registry=registry))) as client:
+                async with client.ws_connect("/api/ws/terminal/tier-sess") as ws:
+                    await ws.send_str(json.dumps({"type": "ping"}))
+                    msg = await ws.receive(timeout=3)
+                    assert json.loads(msg.data) == {"type": "pong"}
+                    await ws.close()
+                persistent = registry["tier-sess"].persistent
+                await terminal._kill_session(registry["tier-sess"])
+        finally:
+            for fd in worker_fds:
+                os.close(fd)
+
+        if tier:
+            assert captured["argv"] == ["fake-tier-run", "/bin/sh", "-l"]
+            assert persistent is False
+        else:
+            assert captured["argv"] == [
+                "tmux",
+                *tmux_substrate.server_flags(),
+                "new-session",
+                "-A",
+                "-s",
+                "pclaw-tier-sess",
+                "/bin/sh",
+                "-l",
+            ]
+            assert persistent is True
+
     def test_tmux_session_name_maps_dots(self):
         # tmux forbids '.' in session names; the dashboard id (e.g. "chat.123") maps to '_'.
         assert terminal._tmux_session_name("abc.123") == "pclaw-abc_123"
         assert terminal._tmux_session_name("plain") == "pclaw-plain"
 
     @pytest.mark.asyncio
-    async def test_list_tmux_sessions_empty_without_tmux(self, monkeypatch):
-        # No tmux binary → create_subprocess_exec raises FileNotFoundError → [] (never raises).
+    async def test_listing_sessions_is_empty_without_tmux(self, monkeypatch):
+        # The terminal lists through the substrate. No tmux binary → create_subprocess_exec
+        # raises FileNotFoundError → [] (never raises).
         async def _boom(*a, **k):
             raise FileNotFoundError("tmux")
 
-        monkeypatch.setattr(terminal.asyncio, "create_subprocess_exec", _boom)
-        assert await terminal._list_tmux_sessions() == []
+        monkeypatch.setattr(tmux_substrate.asyncio, "create_subprocess_exec", _boom)
+        assert await tmux_substrate.list_sessions() == []
 
     @pytest.mark.asyncio
-    async def test_kill_tmux_session_best_effort_no_tmux(self, monkeypatch):
+    async def test_killing_a_session_is_best_effort_without_tmux(self, monkeypatch):
         # kill on a missing tmux binary is a silent no-op (never raises into delete).
         async def _boom(*a, **k):
             raise FileNotFoundError("tmux")
 
-        monkeypatch.setattr(terminal.asyncio, "create_subprocess_exec", _boom)
-        await terminal._kill_tmux_session("abc.123")  # must not raise
+        monkeypatch.setattr(tmux_substrate.asyncio, "create_subprocess_exec", _boom)
+        await tmux_substrate.kill_session(terminal._tmux_session_name("abc.123"))
+
+    @pytest.mark.asyncio
+    async def test_deleting_a_terminal_kills_only_its_own_session(self, monkeypatch, tmp_path):
+        """The terminal's private kill named its session with a bare ``-t pclaw-<id>``. When no
+        session has exactly that name (the shell already exited), tmux takes the one whose name
+        STARTS with it: deleting terminal ``proj`` could kill the durable worker
+        ``pclaw-proj-r1-wf``. The substrate's kill asks for the exact name (``=pclaw-<id>``)."""
+        seen: list[tuple] = []
+
+        class _Proc:
+            async def wait(self):
+                return 0
+
+        async def _spawn(*argv, **_kwargs):
+            seen.append(argv)
+            return _Proc()
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"persist": True}}}))
+        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
+        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        monkeypatch.setattr(tmux_substrate.shutil, "which", lambda _b: "/usr/bin/tmux")
+        monkeypatch.setattr(tmux_substrate.asyncio, "create_subprocess_exec", _spawn)
+        request = _make_request()
+        request.match_info = {"session_id": "proj"}
+
+        await terminal.api_terminal_delete(request)
+
+        kills = [argv for argv in seen if "kill-session" in argv]
+        assert kills and kills[0][-2:] == ("-t", "=pclaw-proj"), kills

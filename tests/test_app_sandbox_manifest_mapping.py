@@ -3,8 +3,15 @@ the app launcher applies (EXECUTION-ISOLATION EI-4 §1.3(4))."""
 
 from __future__ import annotations
 
-from personalclaw.apps.backend_runtime import build_backend_sandbox_spec
-from personalclaw.apps.manifest import BackendConfig
+import os
+import tempfile
+import time
+from pathlib import Path
+
+import pytest
+
+from personalclaw.apps.backend_runtime import BackendSupervisor, build_backend_sandbox_spec
+from personalclaw.apps.manifest import AppManifest, BackendConfig
 from personalclaw.sandbox import PROFILE_TOOL
 
 # ── backend.sandbox manifest field ──────────────────────────────────────────────
@@ -77,3 +84,83 @@ def test_env_is_copied_not_aliased():
     )
     src["B"] = "2"
     assert spec.env == {"A": "1"}  # later host-side mutation does not leak into the spec
+
+
+# ── a backend started through a sandbox tier leaves nothing behind ────────────────────────────
+#
+# A tier's wrap can leave temp state for the launch (the `none` tier's seatbelt profile or
+# Linux launcher script), and the handle that owns it is to be cleaned up once the child
+# exits. On `main` the supervisor dropped the handle the moment it had the argv, so an app
+# declaring `backend.sandbox: "none"` left one `personalclaw_sandbox_*` file in the system
+# temp folder every time its backend started.
+
+
+@pytest.fixture
+def boxed_backend(tmp_path, monkeypatch):
+    """An app whose backend runs through the `none` tier, and the temp folder its wrap uses.
+
+    The wrap is stood in for by one that makes the same kind of file, so what is under test
+    is the supervisor's handling of it on every platform, including one with no OS sandbox.
+    """
+    from personalclaw.apps import manager
+    from personalclaw.sandbox_providers import none as none_tier
+
+    system_temp = tmp_path / "system-temp"
+    system_temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(system_temp))
+
+    def wrap_that_leaves_a_file(argv, mode="auto"):
+        fd, path = tempfile.mkstemp(prefix="personalclaw_sandbox_", suffix=".sb")
+        os.close(fd)
+        return list(argv), path
+
+    monkeypatch.setattr(none_tier, "wrap_argv", wrap_that_leaves_a_file)
+    entry = manager.app_dir("boxed") / "backend" / "server.py"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("import time\nwhile True:\n    time.sleep(1)\n", encoding="utf-8")
+    manifest = AppManifest.from_dict(
+        {
+            "name": "boxed",
+            "version": "1.0.0",
+            "displayName": "Boxed",
+            "description": "fixture",
+            "backend": {"entryPoint": "backend/server.py", "type": "python", "sandbox": "none"},
+        }
+    )
+    supervisor = BackendSupervisor()
+    yield supervisor, manifest, system_temp
+    supervisor.stop_all()
+
+
+def _wrap_files(folder: Path) -> list[str]:
+    return sorted(p.name for p in folder.iterdir() if p.name.startswith("personalclaw_sandbox_"))
+
+
+def test_stopping_a_sandboxed_backend_removes_what_its_wrap_left(boxed_backend):
+    supervisor, manifest, system_temp = boxed_backend
+
+    running = supervisor.start(manifest)
+    assert running is not None and running.is_alive()
+    assert len(_wrap_files(system_temp)) == 1, "the launch keeps its wrap while it runs"
+
+    assert supervisor.stop("boxed")
+    assert _wrap_files(system_temp) == []
+
+
+def test_a_backend_that_died_and_is_started_again_leaves_one_wrap_not_two(boxed_backend):
+    supervisor, manifest, system_temp = boxed_backend
+
+    first = supervisor.start(manifest)
+    assert first is not None and first.proc is not None
+    first.proc.kill()
+    first.proc.wait(timeout=10)
+    deadline = time.monotonic() + 10
+    while first.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    second = supervisor.start(manifest)
+    assert second is not None and second.pid != first.pid
+    assert len(_wrap_files(system_temp)) == 1, _wrap_files(system_temp)
+
+    supervisor.stop("boxed")
+    assert _wrap_files(system_temp) == []

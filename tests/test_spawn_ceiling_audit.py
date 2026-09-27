@@ -389,17 +389,10 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/files.py::api_upload::asyncio.create_subprocess_exec": (
         "operator: native file picker"
     ),
-    # Terminal tmux session management — operator's own persistent shells.
-    "dashboard/handlers/terminal.py::_kill_tmux_session::asyncio.create_subprocess_exec": (
-        "operator: kill user's tmux session"
-    ),
-    "dashboard/handlers/terminal.py::_list_tmux_sessions::asyncio.create_subprocess_exec": (
-        "operator: list user's tmux sessions"
-    ),
-    # EI-6 tmux substrate — the same class as the terminal entries above, and for the same
-    # reason: the argv is FIXED (`tmux -L personalclaw <subcommand>`), no element of it is
-    # agent-influenced, and every one of these is a bounded read of our own tmux server. A
-    # resource ceiling on a `has-session` probe would cap the boot sweep's ability to ask
+    # EI-6 tmux substrate, which the terminal's own session management goes through too: the
+    # argv is FIXED (`tmux -S <home>/tmux.sock <subcommand>`), no element of it is
+    # agent-influenced, and every one of these is a bounded call to the home's own tmux server.
+    # A resource ceiling on a `has-session` probe would cap the boot sweep's ability to ask
     # whether a run's worker is still alive, which is the opposite of the safety it buys.
     "tmux_substrate.py::has_session::asyncio.create_subprocess_exec": (
         "operator: probe our own tmux server for a session"
@@ -415,6 +408,9 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     ),
     "tmux_substrate.py::kill_session::asyncio.create_subprocess_exec": (
         "operator: kill a session on our own tmux server"
+    ),
+    "tmux_substrate.py::kill_server::subprocess.run": (
+        "operator: stop the home's own tmux server (service uninstall, home wipe)"
     ),
     # Update machinery — operator/service; re-execs the gateway itself (must not be capped).
     # The install-kind decision + the shared git/pip primitives live in core self_update.py

@@ -45,7 +45,7 @@ from personalclaw.apps.manifest import AppManifest
 from personalclaw.periodic_sweep import PeriodicSweep
 
 if TYPE_CHECKING:
-    from personalclaw.sandbox_providers import SandboxSpec
+    from personalclaw.sandbox_providers import SandboxHandle, SandboxSpec
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +158,10 @@ class RunningBackend:
     pid: int
     health_check: str = "/health"
     proc: subprocess.Popen | None = field(default=None, repr=False)
+    #: The sandbox tier's handle for this launch, when the app declared one. It owns the temp
+    #: state the wrap made (the ``none`` tier's seatbelt profile or launcher script), which
+    #: :meth:`release` removes once the process has exited.
+    sandbox: SandboxHandle | None = field(default=None, repr=False)
 
     @property
     def base_url(self) -> str:
@@ -165,6 +169,12 @@ class RunningBackend:
 
     def is_alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
+
+    def release(self) -> None:
+        """Remove what the sandbox wrap left for this launch. Call it after the process exits."""
+        handle, self.sandbox = self.sandbox, None
+        if handle is not None:
+            handle.cleanup()
 
 
 class BackendSupervisor:
@@ -198,6 +208,7 @@ class BackendSupervisor:
             if rb and not rb.is_alive():
                 # Process died — drop the stale entry so the proxy 502s honestly.
                 self._procs.pop(name, None)
+                rb.release()
                 return None
             return rb
 
@@ -221,6 +232,10 @@ class BackendSupervisor:
             existing = self._procs.get(name)
             if existing and existing.is_alive():
                 return existing
+            if existing is not None:
+                # It died since it started: what its wrap left goes before a new launch wraps again.
+                self._procs.pop(name, None)
+                existing.release()
 
             root = app_dir(name)
             entry = (root / backend.entryPoint).resolve()
@@ -324,6 +339,7 @@ class BackendSupervisor:
             # backend that silently ran on the host would defeat the isolation it asked for. The
             # ceiling shim still wraps the resulting (client) argv exactly as the host path does.
             inner_cmd = list(cmd)
+            handle: SandboxHandle | None = None
             sandbox_name = (backend.sandbox or "").strip()
             if sandbox_name:
                 from personalclaw.sandbox_providers import (
@@ -369,9 +385,16 @@ class BackendSupervisor:
                 )
             except OSError as exc:
                 logger.warning("app %s backend failed to launch: %s", name, exc)
+                if handle is not None:
+                    handle.cleanup()
                 return None
             rb = RunningBackend(
-                name=name, port=port, pid=proc.pid, health_check=backend.healthCheck, proc=proc
+                name=name,
+                port=port,
+                pid=proc.pid,
+                health_check=backend.healthCheck,
+                proc=proc,
+                sandbox=handle,
             )
             self._procs[name] = rb
             logger.info("app %s backend started: pid=%s port=%s", name, proc.pid, port)
@@ -382,10 +405,16 @@ class BackendSupervisor:
         True if a process was stopped."""
         with self._lock:
             rb = self._procs.pop(name, None)
-        if rb is None or rb.proc is None:
+        if rb is None:
             return False
-        proc = rb.proc
-        if proc.poll() is not None:
+        try:
+            return self._terminate(name, rb.proc)
+        finally:
+            rb.release()
+
+    @staticmethod
+    def _terminate(name: str, proc: subprocess.Popen | None) -> bool:
+        if proc is None or proc.poll() is not None:
             return False
         try:
             proc.terminate()
