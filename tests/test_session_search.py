@@ -18,17 +18,20 @@ from personalclaw.history import ConversationLog
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """Own home + a fresh connection, since the module caches one process-wide."""
+    """Own home + a fresh connection and indexer, since the module keeps one process-wide."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     ss.reset_for_tests()
+    ss.INDEXER.reset()
     yield
+    ss.INDEXER.reset()
     ss.reset_for_tests()
 
 
 @pytest.fixture
 def log(tmp_path):
-    """A conversation log with three findable sessions."""
-    log = ConversationLog(base_dir=tmp_path / "history")
+    """The home's conversation log, with three findable sessions."""
+    log = ConversationLog()
+    assert log.is_home_log()
     log.append("chat-1", "user", "How do I configure the Bedrock provider for Claude?")
     log.append("chat-1", "assistant", "Bind a model under Settings and set the region.")
     log.append("chat-2", "user", "Remind me about the quarterly planning document")
@@ -58,20 +61,10 @@ class TestIndexing:
         ss.reindex_all(log)
         assert ss.reindex_all(log, force=True) == 3
 
-    def test_limit_caps_one_pass(self, log):
-        assert ss.reindex_all(log, limit=2) == 2
-
-    def test_limited_pass_does_not_prune(self, log):
-        """A capped pass hasn't seen every session, so it must not delete rows."""
-        ss.reindex_all(log)
-        before = ss.stats()["sessions"]
-        ss.reindex_all(log, limit=1, force=True)
-        assert ss.stats()["sessions"] == before
-
-    def test_deleted_session_is_pruned_on_a_full_pass(self, log, tmp_path):
+    def test_deleted_session_is_pruned_on_a_full_pass(self, log):
         ss.reindex_all(log)
         assert ss.search_sessions("quarterly")
-        for path in (tmp_path / "history").glob("chat-2*"):
+        for path in log._dir.glob("chat-2*"):
             path.unlink()
         log._invalidate_cache("chat-2")
         ss.reindex_all(log)
@@ -284,15 +277,11 @@ class TestDegradation:
 
         assert ss.reindex_all(_Broken()) == 0
 
-    def test_reindex_session_survives_an_unreadable_transcript(self):
-        class _Broken:
-            def get_metadata(self, key):
-                return {}
-
-            def read_messages(self, key):
-                raise OSError("cannot read")
-
-        assert ss.reindex_session("k", log=_Broken()) is False
+    def test_reindex_session_survives_an_unreadable_transcript(self, log):
+        path = log._path("chat-1")
+        path.unlink()
+        path.mkdir()  # a transcript that cannot be opened for reading
+        assert ss.reindex_session("chat-1", log=log) is False
 
     def test_forget_is_safe_on_an_unknown_key(self):
         ss.forget_session("never-existed")
@@ -371,55 +360,71 @@ class TestEndpoint:
         assert body["sessions"] == []
 
 
-# ── Heartbeat wiring ──
+# ── The indexer: the index caught up in the background ──
 
 
-class TestHeartbeatWiring:
-    def test_reindex_cadence_is_declared(self):
+def _wait_until_caught_up(timeout: float = 20.0) -> dict:
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        progress = ss.INDEXER.progress()
+        if progress is not None and not progress["building"]:
+            return progress
+        _time.sleep(0.02)
+    raise AssertionError(f"the indexer did not catch up: {ss.INDEXER.progress()}")
+
+
+class TestTheIndexer:
+    def test_it_indexes_every_chat_when_it_starts(self, log):
+        """What the heartbeat did 200 chats every five minutes, the indexer does until none is
+        left: here every chat, as soon as it starts."""
+        for n in range(40):
+            log.append(f"bulk-{n}", "user", f"the kiwi harvest, batch {n}")
+        assert ss.stats()["sessions"] == 0
+        assert ss.INDEXER.start()
+        assert _wait_until_caught_up() == {"indexed": 43, "of": 43, "building": False}
+        assert ss.stats()["sessions"] == 43
+        assert len(ss.search_sessions("kiwi", limit=200)) == 40
+
+    def test_a_chat_written_after_it_started_is_read_in_soon(self, log):
+        ss.INDEXER.start()
+        _wait_until_caught_up()
+        log.append("late", "user", "the tamarind shipment arrived")
+        _wait_until_caught_up()
+        assert [r["key"] for r in ss.search_sessions("tamarind")] == ["late"]
+
+    def test_one_chat_it_cannot_index_does_not_stop_the_rest(self, log, monkeypatch):
+        real = ss.reindex_session
+
+        def failing(key, log=None):
+            if key == "chat-2":
+                raise RuntimeError("index exploded")
+            return real(key, log=log)
+
+        monkeypatch.setattr(ss, "reindex_session", failing)
+        ss.INDEXER.start()
+        assert _wait_until_caught_up()["building"] is False
+        assert {r["key"] for r in ss.search_sessions("bedrock")} == {"chat-1", "chat-3"}
+
+    def test_it_waits_while_a_foreground_request_holds_it(self, log):
+        """The pause a search and the chat list take: nothing is indexed while it is held."""
+        for n in range(20):
+            log.append(f"held-{n}", "user", f"lychee notes {n}")
+        with ss.INDEXER.foreground():
+            ss.INDEXER.start()
+            import time as _time
+
+            _time.sleep(0.5)
+            assert ss.stats()["sessions"] == 0
+        assert _wait_until_caught_up()["indexed"] == 23
+
+    def test_the_heartbeat_no_longer_indexes(self):
+        """One mechanism: the heartbeat's capped pass is gone, not kept beside the indexer."""
         from personalclaw import heartbeat
 
-        assert heartbeat._SESSION_INDEX_TICKS >= 1
-        assert heartbeat._SESSION_INDEX_MAX_PER_PASS >= 1
-
-    @pytest.mark.asyncio
-    async def test_beat_actually_calls_the_reindex(self, monkeypatch):
-        """The periodic sweep is what catches channel appends and rewrites.
-
-        Drives the real ``_beat`` rather than inspecting source, so deleting the
-        call site fails this test.
-        """
-        from personalclaw import heartbeat
-
-        calls: list = []
-        monkeypatch.setattr(ss, "reindex_all", lambda **kw: calls.append(kw) or 3)
-
-        service = heartbeat.HeartbeatService.__new__(heartbeat.HeartbeatService)
-        service._tick = heartbeat._SESSION_INDEX_TICKS  # a tick the sweep runs on
-        service._processing = True  # skip the heartbeat-file work
-        service._consolidator = None
-        service._on_due_commitments = None
-        service._interval = 60
-
-        await service._beat()
-        assert calls, "the heartbeat must run the session-search reindex"
-        assert calls[0]["limit"] == heartbeat._SESSION_INDEX_MAX_PER_PASS
-
-    @pytest.mark.asyncio
-    async def test_a_reindex_failure_does_not_kill_the_tick(self, monkeypatch):
-        from personalclaw import heartbeat
-
-        def _boom(**kwargs):
-            raise RuntimeError("index exploded")
-
-        monkeypatch.setattr(ss, "reindex_all", _boom)
-        service = heartbeat.HeartbeatService.__new__(heartbeat.HeartbeatService)
-        service._tick = heartbeat._SESSION_INDEX_TICKS
-        service._processing = True
-        service._consolidator = None
-        service._on_due_commitments = None
-        service._interval = 60
-
-        await service._beat()  # must not raise
+        assert not hasattr(heartbeat, "_SESSION_INDEX_TICKS")
+        assert not hasattr(heartbeat, "_SESSION_INDEX_MAX_PER_PASS")
 
 
 # ── The index describes the transcript store it was handed ───────────────────
@@ -505,24 +510,6 @@ class TestValidationRegressions:
         path.write_text("\n".join(lines) + "\n")
         log._invalidate_cache("m1")
         assert log.search_sessions("watermelon") == []
-
-    def test_first_heartbeat_tick_builds_the_index(self, monkeypatch):
-        """`_tick` starts at 1, so a plain modulo left a fresh install unsearchable
-        for the first five minutes — including the initial history sweep."""
-        import asyncio as _asyncio
-
-        from personalclaw import heartbeat
-
-        calls: list = []
-        monkeypatch.setattr(ss, "reindex_all", lambda **kw: calls.append(kw) or 0)
-        service = heartbeat.HeartbeatService.__new__(heartbeat.HeartbeatService)
-        service._tick = 1  # the very first wake-up
-        service._processing = True
-        service._consolidator = None
-        service._on_due_commitments = None
-        service._interval = 60
-        _asyncio.run(service._beat())
-        assert calls, "the first tick must build the index"
 
 
 class TestCoarseMtimeFilesystems:

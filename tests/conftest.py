@@ -645,6 +645,12 @@ def _close_sqlite_connections(monkeypatch):
 
     yield
 
+    # A background thread a test started — the session search indexer, which a gateway's
+    # `_init_heartbeat` starts — stops before the connections it may be using are closed under
+    # it: closing one mid-statement on another thread crashed the interpreter (measured).
+    from personalclaw import session_search
+
+    session_search.INDEXER.reset()
     for conn in opened:
         try:
             conn.close()

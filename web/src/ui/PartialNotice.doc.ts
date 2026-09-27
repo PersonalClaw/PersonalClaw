@@ -11,6 +11,8 @@ const doc: UiDoc = {
     { name: 'total', description: 'How many exist — the number the bounded read could not reach.' },
     { name: 'what', description: 'The rows as a lowercase plural noun, copied from the same surface\'s LoadError and skeleton rather than invented, so one surface speaks one vocabulary in all four states.' },
     { name: 'detail', description: 'What is wrong BEYOND the missing rows, in this surface\'s own terms — a graph not drawing an edge, a picker not offering a candidate. Optional: a surface that only lists rows has nothing further to disclose.' },
+    { name: 'verb', description: 'What the surface did with the part it holds, leading the sentence: "Showing" (the default) for rows, "Searched" for the chats a search looked in.' },
+    { name: 'action', description: 'The way to the rest when the surface can fetch it on request — `{label, onClick, busy}`, a text button after the sentence. A search whose index is still being built offers to read the other chats directly.' },
     { name: 'className', description: 'Layout-only override for placement within the caller\'s header or toolbar.' },
   ],
   bestPractices: [

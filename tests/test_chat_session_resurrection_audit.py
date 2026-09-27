@@ -815,7 +815,7 @@ def _archive(state, key: str) -> str:
     meta["closed"] = True
     lines[0] = json.dumps(meta) + "\n"
     path.write_text("".join(lines), encoding="utf-8")
-    state.conversation_log._meta_cache.pop(hk, None)
+    state.conversation_log._invalidate_cache(hk)
     state._sessions.pop(key, None)
     return hk
 
@@ -905,7 +905,7 @@ async def test_an_unreadable_log_does_not_lock_the_user_out(tmp_path):
     state._sessions.pop(key, None)  # disk-only, as after a restart
 
     log = state.conversation_log
-    log._meta_cache.pop(hk, None)
+    log._invalidate_cache(hk)
     real_read = log._read_metadata
 
     def unreadable(k: str):

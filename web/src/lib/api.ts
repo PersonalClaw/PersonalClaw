@@ -6561,6 +6561,27 @@ async function _collectTasks(
   }
 }
 
+/** `GET /api/sessions/search`: the matches, and how much of the history they come from.
+ *  Everything but `sessions` is absent when no search ran (a query under two characters). */
+export interface SessionSearchAnswer {
+  sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>
+  /** Which path answered: the index, a direct read of the transcripts, or both. */
+  source?: 'index' | 'scan' | 'index+scan'
+  /** How many chats the answer looked in whole, of how many there are. */
+  searched?: { chats: number; of: number }
+  /** Whether it looked in every chat whole. `false` while the search index is still being built,
+   *  when a chat is longer than the index keeps, or — with no index — when only the newest were
+   *  read; asking again with `rest` reads the others directly. A partial answer is never shown as
+   *  a complete one. */
+  complete?: boolean
+  /** The search index's own count of the chats it holds as they are (`indexed` of `of`), and of
+   *  those it holds only the beginning of (`long`); `null` when there is no index. */
+  index?: { indexed: number; of: number; building: boolean; long: number } | null
+  /** How many chats matched, of those searched — more than `sessions` lists when there were
+   *  more matches than the answer's limit. */
+  matched?: number
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -7041,10 +7062,11 @@ export const api = {
   // ── Full-text conversation search (over persisted JSONL content) ──
   // `snippet` carries the matching passage with `<<`/`>>` around the matched terms
   // (present on FTS-index hits; absent when the linear-scan fallback answered).
-  // Returns `{sessions, source}` VERBATIM — `source` ('index' | 'scan') reports which
-  // path answered, and the UI surfaces it (SM-2), so we keep it rather than drop it
-  // one line before the caller. `source` is absent when no search ran (empty/short q).
-  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
+  // Returns the answer VERBATIM — `source` reports which path answered, and `searched` /
+  // `complete` how much of the history it covered (see `SessionSearchAnswer`). `rest` reads
+  // directly every chat the index cannot answer for whole.
+  sessionsSearch: (q: string, opts?: { rest?: boolean; limit?: number }) =>
+    get<SessionSearchAnswer>(`/api/sessions/search?q=${encodeURIComponent(q)}${opts?.rest ? '&rest=1' : ''}${opts?.limit ? `&limit=${opts.limit}` : ''}`),
 
   // ── Background subagents monitor (spawned by crons / loops / Slack) ──
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),

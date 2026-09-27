@@ -65,6 +65,14 @@ async def api_sessions_health(request: web.Request) -> web.Response:
     return web.json_response({"stalled": _health_cache})
 
 
+def _listed(log) -> list[dict]:
+    """The sessions, with the search indexer held off while they are listed."""
+    from personalclaw import session_search
+
+    with session_search.INDEXER.foreground():
+        return log.list_sessions()
+
+
 async def api_sessions(request: web.Request) -> web.Response:
     """GET /api/sessions — list conversation session files.
 
@@ -87,9 +95,11 @@ async def api_sessions(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         offset = 0
     request_app = request.get("app", "")
+    # Off the event loop: a history of thousands of chats is a stat of each transcript.
+    listed = await asyncio.to_thread(_listed, state.conversation_log)
     all_sessions = [
         s
-        for s in state.conversation_log.list_sessions()
+        for s in listed
         # Restricted (incognito/temporary) sessions stay out of every
         # discovery surface, not just the chat-history list.
         if s.get("memory_mode") not in ("incognito", "temporary")
@@ -109,23 +119,30 @@ async def api_sessions(request: web.Request) -> web.Response:
 async def api_sessions_search(request: web.Request) -> web.Response:
     """GET /api/sessions/search — content search across session transcripts.
 
-    Served from the FTS5 index when it has an answer (SESSION-MANAGEMENT §C1),
-    which also yields a highlighted ``snippet`` showing why each session matched.
-    Falls back to the linear transcript scan when the index is unavailable, empty,
-    or genuinely finds nothing — the scan reads a bounded window of recent
-    sessions, so it stays a correct-but-narrower answer rather than a wrong one.
+    Served from the FTS5 index (SESSION-MANAGEMENT §C1), which also yields a highlighted
+    ``snippet`` showing why each session matched, and read directly from the transcripts for
+    what the index cannot answer (:func:`personalclaw.session_search.search`).
 
     Query params:
       - ``q``: search string (min 2 chars; empty returns no results)
       - ``limit``: max results (default 50, max 200)
+      - ``rest``: ``1`` to also read directly every chat the index does not answer for whole
 
-    Returns ``{sessions, source}`` — session metadata as in :func:`api_sessions`,
-    plus which path answered. Titles may be LLM-generated and are redacted.
+    Returns ``{sessions, source, searched, complete, index, matched}``: session metadata as in
+    :func:`api_sessions`, which path answered (``index``, ``scan`` or ``index+scan``), how many
+    chats the answer looked in whole of how many there are (``searched: {chats, of}``), whether
+    that is all of them (``complete``), the index's own count (``index: {indexed, of, building,
+    long}``, ``long`` being the chats it holds only the beginning of; ``null`` when there is no
+    index), and how many chats matched (``matched``, which is more than ``sessions`` holds when
+    there were more matches than ``limit``). **A partial answer says so**: while the index is
+    being built, when a chat is longer than it keeps, or with no index, an answer that did not
+    look in every chat whole is ``complete: false``, and the same search with ``rest=1`` reads
+    the others. Titles may be LLM-generated and are redacted.
 
     An app caller's matches are in the conversations it started and nowhere else
-    (``DashboardState.session_creating_app``). Both paths rank every transcript, so an app's
-    search asks each for its widest page and keeps its own: an answer that can be narrower than
-    the app's whole history, and never one that names or quotes a conversation of yours.
+    (``DashboardState.session_creating_app``), and its counts are of those conversations only:
+    an answer that can be narrower than the app's whole history, and never one that names,
+    quotes or counts a conversation of yours.
     """
     state: DashboardState = request.app["state"]
     if not state.conversation_log:
@@ -137,33 +154,26 @@ async def api_sessions_search(request: web.Request) -> web.Response:
         limit = max(1, min(int(request.query.get("limit", "50")), 200))
     except (TypeError, ValueError):
         limit = 50
+    rest = request.query.get("rest", "") in ("1", "true", "yes")
     request_app = request.get("app", "")
     fetch = 200 if request_app else limit
+    log = state.conversation_log
 
-    def _visible(rows: list) -> list:
-        if not request_app:
-            return rows
-        return [
-            s for s in rows if state.session_creating_app(str(s.get("key", ""))) == request_app
-        ][:limit]
+    def _visible(key: str) -> bool:
+        return state.session_creating_app(key) == request_app
 
-    loop = asyncio.get_running_loop()
-    source = "index"
-    sessions: list = []
-    try:
+    def _search() -> dict:
         from personalclaw import session_search
 
-        sessions = _visible(
-            await loop.run_in_executor(None, lambda: session_search.search_sessions(q, limit=fetch))
-        )
-    except Exception:  # noqa: BLE001 — the scan below is the designed fallback
-        logger.debug("session search index unavailable", exc_info=True)
-        sessions = []
-    if not sessions:
-        source = "scan"
-        sessions = _visible(
-            await loop.run_in_executor(None, state.conversation_log.search_sessions, q, fetch)
-        )
+        # The indexer gives way while a search is answered, as it does for the chat list.
+        with session_search.INDEXER.foreground():
+            return session_search.search(
+                q, log=log, limit=fetch, rest=rest, visible=_visible if request_app else None
+            ).to_dict()
+
+    payload = await asyncio.get_running_loop().run_in_executor(None, _search)
+    sessions = payload["sessions"][:limit]
+    payload["sessions"] = sessions
     for s in sessions:
         title = s.get("title")
         if title:
@@ -180,7 +190,7 @@ async def api_sessions_search(request: web.Request) -> web.Response:
             snippet, _ = _h.redact_exfiltration_urls(snippet)
             snippet, _ = _h.redact_credentials(snippet)
             s["snippet"] = snippet
-    return web.json_response({"sessions": sessions, "source": source})
+    return web.json_response(payload)
 
 
 async def api_session_detail(request: web.Request) -> web.Response:

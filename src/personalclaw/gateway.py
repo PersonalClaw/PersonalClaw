@@ -2857,6 +2857,11 @@ class GatewayOrchestrator:
             on_auto_archive=_auto_archive_sessions,
         )
         await self.heartbeat_svc.start()
+        # The cross-session search index keeps itself caught up with the transcripts, on its
+        # own thread and at a pace that leaves the gateway its time (`SessionIndexer`).
+        from personalclaw import session_search
+
+        session_search.INDEXER.start()
 
     def _register_graph_maintenance_passes(self) -> None:
         """Give the standing maintenance jobs their cadence (KL-14).
@@ -4498,6 +4503,9 @@ class GatewayOrchestrator:
                 pass
         if self.heartbeat_svc:
             self.heartbeat_svc.stop()
+        from personalclaw import session_search
+
+        await asyncio.to_thread(session_search.INDEXER.stop, wait=True)
         if self.inbox_svc:
             self.inbox_svc.stop()
         # Kill all ACP processes and close connections

@@ -80,6 +80,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
   ]
   const searchingContent = q.trim().length >= MIN_CONTENT_QUERY && (content.searching || content.query !== q.trim())
   const failures = CONTENT_SOURCES.flatMap((s) => (content.query === q.trim() && content.failures[s] ? [content.failures[s]!] : []))
+  const notes = CONTENT_SOURCES.flatMap((s) => (content.query === q.trim() && content.notes[s] ? [content.notes[s]!] : []))
 
   // A new query puts the cursor back on the first match, IN the handler that changes the query —
   // the same place ⌘K already resets it. This was `useEffect(() => { setActive(0) }, [q])`, which
@@ -159,13 +160,15 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
                 <div className="px-l py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</div>
               )}
             </div>
-            {/* The content half's progress and failures. Outside the listbox, because neither is an
-                option; a failed source is said in words so it never reads as a source with nothing
-                in it. */}
-            {(searchingContent || failures.length > 0) && (
+            {/* The content half's progress, failures and partial answers. Outside the listbox,
+                because none is an option; a failed source is said in words so it never reads as a
+                source with nothing in it, and one that looked in only part of what it holds says
+                how much. */}
+            {(searchingContent || failures.length > 0 || notes.length > 0) && (
               <div role="status" data-type="caption" className="flex flex-col gap-0.5 border-t border-outline-variant/40 px-l py-2">
                 {searchingContent && <span className="text-on-surface-low">Searching chats, memory, knowledge and tasks…</span>}
                 {failures.map((f) => <span key={f} className="text-danger">{f}</span>)}
+                {notes.map((note) => <span key={note} data-partial="true" className="text-on-surface-low">{note}</span>)}
               </div>
             )}
             {/* footer hint */}
