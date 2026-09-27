@@ -9,6 +9,10 @@ import type { ChannelRuntime, NotificationRuleRow } from '../../lib/api'
 // had their approvals asked on Discord. This is the control: it lists the channels that know you,
 // keeps the old order as the default, writes the allowlisted path, and its description says what
 // happens under the current choice. Driven through the real Notifications panel.
+//
+// Ledger 283: an approval for a chat that STARTED on a channel is asked in that chat first, since
+// the person asking is there; the setting decides everything else (a chat here, an unattended run,
+// a trigger). The sentence under the control says exactly that, under every choice.
 
 const patchConfig = vi.fn()
 
@@ -72,7 +76,7 @@ describe('Send approvals to', () => {
     expect(select.value).toBe('')
     expect(options(select)).toEqual(['The first connected channel that knows you', 'Discord', 'Telegram'])
     expect(screen.getByText(
-      'The first connected channel that knows you asks, in name order: Discord, Telegram. Choose one to be asked only there.',
+      'A chat that started on a chat channel is asked in that chat. Everything else (a chat here, an unattended run, a trigger) asks the first connected channel that knows you, in name order: Discord, Telegram. Choose one to be asked only there.',
     )).toBeInTheDocument()
   })
 
@@ -82,7 +86,7 @@ describe('Send approvals to', () => {
     await waitFor(() => expect(patchConfig).toHaveBeenCalled())
     expect(patchConfig.mock.calls.at(-1)?.slice(0, 2)).toEqual(['agent.approval_channel', 'telegram'])
     expect(await screen.findByText(
-      "Only Telegram asks. When it can't reach you, the approval waits here in PersonalClaw, and no other channel is asked.",
+      "A chat that started on a chat channel is asked in that chat. Everything else (a chat here, an unattended run, a trigger) asks only on Telegram. When it can't reach you, the approval waits here in PersonalClaw, and no other channel is asked.",
     )).toBeInTheDocument()
   })
 
@@ -90,7 +94,22 @@ describe('Send approvals to', () => {
     const select = await mount('email')
     expect(select.value).toBe('email')
     expect(options(select)).toContain("Email (doesn't know you)")
-    expect(screen.getByText(/Email doesn't know who you are yet, so approvals wait in PersonalClaw/)).toBeInTheDocument()
+    expect(screen.getByText(
+      /waits here in PersonalClaw, because Email doesn't know who you are yet, and no other channel asks/,
+    )).toBeInTheDocument()
+  })
+
+  it('🔑 says a chat that started on a channel is asked there, whatever is chosen', async () => {
+    for (const stored of ['', 'telegram', 'email', 'slack']) {
+      cleanup()
+      vi.resetModules()
+      const select = await mount(stored)
+      const id = select.getAttribute('aria-describedby') || ''
+      const sentence = document.getElementById(id.split(' ').find((i) => document.getElementById(i)) || '')?.textContent || ''
+      expect(sentence, `under ${stored || 'the default'}`).toMatch(
+        /^A chat that started on a chat channel is asked in that chat\. Everything else \(a chat here, an unattended run, a trigger\) /,
+      )
+    }
   })
 
   it('rolls back and says so when the save is refused', async () => {
@@ -105,7 +124,7 @@ describe('Send approvals to', () => {
     fireEvent.click(await screen.findByRole('button', { name: /delivery detail for Approval needed/i }))
     const row = screen.getByRole('checkbox', { name: /Deliver Approval needed to Channel DM/ })
     expect(row.getAttribute('aria-label')).toBe(
-      'Deliver Approval needed to Channel DM (asks on the channel under Send approvals to, above)',
+      'Deliver Approval needed to Channel DM (asks where the chat started, else on the channel under Send approvals to, above)',
     )
     expect(within(row.closest('label') as HTMLElement).getByText(/Send approvals to/)).toBeInTheDocument()
   })

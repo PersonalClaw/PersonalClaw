@@ -1060,10 +1060,11 @@ class InboxTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'inbox'`` extensions (INU-8).
 
     Builds a :class:`~personalclaw.inbox_providers.base.MessageSourceProvider` via
-    the manifest factory and registers it in ``inbox_providers.registry`` so
-    ``inbox_providers.get_default_provider`` resolves the app's ``source_name`` —
-    the same ``load_factory`` + ``ProviderSettings`` path every other app provider
-    type uses. This graduates ``inbox`` from an :class:`EntitySeamHandler` no-op to
+    the manifest factory and registers it in ``inbox_providers.registry``, which is
+    what the inbox polls (``inbox_providers.source_catalog``) and what a reply to one of
+    the source's rows goes back to — the same ``load_factory`` + ``ProviderSettings``
+    path every other app provider type uses. This graduates ``inbox`` from an
+    :class:`EntitySeamHandler` no-op to
     a real handler, exactly as ``knowledge`` and ``channel`` graduated before it:
     the seam now has a consumer, so the instance must be kept, not dropped.
 
@@ -1074,8 +1075,8 @@ class InboxTypeHandler(_TypeHandler):
     #47 class the manifest-vs-handler guard exists to prevent.
 
     **Deregistration is load-bearing.** An unregistered source is a PHANTOM: a
-    disabled or uninstalled app whose ``source_name`` still answers
-    ``get_default_provider``, so the inbox appears to poll a source that is gone
+    disabled or uninstalled app whose ``source_name`` is still in the inbox's poll
+    catalog, so the inbox goes on polling a source that is gone
     (compare ``DutyGateTypeHandler``, where the analogous failure is a gate that
     fails open). ``deregister`` therefore removes it by the same key ``register``
     used — the provider's own ``source_name``.
@@ -1384,7 +1385,7 @@ def get_provider_registry() -> ProviderRegistry:
         # of truth for the native provider.
         _registry.register_type_handler("knowledge", KnowledgeTypeHandler())
         # Real handler (INU-8): an app-contributed message source registers into
-        # inbox_providers.registry, which get_default_provider reads FIRST (ahead of
+        # inbox_providers.registry, which the inbox's poll catalog reads FIRST (ahead of
         # the personalclaw.message_source_providers entry-point group an installed app
         # cannot contribute to). Graduated from an EntitySeamHandler no-op — the seam
         # now has a consumer, so dropping the instance would be the #47 dead end.

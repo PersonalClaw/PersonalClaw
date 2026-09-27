@@ -9,6 +9,11 @@ channel that asks. Left empty, the order is what it was. Both askers follow it: 
 ``channel_dm`` target (``approval_state._approval_on_a_channel``, and its link fallback) and the
 gateway's subagent approval (``GatewayOrchestrator._interactive_approval``).
 
+Ledger 283 (decided): a chat that STARTED on a channel is asked on that channel first, in that
+chat, since the person asking is there; "Send approvals to" governs the turns with no channel origin
+(a chat in PersonalClaw, an unattended run, a trigger) and who is tried after an origin that cannot
+ask. It used to send a Telegram chat's approval to whatever the setting named.
+
 Only the channels' outbound halves are fakes. The config file, the owner ids, the rules file and
 the approval registry are real, in a scratch home.
 """
@@ -59,6 +64,8 @@ class _Channel:
     def __init__(self, *, can_prompt: bool = True) -> None:
         self.sent: list[tuple[str, str]] = []
         self.prompts: list[Any] = []
+        #: where each prompt was asked: the session key and store it was handed, or none
+        self.asked_in: list[tuple[str, Any]] = []
         if not can_prompt:
             self.request_approval = None  # type: ignore[assignment]
 
@@ -74,6 +81,7 @@ class _Channel:
     ):  # noqa: E301 - the protocol's shape
         pending = SimpleNamespace(future=asyncio.get_running_loop().create_future())
         self.prompts.append(pending)
+        self.asked_in.append((parent_session_key, sessions))
         if on_prompted:
             on_prompted(pending)
         return (await pending.future) == "approved"
@@ -244,6 +252,40 @@ async def test_a_chosen_channel_without_buttons_gets_the_link_not_another_channe
     await asyncio.wait_for(waiter, timeout=5)
 
 
+@pytest.mark.asyncio
+async def test_a_chat_that_started_on_a_channel_is_asked_there_first(tmp_path):
+    """Ledger 283: the person asking is in that chat, so that is where the approval asks —
+    whatever "Send approvals to" names, which governs the approvals with no channel origin."""
+    first, last = _connect(FIRST), _connect(LAST)
+    _send_approvals_to(LAST)
+    state = _state(tmp_path)
+    chat = state.get_or_create_session(app=FIRST)  # what FIRST's inbound door creates
+
+    waiter = asyncio.ensure_future(state.request_approval("ap-5", "chat", "bash", session=chat.key))
+    await _until(lambda: first.prompts, f"{FIRST} asked")
+    assert last.prompts == [] and last.sent == [], "the setting stood in for the chat's channel"
+    key, sessions = first.asked_in[0]
+    assert key == f"dashboard:{chat.key}", "asked in the owner's DM, not in the chat"
+    assert sessions is state.sessions
+    first.prompts[0].future.set_result("approved")
+    assert await asyncio.wait_for(waiter, timeout=5) is True
+
+
+@pytest.mark.asyncio
+async def test_an_origin_that_cannot_ask_hands_over_to_send_approvals_to(tmp_path):
+    first, last = _connect(FIRST, knows_owner=False), _connect(LAST)
+    _send_approvals_to(LAST)
+    state = _state(tmp_path)
+    chat = state.get_or_create_session(app=FIRST)
+
+    waiter = asyncio.ensure_future(state.request_approval("ap-6", "chat", "bash", session=chat.key))
+    await _until(lambda: last.prompts, f"{LAST} asked")
+    assert first.prompts == []
+    assert last.asked_in[0] == ("", None), "the setting's channel asks in the owner's DM"
+    state.resolve_approval("ap-6", False)
+    await asyncio.wait_for(waiter, timeout=5)
+
+
 # ── the gateway's subagent approval ─────────────────────────────────────────────────────────
 
 
@@ -317,3 +359,33 @@ async def test_a_subagent_approval_with_the_chosen_channel_gone_waits_in_the_das
         assert await callback(_event(), "") is False  # the dashboard's answer (the mock's)
     first.request_approval.assert_not_awaited()
     orch.dashboard_state.request_approval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_subagent_of_a_channel_chat_asks_that_channel_first():
+    first, last = _asker(FIRST), _asker(LAST)
+    _send_approvals_to(LAST)
+    orch = _orchestrator()
+    orch.dashboard_state.channel_provider_for = lambda key: (
+        FIRST if key == "dashboard:chat-7" else ""
+    )
+    callback = orch._interactive_approval("subagent")
+
+    with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
+        assert await callback(_event(), "dashboard:chat-7") is True
+    first.request_approval.assert_awaited_once()
+    last.request_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_subagent_of_a_dashboard_chat_follows_the_setting():
+    first, last = _asker(FIRST), _asker(LAST)
+    _send_approvals_to(LAST)
+    orch = _orchestrator()
+    orch.dashboard_state.channel_provider_for = lambda key: ""
+    callback = orch._interactive_approval("subagent")
+
+    with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
+        assert await callback(_event(), "dashboard:chat-8") is True
+    last.request_approval.assert_awaited_once()
+    first.request_approval.assert_not_awaited()

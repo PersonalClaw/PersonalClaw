@@ -331,7 +331,9 @@ class InboxItem:
     # Native agent-posted questions route the reply back to the posting agent's
     # session (reply_target); poll-based sources reply through their provider.
     can_reply: bool = False
-    reply_target: str = ""  # native: the posting agent's session key for reply routing
+    #: Where a reply to this row goes. Native: the posting agent's session key. Polled: the
+    #: source's own id for the message (``IncomingMessage.id``), which ``send_reply`` is given.
+    reply_target: str = ""
     # P11: whether the user favorited this item — a strong positive engagement signal
     # feeding the engagement-ranking multiplier (tolerant from_dict makes it back-compat).
     favorited: bool = False

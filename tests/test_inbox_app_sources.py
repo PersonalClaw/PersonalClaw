@@ -7,8 +7,8 @@ app cannot contribute to. So a manifest declaring ``{"type": "inbox", ...}`` val
 installed clean, and then did nothing (the #47 class).
 
 Driven here with a real ``MessageSourceProvider`` fixture app written to disk and put
-through the actual install → enable → resolve → poll → disable path, plus the
-precedence chain and the phantom-source check that deregistration is real.
+through the actual install → enable → poll → disable path, plus the poll catalog's
+precedence and the phantom-source check that deregistration is real.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from personalclaw.apps import app_manager, manager
 
 APP_NAME = "fixture-inbox-app"
 # Deliberately NOT the app name: the registry keys by the provider's own source_name
-# (what an inbox item records and what a caller asks get_default_provider for).
+# (what an inbox item records and what a reply to it is routed by).
 SOURCE_NAME = "fixture-inbox"
 
 
@@ -118,11 +118,11 @@ def _inbox_app(tmp_path: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_app_inbox_source_resolves_and_a_message_flows(tmp_path):
-    """The whole point: an app's declared source is resolvable BY ITS source_name and a
+    """The whole point: an app's declared source is polled BY ITS source_name and a
     message it polls lands in the inbox through the generic InboxService path, attributed
     to that source. Fails without ``InboxTypeHandler`` — the seam has nothing to find."""
     from personalclaw.inbox import InboxState, InboxStore
-    from personalclaw.inbox_providers import get_default_provider
+    from personalclaw.inbox_providers import polled_source, polled_sources
     from personalclaw.inbox_providers.registry import list_source_names
     from personalclaw.inbox_service import InboxService
 
@@ -131,15 +131,15 @@ async def test_app_inbox_source_resolves_and_a_message_flows(tmp_path):
 
     # install() registers + enables providers → the source is live under source_name.
     assert list_source_names() == [SOURCE_NAME]
-    provider = get_default_provider(SOURCE_NAME)
-    assert provider.source_name == SOURCE_NAME
+    provider = polled_source(SOURCE_NAME)
+    assert provider is not None and provider.source_name == SOURCE_NAME
     # The INSTANCE the factory built (it closes over app config) — not a rebuilt class.
     assert type(provider).__name__ == "FixtureInboxSource"
-    assert provider is get_default_provider(SOURCE_NAME)
+    assert provider is polled_source(SOURCE_NAME)
 
     # A message flows through the GENERIC path (no vendor knowledge in InboxService).
     store = InboxStore()
-    svc = InboxService(state=InboxState(), store=store, provider=provider, user_name="Alex")
+    svc = InboxService(state=InboxState(), store=store, sources=polled_sources, user_name="Alex")
     await svc._poll_once()
     items = list(store.items.values())
     assert len(items) == 1, [i.message for i in items]
@@ -147,21 +147,21 @@ async def test_app_inbox_source_resolves_and_a_message_flows(tmp_path):
     assert items[0].source == SOURCE_NAME
     assert items[0].can_reply is True
 
-    # disable → the source is GONE (no phantom answering the seam).
+    # disable → the source is GONE (no phantom still being polled).
     assert app_manager.disable(APP_NAME)
     assert list_source_names() == []
-    fallback = get_default_provider(SOURCE_NAME)
-    assert fallback.source_name != SOURCE_NAME
+    assert polled_source(SOURCE_NAME) is None
 
     # re-enable restores it (symmetric round trip)
     assert app_manager.enable(APP_NAME)
-    assert get_default_provider(SOURCE_NAME).source_name == SOURCE_NAME
+    restored = polled_source(SOURCE_NAME)
+    assert restored is not None and restored.source_name == SOURCE_NAME
 
 
 @pytest.mark.asyncio
 async def test_uninstall_leaves_no_phantom_source(tmp_path):
-    """A disabled/uninstalled app must not keep answering get_default_provider —
-    otherwise the inbox looks like it is polling a source that is gone."""
+    """A disabled/uninstalled app must not stay in the poll catalog — otherwise the
+    inbox goes on polling a source that is gone."""
     from personalclaw.inbox_providers.registry import get_source
 
     res = app_manager.install(_inbox_app(tmp_path), confirm=True)
@@ -174,8 +174,8 @@ async def test_uninstall_leaves_no_phantom_source(tmp_path):
 
 def test_bundled_filesystem_inbox_is_a_live_consumer_of_this_path():
     """The mechanism is not fixture-only: the SHIPPED ``filesystem-inbox`` native app
-    declares ``type: inbox``, so its factory's instance is what the real handler now
-    registers and what the gateway's ``get_default_provider("filesystem")`` resolves.
+    declares ``type: inbox``, so its factory's instance is what the real handler
+    registers, and the drop folder the inbox polls while ``inbox.enabled`` is on.
     (The provider is stateless, so sharing that instance is equivalent to building a
     fresh one from the entry-point class — the pre-INU-8 behaviour.)"""
     import json as _json
@@ -202,7 +202,7 @@ def test_inbox_uses_a_real_handler_not_a_seam():
     assert not isinstance(handler, EntitySeamHandler)
 
 
-# ── precedence: app instance → entry-point class → native → filesystem ──
+# ── the poll catalog: app instances first, then entry points no app took, never native ──
 
 
 class _StubSource:
@@ -214,13 +214,12 @@ class _StubSource:
     def source_name(self) -> str:
         return self._name
 
+    def polling_enabled(self) -> bool:
+        return True
+
 
 class _NativeStub(_StubSource):
     _name = "native"
-
-
-class _FilesystemStub(_StubSource):
-    _name = "filesystem"
 
 
 class _EntryPointFixture(_StubSource):
@@ -234,32 +233,22 @@ def test_app_instance_beats_entry_point_class(monkeypatch):
     from personalclaw.inbox_providers.registry import register_source
 
     monkeypatch.setattr(ip, "_cache", {SOURCE_NAME: _EntryPointFixture})
+    monkeypatch.setattr(ip, "_builtin_instances", {})
     app_instance = _EntryPointFixture()
     register_source(app_instance)
 
-    resolved = ip.get_default_provider(SOURCE_NAME)
-    assert resolved is app_instance, "entry-point class shadowed the app-contributed source"
+    catalog = ip.source_catalog()
+    assert [s for s, _ in catalog] == [app_instance], "the entry-point class shadowed the app"
 
 
-def test_falls_back_to_entry_point_then_native_then_filesystem(monkeypatch):
+def test_an_entry_point_no_app_took_is_listed_and_native_never_is(monkeypatch):
     import personalclaw.inbox_providers as ip
-    from personalclaw.inbox_providers.filesystem_source import FilesystemSourceProvider
 
-    # requested name present in the entry-point group → instantiated from the CLASS
     monkeypatch.setattr(ip, "_cache", {SOURCE_NAME: _EntryPointFixture, "native": _NativeStub})
-    assert isinstance(ip.get_default_provider(SOURCE_NAME), _EntryPointFixture)
-
-    # unknown name → native
-    monkeypatch.setattr(ip, "_cache", {"native": _NativeStub, "filesystem": _FilesystemStub})
-    assert isinstance(ip.get_default_provider("nope"), _NativeStub)
-
-    # no native → filesystem
-    monkeypatch.setattr(ip, "_cache", {"filesystem": _FilesystemStub})
-    assert isinstance(ip.get_default_provider("nope"), _FilesystemStub)
-
-    # nothing discovered at all → the terminal in-process filesystem source
-    monkeypatch.setattr(ip, "_cache", {})
-    assert isinstance(ip.get_default_provider("nope"), FilesystemSourceProvider)
+    monkeypatch.setattr(ip, "_builtin_instances", {})
+    catalog = ip.source_catalog()
+    assert [(type(s), polled) for s, polled in catalog] == [(_EntryPointFixture, True)]
+    assert catalog[0][0] is ip.source_catalog()[0][0], "a built-in was rebuilt every tick"
 
 
 def test_app_source_registry_rejects_a_nameless_source():

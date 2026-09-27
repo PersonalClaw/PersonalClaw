@@ -727,15 +727,22 @@ class GatewayOrchestrator:
 
             request_id = str(event.request_id)
 
-            # Prompt on the channel that asks the owner approvals: their "Send approvals to"
-            # choice, else the first connected channel that knows them
+            # Prompt on the channel that asks the owner approvals: the channel the parent chat
+            # started on first, since the person asking is there, then their "Send approvals
+            # to" choice, else the first connected channel that knows them
             # (`channel_delivery.approval_delivery`). The channel owns its approval UI +
             # owner-response wait; core races it against the dashboard prompt via the
             # on_prompted hook (which hands us the channel's pending future so a dashboard
             # click resolves both).
             from personalclaw.channel_delivery import approval_delivery
 
-            asker = approval_delivery()
+            origin = ""
+            if self.dashboard_state is not None:
+                parent = parent_session_key or (
+                    session_resolver(request_id) if session_resolver else resolved_session
+                )
+                origin = self.dashboard_state.channel_provider_for(parent) if parent else ""
+            asker = approval_delivery(origin)
             if asker is not None:
                 try:
                     dashboard_future = None
@@ -3270,13 +3277,14 @@ class GatewayOrchestrator:
         """Construct the Inbox service (state + store + on-demand AI triage).
 
         Source-independent: draft/classify/digest run over STORED items (populated by
-        the native push source + any configured poll provider) through the bound chat
-        model, so they work with no external provider connected. A message-source
-        provider is attached when one is configured, enabling poll/history; otherwise
-        polling no-ops. Attached to the dashboard state in ``_init_dashboard`` (which
-        runs after this)."""
+        the native push source + every polled source) through the bound chat model, so
+        they work with no external source connected. What the service polls is
+        ``inbox_providers.polled_sources``, read on every tick: each installed inbox app's
+        source, and the built-in drop folder while ``inbox.enabled`` is on. Attached to the
+        dashboard state in ``_init_dashboard`` (which runs after this)."""
         from personalclaw.identity import operator_name
         from personalclaw.inbox import InboxState, InboxStore
+        from personalclaw.inbox_providers import polled_sources
         from personalclaw.inbox_service import InboxService
 
         sec = self._cfg.inbox
@@ -3285,42 +3293,21 @@ class GatewayOrchestrator:
         store = InboxStore()
         store.load()
 
-        provider = None
-        if sec.enabled:
-            try:
-                # The inbox's poll source is the in-process filesystem source. (The
-                # inbox is also fed by the always-on native push source regardless.)
-                # Sources are selected BY NAME through the vendor-neutral seam below,
-                # so this names no vendor: any other source — including one an app
-                # contributes — is resolved by its own ``source_name``, not assumed
-                # here. Since INU-8 the seam resolves an app-declared source too
-                # (app-contributed instance → entry-point class → native →
-                # filesystem); which NAME the inbox polls is the caller's choice, and
-                # this default call site asks for the in-process filesystem source.
-                from personalclaw.inbox_providers import get_default_provider
-
-                provider = get_default_provider("filesystem")
-            except Exception:
-                logger.debug("inbox: message-source provider unavailable", exc_info=True)
-
         if self.inbox_svc is not None:
             self.inbox_svc.stop()
         self.inbox_svc = InboxService(
             state=state,
             store=store,
-            provider=provider,
+            sources=polled_sources,
             # The OPERATOR's name (drafts are written on behalf of the human —
             # "reply as {{user_name}}"), NOT agent.bot_name (the assistant's name).
             user_name=operator_name() or "the user",
             style_rules="\n".join(sec.style_rules or []),
         )
-        # Background loop: polls the wired provider (when any). Cheap when idle.
+        # Background loop: polls every source polled_sources names. Cheap when idle.
         # Retention/dismissed/feedback maintenance is the remediation engine's
         # `inbox.maintenance` job now, not a second cadence in this loop (PR2-11).
         self.inbox_svc.start()
-        logger.info(
-            "Inbox service initialized (provider=%s)", provider.source_name if provider else "none"
-        )
 
     async def _restart_inbox(self) -> str:
         """Rebuild the inbox service from current config (e.g. after a settings

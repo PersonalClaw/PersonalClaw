@@ -3714,8 +3714,7 @@
    {"annotation": "Any", "kind": "positional_or_keyword", "name": "state"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "sender_id"},
-   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "sender_name"},
-   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "silent"}
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "sender_name"}
   ],
   "returns": "bool"
  },
@@ -4745,6 +4744,11 @@
      {"annotation": "str", "kind": "positional_or_keyword", "name": "user_id"}
     ],
     "returns": "tuple[list[IncomingMessage], dict[str, str]]"
+   },
+   "polling_enabled": {
+    "kind": "method",
+    "params": [],
+    "returns": "bool"
    },
    "resolve_user_name": {
     "kind": "async method",
