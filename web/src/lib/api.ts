@@ -1755,8 +1755,9 @@ export interface WorkflowDef {
     /** Whether this template is published as an A2A skill (EXTERNAL-ACCESS §5). Optional and
      *  DEFAULTS TO FALSE on both sides — an absent key means unpublished, which is what every
      *  template authored before A2A existed looks like. The detail page's toggle reads this and
-     *  writes it through `publishWorkflowToA2A`, never through `saveWorkflowDef`: the def this
-     *  page holds is the secret-STRIPPED read, so re-saving it would drop credential bindings. */
+     *  writes it through `publishWorkflowToA2A`, never through `saveWorkflowDef`: a one-bool
+     *  change must not re-validate the whole definition, and a template that was savable when it
+     *  was authored must not become unpublishable because the validator has grown since. */
     a2a_published?: boolean
   }
 }
@@ -8520,14 +8521,21 @@ export const api = {
     ),
   workflowDef: (name: string) =>
     get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
-  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
+  /** Validate a definition and, unless `save: false` (the engine's dry run), save it — a new version.
+   *
+   *  The body is the WHOLE editable definition, not a subset: every field a definition has
+   *  (`runtime_hints`, `defaults`, `on_overlap`, `workspace`…) has to come back, or the save
+   *  writes a definition without it. `based_on` names what the edit started from — another
+   *  definition for a copy, and `based_on_version` one recorded version for a restore — because
+   *  the read this edit started from hid some values (`_has_<key>` flags) and the server restores
+   *  them from THAT. A refused save is a 422 whose `detail` carries the same `issues`. */
+  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; based_on?: string; based_on_version?: number; save?: boolean; [field: string]: unknown }) =>
     // A step whose agent approves its own tool calls (or holds the write grant) is asked for
     // when a save loosens it; a dry run (`save: false`) writes nothing and is never asked.
-    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows',
+    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; lint?: { findings?: Array<{ code: string; message: string; path?: string; severity?: string }> }; levels?: string[][] }>('/api/workflows',
       c ? { ...body, confirm: true } : body)),
   // EXTERNAL-ACCESS §5 — publish/unpublish one template as an A2A skill. Its own route, not a
-  // field on `saveWorkflowDef`: this page holds the secret-stripped def, and re-saving that to
-  // carry one bool would persist the stripped bindings.
+  // field on `saveWorkflowDef`: one bool must not re-validate and re-save the whole definition.
   publishWorkflowToA2A: (name: string, published: boolean) =>
     post<{ ok: boolean; name: string; a2a_published: boolean }>(`/api/workflows/${encodeURIComponent(name)}/a2a-publish`, { published }),
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
@@ -8543,11 +8551,11 @@ export const api = {
     get<{ a: number; b: number; ops: WorkflowVersionOp[] }>(
       `/api/workflows/${encodeURIComponent(name)}/versions/diff?a=${a}&b=${b}`,
     ),
-  /** Rollback / re-pin the active version. Moves only the pointer; history is never rewritten. */
-  repinWorkflowVersion: (name: string, version: number) =>
-    post<{ ok: boolean; name: string; pinned: number }>(
-      `/api/workflows/${encodeURIComponent(name)}/versions/repin`,
-      { version },
+  /** One recorded version's full definition — stripped like every definition read. The editor
+   *  opens it to restore that version: saving it makes a NEW version, which is what runs execute. */
+  workflowVersion: (name: string, version: number) =>
+    get<{ version: number; source: string; created_at: string; note: string; definition: WorkflowDef }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions/${version}`,
     ),
   /** Recent runs of this template with their ledger totals — the Run Ledger tab. */
   workflowLedger: (name: string) =>

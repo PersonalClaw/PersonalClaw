@@ -230,6 +230,22 @@ From chat, `workflow_author` with `save=false` does the same thing, and
 `workflow_plan` with `template: "<name>"` hands you an existing template's
 expanded tree to start from.
 
+In the dashboard, open the definition (**Workflows → Definitions**) and choose
+**Edit**, or **Edit a copy** for a shipped template, which is read-only and so is
+saved as a copy under a name of yours. The editor's **Steps** view lists every step
+in the order it runs and edits the settings each one has, bindings included, and
+the declared run inputs; its **JSON** tab holds the whole definition, for adding,
+removing or moving a step. **Check** is the same `save: false` dry run, and each
+issue it returns is shown at the step it names, in the engine's own words. Every
+save is a new version, and a version's **Restore** opens the editor on it.
+
+A read of a definition never shows a value held under a name that looks like a
+credential — `api_key`, but also `max_tokens` or an `authors` field — and sends a
+`_has_<key>: true` flag in its place. Send the flag back as it is: the save
+restores the value from the definition the edit came from (`based_on`, or
+`based_on_version` for a restore), and refuses the save with
+`WF_HIDDEN_VALUE_UNMATCHED`, at that step, if there is nothing to restore it from.
+
 | Code | Means |
 |---|---|
 | `WFL_INLINE_CONVENTION` | you restated a shared block; cite it instead |

@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **855 registrations** over **692 distinct paths** — 848 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **856 registrations** over **693 distinct paths** — 849 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -27,7 +27,7 @@ The 127 families the surface divides into, largest first.
 | `/api/chat` | 78 | 66 |
 | `/api/knowledge` | 72 | 59 |
 | `/api/memory` | 49 | 41 |
-| `/api/workflows` | 44 | 39 |
+| `/api/workflows` | 45 | 40 |
 | `/api/models` | 34 | 28 |
 | `/api/artifacts` | 25 | 16 |
 | `/api/apps` | 23 | 15 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 849 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -1006,6 +1006,7 @@ The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/{name}/versions` | the monotonic version history + pin + maturity. |
 | `GET` | `/api/workflows/{name}/versions/diff` | the typed-op diff between two versions. |
 | `POST` | `/api/workflows/{name}/versions/repin` | {version} — rollback / re-pin the active version. |
+| `GET` | `/api/workflows/{name}/versions/{version}` | one recorded version's full definition. |
 
 ## Websocket and internal routes
 

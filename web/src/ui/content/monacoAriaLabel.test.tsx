@@ -53,7 +53,7 @@ const walk = (dir: string): string[] =>
     return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
   })
 
-describe('both Monaco consumers name their editing surface', () => {
+describe('every Monaco consumer names its editing surface', () => {
   it('ContentSurface names the editor from the document title', () => {
     const src = read('ui/content/ContentSurface.tsx')
     expect(src).toMatch(/ariaLabel: `\$\{title\} — editor`/)
@@ -62,6 +62,13 @@ describe('both Monaco consumers name their editing surface', () => {
   it('GistEditor names the editor from the gist language', () => {
     const src = read('pages/knowledge/GistEditor.tsx')
     expect(src).toMatch(/ariaLabel: language \? `Gist content \(\$\{language\}\)` : 'Gist content'/)
+  })
+
+  it('WorkflowJsonEditor names the editor from the workflow it holds', () => {
+    // The third consumer (F-29, the workflow editor's JSON tab). Named for the definition, for the
+    // same reason as the other two: "Editor content" does not say which document you are in.
+    const src = read('pages/workflows/WorkflowJsonEditor.tsx')
+    expect(src).toMatch(/ariaLabel: `\$\{name\} definition \(JSON\)`/)
   })
 
   it('GistEditor exposes no ariaLabel PROP — nothing would pass it', () => {
@@ -102,9 +109,13 @@ describe('the rail: every Monaco mount names itself specifically', () => {
   })
 
   it('the rail actually finds the Monaco mounts (it is not vacuously green)', () => {
-    // A rail that matches nothing passes forever. Pin that both known consumers are in scope.
+    // A rail that matches nothing passes forever. Pin that every known consumer is in scope.
     const mounting = walk(SRC).filter((abs) => /<MonacoEditor\b/.test(readFileSync(abs, 'utf8')))
       .map((abs) => abs.slice(SRC.length + 1)).sort()
-    expect(mounting).toEqual(['pages/knowledge/GistEditor.tsx', 'ui/content/ContentSurface.tsx'])
+    expect(mounting).toEqual([
+      'pages/knowledge/GistEditor.tsx',
+      'pages/workflows/WorkflowJsonEditor.tsx',
+      'ui/content/ContentSurface.tsx',
+    ])
   })
 })

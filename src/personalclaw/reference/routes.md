@@ -854,6 +854,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/{name}/versions` — the monotonic version history + pin + maturity.
 - `GET /api/workflows/{name}/versions/diff` — the typed-op diff between two versions.
 - `POST /api/workflows/{name}/versions/repin` — {version} — rollback / re-pin the active version.
+- `GET /api/workflows/{name}/versions/{version}` — one recorded version's full definition.
 
 ## Websocket / internal routes
 

@@ -64,7 +64,7 @@ from personalclaw.workflows.models import (
     valid_name,
     walk,
 )
-from personalclaw.workflows.validator import validate_spec
+from personalclaw.workflows.validator import Issue, validate_spec
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +298,52 @@ async def _reserved_name_provider(name: str) -> str:
     return ""
 
 
+async def _reinject_source(name: str, *, version: int = 0) -> dict[str, Any]:
+    """The stored definition a save restores hidden values from — RAW, never the stripped read.
+
+    ``version`` reads one recorded snapshot instead of the current definition: an edit that
+    started from version 2 needs version 2's values back, and the current definition may no
+    longer hold the step they belong to. Empty when there is nothing to read, which leaves every
+    flag unmatched — so the save refuses rather than guessing.
+    """
+    if not valid_name(name):
+        return {}
+    if version > 0:
+        from personalclaw.workflows import versions
+
+        record = versions.get_version(name, version)
+        return dict(record.spec) if record is not None else {}
+    definition = await _raw_def(name)
+    if definition is None:
+        return {}
+    return definition if isinstance(definition, dict) else definition.to_dict()
+
+
+def _hidden_value_issue(where: str, node_id: str, field: str, *, source: str) -> Issue:
+    """The refusal for one hidden value this save could not restore.
+
+    Code `WF_HIDDEN_VALUE_UNMATCHED`, at the step the value belongs to."""
+    real = field.rsplit(".", 1)[-1]
+    lost = (
+        f"is a value the definition keeps hidden when it is read, and {source!r} has no value "
+        "there to keep, so this save would lose it"
+    )
+    if where == "root" or where.startswith("root."):
+        return Issue(
+            code="WF_HIDDEN_VALUE_UNMATCHED",
+            message=(
+                f"`{field}` on step {node_id or where!r} {lost}. If you renamed the step, give it "
+                f"back its original id; otherwise set `{real}` to a value, or remove it."
+            ),
+            path=where,
+        )
+    return Issue(
+        code="WF_HIDDEN_VALUE_UNMATCHED",
+        message=f"`{field}` {lost}. Set `{real}` to a value, or remove it.",
+        path=where,
+    )
+
+
 async def author_def(
     *,
     name: str,
@@ -310,6 +356,11 @@ async def author_def(
     provenance: str = "chat",
     strict: bool = True,
     workspace: dict[str, Any] | None = None,
+    runtime_hints: dict[str, Any] | None = None,
+    defaults: dict[str, Any] | None = None,
+    on_overlap: str = "",
+    based_on: str = "",
+    based_on_version: int = 0,
 ) -> dict[str, Any]:
     """Validate a spec and (optionally) save it.
 
@@ -325,6 +376,18 @@ async def author_def(
     `surface_mode`, `cadence_days` and `packs` the surfacing channels read) could be loaded from
     disk and never SET through the API. A field with a read path and no write path is a field only a
     hand-edited file can use, which is the config round-trip contract's exact failure.
+
+    `runtime_hints`, `defaults` and `on_overlap` are the same failure for three more fields a
+    definition has, found when the dashboard editor saved a copy of a shipped template: nine of
+    them carry `runtime_hints` (the judge rubric, the WIP invariant), and a copy saved through
+    here came back without any of it (F-29).
+
+    `based_on` names the definition this save was EDITED FROM — the definition itself when
+    absent — and `based_on_version` one recorded version of it. The editor starts from a read,
+    and every read is stripped (`get_def`): a value under a credential-shaped key is replaced by
+    a `_has_<key>` presence flag. Those values are restored from the definition the edit came
+    from before anything is validated or written (`secrets.reinject_secrets`), and a flag nothing
+    can restore is refused at its step rather than written to disk as a field.
     """
     if not valid_name(name):
         return _service_failure(
@@ -370,12 +433,27 @@ async def author_def(
         # run-start applier reading a key nothing ever wrote — the same config-round-trip failure
         # a field with a read path and no write path always is.
         spec[provisioning.WORKSPACE_KEY] = dict(workspace)
+    if isinstance(runtime_hints, dict) and runtime_hints:
+        spec["runtime_hints"] = dict(runtime_hints)
+    if isinstance(defaults, dict) and defaults:
+        spec["defaults"] = dict(defaults)
+    if on_overlap:
+        spec["on_overlap"] = str(on_overlap)
+    # BEFORE `metadata` is coerced below: a presence flag inside it has to be restored while it is
+    # still where the read put it, and `DefMetadata.from_dict` would drop an unknown key outright.
     if metadata:
+        spec["metadata"] = dict(metadata)
+    spec = secrets.reinject_secrets(
+        spec, await _reinject_source(based_on or name, version=based_on_version)
+    )
+    hidden_lost = secrets.unmatched_flags(spec)
+    if spec.get("metadata"):
         # Through `DefMetadata.from_dict` and back out, so the tolerant per-field coercion (unknown
         # `surface_mode` → `off`, negative `cadence_days` → 0) applies to the WRITE and not only to
         # the read. Coercing on read alone would store a value the next reader silently
         # reinterprets.
-        spec["metadata"] = models.DefMetadata.from_dict(metadata).to_dict()
+        spec["metadata"] = models.DefMetadata.from_dict(spec["metadata"]).to_dict()
+    root = spec["root"] if isinstance(spec.get("root"), dict) else root
 
     # Macros expand HERE, before validation and before the write — so what is stored, what is
     # validated and what the engine runs are the same core nodes. Expanding at run time
@@ -405,6 +483,14 @@ async def author_def(
         )
 
     result = validate_spec(spec, strict=strict)
+    if hidden_lost:
+        # Reported as validation issues, at the step, in the validator's own path grammar, so a
+        # dry run shows them and a client pins them where the rest of a spec's problems go.
+        result.issues.extend(
+            _hidden_value_issue(where, node_id, field, source=based_on or name)
+            for where, node_id, field in hidden_lost
+        )
+        result.levels = []
     body = {
         "valid": result.ok,
         "issues": [i.to_dict() for i in result.issues],
@@ -460,17 +546,11 @@ async def author_def(
 async def set_a2a_published(name: str, published: bool) -> dict[str, Any]:
     """Flip one template's ``metadata.a2a_published`` (EXTERNAL-ACCESS §5, EA-8).
 
-    A DEDICATED write path rather than routing the toggle through :func:`author_def`, and the
-    reason is a data-loss hazard rather than taste. The detail UI holds the def it got from
-    :func:`get_def`, which is the STRIPPED read — credential values are replaced with ``_has*``
-    flags. Handing that copy back to ``author_def`` would persist the stripped form and destroy
-    the template's real credential bindings, so a one-bool toggle would silently break every
-    node that resolved a secret. This function mutates the RAW stored def instead and never
-    round-trips through the client.
-
-    It also declines to re-validate: publishing does not change the graph, and a template that
-    was savable when it was authored must not become unpublishable because the validator grew a
-    new warning since.
+    A DEDICATED write path rather than routing the toggle through :func:`author_def`: it mutates
+    the RAW stored def and never round-trips the definition through the client, and it declines
+    to re-validate. Publishing does not change the graph, and a template that was savable when it
+    was authored must not become unpublishable because the validator grew a new warning since —
+    which a toggle routed through ``author_def`` would, since that validates the whole spec.
     """
     if not name:
         return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")

@@ -107,6 +107,11 @@ class NativeWorkflowDefProvider(WorkflowDefProvider):
             payload["defaults"] = fields["defaults"]
         if "on_overlap" in fields:
             payload["on_overlap"] = str(fields["on_overlap"])
+        if isinstance(fields.get("runtime_hints"), dict) and fields["runtime_hints"]:
+            # The judge rubric and loop invariants a template ships with. Omitted from this
+            # allowlist, every save — a dashboard copy of a shipped template included — wrote a
+            # definition without them, while the one it was copied from ran with them (F-29).
+            payload["runtime_hints"] = dict(fields["runtime_hints"])
         if isinstance(fields.get(provisioning.WORKSPACE_KEY), dict):
             # The §4.1 `workspace:` block has to SURVIVE the save, because the applier reads it at
             # RUN start — from the persisted def, not from whatever object authored it. This payload
