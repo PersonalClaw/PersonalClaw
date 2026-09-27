@@ -40,19 +40,48 @@ class IncomingMessage:
 
 
 class MessageSourceProvider(ABC):
+    """A source the inbox polls: an installed inbox app's, or a built-in one.
+
+    Every registered source is polled while :meth:`polling_enabled` says so
+    (``inbox_providers.polled_sources``); ``display_name``, when a source has one, is what
+    the inbox's sentences call it.
+    """
+
     @property
     @abstractmethod
     def source_name(self) -> str: ...
 
+    def polling_enabled(self) -> bool:
+        """Whether the inbox polls this source now.
+
+        An installed app's source is registered while its app is enabled, and enabling it is
+        the owner's say-so, so the default is yes. A source that ships inside core has no app
+        the owner chose (a native app is locked on), so it reads its own switch here: the drop
+        folder's is ``inbox.enabled``."""
+        return True
+
     @abstractmethod
     async def poll(
         self, watched_channels: list[str], checkpoints: dict[str, str], user_id: str
-    ) -> tuple[list[IncomingMessage], dict[str, str]]: ...
+    ) -> tuple[list[IncomingMessage], dict[str, str]]:
+        """What arrived since ``checkpoints``, and the checkpoints to resume from.
+
+        ``checkpoints`` is one dict every source shares, so a source namespaces its own keys
+        and returns them. A poll that could not read the source RAISES: the inbox keeps the
+        checkpoints it had, shows the exception's message as this source's health (so write
+        it as a sentence the owner can act on), and tries again next tick. Returning an
+        empty list instead would read as "nothing new" while nothing was read."""
 
     @abstractmethod
-    async def send_reply(
-        self, channel_id: str, text: str, thread_ts: str | None = None
-    ) -> bool: ...
+    async def send_reply(self, channel_id: str, text: str, thread_ts: str | None = None) -> bool:
+        """Send ``text`` as a reply to one message this source polled.
+
+        ``thread_ts`` is that message's ``IncomingMessage.id``, the source's own id for it,
+        which the inbox keeps on its row (``reply_target``): a mail's ``Message-ID``, a chat
+        message's ts. A source threads the reply under it as its platform does. Truthy when
+        it was sent. A falsy result that is not a plain bool may say why it was
+        not, as its ``str()`` (the convention channel transports' refusals follow): the
+        inbox shows it to the owner who pressed Send."""
 
     @abstractmethod
     async def add_reaction(self, channel_id: str, ts: str, emoji: str) -> bool: ...

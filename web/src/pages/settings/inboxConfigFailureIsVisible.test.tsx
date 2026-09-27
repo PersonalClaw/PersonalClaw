@@ -82,7 +82,7 @@ describe.each(COPIES)('%s: a failed config read is reported, never rendered as O
     expect(band.closest('[role="alert"]'), 'and it is announced, not just painted').not.toBeNull()
 
     // And neither switch is presented as a saved setting.
-    for (const label of ['Poll message sources', 'Engagement ranking']) {
+    for (const label of ['Poll the drop folder', 'Engagement ranking']) {
       const sw = await screen.findByRole('switch', { name: label })
       expect(sw, `${label} must not be operable off an unread config`).toBeDisabled()
       fireEvent.click(sw)
@@ -95,7 +95,7 @@ describe.each(COPIES)('%s: a failed config read is reported, never rendered as O
     const { InboxSettingsPanel } = await load()
     render(<InboxSettingsPanel />)
 
-    const sources = await screen.findByRole('switch', { name: 'Poll message sources' })
+    const sources = await screen.findByRole('switch', { name: 'Poll the drop folder' })
     await waitFor(() => expect(sources, 'a resolved config unlocks the switch').toBeEnabled())
     expect(sources, 'and shows what the config actually said').toHaveAttribute('aria-checked', 'true')
     expect(screen.queryByText(/Couldn't read your inbox configuration/), 'no failure to report').toBeNull()

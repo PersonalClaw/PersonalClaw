@@ -93,7 +93,7 @@ panel (entity store). Config-side:
 
 | Key | Default | What it does |
 |---|---|---|
-| `inbox.enabled` | `false` | Gates the poll-based message sources (the UI "Poll sources" toggle writes this). |
+| `inbox.enabled` | `false` | Polls the built-in drop folder, `<home>/inbox/incoming/` (the UI "Poll the drop folder" toggle writes this). An installed inbox app is polled while its app is enabled, whatever this says. |
 | `inbox.user_id` | `""` | Your user id on the connected channel (set by channel-app setup) — used to skip your own messages. |
 | `inbox.watched_channels` | `[]` | Channel ids the poll loop watches (channel-app setup). |
 | `inbox.poll_interval_seconds` | `60` | Poll cadence (min 30). |

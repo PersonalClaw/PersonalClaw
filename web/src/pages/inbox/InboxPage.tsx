@@ -455,22 +455,37 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           mounted group and never replay the entrance (see `ui/motion/Entrance`). */}
       <EntranceGroup>
         {/* source health banner — the native agent→inbox source is ALWAYS active
-            (push), so the inbox is never "off"; poll providers are extra. */}
+            (push), so the inbox is never "off"; polled sources are extra, and one whose last
+            poll failed says why in its own line (the sentence the source raised), because a
+            source that cannot be read otherwise looks exactly like a quiet one. */}
         {status && (() => {
-          const pollActive = (status.sources ?? []).filter((s) => s.kind === 'poll' && s.active)
-          const hasPollProviders = (status.sources ?? []).some((s) => s.kind === 'poll')
+          const polled = (status.sources ?? []).filter((s) => s.kind === 'poll' && s.active)
+          const failing = polled.flatMap((s) => (s.error ? [{ name: s.name, label: s.label, error: s.error }] : []))
+          const named = (s: { label?: string; name: string }) => s.label || s.name
           return (
             <EntranceRegion className="mx-auto w-full px-l" style={{ maxWidth: 'var(--content-width)' }}>
-              <div data-type="body-s" className="flex items-center gap-s rounded-md px-m py-2" style={{ background: 'var(--color-surface-container)' }}>
-                <span className="relative flex size-2">
-                  <span className="relative inline-flex size-2 rounded-pill" style={{ background: 'var(--color-ok)' }} />
-                </span>
-                <span className="text-on-surface-var">
-                  Native source active — agents post here directly.
-                  {pollActive.length > 0
-                    ? ` Also polling ${pollActive.map((s) => s.name).join(', ')}${health?.last_poll_at ? ` · last checked ${relPast(health.last_poll_at)}` : ''}.`
-                    : hasPollProviders ? ' Connect a message source (filesystem/Slack) to collect more.' : ''}
-                </span>
+              <div data-type="body-s" className="flex flex-col gap-1 rounded-md px-m py-2" style={{ background: 'var(--color-surface-container)' }}>
+                <div className="flex items-center gap-s">
+                  <span className="relative flex size-2 shrink-0">
+                    <span className="relative inline-flex size-2 rounded-pill" style={{ background: 'var(--color-ok)' }} />
+                  </span>
+                  <span className="text-on-surface-var">
+                    Native source active — agents post here directly.
+                    {polled.length > 0
+                      ? ` Also polling ${polled.map(named).join(', ')}${health?.last_poll_at ? ` · last checked ${relPast(health.last_poll_at)}` : ''}.`
+                      : ' Install an inbox app (Mail Inbox, Slack) to collect your mail and messages here.'}
+                  </span>
+                </div>
+                {failing.map((s) => (
+                  <div key={s.name} className="flex items-start gap-s">
+                    <span className="relative mt-1.5 flex size-2 shrink-0">
+                      <span className="relative inline-flex size-2 rounded-pill" style={{ background: 'var(--color-warning)' }} />
+                    </span>
+                    <span className="min-w-0 break-words text-on-surface">
+                      {named(s)} can't be read: {s.error}{s.error.endsWith('.') ? '' : '.'} It tries again at the next poll.
+                    </span>
+                  </div>
+                ))}
               </div>
             </EntranceRegion>
           )

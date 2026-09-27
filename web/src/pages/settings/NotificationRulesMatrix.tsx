@@ -48,9 +48,9 @@ const SOUND_OPTIONS: { value: string; label: string }[] = [
 //
 // `channel_dm` went on that list with issue #343, when nothing was behind it, and came off it
 // once `DashboardState.notify` sent it: the note goes to your DM on the first connected chat
-// channel that knows you. An approval asks on the channel "Send approvals to" names, with
-// Approve/Deny where the channel has them — which is that same first channel only while nothing is
-// chosen there, so the approval row says so (`targetLabel`).
+// channel that knows you. An approval asks on the channel its chat started on, else on the one
+// "Send approvals to" names, with Approve/Deny where the channel has them — which is that same first
+// channel only while nothing is chosen there, so the approval row says so (`targetLabel`).
 const TARGET_LABELS: Record<NotificationTarget, string> = {
   dashboard: 'Dashboard',
   channel_dm: 'Channel DM (the first connected chat channel that knows you)',
@@ -62,7 +62,7 @@ const INERT_TARGETS: NotificationTarget[] = ['push']
 /** A target's label on one row: the approval row's Channel DM asks where "Send approvals to" says. */
 function targetLabel(t: NotificationTarget, row: NotificationRuleRow): string {
   if (t === 'channel_dm' && row.source === 'approval' && row.kind === 'requested') {
-    return 'Channel DM (asks on the channel under Send approvals to, above)'
+    return 'Channel DM (asks where the chat started, else on the channel under Send approvals to, above)'
   }
   return TARGET_LABELS[t]
 }

@@ -614,18 +614,22 @@ class AgentConfig:
             "Unattended runs never wait: no one is there to ask, so they are denied at once.",
         ),
     )
-    #: Which chat channel asks you to approve a tool call ("Send approvals to"). Empty asks the
-    #: first connected channel that knows you, in name order, which is all there was before an
-    #: owner with several channels paired could choose. A channel's name asks only there: when
-    #: it cannot reach you the approval waits in PersonalClaw, and no other channel is asked.
+    #: Which chat channel asks you to approve a tool call ("Send approvals to") when the chat
+    #: asking did not start on a channel: a chat that did is asked there first, since the person
+    #: asking is there. Empty asks the first connected channel that knows you, in name order,
+    #: which is all there was before an owner with several channels paired could choose. A
+    #: channel's name asks only there: when it cannot reach you the approval waits in
+    #: PersonalClaw, and no other channel is asked.
     approval_channel: str = field(
         default="",
         metadata=_meta(
             "Send Approvals To",
-            "The chat channel that asks you to approve a tool call, by its name (telegram, "
-            "discord, email, slack). Empty asks the first connected channel that knows you, in "
-            "name order. A named channel asks only there; when it cannot reach you, the approval "
-            "waits in PersonalClaw.",
+            "Where a tool approval asks you when its chat did not start on a channel (a chat in "
+            "PersonalClaw, an unattended run, a trigger), by the channel's name (telegram, "
+            "discord, email, slack). A chat that started on a channel is asked there first. "
+            "Empty asks the first connected channel that knows you, in name order. A named "
+            "channel asks only there; when it cannot reach you, the approval waits in "
+            "PersonalClaw.",
         ),
     )
     acp_concurrent_sessions: bool = field(
@@ -2690,9 +2694,16 @@ class RoomsConfig:
 class InboxConfig:
     """Inbox — reads your messages, drafts replies, presents for approval."""
 
+    #: The built-in drop folder's switch (``inbox_providers.source_catalog``). An installed inbox
+    #: app (Mail Inbox, Slack) is polled while its app is enabled, whatever this says.
     enabled: bool = field(
         default=False,
-        metadata=_meta("Enabled", "Enable Inbox background polling."),
+        metadata=_meta(
+            "Poll the Drop Folder",
+            "Collect the messages a program on this machine drops as JSON files in "
+            "inbox/incoming/. Off by default, since anything that can write to this machine can "
+            "drop one there. Installed inbox apps are polled while they are enabled.",
+        ),
     )
     user_id: str = field(
         default="",

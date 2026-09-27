@@ -322,7 +322,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/inbox/open` — every row still wanting the user (PENDING or SEEN).
 - `GET /api/inbox/owners` — owners present in the store, with counts, for the filter chips.
 - `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).
-- `GET /api/inbox/providers` — list registered inbox message source providers.
+- `GET /api/inbox/providers` — every message source the inbox knows, and whether it polls it.
 - `POST /api/inbox/restart` — stop and reinitialize the inbox service.
 - `POST /api/inbox/seen` — mark items SEEN (the read/unread boundary).
 - `POST /api/inbox/send` — send a reply to an inbox item.

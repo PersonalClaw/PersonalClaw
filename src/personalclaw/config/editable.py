@@ -891,8 +891,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "loops.worktree_sparse": {"type": "bool"},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
-    # Gates the poll-based message sources (filesystem/channel apps). The UI
-    # toggle calls /api/inbox/restart after flipping so the service re-attaches.
+    # "Poll the drop folder": the built-in drop folder's switch alone (an installed inbox
+    # app is polled while it is enabled). Read at every poll, so no restart is needed.
     "inbox.enabled": {"type": "bool"},
     # AGENT-ROOMS. Runtime-editable because all three are knobs the human reaches for
     # while a room is running: killing the feature, or capping a deliberation that is

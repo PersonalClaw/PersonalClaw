@@ -67,12 +67,13 @@ export function InboxSettingsPanel() {
       .catch(() => setEngagementOn(!v))  // revert the optimistic flip on failure
   }
 
+  // The inbox reads this switch at every poll, so the next one follows it: nothing to restart.
+  // A refused save reverts the switch AND says why.
   const setSources = (v: boolean) => {
     setSourcesOn(v)
     api.patchConfig('inbox.enabled', v)
-      .then(() => api.restartInbox())  // re-attach/detach the poll provider live
       .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
-      .catch(() => setSourcesOn(!v))
+      .catch((e) => { setSourcesOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
   }
 
   if (!s && loadErr) return <LoadError what="inbox settings" error={loadErr} onRetry={load} />
@@ -85,9 +86,9 @@ export function InboxSettingsPanel() {
         <InlineError icon onRetry={loadConfig}>Couldn't read your inbox configuration: {cfgErr}</InlineError>
       )}
 
-      <Row label="Poll message sources"
-        hint="Collect messages from connected poll sources (filesystem drops; channel apps). Agents can always post here directly.">
-        <Toggle on={!!sourcesOn} onChange={setSources} label="Poll message sources"
+      <Row label="Poll the drop folder"
+        hint="Collect the messages a program on this machine drops as JSON files in the inbox's incoming folder. Off unless you use one: anything that can write to this machine can drop a file there. Inbox apps you install (Mail Inbox, Slack) are collected while they are enabled, and agents can always post here directly.">
+        <Toggle on={!!sourcesOn} onChange={setSources} label="Poll the drop folder"
           disabled={sourcesOn === null} />
       </Row>
 

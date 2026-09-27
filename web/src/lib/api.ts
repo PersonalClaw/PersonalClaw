@@ -3992,9 +3992,15 @@ export interface InboxOwnerCount { username: string; total: number; open: number
 /** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
  *  unattributed rows) — the same number `InboxStatus.my_open_count` reports. */
 export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
-export interface InboxProvider { name: string; display_name: string; source_name: string }
+export interface InboxProvider { name: string; display_name: string; source_name: string; polled?: boolean }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
-export interface InboxSourceHealth { name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean }
+/** One source the inbox knows. A poll source is `active` while it is polled (an installed inbox
+ *  app's always is; the drop folder only while `inbox.enabled` is on), and `error` is the sentence
+ *  its last poll raised ("" while it reads). */
+export interface InboxSourceHealth {
+  name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean
+  label?: string; ok?: boolean; error?: string; last_poll_at?: number; last_ok_at?: number
+}
 export interface InboxStatus {
   enabled: boolean; user_id?: string
   native_source_active?: boolean; sources?: InboxSourceHealth[]

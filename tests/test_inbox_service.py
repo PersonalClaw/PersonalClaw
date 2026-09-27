@@ -4,6 +4,7 @@ external (untrusted) message text fenced before it reaches any LLM prompt."""
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -260,6 +261,10 @@ def _ingest_svc(tmp_path, monkeypatch, settings=None, operator="", alert_conditi
     return svc
 
 
+#: What a polled row came from (``_ingest`` records it, and a reply to the row is sent there).
+_SLACK = SimpleNamespace(source_name="slack")
+
+
 def test_ingest_creates_item_and_fires_keyword_alert(tmp_path, monkeypatch):
     from unittest.mock import MagicMock
 
@@ -268,27 +273,32 @@ def test_ingest_creates_item_and_fires_keyword_alert(tmp_path, monkeypatch):
     svc = _ingest_svc(tmp_path, monkeypatch, alert_conditions={"keywords": ["urgent"]})
     dash = MagicMock()
     monkeypatch.setattr(mod, "_dashboard_state", lambda: dash)
-    n = svc._ingest([_incoming()])
+    n = svc._ingest([_incoming()], source=_SLACK)
     assert n == 1
     item = svc.inbox.items["C9_1700000000.5"]
     assert item.channel_name == "#ops" and item.sender_name == "Ravi"
+    assert item.source == "slack" and item.can_reply is True  # the row names its source
     dash.notify.assert_called_once()  # the keyword alert fired
     dash.broadcast_ws.assert_called_once()  # live push
 
 
 def test_ingest_dedups_and_honors_mute_dismiss_own(tmp_path, monkeypatch):
     svc = _ingest_svc(tmp_path, monkeypatch)
-    assert svc._ingest([_incoming()]) == 1
-    assert svc._ingest([_incoming()]) == 0  # same id → dedup
+    assert svc._ingest([_incoming()], source=_SLACK) == 1
+    assert svc._ingest([_incoming()], source=_SLACK) == 0  # same id → dedup
     svc.state.muted_threads.add("T1")
-    assert svc._ingest([_incoming(id="m2", timestamp=2.0, thread_id="T1")]) == 0
+    assert svc._ingest([_incoming(id="m2", timestamp=2.0, thread_id="T1")], source=_SLACK) == 0
     svc.state.dismissed.add("C9_3.0")
-    assert svc._ingest([_incoming(id="m3", timestamp=3.0)]) == 0
+    assert svc._ingest([_incoming(id="m3", timestamp=3.0)], source=_SLACK) == 0
     # own message skipped unless test_mode
-    assert svc._ingest([_incoming(id="m4", timestamp=4.0, sender_id="ME")], own_user_id="ME") == 0
+    own = _incoming(id="m4", timestamp=4.0, sender_id="ME")
+    assert svc._ingest([own], source=_SLACK, own_user_id="ME") == 0
     assert (
         svc._ingest(
-            [_incoming(id="m5", timestamp=5.0, sender_id="ME")], own_user_id="ME", test_mode=True
+            [_incoming(id="m5", timestamp=5.0, sender_id="ME")],
+            source=_SLACK,
+            own_user_id="ME",
+            test_mode=True,
         )
         == 1
     )
@@ -331,7 +341,7 @@ async def test_background_loop_does_not_run_maintenance(tmp_path, monkeypatch):
     store = InboxStore(tmp_path / "i.json")
     old = _item(id="C1_old", created_at=time.time() - 90 * 86400)
     store.items[old.id] = old
-    svc = InboxService(state=InboxState(tmp_path / "s.json"), store=store)  # provider=None
+    svc = InboxService(state=InboxState(tmp_path / "s.json"), store=store)  # no sources
     monkeypatch.setattr(svc, "_poll_interval", lambda: 0.01)
     spy = {"n": 0}
     monkeypatch.setattr(svc, "run_maintenance", lambda: spy.__setitem__("n", spy["n"] + 1) or 0)

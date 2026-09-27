@@ -900,17 +900,15 @@ def channel_display_name(provider: str) -> str:
     return name or provider
 
 
-def note_unknown_sender(
-    state: Any, provider: str, sender_id: str, sender_name: str = "", *, silent: bool = False
-) -> bool:
+def note_unknown_sender(state: Any, provider: str, sender_id: str, sender_name: str = "") -> bool:
     """Record + surface a first contact from an unknown sender. Returns whether it fired.
 
     Emits exactly ONE ``sender_denied`` SEL entry and ONE actionable owner notification per
     sender per :data:`UNKNOWN_SENDER_RENOTIFY_SECS` window — a chatty stranger cannot flood
     either. The notification carries ``actions=["allow","deny"]`` plus the ``provider`` /
     ``sender_id`` the Allow button needs; a click routes to :func:`apply_trust_action`,
-    which persists the sender. ``silent`` suppresses the canned reply text only (policy
-    ``owner_only``), never the audit/notification.
+    which persists the sender. Whether the sender also gets the canned reply is
+    :func:`guard_inbound`'s call (policy ``pairing`` only), riding the same window.
 
     Deduped on the persisted ``rate`` map (an ISO timestamp per sender), so the dedup
     survives a restart — an unknown sender who messaged before you slept does not re-alert
@@ -1093,9 +1091,7 @@ def guard_inbound(
                     channel_id=channel_id,
                     is_dm=True,
                 )
-            fired = note_unknown_sender(
-                state, provider, sender_id, sender_name, silent=(policy == "owner_only")
-            )
+            fired = note_unknown_sender(state, provider, sender_id, sender_name)
             # The reply rides the same per-sender window as the notification
             # (UNKNOWN_SENDER_RENOTIFY_SECS): once per stranger per window, never once per
             # message. Answering every message put one reply on the wire for each mail anyone
