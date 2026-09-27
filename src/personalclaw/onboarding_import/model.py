@@ -116,6 +116,35 @@ def fingerprint_of(source: str, category: ImportCategory | str, key: str) -> str
 
 
 @dataclass(frozen=True)
+class SkillScan:
+    """What the supply-chain scan says about a skill before it is imported.
+
+    The scan an install makes (``skills.marketplace.scan_before_install``), made at scan time so
+    the step can show it before anything is chosen. ``findings`` are the warnings and dangerous
+    matches, each ``{"rule", "severity", "path", "evidence"}`` with the evidence through the
+    credential detector. ``consent`` (``skills.marketplace.warnings_consent``) is a digest of the
+    warnings and the files they were found in: the value a person's acceptance carries, so an
+    install goes ahead only over the warnings they read, on the bytes they were read on.
+    """
+
+    verdict: str
+    findings: tuple[dict, ...] = ()
+    consent: str = ""
+
+    @property
+    def needs_acceptance(self) -> bool:
+        """A WARNING verdict: the skill comes over only when its warnings are accepted."""
+        return self.verdict == "warning"
+
+    def to_dict(self) -> dict:
+        return {
+            "verdict": self.verdict,
+            "findings": [dict(finding) for finding in self.findings],
+            "consent": self.consent,
+        }
+
+
+@dataclass(frozen=True)
 class ImportItem:
     """One importable thing found by a scanner. Pure data — no store, no session.
 
@@ -159,6 +188,11 @@ class ImportItem:
     #: counts what belongs to no item (a credential file at the root, a refused command that
     #: holds a credential). A count, never the value.
     secrets_skipped: int = 0
+    #: A skill's supply-chain scan, made when the tool was scanned. ``None`` for anything else.
+    scan: SkillScan | None = None
+    #: The ``consent`` of the warnings the person accepted for THIS import. Set by
+    #: :func:`~.engine.run_import` from the request, never by a scanner, and never on the wire.
+    accepted_warnings: str = ""
 
     @property
     def fingerprint(self) -> str:
@@ -181,6 +215,7 @@ class ImportItem:
             "preselected": self.preselect,
             "secrets_skipped": self.secrets_skipped,
             "redactions": self.redactions,
+            "scan": self.scan.to_dict() if self.scan is not None else None,
         }
 
 

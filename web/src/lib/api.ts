@@ -5168,6 +5168,17 @@ export interface OnboardingImportItem {
   origin: string; note: string; preselected: boolean
   state: OnboardingImportItemState; destination: string; detail: string
   secrets_skipped: number; redactions: number
+  /** A skill's supply-chain scan, `null` for anything else. */
+  scan: OnboardingImportSkillScan | null
+}
+/** The supply-chain scan a skill's install will make, made when the tool was scanned, so the
+ *  step shows it before anything is chosen. A `dangerous` verdict is `rejected` in the plan. A
+ *  `warning` skill starts unticked and comes over only with its warnings accepted: the pick then
+ *  sends its `consent`. `findings` are the warnings and dangerous matches, evidence redacted. */
+export interface OnboardingImportSkillScan {
+  verdict: 'clean' | 'low' | 'warning' | 'dangerous'
+  findings: Array<{ rule: string; severity: 'warning' | 'dangerous'; path: string; evidence: string }>
+  consent: string
 }
 /** A kind of thing a source holds that is not brought over, with how many and why — so a
  *  tool whose prompt history stays behind reads as having one, not as never having had it. */
@@ -6969,8 +6980,10 @@ export const api = {
    *  directions — it writes neither their config nor our home. */
   onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
   /** Import the picked items. The server RE-SCANS and keeps only the fingerprints its own
-   *  scan found: ids travel, never items, so a caller can never name a directory to copy in. */
-  runOnboardingImport: (body: { fingerprints: string[] }) =>
+   *  scan found: ids travel, never items, so a caller can never name a directory to copy in.
+   *  `accepted` carries, for each picked skill whose scan has warnings, the `consent` its scan
+   *  showed: the warnings the user accepted, which its install checks against what it installs. */
+  runOnboardingImport: (body: { fingerprints: string[]; accepted?: Record<string, string> }) =>
     post<OnboardingImportReport>('/api/onboarding/import', body),
   /** The model step's VERIFICATION — build what chat would build, and report the verdict.
    *  Always 200: a refusal is a body, not a throw, because the three envelope lines are

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-react'
 import { InlineError } from '../../ui/InlineError'
 import { TextLink } from '../../ui/TextLink'
 import { Checkbox } from '../../ui/forms'
@@ -10,6 +10,7 @@ import { ResultAnnouncement } from '../../ui/ListControls'
 import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { listItemEnter, stagger } from '../../design/motion'
 import { StepActions } from './StepActions'
+import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import {
   api,
   type OnboardingImportItem,
@@ -111,8 +112,14 @@ export function labelOfCategory(category: string): string {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-/** Whether an item begins ticked: every `new` one, bar what the other tool does not use. */
+/** Whether an item begins ticked: every `new` one, bar what the other tool does not use and a
+ *  skill whose security scan has warnings. */
 const startsTicked = (i: OnboardingImportItem) => i.state === 'new' && i.preselected !== false
+
+/** A skill whose scan has warnings: it comes over only when the user accepts them, on its own
+ *  row. A group's box never ticks it, because a shortcut over many items is not a decision about
+ *  this one. */
+const needsAcceptance = (i: OnboardingImportItem) => i.state === 'new' && i.scan?.verdict === 'warning'
 
 /** What was left out of ONE item, value-free. The skipped count is the credential files
  *  inside a skill, which are never installed; a redaction is a credential-shaped string
@@ -245,7 +252,15 @@ export function ImportStep({ onDone, onSkip }: {
     setBusy(true)
     setFailure('')
     try {
-      setReport(await api.runOnboardingImport({ fingerprints: chosen.map((i) => i.fingerprint) }))
+      // Each picked skill with warnings carries the consent its scan showed: what the user
+      // accepted, which the install checks against the bytes it installs.
+      const accepted = Object.fromEntries(
+        chosen.filter(needsAcceptance).map((i) => [i.fingerprint, i.scan?.consent ?? '']),
+      )
+      setReport(await api.runOnboardingImport({
+        fingerprints: chosen.map((i) => i.fingerprint),
+        ...(Object.keys(accepted).length ? { accepted } : {}),
+      }))
     } catch (e) {
       // The gateway's own sentence, verbatim. `errText` already decided what a user
       // should read; paraphrasing it here would hide which write failed.
@@ -463,25 +478,35 @@ function GroupRow({ group, picked, onPick, open, onToggle }: {
   const listId = useId()
   const label = labelOfCategory(group.category)
   const tool = group.source.display_name
-  const choosable = group.items.filter((i) => i.state === 'new')
+  // The box, and the count beside it, stand for the items it can tick. A skill whose scan has
+  // warnings is chosen on its own row, so it is counted apart: "1 needs your OK".
+  const choosable = group.items.filter((i) => i.state === 'new' && !needsAcceptance(i))
+  const pending = group.items.filter(needsAcceptance)
   const chosen = choosable.filter((i) => picked.has(i.fingerprint)).length
   const all = choosable.length > 0 && chosen === choosable.length
   const count = all ? `${choosable.length}` : `${chosen} of ${choosable.length}`
   const settled = settledOf(group.items)
-  const verb = choosable.length > 0 ? 'Choose' : 'Show'
+  const verb = choosable.length + pending.length > 0 ? 'Choose' : 'Show'
   return (
     <div className="flex items-start gap-s">
       {choosable.length > 0
         ? <Checkbox checked={all} indeterminate={chosen > 0 && !all} className="mt-0.5"
             onChange={(on) => onPick(choosable.map((i) => i.fingerprint), on)}
             ariaLabel={`Bring over ${label} from ${tool}, ${count}`} />
-        : <Check size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-ok" />}
+        : pending.length > 0
+          ? <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-warning" />
+          : <Check size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-ok" />}
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-s">
           <span data-type="body-s" className="text-on-surface">{label}</span>
           {choosable.length > 0 && (
             <span data-type="caption" className="text-on-surface-low tabular-nums">
               <span aria-hidden="true">· </span>{count}
+            </span>
+          )}
+          {pending.length > 0 && (
+            <span data-type="caption" className="text-warning">
+              <span aria-hidden="true">· </span>{pending.length} {pending.length === 1 ? 'needs' : 'need'} your OK
             </span>
           )}
           {settled && (
@@ -589,11 +614,16 @@ function ItemRow({ item, picked, onPick }: {
 }) {
   const withheld = withheldOf(item)
   const choosable = item.state === 'new'
+  const accepting = needsAcceptance(item)
+  const warnings = (item.scan?.findings ?? []).filter((f) => f.severity === 'warning').length
+  const acceptance = accepting
+    ? `import anyway, accepting ${plural(warnings, 'warning', 'warnings')}`
+    : ''
   return (
     <li tabIndex={choosable ? undefined : -1} className="flex items-start gap-s py-xs">
       {choosable
         ? <Checkbox checked={picked} onChange={(on) => onPick([item.fingerprint], on)} className="mt-0.5"
-            ariaLabel={[item.title, item.origin, withheld].filter(Boolean).join(', ')} />
+            ariaLabel={[item.title, item.origin, withheld, acceptance].filter(Boolean).join(', ')} />
         : <span aria-hidden="true" className="size-4 shrink-0" />}
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-s">
@@ -616,8 +646,49 @@ function ItemRow({ item, picked, onPick }: {
             {withheld}
           </p>
         )}
+        {item.scan && item.scan.findings.length > 0 && <ScanFindings item={item} accepting={accepting} />}
       </div>
     </li>
+  )
+}
+
+/** What a skill's security scan found, on its own row before anything is imported: each finding's
+ *  rule, file, what it means and the line that tripped it, the way the Store's install card lists
+ *  them. A warning skill says what ticking it does, because the tick IS the acceptance: the
+ *  import records it in the audit log. A dangerous one says nothing overrides it. */
+function ScanFindings({ item, accepting }: { item: OnboardingImportItem; accepting: boolean }) {
+  const findings = item.scan?.findings ?? []
+  const dangerous = item.scan?.verdict === 'dangerous'
+  const tone = dangerous ? 'danger' : 'warning'
+  const hidden = hiddenFindingsNote(findings.length)
+  return (
+    <div className="mt-xs flex flex-col gap-xs rounded-md px-s py-xs"
+      style={{ background: `color-mix(in srgb, var(--color-${tone}) 10%, transparent)` }}>
+      <p data-type="caption" className="flex items-center gap-xs" style={{ color: `var(--color-${tone})` }}>
+        {dangerous ? <ShieldX size={12} aria-hidden="true" /> : <ShieldAlert size={12} aria-hidden="true" />}
+        {dangerous
+          ? 'The security scan found dangerous content. Nothing overrides that.'
+          : `The security scan flagged ${plural(findings.length, 'warning', 'warnings')}.`}
+      </p>
+      <ul className="flex flex-col gap-xs">
+        {findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => (
+          <li key={`${f.rule}:${f.path}:${i}`} data-type="caption" className="text-on-surface-var">
+            <span className="font-mono">
+              <span className="uppercase" style={{ color: `var(--color-${f.severity === 'dangerous' ? 'danger' : 'warning'})` }}>{f.severity}</span>
+              {' '}{f.rule}{f.path && <span className="text-on-surface-low"> in {f.path}</span>}
+            </span>
+            {ruleGloss(f.rule) && <span className="block">{ruleGloss(f.rule)}</span>}
+            {f.evidence && <span className="block break-all font-mono text-on-surface-low">{f.evidence}</span>}
+          </li>
+        ))}
+      </ul>
+      {hidden && <p data-type="caption" className="italic text-on-surface-low">{hidden}</p>}
+      {accepting && (
+        <p data-type="caption" className="text-on-surface-var">
+          Ticking it imports it anyway: you accept these warnings, and the audit log records that you did.
+        </p>
+      )}
+    </div>
   )
 }
 

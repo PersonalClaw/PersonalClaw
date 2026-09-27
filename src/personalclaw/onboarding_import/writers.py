@@ -68,12 +68,6 @@ from personalclaw.onboarding_import.model import (
     WriteResult,
     withheld_notes,
 )
-from personalclaw.skills.marketplace import (
-    SkillDetail,
-    SkillEntry,
-    SkillsMarketplace,
-    read_skill_file_entry,
-)
 
 
 def config_dir() -> Path:
@@ -356,12 +350,20 @@ def imported_skills_dir(source: str) -> Path:
     return skills_dir() / _IMPORTED_DIRNAME / _slug(source)
 
 
-def _plan_skill(item: ImportItem) -> Plan:
-    """Everything about a skill the destination can answer without installing it.
+def _refusing_rules(item: ImportItem) -> str:
+    """The rules that make a skill's scan dangerous, for the sentence that says so."""
+    findings = item.scan.findings if item.scan is not None else ()
+    rules = sorted({f["rule"] for f in findings if f["severity"] == "dangerous"})
+    return ", ".join(rules) or "no specific rule"
 
-    The supply-chain scan is not part of the plan — it needs the quarantine copy an
-    install makes — so a skill it would refuse still plans ``new``; the report then
-    carries the scanner's own reason as ``rejected``.
+
+def _plan_skill(item: ImportItem) -> Plan:
+    """Everything about a skill the destination and its scan can answer without installing it.
+
+    The scan is the one the import's install will make, made when the tool was scanned: a
+    dangerous verdict is refused here, before anything is chosen, with the rules that refuse
+    it. A skill whose scan has warnings plans ``new``; it comes over only with them accepted,
+    and without that its row is ``rejected`` with the scanner's reason.
     """
     target = imported_skills_dir(item.source) / item.key
     dest = _rel_to_home(target)
@@ -378,83 +380,59 @@ def _plan_skill(item: ImportItem) -> Plan:
             dest,
             "a skill of this name that no import wrote is already here, and it is kept",
         )
+    if item.scan is not None and item.scan.verdict == "dangerous":
+        return Plan(
+            ItemState.REJECTED,
+            dest,
+            f"the skill supply-chain scan refuses it as dangerous: {_refusing_rules(item)}",
+        )
     return Plan(ItemState.NEW, dest)
 
 
 def _write_skill(item: ImportItem, dest: str) -> WriteResult:
     """Install a foreign skill through the shared supply-chain gate.
 
-    Namespaced under ``imported/<source>/`` so a re-import or a removal is scoped
-    and reversible, and routed through ``install_scanned`` so a foreign skill gets
-    exactly the quarantine → scan → commit treatment a Store skill gets. A
-    DANGEROUS verdict is ``rejected``, never force-installed.
+    Namespaced under ``imported/<source>/`` so a re-import or a removal is scoped and
+    reversible, and routed through ``install_scanned`` so a foreign skill gets exactly the
+    quarantine → scan → commit treatment a Store skill gets. A DANGEROUS verdict is
+    ``rejected``, never installed. A WARNING verdict installs only over the warnings the person
+    accepted (``accepted_warnings``): the gate compares their digest with the scan it makes of
+    the bytes it installs, and records the acceptance in the SEL.
     """
+    from personalclaw.onboarding_import.sources.common import ImportedSkillMarketplace
     from personalclaw.skills.marketplace import SkillInstallRefused, install_scanned
 
     target = imported_skills_dir(item.source)
     target.mkdir(parents=True, exist_ok=True)
-    marketplace = _ImportedSkillsMarketplace(Path(item.path))
+    marketplace = ImportedSkillMarketplace(Path(item.path))
     try:
-        install_scanned(marketplace, f"import:{item.source}", item.key, target, force=False)
-    except SkillInstallRefused as exc:
-        return _result(
-            item,
-            WriteOutcome.REJECTED,
-            dest,
-            f"the skill supply-chain scan refused this skill: {exc}",
+        install_scanned(
+            marketplace,
+            f"import:{item.source}",
+            item.key,
+            target,
+            accepted_warnings=item.accepted_warnings or None,
         )
+    except SkillInstallRefused as exc:
+        band = "dangerous" if exc.dangerous else "warning"
+        rules = ", ".join(sorted({f.rule for f in exc.report.findings if f.severity.value == band}))
+        if exc.dangerous:
+            detail = f"the skill supply-chain scan refuses it as dangerous: {rules}"
+        elif item.accepted_warnings:
+            detail = (
+                "its security scan finds warnings other than the ones you accepted, so it was "
+                f"not installed: {rules}. Scan again to read them"
+            )
+        else:
+            detail = (
+                f"its security scan found warnings, and it comes over only if you accept them: "
+                f"{rules}"
+            )
+        return _result(item, WriteOutcome.REJECTED, dest, detail)
     except (ValueError, OSError) as exc:
         return _result(item, WriteOutcome.REJECTED, dest, f"could not install: {exc}")
     _record(item, dest)
     return _result(item, WriteOutcome.IMPORTED, dest)
-
-
-def _imported_skills_marketplace_files(skill_dir: Path) -> list[dict[str, Any]]:
-    files: list[dict[str, Any]] = []
-    for path in sorted(skill_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        # The same floor the scanner counted with: a credential file inside a
-        # foreign skill is never staged, scanned or installed.
-        if refuses(path):
-            continue
-        try:
-            files.append(read_skill_file_entry(path, path.relative_to(skill_dir).as_posix()))
-        except OSError:
-            logger.warning("skipping unreadable file in imported skill %s", skill_dir.name)
-    return files
-
-
-class _ImportedSkillsMarketplace(SkillsMarketplace):
-    """A transient, single-directory skills source rooted at a foreign skill dir.
-
-    Not registered in the shared registry — another tool's skills dir is not a
-    marketplace. It exists only so an imported skill flows through the exact same
-    :func:`install_scanned` gate (quarantine → scan → commit → lock) as any other
-    install, at the ``community`` trust tier (foreign, unsigned content).
-    """
-
-    def __init__(self, skill_dir: Path) -> None:
-        self._skill_dir = Path(skill_dir)
-
-    @property
-    def marketplace_type(self) -> str:
-        return "onboarding_import"
-
-    @property
-    def trust_tier(self) -> str:
-        return "community"
-
-    def search(self, query: str, limit: int = 20) -> list[SkillEntry]:  # pragma: no cover
-        return []
-
-    def fetch(self, skill_id: str) -> SkillDetail:
-        return SkillDetail(
-            id=skill_id,
-            name=self._skill_dir.name,
-            files=_imported_skills_marketplace_files(self._skill_dir),
-            audit_status="pass",
-        )
 
 
 # ── agents → config.json agents (the profiles the Agents page lists) ─────────
