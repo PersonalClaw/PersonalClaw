@@ -160,6 +160,13 @@ Install agent config and configure credentials (interactive wizard).
 | `--mode {docker,service,none}` | Deployment mode: Docker Compose, system service (systemd/launchd), or none. |
 | `--provider NAME` | Set the default chat provider by registry entry name. |
 | `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
+| `--app NAME` | Run only the named installed app's setup step. |
+
+A step that fails never ends on "Done!". It says why on stderr and `setup` goes on to the
+next step, then ends on a summary naming each failed step with the command that runs it
+again (`personalclaw setup`, `personalclaw setup --agent-only`, or
+`personalclaw setup --app NAME` for an app's step), and exits 1. What the other steps did
+stays saved, and running `setup` again is safe: Enter at a prompt keeps its answer.
 
 ## `personalclaw doctor`
 

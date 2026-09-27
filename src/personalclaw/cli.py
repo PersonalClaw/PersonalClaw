@@ -26,6 +26,7 @@ _ensure_ssl_certs()
 
 import argparse
 import asyncio
+import io
 import logging
 import os
 import sys
@@ -1448,6 +1449,13 @@ Examples:
 
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
+    # stdout a line at a time, so that a line on stderr lands after what was printed before it
+    # when both streams go to one pipe (`personalclaw setup 2>&1 | tee setup.log`). A piped
+    # stdout is otherwise buffered in blocks, and each failure `setup` names on stderr came out
+    # ahead of the prompt it answers.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
+
     # Load .env from the working directory and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.

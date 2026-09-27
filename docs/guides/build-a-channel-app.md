@@ -369,7 +369,8 @@ app-creation guide in the apps repository; the channel-specific parts are:
   Prompt for them from your `cli_setup` contribution and probe them from `cli_doctor`.
   A step runs with your app's directory on `sys.path` (while it imports and while it runs),
   so it may import your own package; one that cannot load or raises makes
-  `personalclaw setup` exit non-zero, naming your app and the exception.
+  `personalclaw setup` exit non-zero, naming your app, the exception and
+  `personalclaw setup --app <your-app>`, the command that runs your step again.
   `SetupContext.delete_credential(name)` removes a secret an EARLIER release saved under a
   plain name — it refuses a key one of your settings owns (clear the setting instead).
 - A thread-title generator: parse the model's reply with `parse_title` from

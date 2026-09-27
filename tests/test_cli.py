@@ -572,12 +572,13 @@ class TestSetupTimezone:
 
         with patch("builtins.input", return_value="Invalid/Timezone"):
             with patch("personalclaw.cli_setup._detect_system_timezone", return_value=""):
-                _setup_timezone()
+                reason = _setup_timezone()
 
         data = json.loads(cfg_file.read_text())
         assert "timezone" not in data
-        output = capsys.readouterr().out
-        assert "Unknown timezone" in output
+        # Three answers that are not zones fail the step, so `setup` cannot end on "Done!".
+        assert reason == "no IANA timezone in 3 tries, so it was not changed"
+        assert "Unknown timezone" in capsys.readouterr().err
 
     def test_missing_database_is_not_called_an_unknown_timezone(
         self, tmp_path, monkeypatch, capsys
@@ -602,13 +603,14 @@ class TestSetupTimezone:
 
         with patch("builtins.input", return_value="America/Los_Angeles"):
             with patch("personalclaw.cli_setup._detect_system_timezone", return_value=""):
-                _setup_timezone()
+                reason = _setup_timezone()
 
         assert "timezone" not in json.loads(cfg_file.read_text())
-        output = capsys.readouterr().out
-        assert "Timezone database unavailable" in output
-        assert "Unknown timezone" not in output
-        assert "tzdata" in output
+        out, err = capsys.readouterr()
+        assert reason and "tzdata" in reason
+        assert "Timezone database unavailable" in err
+        assert "Unknown timezone" not in out + err
+        assert "tzdata" in err
 
     def test_keeps_existing_on_enter(self, tmp_path, monkeypatch):
         """Re-running setup with existing timezone keeps it on Enter."""
@@ -632,12 +634,11 @@ class TestSetupTimezone:
 
         from personalclaw.cli_setup import _setup_timezone
 
-        _setup_timezone()
+        assert _setup_timezone()
 
         # File should be unchanged
         assert cfg_file.read_text() == "not json {{{"
-        output = capsys.readouterr().out
-        assert "Could not read" in output
+        assert "Could not read" in capsys.readouterr().err
 
 
 class TestLogout:
