@@ -147,4 +147,4 @@ def _ensure_default_agent_in_config() -> None:
     try:
         mutate_config(_seed, path=config_path())
     except ConfigWriteError as exc:
-        print(f"  ⚠️  Could not add the default agent: {exc}", file=sys.stderr)
+        print(f"  Could not add the default agent: {exc}", file=sys.stderr)

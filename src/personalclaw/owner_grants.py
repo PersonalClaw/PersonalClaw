@@ -51,7 +51,9 @@ class GrantBook:
 
     @property
     def path(self) -> Path:
-        return grants_dir() / f"{self._name}.json"
+        from personalclaw.record_ids import record_path
+
+        return record_path(grants_dir(), self._name, kind="grant book")
 
     def _read(self) -> dict[str, dict]:
         try:

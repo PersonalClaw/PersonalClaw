@@ -186,6 +186,30 @@ class TestAnAppCannotReachYourChat:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        ("raw", "code"), [(b'{"session": "mine"', "invalid_json"), (b'["mine"]', "invalid_body")]
+    )
+    async def test_a_body_the_ownership_check_cannot_read_never_reaches_the_handler(
+        self, tmp_path, sel_rows, raw, code
+    ) -> None:
+        """``POST /api/chat`` names its conversation in the body. The check used to read a body
+        that did not parse as naming nothing, and an optional target then let the request
+        through to the handler. It refuses the body itself now, in the shared envelope."""
+        state = _make_state(tmp_path)
+        _owner_chat(state)
+        handler, reached = _stub()
+        with _home(tmp_path):
+            _install(tmp_path, APP, DECLARED)
+            gw = _gateway(state, APP, [("POST", "/api/chat", handler)])
+            async with TestClient(TestServer(gw)) as client:
+                resp = await client.post(
+                    "/api/chat", data=raw, headers={"Content-Type": "application/json"}
+                )
+                body = await resp.json()
+        assert resp.status == 400 and body["error"]["code"] == code, body
+        assert not reached, "the handler never ran"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         ("name", "key", "tag"),
         [
             # A loop's worker approves its own tool calls (`loop/manager.py` sets `_trust`).
