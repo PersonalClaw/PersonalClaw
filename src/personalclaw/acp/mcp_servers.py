@@ -20,11 +20,11 @@ Two shapes, one spec:
 * the ACP ``session/new`` shape is an **array** of objects that each carry their
   own ``name``, and whose ``env`` is an array of ``{"name", "value"}`` pairs.
 
-Env is declared explicitly rather than relied upon by inheritance. The CLI
-inherits the gateway's environment (``transport.py`` spawns with ``{**os.environ}``)
-and its MCP children would normally inherit that in turn, but a CLI is free to
-spawn MCP servers with a filtered environment. Two variables decide whether the
-server answers correctly at all, so neither may be left to inheritance:
+Env is declared explicitly rather than relied upon by inheritance. The CLI starts
+from the child allowlist (``transport.py``, ``sandbox.build_child_env``) and its MCP
+children would normally inherit that in turn, but a CLI is free to spawn MCP servers
+with a filtered environment. Two variables decide whether the server answers
+correctly at all, so neither may be left to inheritance:
 
 ``PERSONALCLAW_HOME``
     ``mcp_core`` resolves ``config_dir()`` for the IPC secret, the gateway port
