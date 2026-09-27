@@ -726,9 +726,14 @@ async def handle_confirm(request: web.Request) -> web.Response:
         return refusal
     try:
         body = await request.json()
-    except Exception:
-        body = {}
+    except Exception:  # noqa: BLE001 - a body that does not parse names no confirmation
+        return _refuse_confirm(client, "")
     token = str((body if isinstance(body, dict) else {}).get("confirmation") or "").strip()
+    return _refuse_confirm(client, token)
+
+
+def _refuse_confirm(client: InboundClient | None, token: str) -> web.Response:
+    """The one answer ``/confirm`` gives, a malformed body included, and its audit rows."""
     intent = _pending.get(token) if token else None
     by = approval_answer.bridge(client.client_id if client is not None else "")
     why = approval_answer.check(
