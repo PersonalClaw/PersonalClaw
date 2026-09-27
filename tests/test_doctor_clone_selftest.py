@@ -15,6 +15,7 @@ The behaviours the atom pins:
 from __future__ import annotations
 
 import os
+import tempfile
 import wave
 
 import pytest
@@ -28,15 +29,31 @@ async def _timed(coro, timeout: float = 15.0):
     return await coro
 
 
+@pytest.fixture(autouse=True)
+def system_temp(tmp_path, monkeypatch):
+    """The system temp folder, as the probe and the provider see it: this test's own."""
+    folder = tmp_path / "system-temp"
+    folder.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(folder))
+    return folder
+
+
 class _FakeProvider:
     supports_cloning = True
 
     def __init__(self) -> None:
         self.seen: dict = {}
 
-    async def synthesize(self, text, *, ref_audio="", ref_text="", **opts):
+    async def synthesize(self, text, *, ref_audio="", ref_text="", output_path="", **opts):
+        """As the real providers behave: it writes where it is told, or makes a temporary file
+        of its own when told nowhere, and hands the path back for the caller to remove."""
         self.seen = {"text": text, "ref_audio": ref_audio, "ref_text": ref_text, **opts}
-        return "/tmp/out.wav"
+        if not output_path:
+            fd, output_path = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+        with open(output_path, "wb") as fh:
+            fh.write(b"RIFF")
+        return output_path
 
 
 def _params(provider) -> dict:
@@ -69,7 +86,10 @@ async def test_a_cloning_provider_is_probed_through_a_real_clip(monkeypatch):
         seen_exists["ref"] = params.get("ref_audio", "")
         seen_exists["existed"] = os.path.isfile(params.get("ref_audio", ""))
         return await params["provider"].synthesize(
-            text, ref_audio=params.get("ref_audio", ""), ref_text=params.get("ref_text", "")
+            text,
+            ref_audio=params.get("ref_audio", ""),
+            ref_text=params.get("ref_text", ""),
+            output_path=output_path,
         )
 
     import personalclaw.tts.registry as reg
@@ -88,7 +108,9 @@ async def test_a_locked_profile_clip_is_never_overridden(monkeypatch):
     provider = _FakeProvider()
 
     async def fake_route(params, text, *, output_path=""):
-        return await params["provider"].synthesize(text, ref_audio=params.get("ref_audio", ""))
+        return await params["provider"].synthesize(
+            text, ref_audio=params.get("ref_audio", ""), output_path=output_path
+        )
 
     import personalclaw.tts.registry as reg
 
@@ -136,7 +158,7 @@ async def test_a_non_cloning_provider_is_probed_without_a_clip(monkeypatch):
 
     async def fake_route(params, text, *, output_path=""):
         assert not params.get("ref_audio")  # plain-voice path: nothing injected
-        return await params["provider"].synthesize(text)
+        return await params["provider"].synthesize(text, output_path=output_path)
 
     import personalclaw.tts.registry as reg
 
@@ -145,6 +167,49 @@ async def test_a_non_cloning_provider_is_probed_without_a_clip(monkeypatch):
 
     result = await _tts_clone_probe(_timed)
     assert result == {"ok": True, "detail": "synthesis returned audio", "cloning": False}
+
+
+# On `main` the probe asked for its clip with no path (`output_path=""`), so the provider made a
+# temporary file, and the probe only looked at whether a path came back: every selftest with a
+# voice bound left that clip in the system temp folder. It now hands the provider a path of its
+# own, as the Models page's selftest does, and removes it and any other path the provider returns.
+
+
+@pytest.mark.parametrize("cloning", [False, True], ids=["plain", "clone"])
+async def test_the_probe_leaves_no_clip_behind(monkeypatch, system_temp, cloning):
+    provider = _FakeProvider()
+    provider.supports_cloning = cloning
+
+    async def fake_route(params, text, *, output_path=""):
+        return await params["provider"].synthesize(
+            text, ref_audio=params.get("ref_audio", ""), output_path=output_path
+        )
+
+    import personalclaw.tts.registry as reg
+
+    monkeypatch.setattr(reg, "active_voice_params", lambda **kw: _params(provider))
+    monkeypatch.setattr(reg, "route_synthesis", fake_route)
+
+    result = await _tts_clone_probe(_timed)
+    assert result is not None and result["ok"] is True, result
+    assert list(system_temp.iterdir()) == []
+
+
+async def test_a_clip_the_provider_put_somewhere_else_is_removed_too(monkeypatch, system_temp):
+    provider = _FakeProvider()
+    provider.supports_cloning = False
+
+    async def fake_route(params, text, *, output_path=""):
+        return await params["provider"].synthesize(text)  # its own file, not the probe's path
+
+    import personalclaw.tts.registry as reg
+
+    monkeypatch.setattr(reg, "active_voice_params", lambda **kw: _params(provider))
+    monkeypatch.setattr(reg, "route_synthesis", fake_route)
+
+    result = await _tts_clone_probe(_timed)
+    assert result is not None and result["ok"] is True, result
+    assert list(system_temp.iterdir()) == []
 
 
 def test_the_sdk_facade_is_the_lmmv_machinery_unchanged():

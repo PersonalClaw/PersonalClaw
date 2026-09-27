@@ -27,7 +27,9 @@ wheels built in the test, because a fake cannot witness what pip actually does w
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
+import http.server
 import importlib
 import importlib.metadata
 import json
@@ -35,6 +37,7 @@ import os
 import subprocess
 import sys
 import sysconfig
+import threading
 import zipfile
 from pathlib import Path
 
@@ -616,6 +619,83 @@ class TestRealPip:
         assert f"PersonalClaw runs packaging {have}" in message, message
         assert importlib.metadata.version("packaging") == have
         assert not (_site() / "pclaw_badpin").exists()
+
+
+# ── what an install leaves outside the home: nothing ──────────────────────────────────
+
+
+@contextlib.contextmanager
+def _index_like_pypi(wheel: Path):
+    """A package index that answers the way PyPI does: a project page pip may keep for ten
+    minutes and a file marked immutable.
+
+    pip's HTTP cache keeps what the server says it may keep, so a plain file server would leave
+    nothing behind on ``main`` either. These are PyPI's own ``Cache-Control`` values. pip caches
+    only over HTTPS or from a trusted host, so the caller trusts ``127.0.0.1`` as PyPI's HTTPS
+    would be.
+    """
+    body = wheel.read_bytes()
+    digest = hashlib.sha256(body).hexdigest()
+    project = "/simple/" + wheel.name.split("-")[0].replace("_", "-") + "/"
+    page = f'<a href="/files/{wheel.name}#sha256={digest}">{wheel.name}</a>'.encode()
+
+    class _Index(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 (the stdlib handler's name)
+            if self.path == project:
+                self._answer(page, "text/html", "max-age=600, public")
+            elif self.path == f"/files/{wheel.name}":
+                self._answer(body, "application/octet-stream", "max-age=365000000, immutable")
+            else:
+                self.send_error(404)
+
+        def _answer(self, data: bytes, kind: str, cache: str) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", cache)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Index)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/simple/"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_installing_an_apps_packages_keeps_pips_cache_out_of_the_users_home(tmp_path, monkeypatch):
+    """Measured on ``main`` with a gateway driven on a scratch HOME: installing an app that declares
+    a Python package filled pip's own cache in the user's home, ``~/Library/Caches/pip/http-v2``
+    (``~/.cache/pip`` on Linux). What the install is for lives in ``<home>/app-python``; nothing
+    of it may stay in the user's home. The environment is a user's, with no ``PIP_*`` of its own."""
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
+    monkeypatch.setenv("HOME", str(user_home))
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "pclaw-home"))
+    for name in [k for k in os.environ if k.startswith("PIP_")] + ["XDG_CACHE_HOME"]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    # pip's user agent asks `rustc --version`, and a rustup proxy on the developer's PATH would
+    # initialise its own `~/.rustup` in this empty home: a real user's rustup home already exists.
+    monkeypatch.setenv(
+        "PATH", os.pathsep.join([str(Path(sys.executable).parent), "/usr/bin", "/bin"])
+    )
+    wheel = _wheel(tmp_path / "files", "pclaw-cache-probe", "1.0")
+
+    with _index_like_pypi(wheel) as index:
+        monkeypatch.setenv("PIP_INDEX_URL", index)
+        monkeypatch.setenv("PIP_TRUSTED_HOST", "127.0.0.1")
+        assert _ap().ensure("cache-probe", ["pclaw-cache-probe==1.0"], label="Cache Probe") == []
+
+    assert (_site() / "pclaw_cache_probe" / "__init__.py").is_file(), "the install did not run"
+    assert sorted(p.relative_to(user_home).as_posix() for p in user_home.rglob("*")) == []
 
 
 # ── an update moves a pin: exactly the new version, nothing of the old ─────────────────

@@ -913,6 +913,7 @@ class SidecarInstall:
         Raises, naming it by *label*, when it exits non-zero, when it is still running after
         *timeout* seconds, and when :meth:`cancel` stopped it; a stopped command's whole
         process group goes with it."""
+        from personalclaw._installer import HOME_INSTALL_PIP_ENV
         from personalclaw.sandbox import PROFILE_BUILD, build_child_env, spawn_shim_argv
 
         # Ceiling: pip and venv creation are operator-initiated but run third-party
@@ -925,7 +926,8 @@ class SidecarInstall:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            env=build_child_env(site="model-sidecar-install"),
+            # The engine installs into the app's folder, so pip keeps no cache in the user's.
+            env=build_child_env(site="model-sidecar-install", extra=dict(HOME_INSTALL_PIP_ENV)),
             start_new_session=True,
         )
         with self._lock:

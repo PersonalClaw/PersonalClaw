@@ -88,7 +88,7 @@ _IMPORT = "Bring your setup over: reads another tool's own files, to import from
 ALLOWED: dict[tuple[str, str], str] = {
     ("config/loader.py", "default_config_dir"): "the home itself is ~/.personalclaw by default",
     ("security.py", "_build_sensitive_regex"): "a guard: knows what under HOME to refuse",
-    ("security.py", "is_sensitive_path"): "a guard: knows what under HOME to refuse",
+    ("security.py", "SensitivePaths.__init__"): "a guard: knows what under HOME to refuse",
     ("security.py", "system_subtrees"): "a guard: the running account's own home is exempt",
     ("sandbox.py", "_build_launcher_script"): "the OS sandbox profile confines the home",
     ("sandbox.py", "_build_seatbelt_profile"): "the OS sandbox profile confines the home",
