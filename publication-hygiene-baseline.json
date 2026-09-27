@@ -58,6 +58,9 @@
       "lb",
       "linuxbrew",
       "me",
+      "noor",
+      "old",
+      "old-name",
       "personalclaw",
       "projects",
       "runner",
@@ -66,12 +69,13 @@
       "state-history",
       "surfaces",
       "u",
+      "uploads",
       "user",
       "workflows",
       "x",
       "you"
     ],
-    "rationale": "An absolute path into a real developer's home publishes the author's username and machine layout. This is an ALLOWLIST of placeholder home names rather than a denylist of real ones, for two reasons: a denylist would have to write the maintainer's username INTO the public repo to keep it out (self-defeating), and an allowlist reds an unrecognised name the first time it appears instead of only the names someone already thought of. The listed names are the complete measured set across the tracked tree — every one a synthetic fixture (`/Users/x`, `/home/u`, `/Users/dev`) or a dev-home path fragment (`/home/config.json`). Adding a name here is a claim that it is a PLACEHOLDER, not a person. `linuxbrew` and `lb` are claimed as placeholders on the same measured basis: `/home/linuxbrew/.linuxbrew` is Homebrew-on-Linux's canonical install prefix, byte-identical on every machine and named in Homebrew's own documentation, so it publishes nothing about this author; and `lb` is an unprivileged account that `scripts/fresh_install_validate.sh` CREATES inside a throwaway container (`chown -R lb:lb`, `su lb -c`) because Homebrew refuses to run as root — it is a fixture of the script, not a person's home."
+    "rationale": "An absolute path into a real developer's home publishes the author's username and machine layout. This is an ALLOWLIST of placeholder home names rather than a denylist of real ones, for two reasons: a denylist would have to write the maintainer's username INTO the public repo to keep it out (self-defeating), and an allowlist reds an unrecognised name the first time it appears instead of only the names someone already thought of. The listed names are the complete measured set across the tracked tree — every one a synthetic fixture (`/Users/x`, `/home/u`, `/Users/dev`) or a dev-home path fragment (`/home/config.json`). Adding a name here is a claim that it is a PLACEHOLDER, not a person. `linuxbrew` and `lb` are claimed as placeholders on the same measured basis: `/home/linuxbrew/.linuxbrew` is Homebrew-on-Linux's canonical install prefix, byte-identical on every machine and named in Homebrew's own documentation, so it publishes nothing about this author; and `lb` is an unprivileged account that `scripts/fresh_install_validate.sh` CREATES inside a throwaway container (`chown -R lb:lb`, `su lb -c`) because Homebrew refuses to run as root — it is a fixture of the script, not a person's home. Four names are claimed on the same basis. `noor` is the invented persona whose Claude Code and Codex homes are the importer fixtures under `tests/fixtures/agent_tool_homes/noor/`: `/Users/noor` is the home that fiction's copied `~/.claude` still records its projects under, and the Codex rollouts and onboarding tests that quote those fixtures carry the same path. `old` and `old-name` stand for a PREVIOUS machine's username in the importers' 'a home copied from another machine still names that machine' example (`/Users/old-name/src/app` in `onboarding_import/sources/`, `/Users/old/src/app` in the changelog entry for that fix). `uploads` is not an owner at all: `/home/uploads/` is the synthetic uploads-folder prefix `web/src/pages/chat/imageAttachmentChips.test.tsx` builds its attachment paths from."
   },
   "internal_reference_rule": {
     "name": "internal-reference",
@@ -195,6 +199,126 @@
       "path": "tests/debug_sandbox.sh",
       "rule": "residue-name",
       "rationale": "Matches `residue-name` on its `debug_` prefix, but the word is descriptive of what it does, not a mark of residue: it is a documented manual on-host sandbox check (listed in `tests/README.md`) that prints the detected backend and confirms `~/.aws/` is blocked. Present since the initial public commit and referenced from the tests README. Kept broad-rule-plus-exception rather than narrowing the pattern, so the NEXT `debug_*` file that appears reds and forces a deliberate decision."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/.claude.json",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/CLAUDE.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/agents/code-reviewer.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/agents/oncall-triage.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/commands/handoff.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/commands/standup.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/history.jsonl",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/6277d318-971a-44e8-b375-0e64f38466e9.jsonl",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/MEMORY.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/issue-412-cause.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/maintainers.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/release-checklist.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/MEMORY.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/dedupe-is-postgres-not-lru.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/never-quote-consignee-pii.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/oncall-rotation.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor/80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor/9616f743-040c-4515-8bdf-701612aa21ba.jsonl",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/rules/privacy.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/rules/python.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/settings.json",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/skills/postgres-migration-review/SKILL.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/.claude/skills/postgres-migration-review/checklist.md",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's Claude Code home, laid out file for file as Claude Code 2.x writes it (settings, agents, commands, rules, skills, per-project memory and transcripts), because the importer's contract is reading exactly that layout and the `.claude` directory name is part of it. Every value is fictional: the persona `noor` and her projects `feedsmith` and `carrier-webhooks`, not a copy of any real machine's state. `tests/test_claude_code_import_reads_what_claude_code_writes.py` and its sibling import suites copy the tree into `tmp_path` and point `CLAUDE_CONFIG_DIR` at the copy."
+    },
+    {
+      "path": "tests/fixtures/agent_tool_homes/noor/src/feedsmith/.claude/settings.json",
+      "rule": "embedded-repo-or-editor-state",
+      "rationale": "The invented persona's project-level Claude Code settings, the `<repository>/.claude/settings.json` Claude Code keeps beside a repository, where it records which of the repository's own MCP servers were approved (`enabledMcpjsonServers`). The importer reads it for exactly that (`claude_code._project_approvals`), so the `.claude` segment is Claude Code's own name and cannot be renamed without no longer testing the real layout. Fictional content."
     }
   ]
 }
