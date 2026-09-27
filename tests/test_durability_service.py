@@ -878,6 +878,30 @@ class TestServiceLoop:
         assert svc._task is first
         svc.stop()
 
+    @pytest.mark.asyncio
+    async def test_a_gateway_stop_uninstalls_the_history_debouncer_its_boot_installed(
+        self, tmp_path, monkeypatch
+    ):
+        """``start_dashboard`` starts this service, and the service installs time-travel's
+        debouncer, which is process-wide and runs a thread of its own. Nothing stopped the
+        service, so a stopped gateway left the debouncer subscribed to every write, bound to its
+        home, and the next ``install`` in the process was handed that one."""
+        from unittest.mock import MagicMock
+
+        from personalclaw.dashboard.server import start_dashboard
+        from personalclaw.durability import history_debounce, state_history
+
+        if not state_history.git_available():
+            pytest.skip("git is unavailable, so a boot installs no debouncer at all")
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", "none")
+        runner, _state = await start_dashboard(sessions=MagicMock(count=0), port=0)
+        try:
+            assert history_debounce.active() is not None, "the boot installs the debouncer"
+        finally:
+            await runner.cleanup()
+        assert history_debounce.active() is None, "the gateway's stop uninstalled it"
+
 
 class TestConfigContract:
     """The five `durability.*` fields must complete the config round-trip.

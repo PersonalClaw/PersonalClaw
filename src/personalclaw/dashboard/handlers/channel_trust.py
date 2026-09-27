@@ -36,7 +36,7 @@ from aiohttp import web
 
 from personalclaw import channel_trust
 from personalclaw.http_errors import consent_required, json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ async def api_channel_trust_track(request: web.Request) -> web.Response:
         return _unknown()
     body = await json_object_body(request)
     channel_id = str(body.get("channel_id", "") or "").strip()
-    name = str(body.get("name", "") or "").strip()
+    name = string_field(body, "name")
     if not channel_id or len(channel_id) > _CHANNEL_ID_MAX or any(c.isspace() for c in channel_id):
         return json_error(
             "invalid_request", message="channel_id must be the group's id.", status=400

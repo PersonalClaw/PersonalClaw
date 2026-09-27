@@ -336,7 +336,10 @@ class TestSpawnWithApprovalCallback:
 
     @pytest.mark.asyncio
     async def test_rejected_spawn_logs_sel_rejection(self) -> None:
-        """SEL audit log records rejection when spawn is denied."""
+        """SEL audit log records rejection when spawn is denied, and that you decided it
+        (#3742: every approval row names who decided)."""
+        from personalclaw import approval_grants
+
         approval_callback = AsyncMock(return_value=False)
         manager = SubagentManager(
             sessions=_mock_sessions(),
@@ -354,7 +357,7 @@ class TestSpawnWithApprovalCallback:
             source="subagent",
             tool_name="subagent_run",
             outcome="rejected",
-            metadata={"subagent_id": info.id},
+            metadata={"subagent_id": info.id, "decided_by": approval_grants.YOU},
         )
 
     @pytest.mark.asyncio

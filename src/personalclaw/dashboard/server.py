@@ -2231,6 +2231,24 @@ async def start_dashboard(
 
     app.on_cleanup.append(_auth_tally_shutdown)
 
+    async def _durability_shutdown(app_: web.Application) -> None:
+        """Stop the durability loop, and time-travel's debouncer with it, on gateway stop.
+
+        The service starts after ``runner.setup()`` froze ``on_cleanup``, so its stop is
+        registered here and reads the service off the state. Nothing stopped it before. The
+        debouncer is process-wide and runs its own thread, so it outlived the gateway that
+        installed it: the commits it still held were never flushed, and the next gateway in the
+        same process was handed the old debouncer, bound to the old home."""
+        svc = getattr(app_["state"], "_durability_svc", None)
+        if svc is None:
+            return
+        try:
+            svc.stop()
+        except Exception:
+            logger.debug("durability shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_durability_shutdown)
+
     # Static files — React build under /assets, packaged static assets under /static
     if _DIST_DIR.is_dir():
         app.router.add_static(
