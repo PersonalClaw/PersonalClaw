@@ -1,7 +1,7 @@
 """The desktop shell must DECLARE its install kind (`DC-1` T1.3, DISTRIBUTION C1) — #2673.
 
 `self_update.detect_install_kind()` resolves ``PERSONALCLAW_INSTALL_KIND`` first, then asks
-whether the process is FROZEN, then probes ``PERSONALCLAW_PROJECT_DIR`` for a ``.git``, then
+whether the process is FROZEN, then whether the running package comes from a git checkout, then
 falls back to ``"pip"``. The ``"desktop"`` member has two producers: the Electron shell's spawn
 env (asserted here) and the frozen artefact answering for itself
 (``tests/test_frozen_bundle_runtime.py``) — a second, independent producer added on 2026-09-23

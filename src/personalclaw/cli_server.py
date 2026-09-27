@@ -760,7 +760,7 @@ def _update(to: str = "") -> None:
         sys.exit(1)
 
     if kind == "git":
-        _update_git(self_update.project_dir())
+        _update_git(self_update.source_checkout())
     elif kind == "pip":
         _update_pip()
     elif kind == "container":
@@ -1026,7 +1026,9 @@ def _service_cmd(args: argparse.Namespace) -> int:
     """
     action = getattr(args, "service_action", None)
     if action == "install":
-        rc = service_controller.install_service()
+        rc = service_controller.install_service(
+            extra=getattr(args, "env", None) or (), without=getattr(args, "no_env", None) or ()
+        )
         sel().log_api_access(
             caller="cli",
             operation="service_install",

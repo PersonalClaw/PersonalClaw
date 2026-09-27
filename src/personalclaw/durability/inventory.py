@@ -915,13 +915,17 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,  # maps to provider-side session ids; machine-local
         help="provider session id map (machine-local)",
     ),
+    # Earlier versions of `personalclaw setup` saved the checkout the working directory was in, and
+    # the CLI took it as the install's project dir. Nothing writes or reads it now (the project dir
+    # is the checkout the running package comes from), but homes still carry one, so it stays
+    # claimed: an unclaimed path is a Doctor failure (`audit_home`), and this one is harmless.
     StateEntry(
         id="project_dir",
         kind=KIND_JSON_FILE,
         path="project_dir",
         domain=DOMAIN_CONFIG,
         merge=MERGE_REPLACE_ONLY,
-        help="the bound project directory pointer",
+        help="a project directory pointer earlier versions saved; nothing reads it now",
     ),
     StateEntry(
         id="workspace_dir",

@@ -271,6 +271,47 @@ def _isolate_trigger_store(tmp_path_factory, monkeypatch):
     monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: store_home, raising=False)
 
 
+#: Where the package under test "runs from" unless a test places it: a wheel's copy in this
+#: interpreter's ``site-packages``. Only its shape is read, so nothing needs to exist there.
+_WHEEL_PACKAGE_DIR = Path(sys.prefix) / "lib" / "site-packages" / "personalclaw"
+
+
+@pytest.fixture(autouse=True)
+def _package_runs_from_a_wheel(monkeypatch):
+    """The running ``personalclaw`` is a wheel's copy, unless a test puts it in a checkout.
+
+    ``self_update.source_checkout()`` reads the install from where the package was imported
+    from, and this suite imports it from the checkout it tests. Left alone, every test would be
+    a git install of that checkout, and an update path a test forgot to mock would run ``git
+    fetch`` and ``git checkout`` on the developer's own tree. A test that wants a git install
+    builds a checkout under ``tmp_path`` and points ``self_update._package_dir`` at its
+    ``src/personalclaw`` (last patch wins). Nothing is created: a ``site-packages`` path is not
+    a checkout whether or not it exists."""
+    monkeypatch.setattr("personalclaw.self_update._package_dir", lambda: _WHEEL_PACKAGE_DIR)
+
+
+@pytest.fixture
+def package_in_checkout(monkeypatch):
+    """Run ``personalclaw`` from a source checkout: ``package_in_checkout(root)`` lays out
+    ``root/pyproject.toml`` and ``root/src/personalclaw``, adds a ``.git`` directory
+    (``git="dir"``), a worktree's ``.git`` file (``git="file"``) or none (``git=""``), and makes
+    ``root/src/personalclaw`` the directory the package was imported from. Returns *root*."""
+
+    def _place(root: Path, *, git: str = "dir") -> Path:
+        package = root / "src" / "personalclaw"
+        package.mkdir(parents=True, exist_ok=True)
+        if not (root / "pyproject.toml").exists():
+            (root / "pyproject.toml").write_text("[project]\nname = 'personalclaw'\n")
+        if git == "dir":
+            (root / ".git").mkdir(exist_ok=True)
+        elif git == "file":
+            (root / ".git").write_text("gitdir: /somewhere/.git/worktrees/x\n")
+        monkeypatch.setattr("personalclaw.self_update._package_dir", lambda: package)
+        return root
+
+    return _place
+
+
 @pytest.fixture(autouse=True)
 def _reset_trust_mode():
     """Reset the process-global YOLO/auto-approve trust state around every test.

@@ -315,8 +315,8 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # Same class as the probes in `_doctor` above, split out into its own helper so the
     # `git repo:` row can distinguish "git says no" from "git could not answer" (#2907).
     # Fixed argv (`git -C <dir> rev-parse --is-inside-work-tree`), no shell, check=False,
-    # read-only, bounded by a timeout. The one variable is the project dir, which the
-    # OPERATOR set (`PERSONALCLAW_PROJECT_DIR` or the saved `project_dir` file) and which
+    # read-only, bounded by a timeout. The one variable is the project dir: the checkout the
+    # running package comes from, or a `PERSONALCLAW_PROJECT_DIR` the OPERATOR set, which
     # `_doctor` has already resolved through `is_dir()`; no agent input reaches this argv.
     "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": ("operator: doctor work-tree probe"),
     # Also split out of `_doctor`, and for the same shape of reason: both Runtime rows

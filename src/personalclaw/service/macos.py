@@ -2,15 +2,20 @@
 
 The plist lives at ``~/Library/LaunchAgents/io.personalclaw.gateway.plist``
 and is loaded via ``launchctl load -w``. The service starts on user login
-and is restarted on crash by ``KeepAlive``.
+and is restarted on crash by ``KeepAlive``. Its environment is ``HOME``, the
+PATH ``service_path`` builds, and what :mod:`personalclaw.service.environment`
+carries from the shell that installed it.
 """
 
 import os
+import plistlib
 import subprocess
 import tempfile
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from personalclaw.service.common import LAUNCHD_LABEL, personalclaw_bin, service_path
+from personalclaw.service.environment import Capture, capture
 
 PLIST_DIR = Path.home() / "Library" / "LaunchAgents"
 PLIST_PATH = PLIST_DIR / f"{LAUNCHD_LABEL}.plist"
@@ -19,52 +24,35 @@ STDOUT_LOG = LOG_DIR / "gateway.log"
 STDERR_LOG = LOG_DIR / "gateway.err"
 
 
-def _xml_escape(value: str) -> str:
-    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+def render_plist(carried: Mapping[str, str] | None = None) -> str:
+    """Render the launchd LaunchAgent plist contents, carrying *carried* in its environment.
+
+    Through :mod:`plistlib`, which escapes every value, so a path or a proxy URL with ``&`` or
+    ``<`` in it cannot break the document ``launchctl`` loads.
+    """
+    home = str(Path.home())
+    environment = {"HOME": home, "PATH": service_path(home), **dict(carried or {})}
+    document = {
+        "Label": LAUNCHD_LABEL,
+        "ProgramArguments": [personalclaw_bin(), "gateway"],
+        "RunAtLoad": True,
+        "KeepAlive": {"SuccessfulExit": False},
+        "EnvironmentVariables": environment,
+        "StandardOutPath": str(STDOUT_LOG),
+        "StandardErrorPath": str(STDERR_LOG),
+    }
+    return plistlib.dumps(document, sort_keys=False).decode("utf-8")
 
 
-def render_plist() -> str:
-    """Render the launchd LaunchAgent plist contents."""
-    bin_path = _xml_escape(personalclaw_bin())
-    home_str = str(Path.home())
-    home = _xml_escape(home_str)
-    path = _xml_escape(service_path(home_str))
-    out_log = _xml_escape(str(STDOUT_LOG))
-    err_log = _xml_escape(str(STDERR_LOG))
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        '<plist version="1.0">\n'
-        "<dict>\n"
-        "    <key>Label</key>\n"
-        f"    <string>{LAUNCHD_LABEL}</string>\n"
-        "    <key>ProgramArguments</key>\n"
-        "    <array>\n"
-        f"        <string>{bin_path}</string>\n"
-        "        <string>gateway</string>\n"
-        "    </array>\n"
-        "    <key>RunAtLoad</key>\n"
-        "    <true/>\n"
-        "    <key>KeepAlive</key>\n"
-        "    <dict>\n"
-        "        <key>SuccessfulExit</key>\n"
-        "        <false/>\n"
-        "    </dict>\n"
-        "    <key>EnvironmentVariables</key>\n"
-        "    <dict>\n"
-        "        <key>HOME</key>\n"
-        f"        <string>{home}</string>\n"
-        "        <key>PATH</key>\n"
-        f"        <string>{path}</string>\n"
-        "    </dict>\n"
-        f"    <key>StandardOutPath</key>\n"
-        f"    <string>{out_log}</string>\n"
-        f"    <key>StandardErrorPath</key>\n"
-        f"    <string>{err_log}</string>\n"
-        "</dict>\n"
-        "</plist>\n"
-    )
+def installed_environment() -> dict[str, str]:
+    """The environment the installed plist starts the gateway in, or ``{}`` with none."""
+    try:
+        with PLIST_PATH.open("rb") as fh:
+            document = plistlib.load(fh)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return {}
+    env = document.get("EnvironmentVariables") if isinstance(document, dict) else None
+    return {str(k): str(v) for k, v in env.items()} if isinstance(env, dict) else {}
 
 
 class ServiceInstallError(RuntimeError):
@@ -102,21 +90,23 @@ def _launchctl(*args: str, check: bool = False) -> subprocess.CompletedProcess[s
     )
 
 
-def install() -> None:
-    """Write the plist and load+start the agent.
+def install(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> Capture:
+    """Write the plist and load+start the agent; return what its environment carries.
 
     Idempotent — unloads first if already loaded so the new plist takes
-    effect without leaving the prior agent stale.
+    effect without leaving the prior agent stale. *extra* and *without* are
+    ``--env`` / ``--no-env`` (:func:`personalclaw.service.environment.capture`).
 
     Raises :class:`ServiceInstallError` with a human-readable message if
     ``launchctl load`` fails. The CLI catches this and prints the message
     instead of letting a CalledProcessError surface.
     """
+    carried = capture(os.environ, extra=extra, without=without)
     PLIST_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     if PLIST_PATH.exists():
         _launchctl("unload", "-w", str(PLIST_PATH))
-    _write_plist_atomic(render_plist())
+    _write_plist_atomic(render_plist(carried.env))
     load_res = _launchctl("load", "-w", str(PLIST_PATH))
     if load_res.returncode != 0:
         raise ServiceInstallError(
@@ -125,6 +115,7 @@ def install() -> None:
             f"   Plist: {PLIST_PATH}\n"
             f"   Tail the agent logs at {STDOUT_LOG} / {STDERR_LOG} for details."
         )
+    return carried
 
 
 def uninstall() -> None:

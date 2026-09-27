@@ -144,7 +144,6 @@ def _setup(
         return
 
     from personalclaw.agent import rebuild_agent_config  # circular import: agent imports cli
-    from personalclaw.cli import _project_dir_file  # circular import: cli -> cli_setup -> cli
 
     print("PersonalClaw Setup\n")
     print(f"  {DATA_WARNING.replace(chr(10), chr(10) + '  ')}\n")
@@ -154,13 +153,6 @@ def _setup(
         _setup_noninteractive(mode=mode, provider=provider, credential=credential)
         if not agent_only:
             return
-
-    # 0. Save project dir so personalclaw works from anywhere
-    proj = os.environ.get("PERSONALCLAW_PROJECT_DIR")
-    if proj:
-        _project_dir_file().parent.mkdir(parents=True, exist_ok=True)
-        _project_dir_file().write_text(proj + "\n", encoding="utf-8")
-        print(f"  ✅ Project dir saved: {proj}")
 
     # 1. Choose workspace directory (skip for agent-only — not relevant)
     if not agent_only:

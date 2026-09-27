@@ -1,9 +1,11 @@
 """Install-kind detection + the shared self-update primitives (contracts C1/C2).
 
 Four fixtures — one per InstallKind — pin the resolution order:
-env (container/desktop) wins first, then a .git working tree => git, else pip.
-Each test isolates the two env vars the classifier reads (monkeypatch.delenv)
-so it never inherits the runner's real environment.
+env (container/desktop) wins first, then a running package that belongs to a git checkout
+=> git, else pip. Each test clears the env var the classifier reads and places the running
+package itself (the ``package_in_checkout`` fixture, over the suite's default of a wheel's
+copy), so it never
+inherits the runner's environment or the checkout the suite itself runs from.
 
 The module under test moved out of ``dashboard/handlers/updates_kind.py`` into the
 core package in DIST-13, so the CLI can reach the same decision the dashboard makes
@@ -29,11 +31,10 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
 
 
-def test_container_env_wins(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    # Even with a git tree present, the container env marker takes precedence.
+def test_container_env_wins(monkeypatch: pytest.MonkeyPatch, tmp_path, package_in_checkout) -> None:
+    # Even when the package runs from a git checkout, the container env marker takes precedence.
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
-    (tmp_path / ".git").mkdir()
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+    package_in_checkout(tmp_path)
     assert detect_install_kind() == "container"
 
 
@@ -53,37 +54,33 @@ def test_unknown_env_kind_falls_through(monkeypatch: pytest.MonkeyPatch) -> None
     assert detect_install_kind() == "pip"
 
 
-def test_git_when_project_dir_has_dot_git(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    (tmp_path / ".git").mkdir()
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+def test_git_when_the_package_runs_from_a_checkout(tmp_path, package_in_checkout) -> None:
+    package_in_checkout(tmp_path)
     assert detect_install_kind() == "git"
 
 
-def test_git_worktree_dot_git_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_git_worktree_dot_git_file(tmp_path, package_in_checkout) -> None:
     # In a git worktree/submodule, .git is a FILE pointing at the real gitdir.
-    (tmp_path / ".git").write_text("gitdir: /somewhere/.git/worktrees/x\n")
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+    package_in_checkout(tmp_path, git="file")
     assert detect_install_kind() == "git"
 
 
-def test_git_when_dot_git_in_monorepo_parent(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    # Monorepo layout: the project dir is nested one level under the repo root
+def test_git_when_dot_git_in_monorepo_parent(tmp_path, package_in_checkout) -> None:
+    # Monorepo layout: the package root is nested one level under the repo root
     # (which carries .git). The parent probe catches it.
     (tmp_path / ".git").mkdir()
-    nested = tmp_path / "PersonalClaw"
-    nested.mkdir()
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(nested))
+    package_in_checkout(tmp_path / "PersonalClaw", git="")
     assert detect_install_kind() == "git"
 
 
-def test_pip_when_no_env_no_git(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    # A project dir with NO .git (e.g. an unpacked source dir) is not "git".
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+def test_pip_when_no_env_no_git(tmp_path, package_in_checkout) -> None:
+    # A source layout with NO .git (e.g. an unpacked sdist) is not "git".
+    package_in_checkout(tmp_path, git="")
     assert detect_install_kind() == "pip"
 
 
 def test_pip_when_nothing_set() -> None:
-    # No env markers, no project dir -> a plain wheel/uv/pipx install.
+    # No env markers, and the package is a wheel's copy -> a plain wheel/uv/pipx install.
     assert detect_install_kind() == "pip"
 
 
@@ -257,14 +254,16 @@ class _FakeProc:
 
 
 @pytest.mark.asyncio
-async def test_do_update_check_kill_switch_runs_no_subprocess(monkeypatch, tmp_path) -> None:
+async def test_do_update_check_kill_switch_runs_no_subprocess(
+    monkeypatch, tmp_path, package_in_checkout
+) -> None:
     from personalclaw.dashboard.handlers import updates as dash_updates
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     _write_updates_config(tmp_path, check_enabled=False)
-    # A VALID project dir so the kill switch — not the "no project dir" guard — is what
-    # stops the check; otherwise the assertion would pass vacuously.
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+    # A git checkout the package runs from, so the kill switch — not the "no checkout"
+    # guard — is what stops the check; otherwise the assertion would pass vacuously.
+    package_in_checkout(tmp_path / "checkout")
 
     calls: list[tuple] = []
 
@@ -280,11 +279,13 @@ async def test_do_update_check_kill_switch_runs_no_subprocess(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_do_update_check_runs_git_fetch_when_enabled(monkeypatch, tmp_path) -> None:
-    # Positive control: with the check ON and a valid project dir, `_do_update_check`
-    # runs `git fetch`. Pairs with the kill-switch test to make it a gate.
+async def test_do_update_check_runs_git_fetch_when_enabled(
+    monkeypatch, tmp_path, package_in_checkout
+) -> None:
+    # Positive control: with the check ON and the package running from a git checkout,
+    # `_do_update_check` runs `git fetch`. Pairs with the kill-switch test to make it a gate.
     #
-    # The `.git` directory makes "a valid project dir" literally true rather than assumed.
+    # The `.git` directory makes "a git checkout" literally true rather than assumed.
     # It used to be assumed, and a project dir with no repository in it is EXACTLY the
     # state a packaged `.app` is in (`…/Resources`), where the check ran `git fetch`
     # anyway and logged `fatal: not a git repository` twelve times in one session. The
@@ -295,8 +296,7 @@ async def test_do_update_check_runs_git_fetch_when_enabled(monkeypatch, tmp_path
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     _write_updates_config(tmp_path, check_enabled=True)
-    (tmp_path / ".git").mkdir(exist_ok=True)
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+    package_in_checkout(tmp_path / "checkout")
 
     calls: list[tuple] = []
 
@@ -544,7 +544,7 @@ async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_ta
     monkeypatch.setattr(uk, "git_fast_forward", _reset_or_branch_boom, raising=False)
     monkeypatch.setattr(uk, "resolve_default_branch", _reset_or_branch_boom, raising=False)
     monkeypatch.setattr(uk, "package_root", lambda _p: str(tmp_path))
-    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(uk, "source_checkout", lambda: str(tmp_path))
 
     async def _fake_pip(*_a, **_k):
         return _FakeOkProc()

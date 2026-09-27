@@ -19,9 +19,16 @@ runs as root. The actual gateway runs as ``User=$USER`` once started.
 import os
 import subprocess
 import tempfile
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from personalclaw.service.common import SERVICE_NAME, personalclaw_bin, service_path
+from personalclaw.service.environment import (
+    Capture,
+    capture,
+    systemd_assignment,
+    systemd_environment,
+)
 
 UNIT_PATH = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
 
@@ -48,18 +55,22 @@ def _current_group(user: str) -> str:
     return user
 
 
-def render_unit() -> str:
-    """Render the systemd system-unit file contents.
+def render_unit(carried: Mapping[str, str] | None = None) -> str:
+    """Render the systemd system-unit file contents, carrying *carried* in its environment.
 
     Runs the gateway as the invoking user (``User=``, ``Group=``) so it
     has access to ``$HOME/.personalclaw`` and the user's other config. The
     PATH is set explicitly so subprocess invocations of git, agent CLIs,
-    etc. resolve the same way they would from an interactive shell.
+    etc. resolve the same way they would from an interactive shell, and
+    each carried variable (:mod:`personalclaw.service.environment`) is one
+    quoted ``Environment=`` line.
     """
     bin_path = personalclaw_bin()
     user = _current_user()
     group = _current_group(user) if user else ""
     home = str(Path.home())
+    environment = {"HOME": home, "USER": user, "PATH": service_path(home), **dict(carried or {})}
+    env_lines = "".join(systemd_assignment(k, v) + "\n" for k, v in environment.items())
     return (
         "[Unit]\n"
         "Description=PersonalClaw gateway (dashboard + channels + cron)\n"
@@ -81,9 +92,7 @@ def render_unit() -> str:
         "Restart=on-failure\n"
         "RestartSec=10\n"
         "TimeoutStopSec=20\n"
-        f"Environment=HOME={home}\n"
-        f"Environment=USER={user}\n"
-        f"Environment=PATH={service_path(home)}\n"
+        f"{env_lines}"
         "\n"
         "[Install]\n"
         "WantedBy=multi-user.target\n"
@@ -159,14 +168,17 @@ def _write_unit_via_sudo(contents: str) -> subprocess.CompletedProcess[str]:
             pass
 
 
-def install() -> None:
-    """Write the unit file and enable+start the service. Idempotent.
+def install(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> Capture:
+    """Write the unit file and enable+start the service; return what it carries. Idempotent.
 
     Calls ``sudo`` to write the unit and to invoke ``systemctl``. Sudo
     will prompt for a password the first time (or when the cached
     ticket has expired) — that prompt appears on the user's terminal.
     No personalclaw / LLM / agent code runs under sudo: only ``tee`` and
     ``systemctl`` are invoked.
+
+    *extra* and *without* are ``--env`` / ``--no-env``
+    (:func:`personalclaw.service.environment.capture`).
 
     Raises :class:`ServiceInstallError` with a human-readable message if
     a step fails. The CLI catches this and prints the message instead
@@ -179,7 +191,8 @@ def install() -> None:
             "Set $USER and re-run."
         )
 
-    write_res = _write_unit_via_sudo(render_unit())
+    carried = capture(os.environ, extra=extra, without=without)
+    write_res = _write_unit_via_sudo(render_unit(carried.env))
     if write_res.returncode != 0:
         raise ServiceInstallError(
             "Failed to write the unit file. The sudo step is required because "
@@ -210,6 +223,18 @@ def install() -> None:
             f"{(restart_res.stderr or restart_res.stdout).strip()}\n"
             f"Run `sudo journalctl -u {SERVICE_NAME}.service -n 50` for details."
         )
+    return carried
+
+
+def installed_environment() -> dict[str, str]:
+    """The environment the installed unit starts the gateway in, or ``{}`` with none.
+
+    The unit is world-readable (``install -m 0644``), so this needs no sudo.
+    """
+    try:
+        return systemd_environment(UNIT_PATH.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
 
 
 def uninstall() -> None:

@@ -49,49 +49,6 @@ BANNER = r"""
 """
 
 
-def _is_project_root(d: Path) -> bool:
-    """True when *d* is the package root of a PersonalClaw source checkout.
-
-    The markers are the two things every source layout has and no unrelated
-    directory does: the installable ``pyproject.toml`` and the ``src/personalclaw``
-    package. Both shipped layouts satisfy this — the standalone published
-    checkout (repo root IS the package root) and the monorepo layout
-    (``<repo>/PersonalClaw``), for which :func:`self_update.git_root` walks up to
-    the repo root and :func:`self_update.package_root` walks back down.
-
-    Getting this wrong is not a cosmetic miss: no match means
-    ``PERSONALCLAW_PROJECT_DIR`` stays unset, so ``detect_install_kind()`` sees no
-    git root and classifies a git checkout as a ``pip`` install — which routes
-    "Update & Restart" into a PyPI wheel upgrade over the user's own tree.
-    """
-    return (d / "pyproject.toml").is_file() and (d / "src" / "personalclaw").is_dir()
-
-
-def _project_dir_file() -> Path:
-    """Return the path to the saved project_dir file, respecting PERSONALCLAW_HOME."""
-    return config_dir() / "project_dir"
-
-
-def _detect_project_dir() -> str | None:
-    """Find the package root of the surrounding PersonalClaw source checkout.
-
-    Search order:
-    1. Walk up from CWD
-    2. Read saved path from config_dir()/project_dir (respects PERSONALCLAW_HOME)
-    """
-    cur = Path.cwd().resolve()
-    for d in (cur, *cur.parents):
-        if _is_project_root(d):
-            return str(d)
-    pdf = _project_dir_file()
-    if pdf.is_file():
-        saved = pdf.read_text(encoding="utf-8").strip()
-        p = Path(saved)
-        if p.is_dir() and _is_project_root(p):
-            return saved
-    return None
-
-
 def _resolve_gateway_args(args: argparse.Namespace) -> dict:
     """Resolve the kwargs for `_gateway()` from parsed CLI args.
 
@@ -1171,7 +1128,24 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         help="Manage the PersonalClaw gateway as a system service (requires sudo on Linux)",
     )
     svc_sub = svc_parser.add_subparsers(dest="service_action")
-    svc_sub.add_parser("install", help="Install and start the gateway service (sudo on Linux)")
+    svc_install = svc_sub.add_parser(
+        "install", help="Install and start the gateway service (sudo on Linux)"
+    )
+    svc_install.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Carry one more variable from this shell into the service (repeatable). A secret "
+        "is refused; save it in Settings → Secrets instead.",
+    )
+    svc_install.add_argument(
+        "--no-env",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Leave out a variable the service would carry (repeatable).",
+    )
     svc_sub.add_parser("uninstall", help="Stop and remove the gateway service (sudo on Linux)")
     svc_sub.add_parser("status", help="Show service status (systemctl/launchctl)")
 
@@ -1434,7 +1408,7 @@ Examples:
 
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
-    # Load .env from the project root (CWD or detected project dir) and from
+    # Load .env from the working directory and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.
     #
@@ -1473,10 +1447,17 @@ def main() -> None:
             )
             sys.exit(1)
 
+    # The project dir is where this install's own resources live (`agents/`, `skills/`, the
+    # changelog): the source checkout the running package comes from, or nothing for a wheel.
+    # Never the working directory. It was, and a `uv tool` install started inside a checkout
+    # became that checkout, down to "Update & Restart" running git on it (`self_update`).
+    # An explicit value (the desktop shell sets its bundle's resources) is left alone.
     if not os.environ.get("PERSONALCLAW_PROJECT_DIR"):
-        detected = _detect_project_dir()
-        if detected:
-            os.environ["PERSONALCLAW_PROJECT_DIR"] = detected
+        from personalclaw.self_update import source_checkout
+
+        checkout = source_checkout()
+        if checkout:
+            os.environ["PERSONALCLAW_PROJECT_DIR"] = checkout
 
     parser = build_parser()
 

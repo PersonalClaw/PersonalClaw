@@ -779,7 +779,10 @@ class GatewayOrchestrator:
         if not missing:
             return
 
-        proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
+        from personalclaw import self_update
+
+        # A checkout this package runs from, never a tree the gateway was only started in.
+        proj = self_update.source_checkout()
         if not proj:
             return
 
@@ -4438,12 +4441,15 @@ class GatewayOrchestrator:
         is answered in exactly one place. Untracked files (task specs, notes) are
         never at risk and never block an update.
         """
-        proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
-        if not proj:
-            return
         from personalclaw import __version__ as _cur_version
         from personalclaw import self_update
         from personalclaw.config import AppConfig
+
+        # The checkout the running package comes from: advancing any other tree would leave the
+        # gateway on the code it runs now, with someone else's tree moved underneath them.
+        proj = self_update.source_checkout()
+        if not proj:
+            return
 
         try:
             cfg = AppConfig.load()

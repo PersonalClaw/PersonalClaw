@@ -1084,12 +1084,17 @@ class TestResolveClientPort:
         assert resolve_client_port(0) == 0
 
 
-class TestDoctorStaleProjectDir:
-    """Tests for doctor stale project_dir detection."""
+class TestDoctorProjectDir:
+    """The doctor's project row is the project dir the CLI exported, never a saved path."""
 
-    def test_doctor_detects_stale_project_dir(self, tmp_path, capsys):
-        proj_file = tmp_path / "project_dir"
-        proj_file.write_text("/nonexistent/deleted\n")
+    def test_a_saved_project_dir_file_is_not_the_project_dir(self, tmp_path, capsys):
+        """Earlier versions of `personalclaw setup` saved the checkout the working directory was
+        in, and doctor reported it as this install's project dir from then on, wherever
+        PersonalClaw ran from. Nothing reads that file now, so doctor neither reports it nor
+        calls it stale."""
+        checkout = tmp_path / "PersonalClaw"
+        checkout.mkdir()
+        (tmp_path / "project_dir").write_text(f"{checkout}\n")
         agent_file = tmp_path / "personalclaw.json"
         agent_data = {
             "tools": ["@personalclaw-core", "@personalclaw-schedule"],
@@ -1118,11 +1123,14 @@ class TestDoctorStaleProjectDir:
             patch("personalclaw.cli_doctor.config_dir", return_value=tmp_path),
             patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": ""}, clear=False),
         ):
-            with pytest.raises(SystemExit):
+            try:
                 _doctor()
+            except SystemExit:
+                pass  # other rows may fail on this machine; the project row is the point
         out = capsys.readouterr().out
-        assert "stale" in out
-        assert "project dir: ⚠️  not set" not in out  # should NOT show fallback message
+        assert f"project dir: ✅ {checkout}" not in out
+        assert "project dir: ⏹  not set" in out
+        assert "project dir: ❌ stale" not in out
 
 
 class TestDoctorMcpCmdFixed:
@@ -1288,65 +1296,6 @@ class TestDoctorStt:
 
 class TestConfigDirOverride:
     """Tests that CLI functions respect PERSONALCLAW_HOME env var via config_dir()."""
-
-    def test_project_dir_file_uses_config_dir(self, tmp_path, monkeypatch):
-        """_project_dir_file() returns path under config_dir(), not hardcoded home."""
-        monkeypatch.setattr("personalclaw.cli.config_dir", lambda: tmp_path)
-
-        from personalclaw.cli import _project_dir_file
-
-        assert _project_dir_file() == tmp_path / "project_dir"
-
-    @staticmethod
-    def _make_checkout(root):
-        """Materialize the markers of a real PersonalClaw source checkout."""
-        (root / "src" / "personalclaw").mkdir(parents=True)
-        (root / "pyproject.toml").write_text('[project]\nname = "personalclaw"\n')
-        return root
-
-    def test_detect_project_dir_matches_published_repo_layout(self, tmp_path, monkeypatch):
-        """The published layout (repo root IS the package root) is detected.
-
-        PUBL-8 drive: the previous markers were top-level ``agents/`` + ``skills/``,
-        which the published repository has never had (they live at
-        ``src/personalclaw/{agents,skills}``). Nothing matched, so
-        PERSONALCLAW_PROJECT_DIR stayed unset and a git checkout was classified as
-        a ``pip`` install — routing "Update & Restart" into a PyPI wheel upgrade.
-        """
-        proj = self._make_checkout(tmp_path / "PersonalClaw")
-        sub = proj / "src" / "personalclaw"
-        monkeypatch.chdir(sub)  # detection walks UP from CWD
-
-        from personalclaw.cli import _detect_project_dir
-
-        assert _detect_project_dir() == str(proj)
-
-    def test_detect_project_dir_rejects_agents_skills_only_tree(self, tmp_path, monkeypatch):
-        """A bare agents/+skills/ tree is NOT a checkout — it carries no package."""
-        proj = tmp_path / "not_a_checkout"
-        (proj / "agents").mkdir(parents=True)
-        (proj / "skills").mkdir()
-        monkeypatch.chdir(proj)
-        monkeypatch.setattr("personalclaw.cli.config_dir", lambda: tmp_path / "cfg")
-
-        from personalclaw.cli import _detect_project_dir
-
-        assert _detect_project_dir() is None
-
-    def test_detect_project_dir_reads_from_config_dir(self, tmp_path, monkeypatch):
-        """_detect_project_dir reads saved path from config_dir()/project_dir."""
-        proj = self._make_checkout(tmp_path / "my_project")
-
-        config_home = tmp_path / "custom_config"
-        config_home.mkdir()
-        (config_home / "project_dir").write_text(str(proj) + "\n")
-
-        monkeypatch.setattr("personalclaw.cli.config_dir", lambda: config_home)
-        monkeypatch.chdir(tmp_path)  # CWD has no project markers
-
-        from personalclaw.cli import _detect_project_dir
-
-        assert _detect_project_dir() == str(proj)
 
     def test_logout_reads_secret_from_config_dir(self, tmp_path, monkeypatch):
         """_logout reads .local_secret from config_dir(), not ~/.personalclaw."""
