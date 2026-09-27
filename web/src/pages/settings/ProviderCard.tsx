@@ -7,6 +7,7 @@ import { Toggle } from './settingsUI'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ProviderConfigForm } from './ProviderConfigForm'
 import { ChannelOwnerSection } from './ChannelOwnerSection'
+import { EngineSection } from './EngineSection'
 import { fvs } from '../../design/fontWeight'
 
 /** One provider card: identity + enable toggle, with the provider's own
@@ -129,6 +130,9 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
             className="shrink-0 underline hover:text-on-surface">Check again</button>
         </div>
       )}
+      {/* A sidecar provider's engine: what it runs in its own Python environment, and the button
+          that installs it there. Beside the reason above, which is usually that it isn't there. */}
+      {ext.provider?.execution === 'sidecar' && <EngineSection app={ext.name} displayName={who} onInstalled={onChanged} />}
       {runtime && runtime.detail && runtime.state !== 'ready' && !unavailable && (
         <div data-type="caption" className="mt-2 flex items-start gap-1.5 text-on-surface-low"><TerminalSquare size={12} className="mt-0.5 shrink-0" /> {runtime.detail}</div>
       )}

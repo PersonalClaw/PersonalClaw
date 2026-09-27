@@ -866,6 +866,20 @@ class MarketplaceDependencies:
         )
 
 
+#: Bounds on what a manifest may hand ``pip install`` for an engine: a requirement list is a
+#: few names, and a spec is a name, a version range and at most a direct-reference URL.
+_MAX_SIDECAR_DEPENDENCIES = 50
+_MAX_REQUIREMENT_LENGTH = 500
+
+
+def _as_list(value: Any) -> list[Any]:
+    """A manifest list read as one: absent is empty, and a lone value is a list of one, so a
+    string is never read as its characters."""
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
 @dataclass
 class Dependencies:
     """External dependencies that PersonalClaw should resolve during install.
@@ -885,12 +899,20 @@ class Dependencies:
     app code loads after the interpreter's own packages (``apps/app_python.py``). A
     first install is importable in place; replacing a package the gateway had already
     loaded needs a RESTART — surfaced via the install result's ``restart_required``.
+
+    ``sidecarDependencies`` are the requirement specifiers of the ENGINE an
+    ``execution: "sidecar"`` provider runs: they install into the app's own Python
+    environment (``apps/<name>/venv``, ``local_models.sidecar``), never into
+    ``app-python``, and only when the owner presses **Install engine** — a torch-sized engine
+    is not something an app install should pull in unasked, and in the gateway's own packages
+    it would sit beside core's.
     """
 
     managedBy: str = "gateway"  # noqa: N815
     marketplace: "MarketplaceDependencies" = field(default_factory=MarketplaceDependencies)
     commands: list[str] = field(default_factory=list)
     pythonDependencies: list[str] = field(default_factory=list)  # noqa: N815
+    sidecarDependencies: list[str] = field(default_factory=list)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -903,6 +925,8 @@ class Dependencies:
             d["commands"] = self.commands
         if self.pythonDependencies:
             d["pythonDependencies"] = self.pythonDependencies
+        if self.sidecarDependencies:
+            d["sidecarDependencies"] = self.sidecarDependencies
         return d
 
     @classmethod
@@ -918,6 +942,89 @@ class Dependencies:
             marketplace=marketplace,
             commands=[str(c) for c in data.get("commands", [])],
             pythonDependencies=[str(p) for p in data.get("pythonDependencies", [])],  # noqa: N815
+            sidecarDependencies=[str(p) for p in _as_list(data.get("sidecarDependencies"))],
+        )
+
+    def validate(self, providers: "list[ProviderConfig]") -> list[str]:
+        """Errors in the block. ``sidecarDependencies`` become the argv of a ``pip install``, so
+        each must be a requirement pip reads as one (PEP 508) — never an option — and they need
+        a sidecar provider, whose environment is the only place they go."""
+        errors: list[str] = []
+        if not self.sidecarDependencies:
+            return errors
+        if not any(p.execution == EXECUTION_SIDECAR for p in providers):
+            errors.append(
+                "dependencies.sidecarDependencies install into a sidecar provider's own Python "
+                'environment: declare provider.execution: "sidecar", or move them to '
+                "pythonDependencies"
+            )
+        if len(self.sidecarDependencies) > _MAX_SIDECAR_DEPENDENCIES:
+            errors.append(
+                f"dependencies.sidecarDependencies lists {len(self.sidecarDependencies)} "
+                f"requirements; at most {_MAX_SIDECAR_DEPENDENCIES} are allowed"
+            )
+        from packaging.requirements import InvalidRequirement, Requirement
+
+        for spec in self.sidecarDependencies:
+            if not spec.strip() or len(spec) > _MAX_REQUIREMENT_LENGTH:
+                errors.append(
+                    f"dependencies.sidecarDependencies entry must be 1 to "
+                    f"{_MAX_REQUIREMENT_LENGTH} characters, got {len(spec)}"
+                )
+                continue
+            try:
+                Requirement(spec)
+            except InvalidRequirement as exc:
+                errors.append(
+                    f"dependencies.sidecarDependencies entry {spec[:80]!r} is not a requirement "
+                    f"pip can read: {exc}"
+                )
+        return errors
+
+
+#: Bounds on a ``requires`` entry, whose three strings are shown as they are at install consent
+#: and on the Store card: short enough to read there, long enough for a sentence and a command.
+_MAX_PREREQUISITES = 10
+_PREREQUISITE_LIMITS = {"name": 80, "why": 300, "how": 600}
+
+
+@dataclass
+class Prerequisite:
+    """Something an app needs on this machine that PersonalClaw does not install — the server
+    Local Image Generation sends its work to (ComfyUI), a program a tool shells out to.
+
+    ``name`` is what it is, ``why`` what the app uses it for, ``how`` what the owner does to
+    have it. Install consent and the Store card show all three before anything installs, so
+    "it needs ComfyUI" is read where the choice is made rather than in an error after it.
+    Plain text: no surface renders markup from it.
+    """
+
+    name: str = ""
+    why: str = ""
+    how: str = ""
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        for key, limit in _PREREQUISITE_LIMITS.items():
+            value = getattr(self, key)
+            if not value.strip():
+                errors.append(f"requires entry {self.name[:40]!r} is missing {key!r}")
+            elif len(value) > limit:
+                errors.append(
+                    f"requires entry {self.name[:40]!r}: {key!r} is {len(value)} characters; "
+                    f"at most {limit} are shown"
+                )
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "why": self.why, "how": self.how}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Prerequisite":
+        return cls(
+            name=str(data.get("name", "")),
+            why=str(data.get("why", "")),
+            how=str(data.get("how", "")),
         )
 
 
@@ -1570,6 +1677,8 @@ _KNOWN_FIELDS = frozenset(
         "tags",
         "platform",
         "dependencies",
+        # What the app needs that PersonalClaw does not install (``Prerequisite``).
+        "requires",
         "provider",
         "providers",
         # Connector-pack parse-only source scripts (WATCHED-SOURCES §7.1).
@@ -1731,6 +1840,12 @@ class AppManifest:
 
     # --- Forward compatibility ---
     extra: dict[str, Any] = field(default_factory=dict)
+
+    # --- Prerequisites ---
+    # What the app needs on this machine that PersonalClaw does not install (a ComfyUI server,
+    # a program it runs), each with why and how. Shown at install consent and on the Store card.
+    # Last, so no published field moves position (``sdk/signatures.json``).
+    requires: list[Prerequisite] = field(default_factory=list)
 
     # -----------------------------------------------------------------
     # Validation
@@ -1902,6 +2017,9 @@ class AppManifest:
         for prov in self.all_providers():
             errors.extend(prov.validate())
 
+        errors.extend(self.dependencies.validate(self.all_providers()))
+        errors.extend(self._validate_requires())
+
         errors.extend(self._validate_sources())
 
         # Declared quality bar (APE-4). Validated HERE so an unknown designSystem
@@ -1956,6 +2074,24 @@ class AppManifest:
                 )
 
         errors.extend(_config_permission_errors(self.permissions.config))
+        return errors
+
+    def _validate_requires(self) -> list[str]:
+        """Errors in ``requires``: each entry names its prerequisite, why and how, within what
+        the consent dialog shows, and no prerequisite is listed twice."""
+        errors: list[str] = []
+        if len(self.requires) > _MAX_PREREQUISITES:
+            errors.append(
+                f"requires lists {len(self.requires)} prerequisites; at most "
+                f"{_MAX_PREREQUISITES} are shown"
+            )
+        seen: set[str] = set()
+        for entry in self.requires:
+            errors.extend(entry.validate())
+            key = entry.name.strip().casefold()
+            if key and key in seen:
+                errors.append(f"requires lists {entry.name!r} more than once")
+            seen.add(key)
         return errors
 
     def _validate_sources(self) -> list[str]:
@@ -2075,6 +2211,8 @@ class AppManifest:
         deps_d = self.dependencies.to_dict()
         if deps_d:
             d["dependencies"] = deps_d
+        if self.requires:
+            d["requires"] = [p.to_dict() for p in self.requires]
         platform_d = self.platform.to_dict()
         if platform_d:
             d["platform"] = platform_d
@@ -2196,6 +2334,13 @@ class AppManifest:
             cli=cli,
             loggerRoots=[str(r) for r in data.get("loggerRoots", []) if r],
             dependencies=deps,
+            # A bare string is kept as a name, so ``validate`` reports its missing why and how
+            # instead of the entry vanishing into "requires nothing".
+            requires=[
+                Prerequisite.from_dict(r if isinstance(r, dict) else {"name": str(r)})
+                for r in _as_list(data.get("requires"))
+                if r not in (None, "")
+            ],
             platform=platform_cfg,
             provider=provider_cfg,
             providers=providers_cfg,

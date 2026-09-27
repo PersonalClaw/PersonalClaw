@@ -107,13 +107,15 @@ class ModelDownloadJob:
 class _Running:
     """The live bits backing a job that the wire shape (:class:`ModelDownloadJob`)
     doesn't carry: its baseline disk size, background tasks, and the last poll
-    sample (bytes + monotonic timestamp) used to derive a coarse ``speed_bps``."""
+    sample (bytes + monotonic timestamp) used to derive a coarse ``speed_bps``. A sidecar
+    install job also holds the install it drives, which is what a cancel stops."""
 
     job: ModelDownloadJob
     baseline: int = 0
     tasks: set[asyncio.Task] = field(default_factory=set)  # type: ignore[type-arg]
     last_bytes: int = 0
     last_ts: float = 0.0
+    install: Any = None
 
 
 def _apply_progress(job: ModelDownloadJob) -> None:
@@ -383,23 +385,35 @@ class ModelDownloadRegistry:
         """The tracked :class:`~personalclaw.local_models.sidecar.SidecarInstall`.
 
         Created on first use and RETAINED, so a poll after the job finished still sees
-        which steps ran and which were skipped. None when the app is not installed or
-        declares ``execution: in-process`` (no sidecar to install).
+        which steps ran and which were skipped — until the installed manifest asks for other
+        requirements (an update of the app), when it is built again from the manifest; never
+        while its job runs. None when the app is not installed or declares ``execution:
+        in-process`` (no sidecar to install).
         """
-        existing = self._installs.get(provider)
-        if existing is not None:
-            return existing
         from personalclaw.local_models.sidecar import SidecarInstall
 
-        created = SidecarInstall.for_app(provider)
-        if created is not None:
-            self._installs[provider] = created
-        return created
+        existing = self._installs.get(provider)
+        if existing is not None and self.install_running(provider):
+            return existing
+        current = SidecarInstall.for_app(provider)
+        if current is None:
+            self._installs.pop(provider, None)
+            return None
+        if existing is not None and existing.requirements == current.requirements:
+            return existing
+        self._installs[provider] = current
+        return current
 
     def install_job(self, provider: str) -> ModelDownloadJob | None:
         """The current/last install job for *provider* (None if never started)."""
         job_id = self._by_model.get((provider, _INSTALL_MODEL))
         return self._jobs.get(job_id) if job_id else None
+
+    def install_running(self, provider: str) -> bool:
+        """Whether *provider*'s engine install is queued or running — pip may be writing into
+        the app's folder, so an update or a removal of that app has to wait for it."""
+        job = self.install_job(provider)
+        return job is not None and job.state in ("queued", "running")
 
     def start_install(self, provider: str) -> tuple[ModelDownloadJob | None, str | None]:
         """Begin (or re-use) the resumable sidecar install for *provider*.
@@ -426,7 +440,8 @@ class ModelDownloadRegistry:
         )
         self._jobs[job.id] = job
         self._by_model[(provider, _INSTALL_MODEL)] = job.id
-        run = _Running(job=job)
+        install.begin()
+        run = _Running(job=job, install=install)
         self._running[job.id] = run
         run.tasks.add(asyncio.ensure_future(self._drive_install(run, install)))
         return job, None
@@ -442,15 +457,20 @@ class ModelDownloadRegistry:
                 ok = await asyncio.to_thread(install.run_one, step.name)
                 job.progress = round((index + 1) / total, 3)
                 if not ok:
-                    job.state = "error"
+                    job.state = "cancelled" if install.reason == "cancelled" else "error"
                     job.error = install.error
                     job.reason = install.reason
-                    self._publish(job, "error")
+                    self._publish(job, job.state)
                     return
                 self._publish(job, "progress")
             job.state = "done"
             job.progress = 1.0
             event = "done"
+            # What the app answers about itself changes with its engine: its card and its
+            # models read the new answer, not the one measured before the engine was there.
+            from personalclaw.providers.availability import get_availability_board
+
+            get_availability_board().recheck(job.provider)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — surface any install failure to the UI
@@ -475,6 +495,9 @@ class ModelDownloadRegistry:
             return False
         run = self._running.pop(job_id, None)
         if run is not None:
+            if run.install is not None:
+                # Its step runs on a worker thread that no task cancel reaches: stop its pip.
+                run.install.cancel()
             for t in run.tasks:
                 t.cancel()
         if job.state in ("queued", "running"):

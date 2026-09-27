@@ -468,7 +468,9 @@ run under your own account:
 
 - provider modules, imported into the gateway's own process
   (`providers/loader.py::_load_ext_module`), or run as a child of it when the manifest says
-  `execution: sidecar`;
+  `execution: sidecar`, with the engine packages (`dependencies.sidecarDependencies`) that
+  **Install engine** puts in that child's own Python environment, `apps/<app>/venv`
+  (`local_models/sidecar.py::SidecarInstall`);
 - a backend, started as a process on this machine (`apps/backend_runtime.py`);
 - the MCP servers in its manifest's `mcpServers`, each a command the gateway launches with
   the gateway's own environment, which carries the stored credentials PersonalClaw exports
@@ -481,7 +483,10 @@ run under your own account:
   sources fetch, fenced off from the network but not from your files
   (`knowledge_providers/pack_parse.py`).
 
-The Python packages an app installs load into the gateway's process too (§3).
+The Python packages an app installs load into the gateway's process too (§3). Its engine
+packages do not: they install only when you choose Install engine, into the app's own
+environment, and run in its child process. A sidecar is a crash boundary, not a sandbox, so
+that child has your files and your network as well.
 
 That code can read and write every file in your PersonalClaw home. It can switch YOLO on
 by editing `config.json`, with no `PATCH /api/config/personalclaw` to refuse; it can add
@@ -515,6 +520,7 @@ limit what the app asks the gateway for, not what that code does
 (`apps/disclosure._runs_as_you`). Below it the row names every kind: the server process it
 starts, and the sandbox tier it runs in when it names one; each provider module, with the
 entry point the gateway loads and whether it runs inside the gateway or as a child of it;
+the engine packages Install engine would put in its own environment, verbatim;
 the shell command of each lifecycle hook, verbatim, with when it runs (the install or
 update now, switching the app on, switching it off, removing it); the steps it adds to
 `personalclaw setup` and `personalclaw doctor`; each source parser; and each MCP server

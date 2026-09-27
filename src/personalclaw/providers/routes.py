@@ -86,6 +86,9 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                     # describes its instances — those are edited on the instance cards.
                     "hasConfigSchema": not ext.provider_config.multiInstance
                     and bool((ext.provider_config.settingsSchema or {}).get("properties")),
+                    # `sidecar` runs its engine in a child process with its own Python
+                    # environment, which the card offers to install (Install engine).
+                    "execution": ext.provider_config.execution,
                 },
                 "tags": ext.manifest.tags,
             }
