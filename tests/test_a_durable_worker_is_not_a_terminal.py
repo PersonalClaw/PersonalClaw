@@ -5,8 +5,8 @@ prefix, and the terminal list reported every ``pclaw-`` session there as a detac
 the Terminal page's restore opened a tab on each worker, which attached to its session: the tab's
 keystrokes went into the worker's step, and closing the tab killed it.
 
-Now a worker is marked when it is created, the list leaves marked sessions out, and the socket and
-the close refuse a worker's session. Against a real tmux server.
+Now a worker is marked when it is created, the list leaves marked sessions out, and neither the
+socket nor the close can reach a worker's session. Against a real tmux server.
 """
 
 from __future__ import annotations
@@ -34,7 +34,8 @@ pytestmark = [
     pytest.mark.skipif(shutil.which("tmux") is None, reason="needs the tmux binary"),
 ]
 
-TERMINAL_ID = "0123456789ab"
+#: What the create route makes: every id names its tier, the host's (`none`) included.
+TERMINAL_ID = "0123456789ab@none"
 
 
 class _FakeProcess:
@@ -76,7 +77,12 @@ def server(monkeypatch, tmp_path):
         worker_fds.append(os.dup(kwargs["stdin"]))
         return _FakeProcess()
 
+    def _fake_signal(sess: Any, _sig: int) -> None:
+        sess.proc.returncode = 0
+        sess.proc._done.set()
+
     monkeypatch.setattr("personalclaw.sandbox.create_subprocess_limited", _fake_spawn)
+    monkeypatch.setattr(terminal, "_signal_session", _fake_signal)
 
     ws = root / "ws"
     ws.mkdir()
@@ -100,9 +106,9 @@ def server(monkeypatch, tmp_path):
         shutil.rmtree(root, ignore_errors=True)
 
 
-def _app() -> web.Application:
+def _app(registry: dict | None = None) -> web.Application:
     state = MagicMock()
-    state._terminal_sessions = {}
+    state._terminal_sessions = {} if registry is None else registry
 
     @web.middleware
     async def owner(request, handler):
@@ -129,18 +135,25 @@ async def test_the_terminal_list_shows_the_terminal_and_not_the_worker(server):
 
 
 async def test_the_terminal_socket_does_not_attach_to_a_worker(server):
+    """A worker's name is reachable only through an id that names no tier, and such an id was
+    made before ids carried one: it is refused. An id that names its tier maps to a session name
+    carrying ``@<tier>``, which no worker's name can, so it opens a terminal of its own."""
     worker, spawned = server
-    async with TestClient(TestServer(_app())) as client:
+    registry: dict = {}
+    async with TestClient(TestServer(_app(registry))) as client:
         async with client.ws_connect(f"/api/ws/terminal/{_worker_id(worker)}") as ws:
             msg = await ws.receive(timeout=5)
+        assert msg.type == web.WSMsgType.TEXT, msg
+        assert json.loads(msg.data) == {"type": "error", "message": terminal.LEGACY_ID_REFUSAL}
+        assert spawned == [], "a tmux client was started on the worker's session"
 
-    assert msg.type == web.WSMsgType.TEXT, msg
-    assert json.loads(msg.data) == {
-        "type": "error",
-        "message": "This session is a workflow run's worker, not a terminal, so it was not "
-        "opened here.",
-    }
-    assert spawned == [], "a tmux client was started on the worker's session"
+        async with client.ws_connect(f"/api/ws/terminal/{_worker_id(worker)}@none") as ws:
+            await ws.send_str(json.dumps({"type": "ping"}))
+            await ws.receive(timeout=5)
+        for sess in list(registry.values()):
+            await terminal._kill_session(sess)
+    [argv] = spawned
+    assert argv[-4:] == ["-s", f"{worker}@none", "/bin/sh", "-l"], argv
 
 
 async def test_closing_a_worker_through_the_terminal_route_leaves_it_running(server):

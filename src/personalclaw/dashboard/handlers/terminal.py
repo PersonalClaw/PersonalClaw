@@ -44,18 +44,27 @@ _ORPHAN_TIMEOUT_S = 300  # 5 min with no WS → reap PTY
 # session_id but the PTY spawns on WS connect). Keyed by session_id.
 _pending_cwd: dict[str, str] = {}
 
-# EI-4 §1.3(3): a session opened in a sandbox tier carries the tier in its id, ``<id>@<tier>``, so
-# every reopen of it is in that tier or refused — never on this machine's own shell. The tier was
-# held in a map the first connect popped, so a reconnect after a gateway restart (or after the
-# orphan reaper ended the shell) found no tier and opened the host shell under the sandboxed tab.
-# No suffix → the host shell (the user's own interactive terminal).
+# EI-4 §1.3(3): every session id names the tier its shell runs in, ``<id>@<tier>``, the host's
+# (``none``) included, and every open reads the tier from the id: the shell opens in it or is
+# refused, never on this computer's own shell instead. The tier used to be held in a map the first
+# connect popped, so a reconnect after a gateway restart (or after the orphan reaper ended the
+# shell) found no tier and opened the host shell under a sandboxed tab. An id that names no tier
+# was made before ids carried one, and nothing says where its shell ran, so it is refused rather
+# than guessed at: once, since every id made now names its tier.
 _TIER_SEP = "@"
+HOST_TIER = "none"
+LEGACY_ID_REFUSAL = "This terminal was opened before an update; open a new one."
+
+
+def _named_tier(session_id: str) -> str:
+    """The tier *session_id* names, or "" when it names none (an id made before ids carried it)."""
+    return session_id.partition(_TIER_SEP)[2]
 
 
 def session_tier(session_id: str) -> str:
     """The sandbox tier the terminal session *session_id* was opened in; "" for the host shell."""
-    _, sep, tier = session_id.partition(_TIER_SEP)
-    return tier if sep else ""
+    tier = _named_tier(session_id)
+    return "" if tier == HOST_TIER else tier
 
 
 class _Refused(Exception):
@@ -407,6 +416,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         # exhausts and the whole gateway hangs. add_reader avoids threads entirely).
         os.set_blocking(master_fd, False)
         try:
+            if not _named_tier(session_id):
+                raise _Refused(LEGACY_ID_REFUSAL)
             fcntl.ioctl(
                 worker_fd,
                 termios.TIOCSWINSZ,
@@ -433,7 +444,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 # terminals still prompt). Harmless for bash/fish.
                 "DISABLE_AUTO_UPDATE": "true",
             }
-            # Security: a session with no tier is intentionally unsandboxed — this is the
+            # Security: a session in the ``none`` tier is intentionally unsandboxed — this is the
             # user's own interactive terminal (like SSH), not agent-executed code.
             # Auth is enforced at WS handshake via token_auth_middleware.
             # See CLI_PANEL_DESIGN.md §8 "Security Considerations".
@@ -456,16 +467,10 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 # (created if absent, re-attached if it survived a restart). `new-session -A -s`
                 # is attach-or-create; the daemon (not this client) owns the shell, so a
                 # gateway restart kills only the client — the shell + scrollback live on.
-                name = _tmux_session_name(session_id)
-                # A run's durable worker shares the server and the name prefix. Attaching would
-                # put this tab's keystrokes into the worker's step, and closing the tab would
-                # end it.
-                if (name, tmux_substrate.WORKER_KIND) in await tmux_substrate.list_sessions():
-                    raise _Refused(
-                        "This session is a workflow run's worker, not a terminal, so it was not "
-                        "opened here."
-                    )
-                argv = tmux_substrate.attach_argv(name, shell)
+                # A run's durable worker shares the server and the name prefix, but it can never
+                # be this session: the name carries the id's ``@<tier>``, and a worker's name is
+                # built from `tmux_substrate.sanitize`'s alphabet, which has no ``@``.
+                argv = tmux_substrate.attach_argv(_tmux_session_name(session_id), shell)
             else:
                 argv = [shell, "-l"]
             # Resource ceiling (PHF-1): the interactive terminal gets the ``none`` profile
@@ -752,12 +757,12 @@ async def api_terminal_create(request: web.Request) -> web.Response:
                 {"error": "Cannot open a terminal in a system or credential directory."},
                 status=403,
             )
-    # EI-4 §1.3(3): the picked sandbox tier rides the session id (``<id>@<tier>``), so the WS
-    # opens the shell in it on the first connect and on every reopen, a gateway restart included.
-    # A tier that is not installed is refused here with a sentence: it used to be dropped, and
-    # the terminal opened on the host under a picker that named the tier. "none"/host is the
-    # default.
-    requested_sandbox = "" if requested_sandbox == "none" else requested_sandbox
+    # EI-4 §1.3(3): the picked sandbox tier rides the session id (``<id>@<tier>``, ``@none`` for
+    # the host shell), so the WS opens the shell in it on the first connect and on every reopen,
+    # a gateway restart included. A tier that is not installed is refused here with a sentence:
+    # it used to be dropped, and the terminal opened on the host under a picker that named the
+    # tier. The host is the default.
+    requested_sandbox = "" if requested_sandbox == HOST_TIER else requested_sandbox
     if requested_sandbox:
         from personalclaw.sandbox_providers import get_provider
 
@@ -777,7 +782,7 @@ async def api_terminal_create(request: web.Request) -> web.Response:
                 ),
                 status=409,
             )
-        session_id = f"{session_id}{_TIER_SEP}{requested_sandbox}"
+    session_id = f"{session_id}{_TIER_SEP}{requested_sandbox or HOST_TIER}"
     if requested_cwd:
         _pending_cwd[session_id] = requested_cwd
     _sel().log_api_access(

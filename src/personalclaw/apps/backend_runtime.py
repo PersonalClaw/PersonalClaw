@@ -297,9 +297,13 @@ class BackendSupervisor:
             # `CHILD_ENV_BASE_NAMES` or the operator declared it by name in
             # `sandbox.env_passthrough`. Withheld names are logged under the `app-backend`
             # site so an app author can diagnose a variable that stopped arriving.
+            from personalclaw._installer import node_cli_env
             from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv
 
             extra = {
+                # A backend run through Node keeps its compile cache in the home, not the temp
+                # folder.
+                **node_cli_env(),
                 "PORT": str(port),
                 "PERSONALCLAW_APP_NAME": name,
                 APP_SECRET_ENV: proxy_secret,

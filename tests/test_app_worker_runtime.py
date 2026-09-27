@@ -793,6 +793,31 @@ def test_the_worker_child_gets_its_name_and_not_the_gateway_environment(
     assert isinstance(rec, SupervisedWorker)
 
 
+def test_a_worker_run_through_node_keeps_its_compile_cache_in_the_home(
+    tmp_path: Path, sup: WorkerSupervisor
+) -> None:
+    """Node writes the code it compiles to the temp folder whenever a program turns the cache on;
+    a worker's points into the home, as its app's backend does. From the child's own environment,
+    through the real spawn."""
+    dump = tmp_path / "env.json"
+    body = (
+        "import json, os, pathlib\n"
+        f"pathlib.Path({str(dump)!r}).write_text(json.dumps(dict(os.environ)))\n"
+    )
+    from personalclaw.apps import worker_runtime as module
+
+    manifest = _install_worker_app(
+        tmp_path, "cacheprobe", body=body, workers=[_spec(module, "probe", "worker.py")]
+    )
+    sup.start(manifest)
+    _wait_for(lambda: dump.exists() and dump.stat().st_size > 0, what="the worker's env dump")
+    env = json.loads(dump.read_text(encoding="utf-8"))
+
+    cache = tmp_path / "installer-cache" / "node-compile-cache"
+    assert env.get("NODE_COMPILE_CACHE") == str(cache), env.get("NODE_COMPILE_CACHE")
+    assert cache.is_dir()
+
+
 def test_the_worker_spawn_actually_goes_through_the_ceiling_shim():
     """The spawn-ceiling AUDIT pins the classification; this pins the behaviour.
 
