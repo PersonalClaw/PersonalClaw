@@ -155,8 +155,12 @@ chat, channel thread, loop worker, webhook, subagent).
    model that answered (`served_model_ref`), and the chat records and prices the
    turn by that model's id: its `usage/turns.jsonl` row, its "Turn complete"
    line and `meta.turn_telemetry` (every ledger write does,
-   `usage_ledger.answered_model`). The next turn starts on X again. When every
-   model fails, the error names each one and why (`NoModelAnswered`, in a
+   `usage_ledger.answered_model`). The row's `provider` is that ref's entry, the
+   `Y` of `Y:gpt-4o` (`usage_ledger.answered_provider`); an ACP turn, which names
+   none, keeps its runtime (`acp:claude-code`). A room member's turn writes its
+   own row (`source: room`, under the member's session key and agent), so
+   Settings → Usage counts a room by source, by provider and by model. The next
+   turn starts on X again. When every model fails, the error names each one and why (`NoModelAnswered`, in a
    room's words on a room). Only a caller that shows the line asks for this
    (`NativeAgentRuntime.announce_failover`: the chat runner, and a room through
    `stream_and_collect(on_substitution=…)`): a loop or a background stream keeps
