@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
@@ -1015,6 +1016,18 @@ def _scheme_run_start(text: str, sep: int) -> int:
 _URL_USERINFO_TAG = "[REDACTED: url credential]"
 
 
+def _url_userinfo_spans(text: str) -> Iterator[tuple[int, int, str]]:
+    """``(start, end, scheme)`` for each ``<scheme>://userinfo@`` in *text*: where its scheme
+    begins, just past its ``@``, and the scheme. The one reading of "a URL with a credential in
+    it" that :func:`redact_url_userinfo` and :func:`strip_url_userinfo` both use."""
+    for m in _URL_USERINFO_CORE_RE.finditer(text):
+        sep = m.start()
+        first = _SCHEME_FIRST_RE.search(text, _scheme_run_start(text, sep), sep)
+        if first is None:
+            continue  # no scheme, so no match — `://x@y`, or `1://x@y`
+        yield first.start(), m.end(), text[first.start() : sep]
+
+
 def redact_url_userinfo(text: str) -> tuple[str, list[str]]:
     """Replace `<scheme>://userinfo@` with a redaction tag, keeping scheme and host.
 
@@ -1026,21 +1039,37 @@ def redact_url_userinfo(text: str) -> tuple[str, list[str]]:
     out: list[str] = []
     pos = 0
 
-    for m in _URL_USERINFO_CORE_RE.finditer(text):
-        sep = m.start()
-        first = _SCHEME_FIRST_RE.search(text, _scheme_run_start(text, sep), sep)
-        if first is None:
-            continue  # no scheme, so no match — `://x@y`, or `1://x@y`
-        scheme = text[first.start() : sep]
-        out.append(text[pos : first.start()])
+    for start, end, scheme in _url_userinfo_spans(text):
+        out.append(text[pos:start])
         out.append(f"{scheme}://{_URL_USERINFO_TAG}@")
         warnings.append(f"Redacted credential in a {scheme} URL")
-        pos = m.end()
+        pos = end
 
     if not warnings:
         return text, []
     out.append(text[pos:])
     return "".join(out), warnings
+
+
+def strip_url_userinfo(text: str) -> str:
+    """*text* with the user name and password taken out of every URL in it:
+    ``http://ada:pw@proxy:3128`` becomes ``http://proxy:3128``.
+
+    For a value that must keep WORKING without its credential, where a redaction tag would be a
+    wrong password sent to the host: a proxy address handed to a child process
+    (``sandbox.build_child_env``) still routes through the proxy, and a proxy that wants a password
+    answers 407 at once instead of the child waiting on a connection that never comes.
+    """
+    out: list[str] = []
+    pos = 0
+    for start, end, scheme in _url_userinfo_spans(text):
+        out.append(text[pos:start])
+        out.append(f"{scheme}://")
+        pos = end
+    if not out:
+        return text
+    out.append(text[pos:])
+    return "".join(out)
 
 
 # 🔴 A WEBHOOK URL IS ITS OWN CREDENTIAL. An incoming webhook (Slack, Discord, Teams, Zapier, a

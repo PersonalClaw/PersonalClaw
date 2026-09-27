@@ -833,7 +833,9 @@ class SidecarInstall:
             step.status = "cancelled" if isinstance(exc, InstallCancelled) else "error"
             step.detail = str(exc)[:200]
             self.error = str(exc)[:200]
-            self.reason, self.remediation = _classify_install_failure(exc, step.name)
+            self.reason, self.remediation = _classify_install_failure(
+                exc, step.name, "\n".join(self.log_tail)
+            )
             logger.warning("sidecar install %s: step %s %s", self.app, step.name, step.status)
             return False
         return True
@@ -868,6 +870,8 @@ class SidecarInstall:
             )
         python = venv_python(self.venv)
         # `--` ends pip's options: a requirement can never be read as one, whatever it says.
+        # `--no-input`: an index that wants a login fails instead of waiting on a prompt nobody
+        # sees until the step's timeout.
         self._run(
             [
                 str(python),
@@ -875,6 +879,7 @@ class SidecarInstall:
                 "pip",
                 "install",
                 "--disable-pip-version-check",
+                "--no-input",
                 "--",
                 *self.requirements,
             ],
@@ -918,7 +923,10 @@ class SidecarInstall:
 
         # Ceiling: pip and venv creation are operator-initiated but run third-party
         # setup code, so they carry the ``build`` profile (NOFILE raised, OOM bias kept)
-        # via argv-prepend — never preexec_fn, this can run off a worker thread.
+        # via argv-prepend — never preexec_fn, this can run off a worker thread. The same
+        # third-party code is why the environment is the child allowlist, with pip's own
+        # settings (index, certificates, cache) so an engine installs wherever an app's
+        # packages do.
         launch = spawn_shim_argv(list(argv), PROFILE_BUILD)
         proc = subprocess.Popen(  # noqa: S603 — core-built argv, no shell
             launch,
@@ -927,7 +935,9 @@ class SidecarInstall:
             text=True,
             bufsize=1,
             # The engine installs into the app's folder, so pip keeps no cache in the user's.
-            env=build_child_env(site="model-sidecar-install", extra=dict(HOME_INSTALL_PIP_ENV)),
+            env=build_child_env(
+                site="model-sidecar-install", installer="pip", extra=dict(HOME_INSTALL_PIP_ENV)
+            ),
             start_new_session=True,
         )
         with self._lock:
@@ -1030,8 +1040,8 @@ def _duration(secs: float) -> str:
     return f"{n} second{'s' if n != 1 else ''}"
 
 
-def _classify_install_failure(exc: Exception, step: str) -> tuple[str, str]:
-    """``(reason, remediation)`` for a failed install step.
+def _classify_install_failure(exc: Exception, step: str, log: str = "") -> tuple[str, str]:
+    """``(reason, remediation)`` for a failed install step. *log* is what the step wrote.
 
     ``remediation`` is deliberately distinct from the error: the error says what broke,
     the remediation says what the user should DO about it — the one field that turns a
@@ -1039,6 +1049,11 @@ def _classify_install_failure(exc: Exception, step: str) -> tuple[str, str]:
     """
     if isinstance(exc, InstallCancelled):
         return "cancelled", "Install engine starts it again, from the step it stopped at."
+    from personalclaw.sandbox import login_left_out_note
+
+    login = login_left_out_note(log, installer="pip") if step == "deps" else ""
+    if login:
+        return "network", f"{login} Then re-run the install."
     text = str(exc).lower()
     if isinstance(exc, subprocess.TimeoutExpired) or "timed out" in text:
         return "timeout", "Re-run the install — it resumes from the step that timed out."

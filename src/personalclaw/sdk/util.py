@@ -17,7 +17,9 @@
 
 - ``app_packages_env()`` — the environment for a child process that must import the
   packages apps declare (``<home>/app-python``): an app running one of its declared packages
-  as ``python -m <package>``. ``None`` when there is nothing to add.
+  as ``python -m <package>``. The child allowlist (PATH, home, locale, proxy and CA settings),
+  never the gateway's own environment and the secrets in it, with the app packages on
+  ``PYTHONPATH`` when there are any.
 - ``outside_home_path(place)`` — a READ-ONLY handle to a place outside the PersonalClaw home
   (the machine-wide Hugging Face folder, ``"huggingface-cache"``) once the owner allowed it in
   Settings → Security, else ``None``. An app keeps what it writes in its own data dir.

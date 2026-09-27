@@ -218,7 +218,9 @@ async def test_a_server_that_sets_its_own_path_is_started_the_way_it_was_probed(
 
 def test_the_spawn_environment_puts_a_servers_path_first_and_keeps_the_gateways(monkeypatch):
     monkeypatch.setenv("PATH", "/gateway/bin")
-    env = mcp_discovery.stdio_spawn_env({"PATH": "/server/bin", "LOG_LEVEL": "debug"})
+    env = mcp_discovery.stdio_spawn_env(
+        {"PATH": "/server/bin", "LOG_LEVEL": "debug"}, server="my-server"
+    )
     parts = env["PATH"].split(os.pathsep)
     assert parts[0] == "/server/bin"
     assert "/gateway/bin" in parts

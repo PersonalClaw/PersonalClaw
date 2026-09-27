@@ -490,13 +490,16 @@ class SandboxConfig:
         metadata=_meta(
             "Child Env Passthrough",
             "Extra environment variable NAMES that hook, cron-script and bash-action "
-            "children inherit from the gateway, on top of the minimal base "
-            "(sandbox.CHILD_ENV_BASE_NAMES: PATH, locale, home-equivalents, proxy/CA "
-            "settings and the three PERSONALCLAW_* vars). Everything else is withheld — a "
-            "child does not inherit the gateway's environment. Declare a name here when a "
-            "script legitimately needs it (e.g. SLACK_BOT_TOKEN for a notifier, a language "
-            "runtime's variable); the withheld names are listed in the debug log at each "
-            "spawn. Names matching the credential floor (AWS_SECRET*, AWS_SESSION*, "
-            "SSH_AUTH_SOCK, GNUPGHOME, GIT_ASKPASS) are refused even when declared.",
+            "children, and everything PersonalClaw starts for an app (its installs, setup "
+            "hooks, backend, worker, sidecar and MCP servers), inherit from the gateway, on "
+            "top of the minimal base (sandbox.CHILD_ENV_BASE_NAMES: PATH, locale, "
+            "home-equivalents, proxy/CA settings and the three PERSONALCLAW_* vars). Everything "
+            "else is withheld — a child does not inherit the gateway's environment — and a "
+            "login in an inherited value (a proxy address) is taken out. Declare a name here "
+            "when a script legitimately needs it (e.g. SLACK_BOT_TOKEN for a notifier, a "
+            "language runtime's variable, a proxy that needs its password): it is then passed "
+            "as it is. The withheld names are listed in the debug log at each spawn. Names "
+            "matching the credential floor (AWS_SECRET*, AWS_SESSION*, SSH_AUTH_SOCK, "
+            "GNUPGHOME, GIT_ASKPASS) are refused even when declared.",
         ),
     )

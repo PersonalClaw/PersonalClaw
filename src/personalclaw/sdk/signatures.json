@@ -8703,7 +8703,7 @@
  "personalclaw.sdk.util.app_packages_env": {
   "kind": "function",
   "params": [],
-  "returns": "dict[str, str] | None"
+  "returns": "dict[str, str]"
  },
  "personalclaw.sdk.util.atomic_write": {"kind": "alias", "of": "personalclaw.sdk.channel.atomic_write"},
  "personalclaw.sdk.util.config_dir": {"kind": "alias", "of": "personalclaw.sdk.channel.config_dir"},

@@ -244,7 +244,7 @@ An app with a backend gets its own subprocess:
 A backend does **not** inherit the gateway's environment. It receives
 `sandbox.build_child_env(site="app-backend")`: the `CHILD_ENV_BASE_NAMES`
 allowlist (`PATH`, `HOME`, `TMPDIR`, `XDG_*`, locale/`TZ`, proxy + CA vars,
-`PYTHONPATH`, and the three `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` vars) plus
+`PYTHONPATH`, `PYTHONPYCACHEPREFIX`, and the three `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` vars) plus
 any name the operator declared in `sandbox.env_passthrough`, layered with the
 four variables the supervisor **computes**:
 
@@ -269,7 +269,10 @@ region/SDK vars and the operator's git identity.
 purpose — it is not reachable from a manifest or a trigger payload, because an
 app-declared name would be an exfiltration channel. Note that the declaration is
 **global**, not per-site: a name declared there reaches every child site (cron,
-bash action, app backend). Withheld names are logged at DEBUG against the
+bash action, app backend). The same allowlist is where every other process the
+gateway starts for an app begins: the pip that installs its `pythonDependencies`,
+its engine's venv and pip, the npm that installs an ACP adapter, its setup hooks,
+worker, sidecar and MCP servers. Withheld names are logged at DEBUG against the
 `app-backend` site, so an app author whose variable stopped arriving can see
 exactly which one was dropped and why. `BackendConfig` has no `env` field — an
 app cannot declare its own environment.
