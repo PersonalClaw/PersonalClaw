@@ -1017,7 +1017,7 @@ def _diagnose_unbuildable_ref(
                 f"provider {provider_name!r} declares type {entry.type!r}, and no installed "
                 f"app registers that type",
                 f"install an app that provides {entry.type!r} in the App Store, or change "
-                f"{provider_name!r}'s type in Settings → Providers",
+                f"the type of {provider_name!r} in Settings → Providers",
             )
         app_name, enabled = app
         if not enabled:
@@ -1030,7 +1030,8 @@ def _diagnose_unbuildable_ref(
             f"provider {provider_name!r} declares type {entry.type!r} and its app "
             f"{app_name!r} is installed and enabled, but the type never registered — the "
             f"app failed to load",
-            f"check the gateway log for {app_name!r}'s import error, or {rebind}",
+            f"check the gateway log for the import error that stopped {app_name!r} loading, "
+            f"or {rebind}",
         )
 
     if target_cap not in (entry.declared_capabilities or type_capabilities):

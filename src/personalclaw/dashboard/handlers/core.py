@@ -31,7 +31,7 @@ from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
-from personalclaw.stale_write import revision_of, stale_write_refusal
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -924,7 +924,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             stale = stale_write_refusal(request, current, what=path_key)
             if stale is not None:
                 raise RefusedInConfigTransaction(
-                    stale, audit=_audit("denied", f"{path_key}: stale base")
+                    stale, audit=_audit(refusal_outcome(stale), path_key)
                 )
         elif op != "value":
             names = [n for n in current if isinstance(n, str)] if isinstance(current, list) else []

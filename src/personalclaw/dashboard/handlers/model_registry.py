@@ -27,7 +27,7 @@ from personalclaw.providers.use_cases import (
     load_active_models,
     save_active_models,
 )
-from personalclaw.stale_write import revision_of, stale_write_refusal
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -608,7 +608,7 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         request, active.get(use_case, []), what=f"the {use_case} model chain"
     )
     if stale is not None:
-        _sel_log("models.active_set", "denied", f"{use_case}: stale base", request)
+        _sel_log("models.active_set", refusal_outcome(stale), use_case, request)
         return stale
     active[use_case] = [str(m) for m in models]
     save_active_models(active)

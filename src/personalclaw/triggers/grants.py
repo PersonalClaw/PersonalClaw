@@ -224,19 +224,30 @@ def consent(
     return f"Switching “{name}” on allows it to use {uses}, as it is now, when it runs."
 
 
+def _only_on_the_page(trigger: Any) -> str:
+    """Where a grant is given, said to someone who is not there: the Triggers page's own control
+    for the trigger as it is now — Allow on its panel when it is on, its switch when it is off."""
+    enabled = getattr(trigger, "enabled", False)
+    control = "open it there and choose Allow" if enabled else "switch it on there"
+    return f"It can be allowed only on the Triggers page, which asks first: {control}."
+
+
 def refusal(
-    trigger: Any, providers: list[str], *, agent: bool = False, switching_on: bool = False
+    trigger: Any, providers: list[str], *, elsewhere: bool = False, switching_on: bool = False
 ) -> str:
     """Why `trigger` did not run (or was not switched on), and how its grant is given.
 
-    `agent` is the chat's wording: the one reading it cannot give the grant, so it is told who can.
-    Otherwise the owner is told the one control that gives it for the trigger as it is now: Allow
-    on its panel when it is on, its switch when it is off — both ask first.
+    `elsewhere` is the wording read away from the dashboard — a channel's `cron resume`, the CLI,
+    the chat's tools — where the grant cannot be given, so it says where it can. It says where, not
+    who: the one reading it is usually the owner, in their own channel or terminal, and "only the
+    owner can allow it" told them they were someone else. On the dashboard the owner is told the
+    one control that gives it for the trigger as it is now: Allow on its panel when it is on, its
+    switch when it is off — both ask first.
     """
     outcome = "so it was not switched on" if switching_on else "so it did not run"
     head = f"“{_name(trigger)}” is not allowed to use {_uses(providers)}, {outcome}."
-    if agent:
-        return f"{head} Only the owner can allow it, on the Triggers page, which asks them first."
+    if elsewhere:
+        return f"{head} {_only_on_the_page(trigger)}"
     if getattr(trigger, "enabled", False):
         return (
             f"{head} Allow it on the Triggers page: open it and choose Allow, and PersonalClaw "
@@ -248,14 +259,12 @@ def refusal(
 def switched_off(
     trigger: Any, providers: list[str], *, changed: list[str] | tuple[str, ...] = ()
 ) -> str:
-    """What an edit that needed a new grant, saved without the owner's yes, did instead."""
-    allow = (
-        "so it was saved switched off. The owner allows it by switching it on from the Triggers "
-        "page, which asks them first."
-    )
+    """What an edit that needed a new grant, saved without the owner's yes, did instead. Read away
+    from the dashboard (the chat's `automation_update`), so it says where, too."""
+    saved = f"so it was saved switched off. {_only_on_the_page(trigger)}"
     if changed and set(providers) <= set(changed):
-        return f"What {_uses(providers)} runs changed, and the change has not been allowed, {allow}"
-    return f"It now uses {_uses(providers)}, which it has not been allowed to, {allow}"
+        return f"What {_uses(providers)} runs changed, and the change has not been allowed, {saved}"
+    return f"It now uses {_uses(providers)}, which it has not been allowed to, {saved}"
 
 
 def give(trigger: Any) -> list[str]:

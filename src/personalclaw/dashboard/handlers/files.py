@@ -42,7 +42,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
-from personalclaw.stale_write import revision_of, stale_write_refusal
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 from personalclaw.validation import (
     FILE_READ_SCHEMA,
     ValidationError,
@@ -1522,7 +1522,10 @@ async def api_file_write(request: web.Request) -> web.Response:
         stale = stale_write_refusal(request, whole_text(head), what=f"the file {path!r}")
         if stale is not None:
             _sel().log_tool_invocation(
-                session_key="dashboard", tool_name="file_write", outcome="denied", resources=path
+                session_key="dashboard",
+                tool_name="file_write",
+                outcome=refusal_outcome(stale),
+                resources=path,
             )
             return stale
         # That copy is the file as `file_as_read` shows it, with a marker for every value it masks.

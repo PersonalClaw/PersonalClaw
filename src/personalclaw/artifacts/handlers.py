@@ -54,7 +54,12 @@ from personalclaw.request_validation import (
 )
 from personalclaw.security import MaskConflict, is_sensitive_path, redact_credentials
 from personalclaw.sel import sel
-from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
+from personalclaw.stale_write import (
+    claimed_revision,
+    refusal_outcome,
+    revision_of,
+    stale_write_refusal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +249,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
         # nothing in this process lands on the file in between.
         stale = _source_file_refusal(request, source_path)
         if stale is not None:
-            _audit(request, "artifact.create", "denied", "stale_write")
+            _audit(request, "artifact.create", refusal_outcome(stale), f"source_path={source_path}")
             return stale
 
     # Dedup by source_path: re-saving a file-backed artifact bumps the existing
@@ -421,10 +426,11 @@ async def api_artifact_update(request: web.Request) -> web.Response:
             remove_tags=tag_edits.get("remove_tags"),
         )
     except ArtifactStaleWrite as stale:
-        _audit(request, "artifact.update", "denied", f"slug={slug} stale_write")
         # The provider found the claimed revision is not `stale.current`'s — the comparison this
         # makes — so it is never None here.
-        return cast(web.Response, stale_write_refusal(request, stale.current, what=what))
+        refusal = cast(web.Response, stale_write_refusal(request, stale.current, what=what))
+        _audit(request, "artifact.update", refusal_outcome(refusal), f"slug={slug}")
+        return refusal
     except MaskConflict as exc:
         return web.json_response({"error": str(exc)}, status=409)
     except (ValueError, PermissionError) as e:

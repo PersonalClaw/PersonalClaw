@@ -46,8 +46,9 @@ export class ApiError extends Error {
 
 /** The `ApiError` a failed response should become. A body is a one-shot stream, so the
  *  sentence and the code have to come out of the SAME read — hence one builder every thrower
- *  below calls, rather than `errText` here and a second parse somewhere else. */
-async function apiError(r: Response): Promise<ApiError> {
+ *  below calls, rather than `errText` here and a second parse somewhere else. Exported for the
+ *  app SDK's client (`app/appSdk.tsx`), so an app page's failures are read by the same builder. */
+export async function apiError(r: Response): Promise<ApiError> {
   const { message, code, detail } = await errEnvelope(r)
   return new ApiError(message, r.status, code, detail)
 }

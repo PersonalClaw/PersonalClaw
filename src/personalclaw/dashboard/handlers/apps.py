@@ -44,7 +44,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
-from personalclaw.stale_write import revision_of, stale_write_refusal
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -1031,11 +1031,13 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     # from the copy it read, so a form opened before Settings → Providers, another tab, or the
     # app itself saved this file put its stale values back over that save. Compared in the
     # masked form the GET hands out; no `await` between this check and the write below.
+    # Named as Settings → Providers names it (`providers/routes.handle_patch_config`): the two
+    # routes write the same file, so a refusal from either is about the same thing.
     stale = stale_write_refusal(
-        request, mask_secrets(stored, schema)[0], what=f"the app {name!r}'s settings"
+        request, mask_secrets(stored, schema)[0], what=f"the settings of {name!r}"
     )
     if stale is not None:
-        _sel_log("apps.config", "denied", name, request, error="stale base")
+        _sel_log("apps.config", refusal_outcome(stale), name, request)
         return stale
     # A sensitive field carrying the mask sentinel (or empty when it was already set)
     # means "keep the stored secret" — don't overwrite it with the placeholder (#43). What is

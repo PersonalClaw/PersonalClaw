@@ -38,7 +38,12 @@ from personalclaw.http_errors import consent_required
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
-from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
+from personalclaw.stale_write import (
+    claimed_revision,
+    refusal_outcome,
+    revision_of,
+    stale_write_refusal,
+)
 from personalclaw.workflows import run_cockpit, service, store
 from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
 from personalclaw.workflows.review_service import apply_triage, review_findings
@@ -337,7 +342,7 @@ async def _save_def(
             # nor failed on a hidden value there is no longer a definition to restore from.
             stale = stale_write_refusal(request, None, what=f"the workflow {name!r}")
         if stale is not None:
-            _audit(request, "workflow_def_save", "denied", f"{name}: stale base")
+            _audit(request, "workflow_def_save", refusal_outcome(stale), name)
             return stale
         loosened = unconsented_workflow_loosening(
             name,
@@ -1232,7 +1237,7 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
             request, run.policy_overrides, what=f"the policy overrides of the run {run_id!r}"
         )
         if stale is not None:
-            _audit(request, "workflow_run_policy_overrides", "denied", f"{run_id}: stale base")
+            _audit(request, "workflow_run_policy_overrides", refusal_outcome(stale), run_id)
             return stale
     if run is not None:
         from personalclaw.workflows.supervisor_policy import unconsented_override_loosening

@@ -35,7 +35,7 @@ from personalclaw.request_validation import (
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.stale_write import revision_of, stale_write_refusal
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
 logger = logging.getLogger(__name__)
@@ -834,7 +834,7 @@ async def update_item(request: web.Request) -> web.Response:
             request, current.get("content") or "", what=f"the body of the item {item_id!r}"
         )
         if stale is not None:
-            _sel_log("item.update", item_id=item_id, outcome="denied", reason="stale_write")
+            _sel_log("item.update", item_id=item_id, outcome=refusal_outcome(stale))
             return stale
     if tag_edits:
         dropped = {n.strip() for n in tag_edits.get("remove_tags", [])}
@@ -2067,7 +2067,7 @@ async def upsert_intent(request: web.Request) -> web.Response:
                 what=f"the intent “{(stored.goal if stored else intent.goal).strip()}”",
             )
             if stale is not None:
-                _sel_log("intent.upsert", intent_id=intent.id, outcome="denied")
+                _sel_log("intent.upsert", intent_id=intent.id, outcome=refusal_outcome(stale))
                 return stale
         store.upsert(intent, replace=replace)
     except ValueError as e:
@@ -3669,7 +3669,7 @@ async def update_watched_source(request: web.Request) -> web.Response:
             what=f"the settings of the source {current['name']!r}",
         )
         if stale is not None:
-            _sel_log("sources.update", source_id=source_id, outcome="denied")
+            _sel_log("sources.update", source_id=source_id, outcome=refusal_outcome(stale))
             return stale
     updated = store.update_source(source_id, **fields)
     if updated is None:
