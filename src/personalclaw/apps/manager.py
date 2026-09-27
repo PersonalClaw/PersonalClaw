@@ -178,6 +178,15 @@ def app_data_dir(name: str) -> Path:
     return d
 
 
+def engine_not_installed(name: str) -> bool:
+    """Whether installed app *name* declares an engine (``sidecarDependencies``) that is not in its
+    own Python environment, ``APP_VENV_DIRNAME``: what Install engine then puts there."""
+    from personalclaw.local_models.sidecar import SidecarInstall
+
+    install = SidecarInstall.for_app(name)
+    return install is not None and bool(install.requirements) and not install.installed
+
+
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _NONBLOCK = getattr(os, "O_NONBLOCK", 0)
