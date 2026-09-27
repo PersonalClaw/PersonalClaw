@@ -113,7 +113,7 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
   const who = status.display_name
   const Icon = status.owner_id ? UserCheck : UserX
   return (
-    <section aria-label={`${who} owner`} className="flex flex-col gap-s rounded-md border border-outline-variant bg-surface-high p-m">
+    <section role="region" aria-label={`${who} owner`} className="flex flex-col gap-s rounded-md border border-outline-variant bg-surface-high p-m">
       <div data-type="label-l" className="text-on-surface">Owner</div>
       <div data-type="body-s" className="flex items-start gap-2 text-on-surface-var">
         <Icon size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -126,7 +126,7 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
             Send this code to your bot in a direct message on {who}:
           </div>
           <div className="flex items-center gap-s">
-            <span data-type="headline-s" className="font-mono tracking-[0.2em] text-on-surface" aria-label={`Pairing code ${code.split('').join(' ')}`}>{code}</span>
+            <span role="img" data-type="headline-s" className="font-mono tracking-[0.2em] text-on-surface" aria-label={`Pairing code ${code.split('').join(' ')}`}>{code}</span>
             <Button size="xs" variant="ghost" onClick={() => void copyText(code, 'the pairing code')} ariaLabel="Copy the pairing code">
               <Copy size={12} /> Copy
             </Button>

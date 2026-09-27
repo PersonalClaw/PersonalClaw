@@ -108,7 +108,7 @@ function MentionChips({ paths, images = [], asText = [], onRemove, onOpen }: { p
             </button>
             {asText.includes(p) && <span className="shrink-0 text-[0.75rem] text-on-surface-var">as text</span>}
             {open && (
-              <Button variant="ghost-accent" size="xs" title="Open file" onClick={() => onOpen(p)}
+              <Button variant="ghost-accent" size="xs" title="Open file" onClick={() => onOpen(p)} ariaLabel={`Open ${attachedName(p)}`}
                 className="shrink-0 h-6 px-1.5 text-[0.75rem]">Open</Button>
             )}
             <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}

@@ -409,7 +409,8 @@ function AgentHooksWaiting() {
             <div className="min-w-0 flex-1 font-mono text-[0.75rem] text-on-surface-low overflow-x-auto" style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
               <span className="text-on-surface-var">{w.event}</span>{w.matcher && <span className="text-primary"> [{w.matcher}]</span>} {w.command}
             </div>
-            <Button size="sm" variant="secondary" onClick={() => allow(w)} loading={busy === id} disabled={busy !== ''}>Allow</Button>
+            <Button size="sm" variant="secondary" onClick={() => allow(w)} loading={busy === id} disabled={busy !== ''}
+              ariaLabel={`Allow the ${w.event} hook: ${w.command}`}>Allow</Button>
           </div>
         )
       })}
