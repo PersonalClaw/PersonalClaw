@@ -351,7 +351,9 @@ door that applies an answer asks it (`approval_answer.refusal`):
 - **One exception: an `event` gate.** It parks a run until something happens, and asks nobody's
   permission. The trigger it waits for (a monitor's self-scheduled wake, for example) answers it,
   and you still can. A trigger answers no other gate, so a trigger an agent armed against its own
-  run cannot approve that run's approval gate.
+  run cannot approve that run's approval gate. What it answers an event gate with is only a wake
+  ([workflows.md](workflows.md)): it cannot decline the run, rewrite one of its steps with a
+  `revise`, or leave an "always allow" behind.
 
 A refused answer decides nothing and leaves the approval pending. It writes one
 `approval.answer_refused` audit row naming who tried, what, and who asked. An HTTP door answers

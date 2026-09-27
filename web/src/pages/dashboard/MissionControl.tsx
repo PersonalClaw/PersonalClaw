@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Ban, Check, CheckCircle2, X } from 'lucide-react'
+import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
 import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type WorkflowRunSummary } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
@@ -173,7 +173,11 @@ async function readAttention(): Promise<Attention> {
  *  step that stopped for you, like a sign-in), and the run takes only a boolean for it. So it is
  *  answered with Approve and Deny whatever prose choices its card carries. It rendered as "no
  *  preset options — open the run", with no buttons at all, on exactly the card a person most
- *  needs to answer from here. */
+ *  needs to answer from here.
+ *
+ *  A PARKED run is not a question at all (`block_kind: 'event'` — an `event` gate, like a monitor
+ *  waiting between checks): it carries on when what it waits for happens, so its card offers only
+ *  to wake it now. */
 export interface CardQuestion {
   runId: string
   /** A trigger's action that stopped for you (`triggers.parks`): answered at the trigger, which
@@ -184,6 +188,8 @@ export interface CardQuestion {
   prompt: string
   choices: string[]
   approval: boolean
+  /** Parked until something wakes it (an `event` gate): the card wakes it, and decides nothing. */
+  event: boolean
 }
 
 export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | undefined): CardQuestion | null {
@@ -206,11 +212,13 @@ export function questionOf(item: Pick<InboxItem, 'refs' | 'message'> | null | un
     choices,
     // A trigger's park asks Approve or Deny by construction (`parks._raise_row`).
     approval: payload.block_kind === 'approval' || !!triggerId,
+    event: payload.block_kind === 'event' && !triggerId,
   }
 }
 
 /** What an answer did, in words, for the card's live region. */
 function answeredText(q: CardQuestion, value: string | boolean): string {
+  if (q.event) return 'Woken — the run is moving again.'
   if (!q.approval) return `Answered “${String(value)}” — the run is moving again.`
   if (q.triggerId) {
     return value === true ? 'Approved — it is running again.' : 'Declined — it asks again the next time it stops.'
@@ -589,7 +597,9 @@ function AttentionCard({
  *  A question with NO choices is stated plainly. The wire carries `choices[]` and often fills it,
  *  but a freeform gate legitimately has none, and a text box here would be a control this surface
  *  cannot honestly submit: `resumeWorkflowRun`'s `answer` would carry prose the run's gate never
- *  offered. So the card says where to answer it instead of pretending it can. */
+ *  offered. So the card says where to answer it instead of pretending it can.
+ *
+ *  A parked run is neither a question nor an approval, so it gets one button: wake it now. */
 function QuestionActions({
   cardKey,
   question,
@@ -603,6 +613,20 @@ function QuestionActions({
   busy: boolean
   onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
 }) {
+  if (question.event) {
+    // A parked run decides nothing, so there is nothing to deny: it wakes, as on the run page.
+    return (
+      <Button
+        size="xs"
+        variant="primary"
+        loading={busy}
+        ariaLabel={`Wake ${subject} now`}
+        onClick={() => onAnswer(cardKey, question, true)}
+      >
+        <Play size={13} aria-hidden="true" /> Wake it now
+      </Button>
+    )
+  }
   if (question.approval) {
     // A yes or a no, sent as the boolean the run (or the trigger) takes. Deny is quiet, as on the
     // run page: declining is a normal answer, not a destructive act.

@@ -458,6 +458,15 @@ it, as a monitor's self-scheduled wake does, and you still can. A trigger answer
 a trigger an agent armed against its own run (`resume_run_id: "self"`) cannot approve that run's
 approval gate. Its fire is refused, and the gate waits for you.
 
+**An `event` gate is woken, not answered.** Its ask is `event` (`human_input.AskKind.EVENT`, from
+the gate's own kind, whatever `ask_kind` says), and its answer is the wake's payload: whatever the
+trigger was armed with (`set_onetime_task` arms it with its `message`), or `true` when you press
+**Wake it now** on the run page, the Inbox row or Mission Control's card. Any payload moves the
+run on, and the gate's output records it as `answer`. It is never read as a verdict or a verb: a
+`false` does not decline the run, a `{"revise": …}` does not amend a step, an "always allow" is
+not remembered (`Ask.rememberable`), and the gate policy does not auto-approve it in an unattended
+run, since approving it would skip the wait it is for.
+
 A trigger's action that stops the same way asks through the trigger instead
 ([tasks-triggers.md](tasks-triggers.md#an-action-that-stops-for-you-asks-you)):
 its run is recorded `waiting`, one Inbox row carries the same card, and Approve

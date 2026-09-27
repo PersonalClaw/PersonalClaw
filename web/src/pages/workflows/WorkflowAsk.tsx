@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, TriangleAlert, X } from 'lucide-react'
+import { Check, Play, TriangleAlert, X } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { QuietButton } from '../../ui/QuietButton'
 import { Checkbox, Field, NumberField, Select, TextArea, TextInput } from '../../ui/forms'
@@ -11,9 +11,14 @@ import { BUSY_REASON } from '../../ui/unavailable'
 
 /** The ONE renderer for every human-input gate (WF2-R7).
  *
- *  The backend ships a TYPED ask payload — approval | choice | text | form — precisely so a
- *  single component covers every gate any template will ever declare. A per-template
+ *  The backend ships a TYPED ask payload — approval | choice | text | form | event — precisely so
+ *  a single component covers every gate any template will ever declare. A per-template
  *  renderer is how "just add a prompt string" becomes twelve half-broken dialogs.
+ *
+ *  An `event` gate asks nothing: its run is parked until something wakes it (a monitor's own
+ *  trigger), so it offers one thing, waking it now. No Deny, because an event cannot be refused
+ *  (cancel the run to stop it), and no "Don't ask again", because a remembered wake would wake it
+ *  at once every time.
  *
  *  An expired token renders as a dead end WITH a next step: a button that silently does
  *  nothing is indistinguishable from a bug.
@@ -35,6 +40,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption 
 }) {
   const { ask, handoff, expired } = continuation
   const kind = ask.kind || 'approval'
+  const event = kind === 'event'
   const [text, setText] = useState('')
   const [choice, setChoice] = useState(ask.choices?.[0] ?? '')
   const [form, setForm] = useState<Record<string, unknown>>(() => {
@@ -158,6 +164,11 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption 
         <p data-type="caption" className="text-on-surface-low">
           {rerunCaption ?? 'Approve runs this step again. Deny ends the run here.'}
         </p>
+      ) : event ? (
+        <p data-type="caption" className="text-on-surface-low">
+          This step waits for something to happen, and the run carries on when it does. Wake it
+          now to carry on without waiting.
+        </p>
       ) : (
         <>
           {kind === 'approval' && (
@@ -173,7 +184,12 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption 
       )}
 
       <div className="flex items-center gap-s">
-        {kind === 'approval' ? (
+        {event ? (
+          // The wake carries no verdict, so it is sent as a bare `true`: "it happened".
+          <Button onClick={() => onAnswer(continuation, true, false)} disabled={busy} disabledReason={BUSY_REASON}>
+            <Play size={14} /> Wake it now
+          </Button>
+        ) : kind === 'approval' ? (
           <>
             <Button onClick={() => onAnswer(continuation, true, rerun ? false : alwaysAllow)} disabled={busy} disabledReason={BUSY_REASON}>
               <Check size={14} /> Approve

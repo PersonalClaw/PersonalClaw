@@ -781,7 +781,9 @@ class RunController:
         audited (``approval_answer``), before the token is touched. The one exception is an
         ``event`` gate, which parks the run until something happens and asks nobody's
         permission: the trigger it waits for wakes it by answering it. A trigger answers no other
-        gate, so a trigger an agent armed cannot approve its own run's approval gate.
+        gate, so a trigger an agent armed cannot approve its own run's approval gate. What wakes an
+        event gate is its payload (`AskKind.EVENT`): whatever it carries moves the run on, and it
+        is never a no, a `revise` or a remembered allow.
 
         The answer is VALIDATED before the token is consumed: rejecting afterwards would
         have already destroyed the token, leaving a dead link and an unanswered gate. Then
@@ -795,6 +797,7 @@ class RunController:
         """
         from personalclaw.workflows.human_input import (
             Ask,
+            AskKind,
             consume_continuation,
             expired_item,
             load_continuation,
@@ -825,18 +828,20 @@ class RunController:
             self._publish("workflow_needs_input", item)
             return {"ok": False, "code": "WF_RESUME_EXPIRED", "item": item}
 
+        ask = Ask.from_dict(cont.ask)
         # The `revise` verb (UP): "change step 3, then carry on" — neither an approval nor a
         # rejection. Recognised HERE, alongside `validate_answer` and for the same reason: a revise
         # naming a step that does not exist must leave the token intact so the reviewer can correct
-        # the name, and a check placed after the claim would have destroyed it already.
-        revise = gate_answers.parse_revise(answer)
+        # the name, and a check placed after the claim would have destroyed it already. Never in
+        # an EVENT's answer, which is the wake's payload and nothing else: read as a verb, a
+        # trigger's `{"revise": ...}` rewrote the steps of the run it was armed to wake.
+        revise = None if ask.kind == AskKind.EVENT else gate_answers.parse_revise(answer)
         if revise is not None:
             step_ref, comment = revise
             return gate_answers.resume_revise(
                 self, cont, token, step_ref, comment, by=by, channel=channel
             )
 
-        ask = Ask.from_dict(cont.ask)
         problem = ask.validate_answer(answer)
         if problem:
             # Validated BEFORE consuming: the token survives so the user can correct it.
@@ -855,11 +860,10 @@ class RunController:
 
         filled = ask.apply_defaults(answer)
         approved = gate_answers.is_approved(ask, filled)
-        if approved and always_allow and not ask.rerun:
+        if approved and always_allow and ask.rememberable:
             # Run-scoped, keyed by (operation, target) — and cleared on rewind, so it can
-            # never auto-approve a step the user rewound to reconsider. Never for a step that
-            # parked (`ask.rerun`): what it waits for is a person's act, which no remembered
-            # answer can perform the next time it parks.
+            # never auto-approve a step the user rewound to reconsider. Never for an ask no
+            # remembered answer can stand in for (`Ask.rememberable`).
             node = dict(walk(self.root)).get(spec_path(cont.instance_path))
             self._allow_memory.remember(node.config if node else {}, cont.node_id)
         inst.wake_at = 0.0
@@ -1530,7 +1534,14 @@ class RunController:
             # clock and an ACTION that parked is waiting for a person to do something (sign in,
             # raise a budget) that no policy can do for them. Applied to every WAITING result, it
             # marked a `risk: caution` browse step in a scheduled run done with `approved: true`
-            # for a sign-in nobody made.
+            # for a sign-in nobody made. Nor an `event` gate, which asks no question: it waits for
+            # something to happen, and a policy that "approved" it would skip the wait it is for.
+            from personalclaw.workflows.human_input import AskKind
+
+            asks_a_question = (
+                item.node.kind == NodeKind.GATE
+                and (result.ask or {}).get("kind") != AskKind.EVENT.value
+            )
             verdict = (
                 gate_policy.decide(
                     item.node.config or {},
@@ -1539,7 +1550,7 @@ class RunController:
                     mode=self.run.mode,
                     memory=self._allow_memory,
                 )
-                if item.node.kind == NodeKind.GATE
+                if asks_a_question
                 else None
             )
             if verdict is not None and verdict.approved:
