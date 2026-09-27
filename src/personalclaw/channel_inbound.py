@@ -163,18 +163,17 @@ def _decide(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool) ->
     happens only inside :func:`~personalclaw.channel_trust.guard_inbound`, which redeems
     under policy ``pairing`` and refuses — without consuming the code — under ``owner_only``.
     """
-    sender_name = ""
-    if isinstance(msg.metadata, dict):
-        sender_name = str(msg.metadata.get("sender_name", "") or "")
+    meta = msg.metadata if isinstance(msg.metadata, dict) else {}
 
     return guard_inbound(
         state,
         provider,
         msg.sender,
-        sender_name=sender_name,
+        sender_name=str(meta.get("sender_name", "") or ""),
         channel_id=msg.channel_id,
         is_dm=is_dm,
         text=msg.text,
+        channel_name=str(meta.get("channel_name", "") or ""),
     )
 
 

@@ -25,7 +25,6 @@ from personalclaw.security import (
     scan_memory,
 )
 from personalclaw.sel import sel
-from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 from personalclaw.vector_memory import VectorMemoryStore
 
 
@@ -309,6 +308,24 @@ def _automation(args: argparse.Namespace) -> None:
     print("Usage: personalclaw automation verify-migration [--json]")
 
 
+def _cron_channel_problem(channel: str | None) -> str:
+    """Why ``--channel`` can't be delivered to, or ``""``: the check the schedule API makes.
+
+    ``--channel`` is a chat channel's name (the owner's DM there) or ``<name>:<id>``. This process
+    is not the gateway, so no channel is registered in it: the installed channels are built to be
+    asked, exactly as the gateway would build them.
+    """
+    if not channel:
+        return ""
+    from personalclaw.providers.loader import build_channel_transports
+    from personalclaw.triggers import delivery as _delivery
+
+    transports = {t.name: t for t in build_channel_transports()}
+    return _delivery.channel_route_problem(
+        f"{_delivery.CHANNEL_ROUTE_PREFIX}{channel}", transports=transports
+    )
+
+
 def _cron(args: argparse.Namespace) -> None:
     """Dispatch cron subcommands: list, add, update, remove, pause, resume, trigger.
 
@@ -355,12 +372,10 @@ def _cron(args: argparse.Namespace) -> None:
         cron_expr = getattr(args, "cron_expr", None)
         channel = (getattr(args, "channel", None) or "").strip() or None
         approval_mode = getattr(args, "approval_mode", "") or ""
-        if channel:
-            if len(channel) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(channel):
-                print(
-                    f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
-                )
-                return
+        problem = _cron_channel_problem(channel)
+        if problem:
+            print(f"Error: {problem}")
+            return
         if cron_expr:
             spec = {"kind": "cron", "expr": cron_expr}
         elif every:
@@ -428,10 +443,9 @@ def _cron(args: argparse.Namespace) -> None:
                 val = val.strip() or None
                 if val is None:
                     continue
-                if len(val) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(val):
-                    print(
-                        f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
-                    )
+                problem = _cron_channel_problem(val)
+                if problem:
+                    print(f"Error: {problem}")
                     return
                 patch["delivery"] = f"channel:{val}"
             elif field == "name":

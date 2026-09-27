@@ -1603,6 +1603,42 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # the blocking POST to a daemon thread and swallows its own failures.
         if rule is not None and "push" in rule.targets:
             self._push_target(kind, note)
+        # The `channel_dm` target: the note, in the owner's DM on the first connected channel
+        # that reaches them. A note a channel route already sent there (a schedule's Notify
+        # channel marks it `sent_to_channel`) is not sent twice.
+        if rule is not None and "channel_dm" in rule.targets and not note.get("sent_to_channel"):
+            self._channel_dm_target(note)
+
+    def _channel_dm_target(self, note: dict[str, Any]) -> None:
+        """Send *note* to the owner's DM on the first channel that reaches them.
+
+        A task on the gateway's loop, after the dashboard delivery above, so a slow or failing
+        channel never holds up the bell. When no channel can take it, the log says why; the note
+        is already in the bell and the Inbox, so nothing is lost.
+        """
+        from personalclaw import notification_rules as rules
+
+        text = rules.channel_dm_text(note)
+        if not text:
+            return
+
+        async def _send() -> None:
+            from personalclaw.channel_delivery import reach_owner
+
+            outcome = await reach_owner(lambda delivery, dm: delivery.deliver_text(dm, text))
+            if not outcome.delivered and not outcome.no_channel:
+                self._log.warning(
+                    "channel DM for %r reached nobody: %s", note.get("title"), outcome.sentence()
+                )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._log.debug("channel DM for %r: no event loop in this thread", note.get("title"))
+            return
+        task = loop.create_task(_send())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     def _announce_logged(self, note: dict[str, Any]) -> None:
         """Tell the bell a note was recorded WITHOUT being fired (a badge, a foreign addressee).

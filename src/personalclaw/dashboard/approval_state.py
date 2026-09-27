@@ -173,8 +173,13 @@ class DashboardApprovalState:
         tool_input: object = "",
         tool_purpose: str = "",
         session: str = "",
+        asked_on_channel: bool = False,
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
+
+        ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
+        gateway's race for a background origin), so the ``channel_dm`` target must not ask a
+        second time.
 
         The timeout is origin-aware (see :meth:`_approval_timeout_for`): unattended
         sources deny fast, interactive sources wait longer. Timeout always fails
@@ -230,6 +235,8 @@ class DashboardApprovalState:
             # `None` when this is not a shell call.
             is_read_only=read_only_command(tool, "", tool_input),
         )
+        if asked_on_channel:
+            self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
         timeout = self._approval_timeout_for(source)
         # How this approval ends if nobody answers it. The waiter is the one party that knows
         # WHY it stopped waiting, so it says so: its window closing is `expired`; anything else
@@ -435,6 +442,13 @@ class DashboardApprovalState:
         if outcome not in APPROVAL_OUTCOMES:
             raise ValueError(f"unknown approval outcome {outcome!r}")
         entry = self._pending_approvals.pop(approval_id, None) or {}
+        self.__dict__.get("_channel_asked", set()).discard(approval_id)
+        # A prompt still open on the owner's channel is closed with how it ended, so the message
+        # there says so instead of offering buttons that answer nothing.
+        pending = self.__dict__.get("_channel_prompts", {}).pop(approval_id, None)
+        future = getattr(pending, "future", None)
+        if future is not None and not future.done():
+            future.set_result("approved" if outcome == "approved" else "rejected")
         try:
             from personalclaw.inbox import resolve_attention_items
 
@@ -664,17 +678,118 @@ class DashboardApprovalState:
         NOT routed through :meth:`notify`: that would add a desktop toast beside the approval
         card the dashboard already renders — a behaviour change to every existing user, in
         exchange for nothing the phone needs.
+
+        The same rule's ``channel_dm`` target asks the owner on their chat channel
+        (:meth:`_ask_on_a_channel`), with Approve/Deny where the channel has them.
         """
         try:
             from personalclaw import notification_kinds, notification_rules, push
 
             registered = notification_kinds.kind_for_legacy(notification_kinds.APPROVAL)
             rule = notification_rules.resolve_rule(registered.source, registered.kind)
-            if rule.mode == "never" or "push" not in rule.targets:
+            if rule.mode == "never":
                 return
-            push.deliver_async("approval", approval_id)
+            if "push" in rule.targets:
+                push.deliver_async("approval", approval_id)
+            if "channel_dm" in rule.targets:
+                self._ask_on_a_channel(approval_id)
         except Exception:
             self._log.debug("approval push dispatch failed", exc_info=True)
+
+    def _ask_on_a_channel(self, approval_id: str) -> None:
+        """The ``channel_dm`` target of ``approval/requested``: ask the owner on their channel.
+
+        Skipped when the caller is already asking there (``asked_on_channel``). Runs as a task on
+        the gateway's loop, so the approval is listed everywhere else first and never waits on a
+        channel."""
+        entry = self._pending_approvals.get(approval_id)
+        if not entry or approval_id in self.__dict__.get("_channel_asked", set()):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._log.debug("approval %s: no loop here to ask on a channel from", approval_id)
+            return
+        task = loop.create_task(self._approval_on_a_channel(approval_id, dict(entry)))
+        tasks = getattr(self, "_background_tasks", None)
+        if isinstance(tasks, set):
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+    async def _approval_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
+        """Ask on the first channel that can: Approve/Deny where it has them, else a link.
+
+        Channels are tried in name order, as ``channel_delivery.reach_owner`` tries them. The
+        first one with an owner id and a ``request_approval`` prompt asks, and a press there
+        answers this approval the way the dashboard's buttons do (:meth:`resolve_approval`). An
+        answer given anywhere else closes that prompt (:meth:`withdraw_approval`). A prompt that
+        runs out on the channel decides nothing: this approval keeps its own window. When no
+        channel can prompt, the owner gets a message with the link to answer it instead.
+
+        The channel is handed a short token, not the approval id: a chat's id carries its session
+        key, and a button's data has a size cap on some channels."""
+        import secrets
+        from types import SimpleNamespace
+
+        from personalclaw import channel_delivery
+        from personalclaw.config.credentials import owner_id_for
+
+        event = SimpleNamespace(
+            request_id=secrets.token_hex(6),
+            title=str(entry.get("tool") or ""),
+            tool_input=str(entry.get("tool_input") or ""),
+            tool_purpose=str(entry.get("tool_purpose") or ""),
+            risk_level=str(entry.get("risk") or ""),
+            tool_meta={},
+        )
+        prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
+        for provider in channel_delivery.registered_providers():
+            delivery = channel_delivery.delivery_for(provider)
+            ask = getattr(delivery, "request_approval", None)
+            if delivery is None or ask is None or not owner_id_for(provider):
+                continue
+            seen: dict[str, Any] = {}
+
+            def _on_prompted(pending: Any, _seen: dict[str, Any] = seen) -> None:
+                _seen["pending"] = pending
+                prompts[approval_id] = pending
+
+            try:
+                approved = await ask(
+                    event, source=str(entry.get("source") or "chat"), on_prompted=_on_prompted
+                )
+            except Exception:  # noqa: BLE001 - one channel failing hands over to the next
+                self._log.warning(
+                    "channel %s: asking for an approval failed", provider, exc_info=True
+                )
+                continue
+            finally:
+                if prompts.get(approval_id) is seen.get("pending"):
+                    prompts.pop(approval_id, None)
+            if approved is None and "pending" not in seen:
+                continue  # this channel could not prompt the owner; the next one may
+            future = getattr(seen.get("pending"), "future", None)
+            pressed = future is not None and future.done() and not future.cancelled()
+            if pressed and approval_id in self._pending_approvals:
+                self.resolve_approval(approval_id, bool(approved))
+            return
+        await self._approval_link_on_a_channel(approval_id, entry)
+
+    async def _approval_link_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
+        """Tell the owner on their channel that an approval is waiting, with where to answer it."""
+        from personalclaw.channel_delivery import reach_owner
+        from personalclaw.notification_rules import dashboard_link
+
+        what = str(entry.get("tool") or "a tool call")
+        why = str(entry.get("tool_purpose") or "")
+        link = dashboard_link(f"#/companion?approval={approval_id}")
+        text = f"PersonalClaw is waiting for your approval: {what}" + (f", to {why}" if why else "")
+        text += f". Answer it here: {link}" if link else ". Answer it in PersonalClaw."
+        outcome = await reach_owner(lambda delivery, dm: delivery.deliver_text(dm, text))
+        if not outcome.delivered and not outcome.no_channel:
+            self._log.warning(
+                "approval %s: no channel reached the owner: %s", approval_id, outcome.sentence()
+            )
 
     def resolve_approval(self, approval_id: str, approved: bool) -> bool:
         """Answer a pending approval by its REGISTRY id, from any surface. False if not pending.

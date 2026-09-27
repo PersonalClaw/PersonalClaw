@@ -16,7 +16,7 @@ destination was verified against a real migration:
 
     spec.timezone / spec.skip_dates / spec.strict   ← timezone / skip_dates / strict_schedule
     workflow.inline                                 ← action
-    delivery ("channel:C1", "none")                 ← channel / silent
+    delivery ("channel:<name>[:<id>]", "none")      ← channel / silent
     session  ("pinned:cron:j")                      ← session_key / persistent_session
     capabilities.env                                ← env
     health_status / last_error_summary              ← last_status / last_error
@@ -42,9 +42,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: The delivery string prefix a channel target uses (`channel:C0AP3QR7Z4M`). Matched rather than
-#: split blind: `delivery` also carries `none` (a silent job) and `inbox`, and treating those as a
-#: channel id would render "none" as a destination in the UI.
+#: The delivery string prefix a channel route uses (`channel:<name>` or `channel:<name>:<id>`).
+#: Matched rather than split blind: `delivery` also carries `none` (a silent job) and `inbox`, and
+#: treating those as a channel would render "none" as a destination in the UI.
 _CHANNEL_PREFIX = "channel:"
 
 #: The session string prefix a pinned (persistent) session uses (`pinned:cron:j`). A `fresh` session
@@ -113,9 +113,19 @@ def _action_config(trigger: Any) -> dict[str, Any]:
 
 
 def channel_of(trigger: Any) -> str:
-    """The channel id a trigger delivers to, or "" — read from `delivery`, never from the action."""
+    """Where a trigger's results go on a chat channel, or "". Read from `delivery`, not the action.
+
+    ``<name>`` for the owner's DM on that channel, ``<name>:<id>`` for a chat on it: the route
+    without its prefix, which is also what the schedule API takes back.
+    """
     delivery = str(getattr(trigger, "delivery", "") or "")
     return delivery[len(_CHANNEL_PREFIX) :] if delivery.startswith(_CHANNEL_PREFIX) else ""
+
+
+def _channel_problem(trigger: Any) -> str:
+    from personalclaw.triggers.delivery import channel_route_problem
+
+    return channel_route_problem(getattr(trigger, "delivery", ""))
 
 
 def is_silent(trigger: Any) -> bool:
@@ -202,6 +212,11 @@ def to_schedule_row(
         "agent": str(config.get("agent") or "") or None,
         "model": str(config.get("model") or "") or None,
         "channel": channel_of(trigger) or None,
+        # Why the results can't go to that channel, when they can't: a channel that isn't set up
+        # here, or an id it refuses. A route stored before routes named their channel
+        # (`channel:C0123`) reads as a channel called `C0123`, and the row says so rather than
+        # showing a destination nothing will deliver to.
+        "channel_problem": _channel_problem(trigger),
         "approval_mode": str(config.get("approval_mode") or "") or None,
         "silent": is_silent(trigger),
         # 🔴 FAILURE ROUTING, published (WF2AUT-15). Both were declared, persisted, round-tripped and

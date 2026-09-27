@@ -15,10 +15,15 @@ consumer. WHEN a receiver runs is core's one rule,
 a management + visibility surface over the registered transports, not a second inbound router.
 """
 
+import unicodedata
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
+
+#: The longest target id :meth:`ChannelTransportProvider.validate_target` accepts by default. A
+#: chat, channel or user id is far shorter on every platform; anything longer is pasted text.
+_TARGET_MAX_LEN = 256
 
 
 @dataclass
@@ -175,6 +180,26 @@ class ChannelTransportProvider(ABC):
         """
         h = await self.health()
         return {"ok": h.get("state") == "ready", "detail": h.get("detail", "")}
+
+    def validate_target(self, target: str) -> str:
+        """Whether this channel can deliver to ``target``: ``""`` if it can, else one sentence why.
+
+        ``target`` is a chat, channel or user id as this channel names it, which is what a
+        schedule's "Notify channel" can send results to (``channel:<name>:<target>``). Core knows
+        nothing about what an id looks like on any platform and must not, so it asks the channel.
+        The sentence is shown to the owner as it is, so say what a valid id looks like.
+
+        The default accepts any non-empty id with no whitespace or control characters, up to 256
+        characters. A channel whose ids have a shape overrides it.
+        """
+        value = str(target or "")
+        if not value:
+            return f"{self.display_name} needs a chat or channel id to send to."
+        if len(value) > _TARGET_MAX_LEN:
+            return f"That's too long for a {self.display_name} id."
+        if any(ch.isspace() or unicodedata.category(ch).startswith("C") for ch in value):
+            return f"A {self.display_name} id has no spaces or control characters."
+        return ""
 
     def info(self) -> dict[str, Any]:
         """Static descriptor (no awaiting) for quick listing."""

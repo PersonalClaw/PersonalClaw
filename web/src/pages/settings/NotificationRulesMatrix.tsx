@@ -46,17 +46,16 @@ const SOUND_OPTIONS: { value: string; label: string }[] = [
 // desktop app is running, and falls back to this dashboard's own bell when it isn't. Leaving
 // it dimmed would have been the opposite lie to the one the dimming was there to prevent.
 //
-// 🔴 `channel_dm` WENT ON IT (issue #343). It is the one target with nothing behind it —
-// `notification_rules.TARGETS`' own comment says it is *"still accepted and persisted but
-// inert"* — and it was the only one presented as a plain, live choice. Ticking Channel DM
-// silently did nothing, which is precisely the expectation the dimming exists to manage.
+// `channel_dm` went on that list with issue #343, when nothing was behind it, and came off it
+// once `DashboardState.notify` sent it: the note goes to your DM on the first connected chat
+// channel that knows you, and an approval asks there, with Approve/Deny where the channel has them.
 const TARGET_LABELS: Record<NotificationTarget, string> = {
   dashboard: 'Dashboard',
-  channel_dm: 'Channel DM (not delivered yet — saved for when channels can)',
+  channel_dm: 'Channel DM (the first connected chat channel that knows you)',
   push: 'Push (mobile app required)',
   native: 'Desktop notification (when the desktop app is running)',
 }
-const INERT_TARGETS: NotificationTarget[] = ['channel_dm', 'push']
+const INERT_TARGETS: NotificationTarget[] = ['push']
 
 /** Per-(source, kind) delivery rules.
  *

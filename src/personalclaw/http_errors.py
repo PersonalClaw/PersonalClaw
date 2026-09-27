@@ -182,6 +182,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # (nothing to retry — it was already answered, or it expired).
     "browse_grant_action_invalid": "A browse grant may only be approved or rejected.",
     "browse_grant_not_pending": "No browse grant is waiting on that id.",
+    # ── a channel's rules for strangers and groups (handlers/channel_trust.py) ──
+    "channel_trust_provider_unknown": "No chat channel by that name is set up.",
+    "channel_trust_channel_unknown": "That group is not tracked on this channel.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
     # ── a channel's owner and its pairing (handlers/channel_owner.py) ──

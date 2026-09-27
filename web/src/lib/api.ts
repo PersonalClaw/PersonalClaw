@@ -631,13 +631,20 @@ export interface ChannelTrustSender {
   via: string
 }
 export interface ChannelTrustChannel { channel_id: string; name: string; added_at: string }
+/** An untracked group that messaged the agent (newest first). Its messages were refused; the
+ *  page offers Track for it. */
+export interface ChannelTrustSeenChannel { channel_id: string; name: string; last_seen: string }
 /** A provider's whole trust posture. NEVER carries the pairing code or its hash — only whether
- *  one is outstanding (`pairing_active`) and when it dies. */
+ *  one is outstanding (`pairing_active`) and when it dies. `display_name` is the channel's own
+ *  name for itself; `registered` is whether that channel is set up now. */
 export interface ChannelTrustProvider {
   provider: string
+  display_name: string
+  registered: boolean
   policies: { dm: string; group: string }
   allowed_senders: ChannelTrustSender[]
   tracked_channels: ChannelTrustChannel[]
+  seen_channels: ChannelTrustSeenChannel[]
   pairing_active: boolean
   pairing_expires_at: string
 }
@@ -647,7 +654,10 @@ export interface ChannelTrust {
   group_policies: string[]
   default_dm_policy: string
   default_group_policy: string
+  pairing_code_ttl_secs: number
 }
+/** A sender's pairing code, shown ONCE: the answer to minting it is the only place it exists. */
+export interface ChannelSenderPairing { code: string; expires_at: string; ttl_secs: number }
 // A background subagent (from /api/spawn) — spawned by a cron/loop/Slack/agent.
 export interface SpawnedAgent { id: string; task: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
 // A knowledge item scored for chat-context injection (from search-for-context),
@@ -1514,7 +1524,10 @@ export interface ScheduleJob {
   state?: string | null
   run_count?: number
   agent?: string | null; model?: string | null
-  channel?: string | null; approval_mode?: string | null
+  // Where results go on a chat channel: `<name>` (your DMs there) or `<name>:<target>` (a chat on
+  // it), the delivery route without its `channel:` prefix. `channel_problem` is the server's
+  // sentence when that channel can't take them (not set up here, or an id it refuses), else ''.
+  channel?: string | null; channel_problem?: string; approval_mode?: string | null
   silent?: boolean; strict_schedule?: boolean; timezone?: string | null
   skip_dates?: string[]
   // Failure routing (WF2AUT-15). `failure_delivery` is `Trigger.failure_delivery` verbatim — '' means
@@ -6782,12 +6795,24 @@ export const api = {
     del(`/api/channels/${encodeURIComponent(name)}/owner/pairing`),
 
   // ── Channel sender trust (EA-7) — who is allowed to talk to the agent, per channel ──
-  // The allowlist was writable from two places (a pairing code, the unknown-sender
-  // notification's Allow) and readable from none. This is the read half; granting stays with
-  // those two deliberate acts, so this surface revokes only.
+  // Granting stays a deliberate act: a sender is let in by the code they send (minted here) or
+  // by the owner's Allow on the unknown-sender notification, and a group is tracked from the
+  // list of groups that already messaged the agent.
   channelTrust: () => get<ChannelTrust>('/api/channels/trust'),
   revokeChannelSender: (provider: string, senderId: string) =>
     del(`/api/channels/trust/${encodeURIComponent(provider)}/senders/${encodeURIComponent(senderId)}`),
+  /** Opening DMs to anyone loosens a security setting: the server asks, and this confirms. */
+  setChannelTrustPolicies: (provider: string, policies: { dm?: string; group?: string }) =>
+    withSecurityConsent((c) => put<{ ok: boolean; policies: { dm: string; group: string } }>(
+      `/api/channels/trust/${encodeURIComponent(provider)}/policies`, c ? { ...policies, confirm: true } : policies)),
+  trackChannelGroup: (provider: string, channelId: string, name = '') =>
+    post<{ ok: boolean }>(`/api/channels/trust/${encodeURIComponent(provider)}/channels`, { channel_id: channelId, name }),
+  untrackChannelGroup: (provider: string, channelId: string) =>
+    del(`/api/channels/trust/${encodeURIComponent(provider)}/channels/${encodeURIComponent(channelId)}`),
+  startSenderPairing: (provider: string) =>
+    post<ChannelSenderPairing>(`/api/channels/trust/${encodeURIComponent(provider)}/pairing`, {}),
+  cancelSenderPairing: (provider: string) =>
+    del(`/api/channels/trust/${encodeURIComponent(provider)}/pairing`),
 
   // ── Tasks bulk ops (validate-all-then-apply create/update/delete) ──
   tasksBulk: (op: 'create' | 'update' | 'delete', items: Array<Record<string, unknown>>) =>

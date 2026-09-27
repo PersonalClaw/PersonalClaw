@@ -1,6 +1,9 @@
-/** EA-7 — the sender-trust panel: the owner's read/revoke surface over the channel allowlist.
+/** EA-7 — the sender-trust panel: the owner's surface over who may talk to the agent.
  *
- *  The five things this surface can get wrong, in the order they would hurt:
+ *  It read and revoked; it now also sets each channel's rules for strangers and groups, mints a
+ *  sender's pairing code, and tracks the groups that messaged the agent (the second describe).
+ *
+ *  The five things the revoke half can get wrong, in the order they would hurt:
  *  a revoke that does not name WHO it is revoking; a dismissed confirm that revokes anyway;
  *  a confirmed revoke that mutates locally instead of re-reading (so the row lies); a failed
  *  revoke that is swallowed (the row stays and the owner believes access is gone); and a
@@ -24,9 +27,12 @@ function sender(over: Partial<ChannelTrustSender> = {}): ChannelTrustSender {
 function provider(over: Partial<ChannelTrustProvider> = {}): ChannelTrustProvider {
   return {
     provider: 'telegram',
+    display_name: '',
+    registered: true,
     policies: { dm: 'pairing', group: 'tracked_only' },
     allowed_senders: [sender()],
     tracked_channels: [],
+    seen_channels: [],
     pairing_active: false,
     pairing_expires_at: '',
     ...over,
@@ -40,6 +46,7 @@ function trust(over: Partial<ChannelTrust> = {}): ChannelTrust {
     group_policies: ['tracked_only', 'off'],
     default_dm_policy: 'pairing',
     default_group_policy: 'tracked_only',
+    pairing_code_ttl_secs: 600,
     ...over,
   }
 }
@@ -53,7 +60,7 @@ function captureToasts(): string[] {
   return seen
 }
 
-const mount = () => render(<><SenderTrustPanel /><DialogHost /></>)
+const mount = (navigate?: (p: string) => void) => render(<><SenderTrustPanel navigate={navigate} /><DialogHost /></>)
 
 beforeEach(() => {
   // Mandatory: without this the previous test's payload seeds the next mount from cache.
@@ -219,5 +226,108 @@ describe('SenderTrustPanel', () => {
     mount()
 
     expect(await screen.findByText(/date unknown/i)).toBeTruthy()
+  })
+})
+
+describe('SenderTrustPanel manages every channel', () => {
+  it("titles each channel by its own name, not its key", async () => {
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({
+      providers: [provider({ display_name: 'Telegram' })],
+    }))
+    mount()
+    expect(await screen.findByRole('button', { name: 'Revoke Alice on Telegram' })).toBeTruthy()
+  })
+
+  it("sets the rule for people you haven't paired, then re-reads", async () => {
+    const list = vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({ providers: [provider({ display_name: 'Telegram' })] }))
+    const set = vi.spyOn(api, 'setChannelTrustPolicies').mockResolvedValue({ ok: true, policies: { dm: 'owner_only', group: 'tracked_only' } })
+    mount()
+
+    await userEvent.click(await screen.findByRole('button', { name: "Telegram DMs from people you haven't paired: Ignore them" }))
+    await waitFor(() => expect(set).toHaveBeenCalledWith('telegram', { dm: 'owner_only' }))
+    await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(1))
+    // The live choice is the pressed one; the others are not.
+    expect(screen.getByRole('button', { name: "Telegram DMs from people you haven't paired: Ask for a code" }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('says nothing went wrong when the owner declines to open DMs to anyone', async () => {
+    const { ConsentDeclined } = await import('../../lib/securityConsent')
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({ providers: [provider({ display_name: 'Telegram' })] }))
+    vi.spyOn(api, 'setChannelTrustPolicies').mockRejectedValue(new ConsentDeclined('dm'))
+    const toasts = captureToasts()
+    mount()
+
+    await userEvent.click(await screen.findByRole('button', { name: "Telegram DMs from people you haven't paired: Anyone" }))
+    await waitFor(() => expect(api.setChannelTrustPolicies).toHaveBeenCalledWith('telegram', { dm: 'open' }))
+    expect(toasts.some((t) => /Couldn't change/i.test(t))).toBe(false)
+  })
+
+  it('turns group chats off for a channel', async () => {
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({ providers: [provider({ display_name: 'Telegram' })] }))
+    const set = vi.spyOn(api, 'setChannelTrustPolicies').mockResolvedValue({ ok: true, policies: { dm: 'pairing', group: 'off' } })
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Telegram group chats: None' }))
+    await waitFor(() => expect(set).toHaveBeenCalledWith('telegram', { group: 'off' }))
+  })
+
+  it('pairs someone: the code shows once, and goes when it has been used', async () => {
+    const list = vi.spyOn(api, 'channelTrust')
+      .mockResolvedValueOnce(trust({ providers: [provider({ display_name: 'Telegram', allowed_senders: [] })] }))
+      .mockResolvedValue(trust({ providers: [provider({ display_name: 'Telegram', pairing_active: true, allowed_senders: [] })] }))
+    vi.spyOn(api, 'startSenderPairing').mockResolvedValue({ code: '48213579', expires_at: '2026-09-26T18:10:00+00:00', ttl_secs: 600 })
+    mount()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Pair someone' }))
+    const code = await screen.findByLabelText('Pairing code 4 8 2 1 3 5 7 9')
+    expect(code.textContent).toBe('48213579')
+    expect(screen.getByText(/Have them send this code to your bot in a direct message on Telegram/)).toBeTruthy()
+
+    // They sent it: the code is spent, and a new sender is on the list.
+    list.mockResolvedValue(trust({ providers: [provider({ display_name: 'Telegram', pairing_active: false, allowed_senders: [sender({ sender_id: '4242', name: 'Dana', via: 'pairing' })] })] }))
+    await waitFor(() => expect(screen.queryByLabelText('Pairing code 4 8 2 1 3 5 7 9')).toBeNull(), { timeout: 5000 })
+    expect(await screen.findByText('Dana')).toBeTruthy()
+  })
+
+  it('tracks a group that messaged the agent, after saying what that lets in', async () => {
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({
+      providers: [provider({ display_name: 'Telegram', seen_channels: [{ channel_id: '-100123', name: 'Family', last_seen: '2026-09-26T10:00:00+00:00' }] })],
+    }))
+    const track = vi.spyOn(api, 'trackChannelGroup').mockResolvedValue({ ok: true })
+    mount()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Track Family on Telegram' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toMatch(/Messages in Family will reach your agent/)
+    expect(track).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Track group' }))
+    await waitFor(() => expect(track).toHaveBeenCalledWith('telegram', '-100123', 'Family'))
+  })
+
+  it('stops tracking a group', async () => {
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({
+      providers: [provider({ display_name: 'Telegram', tracked_channels: [{ channel_id: '-100123', name: 'Family', added_at: '2026-09-26T10:00:00+00:00' }] })],
+    }))
+    const untrack = vi.spyOn(api, 'untrackChannelGroup').mockResolvedValue(undefined as never)
+    mount()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop tracking Family on Telegram' }))
+    await screen.findByRole('alertdialog')
+    await userEvent.click(screen.getByRole('button', { name: /^Stop tracking$/ }))
+    await waitFor(() => expect(untrack).toHaveBeenCalledWith('telegram', '-100123'))
+  })
+
+  it('says where a group comes from when none has messaged the agent yet', async () => {
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({ providers: [provider({ display_name: 'Telegram' })] }))
+    mount()
+    expect(await screen.findByText(/No group has messaged your agent on Telegram yet/)).toBeTruthy()
+  })
+
+  it('offers Apps when no chat channel is set up', async () => {
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({ providers: [] }))
+    const navigate = vi.fn()
+    mount(navigate)
+    await userEvent.click(await screen.findByRole('button', { name: 'Open Apps' }))
+    expect(navigate).toHaveBeenCalledWith('apps')
+    expect(screen.getByText('No chat channel is set up')).toBeTruthy()
   })
 })

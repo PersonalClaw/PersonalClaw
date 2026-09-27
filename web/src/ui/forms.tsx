@@ -37,8 +37,8 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. **355** hinted publishers render today — **303** DIRECT call sites (Field 152,
- *  settingsUI's Row 85, NumberRow 66) plus **52** that arrive through seven local wrappers which
+ *  expected to follow. **357** hinted publishers render today — **305** DIRECT call sites (Field 152,
+ *  settingsUI's Row 87, NumberRow 66) plus **52** that arrive through seven local wrappers which
  *  forward a hint into one of those three (ToggleRow 34, SelectRow 4, TextRow 4, CheckList 3,
  *  StrListField 3, EnumRow 2, SegRow 2). Recounted **2026-09-26** with the depth-tracking scan
  *  `fieldHintCounts.test.ts` runs; the 336/284 reading of 2026-09-19 (Field 133, Row 84, NumberRow 67)
@@ -57,7 +57,7 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  reds on healthy growth is a rail someone weakens. The floor catches the failure that matters — the
  *  scan breaking, or publishers disappearing — and the test names the command to refresh the prose.
  *
- *  None of the 336 has to change — the id is published here and claimed by the same controls that
+ *  None of the 357 has to change — the id is published here and claimed by the same controls that
  *  already claim the label. axe cannot see this: an unassociated paragraph is valid HTML. */
 const FieldHintCtx = createContext<string | undefined>(undefined)
 export function useFieldHintId() { return useContext(FieldHintCtx) }

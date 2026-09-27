@@ -113,6 +113,30 @@ class TestCronCli:
         monkeypatch.setattr("personalclaw.cli_commands.sel", MagicMock())
         return tmp_path
 
+    @pytest.fixture
+    def fakechat(self, monkeypatch):
+        """An installed chat channel. `--channel` names the channel results go to, and the CLI
+        builds the installed channels to ask whether it can take the id."""
+        from personalclaw.channel_transports.base import ChannelTransportProvider
+
+        class _Chat(ChannelTransportProvider):
+            name = property(lambda self: "fakechat")
+            display_name = property(lambda self: "FakeChat")
+
+            async def connect(self) -> bool:
+                return True
+
+            async def disconnect(self) -> None:
+                return None
+
+            async def send(self, message: object) -> bool:
+                return True
+
+        monkeypatch.setattr(
+            "personalclaw.providers.loader.build_channel_transports", lambda: [_Chat()]
+        )
+        return "fakechat"
+
     def _store(self, tmp_path):
         from personalclaw.triggers.store import TriggerStore
 
@@ -144,7 +168,7 @@ class TestCronCli:
         assert row.trigger.spec == {"kind": "interval", "interval_secs": 300}
         assert not (tmp_path / "crons.json").exists(), "nothing may be written to the legacy file"
 
-    def test_cron_add_with_channel(self, tmp_path):
+    def test_cron_add_with_channel(self, tmp_path, fakechat):
         _cron(
             argparse.Namespace(
                 cron_action="add",
@@ -152,14 +176,14 @@ class TestCronCli:
                 message="check",
                 every=300,
                 cron_expr=None,
-                channel="C0AP77JJSN6",
+                channel="fakechat:C0AP77JJSN6",
                 approval_mode="",
             )
         )
         # `delivery` is the store's spelling of the legacy `channel=` kwarg.
-        assert self._only(tmp_path).trigger.delivery == "channel:C0AP77JJSN6"
+        assert self._only(tmp_path).trigger.delivery == "channel:fakechat:C0AP77JJSN6"
 
-    def test_cron_add_with_cron_expr(self, tmp_path):
+    def test_cron_add_with_cron_expr(self, tmp_path, fakechat):
         _cron(
             argparse.Namespace(
                 cron_action="add",
@@ -167,13 +191,13 @@ class TestCronCli:
                 message="check",
                 every=None,
                 cron_expr="0 9 * * MON-FRI",
-                channel="C0AP77JJSN6",
+                channel="fakechat",
                 approval_mode="",
             )
         )
         row = self._only(tmp_path)
         assert row.trigger.spec == {"kind": "cron", "expr": "0 9 * * MON-FRI"}
-        assert row.trigger.delivery == "channel:C0AP77JJSN6"
+        assert row.trigger.delivery == "channel:fakechat"
         assert row.trigger.next_fire_at
 
     def test_cron_add_with_approval_mode(self, tmp_path):
@@ -373,7 +397,7 @@ class TestCronCli:
         # And nothing may have been written on the way to that refusal.
         assert self._only(tmp_path).trigger.spec == {"kind": "interval", "interval_secs": 300}
 
-    def test_cron_update_not_found(self, tmp_path, capsys):
+    def test_cron_update_not_found(self, tmp_path, capsys, fakechat):
         _cron(
             argparse.Namespace(
                 cron_action="update",
@@ -382,7 +406,7 @@ class TestCronCli:
                 message=None,
                 every_secs=None,
                 cron_expr=None,
-                channel="C0AP77JJSN6",
+                channel="fakechat:C0AP77JJSN6",
                 approval_mode=None,
             )
         )

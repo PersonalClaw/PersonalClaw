@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { api } from '../../lib/api'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
+import { useQuery } from '../../lib/data'
 import { useAgentCatalog, useModelCatalog } from '../../lib/agents'
 import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
@@ -12,6 +14,7 @@ import {
   secsToInterval, intervalToSecs, INTERVAL_UNITS, MIN_INTERVAL_SECS, CRON_PRESETS,
 } from './scheduleMeta'
 import { cronExprInvalidReason } from './cronExpr'
+import { chatChannels, joinChannel, splitChannel } from './notifyChannel'
 
 /** The draft mirrors the create/update payload but keeps the kind/mode axes
  *  explicit (the wire derives them from which fields are set). */
@@ -47,6 +50,7 @@ export interface ScheduleDraft {
   script: string
   command: string
   // delivery / context
+  /** `<name>` (your DMs on that chat channel), `<name>:<target>` (a chat on it) or ''. */
   channel: string
   silent: boolean
   strict_schedule: boolean
@@ -325,9 +329,7 @@ function Advanced({ draft, set, triggerOnly }: { draft: ScheduleDraft; set: <K e
               ? <Combobox options={tzOptions} value={draft.timezone} onChange={(v) => set('timezone', v)} placeholder="Server default" emptyText="No match" />
               : <TextInput value={draft.timezone} onChange={(v) => set('timezone', v)} placeholder="America/Los_Angeles" />}
           </Field>
-          <Field label="Notify channel" hint="Optional Slack channel ID to deliver results to.">
-            <TextInput value={draft.channel} onChange={(v) => set('channel', v)} placeholder="C0123456789" />
-          </Field>
+          <NotifyChannelField value={draft.channel} onChange={(v) => set('channel', v)} />
           <Field label="Skip dates" hint="ISO dates (YYYY-MM-DD) to skip — holidays, blackout days.">
             <ChipInput values={draft.skip_dates} onChange={(v) => set('skip_dates', v)} placeholder="2026-12-25, Enter" />
           </Field>
@@ -363,6 +365,59 @@ function Advanced({ draft, set, triggerOnly }: { draft: ScheduleDraft; set: <K e
         </div>
       )}
     </div>
+  )
+}
+
+/** Where results go on a chat channel: nowhere, your DMs on one, or a chat on one.
+ *
+ *  This used to be a free-text "Slack channel ID" field, and core refused any id that wasn't shaped
+ *  like one, so no other channel's chats could be named at all. The channel is picked here and a
+ *  chat id is checked by that channel when the schedule is saved (`validate_target`): core knows no
+ *  platform's id shape, so a refusal comes back in the channel's own words as the save error. */
+function NotifyChannelField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  // Not Settings → Providers' `settings:channels`: that read keeps its catch, and the `[]` it caches
+  // on a failure would pass `error && !data` below as "you have no chat channels".
+  const { data, error } = useQuery('settings:channels-owners', () => api.channels(), { persist: true })
+  const channels = chatChannels(data)
+  const { name, target } = splitChannel(value)
+  // Whether the user is naming a chat. Local, because "a chat, id not typed yet" and "your DMs"
+  // send the same value until the id is typed.
+  const [toChat, setToChat] = useState(!!target)
+  const known = channels.some((c) => c.name === name)
+  const options = [
+    { value: '', label: "Don't send results to a chat channel" },
+    ...channels.map((c) => ({
+      value: c.name,
+      label: c.health?.state === 'ready' ? c.display_name : `${c.display_name} (not connected)`,
+    })),
+    // A saved channel that isn't set up here (uninstalled, or saved before routes named their
+    // channel) stays visible, so the form shows what the schedule really holds. When the list
+    // couldn't be read there is no telling, so it shows the name alone.
+    ...(name && !known ? [{ value: name, label: error && !data ? name : `${name} (not set up here)` }] : []),
+  ]
+  return (
+    <Field label="Notify channel" hint="Also send each result to a chat channel. It still reaches the dashboard.">
+      <div className="flex flex-col gap-s">
+        <NativeSelect value={name} onChange={(v) => { setToChat(false); onChange(joinChannel(v, '')) }}
+          options={options} label="Chat channel for results" name="notify-channel" />
+        {name && (
+          <Segmented ariaLabel="Send results to" size="sm" value={toChat ? 'chat' : 'dm'}
+            onChange={(k) => {
+              const chat = k === 'chat'
+              setToChat(chat)
+              if (!chat) onChange(joinChannel(name, ''))
+            }}
+            options={[{ key: 'dm', label: 'You, in a direct message' }, { key: 'chat', label: 'A chat or channel' }]} />
+        )}
+        {name && toChat && (
+          <TextInput value={target} onChange={(v) => onChange(joinChannel(name, v))}
+            placeholder="Chat or channel id" ariaLabel="Chat or channel id" name="notify-target" />
+        )}
+        {error && !data ? (
+          <FieldError>Couldn't load your chat channels — {(error as Error)?.message || 'the server did not respond'}.</FieldError>
+        ) : null}
+      </div>
+    </Field>
   )
 }
 

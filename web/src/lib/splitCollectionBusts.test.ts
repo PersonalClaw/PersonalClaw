@@ -237,6 +237,17 @@ describe('the channel list is read under two keys, and every bust reaches both',
       .toMatch(/'settings:channels', \(\) => api\.channels\(\)\.catch/)
   })
 
+  it('and nothing else reads the tolerant key', () => {
+    // Not only the load-error adopters: the schedule's Notify channel picker shows its failure when
+    // `error && !data`, and under this key the `[]` cached by Providers' catch passed as data.
+    const readers = walk(SRC).map((abs) => abs.slice(SRC.length + 1))
+      .filter((rel) => /'settings:channels',\s*\(\) => api\.channels\(\)/.test(codeOf(rel)))
+    expect(readers).toEqual(['pages/settings/ProvidersPanel.tsx'])
+    const strict = walk(SRC).map((abs) => abs.slice(SRC.length + 1))
+      .filter((rel) => /'settings:channels-owners',\s*\(\) => api\.channels\(\)/.test(codeOf(rel)))
+    expect(strict.length, 'vacuity floor: the readers that render a failure are still found').toBeGreaterThanOrEqual(4)
+  })
+
   it('every bust of the channel list is prefix mode', () => {
     const busts = walk(SRC).flatMap((abs) => codeOf(abs.slice(SRC.length + 1))
       .match(/invalidateKeys\('settings:channels[^']*'[^)]*\)/g) ?? [])

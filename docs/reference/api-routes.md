@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **866 registrations** over **700 distinct paths** — 859 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **871 registrations** over **704 distinct paths** — 864 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -37,6 +37,7 @@ The 127 families the surface divides into, largest first.
 | `/api/mcp` | 18 | 14 |
 | `/api/triggers` | 18 | 15 |
 | `/api/voice` | 17 | 11 |
+| `/api/channels` | 16 | 14 |
 | `/api/projects` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
@@ -44,7 +45,6 @@ The 127 families the surface divides into, largest first.
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
 | `/api/providers` | 12 | 8 |
-| `/api/channels` | 11 | 10 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 859 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 864 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -269,7 +269,12 @@ The 859 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/channel/upload-file` | upload a file to the active channel (internal, called by notify_attachment). |
 | `GET` | `/api/channels` | all comms transports with info + health. |
 | `GET` | `/api/channels/reply-targets` | list channels the bot can reply in. |
-| `GET` | `/api/channels/trust` | the whole sender-trust posture, per provider. |
+| `GET` | `/api/channels/trust` | the whole sender-trust posture, per chat channel. |
+| `POST` | `/api/channels/trust/{provider}/channels` | track one group. |
+| `DELETE` | `/api/channels/trust/{provider}/channels/{channel_id}` | stop tracking one group. |
+| `DELETE` | `/api/channels/trust/{provider}/pairing` | cancel the outstanding sender code. |
+| `POST` | `/api/channels/trust/{provider}/pairing` | mint a sender's code and return it once. |
+| `PUT` | `/api/channels/trust/{provider}/policies` | set the DM and/or group policy. |
 | `DELETE` | `/api/channels/trust/{provider}/senders/{sender_id}` | revoke one sender. |
 | `GET` | `/api/channels/{name}` | one transport's info + health. |
 | `POST` | `/api/channels/{name}/connect` | bring the transport online. |
