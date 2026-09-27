@@ -13,6 +13,9 @@ import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { api, ApiError, type WorkflowNode } from '../../lib/api'
 import { ConsentDeclined } from '../../lib/securityConsent'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { WorkflowJsonEditor } from './WorkflowJsonEditor'
 import {
   NAME_RE, copyCandidates, docToJson, editableDoc, hiddenName, inlineSecretIssues, isError, isHidden,
@@ -45,7 +48,13 @@ type Tab = 'steps' | 'json'
  *  The editor edits only what the definition already has. The Steps view offers a control for
  *  every setting a step carries; adding, removing or moving a step is the JSON tab's job, because
  *  a structural edit is a new graph and the engine is the only judge of whether it is one. Every
- *  problem comes back from the engine at the step it names (`issue.path`), in its own words. */
+ *  problem comes back from the engine at the step it names (`issue.path`), in its own words.
+ *
+ *  A save over a definition of yours (an edit or a restore) replaces the whole of it, so it names
+ *  the revision of the definition this page read. When another tab, the agent or the publish
+ *  toggle saved it since, the save is refused and the change is kept: Reload and reapply puts an
+ *  edit back on top of what is stored now; a restore is not re-applied on its own — it is offered
+ *  over the newer version only after the review (`StaleWriteNotice`). */
 export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
   name: string
   fromVersion?: number
@@ -70,6 +79,10 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
   const [nameError, setNameError] = useState('')
   const [busy, setBusy] = useState<'check' | 'save' | null>(null)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
+  // The definition an in-place save replaces, as this page read it — the current one, a restore
+  // included (it replaces the current definition, not the version it started from). `null` for a
+  // copy, which replaces nothing.
+  const [base, setBase] = useState<Revisioned<EditableDoc> | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -90,11 +103,45 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
       setDoc(d)
       setInitial(docToJson(d))
       setCopyMode(readOnly)
+      setBase(readOnly ? null : { value: editableDoc(detail.definition), revision: detail.revision })
       setNewName(suggested)
       setJsonText(docToJson(d))
     })().catch((e) => { if (alive) setLoadErr(e) })
     return () => { alive = false }
   }, [name, fromVersion, reload])
+
+  /** What a Check or a save sends: the whole editable definition under the name it is saved as,
+   *  and what it was edited from — this definition, or the version a restore opened — so the values
+   *  its read hid come back from there. One body for every send, re-applied saves included. */
+  const bodyOf = useCallback((d: EditableDoc, to: string, save: boolean) => ({
+    ...d,
+    name: to,
+    based_on: name,
+    ...(fromVersion ? { based_on_version: fromVersion } : {}),
+    save,
+  }), [fromVersion, name])
+
+  /** The save over your own definition. Its success line is said here, so a save re-applied from
+   *  the refusal notice says it too. */
+  const saveInPlace = useCallback(async (next: EditableDoc, revision: string) => {
+    const res = await api.saveWorkflowDef(bodyOf(next, name, true), revision)
+    setIssues(issuesFrom(res))
+    const v = res.definition?.version
+    notify(v ? `Saved ${name} as version ${v}` : `Saved ${name}`)
+  }, [bodyOf, name])
+
+  const guard = useStaleWriteGuard<EditableDoc>({
+    read: async () => {
+      const fresh = await api.workflowDef(name)
+      return { value: editableDoc(fresh.definition), revision: fresh.revision }
+    },
+    write: saveInPlace,
+    onSaved: () => onSaved(name),
+    // Dropping an edit shows the definition as it is stored now; dropping a restore is not
+    // restoring, so it goes back to the definition.
+    onDiscard: () => { if (fromVersion) onCancel(); else setReload((n) => n + 1) },
+  })
+  const held = guard.conflict !== null
 
   const rows = useMemo(() => (doc ? stepRows(doc.root) : []), [doc])
   const placed = useMemo(() => placeIssues(issues ?? [], rows), [issues, rows])
@@ -144,13 +191,13 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
         setNameError(`You already have a workflow named ${target}. Pick another name — saving would replace it.`)
         return
       }
-      const res = await api.saveWorkflowDef({
-        ...d,
-        name: target,
-        based_on: name,
-        ...(fromVersion ? { based_on_version: fromVersion } : {}),
-        save,
-      })
+      if (save && base) {
+        // An edit merges with a change saved since, field by field; a restore is the whole of an
+        // old version, so merging a newer one into it would restore neither.
+        await guard.save(base, d, fromVersion ? () => null : rebaseRecord(base.value, d))
+        return
+      }
+      const res = await api.saveWorkflowDef(bodyOf(d, target, save))
       setIssues(issuesFrom(res))
       if (save && res.saved) {
         const v = res.definition?.version
@@ -166,13 +213,16 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
         setTopError(e.message)
       } else if (e instanceof ApiError && copyMode && (e.code === 'name_reserved' || e.code === 'invalid_request')) {
         setNameError(e.message)
+      } else if (e instanceof ApiError && copyMode && e.code === 'revision_required') {
+        // A workflow of that name was saved after the check above: saving the copy would replace it.
+        setNameError(`You already have a workflow named ${target}. Pick another name — saving would replace it.`)
       } else {
         setTopError(e instanceof Error ? e.message : 'Could not save the workflow')
       }
     } finally {
       setBusy(null)
     }
-  }, [copyMode, current, fromVersion, name, onSaved, target])
+  }, [base, bodyOf, copyMode, current, fromVersion, guard, onSaved, target])
 
   const leave = useCallback(async () => {
     if (dirty && !(await confirm({ title: `Discard your changes to ${name}?`, body: 'Nothing you changed here has been saved.', confirmLabel: 'Discard', danger: true }))) return
@@ -218,8 +268,8 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
             <Button
               onClick={() => { void submit(true) }}
               loading={busy === 'save'}
-              disabled={busy !== null || !saveable || blocked || !!jsonErr}
-              disabledReason={!saveable ? 'No changes to save' : blockedReason}
+              disabled={busy !== null || !saveable || blocked || !!jsonErr || held}
+              disabledReason={held ? HELD_CHANGE_REASON : !saveable ? 'No changes to save' : blockedReason}
             >
               {copyMode ? 'Save copy' : 'Save'}
             </Button>
@@ -248,8 +298,9 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
             {/* Pinned to the top of the scroll area: a Check is usually run from deep in the step
                 list, and an outcome that renders above the fold is one nobody sees — measured, the
                 "No problems found" line sat outside the viewport after a Check from the 6th step. */}
-            {(issues !== null || topError) && (
-              <div className="sticky top-0 z-10 -mx-l bg-canvas px-l py-s">
+            {(issues !== null || topError || held) && (
+              <div className="sticky top-0 z-10 -mx-l flex flex-col gap-s bg-canvas px-l py-s">
+                <StaleWriteNotice guard={guard} what="This workflow" />
                 <Outcome issues={issues} errors={errors} advice={advice} unplaced={placed.unplaced} topError={topError} />
               </div>
             )}
@@ -267,12 +318,12 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
                   The whole definition. Add, remove or move a step here; the Steps view edits the settings each step already has.
                 </p>
                 <div className="overflow-hidden rounded-md border border-outline-variant" style={{ height: 'min(70vh, 48rem)' }}>
-                  <WorkflowJsonEditor name={target || name} value={jsonText} onChange={(v) => { setJsonText(v); setJsonErr('') }} />
+                  <WorkflowJsonEditor name={target || name} value={jsonText} onChange={(v) => { setJsonText(v); setJsonErr('') }} readOnly={held} />
                 </div>
                 {jsonErr && <FieldError>{jsonErr}</FieldError>}
               </div>
             ) : (
-              <>
+              <HeldChange guard={guard}>
                 <Field label="Description">
                   <TextArea value={doc.description} onChange={(v) => setDoc({ ...doc, description: v })} rows={2} />
                 </Field>
@@ -309,7 +360,7 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
                     />
                   ))}
                 </section>
-              </>
+              </HeldChange>
             )}
           </div>
         )}

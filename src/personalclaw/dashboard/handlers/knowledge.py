@@ -35,6 +35,7 @@ from personalclaw.request_validation import (
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
 logger = logging.getLogger(__name__)
@@ -649,8 +650,25 @@ async def list_source_recipes(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def _content_revision(item: dict) -> str:
+    """The revision of an item's body as ``GET /api/knowledge/items/{id}`` serves it.
+
+    Only the body: it is the one field a PATCH replaces WHOLE from the page's copy
+    (`personalclaw/stale_write.py`). Everything else stays out, so it moves only when the body
+    does — the pipeline's own columns (``processing_status``, ``insights``, ``summary``,
+    ``ai_title``, ``word_count``, the embedding, ``updated_at``) and the scalar edits (a title,
+    a URL, a flag) change without making a body save stale, and tags are edited one name at a
+    time.
+    """
+    return revision_of(item.get("content") or "")
+
+
 async def get_item(request: web.Request) -> web.Response:
-    """GET /api/knowledge/items/{id} -- single item with its entities + relations."""
+    """GET /api/knowledge/items/{id} -- single item with its entities + relations.
+
+    Carries ``content_revision`` (:func:`_content_revision`), which a body save names in
+    ``If-Match``.
+    """
     store = _store(request)
     item_id = request.match_info["id"]
     item = store.get_item(item_id)
@@ -691,11 +709,28 @@ async def get_item(request: web.Request) -> web.Response:
                 r["description"] = _redact(r.get("description"))
                 relations.append(r)
 
-    return web.json_response({**item, "entities": entities, "relations": relations})
+    return web.json_response(
+        {
+            **item,
+            "content_revision": _content_revision(item),
+            "entities": entities,
+            "relations": relations,
+        }
+    )
 
 
 async def update_item(request: web.Request) -> web.Response:
-    """PATCH /api/knowledge/items/{id} -- update fields."""
+    """PATCH /api/knowledge/items/{id} -- update fields.
+
+    ``content`` replaces the WHOLE body, built from the page's copy — and the agent's
+    ``knowledge_update``, the ingest pipeline and a rename's relink rewrite bodies too. So a
+    request carrying it names the ``content_revision`` its copy was read at in ``If-Match``; none
+    is ``428 revision_required``, a stale one ``409 stale_write``, and nothing is written.
+
+    Tags are edited one name at a time — ``add_tags`` / ``remove_tags``, applied to the tags
+    stored when the write lands — so no revision; the whole-list ``tags`` replaced the list with
+    the page's copy of it and is refused. The answer carries the body's new ``content_revision``.
+    """
     store = _store(request)
     item_id = request.match_info["id"]
     existing = store.get_item(item_id)
@@ -707,8 +742,21 @@ async def update_item(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+    if "tags" in body:
+        return web.json_response(
+            {"error": "send add_tags / remove_tags — the names to add or remove — not tags"},
+            status=400,
+        )
+    tag_edits: dict[str, list[str]] = {}
+    for key in ("add_tags", "remove_tags"):
+        if key in body:
+            names = body[key]
+            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+                return web.json_response(
+                    {"error": f"{key} must be a list of tag names"}, status=400
+                )
+            tag_edits[key] = names
     allowed = {
-        "tags",
         "item_type",
         "status",
         "title",
@@ -773,9 +821,33 @@ async def update_item(request: web.Request) -> web.Response:
     for b in ("is_pinned", "is_archived"):
         if b in fields:
             fields[b] = 1 if fields[b] else 0
-    if not fields:
+    if not fields and not tag_edits:
         return web.json_response({"error": "no valid fields"}, status=400)
-    store.update_item(item_id, **fields)
+    # 🔴 THE CHECK AND THE WRITE READ THE ITEM AS STORED NOW — after the body arrived, with no
+    # await before the write — so a rewrite that landed while the page was open is compared
+    # against, not written over.
+    current = store.get_item(item_id)
+    if current is None:
+        return web.json_response({"error": "not found"}, status=404)
+    if "content" in fields:
+        stale = stale_write_refusal(
+            request, current.get("content") or "", what=f"the body of the item {item_id!r}"
+        )
+        if stale is not None:
+            _sel_log("item.update", item_id=item_id, outcome="denied", reason="stale_write")
+            return stale
+    if tag_edits:
+        dropped = {n.strip() for n in tag_edits.get("remove_tags", [])}
+        kept = [t for t in current.get("tags") or [] if t not in dropped]
+        added: list[str] = []
+        for raw_name in tag_edits.get("add_tags", []):
+            name = raw_name.strip()
+            if name and name not in kept and name not in added:
+                added.append(name)
+        if kept + added != (current.get("tags") or []):
+            fields["tags"] = kept + added
+    if fields:
+        store.update_item(item_id, **fields)
     # Editing the text/url re-runs the ingestion node-graph so insights, entities, the
     # embedding, and intent outcomes stay consistent with the new content — matching
     # the agent knowledge_update tool and the create→enrich contract. Curation-only
@@ -792,7 +864,12 @@ async def update_item(request: web.Request) -> web.Response:
         except Exception:
             logger.debug("re-enrich enqueue failed for %s", item_id, exc_info=True)
     _sel_log("item.update", item_id=item_id, fields=list(fields))
-    return web.json_response({"ok": True, "reenriching": reenrich})
+    # Of the body this request left stored — what the page now holds — not a re-read, which could
+    # describe a rewrite that landed after it and so let the page's next save undo that rewrite.
+    saved = {"content": fields["content"] if "content" in fields else current.get("content")}
+    return web.json_response(
+        {"ok": True, "reenriching": reenrich, "content_revision": _content_revision(saved)}
+    )
 
 
 async def delete_item(request: web.Request) -> web.Response:
@@ -1931,10 +2008,18 @@ def _intent_store(request: web.Request):
 
 
 def _intents_payload(request: web.Request) -> list[dict]:
-    """Intent dicts decorated with their recorded-outcome counts (for list badges)."""
+    """Intent dicts decorated with their recorded-outcome counts (for list badges).
+
+    Each carries ``revision``: of the intent RECORD (``Intent.to_dict``), which an edit replaces
+    whole and so names in ``If-Match`` (`personalclaw/stale_write.py`). ``outcome_count`` stays
+    out of it — ingest bumps it, and the record the page saves never holds it.
+    """
     intents = _intent_store(request).load()
     counts = _store(request).intent_outcome_counts()
-    return [{**i.to_dict(), "outcome_count": counts.get(i.id, 0)} for i in intents]
+    return [
+        {**i.to_dict(), "revision": revision_of(i.to_dict()), "outcome_count": counts.get(i.id, 0)}
+        for i in intents
+    ]
 
 
 async def list_intents(request: web.Request) -> web.Response:
@@ -1943,7 +2028,13 @@ async def list_intents(request: web.Request) -> web.Response:
 
 
 async def upsert_intent(request: web.Request) -> web.Response:
-    """POST /api/knowledge/intents -- create or update an intent."""
+    """POST /api/knowledge/intents -- create or update an intent.
+
+    An edit (a body naming an ``id``) replaces the WHOLE record, built from the page's copy of
+    it, so it names that copy's ``revision`` in ``If-Match``: none is ``428 revision_required``,
+    and a record changed — or deleted — since is ``409 stale_write``, with nothing written. A
+    create names no id and needs no revision.
+    """
     from personalclaw.knowledge.intents import Intent
 
     try:
@@ -1965,6 +2056,19 @@ async def upsert_intent(request: web.Request) -> web.Response:
         # from_dict owns the slug, so a caller may send only {goal}.
         intent = Intent.from_dict(body)
         store = _intent_store(request)
+        if replace:
+            # 🔴 An edit is written only over the record it was built from — read here, after
+            # the body arrived, with no await before the write. A record deleted since matches
+            # no revision, so a stale tab cannot resurrect it either.
+            stored = store.get(intent.id)
+            stale = stale_write_refusal(
+                request,
+                stored.to_dict() if stored else None,
+                what=f"the intent “{(stored.goal if stored else intent.goal).strip()}”",
+            )
+            if stale is not None:
+                _sel_log("intent.upsert", intent_id=intent.id, outcome="denied")
+                return stale
         store.upsert(intent, replace=replace)
     except ValueError as e:
         detail = str(e)
@@ -3330,8 +3434,19 @@ def _remediation(source: dict) -> dict:
     return {"kind": "", "guidance": "", "detail": summary, "action": ""}
 
 
+def _source_settings(source: dict) -> dict:
+    """The document a spec/budget PATCH replaces: the two objects it writes whole.
+
+    The row's other columns stay out of its revision: ``name``, ``enabled``, ``enrichment`` and
+    the interval are scalar edits, and the poll engine's rollups (``health_status``,
+    ``last_poll_at``, ``last_escalations``, the cursor, ``updated_at``) move on every poll —
+    none of them makes a copy of these two objects stale.
+    """
+    return {"spec": source.get("spec") or {}, "budget": source.get("budget") or {}}
+
+
 def _serialize_source(source: dict, enrolled: set[str]) -> dict:
-    """A source row for the client: the stored row plus the three things it cannot derive.
+    """A source row for the client: the stored row plus the four things it cannot derive.
 
     ``enrolled`` answers "will anything actually poll this?" BEFORE the first poll — the
     engine records the not-enrolled case as a health error, but only once it has run, and a
@@ -3344,9 +3459,13 @@ def _serialize_source(source: dict, enrolled: set[str]) -> dict:
     user a working mechanism is broken. ``enrolled`` stays FALSE rather than being faked:
     nothing IS enrolled to poll it, and lying there would hide a genuinely orphaned row of
     some future kind.
+
+    ``revision`` is of :func:`_source_settings` — what a spec/budget PATCH names in ``If-Match``
+    (`personalclaw/stale_write.py`).
     """
     return {
         **source,
+        "revision": revision_of(_source_settings(source)),
         "enrolled": source.get("provider") in enrolled,
         "event_driven": source.get("provider") == ARTIFACT_SOURCE_PROVIDER,
         "remediation": _remediation(source),
@@ -3477,6 +3596,11 @@ async def update_watched_source(request: web.Request) -> web.Response:
     is — an edit that could bypass the save-time guard would leave the poll-time
     re-validation as the only thing standing between a hand-edited row and an arbitrary
     fetch target on a timer.
+
+    ``spec`` and ``budget`` are objects replaced WHOLE, built from the page's copy of them — so a
+    request carrying either names the source's ``revision`` in ``If-Match``: none is
+    ``428 revision_required``, a stale one ``409 stale_write``, and nothing is written. The
+    scalar fields need no revision.
     """
     from personalclaw.knowledge_providers.base import ENRICHMENTS
 
@@ -3535,6 +3659,18 @@ async def update_watched_source(request: web.Request) -> web.Response:
     if not fields:
         return web.json_response({"error": "no editable fields in request"}, status=400)
 
+    if "spec" in fields or "budget" in fields:
+        # 🔴 Compared with the row as stored NOW — re-read after the body arrived, with no await
+        # before the write — not the copy read before the await above.
+        stored = store.get_source(source_id)
+        stale = stale_write_refusal(
+            request,
+            _source_settings(stored) if stored else None,
+            what=f"the settings of the source {current['name']!r}",
+        )
+        if stale is not None:
+            _sel_log("sources.update", source_id=source_id, outcome="denied")
+            return stale
     updated = store.update_source(source_id, **fields)
     if updated is None:
         return web.json_response({"error": "not found"}, status=404)

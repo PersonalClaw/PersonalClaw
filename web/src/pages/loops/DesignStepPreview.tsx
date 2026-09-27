@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Palette } from 'lucide-react'
 import { Segmented } from '../../ui/Segmented'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { api } from '../../lib/api'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { reportingWrite } from '../../app/reportingWrite'
-import { TokensView, ContrastView, type ResolvedTokens, type Scheme } from './DesignCockpitPage'
+import {
+  TokensView, ContrastView, overridesOf, withTokenOverride, TOKEN_EDIT_HELD,
+  type ResolvedTokens, type Scheme, type TokenOverrides,
+} from './DesignCockpitPage'
 
 /** D3 — in the design planning walkthrough, a token-bearing step (foundations / palette
  *  / typography) renders the EXTRACTED token values as the editable whole-system design
@@ -39,12 +44,14 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
         merged.current = true
         // Deep-merge the step's extracted overrides into the loop's token_overrides so
         // the resolved preview reflects them. update_spec accepts kind_config edits
-        // while the loop is pre-launch (planning/review).
+        // while the loop is pre-launch (planning/review). Written over the read just made
+        // (its revision), and as `token_overrides` alone: the server merges it into the
+        // stored `kind_config`, where echoing the read's config back would write its
+        // REDACTED view over real values.
         try {
-          const loop = await api.uLoop(loopId)
-          const kc = (loop.kind_config || {}) as Record<string, unknown>
-          const next = deepMerge((kc.token_overrides as Record<string, unknown>) || {}, overrides)
-          await api.updateULoop(loopId, { kind_config: { ...kc, token_overrides: next } })
+          const base = overridesOf(await api.uLoop(loopId))
+          const next = deepMerge(base.value, overrides)
+          await api.saveULoopSpec(loopId, { kind_config: { token_overrides: next } }, base.revision)
         } catch { /* best-effort; preview still loads from whatever's there */ }
       }
       if (alive) await loadTokens()
@@ -53,34 +60,30 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
     return () => { alive = false }
   }, [loopId, overrides, loadTokens])
 
+  // A user token edit, as the cockpit makes it: an operation on the overrides (`withTokenOverride`),
+  // built on a read made just now and naming its revision. A write that lands in between refuses it,
+  // and the notice re-applies the same edit onto what is stored. The refetch runs in `onSaved` — only a
+  // write that landed reaches it, the first try or one re-applied from the notice.
+  const guard = useStaleWriteGuard<TokenOverrides>({
+    read: async () => overridesOf(await api.uLoop(loopId)),
+    write: (next, revision) => api.saveULoopSpec(loopId, { kind_config: { token_overrides: next } }, revision),
+    onSaved: () => { void loadTokens() },
+    onDiscard: () => { void loadTokens() },
+  })
+  const held = guard.conflict !== null
+
   // Edit any token: deep-set the path into the loop's token_overrides (empty = reset),
-  // then reload the resolved preview. Mirrors the cockpit's setTokenOverride.
+  // then reload the resolved preview. The same edit as the cockpit's setTokenOverride.
   const setOverride = useCallback(async (path: string, value: string) => {
     // 🔑 A USER EDIT, not the mount-time merge above. This is wired to `TokensView`'s `onOverride`, so
     // somebody typed a value; the old `catch { /* keep the current preview */ }` then left the OLD
     // value on screen with no sentence, so the edit silently did not stick. Same shape as the three
     // `/* leave dirty */` editors #2237 converted. The auto-merge in the effect above stays silent
     // deliberately — nobody asked for that one.
-    const ok = await reportingWrite(`save the ${path} override`, async () => {
-      const loop = await api.uLoop(loopId)
-      const kc = (loop.kind_config || {}) as Record<string, unknown>
-      const ov = JSON.parse(JSON.stringify(kc.token_overrides || {}))
-      const segs = path.split('.')
-      const chain: Record<string, unknown>[] = [ov]
-      let node: Record<string, unknown> = ov
-      for (let i = 0; i < segs.length - 1; i++) { node[segs[i]] = (node[segs[i]] as Record<string, unknown>) || {}; node = node[segs[i]] as Record<string, unknown>; chain.push(node) }
-      const leaf = segs[segs.length - 1]
-      if (value.trim()) node[leaf] = value.trim()
-      else {
-        delete node[leaf]
-        for (let i = chain.length - 1; i > 0; i--) { if (Object.keys(chain[i]).length === 0) delete chain[i - 1][segs[i - 1]]; else break }
-      }
-      await api.updateULoop(loopId, { kind_config: { ...kc, token_overrides: ov } })
+    await reportingWrite(`save the ${path} override`, async () => {
+      await guard.apply(overridesOf(await api.uLoop(loopId)), (ov) => withTokenOverride(ov, path, value))
     })
-    // Gated: refetching after a failed save re-renders the value the user just tried to change,
-    // which is the "nothing happened, twice" shape this family records.
-    if (ok) await loadTokens()
-  }, [loopId, loadTokens])
+  }, [loopId, guard.apply])
 
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface-low/40 p-2.5">
@@ -99,10 +102,11 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
       <p data-type="caption" className="mb-2 text-on-surface-low">
         {stepKind === 'palette' ? 'The extracted palette is applied below.' : stepKind === 'typography' ? 'The extracted type + spacing are applied below.' : 'The extracted foundation tokens are applied below.'} Click a swatch / value to edit it — changes apply to the whole system instantly and carry into the cockpit.
       </p>
+      <StaleWriteNotice guard={guard} what="This design system" className="mb-s" />
       {err
         ? <div data-type="caption" className="text-on-surface-low">Couldn't load the live preview.</div>
         : tab === 'tokens'
-          ? <TokensView tokens={tokens} scheme={scheme} onOverride={setOverride} />
+          ? <TokensView tokens={tokens} scheme={scheme} onOverride={setOverride} locked={held ? TOKEN_EDIT_HELD : undefined} />
           : <ContrastView tokens={tokens} scheme={scheme} />}
     </div>
   )

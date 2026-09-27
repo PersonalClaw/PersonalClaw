@@ -66,6 +66,30 @@ routes all refuse it outright. A route that refuses an app token says so in its 
 - **`PATCH` is a partial merge; `PUT` replaces.** Config, entity settings and most
   detail routes follow this — patching one field leaves the rest alone, and a `PUT` with
   a field omitted clears it.
+- **A write that replaces a whole document names the revision it replaces.** A route that
+  replaces a whole list, object or text from what the client read — a settings list, an
+  agent profile, a skill — reports that document's `revision` on its read, and the write
+  must send it back: `If-Match: "<revision>"`. If the document changed since that read,
+  the write is refused with `409 stale_write` and nothing is written; a write that names no
+  revision gets `428 revision_required`. Neither refusal carries the current revision: read
+  the document again, re-apply your change to what it holds now, and save with the new
+  revision. A revision is a digest of the document's content, so every writer — another
+  tab, the agent, a background job, the CLI — changes it; a successful write's response
+  carries the new one. Most reads put it in a `revision` field beside the document (a
+  record's fields that are not part of what its editor writes back, like run state or
+  timestamps, are left out of it, so a background update does not refuse your save);
+  `GET /api/file-read` sends it as the `ETag` header. On `GET /api/config/personalclaw`,
+  `revisions` maps each whole-document field's dotted path to its revision
+  (`PATCH {path, value}` over it). A write that sets only single-valued fields (a name, a
+  status, a model) replaces nothing else, so those routes need no revision for it.
+- **A list of names is edited one entry at a time.** A config field that is a list of
+  names takes `PATCH /api/config/personalclaw {path, add}` or `{path, remove}` (replacing
+  the whole list is still `{path, value}` over its revision); session, artifact and
+  knowledge-item tags take `add`/`remove` edits (`add_tags`/`remove_tags` on the artifact
+  and knowledge PATCH), and a notification rule's `targets` and `conditions.keywords` take
+  one `{add}` or `{remove}` edit. Each is applied to what is stored when it lands, so it
+  needs no revision and cannot undo anyone else's change. The tag and notification-rule
+  routes refuse a whole list with `400`.
 - **Errors.** Routes added under the current convention return
   `{"error": {"code": "<stable_snake_code>", "message": "<human text>"}}`, and the `code`
   is append-only — never reworded once shipped, so it is safe to branch on. Older routes

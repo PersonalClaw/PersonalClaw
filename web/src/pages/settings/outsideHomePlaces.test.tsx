@@ -7,16 +7,17 @@ import type { OutsideHomeState } from '../../lib/api'
 //
 // PersonalClaw reads and writes inside its home. A place outside it (the skills other AI tools
 // share, the Hugging Face folder, another CLI's sign-in) is read only once the owner turns it on
-// here, per place. So the switch has to say where the place is, ask before it turns on, send the
-// whole allowed list with just that one place changed, and never ask to turn one off.
+// here, per place. So the switch has to say where the place is, ask before it turns on, send just
+// that one place — never the list this page read, which another tab may have changed since — and
+// never ask to turn one off.
 
 const outsideHome = vi.fn()
-const setOutsideHome = vi.fn()
+const setOutsideHomePlace = vi.fn()
 const confirm = vi.fn()
 vi.mock('../../lib/api', () => ({
   api: {
     outsideHome: (...a: unknown[]) => outsideHome(...a),
-    setOutsideHome: (...a: unknown[]) => setOutsideHome(...a),
+    setOutsideHomePlace: (...a: unknown[]) => setOutsideHomePlace(...a),
   },
 }))
 vi.mock('../../ui/dialog', () => ({ confirm: (...a: unknown[]) => confirm(...a) }))
@@ -45,7 +46,7 @@ const toggle = (name: RegExp) => screen.getByRole('switch', { name })
 beforeEach(() => {
   sessionStorage.clear()
   outsideHome.mockReset()
-  setOutsideHome.mockReset().mockResolvedValue({})
+  setOutsideHomePlace.mockReset().mockResolvedValue({})
   confirm.mockReset()
 })
 
@@ -59,16 +60,17 @@ describe("the places outside PersonalClaw's home", () => {
     expect(toggle(/hugging face/i).getAttribute('aria-checked')).toBe('false')
   })
 
-  it('asks before turning one on, then sends the list with it added', async () => {
+  it('asks before turning one on, then sends that one place', async () => {
     outsideHome.mockResolvedValue(state(['sign-in:gone-app']))
     confirm.mockResolvedValue(true)
     await mount()
     fireEvent.click(await screen.findByRole('switch', { name: /hugging face/i }))
-    await waitFor(() => expect(setOutsideHome).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(setOutsideHomePlace).toHaveBeenCalledTimes(1))
     expect(confirm).toHaveBeenCalledTimes(1)
     expect(confirm.mock.calls[0][0].title).toMatch(/let personalclaw read the hugging face folder/i)
-    // A place no longer offered (an app since removed) is kept, not dropped by this write.
-    expect(setOutsideHome).toHaveBeenCalledWith(['sign-in:gone-app', 'huggingface-cache'], true)
+    // The one place, with the consent already asked: a place no longer offered (an app since
+    // removed), or one another tab changed since this page read the list, is not in this write.
+    expect(setOutsideHomePlace).toHaveBeenCalledWith('huggingface-cache', true, true)
   })
 
   it('writes nothing when the question is declined', async () => {
@@ -79,14 +81,14 @@ describe("the places outside PersonalClaw's home", () => {
     await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
     // The label keeps its capitals in the question ("AI", not "ai").
     expect(confirm.mock.calls[0][0].title).toBe('Let PersonalClaw read skills other AI tools share?')
-    expect(setOutsideHome).not.toHaveBeenCalled()
+    expect(setOutsideHomePlace).not.toHaveBeenCalled()
   })
 
-  it('turns one off without asking, and keeps the others', async () => {
+  it('turns one off without asking, and sends only that one', async () => {
     outsideHome.mockResolvedValue(state(['agent-skills', 'huggingface-cache']))
     await mount()
     fireEvent.click(await screen.findByRole('switch', { name: /skills other ai tools share/i }))
-    await waitFor(() => expect(setOutsideHome).toHaveBeenCalledWith(['huggingface-cache'], false))
+    await waitFor(() => expect(setOutsideHomePlace).toHaveBeenCalledWith('agent-skills', false, false))
     expect(confirm).not.toHaveBeenCalled()
   })
 

@@ -16,6 +16,7 @@ from aiohttp import web
 
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
     MISSING,
     RequestValidationError,
@@ -213,7 +214,23 @@ async def api_chat_tag_delete(request: web.Request) -> web.Response:
 
 
 async def api_chat_session_tags(request: web.Request) -> web.Response:
-    """PUT /api/chat/sessions/{session}/tags — replace the session's tag list."""
+    """PUT /api/chat/sessions/{session}/tags — add tags to a session and remove tags from it.
+
+    Body: ``{"add": [tag_id, ...], "remove": [tag_id, ...]}``, either or both. Both apply to the
+    session's tags as stored when the write lands — the removals, then the additions, appended in
+    order, an id the session already carries skipped. Answers with the tags as stored after.
+
+    🔴 ONE TAG IN OR OUT, NEVER THE PAGE'S LIST. This took ``{"tags": [...]}`` and replaced the
+    session's tags with it, built from the copy the chat list painted — so a tab whose copy
+    predated a tag set elsewhere (another tab, or the gateway's own auto-tag, re-tag run or bulk
+    tag) dropped that tag the next time it toggled any other one, and neither screen said so. An
+    add or a remove applied to what is stored cannot undo anyone else's change, so it needs no
+    revision (`personalclaw/stale_write.py`).
+
+    An id to add must name a tag that exists (``400 unknown_tag_id``, as on the bulk route): the
+    call could not do what it asked. An id to remove need not — removing a tag the session does
+    not carry leaves it exactly as asked.
+    """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = resolve_session(state, name)
@@ -223,13 +240,36 @@ async def api_chat_session_tags(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    raw_ids = body.get("tags")
-    if not isinstance(raw_ids, list):
-        return web.json_response({"error": "tags must be an array"}, status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_request", message="the body must be an object", status=400)
+    edits: dict[str, list[str]] = {}
+    for key in ("add", "remove"):
+        if key not in body:
+            continue
+        ids = body[key]
+        if not isinstance(ids, list) or not all(isinstance(t, str) for t in ids):
+            return json_error(
+                "invalid_field_type", message=f"'{key}' must be a list of tag ids", status=400
+            )
+        edits[key] = ids
+    if not edits:
+        return json_error(
+            "invalid_request",
+            message="send the tag ids to 'add' and/or 'remove' — the session's other tags stay",
+            status=400,
+        )
     valid_ids = known_tag_ids(state)
-    new_tags: list[str] = []
-    for tid in raw_ids:
-        if isinstance(tid, str) and tid in valid_ids and tid not in new_tags:
+    unknown = [t for t in edits.get("add", []) if t not in valid_ids]
+    if unknown:
+        return json_error(
+            "unknown_tag_id",
+            message=f"No tag with id {unknown[0]!r}. Reload the tag list and retry.",
+            status=400,
+        )
+    removed = set(edits.get("remove", []))
+    new_tags = [t for t in session.tags if t not in removed]
+    for tid in edits.get("add", []):
+        if tid not in new_tags:
             new_tags.append(tid)
     session.tags = new_tags
     save_session_to_history(state, session, force=True)

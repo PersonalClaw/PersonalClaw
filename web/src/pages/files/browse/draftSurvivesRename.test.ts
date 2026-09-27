@@ -60,7 +60,8 @@ describe('the two hosts wire the cache and its lifecycle (source-level)', () => 
   const cockpit = strip(readFileSync(resolve(__dirname, '../../code/CodeCockpitPage.tsx'), 'utf8'))
 
   it('FilesSection owns a store, passes it to FileViewer, and purges on a consented close', () => {
-    expect(files).toMatch(/const draftStore = useRef\(new Map<string, \{ draft: string; base: string; warned\?: boolean \}>\(\)\)\.current/)
+    // Entries are `DraftEntry` — the draft AND the revisioned copy it was edited against.
+    expect(files).toMatch(/const draftStore = useRef\(new Map<string, DraftEntry>\(\)\)\.current/)
     expect(files).toContain('draftStore={draftStore}')
     expect(files).toMatch(/if \(await fileTabs\.close\(path\)\) draftStore\.delete\(path\)/)
     // The missing-file close purges too — a deleted file's draft must not haunt the path.

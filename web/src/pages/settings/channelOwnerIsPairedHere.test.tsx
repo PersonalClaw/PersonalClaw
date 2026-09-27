@@ -129,7 +129,7 @@ describe('the channel status row', () => {
 
   it('opening Configure shows the owner section beside the settings', async () => {
     vi.spyOn(api, 'providerSchema').mockResolvedValue({ properties: {} })
-    vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: {}, _secret_set: [] })
+    vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: {}, _secret_set: [], revision: 'r0' })
     vi.spyOn(api, 'channelOwner').mockResolvedValue(status())
     render(<ProviderCard ext={ext} channel={channel({ id: '', source: '' })} open onOpenChange={() => {}} onChanged={() => {}} />)
     expect(await screen.findByRole('region', { name: 'Telegram owner' })).toBeTruthy()

@@ -150,7 +150,8 @@ async def _create(body: dict) -> tuple[int, dict]:
 async def _update(raw: str, body: dict) -> tuple[int, dict]:
     from personalclaw.dashboard.handlers import triggers as handlers
 
-    resp = await handlers._update_schedule(_State(), raw, body)
+    # A plain function: nothing awaits between a whole-form save's revision check and this write.
+    resp = handlers._update_schedule(_State(), raw, body)
     return resp.status, json.loads(resp.body.decode())
 
 

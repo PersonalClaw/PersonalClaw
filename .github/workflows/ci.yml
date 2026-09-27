@@ -831,6 +831,16 @@ jobs:
       - name: the chat header never overlaps itself (web/e2e/chatHeaderGeometry.spec.ts)
         working-directory: web
         run: npx playwright test e2e/chatHeaderGeometry.spec.ts --project=chromium
+      # TWO TABS, ONE LIST. A save built from a page's stale copy of a whole list is refused
+      # (`409 stale_write`) instead of erasing what another tab — or the CLI, a separate process
+      # writing the same home — saved in between, and the refused tab keeps the user's change and
+      # re-applies it. Two pages in one browser context are the two tabs; vitest can mock a 409
+      # but cannot show one real gateway refusing one real tab while the other's write survives.
+      # THIS JOB because it needs exactly the harness above and nothing more, and it asserts no
+      # screenshot, so it is platform-neutral. Named explicitly: a spec not listed runs nowhere.
+      - name: a stale tab's save never overwrites another tab's (web/e2e/staleWrite.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/staleWrite.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7

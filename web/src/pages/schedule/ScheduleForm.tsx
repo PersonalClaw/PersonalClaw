@@ -17,8 +17,11 @@ import { cronExprInvalidReason } from './cronExpr'
 import { chatChannels, joinChannel, splitChannel } from './notifyChannel'
 
 /** The draft mirrors the create/update payload but keeps the kind/mode axes
- *  explicit (the wire derives them from which fields are set). */
-export interface ScheduleDraft {
+ *  explicit (the wire derives them from which fields are set).
+ *
+ *  A type, not an interface: a refused edit is re-applied field by field (`rebaseRecord` in
+ *  `lib/staleWrite.ts`), which takes a plain record. */
+export type ScheduleDraft = {
   id?: string
   name: string
   message: string

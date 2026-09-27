@@ -62,7 +62,8 @@ const draft: LoopDraft = {
 
 /** Drive the REAL screen to its Launch step, press Launch, and return the PUT body. */
 async function launchAndCaptureBody(storedConfig: Record<string, unknown>) {
-  const updateULoop = vi.fn().mockResolvedValue(loopWith(storedConfig))
+  // The launch is a spec write over the loop as this screen read it (`saveULoopSpec`, base revision).
+  const saveULoopSpec = vi.fn().mockResolvedValue(loopWith(storedConfig))
   vi.doMock('./useRunStream', () => ({
     useRunStream: () => ({ connected: false }),
   }))
@@ -74,7 +75,7 @@ async function launchAndCaptureBody(storedConfig: Record<string, unknown>) {
         uLoop: () => Promise.resolve(loopWith(storedConfig)),
         savedAgents: () => Promise.resolve([]),
         skills: () => Promise.resolve([]),
-        updateULoop,
+        saveULoopSpec,
         uLoopAction: () => Promise.resolve(undefined),
       },
     }
@@ -87,8 +88,8 @@ async function launchAndCaptureBody(storedConfig: Record<string, unknown>) {
   await userEvent.click(screen.getByRole('button', { name: /Capabilities/ }))
   await userEvent.click(screen.getByRole('button', { name: /Continue/ }))
   await userEvent.click(screen.getByRole('button', { name: /^Launch$/ }))
-  await waitFor(() => expect(updateULoop).toHaveBeenCalled())
-  return updateULoop.mock.calls[0][1] as { kind_config: Record<string, unknown> }
+  await waitFor(() => expect(saveULoopSpec).toHaveBeenCalled())
+  return saveULoopSpec.mock.calls[0][1] as { kind_config: Record<string, unknown> }
 }
 
 describe('the launch write declares exactly the keys this screen owns', () => {

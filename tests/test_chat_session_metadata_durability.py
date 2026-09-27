@@ -151,7 +151,7 @@ async def test_the_whole_cluster_survives_together(tmp_path):
             ("patch", "color", {"color_index": 3}),
             ("patch", "folder", {"folder_id": "f1"}),
             ("patch", "lifecycle", {"never_archive": True}),
-            ("put", "tags", {"tags": ["t1"]}),
+            ("put", "tags", {"add": ["t1"]}),
         ]:
             resp = await getattr(client, method)(f"/api/chat/sessions/{_NAME}/{suffix}", json=body)
             assert resp.status == 200, f"{suffix}: {await resp.text()}"

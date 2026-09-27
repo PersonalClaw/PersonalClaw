@@ -395,7 +395,15 @@ def _mcp_detail(method: str, name: str, body: dict | None = None):
 
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    req = make_mocked_request(method, f"/api/mcp/servers/{name}", match_info={"name": name})
+    headers = {}
+    if method == "PUT":
+        # The edit form saves over the definition it read (`personalclaw/stale_write.py`).
+        read = _mcp_detail("GET", name)
+        if read.status == 200:
+            headers["If-Match"] = f'"{json.loads(read.text)["revision"]}"'
+    req = make_mocked_request(
+        method, f"/api/mcp/servers/{name}", headers=headers, match_info={"name": name}
+    )
 
     async def _json():
         return body

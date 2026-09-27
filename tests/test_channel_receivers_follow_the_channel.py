@@ -242,10 +242,18 @@ class _Gateway:
                 lambda n=name: _running_on_the_registered_instance(self.wire, n)
             ), f"{name} is not receiving after boot"
 
-    async def call(self, method: str, path: str, body: Any = None) -> Any:
-        resp = await self.client.request(method, path, json=body)
+    async def call(
+        self, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
+    ) -> Any:
+        resp = await self.client.request(method, path, json=body, headers=headers)
         assert resp.status < 300, f"{method} {path} → {resp.status}: {await resp.text()}"
         return await resp.json()
+
+    async def configure(self, method: str, path: str, body: Any) -> Any:
+        """Save a settings form the way Configure does: read it, then save over that read's
+        revision — a settings save replaces the file, so it names the copy it replaces."""
+        revision = (await self.call("GET", path))["revision"]
+        return await self.call(method, path, body, headers={"If-Match": f'"{revision}"'})
 
     async def install(self, source: Path) -> None:
         review = await self.call("POST", "/api/apps/preview", {"source": str(source)})
@@ -344,7 +352,7 @@ async def test_a_channel_installed_after_boot_receives_once_it_is_configured(hom
         assert wire.on("probe") == [], "a channel with no token must not receive"
         assert (await gw.health("probe"))["state"] == "offline"
 
-        await gw.call("PUT", "/api/apps/probe-channel/config", {"token": "tok-a"})
+        await gw.configure("PUT", "/api/apps/probe-channel/config", {"token": "tok-a"})
         assert await _eventually(
             lambda: _running_on_the_registered_instance(wire, "probe")
         ), "saving the token of a channel installed after boot started no receiver"
@@ -358,7 +366,7 @@ async def test_a_token_saved_after_an_enable_after_boot_moves_the_receiver(home,
     async with _gateway(wire) as gw:
         await gw.boot()
         await gw.call("POST", "/api/apps/probe-channel/enable")
-        await gw.call("PATCH", "/api/providers/probe-channel/config", {"token": "tok-b"})
+        await gw.configure("PATCH", "/api/providers/probe-channel/config", {"token": "tok-b"})
         assert await _eventually(
             lambda: [e["token"] for e in wire.on("probe")] == ["tok-b"]
         ), f"receivers after the save: {[e['token'] for e in wire.on('probe')]}"
@@ -488,7 +496,7 @@ async def test_a_receiver_that_fails_to_start_says_why_and_the_others_still_run(
         probe = await gw.call("POST", "/api/channels/probe/test")
         assert probe["ok"] is False and health["detail"] in probe["detail"], probe
 
-        await gw.call("PUT", "/api/apps/probe-channel/config", {"token": "tok-p"})
+        await gw.configure("PUT", "/api/apps/probe-channel/config", {"token": "tok-p"})
         assert await _eventually(
             lambda: _running_on_the_registered_instance(wire, "probe")
         ), "fixing the settings did not start the receiver"

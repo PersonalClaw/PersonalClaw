@@ -304,6 +304,34 @@ def _coerce_rule(registered: nk.NotificationKind, raw: Any) -> Rule:
     )
 
 
+def edited_list(
+    registered: nk.NotificationKind, raw: Any, field: str, edit: dict[str, str]
+) -> list[str]:
+    """*registered*'s ``targets`` or ``keywords`` after ONE ``{"add": name}`` / ``{"remove":
+    name}`` *edit*.
+
+    Applied to the list as it resolves from *raw* — the rule stored NOW (``None`` when unset), so
+    a kind still on its defaults starts from the ``dashboard`` target the matrix shows. One entry
+    in or out of what is stored cannot undo a change made elsewhere, which is why the rules PUT
+    takes these and never a whole list: the matrix built that list from its copy, so a tab opened
+    before the phone turned push on (:func:`ensure_target`) saved its copy and switched push off.
+
+    Removing the last target leaves ``dashboard``: a rule with none is read back as the default
+    anyway (:func:`_coerce_targets`), so storing it is what keeps the matrix honest about it.
+    """
+    rule = _coerce_rule(registered, raw)
+    current = list(rule.targets) if field == "targets" else list(rule.conditions.keywords)
+    # Stripped the way a stored keyword is read back, so " deploy " neither duplicates the
+    # "deploy" the matrix shows nor fails to remove it.
+    if "add" in edit:
+        name = edit["add"].strip()
+        return current if name in current else [*current, name]
+    kept = [x for x in current if x != edit["remove"].strip()]
+    if field == "targets" and not kept:
+        return list(DEFAULT_TARGETS)
+    return kept
+
+
 def load_rules() -> dict[str, Any]:
     """The raw rules document, or ``{}`` when absent/unreadable (fail-open).
 

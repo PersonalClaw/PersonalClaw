@@ -16,7 +16,11 @@ import { PRELAUNCH_RUN_STATUSES, isPrelaunch } from './workflowMeta'
 // the write (prelaunch), or the UI teaches the user it lies.
 
 let calls: Array<{ id: string; overrides: Record<string, unknown> }>
+let bases: string[]
 let respond: (overrides: Record<string, unknown>) => Record<string, unknown>
+
+/** An overlay as the run-detail read hands it to the panel: the value and that read's revision. */
+const read = (value: Record<string, unknown>) => ({ value, revision: 'v0' })
 
 vi.mock('../../lib/api', async (importActual) => {
   const actual = await importActual<typeof import('../../lib/api')>()
@@ -24,9 +28,14 @@ vi.mock('../../lib/api', async (importActual) => {
     ...actual,
     api: {
       ...actual.api,
-      setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>) => {
+      setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>, base: string) => {
         calls.push({ id, overrides })
-        return Promise.resolve({ run_id: id, status: 'draft', policy_overrides: respond(overrides) })
+        bases.push(base)
+        // The gateway answers with what it persisted and that overlay's new revision.
+        return Promise.resolve({
+          run_id: id, status: 'draft', policy_overrides: respond(overrides),
+          revisions: { policy_overrides: `v${calls.length}` },
+        })
       },
     },
   }
@@ -34,6 +43,7 @@ vi.mock('../../lib/api', async (importActual) => {
 
 beforeEach(() => {
   calls = []
+  bases = []
   // Echo by default: the server persisted exactly what was sent.
   respond = (overrides) => overrides
 })
@@ -46,21 +56,21 @@ describe('the editor covers the whole overridable vocabulary', () => {
     expect(POLICY_KNOBS.map((k) => k.key)).toEqual(
       ['attended', 'autopilot', 'max_cycles', 'idle_secs', 'success_criteria'],
     )
-    render(<PolicyOverridesPanel runId="r1" initial={{}} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({})} />)
     for (const { label } of POLICY_KNOBS) expect(screen.getByText(label)).toBeTruthy()
   })
 })
 
 describe('sparse is shown honestly', () => {
   it('an untouched overlay shows every knob as the kind default, with no clear affordances', () => {
-    render(<PolicyOverridesPanel runId="r1" initial={{}} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({})} />)
     expect(screen.getAllByText('Kind default')).toHaveLength(POLICY_KNOBS.length)
     expect(screen.queryByText('Clear override')).toBeNull()
     expect(screen.queryByText('Clear all')).toBeNull()
   })
 
   it('a set knob shows its value and its own clear affordance; the rest stay defaults', () => {
-    render(<PolicyOverridesPanel runId="r1" initial={{ max_cycles: 5 }} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({ max_cycles: 5 })} />)
     expect(screen.getByLabelText('Max cycles override')).toHaveProperty('value', '5')
     expect(screen.getAllByText('Kind default')).toHaveLength(POLICY_KNOBS.length - 1)
     expect(screen.getAllByText('Clear override')).toHaveLength(1)
@@ -70,14 +80,14 @@ describe('sparse is shown honestly', () => {
 
 describe('every write is a REPLACE of the whole overlay', () => {
   it('overriding a knob PUTs the existing overlay plus the new key', async () => {
-    render(<PolicyOverridesPanel runId="r1" initial={{ max_cycles: 5 }} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({ max_cycles: 5 })} />)
     fireEvent.click(screen.getByTitle('Override Attended for this run only'))
     await waitFor(() => expect(calls).toHaveLength(1))
     expect(calls[0]).toEqual({ id: 'r1', overrides: { max_cycles: 5, attended: true } })
   })
 
   it('clearing one knob PUTs the overlay WITHOUT the key — never `key: null`', async () => {
-    render(<PolicyOverridesPanel runId="r1" initial={{ max_cycles: 5, attended: true }} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({ max_cycles: 5, attended: true })} />)
     fireEvent.click(
       screen.getByTitle('Clear the Max cycles override — this run falls back to the kind default'),
     )
@@ -87,7 +97,7 @@ describe('every write is a REPLACE of the whole overlay', () => {
   })
 
   it('"Clear all" PUTs `{}` — the store contract for clearing every override', async () => {
-    render(<PolicyOverridesPanel runId="r1" initial={{ max_cycles: 5, attended: true }} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({ max_cycles: 5, attended: true })} />)
     fireEvent.click(screen.getByText('Clear all'))
     await waitFor(() => expect(calls).toHaveLength(1))
     expect(calls[0].overrides).toEqual({})
@@ -99,7 +109,7 @@ describe('every write is a REPLACE of the whole overlay', () => {
   it('what renders after a write is what the SERVER persisted, not what was sent', async () => {
     // A refused/normalized write must not leave the UI claiming the edit won.
     respond = () => ({})
-    render(<PolicyOverridesPanel runId="r1" initial={{}} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({})} />)
     fireEvent.click(screen.getByTitle('Override Autopilot for this run only'))
     await waitFor(() => expect(calls).toHaveLength(1))
     await waitFor(() =>
@@ -107,7 +117,7 @@ describe('every write is a REPLACE of the whole overlay', () => {
   })
 
   it('the free-text knob commits on blur, not per keystroke', async () => {
-    render(<PolicyOverridesPanel runId="r1" initial={{ success_criteria: '' }} />)
+    render(<PolicyOverridesPanel runId="r1" initial={read({ success_criteria: '' })} />)
     const input = screen.getByLabelText('Success criteria override')
     fireEvent.change(input, { target: { value: 'PR opened' } })
     expect(calls).toHaveLength(0)

@@ -706,9 +706,10 @@ async def test_rules_put_rejects_unknown_mode(_isolate_rules):
 @pytest.mark.asyncio
 async def test_rules_put_rejects_unknown_target(_isolate_rules):
     resp = await er.handle_notification_rules_put(
-        _req({"rules": {"hook/fired": {"targets": ["hologram"]}}})
+        _req({"rules": {"hook/fired": {"targets": {"add": "hologram"}}}})
     )
     assert resp.status == 400
+    assert "unknown 'hologram'" in (await _json(resp))["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -854,7 +855,9 @@ async def test_rules_put_stores_conditions_that_escalate(_isolate_rules):
                 "rules": {
                     "hook/fired": {
                         "mode": "badge",
-                        "conditions": {"keywords": ["deploy"], "name_mention": True},
+                        # One keyword per edit (`notification_rules.edited_list`), beside the
+                        # name-mention switch in the same write.
+                        "conditions": {"keywords": {"add": "deploy"}, "name_mention": True},
                     }
                 }
             }

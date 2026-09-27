@@ -80,10 +80,17 @@ def _seed(path, data: dict) -> str:
 
 
 async def _patch(client: TestClient, field: str, value: Any, *, confirm: bool = False):
+    """The owner's write, as the SPA sends it: a field holding a whole list or object names the
+    revision of the value it replaces (`personalclaw/stale_write.py`) — read here from what is
+    stored, as a page would have read it — so what these tests measure is the consent rule."""
+    from personalclaw.dashboard.handlers.core import _DOCUMENT_PATHS, _value_in_effect
+    from personalclaw.stale_write import revision_of
+
     body: dict[str, Any] = {"path": field, "value": value}
     if confirm:
         body["confirm"] = True
-    return await client.patch("/api/config/personalclaw", json=body)
+    headers = {"If-Match": revision_of(_value_in_effect(field))} if field in _DOCUMENT_PATHS else {}
+    return await client.patch("/api/config/personalclaw", json=body, headers=headers)
 
 
 def _denials_naming(rows: MagicMock, *, caller: str, field: str) -> list:

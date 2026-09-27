@@ -41,10 +41,16 @@ def _config(store, **payload) -> None:
 
 
 async def _put(body: object, use_case: str = "chat") -> tuple[int, dict]:
-    """Drive the real handler with a mocked request."""
+    """Drive the real handler with a mocked request, over the revision of the chain as it was
+    just read — what every caller sends, since the PUT replaces the whole chain
+    (`personalclaw/stale_write.py`)."""
     from aiohttp.test_utils import make_mocked_request
 
-    req = make_mocked_request("PUT", f"/api/models/active/{use_case}")
+    read = await mr.api_models_active(make_mocked_request("GET", "/api/models/active"))
+    revision = json.loads(read.text)["revisions"][use_case]
+    req = make_mocked_request(
+        "PUT", f"/api/models/active/{use_case}", headers={"If-Match": f'"{revision}"'}
+    )
     req.match_info["use_case"] = use_case
 
     async def _json():

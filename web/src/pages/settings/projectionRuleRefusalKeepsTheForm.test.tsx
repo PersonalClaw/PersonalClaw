@@ -14,16 +14,17 @@ import type { ProjectionRule } from '../../lib/api'
 
 const REFUSAL = "invalid regex '^[MYAPP': unterminated character set at position 1"
 
-let setProjectionRules: Mock<(rules: ProjectionRule[]) => Promise<unknown>>
+let setProjectionRules: Mock<(rules: ProjectionRule[], base: string) => Promise<unknown>>
 
 async function mount(outcome: 'refuse' | 'accept') {
   vi.resetModules()
-  setProjectionRules = vi.fn((_rules: ProjectionRule[]) =>
+  setProjectionRules = vi.fn((_rules: ProjectionRule[], _base: string) =>
     outcome === 'refuse' ? Promise.reject(new Error(REFUSAL)) : Promise.resolve({}))
   vi.doMock('../../lib/api', () => ({
     api: {
-      projectionRules: () => Promise.resolve([]),
-      setProjectionRules: (rules: ProjectionRule[]) => setProjectionRules(rules),
+      // The rules as the panel reads them: the list and the revision a save of it names.
+      projectionRules: () => Promise.resolve({ value: [], revision: 'r0' }),
+      setProjectionRules: (rules: ProjectionRule[], base: string) => setProjectionRules(rules, base),
       toolsSavings: () => Promise.resolve(null),
     },
   }))
@@ -60,6 +61,7 @@ describe('adding a projection rule', () => {
     expect(setProjectionRules.mock.calls[0][0]).toEqual([
       { name: 'myapp', match_regex: '^[MYAPP', strategy: 'diff' },
     ])
+    expect(setProjectionRules.mock.calls[0][1], 'saved over the revision it read').toBe('r0')
     expect(name.value).toBe('')
     expect(strategy.value).toBe('log')
     expect(screen.queryByRole('alert')).toBeNull()

@@ -30,6 +30,9 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { TextLink } from '../../ui/TextLink'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
@@ -292,7 +295,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // which it was, silently, while "Unsaved changes" was on screen (issue 525). Same shape as the
   // `draftStore` the file/artifact viewers already take from their hosts. A ref, not state: it is
   // written on every keystroke and must never re-render the list.
-  const docDrafts = useRef(new Map<string, string>())
+  const docDrafts = useRef(new Map<string, DocDraft>())
   const [hopDepth, setHopDepth] = useState(1)
   const [addMode, setAddMode] = useState<'fact' | 'lesson' | 'entity' | 'proposals' | null>(null)
   // Which graph the canvas draws (§7.2). Records is the historical view; Entities is the
@@ -700,7 +703,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts }: 
   item: StudioItem; onDelete: () => void; onSaved: () => void; onSlotChanged: () => void
   /** Host-owned per-doc draft cache — see `StudioDocEditor`. Owned by `MemoryStudio` because
    *  THIS component is what unmounts the editor when the selection changes. */
-  docDrafts: Map<string, string>
+  docDrafts: Map<string, DocDraft>
 }) {
   const Icon = STUDIO_KIND_META[item.kind].icon
   // A slot is not "delete"-able from here: it is a register — its LINES are retired
@@ -883,6 +886,10 @@ function StudioMeta({ pairs }: { pairs: [string, string][] }) {
   )
 }
 
+/** An unsaved memory-doc edit and the copy it was typed on: the base a save of it names, kept WITH
+ *  the text so a draft restored after the doc changed elsewhere is still based on that copy. */
+export interface DocDraft { text: string; base: Revisioned<string> }
+
 /** Inline markdown editor for a memory doc, folded into the inspector (reuses the
  *  same GET/PUT the old Editors tab used). Save gated on dirty; transient Saved ✓.
  *
@@ -913,6 +920,15 @@ function StudioMeta({ pairs }: { pairs: [string, string][] }) {
  *  guard above, not instead of it: a cached draft is restored only once a read has SUCCEEDED, because
  *  a doc that could not be read is not safe to edit no matter what text we still hold for it.
  *
+ *  🔴 A SAVE IS REFUSED WHEN THE DOC CHANGED SINCE ITS DRAFT WAS STARTED. The gateway writes these
+ *  files too — the history consolidator rewrites preferences and projects and appends to history,
+ *  and the agent's memory tool appends preferences — and a Save used to replace whatever was stored
+ *  with this editor's copy, erasing what the agent had just learned. So each draft carries the copy
+ *  it was typed on (`DocDraft.base`) and the save names that copy's revision; a stale one is refused
+ *  and the edit, a text change, is re-applied onto what is stored (`ui/StaleWriteNotice`). The base
+ *  rides WITH the cached text: a draft restored after the doc changed elsewhere is still based on
+ *  the copy it was typed on, never on the fresher read beside it.
+ *
  *  Exported for its own test: the draft's survive-a-remount lifecycle is the whole fix, and
  *  this textarea (unlike the Monaco-backed viewers) renders under jsdom, so the behaviour can
  *  be asserted directly rather than at a prop seam.
@@ -922,27 +938,32 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
   onSaved: () => void
   /** Host-owned per-doc draft cache: this component is unmounted on every selection change, so a
    *  cache it owned itself would die with it. Written through on each edit, dropped on save. */
-  drafts: Map<string, string>
+  drafts: Map<string, DocDraft>
 }) {
-  const [content, setContent] = useState<string | null>(null)
+  // The doc as the gateway last reported storing it, with its revision; `null` until a read lands.
+  const [stored, setStored] = useState<Revisioned<string> | null>(null)
+  const content = stored === null ? null : stored.value
+  // The copy `draft` was started from — the base its save names.
+  const [base, setBase] = useState<Revisioned<string> | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState('')
   const [loadErr, setLoadErr] = useState('')
   const [reloads, setReloads] = useState(0)
-  // The disk read still happens on every mount — the baseline must be CURRENT, or a Save would
-  // silently overwrite a change made elsewhere while this doc was not on screen. Only the draft
-  // comes from the cache, so a restored edit is still measured against fresh content and stays
-  // marked dirty. `drafts` is the host's `useRef` Map, so its identity is stable and naming it
-  // here does not re-fire the read.
+  const label = STUDIO_DOCS.find((d) => d.which === which)?.label ?? which
+  // The disk read still happens on every mount — the baseline must be CURRENT, so a restored edit
+  // is measured against fresh content and stays marked dirty. The cache hands back the draft AND the
+  // copy it was typed on, so its save still names that copy: saving it over the fresh read's
+  // revision would replace a change made elsewhere while this doc was not on screen. `drafts` is the
+  // host's `useRef` Map, so its identity is stable and naming it here does not re-fire the read.
   useEffect(() => {
     let alive = true
-    setContent(null)
+    setStored(null)
     setLoadErr('')
     const cached = drafts.get(which)
     api.memoryDoc(which)
-      .then((c) => { if (alive) { setContent(c); setDraft(cached ?? c) } })
+      .then((doc) => { if (alive) { setStored(doc); setDraft(cached?.text ?? doc.value); setBase(cached?.base ?? doc) } })
       // `content` deliberately stays null — see the docstring. An empty string here is
       // the data-loss path, not a tidier default, and that holds with a cached draft in
       // hand: the cache entry survives in the host's Map and is restored by the retry,
@@ -952,14 +973,32 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
   }, [which, reloads, drafts])
   const dirty = content !== null && draft !== content
   useUnsavedGuard(dirty)
+  // What the gateway reported storing, as the guard's own reads and writes return it: a landed save
+  // re-seeds from this, not from the text sent — the projects write adds its header to a body
+  // without one — and it is the one copy the next save can name.
+  const latest = useRef<Revisioned<string> | null>(null)
+  const guard = useStaleWriteGuard<string>({
+    read: () => api.memoryDoc(which).then((doc) => { latest.current = doc; return doc }),
+    write: (next, revision) => api.saveMemoryDoc(which, next, revision).then((doc) => { latest.current = doc }),
+    onSaved: () => {
+      const doc = latest.current
+      if (doc !== null) { setStored(doc); setBase(doc); setDraft(doc.value) }
+      drafts.delete(which)
+      setSaved(true); window.setTimeout(() => setSaved(false), 1800); onSaved()
+    },
+    onDiscard: () => { drafts.delete(which); setReloads((n) => n + 1) },
+  })
+  const held = guard.conflict !== null
   const edit = (next: string) => {
     setDraft(next)
     // Write through on every keystroke, so the cache is correct even if the unmount is the very
-    // next thing that happens. Matching the loaded content is not dirty, so it holds no entry.
-    if (content !== null && next === content) drafts.delete(which)
-    else drafts.set(which, next)
+    // next thing that happens. Matching the loaded content is not dirty, so it holds no entry —
+    // and text back at what is stored is based on what is stored again.
+    if (stored !== null && next === stored.value) { drafts.delete(which); setBase(stored) }
+    else if (base !== null) drafts.set(which, { text: next, base })
   }
   const save = async () => {
+    if (base === null) return
     setBusy(true)
     setErr('')
     // 🔑 `/* leave dirty */` was the right STATE decision and the whole of the failure path. Keeping
@@ -969,9 +1008,10 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
     // appear. Success has an explicit signal; failure had none, so the two states were told apart
     // only by the ABSENCE of something. `AddLessonForm`, in this same file, already reports a failed
     // save inline beside its button — this adopts that form rather than inventing a toast.
-    // The cache entry goes only on SUCCESS: a refused save leaves the draft — and its cache
-    // entry — intact, so the text still survives the next selection change.
-    try { await api.saveMemoryDoc(which, draft); setContent(draft); drafts.delete(which); setSaved(true); window.setTimeout(() => setSaved(false), 1800); onSaved() }
+    // The cache entry goes only on SUCCESS: a refused save — the notice's stale refusal included —
+    // leaves the draft and its cache entry intact, so the text still survives the next selection
+    // change.
+    try { await guard.save(base, draft, rebaseText(base.value, draft)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
     setBusy(false)
   }
@@ -987,16 +1027,20 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
       {/* Named: this had no aria-label, no id/label pairing and no aria-labelledby, so a screen
           reader announced only "edit text, multi-line" — on the one control that rewrites what
           every agent prompt carries. Every other editor input in this file names itself. */}
+      {/* Read-only while a refused save waits for the user's choice: the notice re-applies the
+          text it kept, so anything typed meanwhile would be dropped by that save. */}
       <textarea value={draft} onChange={(e) => edit(e.target.value)} rows={16} spellCheck={false}
-        aria-label={`${STUDIO_DOCS.find((d) => d.which === which)?.label ?? which} memory`}
+        readOnly={held} aria-label={`${label} memory`}
         data-type="caption" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} loading={busy} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> Save</Button>
+        <Button size="sm" onClick={save} loading={busy} disabled={!dirty || busy || held}
+          disabledReason={held ? HELD_CHANGE_REASON : !dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> Save</Button>
         {dirty && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
         {saved && <span data-type="caption" className="text-ok">Saved ✓</span>}
         {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
       </div>
+      <StaleWriteNotice guard={guard} what={`${label} memory`} />
     </div>
   )
 }

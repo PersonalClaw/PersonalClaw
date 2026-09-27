@@ -154,6 +154,8 @@ async def test_reset_endpoint_unticks_the_action_plan(tmp_path):
         # THEN complete. The completion gate reads the STORED criteria, so it correctly refuses
         # `done` in the same call that first meets them — and that refusal is what makes the
         # post-reset state below meaningful.
+        # The lists are replaced whole, so the write names the revision of the copy it was built
+        # from — the one the create answered with (`personalclaw/stale_write.py`).
         ticked = await client.put(
             f"/api/tasks/{task['id']}",
             json={
@@ -164,6 +166,7 @@ async def test_reset_endpoint_unticks_the_action_plan(tmp_path):
                 ],
                 "execution_notes": [{"content": "done"}],
             },
+            headers={"If-Match": f'"{task["revision"]}"'},
         )
         assert ticked.status == 200, await ticked.text()
         assert all(a["completed"] for a in (await ticked.json())["action_plan"])

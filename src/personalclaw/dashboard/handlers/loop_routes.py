@@ -31,6 +31,7 @@ from personalclaw.loop.loop import (
 )
 from personalclaw.loop.watchdog import registry_key
 from personalclaw.request_validation import json_object_body, require_string
+from personalclaw.stale_write import stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -806,6 +807,15 @@ def _merge_kind_config(body: dict, existing: Loop) -> dict:
     return {**body, "kind_config": merged}
 
 
+#: The spec fields a PUT writes WHOLESALE from the caller's copy: the lists, the strategy config,
+#: and `kind_config`, each of whose keys replaces the stored one whole (`_merge_kind_config`). A PUT
+#: carrying any of them must name the revision its copy was read at (`If-Match`); a rename, a task
+#: edit or a workspace re-bind changes the one value it names and needs none.
+_WHOLE_SPEC_FIELDS: frozenset[str] = frozenset(
+    {"plan", "roster", "skill_ids", "workflow_ids", "strategy_config", "kind_config"}
+)
+
+
 async def api_loop_update(request: web.Request) -> web.Response:
     """PUT /api/loops/{id} — edit a pre-launch spec, or a name-only rename in any
     state (frozen spec → 409 unless it's just a name). ``kind_config`` is a PATCH
@@ -816,6 +826,17 @@ async def api_loop_update(request: web.Request) -> web.Response:
     existing = store.get(cid)
     if existing is None:
         return web.json_response({"error": "Not found"}, status=404)
+    # 🔴 A WHOLE-DOCUMENT EDIT IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. Plan Review sends
+    # the plan, the capability lists and its `kind_config` keys from the loop it read, and the
+    # planner's finalize, the autopilot toggle and the task queue write this same row — so a
+    # review screen open across one of their writes used to put its old values back without a
+    # word. Compared against the spec as stored now, with nothing awaited between this check and
+    # `update_spec` below, so no other writer in this process can land in between.
+    if not _WHOLE_SPEC_FIELDS.isdisjoint(body):
+        current = store.edited_spec(existing)
+        stale = stale_write_refusal(request, current, what=f"the loop {current.get('name')!r}")
+        if stale is not None:
+            return stale
     spec = _merge_kind_config(body, existing)
     # Re-screen a spec edit before persisting — mirrors the create gate so an edit
     # can't smuggle in a destructive verify/test command or a sensitive workspace
@@ -1266,8 +1287,11 @@ async def api_loop_plan_session(request: web.Request) -> web.Response:
     # not started" — it polls the dead loop forever instead of exiting.
     if store.get(cid) is None:
         return web.json_response({"error": "Not found"}, status=404)
+    from personalclaw.planning import session as PS
+
     session = loop_files.read_plan_session(cid)
-    return web.json_response({"session": session.to_dict() if session else None})
+    # Each step carries the revision an edit of its markdown names (`PS.wire`).
+    return web.json_response({"session": PS.wire(session) if session else None})
 
 
 async def api_loop_plan_start(request: web.Request) -> web.Response:
@@ -1366,10 +1390,23 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
     session = loop_files.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
+    # 🔴 AN EDIT IS SAVED ONLY OVER THE DRAFT IT WAS MADE ON. A comment sends the step back to the
+    # planner, whose redraft returns it to awaiting review — the only thing this route used to
+    # check — so an editor opened on the previous draft replaced the new plan with the old one
+    # plus the edit. The markdown replaces the whole body, so the request names the revision of
+    # the draft it edited (`PS.step_revision`); read, compared and written with nothing awaited.
+    # A step that is not at the review gate is refused below whatever the edit names.
+    step = next((s for s in session.steps if s.id == step_id), None)
+    if step is not None and step.status == PS.StepStatus.AWAITING_REVIEW.value:
+        stale = stale_write_refusal(
+            request, PS.step_markdown(step), what=f"the plan step {step.title!r}"
+        )
+        if stale is not None:
+            return stale
     if not PS.edit_artifact(session, step_id, markdown):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
     loop_files.write_plan_session(session)
-    return web.json_response({"ok": True, "session": session.to_dict()})
+    return web.json_response({"ok": True, "session": PS.wire(session)})
 
 
 # ── design tokens (Design kind) ──

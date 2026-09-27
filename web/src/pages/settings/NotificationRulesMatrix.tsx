@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown, RotateCcw } from 'lucide-react'
-import { api, type NotificationRuleRow, type NotificationRulesDoc, type NotificationMode, type NotificationTarget, type NotificationSound } from '../../lib/api'
+import { api, type NotificationListEdit, type NotificationRulePatch, type NotificationRuleRow, type NotificationRulesDoc, type NotificationMode, type NotificationTarget, type NotificationSound } from '../../lib/api'
 import { Field, Row, SegPills, Section } from './settingsUI'
 import { ChipInput, Checkbox, TextInput, FieldError, Select } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
@@ -81,7 +81,9 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
   }, [doc.rules])
 
   // `patch === null` clears the stored rule so the row inherits the registry default again (#285).
-  async function save(key: string, patch: Record<string, unknown> | null) {
+  // Typed as the gateway's patch, so a whole list cannot be sent: a rule's lists change one entry
+  // per save (`NotificationListEdit`).
+  async function save(key: string, patch: NotificationRulePatch | null) {
     setBusy(key); setErr('')
     try { await api.saveNotificationRules({ rules: { [key]: patch } }); onSaved() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
@@ -147,15 +149,13 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                               <label key={t} data-type="body-s" className="inline-flex items-center gap-2 text-on-surface-var">
                                 <Checkbox checked={r.targets.includes(t)}
                                   ariaLabel={`Deliver ${r.label} to ${TARGET_LABELS[t]}`}
-                                  onChange={(on) => {
-                                    const next = on
-                                      ? [...r.targets, t]
-                                      : r.targets.filter((x) => x !== t)
-                                    // Never leave a rule with zero targets: that is silence
-                                    // by accident, and the backend would fall back to
-                                    // dashboard anyway — so keep the UI honest about it.
-                                    save(r.key, { targets: next.length ? next : ['dashboard'] })
-                                  }} />
+                                  // 🔴 ONE TARGET IN OR OUT, never this row's copy of the list.
+                                  // Sending the whole list put this tab's copy back over what was
+                                  // stored — so a tab opened before the phone turned push on
+                                  // switched push off again with the next tick. The gateway applies
+                                  // the edit to the rule as it is stored, and unticking the last
+                                  // target leaves Dashboard there, as a rule with none reads back.
+                                  onChange={(on) => save(r.key, { targets: on ? { add: t } : { remove: t } })} />
                                 <span className={INERT_TARGETS.includes(t) ? 'text-on-surface-low' : undefined}>{TARGET_LABELS[t]}</span>
                               </label>
                             ))}
@@ -170,8 +170,13 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                         </Field>
                         <Field label="Escalate on keywords"
                           hint="A match upgrades a quieter mode to Notify — it does not add delivery targets you didn't choose.">
+                          {/* The keyword added or removed — never the chips' copy of the list, and
+                              never `name_mention` riding along from this row's copy either. */}
                           <ChipInput values={r.conditions.keywords}
-                            onChange={(v) => save(r.key, { conditions: { ...r.conditions, keywords: v } })}
+                            onChange={(v) => {
+                              const edit = keywordEdit(r.conditions.keywords, v)
+                              if (edit) save(r.key, { conditions: { keywords: edit } })
+                            }}
                             placeholder="add a keyword, Enter" ariaLabel="Add an escalation keyword" />
                         </Field>
                         {/* Same WCAG 2.5.3 fix as the other four, and the one the RUNTIME census could
@@ -180,7 +185,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                             `design/toggleLabelInName.test.ts` is what caught it. */}
                         <Row label="Escalate on name mention" hint="Upgrade when the text mentions you by name.">
                           <Toggle on={r.conditions.name_mention}
-                            onChange={(v: boolean) => save(r.key, { conditions: { ...r.conditions, name_mention: v } })}
+                            onChange={(v: boolean) => save(r.key, { conditions: { name_mention: v } })}
                             label="Escalate on name mention" />
                         </Row>
                       </div>
@@ -194,6 +199,15 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
       </div>
     </Section>
   )
+}
+
+/** The one keyword a chip edit added or removed (`ChipInput` changes one per event), as the edit
+ *  the gateway applies to the stored list — or `null` when nothing changed. */
+function keywordEdit(before: string[], after: string[]): NotificationListEdit<string> | null {
+  const added = after.find((k) => !before.includes(k))
+  if (added !== undefined) return { add: added }
+  const removed = before.find((k) => !after.includes(k))
+  return removed !== undefined ? { remove: removed } : null
 }
 
 /** The digest schedule — a 5-field cron, validated server-side.

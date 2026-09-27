@@ -34,7 +34,7 @@ const PROJECTS: ProjectItem[] = [
 ]
 const REFUSAL = 'cannot complete: unfinished exit criteria — Copy reviewed by Sam'
 
-let updateTask: ReturnType<typeof vi.spyOn>
+let saveTask: ReturnType<typeof vi.spyOn>
 let onSaved: ReturnType<typeof vi.fn<(t: TaskItem) => void>>
 
 beforeEach(() => {
@@ -43,7 +43,8 @@ beforeEach(() => {
   vi.spyOn(api, 'taskLists').mockResolvedValue([{ id: 'tl-launch', name: 'Launch', project_id: 'p-q4' }])
   vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
   vi.spyOn(api, 'taskComments').mockResolvedValue([])
-  updateTask = vi.spyOn(api, 'updateTask').mockRejectedValue(new ApiError(REFUSAL, 400))
+  // The panel's Save is the whole-task write (`saveTask`, over the revision it read).
+  saveTask = vi.spyOn(api, 'saveTask').mockRejectedValue(new ApiError(REFUSAL, 400))
   onSaved = vi.fn<(t: TaskItem) => void>()
 })
 
@@ -57,7 +58,7 @@ async function refuseASave() {
   render(<TaskDetail task={TASK} editing onEditingChange={() => {}} onSaved={onSaved} onDeleted={() => {}} />)
   await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Status' })).getByRole('radio', { name: 'Completed' }))
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(updateTask).toHaveBeenCalled())
+  await waitFor(() => expect(saveTask).toHaveBeenCalled())
   return screen.findByRole('alert')
 }
 

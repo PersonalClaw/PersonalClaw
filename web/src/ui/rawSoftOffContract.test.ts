@@ -65,7 +65,10 @@ const walk = (d: string): string[] =>
 const FIXED: Array<{ file: string; reason: string; guard: RegExp }> = [
   { file: 'pages/settings/AccountPanel.tsx', reason: 'No changes to save', guard: /aria-disabled=\{!dirty \|\| undefined\}/ },
   { file: 'pages/settings/AccountPanel.tsx', reason: 'No changes to save', guard: /aria-disabled=\{!botDirty \|\| undefined\}/ },
-  { file: 'ui/content/ContentSurface.tsx', reason: 'no changes to save', guard: /aria-disabled=\{\(!dirty && !saving\) \|\| undefined\}/ },
+  // `locked`: a save of this draft was refused as stale and the notice holds it (`ui/StaleWriteNotice`).
+  { file: 'ui/content/ContentSurface.tsx', reason: 'no changes to save', guard: /aria-disabled=\{\(\(!dirty \|\| locked\) && !saving\) \|\| undefined\}/ },
+  // …and when `locked` it says why with the ONE sentence every held-change lock uses (`lib/staleWrite`).
+  { file: 'ui/content/ContentSurface.tsx', reason: 'held_change_reason', guard: /aria-disabled=\{\(\(!dirty \|\| locked\) && !saving\) \|\| undefined\}/ },
   { file: 'pages/tasks/formControls.tsx', reason: 'That would create a dependency cycle', guard: /aria-disabled=\{cyclic \|\| undefined\}/ },
   { file: 'pages/knowledge/KnowledgeDetail.tsx', reason: 'Nothing more to show', guard: /aria-disabled=\{!hasMore \|\| undefined\}/ },
 ]

@@ -97,6 +97,7 @@ describe('arguments survive an edit that does not touch them', () => {
 // ── The page ─────────────────────────────────────────────────────────────────────────────────────
 
 const saveMcpServer = vi.fn()
+const addMcpServer = vi.fn()
 const importMcpServer = vi.fn()
 const notify = vi.fn()
 const servers = [{ name: 'gh', status: 'connected', enabled: true, tools: ['gh_search'] }]
@@ -137,8 +138,10 @@ function mockApi(definition: unknown, rows: unknown[] = importable) {
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
-      mcpServerDefinition: () => Promise.resolve(definition),
-      saveMcpServer: (...a: unknown[]) => { saveMcpServer(...a); return Promise.resolve({ ok: true, name: 'gh' }) },
+      // The definition with the revision the same read reported — what an edit is saved over.
+      mcpServerDefinition: () => Promise.resolve({ ...(definition as object), revision: 'r1' }),
+      saveMcpServer: (...a: unknown[]) => { saveMcpServer(...a); return Promise.resolve({ ok: true, name: 'gh', revision: 'r2' }) },
+      addMcpServer: (...a: unknown[]) => { addMcpServer(...a); return Promise.resolve({ ok: true, name: 'hosted', revision: 'r1' }) },
       importMcpServer: (...a: unknown[]) => importMcpServer(...a),
     },
   }))
@@ -165,6 +168,7 @@ beforeEach(() => {
   vi.resetModules()
   sessionStorage.clear()
   saveMcpServer.mockClear()
+  addMcpServer.mockClear()
   importMcpServer.mockReset()
   notify.mockClear()
 })
@@ -195,7 +199,7 @@ describe('Edit on an MCP server', () => {
       env: { LOG_LEVEL: 'debug' },
       plainEnv: ['LOG_LEVEL'],
       keepEnv: ['GITHUB_TOKEN'],
-    })
+    }, 'r1')
   })
 
   it('edits a server at a URL: its headers show as the mask, and one left as it was is kept', async () => {
@@ -222,7 +226,7 @@ describe('Edit on an MCP server', () => {
       url: 'https://mcp.example.com/mcp',
       headers: { Authorization: 'Bearer rotated' },
       keepHeaders: ['X-Api-Key'],
-    })
+    }, 'r1')
   })
 
   it('a server the form does not own opens to the reason, with nothing to save', async () => {
@@ -245,10 +249,12 @@ describe('Add tool server', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'URL' }), { target: { value: ' https://mcp.example.com/sse ' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Headers' }), { target: { value: 'Authorization: Bearer t0k' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
-    await waitFor(() => expect(saveMcpServer).toHaveBeenCalledTimes(1))
-    expect(saveMcpServer).toHaveBeenCalledWith('hosted', {
+    // An add replaces nothing, so it names no base (`api.addMcpServer`).
+    await waitFor(() => expect(addMcpServer).toHaveBeenCalledTimes(1))
+    expect(addMcpServer).toHaveBeenCalledWith('hosted', {
       transport: 'sse', url: 'https://mcp.example.com/sse', headers: { Authorization: 'Bearer t0k' },
     })
+    expect(saveMcpServer).not.toHaveBeenCalled()
   })
 })
 

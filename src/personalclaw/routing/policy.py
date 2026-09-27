@@ -654,6 +654,20 @@ def set_order(
     _sel_policy_change(use_case, "order", f"{query_class}:{','.join(order)}")
 
 
+def order_cell(use_case: str, query_class: str, *, home: Path | None = None) -> dict[str, Any]:
+    """One ``(use_case, query_class)`` cell as the table presents it: its order and the basis
+    behind it — ``{"order": [], "basis": {}}`` when nothing is recorded.
+
+    ONE builder for the cell the Routing tab paints and the cell a reorder replaces, so the
+    revision the tab reads (``api_routing_policy``) and the one the write compares against
+    (``api_routing_policy_put``) are taken from the same form (`personalclaw/stale_write.py`).
+    """
+    return {
+        "order": table_order(use_case, query_class, home=home),
+        "basis": order_basis(use_case, query_class, home=home),
+    }
+
+
 def table_for(use_case: str, *, home: Path | None = None) -> dict[str, Any]:
     """The inspectable table for one use case (§6.1): its mode, pin, and every recorded
     per-class order with the basis behind it. What the read-only Routing tab renders."""
@@ -664,11 +678,5 @@ def table_for(use_case: str, *, home: Path | None = None) -> dict[str, Any]:
         "use_case": use_case,
         "mode": mode_for(use_case, home=home),
         "pin": pin_for(use_case, home=home),
-        "classes": {
-            str(cls): {
-                "order": table_order(use_case, str(cls), home=home),
-                "basis": order_basis(use_case, str(cls), home=home),
-            }
-            for cls in classes
-        },
+        "classes": {str(cls): order_cell(use_case, str(cls), home=home) for cls in classes},
     }

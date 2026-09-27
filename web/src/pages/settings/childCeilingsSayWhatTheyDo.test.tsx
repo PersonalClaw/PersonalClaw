@@ -27,8 +27,10 @@ async function mount(childCeilings: unknown) {
         builtin: [], user: [], user_additions: 0,
         baseline: { version: 1, sha256: 'x', count: 0, verified: true, detail: '' },
       }),
-      securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: false }),
-      setUserDeniedCommands: () => Promise.resolve({}),
+      securityEgress: () => Promise.resolve({ value: { allow_hosts: [], deny_hosts: [], allow_private: false }, revision: 'r1' }),
+      addDeniedCommand: () => Promise.resolve({}),
+      removeDeniedCommand: () => Promise.resolve({}),
+      outsideHome: () => Promise.resolve({ places: [], allowed: [] }),
       setSecurityEgress: () => Promise.resolve({}),
       desktopState: () => Promise.resolve({
         connected: false, shell: null, capabilities: {}, registered_at: '', last_seen: '',

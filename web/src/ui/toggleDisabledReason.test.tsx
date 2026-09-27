@@ -180,8 +180,13 @@ describe('the triage, pinned per site', () => {
     // rises on one. Reasoned sites 7 → 8.
     // 🔺 25 → 26: Settings → Security → Outside PersonalClaw's home gained one switch per place
     // (one `<Toggle>` site, rendered per row). It is disabled only while a write for any place is in
-    // flight, so it is the IN-FLIGHT class and stays native. Reasoned sites hold at 8.
+    // flight, so it is the IN-FLIGHT class and stays native.
+    // 🔺 Reasoned 8 → 9, sites unchanged by it: the Settings hub's inline `Switch`
+    // (`settings/bento.tsx`) now forwards a caller's `disabledReason` to its Toggle — the DC-4 shape
+    // again: a reason only for the caller's precondition (the speech tile's switch is held while a
+    // refused save waits on the user, `HELD_CHANGE_REASON`) and native while its own write is in
+    // flight.
     expect(sites.length).toBe(26)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'eight carry a reason; eighteen stay native').toBe(8)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'nine carry a reason; seventeen stay native').toBe(9)
   })
 })

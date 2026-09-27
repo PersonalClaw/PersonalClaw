@@ -46,12 +46,14 @@ import { QualityBadges } from './qualityBadges'
 import { StoreSideRail, type RailOption } from './StoreSideRail'
 import { artGradient } from './appArt'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The ONE install-consent path, shared with the first-run essential-apps step: every
 // install and update below opens its dialog through `useAppInstall`.
 import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
 // install catalog entries UNION the already-installed apps — so it never reads
@@ -1902,7 +1904,9 @@ function ConfigModal({ name, displayName, onClose }: {
           : !cfg.hasSchema ? (
             <div data-type="body-s" className="text-on-surface-low">This app declares no configurable options.</div>
           ) : (
-            <AppConfigFields appName={name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
+            <HeldChange guard={cfg.guard}>
+              <AppConfigFields appName={name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
+            </HeldChange>
           )}
         {/* 🔴 The one with a data cost. `cfg.err` is `appConfigForm`'s save guard, which exists because
             the backend's `write_config` REPLACES the file — so a save from a form that never loaded
@@ -1911,12 +1915,16 @@ function ConfigModal({ name, displayName, onClose }: {
             a class Tailwind compiles to NOTHING, so it inherited `--color-on-surface` — the app's
             primary body ink, indistinguishable from a hint — with no live region either. */}
         {cfg.err && <FieldError>{cfg.err}</FieldError>}
+        {/* A save refused as stale keeps the modal open: the notice holds the edit, and re-applying
+            it closes the modal the way the first Save would have. */}
+        <StaleWriteNotice guard={cfg.guard} what={`${displayName}'s settings`} present={cfg.present} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {/* Save stays out of reach until the config it would REPLACE has actually loaded — the
               footer sits outside the branch above, so this button was clickable during the load. */}
-          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error || cfg.missing.length > 0}
-            disabledReason={cfg.error ? 'The configuration failed to load'
+          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error || cfg.missing.length > 0 || cfg.guard.conflict !== null}
+            disabledReason={cfg.guard.conflict !== null ? HELD_CHANGE_REASON
+              : cfg.error ? 'The configuration failed to load'
               : cfg.loading ? 'Still loading the configuration'
               // #491: naming the LABELS is the fix — the old feedback was a server 400 quoting the
               // schema key, which the user then had to map to a form row themselves.

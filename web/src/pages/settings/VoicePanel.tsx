@@ -4,7 +4,10 @@ import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { modelIdOf, splitModelRef } from '../../lib/modelRef'
-import { useQuery, invalidateKeys } from '../../lib/data'
+import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
+import { rebaseRecord, sameDocument, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ChipInput, TextInput } from '../../ui/forms'
@@ -30,8 +33,10 @@ import { VoiceProfilesSection } from './VoiceProfilesSection'
  *  the binding. The legacy #/settings/vocabulary deep-link redirects here with
  *  ?section=vocabulary, which scrolls to the merged section. */
 export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: Record<string, string> }) {
-  const [sttSettings, setSttSettings] = useState<Record<string, unknown> | null>(null)
-  const [ttsSettings, setTtsSettings] = useState<Record<string, unknown> | null>(null)
+  // Each use case's settings AS STORED, with the revision a save names — never ahead of the
+  // gateway; a section's unsaved edits live in the section.
+  const [sttSettings, setSttSettings] = useState<Revisioned<Record<string, unknown>> | null>(null)
+  const [ttsSettings, setTtsSettings] = useState<Revisioned<Record<string, unknown>> | null>(null)
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
   // cached snapshot. `active` is read-only (the bound model is owned by Models);
@@ -56,6 +61,14 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
   useEffect(() => {
     if (data) { setSttSettings(data.stt); setTtsSettings(data.tts) }
   }, [data])
+  const reread = () => { invalidateKeys('settings:voice'); refresh() }
+  // A save's result becomes the cached read too, so the next visit — and the hub tile, which reads
+  // the same key — paints the revision this page just stored, not the one it replaced.
+  const stored = (useCase: 'stt' | 'tts') => (doc: Revisioned<Record<string, unknown>>) => {
+    if (useCase === 'stt') setSttSettings(doc)
+    else setTtsSettings(doc)
+    if (data) writeQuery('settings:voice', { ...data, [useCase]: doc }, true)
+  }
 
   // Error first: `data` is undefined for loading AND for failure, so a later test never runs.
   if (!data && loadErr) return <LoadError what="speech settings" error={loadErr} onRetry={refresh} />
@@ -67,7 +80,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
       <UseCaseVoiceSection
         title="Speech-to-text" hint="Transcribe microphone input into the composer." useCase="stt"
         enableLabel="Enable speech-to-text" boundModel={(active['stt'] ?? [])[0] ?? ''}
-        settings={sttSettings} setSettings={setSttSettings} go={go}
+        doc={sttSettings} onStored={stored('stt')} reread={reread} go={go}
       />
       {/* No "Streaming transcription" toggle. It was offered here, hinted "Transcribe
           incrementally as you speak (when supported)", and stored under `streaming` in
@@ -81,8 +94,8 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
       <UseCaseVoiceSection
         title="Text-to-speech" hint="Hear replies read out, from the Speak button on a reply or on their own." useCase="tts"
         enableLabel="Enable text-to-speech" boundModel={(active['tts'] ?? [])[0] ?? ''}
-        settings={ttsSettings} setSettings={setTtsSettings} go={go}
-        extras={(s, save, boundModel) => {
+        doc={ttsSettings} onStored={stored('tts')} reread={reread} go={go}
+        extras={(s, save, show, boundModel) => {
           const speed = typeof s.speed === 'number' ? s.speed : 1.0
           const { provider } = splitModelRef(boundModel)
           const isRemoteVoice = !!provider && !PIPER_PROVIDERS.includes(provider)
@@ -118,7 +131,8 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
                 <div className="flex items-center gap-3">
                   <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Slow' : 'Fast'}</span>
                   <input type="range" min={0.6} max={1.6} step={0.05} value={speed}
-                    onChange={(e) => setLocalSpeed(s, setTtsSettings, Number(e.target.value))}
+                    // Moves the shown value while dragging; saved on release.
+                    onChange={(e) => show({ speed: Number(e.target.value) })}
                     onPointerUp={(e) => save({ speed: Number((e.target as HTMLInputElement).value) })}
                     // Keyboard adjustments never fire pointerup — persist those too.
                     onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) save({ speed: Number((e.target as HTMLInputElement).value) }) }}
@@ -181,6 +195,14 @@ function HandsFreeSection() {
     const v = cfg[key]
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
   }
+  // The phrases added and removed, never this panel's copy of the list — which another tab may have
+  // changed since — and then the list as stored.
+  const editPhrases = (key: string, next: string[], onSaved: () => void) => {
+    api.saveListEdits(`voice.${key}`, phrases(key), next).then((stored) => {
+      setCfg((c) => ({ ...(c ?? {}), [key]: stored }))
+      onSaved()
+    }).catch((e) => notify(`Couldn't save the phrases: ${String((e as Error)?.message || e)}`, 'error'))
+  }
 
   return (
     <Section title="Hands-free voice" hint="Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
@@ -192,9 +214,9 @@ function HandsFreeSection() {
           onChange={(v, cb) => patch('push_to_talk_chord', v, cb)} />
         <PhraseRow label="Confirmation phrases"
           hint="Dictation accumulates in the composer until one of these ends what you just said — so a half-finished thought is never sent."
-          values={phrases('confirmation_phrases')} onChange={(v, cb) => patch('confirmation_phrases', v, cb)} />
+          values={phrases('confirmation_phrases')} onChange={(v, cb) => editPhrases('confirmation_phrases', v, cb)} />
         <PhraseRow label="Exit phrases" hint="Saying one of these throws the accumulated dictation away."
-          values={phrases('exit_phrases')} onChange={(v, cb) => patch('exit_phrases', v, cb)} />
+          values={phrases('exit_phrases')} onChange={(v, cb) => editPhrases('exit_phrases', v, cb)} />
         <ToggleRow label="Mute while speaking" hint="Release the microphone and discard what it captured while a reply plays aloud. This is what stops the assistant hearing itself."
           cfg={cfg} field="duplex_mute_enabled" patch={patch} />
         <ToggleRow label="Echo filter" hint="Also drop any transcription that repeats three consecutive words the assistant just spoke — the backstop for speaker bleed."
@@ -306,48 +328,98 @@ const RANGE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '
 // Built-in personas exposed by remote OpenAI-compatible TTS models.
 const SPEECH_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
 
-// live-update the speed value while dragging (persisted on pointer-up).
-function setLocalSpeed(s: Record<string, unknown>, setter: (v: Record<string, unknown>) => void, speed: number) {
-  setter({ ...s, speed })
-}
-
 function UseCaseVoiceSection({
-  title, hint, useCase, enableLabel, boundModel, settings, setSettings, go, extras,
+  title, hint, useCase, enableLabel, boundModel, doc, onStored, reread, go, extras,
 }: {
   title: string; hint: string; useCase: string; enableLabel: string
   boundModel: string
-  settings: Record<string, unknown>; setSettings: (v: Record<string, unknown>) => void
+  /** The settings as stored, with the revision a save names. */
+  doc: Revisioned<Record<string, unknown>>
+  /** A save landed: the settings as the gateway now stores them. */
+  onStored: (doc: Revisioned<Record<string, unknown>>) => void
+  /** Re-read the stored settings — after the user drops a refused change. */
+  reread: () => void
   go?: (id: string) => void
-  extras?: (settings: Record<string, unknown>, save: (patch: Record<string, unknown>) => void, boundModel: string) => React.ReactNode
+  extras?: (
+    settings: Record<string, unknown>,
+    save: (patch: Record<string, unknown>) => void,
+    show: (patch: Record<string, unknown>) => void,
+    boundModel: string,
+  ) => React.ReactNode
 }) {
   const [saved, setSaved] = useState(false)
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+
+  // 🔴 THE FILE IS SAVED WHOLE, over the revision it was read at. Each control used to send
+  // `{...settings, <its field>}` from this page's copy, and the same file is written by the Slack
+  // voice modal (through the SDK) and by the routing levers — so a page opened before either saved
+  // put its old values back over theirs. A stale copy is now refused, and the change re-applied
+  // field by field on top of what is stored (`ui/StaleWriteNotice`).
+  //
+  // `base` is what the gateway last reported, read or saved; `edits` is every change made on top
+  // of it that no save has confirmed yet. The controls show both, so a change appears at once.
+  const base = useRef(doc)
+  const edits = useRef<Record<string, unknown>>({})
+  const [settings, setShown] = useState(doc.value)
+  useEffect(() => {
+    base.current = doc
+    setShown({ ...doc.value, ...edits.current })
+  }, [doc])
+  const guard = useStaleWriteGuard<Record<string, unknown>>({
+    read: () => api.useCaseSettings(useCase),
+    write: async (next, rev) => {
+      const r = await api.saveUseCaseSettings(useCase, next, rev)
+      base.current = { value: r.settings, revision: r.revision }
+    },
+    onSaved: (saved) => {
+      // What the save carried is confirmed; a change made while it was on the wire is not, and
+      // goes next — after a re-applied save too, which runs outside `drain`.
+      edits.current = Object.fromEntries(
+        Object.entries(edits.current).filter(([k, v]) => !sameDocument(saved[k], v)))
+      onStored(base.current)
+      flash()
+      void drain()
+    },
+    onDiscard: () => { edits.current = {}; reread() },
+  })
+
+  // One save on the wire at a time, each carrying every unconfirmed change over the settings the
+  // gateway last reported — so a second change made before the first lands is saved over it,
+  // never refused as stale against this page's own save.
+  const draining = useRef(false)
+  const drain = async () => {
+    if (draining.current) return
+    draining.current = true
+    try {
+      while (Object.keys(edits.current).length > 0) {
+        const from = base.current
+        const next = { ...from.value, ...edits.current }
+        // `false`: refused as stale. The notice below holds every change so far for the user to
+        // re-apply or drop; a change made meanwhile joins it, since each save carries them all.
+        if (!(await guard.save(from, next, rebaseRecord(from.value, next)))) return
+      }
+    } catch (e) {
+      // `keep optimistic` left the toggle showing a value the server had REFUSED — a claim that
+      // survived until the next reload, with no flash and no error to explain it. So a failed
+      // save ROLLS BACK to what is stored, and says why.
+      edits.current = {}
+      setShown(base.current.value)
+      notify(`Couldn't save this speech setting: ${String((e as Error)?.message || e)}`, 'error')
+    } finally {
+      draining.current = false
+    }
+  }
+  const show = (patch: Record<string, unknown>) => setShown((s) => ({ ...s, ...patch }))
+  const saveSettings = (patch: Record<string, unknown>) => {
+    edits.current = { ...edits.current, ...patch }
+    show(patch)
+    void drain()
+  }
 
   const enabled = Boolean(settings.enabled)
   const bound = !!boundModel
   // boundModel is a "provider:id" ref — show the model id without the provider prefix.
   const modelLabel = modelIdOf(boundModel)
-
-  const saveSettings = async (patch: Record<string, unknown>) => {
-    const prev = settings
-    const next = { ...settings, ...patch }
-    setSettings(next)
-    try {
-      await api.saveUseCaseSettings(useCase, next)
-      flash()
-    } catch (e) {
-      // `keep optimistic` left the toggle showing a value the server had REFUSED — a claim that
-      // survived until the next reload, with no flash and no error to explain it.
-      //
-      // This section receives `settings`/`setSettings` as props and owns no read of its own, so it
-      // ROLLS BACK to the pre-patch value rather than reconciling by re-reading (the hub tiles'
-      // `mutate` does the latter because it holds the cache keys). Both forms are already in this
-      // codebase — `WidgetFrame.pin` rolls back, `PinnedArtifacts.unpin` reconciles — and the one
-      // that is wrong is keeping a value the server refused.
-      setSettings(prev)
-      notify(`Couldn't save this speech setting: ${String((e as Error)?.message || e)}`, 'error')
-    }
-  }
 
   return (
     <Section title={title} hint={hint}>
@@ -367,8 +439,9 @@ function UseCaseVoiceSection({
             : <span data-type="body-s" className="text-on-surface-low italic">none</span>}
         </Row>
 
-        {enabled && bound && extras?.(settings, saveSettings, boundModel)}
+        {enabled && bound && extras?.(settings, saveSettings, show, boundModel)}
       </RowGroup>
+      <StaleWriteNotice guard={guard} what={`Your ${title.toLowerCase()} settings`} />
 
       <ManageLink kind={useCase.toUpperCase()} go={go} />
       <SavedToast show={saved} />

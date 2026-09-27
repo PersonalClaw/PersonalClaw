@@ -99,11 +99,11 @@ def _file_automation(home, name="Summarize notes", when="when a file in ~/notes 
     Tools.create(_store(home), name=name, when=when, message="go")
 
 
-def _req(method, path, state, *, body=None, match_info=None, query=None):
+def _req(method, path, state, *, body=None, match_info=None, query=None, headers=None):
     app = web.Application()
     app["state"] = state
     full = path + ("?" + query if query else "")
-    req = make_mocked_request(method, full, match_info=match_info or {}, app=app)
+    req = make_mocked_request(method, full, match_info=match_info or {}, app=app, headers=headers)
     req["user"] = "tester"
     if body is not None:
 
@@ -112,6 +112,14 @@ def _req(method, path, state, *, body=None, match_info=None, query=None):
 
         req.json = _json  # type: ignore[assignment]
     return req
+
+
+def _based_on_the_list(state, raw_id: str = "clock:nightly") -> dict[str, str]:
+    """The `If-Match` a whole-form save (one carrying `skip_dates` or `action`) names: the
+    revision the list read reports for the row (`personalclaw/stale_write.py`)."""
+    listed = _run(T.api_triggers(_req("GET", "/api/triggers", state, query="type=schedule")))
+    row = next(r for r in _body(listed)["triggers"] if r["raw_id"] == raw_id)
+    return {"If-Match": f'"{row["revision"]}"'}
 
 
 def _body(resp):
@@ -1386,6 +1394,7 @@ def test_skip_dates_can_be_CHANGED_not_only_preserved(home, state):
                 state,
                 body={"skip_dates": ["2027-12-25", "2028-01-01"]},
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )
@@ -1409,6 +1418,7 @@ def test_clearing_skip_dates_actually_clears_them(home, state):
                 state,
                 body={"skip_dates": [], "name": "Nightly"},
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )
@@ -1432,6 +1442,7 @@ def test_a_new_skip_date_RE_ARMS_the_trigger(home, state):
                 state,
                 body={"skip_dates": [skip_day]},
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )
@@ -2248,6 +2259,7 @@ def _put(state, body):
                 state,
                 body=body,
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )

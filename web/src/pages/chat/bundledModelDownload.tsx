@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { api, isLiveDownload, type BundledModelOffer, type DownloadJob, type OnboardingState } from '../../lib/api'
+import { isStaleWrite } from '../../lib/staleWrite'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { WavyProgress } from '../../ui/WavyProgress'
 import { fvs } from '../../design/fontWeight'
@@ -29,15 +30,19 @@ export type BundledDownloadPhase = 'idle' | 'running' | 'failed' | 'done'
  *  The user asked for this model, and a download that left chat on the implicit fallback left it
  *  off every model list and unnamed wherever the chat model is named. Read live, not off a
  *  readiness read taken before the download: an existing binding is the user's, and it is never
- *  overwritten. Resolves to `''`, or to the refusal in the server's words. */
+ *  overwritten. The bind names the revision of the EMPTY chain it read, so a model bound between
+ *  that read and this write (another tab, onboarding) is refused by the gateway instead of
+ *  replaced — and that refusal is exactly "something else already is". Resolves to `''`, or to
+ *  the refusal in the server's words. */
 async function bindIfNothingIs(offer: BundledModelOffer): Promise<string> {
   try {
-    const now = await api.onboarding()
-    if ((now.chat_model_refs ?? []).length === 0) {
-      await api.setActiveModel('chat', [`${offer.provider}:${offer.model}`])
+    const now = await api.activeChain('chat')
+    if (now.value.length === 0) {
+      await api.setActiveModel('chat', [`${offer.provider}:${offer.model}`], now.revision)
     }
     return ''
   } catch (e) {
+    if (isStaleWrite(e)) return ''
     const raw = e instanceof Error ? e.message : String(e ?? '')
     try { return String(JSON.parse(raw)?.error ?? raw) || 'the binding was refused' } catch { return raw || 'the binding was refused' }
   }

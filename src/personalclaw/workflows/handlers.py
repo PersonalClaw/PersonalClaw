@@ -38,7 +38,9 @@ from personalclaw.http_errors import consent_required
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
+from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 from personalclaw.workflows import run_cockpit, service, store
+from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
 from personalclaw.workflows.review_service import apply_triage, review_findings
 
 logger = logging.getLogger(__name__)
@@ -239,7 +241,31 @@ async def api_defs_surfacing(request: web.Request) -> web.Response:
 
 
 async def api_def_detail(request: web.Request) -> web.Response:
-    return _reply(await service.get_def(request.match_info.get("name", "")))
+    """GET /api/workflows/{name} — one definition, and the ``revision`` a save over it names.
+
+    The revision is of exactly the definition handed out, stripped as every read is: the editor
+    saves the whole definition it read, so its save names that revision (`api_def_save`,
+    `personalclaw/stale_write.py`)."""
+    result = await service.get_def(request.match_info.get("name", ""))
+    if result.get("ok"):
+        result = {**result, "revision": revision_of(result.get("definition"))}
+    return _reply(result)
+
+
+_def_save_lock: asyncio.Lock | None = None
+_def_save_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_def_save_lock() -> asyncio.Lock:
+    """One definition save at a time, per event loop — the revision check and the save it guards
+    are separate awaits, and a second save landing between them is the overwrite the check exists
+    to stop."""
+    global _def_save_lock, _def_save_lock_loop
+    loop = asyncio.get_running_loop()
+    if _def_save_lock is None or _def_save_lock_loop is not loop:
+        _def_save_lock = asyncio.Lock()
+        _def_save_lock_loop = loop
+    return _def_save_lock
 
 
 async def api_template_trajectory(request: web.Request) -> web.Response:
@@ -259,6 +285,14 @@ async def api_template_trajectory(request: web.Request) -> web.Response:
 
 
 async def api_def_save(request: web.Request) -> web.Response:
+    """POST /api/workflows — validate a definition and, unless ``save: false``, save it.
+
+    Saving over a definition of yours replaces it with the body, so the request names the
+    revision of the copy it was built from in ``If-Match`` (``GET /api/workflows/{name}``'s
+    ``revision``): none is ``428 revision_required``, a stale one ``409 stale_write``, and nothing
+    is written. A new name, a copy saved as one, and a dry run need none. A saved definition's
+    response carries its new ``revision``.
+    """
     denied = _guard(request, "workflow_def_save")
     if denied is not None:
         return denied
@@ -270,6 +304,14 @@ async def api_def_save(request: web.Request) -> web.Response:
             status=400,
         )
     name = require_string(body, "name")
+    async with _get_def_save_lock():
+        return await _save_def(request, body, name, root)
+
+
+async def _save_def(
+    request: web.Request, body: dict[str, Any], name: str, root: dict[str, Any]
+) -> web.Response:
+    """The save itself, under `_get_def_save_lock` — from the revision check to the write."""
     # A step whose agent approves its own tool calls, or holds the write grant an unattended run
     # never gets by default, is the owner's per-automation approval posture — asked about on the
     # wire when a save loosens it over the stored definition, like `agent.approval_mode`. A dry
@@ -278,6 +320,25 @@ async def api_def_save(request: web.Request) -> web.Response:
         from personalclaw.automation_posture import unconsented_workflow_loosening
 
         stored = await service.get_def(name)
+        # 🔴 A DEFINITION OF YOURS IS SAVED ONLY OVER THE COPY THE EDIT WAS BUILT FROM. The editor
+        # sends the whole definition it read, so a save from a page opened before another tab — or
+        # the agent's `workflow_author` — saved this workflow made the older copy the newest
+        # version, and the change made elsewhere was no longer what runs. Before the consent
+        # question, like every such check: asking about a loosening of a copy that is about to be
+        # refused would be asking about the wrong definition. A new name replaces nothing and
+        # needs no revision; a shipped template is never saved over in place.
+        current = stored.get("definition") if stored.get("ok") else None
+        stale = None
+        if isinstance(current, dict) and current.get("source") == "user":
+            stale = stale_write_refusal(request, current, what=f"the workflow {name!r}")
+        elif current is None and claimed_revision(request):
+            # A revision for a workflow nobody has now: it was deleted after the editor read it.
+            # Refused as the change made elsewhere it is — not re-created from the editor's copy,
+            # nor failed on a hidden value there is no longer a definition to restore from.
+            stale = stale_write_refusal(request, None, what=f"the workflow {name!r}")
+        if stale is not None:
+            _audit(request, "workflow_def_save", "denied", f"{name}: stale base")
+            return stale
         loosened = unconsented_workflow_loosening(
             name,
             current_root=(stored.get("definition") or {}).get("root") if stored.get("ok") else None,
@@ -322,6 +383,12 @@ async def api_def_save(request: web.Request) -> web.Response:
         "success" if result.get("ok") else "failure",
         name,
     )
+    if result.get("saved"):
+        # Read back under the same lock, so the revision handed out is the one the next read of
+        # this definition reports — what a caller that keeps editing saves over next.
+        saved = await service.get_def(name)
+        if saved.get("ok"):
+            result = {**result, "revision": revision_of(saved.get("definition"))}
     return _reply(result, status=201 if result.get("saved") else 200)
 
 
@@ -338,7 +405,10 @@ async def api_def_a2a_publish(request: web.Request) -> web.Response:
         return denied
     body = await json_object_body(request)
     name = request.match_info.get("name", "")
-    result = await service.set_a2a_published(name, body.get("published") is True)
+    # Under the definition save lock like every write to a stored definition here, so it never
+    # lands between a save's revision check and that save's write.
+    async with _get_def_save_lock():
+        result = await service.set_a2a_published(name, body.get("published") is True)
     _audit(request, "workflow_def_a2a_publish", "success" if result.get("ok") else "failure", name)
     return _reply(result)
 
@@ -348,7 +418,8 @@ async def api_def_delete(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     name = request.match_info.get("name", "")
-    result = await service.delete_def(name)
+    async with _get_def_save_lock():
+        result = await service.delete_def(name)
     _audit(request, "workflow_def_delete", "success" if result.get("ok") else "failure", name)
     return _reply(result)
 
@@ -1136,6 +1207,10 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
     LifecyclePhase.PRELAUNCH``), never the literal DRAFT status, so a future prelaunch
     status inherits it. Guarded and SEL-audited like every other run mutation: a policy
     override changes how much an unattended run may spend and whether a human gates it.
+
+    Because the body replaces the whole overlay, it names the revision of the copy it was built
+    from in ``If-Match`` — ``revisions.policy_overrides`` on the run status — and a stale one is
+    refused with ``409 stale_write`` before anything is written.
     """
     denied = _guard(request, "workflow_run_policy_overrides")
     if denied is not None:
@@ -1146,6 +1221,19 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
     # consent on the wire. `confirm` is the consent flag, not a knob, so it is not persisted.
     overrides = {k: v for k, v in body.items() if k != "confirm"}
     run = store.get(run_id)
+    if run is not None and RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        # 🔴 THE OVERLAY IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. The editor PUTs its
+        # whole copy with one knob changed, so a tab opened before another tab's edit reverted
+        # that edit the moment it touched a different knob. Compared against the overlay the run
+        # status reports, before the consent check (consent to a stale overlay is consent to the
+        # wrong one) and with no await before the write. A launched run skips it: its overlay is
+        # frozen, and the service's `run_not_prelaunch` says so whatever the base.
+        stale = stale_write_refusal(
+            request, run.policy_overrides, what=f"the policy overrides of the run {run_id!r}"
+        )
+        if stale is not None:
+            _audit(request, "workflow_run_policy_overrides", "denied", f"{run_id}: stale base")
+            return stale
     if run is not None:
         from personalclaw.workflows.supervisor_policy import unconsented_override_loosening
 

@@ -3,12 +3,14 @@ PERSONALCLAW_HOME/tasks/.
 """
 
 import asyncio
+import fcntl
 import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import record_path
@@ -23,10 +25,15 @@ from personalclaw.tasks.models import (
     WorkflowTaskBinding,
 )
 from personalclaw.tasks.models import coerce_task_field as models_coerce
-from personalclaw.tasks.provider import TaskProvider
+from personalclaw.tasks.models import (
+    task_revision,
+)
+from personalclaw.tasks.provider import StaleTaskWrite, TaskProvider
 from personalclaw.workflows import pool
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 #: Fields an update never writes: identity and provenance. `project` is excluded separately in the
 #: update loop because it is DERIVED (re-resolved from the task list on every read), not immutable.
@@ -112,6 +119,30 @@ def _tasks_dir() -> Path:
     under test alike.
     """
     return config_dir() / "tasks"
+
+
+def _as_one_writer(write: Callable[[], _T]) -> _T:
+    """Run *write* as the only writer of the task files — across threads AND processes.
+
+    Every write here is a read-modify-write of several files (the edited task plus the dependents
+    a reconcile cascade restatuses), and they ran unlocked on worker threads: two writers each read
+    the set, and the later one wrote its copy over the earlier one's. A whole-form save's
+    compare-and-write is only atomic if nothing can write between its read and its write, so every
+    writer — create, update, delete — runs through this.
+
+    ``flock`` on a lock FILE, the trigger store's shape (``triggers/store.py``): it is released when
+    the holder dies, so a crash can never leave the store locked, and because it is per open file
+    description it serializes two threads of one process as well as two processes. The name starts
+    with a dot, so the ``*.json`` scan never reads it as a task.
+    """
+    d = _tasks_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / ".write.lock").open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            return write()
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _record_task_tombstone(task_id: str) -> None:
@@ -440,12 +471,18 @@ class NativeTaskProvider(TaskProvider):
                 self._write_task(changed)
             return task
 
-        return await asyncio.to_thread(_create)
+        return await asyncio.to_thread(_as_one_writer, _create)
 
-    async def update_task(self, task_id: str, **fields: Any) -> Task | None:
+    async def update_task(
+        self, task_id: str, *, base_revision: str | None = None, **fields: Any
+    ) -> Task | None:
         """Apply ``fields``, reject cycles, reconcile dependency-driven status, and return the
         edited task. The full set of tasks whose status changed via cascade is exposed on
         ``task._reconciled`` for the handler to return.
+
+        With ``base_revision``, the write lands only over the task it was built from (see
+        :meth:`TaskProvider.update_task`); the comparison and the write happen under one
+        :func:`_as_one_writer`, so no other writer can land between them.
         """
 
         def _update() -> Task | None:
@@ -453,6 +490,12 @@ class NativeTaskProvider(TaskProvider):
             task = tasks.get(task_id)
             if not task:
                 return None
+            # 🔴 A WHOLE-FORM SAVE IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The task page
+            # sends every list whole (labels, exit criteria, notes, dependencies) from the copy it
+            # read, and the agent's `task_update` and the loop engine write this same file — so a
+            # page open across one of their writes used to put its old lists back without a word.
+            if base_revision is not None and base_revision != task_revision(task):
+                raise StaleTaskWrite(task)
             # The pre-edit status, for the edge-triggered completion event below. Captured BEFORE
             # the field loop because the loop mutates `task` in place.
             previous_status = task.status.value
@@ -582,7 +625,7 @@ class NativeTaskProvider(TaskProvider):
             )
             return task
 
-        edited = await asyncio.to_thread(_update)
+        edited = await asyncio.to_thread(_as_one_writer, _update)
         # TASKS-SOPS §5 R10: fire the task-completion lifecycle hook. Measured in S60 —
         # `TaskComplete` is declared in `hooks.HOOK_EVENTS`, allowlisted in
         # `validation.ALLOWED_HOOK_EVENTS` and rendered by the hook UI, and NO call site in the
@@ -633,7 +676,7 @@ class NativeTaskProvider(TaskProvider):
                     self._write_task(changed)
             return True
 
-        return await asyncio.to_thread(_delete)
+        return await asyncio.to_thread(_as_one_writer, _delete)
 
     def graph(self) -> dict[str, Any]:
         """Adjacency + DependencyAnalysis over this provider's tasks (for /graph)."""

@@ -58,9 +58,10 @@ async function mount(opts: { denied?: Over | 'reject'; stats?: 'reject' } = {}) 
       deniedCommands: () => opts.denied === 'reject'
         ? Promise.reject(new Error('probe-induced 500 on /api/security/denied-commands'))
         : Promise.resolve(payload(opts.denied)),
-      securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: false }),
+      securityEgress: () => Promise.resolve({ value: { allow_hosts: [], deny_hosts: [], allow_private: false }, revision: 'r1' }),
       outsideHome: () => Promise.resolve({ places: [], allowed: [] }),
-      setUserDeniedCommands: () => Promise.resolve({}),
+      addDeniedCommand: () => Promise.resolve({}),
+      removeDeniedCommand: () => Promise.resolve({}),
       setSecurityEgress: () => Promise.resolve({}),
       // DC-2's desktop-capabilities section renders inside this SAME panel. This is a
       // TOTAL module mock (no `...actual`), so an unstubbed read is `undefined` and the
@@ -189,10 +190,11 @@ describe('the baseline is read-only in the UI', () => {
   })
 
   it('no write path addresses the baseline at all', async () => {
-    // The panel's only denylist mutation is the user list. If a future edit wires an editable
-    // baseline, the pattern below is what it would have to add.
+    // The panel's only denylist mutations are one user pattern in or out. If a future edit wires an
+    // editable baseline, the pattern below is what it would have to add.
     const src = readFileSync(PANEL, 'utf8')
-    expect(src).toContain('api.setUserDeniedCommands(next)')
+    expect(src).toContain('api.addDeniedCommand(p)')
+    expect(src).toContain('api.removeDeniedCommand(p)')
     expect(src, 'nothing here may write the baseline').not.toMatch(/set\w*Baseline|baseline:\s*\[/)
   })
 })

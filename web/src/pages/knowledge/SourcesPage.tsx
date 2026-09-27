@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowLeft, Plus, Rss, ShieldOff, Link2, MonitorPlay, AlertTriangle, Zap, type LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -10,10 +10,14 @@ import { TextInput } from '../../ui/forms'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { api, type WatchedSource } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import type { Rebase } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { notify } from '../../app/appSdk'
 import { relFuture, relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
 import { RAW_ENRICHMENT, TONE_CLASS, eventDrivenMetaLine, fmtInterval, formIcon, healthMeta } from './sourceMeta'
+import { HELD_CHANGE_REASON, sameDocument } from '../../lib/staleWrite'
 
 /** The kinds catalog keyed by provider, so a row can name its own kind and pick its icon
  *  from the same `form` discriminator the create page switches on. */
@@ -37,6 +41,9 @@ function Chip({ label, tone, icon: Icon, title }: {
   )
 }
 
+/** The two objects a remediation writes back WHOLE — the document the source's `revision` covers. */
+type SourceSettings = { spec: Record<string, unknown>; budget: Record<string, unknown> }
+
 /** The remediation strip. Its whole reason for existing is that the two failures WS-3
  *  discriminates have OPPOSITE fixes — a page that rendered plenty of text and found nothing
  *  is the wrong URL; a page that is a JavaScript shell needs the render tier. Both the
@@ -47,16 +54,48 @@ function Remediation({ source, onChanged }: { source: WatchedSource; onChanged: 
   const rem = source.remediation
   const [url, setUrl] = useState(String(source.spec?.url ?? ''))
   const [busy, setBusy] = useState(false)
+  // The success line for the save in flight. A ref, because a save re-applied from the notice
+  // lands after this click's handler has returned, and it still owes the user that line.
+  const done = useRef('')
+  // 🔴 A FIX IS SAVED AS BOTH OBJECTS, built from this row's copy of them: `{...source.budget,
+  // allow_render}` and `{...source.spec, url}`. A tab that had the page open before another tab —
+  // or the agent — changed this source's spec or budget used to write its own copy back over that
+  // change without a word. The save now names the revision its copy was read at, a stale one is
+  // refused, and the fix — an operation on the objects, never the objects themselves — is
+  // re-applied on top of what is stored (`ui/StaleWriteNotice`).
+  const guard = useStaleWriteGuard<SourceSettings>({
+    read: () => api.knowledgeSources().then((r) => {
+      const now = r.sources.find((s) => s.id === source.id)
+      if (!now) throw new Error('the source no longer exists')
+      return { value: { spec: now.spec, budget: now.budget }, revision: now.revision }
+    }),
+    write: (next, base) => api.saveKnowledgeSourceSettings(source.id, next, base),
+    onSaved: () => { notify(done.current, 'success'); onChanged() },
+    onDiscard: onChanged,
+  })
   if (!rem?.kind) return null
 
   const isRender = rem.kind === 'render_tier'
+  // A pending refusal holds the user's fix; a second one would replace it before they chose.
+  const pending = guard.conflict !== null
 
-  async function apply(body: Parameters<typeof api.updateKnowledgeSource>[1], done: string) {
+  /** One setting of the source's spec or budget, as an edit re-applicable onto what is stored:
+   *  refused (`null`) when the setting itself was changed elsewhere to something else since this row
+   *  read it — choosing between the two is the user's call, made in the review, not the reapply's. */
+  function setting<K extends keyof SourceSettings>(part: K, key: string, value: unknown): Rebase<SourceSettings> {
+    const read = (source[part] as Record<string, unknown> | undefined)?.[key]
+    return (t) => {
+      const now = (t[part] as Record<string, unknown> | undefined)?.[key]
+      if (!sameDocument(now, read) && !sameDocument(now, value)) return null
+      return { ...t, [part]: { ...(t[part] as Record<string, unknown> | undefined), [key]: value } }
+    }
+  }
+
+  async function apply(fix: Rebase<SourceSettings>, message: string) {
+    done.current = message
     setBusy(true)
     try {
-      await api.updateKnowledgeSource(source.id, body)
-      notify(done, 'success')
-      onChanged()
+      await guard.apply({ value: { spec: source.spec || {}, budget: source.budget || {} }, revision: source.revision }, fix)
     } catch (e) {
       notify(e instanceof Error ? e.message : 'That change did not save', 'error')
     } finally { setBusy(false) }
@@ -77,7 +116,8 @@ function Remediation({ source, onChanged }: { source: WatchedSource; onChanged: 
 
           {rem.action === 'allow_render' && (
             <Button size="xs" variant="tonal" className="mt-m" loading={busy}
-              onClick={() => apply({ budget: { ...(source.budget || {}), allow_render: true } }, `${source.name} may now use the render tier`)}>
+              disabled={pending} disabledReason={HELD_CHANGE_REASON}
+              onClick={() => apply(setting('budget', 'allow_render', true), `${source.name} may now use the render tier`)}>
               Allow the render tier
             </Button>
           )}
@@ -89,13 +129,15 @@ function Remediation({ source, onChanged }: { source: WatchedSource; onChanged: 
                   ariaLabel={`Listing-page URL for ${source.name}`} />
               </span>
               <Button size="xs" variant="tonal" loading={busy}
-                disabled={!/^https?:\/\//.test(url.trim()) || url.trim() === String(source.spec?.url ?? '')}
-                disabledReason={!/^https?:\/\//.test(url.trim()) ? 'Enter a URL starting with http:// or https://' : 'That is already this source’s URL'}
-                onClick={() => apply({ spec: { ...(source.spec || {}), url: url.trim() } }, `${source.name} now watches ${url.trim()}`)}>
+                disabled={pending || !/^https?:\/\//.test(url.trim()) || url.trim() === String(source.spec?.url ?? '')}
+                disabledReason={pending ? HELD_CHANGE_REASON
+                  : !/^https?:\/\//.test(url.trim()) ? 'Enter a URL starting with http:// or https://' : 'That is already this source’s URL'}
+                onClick={() => apply(setting('spec', 'url', url.trim()), `${source.name} now watches ${url.trim()}`)}>
                 Point it here
               </Button>
             </div>
           )}
+          <StaleWriteNotice guard={guard} what="This source’s settings" className="mt-m" />
         </div>
       </div>
     </div>

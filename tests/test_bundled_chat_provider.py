@@ -981,7 +981,7 @@ def _bind_chat(*refs: str) -> None:
     )
 
 
-async def _route(handler, body: dict | None = None):
+async def _route(handler, body: dict | None = None, headers: dict[str, str] | None = None):
     import json as _json
     from unittest.mock import AsyncMock, MagicMock
 
@@ -989,6 +989,7 @@ async def _route(handler, body: dict | None = None):
     request.json = AsyncMock(return_value=body or {})
     request.match_info = {"use_case": "chat"}
     request.get = lambda *_a, **_k: "dashboard"
+    request.headers = headers or {}
     response = await handler(request)
     return _json.loads(response.body.decode())
 
@@ -1071,7 +1072,11 @@ def test_the_download_makes_it_ready_listed_and_bindable_without_a_restart(
     assert [(m["provider"], m["model_id"]) for m in listed] == [(APP_NAME, rail.model_name())]
 
     ref = f"{APP_NAME}:{rail.model_name()}"
-    bound = asyncio.run(_route(mr.api_models_active_set, {"models": [ref]}))
+    # Bound over the chain as just read, the way every binder names the copy it replaces.
+    base = asyncio.run(_route(mr.api_models_active))["revisions"]["chat"]
+    bound = asyncio.run(
+        _route(mr.api_models_active_set, {"models": [ref]}, headers={"If-Match": f'"{base}"'})
+    )
     assert bound["ok"] is True and bound["models"] == [ref]
     assert can_resolve_use_case("chat") is True
 

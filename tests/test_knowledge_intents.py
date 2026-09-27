@@ -396,8 +396,9 @@ def test_reingest_does_not_duplicate_outcome(tmp_path):
 # ── the POST endpoint's create-vs-edit split ──
 
 
-def _upsert(knowledge_store, body):
-    """Drive `POST /api/knowledge/intents` the way the panel does."""
+def _upsert(knowledge_store, body, base=None):
+    """Drive `POST /api/knowledge/intents` the way the panel does — an edit names the revision
+    of the record it replaces (*base*) in If-Match."""
     import json
     from types import SimpleNamespace
 
@@ -408,7 +409,8 @@ def _upsert(knowledge_store, body):
 
     app = web.Application()
     app["state"] = SimpleNamespace(knowledge_store=knowledge_store)
-    req = make_mocked_request("POST", "/api/knowledge/intents", app=app)
+    headers = {"If-Match": f'"{base}"'} if base is not None else {}
+    req = make_mocked_request("POST", "/api/knowledge/intents", app=app, headers=headers)
 
     async def _json():
         return body
@@ -416,6 +418,11 @@ def _upsert(knowledge_store, body):
     req.json = _json
     resp = _run(H.upsert_intent(req))
     return resp, json.loads(resp.body)
+
+
+def _revision(body, intent_id):
+    """The revision a POST's answer reports for *intent_id* — the base of the next edit."""
+    return next(i["revision"] for i in body["intents"] if i["id"] == intent_id)
 
 
 @pytest.fixture
@@ -447,7 +454,11 @@ def test_editing_an_intent_may_still_change_its_goal(knowledge_store):
     resp, body = _upsert(knowledge_store, {"goal": "track drive health"})
     intent_id = body["id"]
 
-    resp, _ = _upsert(knowledge_store, {"id": intent_id, "goal": "track drive health, weekly"})
+    resp, _ = _upsert(
+        knowledge_store,
+        {"id": intent_id, "goal": "track drive health, weekly"},
+        base=_revision(body, intent_id),
+    )
 
     assert resp.status == 201
     from personalclaw.knowledge.intents import IntentStore
@@ -606,6 +617,7 @@ def test_a_paused_intent_costs_no_model_call_on_a_retroactive_run(knowledge_stor
     resp, _ = _upsert(
         knowledge_store,
         {"id": intent_id, "goal": "track anything about drives", "enabled": False},
+        base=_revision(created, intent_id),
     )
     assert resp.status == 201
     cold = _CountingPool()
@@ -625,9 +637,12 @@ def test_pausing_an_intent_keeps_everything_it_already_gathered(knowledge_store)
     _, body = _run_intent(knowledge_store, intent_id, _CountingPool(_MATCH))
     assert body["matched"] == 1
 
-    _upsert(
-        knowledge_store, {"id": intent_id, "goal": "track anything about drives", "enabled": False}
+    paused, _ = _upsert(
+        knowledge_store,
+        {"id": intent_id, "goal": "track anything about drives", "enabled": False},
+        base=_revision(created, intent_id),
     )
+    assert paused.status == 201, "the pause must land, or this asserts nothing about a pause"
 
     assert (
         len(knowledge_store.outcomes_for_intent(intent_id)) == 1

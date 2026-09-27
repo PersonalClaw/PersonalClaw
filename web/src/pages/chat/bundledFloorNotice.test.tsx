@@ -16,7 +16,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BundledFloorNotice } from './BundledFloorNotice'
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
 import type { DownloadJob } from '../../lib/api'
 
 vi.mock('../../lib/api', async (orig) => {
@@ -29,6 +29,7 @@ vi.mock('../../lib/api', async (orig) => {
       startModelDownload: vi.fn(),
       cancelModelDownload: vi.fn(),
       setActiveModel: vi.fn(),
+      activeChain: vi.fn(),
       downloadStreamUrl: vi.fn(() => 'http://localhost/stream'),
     },
   }
@@ -38,6 +39,7 @@ const modelDownloads = vi.mocked(api.modelDownloads)
 const startModelDownload = vi.mocked(api.startModelDownload)
 const cancelModelDownload = vi.mocked(api.cancelModelDownload)
 const setActiveModel = vi.mocked(api.setActiveModel)
+const activeChain = vi.mocked(api.activeChain)
 
 const BOUND = { needs_model: false, has_model_provider: true, has_chat_binding: true }
 const FLOOR = { needs_model: false, has_model_provider: true, has_chat_binding: false }
@@ -64,6 +66,8 @@ beforeEach(() => {
   startModelDownload.mockReset()
   cancelModelDownload.mockReset().mockResolvedValue(undefined as never)
   setActiveModel.mockReset().mockResolvedValue({ ok: true } as never)
+  // Nothing bound to chat, at the revision of that empty chain — which the bind names.
+  activeChain.mockReset().mockResolvedValue({ value: [], revision: 'rev-empty' })
   // EventSource does not exist in jsdom; the hook guards construction, and these tests drive
   // job state through `modelDownloads`/`startModelDownload` rather than through a live stream.
   vi.stubGlobal('EventSource', undefined)
@@ -195,17 +199,31 @@ describe('BundledFloorNotice — a finished download becomes the chat model', ()
   it('binds it as the chat model when nothing else is bound', async () => {
     onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: [] })
     await downloadHere()
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`]))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`], 'rev-empty'))
     expect(setActiveModel).toHaveBeenCalledTimes(1)
   })
 
   it('never overwrites a chat model the user already bound', async () => {
     onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: ['openai:gpt-5'] })
+    activeChain.mockResolvedValue({ value: ['openai:gpt-5'], revision: 'rev-bound' })
     await downloadHere()
-    // The binding step ran (it re-read readiness)…
+    // The binding step ran (it read the chain live, then re-read readiness)…
     await waitFor(() => expect(onboarding.mock.calls.length).toBeGreaterThanOrEqual(3))
     // …and left the user's binding alone.
     expect(setActiveModel).not.toHaveBeenCalled()
+  })
+
+  it('a model bound elsewhere between the read and the bind is kept, and is not called a failure', async () => {
+    // The bind names the revision of the empty chain it read. Another tab (or onboarding) binding a
+    // model in between makes that stale, and the gateway refuses the write instead of replacing it:
+    // exactly "something else already is", so nothing is overwritten and nothing is reported.
+    onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: [] })
+    setActiveModel.mockRejectedValue(new ApiError('the chat model chain changed', 409, 'stale_write'))
+    await downloadHere()
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`], 'rev-empty'))
+    // Settled — it re-reads readiness afterwards — with no refusal on screen.
+    await waitFor(() => expect(onboarding.mock.calls.length).toBeGreaterThanOrEqual(3))
+    expect(screen.queryByText(/could not be set as your chat model/)).toBeNull()
   })
 
   it('says so when the binding is refused, rather than swallowing it', async () => {

@@ -25,7 +25,10 @@ import { readableErrText } from '../../lib/errText'
 import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
-import { STORED_VALUE_MASK, buildMcpEdit, buildMcpEnv, buildMcpHeaderEdit, buildMcpHeaders, envFormFields, formatArgs, headerFormText, parseArgs } from './mcpServerEnv'
+import { STORED_VALUE_MASK, buildMcpEnv, buildMcpHeaders, definitionForm, formSave, formatArgs, parseArgs, type McpServerForm } from './mcpServerEnv'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
 import { PageTitle } from '../../ui/PageTitle'
@@ -111,10 +114,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       api.toolGroups().catch(() => null),
       // Tolerated like the four above — an unreadable config must not hide the tool list — but
       // with `null`, never `[]`. `[]` was defended here as the fail-closed answer, and for the
-      // DISPLAY it was: every grant rendered off. The WRITE is the whole allowlist, though
-      // (`toggleElicitation`), so granting one server from a fabricated `[]` sent `[that one]`
-      // and revoked every other server's grant — under a confirmation that says "No other
-      // server is affected." Unknown grants disable the control instead.
+      // DISPLAY it was: every grant rendered off. But a fabricated `[]` also paints a granted
+      // server as not granted, so its switch would offer to grant what is already granted and
+      // could never revoke it. Unknown grants disable the control instead.
       api.mcpElicitationServers().catch(() => null),
     ])
     return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups, elicitationServers }
@@ -173,22 +175,21 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
   // MBR-1 — grant or revoke ONE server's right to ask the user a question mid-tool-call.
   //
-  // The wire value is the whole allowlist, so the name is spliced in or out here rather
-  // than sent as a per-server boolean: the backend field IS the list, and a server absent
-  // from it is not advertised the capability at all. Data-driven like the four toggles
-  // above (the pressed state reads the refetched list), so a failed write leaves the
-  // switch where it was instead of claiming a grant that never landed.
+  // 🔴 ONE SERVER'S GRANT, NEVER THE LIST. The allowlist used to be sent whole, with this name
+  // spliced into the page's copy of it — so a tab opened before another tab granted a server
+  // revoked that grant the moment it touched any other server, under a dialog promising "No other
+  // server is affected." The gateway now applies the one name to the stored list when the write
+  // lands, so that sentence is true whatever any other tab did. Data-driven like the four toggles
+  // above (the pressed state reads the refetched list), so a failed write leaves the switch where
+  // it was instead of claiming a grant that never landed.
   //
   // Revoking takes effect on the server's NEXT handshake — the grant is read at session
   // construction — which is why the confirmation copy says "reconnect", not "immediately".
   async function toggleElicitation(s: McpServer) {
-    // The control is disabled while this is `null`; the narrowing is what keeps the whole-list
-    // write below from ever being built out of an unread list.
+    // The control is disabled while this is `null`: which way to flip it is only known once the
+    // grants have been read.
     if (!elicitationServers) return
     const granted = elicitationServers.includes(s.name)
-    const next = granted
-      ? elicitationServers.filter((n) => n !== s.name)
-      : [...elicitationServers, s.name]
     if (!granted && !(await confirm({
       title: `Let "${s.name}" ask you questions?`,
       body: 'This MCP server will be able to interrupt its own tool calls to ask you something. '
@@ -200,7 +201,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     // consent step does not ask again. Revoking needs no consent.
     const ok = await reportingWrite(
       `${granted ? 'stop' : 'let'} "${s.name}" ${granted ? 'asking' : 'ask'} you questions`,
-      () => api.setMcpElicitationServers(next, !granted))
+      () => (granted ? api.revokeMcpElicitation(s.name) : api.grantMcpElicitation(s.name, true)))
     if (ok) setTimeout(load, 400)
   }
 
@@ -579,7 +580,8 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
                 `aria-pressed`, so the state is readable by sight and by screen reader, and
                 the accessible name states the grant rather than the verb. */}
             {/* `null` = the grants could not be read: the name claims neither state, and the
-                control is disabled, because its write is the whole allowlist (`toggleElicitation`). */}
+                control is disabled, because whether a click grants or revokes is unknown
+                (`toggleElicitation`). */}
             <SquareIconButton label={elicitationGranted === null
               ? `Questions from ${g.server.name}`
               : elicitationGranted
@@ -966,10 +968,10 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
     setSaving(true); setErr('')
     try {
       if (remote) {
-        await api.saveMcpServer(name.trim(), { transport, url: url.trim(), ...buildMcpHeaders(headers) })
+        await api.addMcpServer(name.trim(), { transport, url: url.trim(), ...buildMcpHeaders(headers) })
       } else {
         const argv = parseArgs(args)
-        await api.saveMcpServer(name.trim(), {
+        await api.addMcpServer(name.trim(), {
           transport: 'stdio',
           command: command.trim(),
           args: argv.length ? argv : undefined,
@@ -977,7 +979,14 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
         })
       }
       onAdded()
-    } catch (e) { setErr(apiErr(e)); setSaving(false) }
+    } catch (e) {
+      // The name is taken: adding replaces nothing, so the gateway will not let it replace the server
+      // already configured under that name. It used to, silently.
+      setErr((e as { code?: unknown }).code === 'revision_required'
+        ? `A server named “${name.trim()}” is already configured — edit it from its row instead.`
+        : apiErr(e))
+      setSaving(false)
+    }
   }
 
   const submitOpenai = async () => {
@@ -1061,7 +1070,7 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
               : kind === 'mcp' ? (remote ? 'Name the server and give it a URL' : 'Name the server and give it a command')
                 : "Enter the server's endpoint URL"}>Add server</Button>
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+          {err && <span role="alert" data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>
       </div>
     </Modal>
@@ -1070,6 +1079,9 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
 
 /** The Environment hint on the EDIT form: what the mask is and the three things a line can do. */
 const EDIT_ENV_HINT = `One KEY=value per line. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, type over it to replace it, or move the line to Plain values to keep it readable in mcp.json. Delete a line to remove the variable.`
+
+/** One server's definition as the edit form reads it, with the revision that read reported. */
+type McpServerRead = McpServerDefinition & { revision: string }
 
 /** Edit an existing MCP server — the Add form's fields over the same write
  *  (`PUT /api/mcp/servers/{name}`), for a server started with a command and for one at a URL. The
@@ -1080,100 +1092,100 @@ const EDIT_ENV_HINT = `One KEY=value per line. ${STORED_VALUE_MASK} is a value a
  *  app's) opens to the gateway's sentence saying why. */
 function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose: () => void; onSaved: () => void }) {
   const key = `tools:mcp-server:${name}`
-  const { data: def, error: loadErr, refresh } = useQuery<McpServerDefinition>(key, () => api.mcpServerDefinition(name))
-  const [transport, setTransport] = useState<McpTransport>('stdio')
-  const [command, setCommand] = useState('')
-  const [args, setArgs] = useState('')
-  const [env, setEnv] = useState('')
-  const [plainEnv, setPlainEnv] = useState('')
-  const [url, setUrl] = useState('')
-  const [headers, setHeaders] = useState('')
-  const [seeded, setSeeded] = useState(false)
+  const { data: def, error: loadErr, refresh } = useQuery<McpServerRead>(key, () => api.mcpServerDefinition(name))
+  // 🔴 THE DEFINITION IS SAVED WHOLE, OVER THE COPY THE FORM WAS SEEDED FROM. The form sends every field
+  // as it was seeded when it opened, so a change made since — Settings → Providers editing the same
+  // server, another tab's edit — was replaced by this copy without a word. `base` is that copy with the
+  // revision the same read reported. Seeded ONCE: a revalidation landing mid-edit must not replace what
+  // is typed, nor move the base out from under it.
+  const [base, setBase] = useState<Revisioned<McpServerForm> | null>(null)
+  const [form, setForm] = useState<McpServerForm | null>(null)
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  const seed = (d: McpServerRead) => {
+    if (!d.editable) return
+    const seeded = { value: definitionForm(d), revision: d.revision }
+    setBase(seeded)
+    setForm(seeded.value)
+  }
+  useEffect(() => { if (!base && def) seed(def) }, [def, base])
+  const guard = useStaleWriteGuard<McpServerForm>({
+    read: async () => {
+      const d = await api.mcpServerDefinition(name)
+      if (!d.editable) throw new Error(d.reason)
+      return { value: definitionForm(d), revision: d.revision }
+    },
+    write: (next, revision) => api.saveMcpServer(name, formSave(next), revision),
+    onSaved: () => { invalidateKeys(key); onSaved() },
+    // Dropping the change puts the form back on what is stored now, read afresh.
+    onDiscard: () => {
+      invalidateKeys(key)
+      api.mcpServerDefinition(name).then(seed, (e) => setErr(readableErrText(e) || "Couldn't read this server's settings."))
+    },
+  })
+  const set = <K extends keyof McpServerForm>(k: K, v: McpServerForm[K]) => setForm((f) => (f ? { ...f, [k]: v } : f))
+  const transport = form?.transport ?? 'stdio'
   const remote = transport !== 'stdio'
 
-  // Seeded ONCE from the definition: a revalidation landing mid-edit must not replace what is typed.
-  useEffect(() => {
-    if (seeded || !def || !def.editable) return
-    setTransport(def.transport)
-    if (def.transport === 'stdio') {
-      setCommand(def.command)
-      setArgs(formatArgs(def.args))
-      const fields = envFormFields(def.env)
-      setEnv(fields.secretText)
-      setPlainEnv(fields.plainText)
-    } else {
-      setUrl(def.url)
-      setHeaders(headerFormText(def.headers))
-    }
-    setSeeded(true)
-  }, [def, seeded])
-
   const submit = async () => {
-    if (remote && !url.trim()) { setErr("Enter the server's URL (e.g. https://mcp.example.com/mcp)."); return }
-    if (!remote && !command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
+    if (!form || !base) return
+    if (remote && !form.url.trim()) { setErr("Enter the server's URL (e.g. https://mcp.example.com/mcp)."); return }
+    if (!remote && !form.command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
     setSaving(true); setErr('')
-    try {
-      if (remote) {
-        await api.saveMcpServer(name, { transport, url: url.trim(), ...buildMcpHeaderEdit(headers) })
-      } else {
-        const argv = parseArgs(args)
-        await api.saveMcpServer(name, {
-          transport: 'stdio',
-          command: command.trim(),
-          args: argv.length ? argv : undefined,
-          ...buildMcpEdit(env, plainEnv),
-        })
-      }
-      invalidateKeys(key)
-      onSaved()
-    } catch (e) { setErr(readableErrText(e) || "Couldn't save the server."); setSaving(false) }
+    // A refusal keeps the form as typed, with the notice below offering the way back.
+    try { await guard.save(base, form, rebaseRecord(base.value, form)) }
+    catch (e) { setErr(readableErrText(e) || "Couldn't save the server.") }
+    finally { setSaving(false) }
   }
 
-  const editable = !!def && def.editable
+  const editable = !!def && def.editable && !!form
   return (
     <Modal title={`Edit ${name}`} icon={<Pencil size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-3">
         {!def && loadErr ? (
           <LoadError what="this server's settings" error={loadErr} onRetry={refresh} />
-        ) : !def ? (
+        ) : !def || (def.editable && !form) ? (
           <ListSkeleton rows={3} what="this server's settings" />
         ) : !def.editable ? (
           <p data-type="body-s" className="text-on-surface-low">{def.reason}</p>
-        ) : (<>
-          <Field label="Transport" hint={TRANSPORT_HINT}>
-            <Segmented value={transport} onChange={(t) => { setTransport(t as McpTransport); setErr('') }} options={TRANSPORT_OPTIONS} />
-          </Field>
-          {remote ? (<>
-            <Field label="URL" hint={URL_HINT}>
-              <TextInput value={url} onChange={setUrl} placeholder="https://mcp.example.com/mcp" size="md" surface="high" mono />
+        ) : form && (<>
+          <HeldChange guard={guard}>
+            <Field label="Transport" hint={TRANSPORT_HINT}>
+              <Segmented value={transport} onChange={(t) => { set('transport', t as McpTransport); setErr('') }} options={TRANSPORT_OPTIONS} />
             </Field>
-            <Field label="Headers" hint={EDIT_HEADERS_HINT}>
-              <TextArea value={headers} onChange={setHeaders} rows={3} placeholder="Authorization: Bearer …" mono size="md" />
-            </Field>
-          </>) : (<>
-            <Field label="Command" hint="The executable that starts the server over stdio.">
-              <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
-            </Field>
-            <Field label="Arguments" hint={ARGS_HINT}>
-              <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
-            </Field>
-            <Field label="Environment" hint={EDIT_ENV_HINT}>
-              <TextArea value={env} onChange={setEnv} rows={3} placeholder="API_KEY=sk-…" mono size="md" />
-            </Field>
-            <Field label="Plain values" hint={PLAIN_HINT}>
-              <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
-            </Field>
-          </>)}
+            {remote ? (<>
+              <Field label="URL" hint={URL_HINT}>
+                <TextInput value={form.url} onChange={(v) => set('url', v)} placeholder="https://mcp.example.com/mcp" size="md" surface="high" mono />
+              </Field>
+              <Field label="Headers" hint={EDIT_HEADERS_HINT}>
+                <TextArea value={form.headers} onChange={(v) => set('headers', v)} rows={3} placeholder="Authorization: Bearer …" mono size="md" />
+              </Field>
+            </>) : (<>
+              <Field label="Command" hint="The executable that starts the server over stdio.">
+                <TextInput value={form.command} onChange={(v) => set('command', v)} placeholder="npx" size="md" surface="high" mono />
+              </Field>
+              <Field label="Arguments" hint={ARGS_HINT}>
+                <TextInput value={form.args} onChange={(v) => set('args', v)} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
+              </Field>
+              <Field label="Environment" hint={EDIT_ENV_HINT}>
+                <TextArea value={form.env} onChange={(v) => set('env', v)} rows={3} placeholder="API_KEY=sk-…" mono size="md" />
+              </Field>
+              <Field label="Plain values" hint={PLAIN_HINT}>
+                <TextArea value={form.plainEnv} onChange={(v) => set('plainEnv', v)} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
+              </Field>
+            </>)}
+          </HeldChange>
+          <StaleWriteNotice guard={guard} what={`The server “${name}”`} />
         </>)}
         <div className="flex items-center gap-2">
-          {editable && (
-            <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…" disabled={saving || !(remote ? url : command).trim()}
-              disabledReason={saving ? undefined : remote ? 'Give the server a URL' : 'Give the server a command'}>Save</Button>
+          {editable && form && (
+            <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…"
+              disabled={saving || guard.conflict !== null || !(remote ? form.url : form.command).trim()}
+              disabledReason={saving ? undefined : guard.conflict !== null ? HELD_CHANGE_REASON
+                : remote ? 'Give the server a URL' : 'Give the server a command'}>Save</Button>
           )}
           <Button variant="ghost" size="sm" onClick={onClose}>{editable ? 'Cancel' : 'Close'}</Button>
-          {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+          {err && <span role="alert" data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>
       </div>
     </Modal>

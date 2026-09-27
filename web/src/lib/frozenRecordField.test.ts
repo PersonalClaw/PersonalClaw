@@ -95,15 +95,13 @@ function census(): string[] {
 
 /** Each remaining frozen literal, with the reason it is an operation flag and not a record field.
  *  Keyed by `<relpath>  <api call>  <prop>: <value>` — the census line verbatim. */
+//
+// (The artifact body's per-save `snapshot` flag used to be listed here from three call sites. It is
+// no longer spelled at any: `api.saveArtifactBody` / `api.snapshotArtifactBody` carry it, and
+// `lib/api.ts` is outside the census for the reason given in `census()`.)
 const OPERATION_FLAGS: Record<string, string> = {
-  'pages/artifacts/ArtifactViewer.tsx  api.updateArtifact  snapshot: false':
-    'Whether THIS save cuts a new version. Paired with `event_type: "edited"`; the artifact has no `snapshot` column.',
-  'pages/artifacts/ArtifactViewer.tsx  api.updateArtifact  snapshot: true':
-    'The Snapshot action, whose entire meaning is "version this save". Paired with `event_type: "iterated"`.',
   'pages/projects/ProjectsSection.tsx  api.createProject  name_locked: true':
     'A user who TYPED the name is the lock — it stops the LLM auto-renaming. Not frozen: the rename path re-writes it via `patch({name, name_locked: true})`.',
-  'ui/widget/WidgetFrame.tsx  api.updateArtifact  snapshot: true':
-    'Same per-save versioning flag as the viewer: a widget save always snapshots.',
   'pages/ChatPage.tsx  writeCachedDetail  running: false':
     'A synthetic seed for a just-created session in the CLIENT query cache, not a stored record — and a fact about it (nothing is running yet). `writeCachedDetail` refuses running details outright.',
   'pages/settings/FeedbackPanel.tsx  writeQuery  enabled: false':
@@ -135,7 +133,7 @@ describe('no api write freezes a record field at a literal', () => {
     // The one record this rail was written for must never appear as an exemption — by either
     // the api name or the single-writer helper the fix routed both call sites through.
     for (const key of Object.keys(OPERATION_FLAGS)) {
-      expect(key).not.toMatch(/upsertKnowledgeIntent|writeIntent/)
+      expect(key).not.toMatch(/KnowledgeIntent|writeIntent/)
     }
   })
 

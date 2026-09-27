@@ -31,8 +31,8 @@ async function openEditor() {
 
 describe('editing SKILL.md', () => {
   it('a failed read shows the failure and a retry, and Save writes nothing', async () => {
-    vi.spyOn(api, 'skillContent').mockRejectedValue(new Error('skill directory unreadable'))
-    const update = vi.spyOn(api, 'updateSkill').mockResolvedValue({ ok: true } as never)
+    vi.spyOn(api, 'skillDocument').mockRejectedValue(new Error('skill directory unreadable'))
+    const update = vi.spyOn(api, 'updateSkill').mockResolvedValue({ ok: true, revision: 'r2' })
     await openEditor()
     expect(await screen.findByRole('heading', { name: "Couldn't load your SKILL.md" })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Retry/ })).toBeInTheDocument()
@@ -43,22 +43,47 @@ describe('editing SKILL.md', () => {
   })
 
   it('a Retry that reads the file opens it for editing', async () => {
-    vi.spyOn(api, 'skillContent')
+    vi.spyOn(api, 'skillDocument')
       .mockRejectedValueOnce(new Error('skill directory unreadable'))
-      .mockResolvedValue('# Notes\nKeep them short.')
+      .mockResolvedValue({ value: '# Notes\nKeep them short.', revision: 'r1' })
     await openEditor()
     fireEvent.click(await screen.findByRole('button', { name: /Retry/ }))
     await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('# Notes\nKeep them short.'))
   })
 
-  it('a successful read saves what the user edited', async () => {
-    // The control: the whole-document write is right when the document it replaces was read.
-    vi.spyOn(api, 'skillContent').mockResolvedValue('# Notes')
-    const update = vi.spyOn(api, 'updateSkill').mockResolvedValue({ ok: true } as never)
+  it('a successful read saves what the user edited, over the revision it read', async () => {
+    // The control: the whole-document write is right when the document it replaces was read — and
+    // it names that read's revision, so a copy that went stale in the meantime is refused.
+    vi.spyOn(api, 'skillDocument').mockResolvedValue({ value: '# Notes', revision: 'r1' })
+    const update = vi.spyOn(api, 'updateSkill').mockResolvedValue({ ok: true, revision: 'r2' })
     await openEditor()
     const field = await waitFor(() => screen.getByRole('textbox') as HTMLTextAreaElement)
     fireEvent.change(field, { target: { value: '# Notes\nMore.' } })
     fireEvent.click(screen.getByRole('button', { name: /Save/ }))
-    await waitFor(() => expect(update).toHaveBeenCalledWith('notes', '# Notes\nMore.'))
+    await waitFor(() => expect(update).toHaveBeenCalledWith('notes', '# Notes\nMore.', 'r1'))
+  })
+})
+
+describe('a SKILL.md save from a stale copy', () => {
+  // The gateway rewrites skills on its own — the curator ages them, an accepted refinement lands in
+  // the overlay — so the copy the editor opened can be older than what is stored by the time it is
+  // saved. The old editor saved it anyway; the gateway now refuses it (`409 stale_write`).
+  const stale = () => Object.assign(new Error('This write replaces the skill, which changed…'), { status: 409, code: 'stale_write' })
+
+  it('is refused with the notice, and the draft stays in the editor', async () => {
+    vi.spyOn(api, 'skillDocument')
+      .mockResolvedValueOnce({ value: '# Notes\nKeep them short.', revision: 'r1' })
+      .mockResolvedValue({ value: '# Notes\nKeep them short.\n\n## Refinement v1\nCite it.', revision: 'r2' })
+    const update = vi.spyOn(api, 'updateSkill').mockRejectedValue(stale())
+    await openEditor()
+    const field = await waitFor(() => screen.getByRole('textbox') as HTMLTextAreaElement)
+    fireEvent.change(field, { target: { value: '# Notes\nKeep them short. Mine.' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/This skill changed elsewhere/)
+    expect(update).toHaveBeenCalledWith('notes', '# Notes\nKeep them short. Mine.', 'r1')
+    // Nothing the user typed was lost: it is still in the editor, which is locked until they choose.
+    const kept = screen.getByRole('textbox') as HTMLTextAreaElement
+    expect(kept.value).toBe('# Notes\nKeep them short. Mine.')
   })
 })

@@ -4,6 +4,7 @@ import asyncio
 import functools
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from aiohttp import web
@@ -16,6 +17,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
 
 from ._shared import (
@@ -53,10 +55,25 @@ def _ranking_payload(capable: Any) -> dict[str, Any]:
         return RecallRanking(vector=False, full_text_search=False, entity_graph=False).to_dict()
 
 
-async def api_memory_preferences(request: web.Request) -> web.Response:
-    """GET/PUT /api/memory/preferences."""
-    state: DashboardState = request.app["state"]
-    mem = _get_memory(state)
+async def _memory_doc(
+    request: web.Request,
+    which: str,
+    read: Callable[[Any], str],
+    write: Callable[[Any, str], None],
+) -> web.Response:
+    """GET/PUT of one markdown memory document: the read carries ``revision`` beside
+    ``content``, and the PUT — which replaces the whole document — must name it in ``If-Match``.
+
+    🔴 THE DOCUMENT IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. These files are written by
+    the gateway as well as the page — the history consolidator rewrites preferences and projects
+    and appends to history, and the agent's ``memory_remember`` tool appends a preference — so an
+    editor opened before one of those writes used to save its old copy straight over it, and what
+    the agent had just learned was gone without a word. The comparison reads with the SAME reader
+    the GET uses (for history, the multi-day composite it returns), and nothing is awaited
+    between the comparison and the write. The success response carries what is stored now, and
+    its revision, because the write can reshape it (``write_projects`` adds the header).
+    """
+    mem = _get_memory(request.app["state"])
     if request.method == "PUT":
         try:
             body = await request.json()
@@ -65,45 +82,46 @@ async def api_memory_preferences(request: web.Request) -> web.Response:
         if not isinstance(body, dict):
             return web.json_response({"error": "JSON body must be an object"}, status=400)
         content = body.get("content", "")
-        mem.write_preferences(content)
-        return web.json_response({"ok": True})
-    return web.json_response({"content": mem.read_preferences()})
+        stale = stale_write_refusal(request, read(mem), what=f"the {which} memory")
+        if stale is not None:
+            return stale
+        write(mem, content)
+        stored = read(mem)
+        return web.json_response({"ok": True, "content": stored, "revision": revision_of(stored)})
+    content = read(mem)
+    return web.json_response({"content": content, "revision": revision_of(content)})
+
+
+def _write_today_history(mem: Any, content: str) -> None:
+    """The history PUT writes today's daily file (the read is the recent-days composite)."""
+    atomic_write(mem._today_history_file(), content)
+
+
+async def api_memory_preferences(request: web.Request) -> web.Response:
+    """GET/PUT /api/memory/preferences."""
+    return await _memory_doc(
+        request,
+        "preferences",
+        lambda mem: mem.read_preferences(),
+        lambda mem, content: mem.write_preferences(content),
+    )
 
 
 async def api_memory_projects(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/projects."""
-    state: DashboardState = request.app["state"]
-    mem = _get_memory(state)
-    if request.method == "PUT":
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON"}, status=400)
-        if not isinstance(body, dict):
-            return web.json_response({"error": "JSON body must be an object"}, status=400)
-        content = body.get("content", "")
-        mem.write_projects(content)
-        return web.json_response({"ok": True})
-    return web.json_response({"content": mem.read_projects()})
+    return await _memory_doc(
+        request,
+        "projects",
+        lambda mem: mem.read_projects(),
+        lambda mem, content: mem.write_projects(content),
+    )
 
 
 async def api_memory_history(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/history — recent daily summaries."""
-    state: DashboardState = request.app["state"]
-    mem = _get_memory(state)
-    if request.method == "PUT":
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON"}, status=400)
-        if not isinstance(body, dict):
-            return web.json_response({"error": "JSON body must be an object"}, status=400)
-        content = body.get("content", "")
-        # Write to today's history file
-        today_path = mem._today_history_file()
-        atomic_write(today_path, content)
-        return web.json_response({"ok": True})
-    return web.json_response({"content": mem.read_recent_history()})
+    return await _memory_doc(
+        request, "history", lambda mem: mem.read_recent_history(), _write_today_history
+    )
 
 
 #: The `memory.*` fields this PUT writes, in the order the panel presents them. Each is

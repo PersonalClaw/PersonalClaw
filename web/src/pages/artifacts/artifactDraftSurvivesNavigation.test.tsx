@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { FileText } from 'lucide-react'
 import type { Artifact } from '../../lib/api'
+import type { DraftEntry } from '../../ui/content/ContentSurface'
 import { registerContentType } from '../../ui/content/contentTypes'
 import { ArtifactViewer } from './ArtifactViewer'
 
@@ -111,18 +112,20 @@ describe('the artifact viewer hands ContentSurface a draft store', () => {
 
   it('survives the component being unmounted and remounted', async () => {
     const first = await mountViewer()
-    const store = seen.draftStore as Map<string, { draft: string; base: string }>
+    const store = seen.draftStore as Map<string, DraftEntry>
     // Stand in for what the editor's mirror effect does on a keystroke. The real editor cannot
     // run here (see the jsdom trap above); what is under test is that the STORE outlives the
     // component, which a `useRef`-held one would not.
-    store.set(SLUG, { draft: 'Torque tables, page 4. Reconciled.', base: BODY })
+    store.set(SLUG, { draft: 'Torque tables, page 4. Reconciled.', base: { value: BODY, revision: 'r-body' } })
 
     first.unmount()
     seen = {}
     await mountViewer()
 
-    const after = seen.draftStore as Map<string, { draft: string; base: string }>
+    const after = seen.draftStore as Map<string, DraftEntry>
     expect(after.get(SLUG)?.draft).toBe('Torque tables, page 4. Reconciled.')
+    // …with the copy it was edited against, which the remounted viewer saves over.
+    await waitFor(() => expect(seen.draftBase).toEqual({ value: BODY, revision: 'r-body' }))
   })
 
   it('withholds the store on a read-only view, so a draft cannot leak into it', async () => {

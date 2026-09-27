@@ -47,7 +47,17 @@ def home(monkeypatch):
 def _call(method: str, name: str, body: dict | None = None):
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    req = make_mocked_request(method, f"/api/mcp/servers/{name}", match_info={"name": name})
+    headers = {}
+    if method == "PUT":
+        # As the Tools page saves: the edit form reads the server first and saves over that read;
+        # the Add form, on a name nobody has configured, has nothing to read
+        # (`personalclaw/stale_write.py`).
+        read = _call("GET", name)
+        if read.status == 200:
+            headers["If-Match"] = f'"{json.loads(read.text)["revision"]}"'
+    req = make_mocked_request(
+        method, f"/api/mcp/servers/{name}", headers=headers, match_info={"name": name}
+    )
 
     async def _json():
         return body

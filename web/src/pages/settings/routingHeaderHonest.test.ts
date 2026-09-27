@@ -65,8 +65,11 @@ describe('the routing panel describes what it actually does', () => {
     // Declared is not enough — it must be RENDERED, or the copy would describe a dead component.
     expect(src, 'and actually rendered by the panel').toMatch(/<RoutingPolicySection\s/)
     expect(src, 'and it must persist through the API').toMatch(/api\.setRoutingPolicy/)
-    for (const lever of ['mode', 'pin', 'order']) {
+    for (const lever of ['mode', 'pin']) {
       expect(src, `the ${lever} lever must still be written`).toMatch(new RegExp(`save\\(\\{[^}]*${lever}`))
     }
+    // The order lever replaces a class's whole order, so it has its own writer, which names the
+    // revision the order was read at.
+    expect(src, 'the order lever must still be written').toMatch(/api\.setRoutingOrder\(useCase, queryClass, next, base\)/)
   })
 })

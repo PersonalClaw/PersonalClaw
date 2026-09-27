@@ -164,8 +164,12 @@ class TestFileWrite:
     @pytest.mark.asyncio
     async def test_write_success(self, tmp_file, mock_sel, home_patch):
         async with TestClient(TestServer(_make_app())) as client:
+            # A save names the revision of the copy it replaces: the read's ETag.
+            read = await client.get(f"/api/file-read?path={tmp_file}")
             resp = await client.post(
-                "/api/file-write", json={"path": str(tmp_file), "content": "updated"}
+                "/api/file-write",
+                json={"path": str(tmp_file), "content": "updated"},
+                headers={"If-Match": read.headers["ETag"]},
             )
             assert resp.status == 200
             assert tmp_file.read_text() == "updated"
@@ -324,7 +328,9 @@ class TestOneNameContractAtBothEnds:
             assert "hi" in body
 
             written = await client.post(
-                "/api/file-write", json={"path": target, "content": "edited"}
+                "/api/file-write",
+                json={"path": target, "content": "edited"},
+                headers={"If-Match": read.headers["ETag"]},
             )
             assert (
                 written.status == 200

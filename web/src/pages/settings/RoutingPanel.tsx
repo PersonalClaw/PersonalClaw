@@ -3,6 +3,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, type RoutingPolicyRow, type RoutingProposal, type TelemetryRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
+import type { Rebase, Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
@@ -11,6 +14,7 @@ import { Field, FieldError, Select } from '../../ui/forms'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { unavailableWhen } from '../../ui/unavailable'
 import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 /** Routing & Efficiency (MODEL-ROUTING-TELEMETRY, MRT-1e + MRT-4).
  *
@@ -20,8 +24,8 @@ import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settings
  *    (p50/p95) and cost per call, one row per model that has handled this
  *    (use_case, query_class) bucket. A model is "on the frontier" when no other
  *    model beats it on all of quality, speed, and cost.
- *  · `RoutingPolicySection` below DECIDES — mode, pin and per-class order, each
- *    written through `api.setRoutingPolicy`.
+ *  · `RoutingPolicySection` below DECIDES — mode and pin written through
+ *    `api.setRoutingPolicy`, and each class's order through `api.setRoutingOrder`.
  *
  *  Until MRT-4 this surface only visualized, and both this comment and the panel's
  *  own hint said so ("Observation only: this does not change routing — that's a
@@ -184,8 +188,8 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
  *
  *  🔑 THIS IS A DIFFERENT STORE FROM EVERYTHING ELSE ON THE PAGE, and that is why the section had
  *  to exist. `RoutingPolicySection` below writes `routing_policy.json` through
- *  `api.setRoutingPolicy` (mode, pin, per-class order); these six write `config.json`'s `routing.*`
- *  through the PATCH allowlist. All six were allowlisted and read by `routing/policy.py` with NO
+ *  `api.setRoutingPolicy` (mode, pin) and `api.setRoutingOrder` (per-class order); these six
+ *  write `config.json`'s `routing.*` through the PATCH allowlist. All six were allowlisted and read by `routing/policy.py` with NO
  *  control anywhere in `web/` — so a panel that looked like it configured routing could not reach
  *  the master switch that turns routing on.
  *
@@ -411,23 +415,32 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
   }, [])
   useEffect(load, [load])
 
+  // 🔴 A CLASS'S ORDER IS SAVED WHOLE, over the revision this table read it at. A reorder swapped
+  // two entries of the order on screen and saved the result — so after another tab's reorder, or
+  // an accepted routing proposal, it put this table's old order back over theirs. A stale copy is
+  // now refused and the move — an operation, never the order — is re-applied on top of what is
+  // stored (`ui/StaleWriteNotice`).
+  const guard = useStaleWriteGuard<string[]>({
+    read: () => api.routingPolicy().then((d) => paintedOrder(d.use_cases.find((r) => r.use_case === useCase), queryClass)),
+    write: (next, base) => api.setRoutingOrder(useCase, queryClass, next, base),
+    onSaved: load,
+    onDiscard: load,
+  })
+  const conflicted = guard.conflict !== null
+
   const row = rows?.find((r) => r.use_case === useCase)
 
   // One write per interaction, then reload — the server is the authority on what the
-  // table now says (a local guess could disagree with a floored/rejected value).
-  // Returns whether the write actually landed. It swallows the error to render `note` instead of
-  // rejecting, so a caller cannot infer success from the promise settling — `move` below needs to
-  // know, because announcing a reorder that failed would be worse than announcing nothing.
-  const save = async (body: Parameters<typeof api.setRoutingPolicy>[0]): Promise<boolean> => {
+  // table now says (a local guess could disagree with a floored/rejected value). For the two
+  // single-valued levers; a reorder goes through the guard above.
+  const save = async (body: Parameters<typeof api.setRoutingPolicy>[0]) => {
     setBusy(true)
     setNote('')
     try {
       await api.setRoutingPolicy(body)
       load()
-      return true
     } catch {
       setNote("Couldn't save that — nothing changed.")
-      return false
     } finally {
       setBusy(false)
     }
@@ -448,13 +461,9 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
   }
 
   const recorded = row?.classes?.[queryClass]
-  const order = recorded?.order ?? []
   const candidates = row?.candidates ?? []
-  // The effective order shown: the recorded ranking first, then any newly-bound model.
-  const shown = [
-    ...order.filter((ref) => candidates.some((c) => c.ref === ref)),
-    ...candidates.map((c) => c.ref).filter((ref) => !order.includes(ref)),
-  ]
+  const painted = paintedOrder(row, queryClass)
+  const shown = painted.value
 
   // A reorder is a status message (WCAG 4.1.3): the only feedback is that the row visually
   // swapped, and the ranking numbers beside each row are not in any focused control's
@@ -462,12 +471,17 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
   // button. Announce the ref AND its new position, because "moved earlier" alone does not say
   // where it landed or when the end of the list has been reached.
   const move = (index: number, delta: number) => {
-    const next = [...shown]
+    const ref = shown[index]
     const target = index + delta
-    if (target < 0 || target >= next.length) return
-    ;[next[index], next[target]] = [next[target], next[index]]
-    void save({ use_case: useCase, query_class: queryClass, order: next })
-      .then((ok) => { if (ok) setMoved(`${next[target]} moved to position ${target + 1} of ${next.length}`) })
+    if (ref === undefined || target < 0 || target >= shown.length) return
+    setBusy(true)
+    setNote('')
+    // `false` is a refused stale copy — the notice below holds the move. Only a move that landed
+    // is announced, because announcing one that did not would be worse than announcing nothing.
+    void guard.apply(painted, moveEntry(ref, delta))
+      .then((ok) => { if (ok) setMoved(`${ref} moved to position ${target + 1} of ${shown.length}`) })
+      .catch(() => setNote("Couldn't save that — nothing changed."))
+      .finally(() => setBusy(false))
   }
 
   return (
@@ -546,14 +560,14 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
                         which is this helper's whole purpose. Its busy branch now also carries
                         `aria-busy`, so the two paths no longer disagree about what in-flight means. */}
                     <button type="button"
-                      {...unavailableWhen(i === 0, 'Already tried first', { busy })}
+                      {...unavailableWhen(i === 0 || conflicted, conflicted ? HELD_CHANGE_REASON : 'Already tried first', { busy })}
                       onClick={() => move(i, -1)}
                       className="grid size-7 place-items-center rounded-md text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
                       aria-label={`Move ${ref} earlier`}>
                       <ArrowUp size={13} aria-hidden />
                     </button>
                     <button type="button"
-                      {...unavailableWhen(i === shown.length - 1, 'Already tried last', { busy })}
+                      {...unavailableWhen(i === shown.length - 1 || conflicted, conflicted ? HELD_CHANGE_REASON : 'Already tried last', { busy })}
                       onClick={() => move(i, 1)}
                       className="grid size-7 place-items-center rounded-md text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
                       aria-label={`Move ${ref} later`}>
@@ -581,10 +595,40 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
           {/* A save that just failed is unrequested bad news, so it INTERRUPTS (FieldError
               carries role="alert"); the recorded-order line above it is normal status text. */}
           {note && <FieldError className="mt-s">{note}</FieldError>}
+          <StaleWriteNotice guard={guard} what="This routing order" className="mt-s" />
         </>
       )}
     </Section>
   )
+}
+
+/** Why a reorder control is unavailable while a refused move waits in the notice below it. */
+
+/** The order a class's table shows — the recorded ranking first, then any newly-bound model — with
+ *  the revision of the class's order from the SAME read, which a reorder names. */
+function paintedOrder(row: RoutingPolicyRow | undefined, queryClass: string): Revisioned<string[]> {
+  const order = row?.classes?.[queryClass]?.order ?? []
+  const candidates = row?.candidates ?? []
+  return {
+    value: [
+      ...order.filter((ref) => candidates.some((c) => c.ref === ref)),
+      ...candidates.map((c) => c.ref).filter((ref) => !order.includes(ref)),
+    ],
+    revision: row?.order_revisions?.[queryClass] ?? '',
+  }
+}
+
+/** Move `ref` one place earlier (`-1`) or later (`1`) in whatever order is stored — found by name,
+ *  so it is the same move wherever another tab put it; `null` when there is no such move left. */
+function moveEntry(ref: string, delta: number): Rebase<string[]> {
+  return (theirs) => {
+    const i = theirs.indexOf(ref)
+    const j = i + delta
+    if (i < 0 || j < 0 || j >= theirs.length) return null
+    const next = [...theirs]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    return next
+  }
 }
 
 /** The per-model efficiency table. Frontier rows are marked with a labeled badge

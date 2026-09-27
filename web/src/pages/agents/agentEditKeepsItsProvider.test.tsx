@@ -45,10 +45,10 @@ import type { SavedAgent } from '../../lib/api'
 /** An ACP-backed profile: the runtime binding lives in three fields the native builder cannot edit. */
 const ACP: SavedAgent = {
   name: 'kiro', provider: 'acp:claude-code', provider_agent: 'sonnet', acp_mode: 'acceptEdits',
-  description: 'Drives the Claude Code CLI', model: '', source: 'marketplace',
+  description: 'Drives the Claude Code CLI', model: '', source: 'marketplace', revision: 'r1',
 }
 /** The commoner case: provider never set, so it INHERITS the global default. */
-const INHERITING: SavedAgent = { name: 'scout', provider: '', description: 'follows the global', model: 'x' }
+const INHERITING: SavedAgent = { name: 'scout', provider: '', description: 'follows the global', model: 'x', revision: 'r1' }
 
 describe('draftToPayload describes no field the form cannot edit', () => {
   it('🔑 omits `provider` entirely — the key’s ABSENCE is what preserves the stored value', () => {
@@ -254,11 +254,18 @@ describe('VACUITY: the server contract and the field semantics this fix relies o
 
   it('GET /api/agents projects every profile — an acp one is not filtered out of this page', () => {
     // Why an ACP profile reaches `NativeAgentDetail` at all: the list handler has no provider filter.
-    const handler = py('dashboard/handlers/agents.py')
-      .match(/async def api_personalclaw_agents\(request[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    const src = py('dashboard/handlers/agents.py')
+    const handler = src.match(/async def api_personalclaw_agents\(request[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
     expect(handler, 'found the list handler').not.toBe('')
-    expect(handler, 'it asdict()s every entry with no provider filter').toMatch(/dataclasses\.asdict\(agent_cfg\)/)
+    // Every entry goes through the one record builder the PUT's stale check also uses…
+    expect(handler, 'it projects every entry, with no provider filter')
+      .toMatch(/for name, agent_cfg in cfg\.agents\.items\(\):\s*\n\s*record = _agent_record\(name, agent_cfg\)/)
+    const record = src.match(/def _agent_record\([\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    expect(record, 'found _agent_record').not.toBe('')
+    // …which asdict()s the whole profile.
+    expect(record, 'it asdict()s the profile').toMatch(/dataclasses\.asdict\(profile\)/)
     expect(handler, 'and filters on nothing but reservation').not.toMatch(/provider/)
+    expect(record, 'nor does the record builder').not.toMatch(/provider/)
   })
 
   it('🔑 REACHABILITY: an acp:<cli> profile is written by an ordinary Settings pick', () => {

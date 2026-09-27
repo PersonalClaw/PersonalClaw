@@ -314,7 +314,12 @@ async def test_onboarding_and_the_degraded_report_say_the_chat_provider_is_not_a
     measures nothing (the vendor's hit count does not move)."""
     async with _client() as client:
         await _create(client, "revoked", endpoint=vendor.endpoint, api_key="sk-revoked")
-        r = await client.put("/api/models/active/chat", json={"models": ["revoked:vendor-chat-1"]})
+        base = (await (await client.get("/api/models/active")).json())["revisions"]["chat"]
+        r = await client.put(
+            "/api/models/active/chat",
+            json={"models": ["revoked:vendor-chat-1"]},
+            headers={"If-Match": f'"{base}"'},
+        )
         assert r.status == 200, await r.text()
 
         hits = vendor.hits

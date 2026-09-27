@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { rowSubject } from '../../lib/rowSubject'
 import { FieldError } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
@@ -20,6 +20,18 @@ import { prereqIds } from './dag'
 import { TaskForm, toDraft, draftToPayload, type TaskDraft } from './TaskForm'
 import { accentChip } from '../../design/accent'
 import { failureSentence, reportingWrite } from '../../app/reportingWrite'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { HELD_CHANGE_REASON, isStaleWrite, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+
+/** What the edit form saves: every field, the lists whole (`draftToPayload`). */
+type TaskSave = Record<string, unknown>
+
+/** A task as the editor starts from it — what its form would save untouched — with the revision the
+ *  same read reported: the base the save names. */
+function baseOf(t: TaskItem): Revisioned<TaskSave> {
+  return { value: draftToPayload(toDraft(t)), revision: t.revision ?? '' }
+}
 
 /** Body for the task SidePanel. Owns the view↔edit toggle (edit reuses the same
  *  panel, per the directive) and the comment thread. Project-provider tasks are
@@ -39,21 +51,43 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
   const editing = editingProp && !readOnly
   const setEditing = onEditingChange
   const [draft, setDraft] = useState<TaskDraft>(() => toDraft(task))
+  // 🔴 THE FORM SAVES THE WHOLE TASK — every list replaced — OVER THE COPY ITS DRAFT WAS SEEDED FROM.
+  // A change made since (the agent's `task_update` ticking a criterion or adding a note, another tab)
+  // was put back by the next save here without a word. `base` is that copy with the revision the
+  // same read reported, seeded together with the draft and never refreshed under it; a stale save is
+  // refused and offered back (`ui/StaleWriteNotice`).
+  const [base, setBase] = useState<Revisioned<TaskSave>>(() => baseOf(task))
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  useEffect(() => { setDraft(toDraft(task)) }, [task.id]) // reset when switching tasks
+  // Seeded from the task as the panel shows it when the editor opens or closes, or another task is
+  // picked — never while it is open, where a list refresh landing mid-edit must not replace what is
+  // typed.
+  const reseed = () => { setDraft(toDraft(task)); setBase(baseOf(task)) }
+  useEffect(() => { reseed() }, [task.id, editing])
+
+  // The task as the gateway last reported it — the write's answer, or the re-read a refusal made —
+  // which is what the list is patched with once the save lands or the change is dropped. When a
+  // re-applied change turns out to be there already, nothing is sent and the re-read IS the task.
+  const stored = useRef<TaskItem | null>(null)
+  const settle = () => { const t = stored.current; stored.current = null; if (t) onSaved(t) }
+  const guard = useStaleWriteGuard<TaskSave>({
+    read: async () => { const t = await api.task(task.id, task.provider); stored.current = t; return baseOf(t) },
+    write: async (next, revision) => { stored.current = await api.saveTask(task.id, next, revision) },
+    onSaved: () => { settle(); setEditing(false) },
+    onDiscard: () => { settle(); setEditing(false); setErr('') },
+  })
 
   async function save() {
     if (!draft.title.trim()) { setErr('Title is required'); return }
     setSaving(true); setErr('')
-    try {
-      const updated = await api.updateTask(task.id, draftToPayload(draft))
-      onSaved(updated); setEditing(false)
+    const mine = draftToPayload(draft)
+    // A refusal keeps the draft and the editor open, with the notice below offering the way back.
+    try { await guard.save(base, mine, rebaseRecord(base.value, mine)) }
     // The server's refusal names what blocked the save ("cannot complete: unfinished exit criteria
     // — Copy reviewed by Sam"); the sentence around it says the save did not happen. It renders in
     // the sticky footer beside Save — see `ui/FormFooter` for why it cannot live in the form body.
-    } catch (e) { setErr(failureSentence('save this task', e)) } finally { setSaving(false) }
+    catch (e) { setErr(failureSentence('save this task', e)) } finally { setSaving(false) }
   }
   // Reverse dependencies, hoisted: the "Blocks" section below renders them and the delete dialog
   // states them, and two copies of one filter is how a count starts disagreeing with a list.
@@ -93,35 +127,55 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
     try { await api.deleteTask(task.id, task.provider); onDeleted() } catch { setErr('Delete failed') }
   }
 
-  // Inline (view-mode) toggles for exit criteria + action-plan items — tick things
-  // off as you go without entering full Edit mode. Optimistic via onSaved.
-  async function toggleExit(idx: number) {
-    if (readOnly) return
-    const next = (task.exit_criteria ?? []).map((c, i) => {
-      if (i !== idx) return c
-      const done = isExitComplete(c)
-      return { ...c, met: !done, status: !done ? 'complete' : 'incomplete' as const }
-    })
+  // Inline (view-mode) ticks for exit criteria + action-plan items — tick things off as you go
+  // without entering full Edit mode. 🔴 EACH IS ONE ITEM'S TICK, applied by the gateway to the list as
+  // stored when it lands (`api.tickTaskItem`). These used to send the WHOLE list rebuilt from this
+  // page's copy, so ticking one criterion put every other one back as the page last saw it — undoing
+  // a criterion the agent had just ticked, or dropping one another tab had added. The item is named
+  // by its text and where the page saw it, so an insert above it cannot redirect the tick; one that
+  // was edited or removed since is refused by name instead of ticking a different one.
+  //
+  // 🔴 AND THAT REFUSAL USED TO BE THE WHOLE ANSWER: the gateway's "Reload the task and tick it again"
+  // under a checklist still showing the copy that had gone stale, on a panel with nothing that reloads
+  // it. So a refused tick brings the task as stored into the panel and the list row, and says what
+  // happened in words that stay true once it has: nothing was ticked, and what is shown is what is stored.
+  async function tick(list: 'exit_criteria' | 'action_plan', idx: number, text: string, done: boolean, failed: string) {
     setErr('')
-    try { onSaved(await api.updateTask(task.id, { exit_criteria: next })) }
-    catch (e) { setErr(e instanceof Error ? e.message : 'Could not update exit criteria') }
+    try { onSaved(await api.tickTaskItem(task.id, list, idx, text, done)) }
+    catch (e) {
+      if (!isStaleWrite(e)) { setErr(e instanceof Error ? e.message : failed); return }
+      const which = text ? `“${text}”` : list === 'exit_criteria' ? 'That criterion' : 'That step'
+      try {
+        onSaved(await api.task(task.id, task.provider))
+        setErr(`${which} was changed or removed elsewhere, so nothing was ticked. This is the task as it is stored now.`)
+      } catch (r) {
+        setErr(`${which} was changed or removed elsewhere, so nothing was ticked, and the task as it is stored now couldn't be read: ${r instanceof Error ? r.message : 'unknown error'}`)
+      }
+    }
   }
-  async function toggleStep(idx: number) {
+  function toggleExit(idx: number) {
     if (readOnly) return
-    const next = (task.action_plan ?? []).map((a, i) => i === idx ? { ...a, completed: !a.completed } : a)
-    setErr('')
-    try { onSaved(await api.updateTask(task.id, { action_plan: next })) }
-    catch (e) { setErr(e instanceof Error ? e.message : 'Could not update action plan') }
+    const c = (task.exit_criteria ?? [])[idx]
+    if (c) void tick('exit_criteria', idx, c.description, !isExitComplete(c), 'Could not update exit criteria')
+  }
+  function toggleStep(idx: number) {
+    if (readOnly) return
+    const a = (task.action_plan ?? [])[idx]
+    if (a) void tick('action_plan', idx, a.content ?? a.description ?? '', !a.completed, 'Could not update action plan')
   }
 
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
-        <TaskForm draft={draft} onChange={setDraft} compact allTasks={allTasks} />
+        <HeldChange guard={guard}>
+          <TaskForm draft={draft} onChange={setDraft} compact allTasks={allTasks} />
+        </HeldChange>
+        <StaleWriteNotice guard={guard} what="This task" />
         <FormFooter error={err}>
-          <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.title.trim()}
-            disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> Save</Button>
+          {/* Cancelling a refused save drops the kept change, exactly as "Discard my change" does. */}
+          <Button variant="ghost" size="sm" onClick={() => { if (guard.conflict) guard.discard(); else { reseed(); setEditing(false); setErr('') } }}><X size={15} /> Cancel</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.title.trim() || guard.conflict !== null}
+            disabledReason={guard.conflict ? HELD_CHANGE_REASON : !draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )

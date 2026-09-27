@@ -2721,7 +2721,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // only counts while text-to-speech itself is on. A failed read leaves it off, like the phrases.
   const { data: voiceCfgRaw } = useQuery('chat:voice-config', async () => {
     const [cfg, tts] = await Promise.all([api.personalclawConfig(), api.useCaseSettings('tts')])
-    return { ...(cfg.voice as VoiceLoopConfig), speak_replies: !!tts.enabled && !!tts.auto_speak }
+    return { ...(cfg.voice as VoiceLoopConfig), speak_replies: !!tts.value.enabled && !!tts.value.auto_speak }
   }, { persist: true })
   const voiceCfg: VoiceLoopConfig = {
     confirmation_phrases: voiceCfgRaw?.confirmation_phrases?.length ? voiceCfgRaw.confirmation_phrases : DEFAULT_CONFIRMATION_PHRASES,
@@ -4740,6 +4740,17 @@ function snippetParts(snippet: string): { text: string; hit: boolean }[] {
   return parts
 }
 
+/** Tags in and out of one session — the body of `PUT .../tags` (`api.editSessionTags`). */
+type TagEdit = { add?: string[]; remove?: string[] }
+
+/** The gateway's rule for a tag edit, for the optimistic paint: the removals, then each addition
+ *  appended unless the session already carries it. */
+function applyTagEdit(tags: string[], edit: TagEdit): string[] {
+  const out = tags.filter((t) => !(edit.remove ?? []).includes(t))
+  for (const t of edit.add ?? []) if (!out.includes(t)) out.push(t)
+  return out
+}
+
 /** Dedicated sessions LIST page (#/chat/history) — search, manage, open. */
 function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) => void; query: Record<string, string>; setQuery: RouteProps['setQuery'] }) {
   // Instant-paint cache: sessions revalidate often (in-memory, persist:false);
@@ -5052,13 +5063,25 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     setSessions((prev) => prev && prev.map((s) => (s.key === key ? { ...s, folder_id: folderId || '' } : s)))
     await api.setSessionFolder(key, folderId).catch(() => load())
   }
+  // 🔴 A TAG EDIT IS ONE TAG IN OR OUT, NEVER THIS PAGE'S LIST. Both writes below used to send the
+  // session's whole tag list as this page painted it, so a tag set since — in another tab, or by the
+  // gateway's auto-tag, re-tag run or bulk tag — was dropped by the next toggle here, and nothing on
+  // either screen said so. The gateway applies the edit to the tags as stored, and its answer (the
+  // tags as stored after) replaces the optimistic paint.
+  async function editTags(key: string, edit: TagEdit, what: string) {
+    setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, tags: applyTagEdit(x.tags ?? [], edit) } : x)))
+    try {
+      const { tags } = await api.editSessionTags(key, edit)
+      setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, tags } : x)))
+    } catch (e) {
+      reportActionFailure(what)(e)
+      load()
+    }
+  }
   async function toggleTag(key: string, tagId: string) {
     const s = (sessions ?? []).find((x) => x.key === key)
-    const next = new Set(s?.tags ?? [])
-    next.has(tagId) ? next.delete(tagId) : next.add(tagId)
-    const arr = [...next]
-    setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, tags: arr } : x)))
-    await api.setSessionTags(key, arr).catch(() => load())
+    const on = (s?.tags ?? []).includes(tagId)
+    await editTags(key, on ? { remove: [tagId] } : { add: [tagId] }, on ? 'untag this chat' : 'tag this chat')
   }
   // Board drag-drop MOVE semantics: the chat leaves the SOURCE column (its tag
   // is removed) and joins the target one (its tag is added). Unrelated tags are
@@ -5069,13 +5092,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     const s = (sessions ?? []).find((x) => x.key === key)
     if (!s) return
     const cur = s.tags ?? []
-    const next = new Set(cur)
-    if (fromTagId) next.delete(fromTagId)
-    if (toTagId) next.add(toTagId)
-    const arr = [...next]
-    if (arr.length === cur.length && cur.every((t) => next.has(t))) return
-    setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, tags: arr } : x)))
-    await api.setSessionTags(key, arr).catch(() => load())
+    const edit: TagEdit = {
+      ...(fromTagId && fromTagId !== toTagId ? { remove: [fromTagId] } : {}),
+      ...(toTagId && !cur.includes(toTagId) ? { add: [toTagId] } : {}),
+    }
+    if (!edit.add && !(edit.remove && cur.includes(edit.remove[0]))) return
+    await editTags(key, edit, 'move this chat')
   }
   // Single-row lifecycle. Optimistic then reconciled by load(), matching togglePin:
   // an archive should feel instant even though the list has to re-fetch (the row is

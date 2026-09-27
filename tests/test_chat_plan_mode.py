@@ -168,9 +168,12 @@ class TestEditableMarkdownArtifact:
             sess.steps[0].artifact["structured"] = {"steps": ["a"]}
             chat_plan.write(sess, binding)
 
+            # The edit names the draft it was made on (`personalclaw/stale_write.py`).
+            read = await (await client.get("/api/chat/sessions/c1/plan-session")).json()
             r = await client.post(
                 "/api/chat/sessions/c1/plan/edit",
                 json={"step_id": "chat-plan-1", "markdown": "# my own plan"},
+                headers={"If-Match": f'"{read["session"]["steps"][0]["revision"]}"'},
             )
             assert r.status == 200
         sess, _ = chat_plan.read("c1")

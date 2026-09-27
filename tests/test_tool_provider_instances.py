@@ -246,6 +246,15 @@ def _register_fake_model_type() -> None:
         )
 
 
+async def _bind(client, use_case: str, models: list[str]):
+    """Bind the way the Models panel does: over the revision of the chain it read, since the PUT
+    replaces the whole chain (`personalclaw/stale_write.py`)."""
+    base = (await (await client.get("/api/models/active")).json())["revisions"][use_case]
+    return await client.put(
+        f"/api/models/active/{use_case}", json={"models": models}, headers={"If-Match": f'"{base}"'}
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_model_instance_is_bindable_at_once_and_unbindable_once_removed(tmp_path):
     """#3372's guarantee, on the store chat reads: no restart between add and bind, and a
@@ -265,11 +274,11 @@ async def test_a_model_instance_is_bindable_at_once_and_unbindable_once_removed(
         )
         assert r.status == 200, await r.text()
 
-        r = await client.put("/api/models/active/chat", json={"models": ["local-models:m1"]})
+        r = await _bind(client, "chat", ["local-models:m1"])
         assert r.status == 200, await r.text()
 
         r = await client.delete("/api/model-providers/local-models")
         assert r.status == 200, await r.text()
         assert "local-models" not in (_known_provider_names() or set())
-        r = await client.put("/api/models/active/chat", json={"models": ["local-models:m1"]})
+        r = await _bind(client, "chat", ["local-models:m1"])
         assert r.status == 400, await r.text()

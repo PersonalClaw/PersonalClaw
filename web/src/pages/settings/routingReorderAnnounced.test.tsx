@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, waitFor, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { RoutingPanel } from './RoutingPanel'
@@ -19,10 +19,11 @@ import { RoutingPanel } from './RoutingPanel'
 //
 // Two details are load-bearing:
 //
-//   · The announcement is gated on the write SUCCEEDING. `save()` swallows its error to render
-//     `note` instead of rejecting, so its promise settles either way; it now returns a boolean and
-//     `move` announces only on `true`. Announcing a reorder that the server rejected would be worse
-//     than silence, and the failure path already interrupts via `FieldError`'s `role="alert"`.
+//   · The announcement is gated on the write LANDING. The move saves through the stale-write guard,
+//     whose `apply` resolves `true` only when the order was stored — `false` when the gateway refused
+//     a stale copy, which the notice then holds — and whose rejection renders `note`. `move`
+//     announces only on `true`. Announcing a reorder that the server rejected would be worse than
+//     silence, and the failure path already interrupts via `FieldError`'s `role="alert"`.
 //   · The region is always mounted and empty at rest, for the same reason `ResultAnnouncement`
 //     records: a live region created at the moment its content appears is not reliably observed.
 
@@ -31,16 +32,19 @@ const ROWS = [
     use_case: 'reasoning', mode: 'off', pin: '',
     candidates: [{ ref: 'local:qwen', local: true }, { ref: 'cloud:opus', local: false }],
     classes: { short_chat: { order: ['local:qwen', 'cloud:opus'], basis: { source: 'manual' } } },
+    order_revisions: { short_chat: 'r1' },
   },
 ]
 
 const setRoutingPolicy = vi.fn((_body: unknown) => Promise.resolve({}))
+const setRoutingOrder = vi.fn((..._a: unknown[]) => Promise.resolve({}))
 const routingPolicy = vi.fn(() => Promise.resolve({ enabled: true, use_cases: ROWS }))
 
 vi.mock('../../lib/api', () => ({
   api: {
     routingPolicy: () => routingPolicy(),
     setRoutingPolicy: (b: unknown) => setRoutingPolicy(b as never),
+    setRoutingOrder: (...a: unknown[]) => setRoutingOrder(...a),
     modelsTelemetry: () => Promise.resolve({ rows: [] }),
     // The panel gained a third read (the MRT-5 proposal queue). A module mock has to answer every
     // call the component makes: an absent key is `undefined()`, which throws inside the effect and
@@ -86,7 +90,10 @@ function politeRegionsOfPolicySection(container: HTMLElement): Element[] {
 }
 
 describe('a routing reorder is announced', () => {
-  beforeEach(() => { setRoutingPolicy.mockClear(); setRoutingPolicy.mockImplementation(() => Promise.resolve({})) })
+  beforeEach(() => {
+    setRoutingPolicy.mockClear(); setRoutingPolicy.mockImplementation(() => Promise.resolve({}))
+    setRoutingOrder.mockClear(); setRoutingOrder.mockImplementation(() => Promise.resolve({}))
+  })
 
   it('the section mounts a polite status region, empty at rest', async () => {
     const { container } = renderPanel()
@@ -107,14 +114,14 @@ describe('a routing reorder is announced', () => {
       // "position 2 of 2" — the number is the point: "moved later" alone does not say where it landed.
       expect(sr!.textContent).toBe('local:qwen moved to position 2 of 2')
     })
-    expect(setRoutingPolicy).toHaveBeenCalledWith(
-      expect.objectContaining({ use_case: 'reasoning', query_class: 'short_chat', order: ['cloud:opus', 'local:qwen'] }),
-    )
+    // Saved over the revision of the order the table painted.
+    expect(setRoutingOrder).toHaveBeenCalledWith('reasoning', 'short_chat', ['cloud:opus', 'local:qwen'], 'r1')
   })
 
   it('a FAILED move announces nothing', async () => {
-    // The whole reason `save` returns a boolean. The error path has its own role="alert".
-    setRoutingPolicy.mockImplementation(() => Promise.reject(new Error('nope')))
+    // The whole reason the announcement waits for the write's outcome. The error path has its own
+    // role="alert".
+    setRoutingOrder.mockImplementation(() => Promise.reject(new Error('nope')))
     const { container } = renderPanel()
     const later = await waitFor(() => screen.getByRole('button', { name: 'Move local:qwen later' }))
     await act(async () => { later.click() })
@@ -124,11 +131,27 @@ describe('a routing reorder is announced', () => {
     expect(sr!.textContent, 'a rejected write must not claim the move happened').toBe('')
   })
 
-  it('save reports success, so the announcement cannot be inferred from settling', () => {
-    // Guard the mechanism, not just the outcome: if `save` ever stops returning a boolean, the
-    // `.then(ok => ...)` gate silently becomes "announce always" again.
+  it('the move reports whether it landed, so the announcement cannot be inferred from settling', () => {
+    // Guard the mechanism, not just the outcome: the announcement hangs off the boolean the guard's
+    // `apply` resolves. If the gate ever stops reading it, `.then(...)` silently becomes "announce
+    // always" again — including for a stale copy the gateway refused.
     const src = readFileSync(join(process.cwd(), 'src/pages/settings/RoutingPanel.tsx'), 'utf8')
-    expect(src).toMatch(/Promise<boolean>/)
-    expect(src).toMatch(/\.then\(\(ok\) => \{ if \(ok\)/)
+    expect(src).toMatch(/guard\.apply\(painted, moveEntry\(ref, delta\)\)\s*\.then\(\(ok\) => \{ if \(ok\)/)
+  })
+
+  it('a move from a stale copy is refused: the notice keeps it and nothing is announced', async () => {
+    // Another tab reordered this class (or a routing proposal was accepted) after the table read it.
+    setRoutingOrder.mockImplementation(() => Promise.reject(
+      Object.assign(new Error('This write replaces the reasoning routing order…'), { status: 409, code: 'stale_write' })))
+    const { container } = renderPanel()
+    const later = await waitFor(() => screen.getByRole('button', { name: 'Move local:qwen later' }))
+    await act(async () => { later.click() })
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/This routing order changed elsewhere/)
+    expect(within(alert).getByRole('button', { name: 'Review the difference' })).toBeTruthy()
+    // The refused save named the revision the table painted, and no move was claimed.
+    expect(setRoutingOrder.mock.calls[0]).toEqual(['reasoning', 'short_chat', ['cloud:opus', 'local:qwen'], 'r1'])
+    const sr = politeRegionsOfPolicySection(container).find((r) => r.className.includes('sr-only'))
+    expect(sr!.textContent, 'a refused move must not be announced').toBe('')
   })
 })

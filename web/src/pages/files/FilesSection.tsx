@@ -20,7 +20,8 @@ import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { useFileRoots, useDirCache, useGitStatus } from './filesData'
 import { FileTree } from './browse/FileTree'
-import { FileViewer, type FileViewerHandle } from './browse/FileViewer'
+import { FileViewer, type FileViewerHandle, type SaveAsArtifact } from './browse/FileViewer'
+import type { DraftEntry } from '../../ui/content/ContentSurface'
 import { PathBar } from './browse/PathBar'
 import { useFileTabs } from './browse/useFileTabs'
 import { newSessionTarget } from '../../ui/content/commentTarget'
@@ -83,7 +84,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   // remount of a keyed viewer — a rename re-points the tab to a new path, which is a
   // new key — discarded an unsaved edit silently. Lifecycle matches the Code cockpit:
   // a confirmed close is a discard (purge), a rename moves the entry with the file.
-  const draftStore = useRef(new Map<string, { draft: string; base: string; warned?: boolean }>()).current
+  const draftStore = useRef(new Map<string, DraftEntry>()).current
   const closeTab = useCallback(async (path: string) => {
     if (await fileTabs.close(path)) draftStore.delete(path)
   }, [fileTabs, draftStore])
@@ -112,7 +113,8 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   // with the composer attach). Cleared when the batch settles.
   const uploadAbortRef = useRef<AbortController | null>(null)
   const [rootDrop, setRootDrop] = useState(false)
-  const [artModal, setArtModal] = useState<{ entry: FsEntry; content: string; name: string } | null>(null)
+  // `save` is the viewer's own: it sends the draft over the copy it was built from (`FileViewer`).
+  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact; name: string } | null>(null)
 
   // File-backed artifact paths — the drift badge in the tree. The full artifact
   // surface lives at #/artifacts; Files only needs to know WHICH paths are backed.
@@ -187,14 +189,23 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     return () => window.removeEventListener('keydown', onKey)
   }, [fileTabs.activePath])
 
-  const saveAsArtifact = (entry: FsEntry, content: string) => setArtModal({ entry, content, name: baseName(entry.path) })
+  const saveAsArtifact = (entry: FsEntry, save: SaveAsArtifact) => setArtModal({ entry, save, name: baseName(entry.path) })
   const confirmArtifact = async () => {
     if (!artModal || !artModal.name.trim()) return
+    const { entry, save, name } = artModal
     try {
-      const created = await api.createArtifact({ name: artModal.name.trim(), content: artModal.content, source: 'manual', source_path: artModal.entry.path, kind: guessKind(artModal.entry.name) })
-      setArtModal(null); await loadArtifacts()
-      // The artifact surface is its own page now — jump to the saved artifact there.
-      navigate(`artifacts/${created.slug}`)
+      // What a created artifact leads to lives IN the create, not after `save` resolves: a create
+      // refused because the file changed since the draft's copy was read is held under the viewer's
+      // notice, and when the user re-applies it there it lands without this handler — which used to
+      // leave the artifact made and the user told nothing.
+      await save((content, base) =>
+        api.saveFileAsArtifact({ name: name.trim(), content, source_path: entry.path, kind: guessKind(entry.name) }, base)
+          .then(async (created) => {
+            await loadArtifacts()
+            // The artifact surface is its own page now — jump to the saved artifact there.
+            navigate(`artifacts/${created.slug}`)
+          }))
+      setArtModal(null)
     } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
   }
 
@@ -367,7 +378,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                   so the header still read "Gateway connected"). Tabs persist to localStorage, so
                   a reload re-opened the streams and landed re-wedged.
                   An unmounted tab loses nothing: `draftStore` (below) carries its unsaved edit
-                  and the concurrent-edit flag across the remount — that store exists for exactly
+                  and the copy it was built from across the remount — that store exists for exactly
                   this lifecycle, and the cockpit has relied on it since issue 2279. */}
               <div className="relative min-h-0 flex-1">
                 {!fileTabs.active ? (

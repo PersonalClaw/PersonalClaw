@@ -252,7 +252,11 @@ to a rule:
 
 Rules live in `entity_settings/notification_rules.json` with a guarded
 `PUT /api/notifications/rules`; the matrix is Settings → Notifications →
-Per-kind delivery. **Rules refine delivery for notifications that already
+Per-kind delivery. A rule's two lists change one entry per write —
+`targets: {"add"|"remove": name}`, `conditions.keywords: {"add"|"remove": keyword}` —
+applied to the rule as stored at that moment, and never as a whole list, so a save
+from a matrix opened before another tab's edit (or before the phone turned push on,
+`ensure_target`) cannot undo it. **Rules refine delivery for notifications that already
 passed the gate — they can never resurrect a suppressed one**, so `mute_all`
 still means mute. Every failure path (missing file, malformed JSON, unknown
 mode/target) falls back to the registry default, which is `immediate`: a policy

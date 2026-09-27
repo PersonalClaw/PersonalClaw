@@ -39,6 +39,7 @@ from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.provider_bridge import agent_model_problem
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
+from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
 
 def config_dir() -> Path:
@@ -277,11 +278,27 @@ async def api_themes_create(request: web.Request) -> web.Response:
         "light": _strip_to_allowed_vars(body.get("light", {})),
     }
     target.write_text(json.dumps(theme_data, indent=2) + "\n", encoding="utf-8")
-    return web.json_response({"ok": True, "slug": slug, "theme": theme_data})
+    # The new theme's revision, so the editor that just saved it can update it in place next.
+    return web.json_response(
+        {"ok": True, "slug": slug, "theme": theme_data, "revision": revision_of(theme_data)}
+    )
+
+
+def _stored_theme(target: Path) -> dict | None:
+    """The theme file's record as the read hands it out, or ``None`` when it cannot be read."""
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 async def api_theme_detail(request: web.Request) -> web.Response:
-    """GET/PUT/DELETE /api/themes/{slug} — get, update, or delete a custom theme."""
+    """GET/PUT/DELETE /api/themes/{slug} — get, update, or delete a custom theme.
+
+    A theme is one document — ``PUT`` rebuilds all of it from the body — so ``GET`` carries its
+    ``revision`` and ``PUT`` must name it in ``If-Match`` (`personalclaw/stale_write.py`).
+    """
     slug = request.match_info["slug"]
     # Sanitize slug to prevent path traversal
     safe_slug = re.sub(r"[^a-z0-9\-]", "", slug)
@@ -313,11 +330,20 @@ async def api_theme_detail(request: web.Request) -> web.Response:
             body.get("emoji", _THEME_DEFAULT_EMOJI).strip()[:_THEME_EMOJI_MAX_LEN]
             or _THEME_DEFAULT_EMOJI
         )
-        # Preserve created_at from existing file
-        try:
-            existing = json.loads(target.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            existing = {}
+        # 🔴 A THEME IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. "Update theme" sends the
+        # name and emoji the Design panel loaded and the colors this browser holds, so a theme
+        # renamed or recolored since — in another tab, or pulled from another device by sync —
+        # was replaced by this page's copy without a word. Read and compared with no `await`
+        # before the write, so nothing can land between the two. A theme that cannot be read
+        # cannot be compared, so it is not written over either.
+        existing = _stored_theme(target)
+        if existing is None:
+            if not target.exists():
+                return web.json_response({"error": "not found"}, status=404)
+            return web.json_response({"error": "failed to read theme"}, status=500)
+        stale = stale_write_refusal(request, existing, what=f"the theme {safe_slug!r}")
+        if stale is not None:
+            return stale
         theme_data = {
             "name": name,
             "slug": safe_slug,
@@ -327,16 +353,17 @@ async def api_theme_detail(request: web.Request) -> web.Response:
             "light": _strip_to_allowed_vars(body.get("light", {})),
         }
         target.write_text(json.dumps(theme_data, indent=2) + "\n", encoding="utf-8")
-        return web.json_response({"ok": True, "theme": theme_data})
+        return web.json_response(
+            {"ok": True, "theme": theme_data, "revision": revision_of(theme_data)}
+        )
 
     # GET
     if not target.exists():
         return web.json_response({"error": "not found"}, status=404)
-    try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = _stored_theme(target)
+    if data is None:
         return web.json_response({"error": "failed to read theme"}, status=500)
-    return web.json_response(data)
+    return web.json_response({**data, "revision": revision_of(data)})
 
 
 # ── Agent Config ──
@@ -952,22 +979,40 @@ def _unavailable_agent_name(name: str) -> str | None:
     return None
 
 
-async def api_personalclaw_agents(request: web.Request) -> web.Response:
-    """GET /api/agents — list all PersonalClaw agent definitions."""
+def _agent_record(name: str, profile: AgentProfile) -> dict[str, Any]:
+    """One agent as ``GET /api/agents`` lists it — and the document ``PUT /api/agents/{name}``
+    compares a record write's base against, built by this one function so the revision a read
+    hands out and the one a write is checked against always describe the same thing."""
     from personalclaw.agents.defaults import is_reserved_agent
 
+    return {
+        "name": name,
+        **dataclasses.asdict(profile),
+        "reserved": is_reserved_agent(name),
+        "editable": not is_reserved_agent(name),
+    }
+
+
+async def api_personalclaw_agents(request: web.Request) -> web.Response:
+    """GET /api/agents — list all PersonalClaw agent definitions.
+
+    Each record carries its ``revision``: the agent editor saves the whole profile it painted,
+    so that write names the revision it was built from (`personalclaw/stale_write.py`).
+    """
     cfg = AppConfig.load()
-    agents = [
-        {
-            "name": name,
-            **dataclasses.asdict(agent_cfg),
-            "reserved": is_reserved_agent(name),
-            "editable": not is_reserved_agent(name),
-            # The pin is KEPT; this says it cannot run, where the pin was chosen and the fix is.
-            "model_unavailable": agent_model_problem(agent_cfg, cfg),
-        }
-        for name, agent_cfg in cfg.agents.items()
-    ]
+    agents = []
+    for name, agent_cfg in cfg.agents.items():
+        record = _agent_record(name, agent_cfg)
+        agents.append(
+            {
+                **record,
+                "revision": revision_of(record),
+                # The pin is KEPT; this says it cannot run, where the pin was chosen and the fix
+                # is. Not part of the revision: it is derived from the models set up, not edited
+                # here, so a model going away must not refuse a save of this profile.
+                "model_unavailable": agent_model_problem(agent_cfg, cfg),
+            }
+        )
     return web.json_response(
         {
             "agents": agents,
@@ -1358,7 +1403,15 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
 
 
 async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
-    """PUT /api/agents/{name} — update a PersonalClaw agent."""
+    """PUT /api/agents/{name} — update a PersonalClaw agent.
+
+    Sets each profile field present in the body. A body that sets several fields, or a list
+    (``skills``/``tools``/``triggers``), is a RECORD write — the agent editor's whole form, built
+    from the profile it read — so it must name that read's ``revision`` in ``If-Match``, and a
+    stale one is refused with ``409 stale_write`` (`personalclaw/stale_write.py`). One scalar
+    field alone (the reserved agents' model picker sends only ``model``) is the edit the user made
+    and needs none, the config PATCH's rule for a scalar.
+    """
 
     name = request.match_info["name"]
     try:
@@ -1389,6 +1442,9 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         staged = _staged_agent_fields(body)
     except ConfigValueError as exc:
         return _agent_write_refusal(exc)
+    record_write = len(staged) > 1 or any(
+        _AGENT_FIELD_SPECS[key]["type"] == "str_list" for key in staged
+    )
 
     def update(cfg: AppConfig) -> tuple[AgentProfile, bool]:
         if name not in cfg.agents:
@@ -1396,6 +1452,28 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
                 web.json_response({"error": f"Agent '{name}' not found"}, status=404)
             )
         agent = cfg.agents[name]
+        if record_write:
+            # 🔴 A PROFILE IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The editor sends every
+            # field it shows, the untouched ones as it read them, so a change made since — the
+            # chat's "Always allow for this agent", a skill ticked in another tab, the CLI — was
+            # reverted by the next save here without a word. Against the agent as it is at the
+            # write, in the config transaction, and before the consent check: a stale save is
+            # refused whatever it would change, and asking the owner to consent to one would be
+            # asking about the wrong profile.
+            stale = stale_write_refusal(
+                request, _agent_record(name, agent), what=f"the agent {name!r}"
+            )
+            if stale is not None:
+                raise RefusedInConfigTransaction(
+                    stale,
+                    audit={
+                        "caller": request.get("user", "dashboard"),
+                        "operation": "agent.update",
+                        "outcome": "denied",
+                        "source": "dashboard",
+                        "resources": f"{name}: stale base",
+                    },
+                )
         # Against the agent as it is at the write, in the config transaction.
         unconsented = _unconsented_agent_loosening(name, staged, dataclasses.asdict(agent), body)
         if unconsented is not None:
@@ -1414,6 +1492,10 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
     # deterministic rather than request-order dependent.
     changed = list(staged)
     _agent_edited(request, name, agent.provider_agent, is_default=is_default)
+    # The revision of the profile as this write stored it, which a profile's lossless config round
+    # trip makes the one the next read reports. Not re-read: a read after the transaction could
+    # hand out the revision of a later writer's change this page never saw.
+    saved = _agent_record(name, agent)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="agent.update",
@@ -1421,7 +1503,7 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"{name} ({','.join(changed)})",
     )
-    return web.json_response({"ok": True, "name": name})
+    return web.json_response({"ok": True, "name": name, "revision": revision_of(saved)})
 
 
 def _agent_edited(
@@ -1518,16 +1600,25 @@ def _regen_orchestrator() -> None:
 
 
 async def api_agent_metadata_get(request: web.Request) -> web.Response:
-    """GET /api/agent-metadata/{name} — read agent routing metadata."""
+    """GET /api/agent-metadata/{name} — read agent routing metadata.
+
+    With the note's ``revision``: the editor saves the whole note, so that write names the
+    revision it was built from.
+    """
     name = request.match_info["name"]
     from personalclaw.agent_metadata import load  # noqa: F811
 
     content = load(name)
-    return web.json_response({"name": name, "content": content})
+    return web.json_response({"name": name, "content": content, "revision": revision_of(content)})
 
 
 async def api_agent_metadata_put(request: web.Request) -> web.Response:
-    """PUT /api/agent-metadata/{name} — write agent routing metadata."""
+    """PUT /api/agent-metadata/{name} — write agent routing metadata.
+
+    The note is replaced whole, so replacing a stored one needs the revision it was read at in
+    ``If-Match`` (`personalclaw/stale_write.py`); writing the first note for an agent replaces
+    nothing and needs none. The response carries the note as stored afterwards and its revision.
+    """
     caller = request.get("user", "")
     if not caller:
         try:
@@ -1565,8 +1656,27 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
         )
     body = await json_object_body(request)
     content = string_field(body, "content")
-    from personalclaw.agent_metadata import delete, save  # noqa: F811
+    from personalclaw.agent_metadata import delete, load, save  # noqa: F811
 
+    # 🔴 A NOTE IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. The editor sends the whole note
+    # as typed into the copy it read, so a note changed since — in another tab, or seeded by the
+    # orchestrator from the agent's description — was overwritten without a word. No `await`
+    # between this read and the write below. Nothing stored and no revision named is the agent's
+    # first note: a create, which replaces nothing.
+    stored = load(name)
+    if stored or claimed_revision(request):
+        stale = stale_write_refusal(request, stored, what=f"the routing note for {name!r}")
+        if stale is not None:
+            try:
+                _sel().log_api_access(
+                    caller=caller,
+                    operation="agent_metadata.put",
+                    outcome="denied",
+                    resources=f"{name}: stale base",
+                )
+            except Exception:
+                logger.warning("SEL logging failed", exc_info=True)
+            return stale
     if not content:
         # Clearing the field is the natural way to say "this agent has no routing
         # note" — the empty state is already supported everywhere else (load()
@@ -1587,7 +1697,13 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
         )
     except Exception:
         logger.warning("SEL logging failed", exc_info=True)
-    return web.json_response({"ok": True, "name": name})
+    # As stored NOW, not as sent: with the orchestrator skill on, `_regen_orchestrator` re-seeds
+    # a missing note from the agent's description, so a cleared note can already hold text
+    # again, and the editor must show — and next save over — what is actually there.
+    now = load(name)
+    return web.json_response(
+        {"ok": True, "name": name, "content": now, "revision": revision_of(now)}
+    )
 
 
 async def api_agent_metadata_delete(request: web.Request) -> web.Response:

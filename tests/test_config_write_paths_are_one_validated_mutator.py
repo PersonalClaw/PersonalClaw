@@ -324,6 +324,15 @@ async def test_projection_rule_tail_true_is_refused_not_stored_as_one(cfg_file):
     assert unchanged, "tail:true was coerced to 1 and written anyway"
 
 
+def _based_on(path: str) -> dict[str, str]:
+    """The `If-Match` a whole-list write carries: the revision of the list it replaces, read from
+    what is stored (`personalclaw/stale_write.py`)."""
+    from personalclaw.dashboard.handlers.core import _value_in_effect
+    from personalclaw.stale_write import revision_of
+
+    return {"If-Match": revision_of(_value_in_effect(path))}
+
+
 @pytest.mark.asyncio
 async def test_projection_rule_a_real_tail_count_still_writes(cfg_file):
     """Vacuity for the test above: a real count must still work."""
@@ -334,6 +343,7 @@ async def test_projection_rule_a_real_tail_count_still_writes(cfg_file):
                 "path": "tools.projection_rules",
                 "value": [{"name": "b", "match_regex": "x", "strategy": "log", "tail": 3}],
             },
+            headers=_based_on("tools.projection_rules"),
         )
         assert resp.status == 200, await resp.text()
     assert _section(cfg_file, "tools")["projection_rules"][0]["tail"] == 3
@@ -371,6 +381,7 @@ async def test_a_real_skill_catalog_url_still_writes(cfg_file):
                 "path": "packs.skill_catalogs",
                 "value": [{"name": "k", "url": "https://example.com/index.json"}],
             },
+            headers=_based_on("packs.skill_catalogs"),
         )
         assert resp.status == 200, await resp.text()
     assert _section(cfg_file, "packs")["skill_catalogs"][0]["url"] == (

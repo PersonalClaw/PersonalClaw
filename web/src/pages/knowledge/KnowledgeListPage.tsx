@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
 import { BookOpen, FileClock, Filter, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, Pencil, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -16,7 +16,10 @@ import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
+import { api, type KnowledgeIntent, type KnowledgeIntentRecord, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem, failedEnrichment, regenerateQueuedSentence } from './knowledgeMeta'
 import { readingTimeLabel } from './readingTime'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
@@ -962,29 +965,47 @@ function blankIntent(): KnowledgeIntent {
   return { id: '', goal: '', enabled: true, enabled_for: [], propose_skill: false }
 }
 
+/** The record an intent write replaces, from the copy this page holds — each field read the way
+ *  the backend defaults it (`enabled=bool(d.get("enabled", True))`), so an absent one is written
+ *  back as the value it already means. `outcome_count` is list decoration, not part of the record,
+ *  and so is `revision`: it describes the record, it is not in it. */
+function intentRecord(it: KnowledgeIntent): KnowledgeIntentRecord {
+  return {
+    id: it.id, goal: it.goal ?? '', enabled: it.enabled !== false,
+    enabled_for: it.enabled_for ?? [], propose_skill: !!it.propose_skill,
+  }
+}
+
 /** THE single writer for an intent — every surface that changes one goes through here.
  *
  *  `POST /api/knowledge/intents` is a WHOLE-RECORD upsert keyed on the id, not a PATCH, so
- *  each caller has to resend the fields it is not changing. Two callers hand-assembling
- *  that body is how `enabled: true` came to be hard-coded in the editor's save: the field
- *  was spelled as a literal because the editor had no control bound to it, and nothing
- *  else wrote intents at all, so `enabled: false` was unreachable through the entire
- *  product even though the backend and the data model both support it.
+ *  every write resends the fields it is not changing. Two callers hand-assembling that body
+ *  is how `enabled: true` came to be hard-coded in the editor's save: the field was spelled as
+ *  a literal because the editor had no control bound to it, and nothing else wrote intents at
+ *  all, so `enabled: false` was unreachable through the entire product even though the
+ *  backend and the data model both support it. So a caller hands over the WHOLE record —
+ *  `intentRecord` of the copy it read, its change applied — and a field added to `Intent`
+ *  later cannot be silently dropped or frozen by one call site and not the other.
  *
- *  Spreading the record and then the patch means a caller states ONLY what it changes, and
- *  a field added to `Intent` later cannot be silently dropped or frozen by one call site
- *  and not the other. `outcome_count` is list decoration, not part of the record, and the
- *  backend's `from_dict` ignores it. */
-function writeIntent(intent: KnowledgeIntent, patch: Partial<KnowledgeIntent>) {
-  return api.upsertKnowledgeIntent({
-    // A new intent omits the id so the backend derives the slug from the goal (single
-    // source of truth); an edit sends it, which is what selects the update path.
-    id: intent.id || undefined,
-    goal: intent.goal,
-    enabled: intent.enabled,
-    enabled_for: intent.enabled_for ?? [],
-    propose_skill: intent.propose_skill,
-    ...patch,
+ *  🔴 AND AN EDIT IS WRITTEN ONLY OVER THE RECORD IT WAS BUILT FROM. It sends the id (which is
+ *  what selects the update path) and names the `revision` of the copy its record came from, so a
+ *  record another tab changed — or deleted — since is refused with `409 stale_write` instead of
+ *  overwritten; the caller's `useStaleWriteGuard` turns that into the reapply notice. An edit
+ *  with no revision is refused too (`428`), which is what a page that never read one should
+ *  hear. A new intent omits the id so the backend derives the slug from the goal (the single
+ *  source of truth), and replaces nothing, so it names no revision. */
+function writeIntent(record: KnowledgeIntentRecord, base?: string) {
+  const { id, ...fields } = record
+  return id ? api.saveKnowledgeIntent(record, base ?? '') : api.createKnowledgeIntent(fields)
+}
+
+/** The intent *id* as stored now, with the revision the same read reported — what a refused edit
+ *  is re-applied onto. */
+function readIntent(id: string): Promise<Revisioned<KnowledgeIntentRecord>> {
+  return api.knowledgeIntents().then((r) => {
+    const now = r.intents.find((it) => it.id === id)
+    if (!now) throw new Error('the intent no longer exists')
+    return { value: intentRecord(now), revision: now.revision ?? '' }
   })
 }
 
@@ -1008,6 +1029,21 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
   const load = () => api.knowledgeIntents()
     .then((r) => { setIntentsErr(null); setIntents(r.intents) })
     .catch((e) => { setIntentsErr(e); setIntents([]) })
+  // 🔴 A ROW SWITCH WRITES THE WHOLE RECORD, built from this list's copy of it. A list opened before
+  // another tab reworded, retyped or paused an intent used to write that change away the moment its
+  // own switch was flipped. The write now names the revision the list read the intent at, a stale
+  // one is refused, and the pause — an operation on the record, never the record itself — is
+  // re-applied on top of what is stored (`ui/StaleWriteNotice`).
+  // Which intent the pending write is for, and the line its success owes: refs, because a write
+  // re-applied from the notice lands after the switch's handler has returned.
+  const pendingId = useRef('')
+  const done = useRef('')
+  const guard = useStaleWriteGuard<KnowledgeIntentRecord>({
+    read: () => readIntent(pendingId.current),
+    write: (next, base) => writeIntent(next, base),
+    onSaved: () => { notify(done.current, 'success'); load() },
+    onDiscard: () => { load() },
+  })
   useEffect(() => { load() }, [reloadKey])
   // Deep-link / refresh restore: when the URL names ?intent=<id> but the parent has
   // no resolved object yet, hand it the matching intent from the loaded list so the
@@ -1027,6 +1063,8 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
   return (
     <div className="flex flex-col gap-s">
       <p data-type="body-s" className="text-on-surface-low">Tell PersonalClaw what to watch for in plain language. As you save items, it gathers what matches — with the specifics extracted as structured fields. Click an intent to see everything it found, or add one with “New intent”.</p>
+      {/* Named, because the switch that made the refused write is one row among many. */}
+      <StaleWriteNotice guard={guard} what={`The intent “${guard.conflict?.base.goal ?? ''}”`} />
       {intents.length === 0 && (
         // PEP-2: the empty state carries the SAME create seed the header's "New intent" control
         // uses — `blankIntent()`, one definition of the blank shape, so the two cannot drift into
@@ -1104,18 +1142,23 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
           {/* The COST lever, on the row — the same place a watched source and a research report
               carry theirs, because an active intent spends a model call per saved item and a Run
               fans out one per existing item. Delete used to be the only way to stop that, and it
-              takes the gathered outcomes with it; pausing keeps them. No `disabledReason`: the
-              only reason it is ever off is the in-flight save, which resolves itself. */}
+              takes the gathered outcomes with it; pausing keeps them. The in-flight save leaves it
+              natively off (it resolves itself); a refused one leaves EVERY switch off with the
+              reason, because a second write would replace the change the notice is holding. The
+              success line and the reload ride the guard's `onSaved`, so a refused write — which
+              resolves, not throws — never claims "Intent paused". */}
           <span onClick={(e) => e.stopPropagation()}>
-            <Toggle on={on} size="sm" disabled={busyId === it.id}
+            <Toggle on={on} size="sm" disabled={busyId === it.id || guard.conflict !== null}
+              disabledReason={guard.conflict ? HELD_CHANGE_REASON : undefined}
               label={`${on ? 'Pause' : 'Resume'} intent: ${rowSubject([it.goal || it.id], 40)}`}
               onChange={async (next) => {
                 setBusyId(it.id)
+                pendingId.current = it.id
+                done.current = `Intent ${next ? 'resumed' : 'paused'}`
                 try {
-                  if (!(await reportingWrite(next ? 'resume this intent' : 'pause this intent',
-                    () => writeIntent(it, { enabled: next })))) return
-                  notify(`Intent ${next ? 'resumed' : 'paused'}`, 'success')
-                  load()
+                  await reportingWrite(next ? 'resume this intent' : 'pause this intent',
+                    () => guard.apply({ value: intentRecord(it), revision: it.revision ?? '' },
+                      (theirs) => ({ ...theirs, enabled: next })))
                 } finally { setBusyId(null) }
               }} />
           </span>
@@ -1328,18 +1371,41 @@ export function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIn
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
   const isEdit = !!intent.id
+  // The record this editor was seeded from, with the revision it was read at — what an edit is
+  // written over. Re-seeded when the user drops a refused change, so the form shows what is stored.
+  const [base, setBase] = useState<Revisioned<KnowledgeIntentRecord>>(
+    () => ({ value: intentRecord(intent), revision: intent.revision ?? '' }))
+  // 🔴 AN EDIT REPLACES THE WHOLE RECORD, built from the copy this editor opened on. Saved over an
+  // intent another tab had changed since, it wrote that change away without a word. A stale copy is
+  // now refused, and the edit is merged field by field onto what is stored (`rebaseRecord`): a
+  // field only this editor changed is re-applied, one both sides changed is left for the user to
+  // review in the notice.
+  const guard = useStaleWriteGuard<KnowledgeIntentRecord>({
+    read: () => readIntent(intent.id),
+    write: (next, rev) => writeIntent(next, rev),
+    onSaved,
+    onDiscard: () => {
+      readIntent(intent.id).then((stored) => {
+        setBase(stored)
+        setGoal(stored.value.goal); setEnabledFor(stored.value.enabled_for.join(', '))
+        setProposeSkill(stored.value.propose_skill); setEnabled(stored.value.enabled)
+      }).catch((e) => setErr(`Couldn't read the stored intent: ${e instanceof Error ? e.message : String(e)}`))
+    },
+  })
 
   async function save() {
     setErr('')
     const g = goal.trim()
     if (!g) { setErr('Describe what you want to track.'); return }
+    const mine: KnowledgeIntentRecord = {
+      id: intent.id, goal: g, enabled, propose_skill: proposeSkill,
+      enabled_for: enabledFor.split(',').map((s) => s.trim()).filter(Boolean),
+    }
     setSaving(true)
     try {
-      await writeIntent(intent, {
-        goal: g, enabled, propose_skill: proposeSkill,
-        enabled_for: enabledFor.split(',').map((s) => s.trim()).filter(Boolean),
-      })
-      onSaved()
+      // A refused edit resolves `false`: the notice holds it, and the form keeps what was typed.
+      if (isEdit) await guard.save(base, mine, rebaseRecord(base.value, mine))
+      else { await writeIntent(mine); onSaved() }
     } catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
 
@@ -1351,34 +1417,38 @@ export function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIn
             here (one per panel), unlike the per-item buttons this sweep also found. */}
         <button type="button" aria-label="Close the intent editor" onClick={onClose} className="text-on-surface-low hover:text-on-surface"><X size={16} /></button>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">What do you want to track?</label>
-        <textarea aria-label="What do you want to track?" value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} autoFocus
-          placeholder={'e.g. "anything that could improve my homelab self-hosted setup"'}
-          data-type="body-s" className="rounded-md bg-surface p-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-none" />
-        <p data-type="caption" className="text-on-surface-low">Plain language. As items are saved, PersonalClaw decides what's relevant and pulls out the useful specifics for you — no need to define fields.</p>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">Limit to types (optional)</label>
-        <input aria-label="Limit to types (optional)" value={enabledFor} onChange={(e) => setEnabledFor(e.target.value)} placeholder="comma-separated, blank = all types"
-          data-type="body-s" className="h-9 rounded-md bg-surface px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-      </div>
-      {/* A `Toggle`, not a checkbox: this is the on/off state of something that RUNS, which is
-          what the two siblings in this directory use for their own `enabled` column, and it is
-          the same primitive as the switch on the list row — one state, one control shape. */}
-      <div className="flex items-start justify-between gap-m">
-        <div className="flex flex-col gap-0.5">
-          <span data-type="label-s" className="text-on-surface-var">Active</span>
-          <span data-type="caption" className="text-on-surface-low">A paused intent is not evaluated against new items, so it stops spending a model call per saved item. What it has already gathered is kept.</span>
+      <HeldChange guard={guard}>
+        <div className="flex flex-col gap-1.5">
+          <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">What do you want to track?</label>
+          <textarea aria-label="What do you want to track?" value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} autoFocus
+            placeholder={'e.g. "anything that could improve my homelab self-hosted setup"'}
+            data-type="body-s" className="rounded-md bg-surface p-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-none" />
+          <p data-type="caption" className="text-on-surface-low">Plain language. As items are saved, PersonalClaw decides what's relevant and pulls out the useful specifics for you — no need to define fields.</p>
         </div>
-        <Toggle on={enabled} size="sm" label="Active" onChange={setEnabled} />
-      </div>
-      <label data-type="body-s" className="flex items-start gap-2 text-on-surface-var">
-        <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />
-        <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
-      </label>
+        <div className="flex flex-col gap-1.5">
+          <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">Limit to types (optional)</label>
+          <input aria-label="Limit to types (optional)" value={enabledFor} onChange={(e) => setEnabledFor(e.target.value)} placeholder="comma-separated, blank = all types"
+            data-type="body-s" className="h-9 rounded-md bg-surface px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        </div>
+        {/* A `Toggle`, not a checkbox: this is the on/off state of something that RUNS, which is
+            what the two siblings in this directory use for their own `enabled` column, and it is
+            the same primitive as the switch on the list row — one state, one control shape. */}
+        <div className="flex items-start justify-between gap-m">
+          <div className="flex flex-col gap-0.5">
+            <span data-type="label-s" className="text-on-surface-var">Active</span>
+            <span data-type="caption" className="text-on-surface-low">A paused intent is not evaluated against new items, so it stops spending a model call per saved item. What it has already gathered is kept.</span>
+          </div>
+          <Toggle on={enabled} size="sm" label="Active" onChange={setEnabled} />
+        </div>
+        <label data-type="body-s" className="flex items-start gap-2 text-on-surface-var">
+          <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />
+          <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
+        </label>
+      </HeldChange>
+      <StaleWriteNotice guard={guard} what="This intent" />
       {err && <FieldError>{err}</FieldError>}
-      <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>{isEdit ? 'Back' : 'Cancel'}</Button><Button size="sm" onClick={save} loading={saving} loadingLabel="Saving…">{isEdit ? 'Save changes' : 'Save intent'}</Button></div>
+      <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>{isEdit ? 'Back' : 'Cancel'}</Button><Button size="sm" onClick={save} loading={saving} loadingLabel="Saving…"
+        disabled={guard.conflict !== null} disabledReason={HELD_CHANGE_REASON}>{isEdit ? 'Save changes' : 'Save intent'}</Button></div>
     </div>
   )
 }

@@ -116,10 +116,10 @@ def advanced(monkeypatch):
     return seen
 
 
-def _req(method, path, *, body=None, match_info=None):
+def _req(method, path, *, body=None, match_info=None, headers=None):
     app = web.Application()
     app["state"] = _FakeState()
-    req = make_mocked_request(method, path, match_info=match_info or {}, app=app)
+    req = make_mocked_request(method, path, match_info=match_info or {}, app=app, headers=headers)
     req["user"] = "alice"
     if body is not None:
 
@@ -197,8 +197,25 @@ _ROUTE_IDS = sorted(_PLAN_ROUTES)
 def _call(path: str, cid: str):
     handler, body, _ok = _PLAN_ROUTES[path]
     return _run(
-        handler(_req("POST", path.replace("{id}", cid), body=dict(body), match_info={"id": cid}))
+        handler(
+            _req(
+                "POST",
+                path.replace("{id}", cid),
+                body=dict(body),
+                match_info={"id": cid},
+                headers=_edit_base(path, cid),
+            )
+        )
     )
+
+
+def _edit_base(path: str, cid: str) -> dict[str, str] | None:
+    """An edit replaces the step's whole markdown, so it names the draft it was made on — the
+    revision the plan-session read reports for the step (`personalclaw/stale_write.py`)."""
+    session = loop_files.read_plan_session(cid) if path.endswith("/plan/edit") else None
+    if session is None or not session.steps:
+        return None
+    return {"If-Match": f'"{PS.step_revision(session.steps[0])}"'}
 
 
 def test_the_two_buckets_partition_the_status_vocabulary():

@@ -21,6 +21,15 @@ import { BUSY_REASON } from '../../ui/unavailable'
 import { InlineLoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
 import { channelLabel } from './notifyChannel'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+
+/** A schedule as the editor starts from it: the form's draft of it, with the revision the same
+ *  read reported — the base the save names. */
+function baseOf(job: ScheduleJob): Revisioned<ScheduleDraft> {
+  return { value: toDraft(job), revision: job.revision ?? '' }
+}
 
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
  *  WorkflowDetail), the schedule + execution summary, last result/error, and a
@@ -39,7 +48,14 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
 }) {
   // Edit mode is owned by the URL (?edit=1), threaded in fully controlled.
   const setEditing = onEditingChange
-  const [draft, setDraft] = useState<ScheduleDraft>(() => toDraft(job))
+  // 🔴 THE FORM SAVES THE WHOLE AUTOMATION, OVER THE COPY ITS DRAFT WAS SEEDED FROM. Every field it
+  // shows is sent, the untouched ones as they were read — so a change made since (the agent's
+  // `automation_update`, another tab adding a skip date) was put back by the next save here without
+  // a word. `base` is that copy with the revision the same read reported, seeded together with the
+  // draft and never refreshed under it; a stale save is refused and offered back
+  // (`ui/StaleWriteNotice`).
+  const [base, setBase] = useState<Revisioned<ScheduleDraft>>(() => baseOf(job))
+  const [draft, setDraft] = useState<ScheduleDraft>(() => base.value)
   // Display names for the chip below. A failed read leaves the channel's key on the chip, which is
   // still true, and says the names couldn't be read. The key without Settings → Providers' catch,
   // same as the Notify channel picker.
@@ -77,8 +93,24 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   // action that can call a model. Unknown (catalog still loading, an app provider it does not
   // list) keeps the floor — the same direction the backend's table takes.
   const draftInvokesModel = providers.find((p) => p.name === draftProvider(draft, provider))?.invokes_model !== false
+  const guard = useStaleWriteGuard<ScheduleDraft>({
+    read: async () => {
+      const stored = (await api.schedules()).jobs.find((j) => j.id === job.id)
+      if (!stored) throw new Error(`the trigger “${job.name}” no longer exists`)
+      return baseOf(stored)
+    },
+    write: (next, revision) => api.updateSchedule(job.id, draftToPayload(next), revision),
+    onSaved: () => { onSaved(); setEditing(false) },
+    // Dropping the change leaves the panel on what is stored: the list re-reads, and the next Edit
+    // seeds from it.
+    onDiscard: () => { onChanged(); setEditing(false); setErr('') },
+  })
 
-  useEffect(() => { setDraft(toDraft(job)) }, [job.id])
+  // Seeded from the job as the panel shows it when the editor opens (or another job is picked), and
+  // by Cancel — never while the editor stays open, where the list's 10s poll must not replace what
+  // is typed.
+  const reseed = () => { const b = baseOf(job); setBase(b); setDraft(b.value) }
+  useEffect(() => { reseed() }, [job.id, editing])
 
   // While a run we triggered is in flight, actively poll (the parent list's own
   // poll is every 10s — too slow for responsive feedback). Detect completion
@@ -116,7 +148,8 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     if (!draft.name.trim()) { setErr('Name is required'); return }
     if (scheduleReason) { setErr(scheduleReason); return }
     setSaving(true); setErr('')
-    try { await api.updateSchedule(job.id, draftToPayload(draft)); onSaved(); setEditing(false) }
+    // A refusal keeps the draft and the editor open, with the notice below offering the way back.
+    try { await guard.save(base, draft, rebaseRecord(base.value, draft)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
@@ -187,12 +220,16 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
-        <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} />
+        <HeldChange guard={guard}>
+          <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} />
+        </HeldChange>
+        <StaleWriteNotice guard={guard} what="This trigger" />
         <FormFooter error={err}>
-          <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
+          {/* Cancelling a refused save drops the kept change, exactly as "Discard my change" does. */}
+          <Button variant="ghost" size="sm" onClick={() => { if (guard.conflict) guard.discard(); else { reseed(); setEditing(false); setErr('') } }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving}
-            disabled={saving || !draft.name.trim() || !!scheduleReason}
-            disabledReason={!draft.name.trim() ? 'Enter a name first' : scheduleReason ?? undefined}><Check size={15} /> Save</Button>
+            disabled={saving || !draft.name.trim() || !!scheduleReason || guard.conflict !== null}
+            disabledReason={guard.conflict ? HELD_CHANGE_REASON : !draft.name.trim() ? 'Enter a name first' : scheduleReason ?? undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )

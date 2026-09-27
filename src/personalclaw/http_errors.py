@@ -483,6 +483,21 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The artifact moved since it was read, so the write would have destroyed somebody "
         "else's edit. Fix: reload and re-apply. The `error` object names the current version."
     ),
+    # ── whole-document writes from a page's copy (personalclaw/stale_write.py) ──
+    # The same refusal as `version_conflict`, for the settings documents, lists and records that
+    # carry a content `revision` instead of an artifact version. Two codes because the remedies
+    # differ: `revision_required` is a client that never read what it is replacing (fix the
+    # client), `stale_write` is a copy that went stale (re-read, re-apply, save). Neither carries
+    # the current revision — only a read of the document hands one out.
+    "revision_required": (
+        "A write that replaces a whole document must name the revision it replaces in "
+        "`If-Match`. Fix: read the document, then resend with its `revision`."
+    ),
+    "stale_write": (
+        "The document changed since the copy this write was built from was read, so saving it "
+        "would have undone that change. Nothing was saved. Fix: read it again, re-apply the "
+        "edit, and save with the new revision."
+    ),
     # Same family as `version_conflict` above: a write refused because it would have
     # destroyed data the caller never saw. An intent's id is DERIVED from its goal, so two
     # differently-worded goals can slugify onto one id — and the create path used to

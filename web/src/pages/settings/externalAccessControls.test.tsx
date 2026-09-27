@@ -19,10 +19,12 @@ import { ExternalAccessPanel } from './ExternalAccessPanel'
 
 const externalAccess = vi.fn()
 const patchConfig = vi.fn()
+const saveListEdits = vi.fn()
 vi.mock('../../lib/api', () => ({
   api: {
     externalAccess: (...a: unknown[]) => externalAccess(...a),
     patchConfig: (...a: unknown[]) => patchConfig(...a),
+    saveListEdits: (...a: unknown[]) => saveListEdits(...a),
     externalAccessCreateClient: vi.fn(),
     externalAccessRevokeClient: vi.fn(),
     externalAccessSetClientDisabled: vi.fn(),
@@ -68,6 +70,7 @@ describe('the external-access controls reach the backend', () => {
     vi.clearAllMocks()
     externalAccess.mockResolvedValue(STATE)
     patchConfig.mockResolvedValue({})
+    saveListEdits.mockResolvedValue([])
   })
 
   it('renders every cap the endpoint reports — none of them is a silent payload field', async () => {
@@ -98,7 +101,7 @@ describe('the external-access controls reach the backend', () => {
     expect(screen.getByLabelText('Remove api.openai.com')).toBeTruthy()
   })
 
-  it('adding a host PATCHes external_access.capture.upstream_allowlist with the WHOLE list', async () => {
+  it('adding a host sends that one host to external_access.capture.upstream_allowlist — never the list', async () => {
     render(<ExternalAccessPanel />)
     await waitFor(() => expect(screen.getByLabelText('Add to capture upstream allow-list')).toBeTruthy())
     await userEvent.type(
@@ -108,12 +111,13 @@ describe('the external-access controls reach the backend', () => {
     // The nested spelling is the assertion. `external_access.capture_upstream_allowlist` — the flat
     // form the neighbouring retention knob uses — is NOT in the PATCH allowlist, so a control that
     // wrote it would move on screen and 400 on the wire.
+    // The edit from the painted list to the next one; `saveListEdits` sends only its difference
+    // (one `add`), so a host another tab added since is not dropped by this save.
     await waitFor(() =>
-      expect(patchConfig).toHaveBeenCalledWith('external_access.capture.upstream_allowlist', [
-        'api.openai.com',
-        'api.anthropic.com',
-      ]),
+      expect(saveListEdits).toHaveBeenCalledWith('external_access.capture.upstream_allowlist',
+        ['api.openai.com'], ['api.openai.com', 'api.anthropic.com']),
     )
+    expect(patchConfig.mock.calls.filter((c) => c[0] === 'external_access.capture.upstream_allowlist')).toEqual([])
     // VACUITY / cross-wiring floor: editing the allow-list must not write a neighbouring cap.
     expect(
       patchConfig.mock.calls.filter((c) => c[0] === 'external_access.capture.retention_days'),
@@ -155,7 +159,7 @@ describe('the external-access controls reach the backend', () => {
     await waitFor(() => expect(retention.value).toBe('45'))
   })
 
-  it('removing a host PATCHes the remaining list, and the value round-trips back into the pane', async () => {
+  it('removing a host sends that one removal, and the value round-trips back into the pane', async () => {
     externalAccess.mockResolvedValueOnce(STATE).mockResolvedValue({
       ...STATE,
       caps: { ...STATE.caps, capture_upstream_allowlist: [] },
@@ -164,7 +168,7 @@ describe('the external-access controls reach the backend', () => {
     await waitFor(() => expect(screen.getByLabelText('Remove api.openai.com')).toBeTruthy())
     await userEvent.click(screen.getByLabelText('Remove api.openai.com'))
     await waitFor(() =>
-      expect(patchConfig).toHaveBeenCalledWith('external_access.capture.upstream_allowlist', []),
+      expect(saveListEdits).toHaveBeenCalledWith('external_access.capture.upstream_allowlist', ['api.openai.com'], []),
     )
     // Round-trip: the panel refetches after a save, so the emptied list must be what it repaints
     // from. A control that only mutated local state would still show the chip here.

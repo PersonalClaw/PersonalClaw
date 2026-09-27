@@ -2,7 +2,8 @@ import { createContext, useContext, useCallback, useEffect, useRef, useState, ty
 import { TOKENS, type Token } from '../design/tokenRegistry'
 import { runtime } from '../design/runtime'
 import { SCHEMES, getScheme, DEFAULT_SCHEME, type Scheme } from '../design/schemes'
-import { api, type ThemeRecord } from '../lib/api'
+import { api, type ThemeRecord, type ThemeWrite } from '../lib/api'
+import type { Revisioned } from '../lib/staleWrite'
 import { useMode } from './theme'
 import { useIsMobile } from './useIsMobile'
 
@@ -48,12 +49,23 @@ export const SURFACE_WIDTHS = {
  *  than a comment nobody reads. */
 export const DEFAULT_WIDTH_PRESET: WidthPreset = 'full'
 
+/** A saved theme as it was stored when its colors were last applied here, saved, or updated — with
+ *  the revision that read reported. `id` is its scheme id (`custom:<slug>`). */
+type ThemeBase = Revisioned<ThemeWrite> & { id: string }
+
 interface Overrides {
   colors: Record<string, { dark?: string; light?: string }>
   scalars: Record<string, number>
   selects: Record<string, string>
   scheme?: string
   widthPreset?: WidthPreset
+  /** 🔴 THE COPY THESE COLORS CAME FROM. "Update theme" rewrites the whole saved theme, so it names
+   *  the revision of the copy it was built from (`lib/staleWrite.ts`) — and the colors it sends were
+   *  seeded when the theme was APPLIED, possibly sessions ago, since they persist here. A revision
+   *  read later would describe a newer copy than these colors, and the update would silently revert
+   *  whatever changed in between — another tab, another device's synced edit. So the base persists
+   *  with the colors it describes. */
+  themeBase?: ThemeBase
 }
 
 const KEY = 'appearance'
@@ -76,6 +88,16 @@ function themeToScheme(t: ThemeRecord): Scheme {
   // with `tokenRegistry`'s default pair — it had been left on `#e85a3f`, two retunes stale (#3503).
   const prim = colors['--color-primary'] ?? { dark: '#ff6b5b', light: '#b12e18' }
   return { id: `custom:${t.slug}`, label: t.name, emoji: t.emoji, swatch: prim, colors }
+}
+
+/** A stored theme as the document `PUT /api/themes/{slug}` rewrites. */
+function themeToWrite(t: ThemeRecord): ThemeWrite {
+  return { name: t.name, emoji: t.emoji, dark: t.dark ?? {}, light: t.light ?? {} }
+}
+
+/** A theme as read, with the revision that read reported, as the base an update of it names. */
+function themeBaseOf(r: ThemeRecord & { revision: string }): ThemeBase {
+  return { id: `custom:${r.slug}`, value: themeToWrite(r), revision: r.revision }
 }
 
 function load(): Overrides {
@@ -112,8 +134,18 @@ interface Ctx {
    *  and activate it. Returns the new scheme id (`custom:<slug>`). Throws on
    *  server/validation error so the caller can surface it. */
   saveCustomScheme: (label: string, emoji?: string) => Promise<string>
-  /** Overwrite an existing saved theme's colors with the current effective set. */
-  updateCustomScheme: (id: string, label: string, emoji?: string) => Promise<void>
+  /** The current effective colors, as a saved theme stores them. */
+  currentColors: () => { dark: Record<string, string>; light: Record<string, string> }
+  /** The copy of saved theme `id` the colors on screen were built from, with its revision — the
+   *  base an update of it names. `undefined` until that theme has been read. */
+  themeBase: (id: string) => Revisioned<ThemeWrite> | undefined
+  /** Read saved theme `id` as stored now, with its revision. */
+  readCustomScheme: (id: string) => Promise<Revisioned<ThemeWrite>>
+  /** Rewrite saved theme `id` as `theme`, over `base` — the revision it was built from. A stale base
+   *  rejects with the gateway's `409 stale_write` and writes nothing. */
+  updateCustomScheme: (id: string, theme: ThemeWrite, base: string) => Promise<void>
+  /** Drop the color edits made over saved theme `id`: apply it again as stored now. */
+  revertCustomScheme: (id: string) => Promise<void>
   deleteCustomScheme: (id: string) => Promise<void>
   themesLoading: boolean
 }
@@ -129,6 +161,9 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // Server-persisted custom themes (the one home for saved color identities).
   const [serverThemes, setServerThemes] = useState<Scheme[]>([])
+  // Each saved theme as that same read returned it, with its revision — the base a scheme applied
+  // from it carries (`themeBase`).
+  const [readBases, setReadBases] = useState<Record<string, ThemeBase>>({})
   const [themesLoading, setThemesLoading] = useState(true)
   const reloadThemes = useCallback(async () => {
     try {
@@ -136,6 +171,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       // The summary list lacks color bodies; fetch each record to build a Scheme.
       const full = await Promise.all(list.map((s) => api.theme(s.slug)))
       setServerThemes(full.map(themeToScheme))
+      setReadBases(Object.fromEntries(full.map((r) => { const b = themeBaseOf(r); return [b.id, b] })))
     } catch { /* offline / no themes dir yet — leave curated schemes only */ }
     finally { setThemesLoading(false) }
   }, [])
@@ -247,7 +283,9 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const applyScheme = (id: string) => {
     const sc = resolveScheme(id)
     if (!sc) return
-    setOv((p) => ({ ...p, scheme: id, colors: { ...sc.colors } }))
+    // A saved theme's colors carry the copy they came from (`Overrides.themeBase`); a curated one has
+    // no stored copy to update.
+    setOv((p) => ({ ...p, scheme: id, colors: { ...sc.colors }, themeBase: readBases[id] }))
   }
 
   /** Snapshot the CURRENT effective color set into the server theme wire shape
@@ -270,16 +308,28 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     const res = await api.createTheme({ name: label.trim() || 'Custom', emoji, dark, light })
     await reloadThemes()
     const id = `custom:${res.slug}`
-    setOv((p) => ({ ...p, scheme: id, colors: { ...themeToScheme(res.theme).colors } }))
+    setOv((p) => ({ ...p, scheme: id, colors: { ...themeToScheme(res.theme).colors },
+      themeBase: themeBaseOf({ ...res.theme, revision: res.revision }) }))
     return id
   }
-  /** Overwrite an existing saved theme with the current effective colors. */
-  const updateCustomScheme = async (id: string, label: string, emoji?: string): Promise<void> => {
+  const themeBase = (id: string): Revisioned<ThemeWrite> | undefined =>
+    ov.themeBase?.id === id ? ov.themeBase : readBases[id]
+  const readCustomScheme = async (id: string): Promise<Revisioned<ThemeWrite>> => {
+    const { value, revision } = themeBaseOf(await api.theme(id.replace(/^custom:/, '')))
+    return { value, revision }
+  }
+  /** Rewrite a saved theme over the revision it was built from, and apply what was stored. */
+  const updateCustomScheme = async (id: string, theme: ThemeWrite, base: string): Promise<void> => {
     const slug = id.replace(/^custom:/, '')
-    const { dark, light } = snapshotColors()
-    const res = await api.updateTheme(slug, { name: label.trim() || 'Custom', emoji, dark, light })
+    const res = await api.updateTheme(slug, theme, base)
     await reloadThemes()
-    setOv((p) => ({ ...p, scheme: id, colors: { ...themeToScheme(res.theme).colors } }))
+    setOv((p) => ({ ...p, scheme: id, colors: { ...themeToScheme(res.theme).colors },
+      themeBase: themeBaseOf({ ...res.theme, revision: res.revision }) }))
+  }
+  const revertCustomScheme = async (id: string): Promise<void> => {
+    const stored = await api.theme(id.replace(/^custom:/, ''))
+    await reloadThemes()
+    setOv((p) => ({ ...p, scheme: id, colors: { ...themeToScheme(stored).colors }, themeBase: themeBaseOf(stored) }))
   }
   const deleteCustomScheme = async (id: string): Promise<void> => {
     const slug = id.replace(/^custom:/, '')
@@ -287,12 +337,12 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     await reloadThemes()
     // If the deleted theme was active, fall back to the default scheme cleanly.
     setOv((p) => (p.scheme === id
-      ? { ...p, scheme: DEFAULT_SCHEME, colors: { ...(getScheme(DEFAULT_SCHEME)?.colors ?? {}) } }
+      ? { ...p, scheme: DEFAULT_SCHEME, colors: { ...(getScheme(DEFAULT_SCHEME)?.colors ?? {}) }, themeBase: undefined }
       : p))
   }
 
   return (
-    <AppearanceCtx.Provider value={{ colorValue, scalarValue, selectValue, setColor, setScalar, setSelect, resetAll, resetToken, widthPreset: ov.widthPreset ?? DEFAULT_WIDTH_PRESET, setWidthPreset, activeScheme, allSchemes, applyScheme, saveCustomScheme, updateCustomScheme, deleteCustomScheme, themesLoading }}>
+    <AppearanceCtx.Provider value={{ colorValue, scalarValue, selectValue, setColor, setScalar, setSelect, resetAll, resetToken, widthPreset: ov.widthPreset ?? DEFAULT_WIDTH_PRESET, setWidthPreset, activeScheme, allSchemes, applyScheme, saveCustomScheme, currentColors: snapshotColors, themeBase, readCustomScheme, updateCustomScheme, revertCustomScheme, deleteCustomScheme, themesLoading }}>
       {children}
     </AppearanceCtx.Provider>
   )

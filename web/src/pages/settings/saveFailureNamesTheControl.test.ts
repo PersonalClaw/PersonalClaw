@@ -39,13 +39,17 @@ describe('a rejected settings save names the control', () => {
     // count alone would go green again if a seventh row arrived without the argument and one of
     // these lost it. (`SegRow`/`SelectRow` commit through the same `v as never` line the toggle
     // does, which is why they add no new string here.)
-    expect(UI, 'the string list must too').toContain('patch(field, next as never, flash, label)')
+    // `StrListField` hands its label to `editList`, not `patch`: a list edit is sent as the names
+    // added and removed (`api.saveListEdits`), never as the panel's copy of the list — but a
+    // rejected one must still name the control, so the label rides the same fourth argument.
+    expect(UI, 'the string list must too').toContain('editList(field, next, flash, label)')
+    expect(UI, 'and its contract admits it').toMatch(/editList: \(k: string, next: string\[\], cb: \(\) => void, label\?: string\) => void/)
     expect(UI, 'the text row must too').toContain('patch(field, draft as never, flash, label)')
     // The contract has to admit it, or a panel cannot receive it. DERIVED from the rows themselves,
-    // not pinned: a SEVENTH shared row declaring a 3-argument `patch` reds here on arrival instead
+    // not pinned: another shared row declaring a 3-argument `patch` reds here on arrival instead
     // of waiting for someone to notice the count is stale.
     const rows = [...UI.matchAll(/export function (\w+)(?:<[^>]*>)?\(\{[^}]*\bpatch\b/g)].map((m) => m[1])
-    expect(rows.length, 'the shared-row matcher must find the rows').toBeGreaterThanOrEqual(6)
+    expect(rows.length, 'the shared-row matcher must find the rows').toBeGreaterThanOrEqual(5)
     // `ToggleRow` alone adds an optional FIFTH argument after the label — `confirmed`, set when its
     // `confirmOn` dialog was accepted so the panel can forward the owner's consent to the gateway.
     const sigs = [...UI.matchAll(/patch: \(k: string, v: never, cb: \(\) => void, label\?: string(?:, confirmed\?: boolean)?\) => void/g)]

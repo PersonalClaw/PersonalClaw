@@ -124,7 +124,7 @@ SESSION_WRITES: list[tuple[str, str, dict]] = [
     ("PATCH", "/api/chat/sessions/{session}/title", {"title": "pwned"}),
     ("PATCH", "/api/chat/sessions/{session}/pin", {"pinned": True}),
     ("PATCH", "/api/chat/sessions/{session}/folder", {"folder_id": ""}),
-    ("PUT", "/api/chat/sessions/{session}/tags", {"tags": []}),
+    ("PUT", "/api/chat/sessions/{session}/tags", {"remove": ["t1"]}),
     ("POST", "/api/chat/sessions/{session}/drop", {"column_id": "c"}),
     ("PATCH", "/api/chat/sessions/{session}/lifecycle", {"lifecycle": "archived"}),
     ("POST", "/api/chat/sessions/{session}/organize/accept", {}),

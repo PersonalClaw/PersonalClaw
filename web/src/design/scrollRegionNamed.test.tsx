@@ -55,7 +55,7 @@ const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
 const agent: SavedAgent = {
-  name: 'personalclaw-loop', provider: 'claude', system_prompt: 'You are personalclaw-loop. '.repeat(40),
+  name: 'personalclaw-loop', provider: 'claude', system_prompt: 'You are personalclaw-loop. '.repeat(40), revision: 'r1',
 }
 
 describe('the agent system-prompt box is a named region', () => {
