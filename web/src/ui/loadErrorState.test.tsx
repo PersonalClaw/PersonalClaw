@@ -737,7 +737,9 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // failure instead of reading as "no extractable text". A fourth, the chat list's content search,
   // fell back to title matches in silence. It now says the search failed and offers a retry (F-41).
   'pages/ChatPage.tsx': 4,
-  'pages/agents/AgentDetail.tsx': 3,
+  // 3 → 2: the lifecycle-hooks read stopped answering `{}` on a failure (#3725). It now says "Could
+  // not read the agent's hooks." The two left are the trigger-name lookup and the active-MCP list.
+  'pages/agents/AgentDetail.tsx': 2,
   'pages/artifacts/ArtifactCard.tsx': 1,
   'pages/chat/OrganizeChip.tsx': 1,
   'pages/chat/SessionSkillsReview.tsx': 1,
