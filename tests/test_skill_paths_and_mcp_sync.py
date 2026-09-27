@@ -60,10 +60,6 @@ class TestApiSessionsRestartMcpSync:
             patch(
                 "personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=True
             ),
-            patch(
-                "personalclaw.dashboard.handlers.sessions.register_servers_for_cc",
-                return_value=True,
-            ),
         ):
             resp = await api_sessions_restart(request)
 
@@ -166,10 +162,6 @@ class TestApiSessionsRestartMcpSync:
             ),
             patch(
                 "personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=True
-            ),
-            patch(
-                "personalclaw.dashboard.handlers.sessions.register_servers_for_cc",
-                return_value=True,
             ),
         ):
             resp = await api_sessions_restart(request)

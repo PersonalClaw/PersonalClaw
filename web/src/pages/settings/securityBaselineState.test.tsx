@@ -59,6 +59,7 @@ async function mount(opts: { denied?: Over | 'reject'; stats?: 'reject' } = {}) 
         ? Promise.reject(new Error('probe-induced 500 on /api/security/denied-commands'))
         : Promise.resolve(payload(opts.denied)),
       securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: false }),
+      outsideHome: () => Promise.resolve({ places: [], allowed: [] }),
       setUserDeniedCommands: () => Promise.resolve({}),
       setSecurityEgress: () => Promise.resolve({}),
       // DC-2's desktop-capabilities section renders inside this SAME panel. This is a

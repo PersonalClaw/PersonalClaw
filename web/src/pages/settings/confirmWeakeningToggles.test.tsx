@@ -319,6 +319,7 @@ describe('SecurityPanel — allow all private networks', () => {
           baseline: { version: '1', pattern_count: 0, sha256: 'a'.repeat(64), verified: true, user_additions: 0 },
         }),
         securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: allowPrivate }),
+        outsideHome: () => Promise.resolve({ places: [], allowed: [] }),
         setSecurityEgress,
         desktopState: () => Promise.resolve({
           connected: false, shell: null, capabilities: {}, registered_at: '', last_seen: '',

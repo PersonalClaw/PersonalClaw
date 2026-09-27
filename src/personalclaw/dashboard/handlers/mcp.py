@@ -557,12 +557,14 @@ async def api_mcp_sync(request: web.Request) -> web.Response:
     """POST /api/mcp/sync — apply MCP config changes and restart sessions.
 
     1. Discovers servers in mcp.json the agent config lacks, or holds a stale copy of.
-    2. Rebuilds the agent config from mcp.json and registers them for Claude Code.
+    2. Rebuilds the agent config from mcp.json.
     3. Resets all sessions so changes take effect.
+
+    Nothing is written outside the home: a server Claude Code should see goes into Claude Code's
+    own scope only when the owner puts it there (``/api/mcp/apply``).
     """
     from personalclaw.mcp_discovery import (  # noqa: F811
         discover_servers_to_sync,
-        register_servers_for_cc,
         sync_to_agent_config,
     )
 
@@ -572,7 +574,6 @@ async def api_mcp_sync(request: web.Request) -> web.Response:
         ok = sync_to_agent_config(to_sync)
         if ok:
             synced = len(to_sync)
-        register_servers_for_cc(to_sync)
 
     # Always reset sessions — even with no new servers, the user may have
     # toggled enable/disable which writes to personalclaw.json but requires

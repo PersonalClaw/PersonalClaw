@@ -107,6 +107,7 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     api_project_trust,
     api_security_denied_commands,
     api_security_egress,
+    api_security_outside_home,
     api_security_stats,
     api_sel_rotate,
     api_session_agent_result,

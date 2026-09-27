@@ -18,6 +18,9 @@
 - ``app_packages_env()`` — the environment for a child process that must import the
   packages apps declare (``<home>/app-python``): an app running one of its declared packages
   as ``python -m <package>``. ``None`` when there is nothing to add.
+- ``outside_home_path(place)`` — a READ-ONLY handle to a place outside the PersonalClaw home
+  (the machine-wide Hugging Face folder, ``"huggingface-cache"``) once the owner allowed it in
+  Settings → Security, else ``None``. An app keeps what it writes in its own data dir.
 
 Keep this surface tiny: an app reaching for more than these is a sign the boundary is
 wrong (promote the need to a proper SDK submodule, or vendor it into the app).
@@ -85,6 +88,21 @@ def shared_app_data_dir(name: str) -> Path | None:
     return _ReadOnlyPath(raw)
 
 
+def outside_home_path(place: str) -> Path | None:
+    """A READ-ONLY handle to the place outside the home named ``place``, or ``None``.
+
+    The places are declared in core (``personalclaw.outside_home``); the one an app has use for
+    is ``"huggingface-cache"``, the Hugging Face folder other tools share (``$HF_HOME``, or
+    ``~/.cache/huggingface``). Each is off until the owner allows it in Settings → Security →
+    Outside PersonalClaw's home, so ``None`` is the usual answer: the app then uses only what it
+    keeps in :func:`app_data_dir`. The returned path, and any child, refuses writes with
+    ``PermissionError``; deleting or downloading there is never the app's to do."""
+    from personalclaw import outside_home
+
+    found = outside_home.place_path(place)
+    return _ReadOnlyPath(found) if found is not None else None
+
+
 __all__ = [
     "config_dir",
     "app_data_dir",
@@ -93,4 +111,5 @@ __all__ = [
     "atomic_write",
     "single_flight",
     "app_packages_env",
+    "outside_home_path",
 ]

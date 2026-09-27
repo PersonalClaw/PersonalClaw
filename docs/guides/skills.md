@@ -82,7 +82,7 @@ trigger phrases.
 |---|---|---|
 | **Bundled** | `src/personalclaw/skills/bundled/` (inside the wheel) | The 17 skills PersonalClaw ships |
 | **Project** | `$PERSONALCLAW_PROJECT_DIR/skills/` | Skills that travel with one workspace |
-| **Global** | `~/.personalclaw/skills/` — plus `~/.agents/skills/` | Your library; the install target |
+| **Global** | `~/.personalclaw/skills/`, plus `~/.agents/skills/` once you allow it | Your library; the install target is always the first |
 | **Agent-local** | `~/.personalclaw/agents/<agent>/skills/` | Visible to one agent only |
 
 Two of those four are **install sources, not search paths**, and it is worth
@@ -96,7 +96,9 @@ directories, first hit wins:
 
 1. `~/.personalclaw/agents/<agent>/skills/` — only when the turn belongs to that agent
 2. `~/.personalclaw/skills/`
-3. `~/.agents/skills/` — the cross-client agentskills.io directory, and where `personalclaw skills install` puts things by default
+3. `~/.agents/skills/`, the cross-client agentskills.io directory, only once you allow it in
+   **Settings → Security → Outside PersonalClaw's home**. PersonalClaw only reads it: nothing is
+   installed into it, changed there or deleted from it
 
 That order carries two consequences the tier table does not show:
 
@@ -230,7 +232,7 @@ Two sources put skills in your library on their own, and both are visible in the
 same list:
 
 - **`personalclaw skills install <id>`** fetches from a marketplace into
-  `~/.agents/skills/`, after a supply-chain scan whose `DANGEROUS` verdict is not
+  `~/.personalclaw/skills/`, after a supply-chain scan whose `DANGEROUS` verdict is not
   overridable. `personalclaw skills verify` re-checks installed skills' file
   hashes against their install baseline, so a skill mutated after install is
   detectable.
@@ -249,7 +251,7 @@ turn index. `--dry-run` reports without writing.
 | Path | What |
 |---|---|
 | `~/.personalclaw/skills/<key>/SKILL.md` | Your library — and where bundled/project skills are synced to |
-| `~/.agents/skills/<key>/SKILL.md` | Cross-client directory; the default install target |
+| `~/.agents/skills/<key>/SKILL.md` | Cross-client directory, read only once you allow it; never written |
 | `~/.personalclaw/agents/<agent>/skills/<key>/SKILL.md` | One agent's private override |
 | `~/.personalclaw/skills/.skill_embeddings.json` | Cached description embeddings, keyed by mtime + model |
 

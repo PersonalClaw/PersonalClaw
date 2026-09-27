@@ -115,10 +115,9 @@ _DEFAULT_PORT = 10000
 DASHBOARD_PORT: int = int(os.environ.get("PERSONALCLAW_PORT", _DEFAULT_PORT))
 
 
-# Cross-platform workspace root for LLM working directories.
-# Override: PERSONALCLAW_WORKSPACE env var or ~/.personalclaw/workspace_dir
-# Default: ~/workplace/personalclaw-workspace
-_WORKSPACE_DIR_NAME = "personalclaw-workspace"
+# The workspace root for LLM working directories: ``<home>/workspace`` unless the owner chose a
+# folder (``PERSONALCLAW_WORKSPACE``, or the path ``personalclaw setup`` saves in
+# ``<home>/workspace_dir``).
 
 
 def _workspace_dir_file() -> Path:
@@ -126,9 +125,9 @@ def _workspace_dir_file() -> Path:
     return config_dir() / "workspace_dir"
 
 
-def _default_workspace_base() -> Path:
-    """Return the platform-specific default base for the workspace."""
-    return Path.home() / "workplace"
+def default_workspace_root() -> Path:
+    """Where the workspace is when the owner has not chosen a folder: inside the home."""
+    return config_dir() / "workspace"
 
 
 def workspace_root() -> Path:
@@ -137,7 +136,7 @@ def workspace_root() -> Path:
     Resolution order:
     1. ``PERSONALCLAW_WORKSPACE`` env var (used as-is, no subdirectory appended)
     2. Saved path in ``config_dir()/workspace_dir`` (written by ``personalclaw setup``)
-    3. Platform default with ``personalclaw-workspace`` subdirectory
+    3. :func:`default_workspace_root`, the ``workspace`` folder in the home
     """
     override = os.environ.get("PERSONALCLAW_WORKSPACE")
     if override:
@@ -153,8 +152,7 @@ def workspace_root() -> Path:
                 return root
         except OSError:
             pass
-    base = _default_workspace_base()
-    root = base / _WORKSPACE_DIR_NAME
+    root = default_workspace_root()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -639,8 +637,8 @@ class AgentConfig:
         default_factory=lambda: ["~/workspace", "~/workplace"],
         metadata=_meta(
             "SubAgent CWD Allowed Roots",
-            "Directory roots under which subagent_run's cwd parameter is permitted. "
-            "Values support ~ expansion. Empty list disables cwd overrides.",
+            "Directory roots under which subagent_run's cwd parameter is permitted, besides "
+            "the workspace. Values support ~ expansion. Empty list disables cwd overrides.",
         ),
     )
     log_level: str = field(
@@ -4595,6 +4593,12 @@ class AppConfig:
                 mcp_elicitation_servers=[
                     s.strip()
                     for s in (security_data.get("mcp_elicitation_servers", []) or [])
+                    if isinstance(s, str) and s.strip()
+                ],
+                # An allowlist too, filtered the same fail-closed way.
+                outside_home=[
+                    s.strip()
+                    for s in (security_data.get("outside_home", []) or [])
                     if isinstance(s, str) and s.strip()
                 ],
             ),

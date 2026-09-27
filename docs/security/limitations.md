@@ -441,8 +441,8 @@ A secret still appears in plaintext in these places:
   (`POST /api/mcp/apply` with `ccGlobal`) writes it into Claude Code's `.claude.json` (in your
   home directory, or in `$CLAUDE_CONFIG_DIR` when that is set) with its values, because Claude
   Code reads only its own file. That copy is outside PersonalClaw's home, snapshots and exports,
-  under Claude Code's own file permissions. The copy PersonalClaw makes by itself when sessions
-  restart (`~/.mcp.json`) carries only the plain values.
+  under Claude Code's own file permissions. PersonalClaw writes no other copy: a session restart
+  or an MCP sync leaves `~/.mcp.json` alone.
 
 **What this means for you:** after upgrading, treat snapshots and exports made before it as
 holding your tokens. Delete them, or change any token that has left your hands in one.

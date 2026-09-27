@@ -679,6 +679,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/security/credentials/rollback` — restore the pre-migration ``.env``.
 - `GET /api/security/denied-commands` — the bash denylist for the Security panel.
 - `GET /api/security/egress` — the operator's outbound-egress overrides for the
+- `GET /api/security/outside-home` — the places outside the home it may be allowed to read.
 - `GET /api/security/stats` — live security feature counts.
 - `POST /api/sel/rotate` — archive existing SEL log and start a fresh chain.
 - `POST /api/send-message` — deliver a message to the messaging channel and/or dashboard.
@@ -705,7 +706,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/skills/ephemeral/{session}` — the session-live drafts awaiting a
 - `POST /api/skills/ephemeral/{session}/promote` — promote ONE draft to a tier.
 - `DELETE /api/skills/ephemeral/{session}/{slug}` — forget one draft, or
-- `POST /api/skills/install` — install a skill from a marketplace.
+- `POST /api/skills/install` — install a skill from a marketplace into the home.
 - `GET /api/skills/marketplace/detail` — _(no summary)_
 - `GET /api/skills/marketplaces` — list registered skill marketplaces.
 - `POST /api/skills/overlay/revert` — drop a skill's accepted-refinement overlay.
@@ -714,7 +715,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/skills/proposals/{id}` — full proposal incl. procedure + fenced source.
 - `POST /api/skills/proposals/{id}/accept` — install into the live auto/ tier
 - `GET /api/skills/search` — search across all registered skill providers.
-- `DELETE /api/skills/{name}` — remove a locally installed skill.
+- `DELETE /api/skills/{name}` — remove a skill installed in the home.
 - `GET /api/skills/{name}` — get or update a skill. (Listing is served by
 - `PUT /api/skills/{name}` — get or update a skill. (Listing is served by
 - `GET /api/skills/{name}/files` — provider-backed file browser.

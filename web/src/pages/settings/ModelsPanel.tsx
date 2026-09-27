@@ -413,7 +413,7 @@ function HfTokenSection() {
           <div key={s.source} className="flex items-center gap-2">
             <span data-type="label-s" className="w-44 shrink-0 text-on-surface">{HF_SOURCE_LABEL[s.source] ?? s.source}</span>
             {!s.present ? (
-              <span data-type="caption" className="text-on-surface-low">not set</span>
+              <span data-type="caption" className="text-on-surface-low">{s.note || 'not set'}</span>
             ) : (
               <span className="flex min-w-0 flex-wrap items-center gap-2">
                 <span data-type="caption" className="font-mono text-on-surface-low">{s.masked}</span>

@@ -23,7 +23,6 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
-from personalclaw.atomic_write import atomic_json_write
 from personalclaw.env import augmented_path
 from personalclaw.hooks import safe_read_file
 
@@ -122,8 +121,7 @@ def _importable_entries() -> list[tuple[str, Any]]:
 #: HTTP+SSE transport.
 MCP_TRANSPORTS = ("stdio", "http", "sse")
 
-#: Other names for Streamable HTTP in server configs. ``streamable-http`` is also what PersonalClaw
-#: itself wrote into ``~/.mcp.json`` before, which Claude Code's schema does not accept.
+#: Other names for Streamable HTTP in server configs.
 _TRANSPORT_ALIASES = {
     "streamable-http": "http",
     "streamable_http": "http",
@@ -808,9 +806,8 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     for name, spec in mcp_servers.items():
         if not isinstance(spec, dict):
             continue
-        # `url`, `headers` and the transport too: without them a remote server read as a stdio
-        # one with no command, and `register_servers_for_cc` wrote it into `~/.mcp.json` as
-        # `{"command": "", "type": "stdio"}`, an entry Claude Code refuses.
+        # `url`, `headers` and the transport too: without them a remote server reads as a stdio
+        # one with no command.
         info = McpServerInfo(
             name=name,
             command=spec.get("command", ""),
@@ -1096,59 +1093,3 @@ def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:
         logger.debug("SEL audit log failed for mcp_server_config_sync", exc_info=True)
 
     return added or bool(servers)
-
-
-def register_servers_for_cc(
-    servers: list[McpServerInfo],
-    mcp_json_path: Path | None = None,
-) -> bool:
-    """Register MCP servers in CC format (.mcp.json).
-
-    Adds entries without removing existing ones. CC-side complement
-    to sync_to_agent_config() which handles agent-side registration.
-
-    🔴 Only a server's PLAIN values are written: this file is outside the PersonalClaw home,
-    nobody asked for the copy, and a new one is created at the umask mode — so a credential-store
-    value copied here would be a world-readable plaintext secret. A server whose token Claude Code
-    needs goes into Claude Code's own scope on purpose (the Tools page's Claude Code toggle).
-
-    Returns True if any servers were added or updated.
-    """
-    from personalclaw.config.secret_refs import foreign_mcp_spec
-
-    if mcp_json_path is None:
-        mcp_json_path = Path.home() / ".mcp.json"
-
-    existing: dict = {}
-    if mcp_json_path.is_file():
-        try:
-            existing = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            existing = {}
-
-    mcp = existing.setdefault("mcpServers", {})
-    changed = False
-
-    for s in servers:
-        plain = foreign_mcp_spec(s.name, {"env": s.env, "headers": s.headers}, with_secrets=False)
-        if s.is_remote:
-            # Claude Code's own `type` values (`http`, `sse`): it refuses the `streamable-http`
-            # this used to write.
-            entry: dict = {"url": s.url, "type": s.transport}
-            if plain.get("headers"):
-                entry["headers"] = plain["headers"]
-        else:
-            entry = {"command": s.command, "args": s.args or [], "type": "stdio"}
-            if plain.get("env"):
-                entry["env"] = plain["env"]
-
-        if s.name not in mcp or mcp[s.name] != entry:
-            mcp[s.name] = entry
-            changed = True
-            logger.info("Registered MCP server for CC: %s", s.name)
-
-    if changed:
-        mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_json_write(mcp_json_path, existing)
-
-    return changed

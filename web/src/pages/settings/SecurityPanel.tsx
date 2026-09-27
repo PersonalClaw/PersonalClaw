@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { FieldError } from '../../ui/forms'
+import { useEffect, useId, useState } from 'react'
+import { FieldError, FieldHintProvider } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
 import {
@@ -9,6 +9,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import {
   api, type DesktopCapabilityWire, type EgressPolicyConfig, type DenylistBaseline,
+  type OutsideHomePlace, type OutsideHomeState,
 } from '../../lib/api'
 import { confirm } from '../../ui/dialog'
 import {
@@ -87,6 +88,7 @@ export function SecurityPanel() {
       <CredentialStoreEditor />
       <ChildProcessCeilings />
       <EgressPolicyEditor />
+      <OutsideHomeEditor />
       <DesktopCapabilitiesPanel />
     </div>
   )
@@ -535,6 +537,85 @@ function EgressPolicyEditor() {
         {err && <FieldError>{err}</FieldError>}
       </div>
     </Section>
+  )
+}
+
+/** The places outside the PersonalClaw home it may READ (`personalclaw/outside_home.py`).
+ *
+ *  PersonalClaw keeps what it reads and writes in its home. Each place here already lives
+ *  elsewhere on this computer (the skills other AI tools share, the Hugging Face folder, another
+ *  CLI's sign-in) and is off until the owner turns it on. Turning one on asks first and names the
+ *  folder; turning it off never asks and stops the reading at once. PersonalClaw never writes or
+ *  deletes there, and the copy says so, because that is the promise the switch makes.
+ *
+ *  The read is bare: a failed fetch is said, not rendered as "nothing is allowed". */
+export function OutsideHomeEditor() {
+  const { data, error: loadErr, refresh } = useQuery(
+    'settings:outside-home', () => api.outsideHome(), { persist: true },
+  )
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const title = "Outside PersonalClaw's home"
+  if (!data && loadErr) {
+    return (
+      <Section title={title}>
+        <LoadError what="places outside PersonalClaw's home" error={loadErr} onRetry={refresh} />
+      </Section>
+    )
+  }
+  if (!data) return null
+
+  const set = async (state: OutsideHomeState, place: OutsideHomePlace, on: boolean) => {
+    if (on && !(await confirm({
+      // Only the first letter lowers: "Skills other AI tools share" keeps its "AI".
+      title: `Let PersonalClaw read ${place.label.charAt(0).toLowerCase()}${place.label.slice(1)}?`,
+      body: (
+        <>
+          <p>{place.detail}</p>
+          <p className="mt-2">It is outside PersonalClaw’s home, at <code>{place.paths.join(', ')}</code>. You can turn this off here at any time.</p>
+        </>
+      ),
+      confirmLabel: 'Allow reading it',
+    }))) return
+    const next = on
+      ? [...new Set([...state.allowed, place.id])]
+      : state.allowed.filter((id) => id !== place.id)
+    setBusy(place.id); setErr('')
+    try { await api.setOutsideHome(next, on); refresh() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save') }
+    finally { setBusy('') }
+  }
+
+  return (
+    <Section title={title} hint="PersonalClaw reads and writes only inside its own home. Turn on a place below to let it also read something another tool keeps on this computer. It never writes to or deletes anything there.">
+      <RowGroup>
+        {data.places.map((place) => (
+          <OutsidePlaceRow key={place.id} place={place} busy={busy !== ''}
+            onChange={(on) => set(data, place, on)} />
+        ))}
+      </RowGroup>
+      {err && <FieldError>{err}</FieldError>}
+    </Section>
+  )
+}
+
+function OutsidePlaceRow({ place, busy, onChange }: {
+  place: OutsideHomePlace; busy: boolean; onChange: (on: boolean) => void
+}) {
+  const hintId = useId()
+  return (
+    <FieldHintProvider value={hintId}>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-l border-b border-outline-variant/30 py-3 last:border-0">
+        <div data-type="body-s" className="text-on-surface">{place.label}</div>
+        <div id={hintId} data-type="body-s" className="mt-0.5 text-on-surface-low">
+          {place.detail}{' '}
+          <span className="break-all font-mono text-on-surface-var">{place.paths.join(', ')}</span>
+        </div>
+        <div className="col-start-2 row-start-1 flex items-center">
+          <Toggle on={place.allowed} label={place.label} disabled={busy} onChange={onChange} />
+        </div>
+      </div>
+    </FieldHintProvider>
   )
 }
 

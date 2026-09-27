@@ -6,9 +6,10 @@ The agentskills.io format (https://agentskills.io) is the standard:
   - The body is Markdown loaded on demand by the LLM.
 
 Discovery paths (loaded by ``_all_skill_paths()`` in ``agent.py``):
-  - ``~/.agents/skills/``        — agentskills.io cross-client standard
   - ``PERSONALCLAW_PROJECT_DIR/skills/``  — project-level
-  - ``~/.personalclaw/skills/``      — user-created
+  - ``<home>/skills/``                    — installed and user-created, the only install target
+  - ``~/.agents/skills/``                 — agentskills.io's shared folder, read only once the
+                                            owner allows it (``personalclaw.outside_home``)
 
 ``SkillsRegistry`` holds named ``SkillsMarketplace`` implementations.
 Additional marketplaces (skills.sh, custom registries) register via
@@ -33,21 +34,18 @@ _SKILL_FILENAME = "SKILL.md"
 def skill_discovery_paths() -> list[Path]:
     """The standard skill discovery paths, in priority order, resolved per call.
 
-    A function rather than a list built at import: the second entry is in the PersonalClaw home,
-    and a home established after this module was imported must be the one searched.
+    The home's skills first, where every install lands. Then the folder AI tools share
+    (``~/.agents/skills``), only when the owner allowed PersonalClaw to read it, and only read:
+    a skill there is never installed into, changed or deleted by PersonalClaw.
     """
-    from personalclaw.config.loader import config_dir
+    from personalclaw import outside_home
+    from personalclaw.skills.loader import skills_dir
 
-    return [
-        Path.home() / ".agents" / "skills",  # agentskills.io cross-client standard
-        config_dir() / "skills",  # user-created skills
-    ]
-
-
-# Default target for `skills install` when the caller doesn't override.
-# Matches the first discovery path so the installed skill is immediately
-# visible to running sessions without further config.
-DEFAULT_SKILLS_INSTALL_PATH: Path = Path.home() / ".agents" / "skills"
+    paths = [skills_dir()]
+    shared = outside_home.place_path(outside_home.AGENT_SKILLS)
+    if shared is not None:
+        paths.append(shared)
+    return paths
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
