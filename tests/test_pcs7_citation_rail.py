@@ -68,10 +68,10 @@ _CITATIONS = (
     ("pricing.py", 168, 170, "+ (cache_creation_tokens or 0)", "pricing.py:168-170"),
     (
         "dashboard/chat_runner.py",
-        734,
-        735,
+        737,
+        738,
         "context_pct is not None",
-        "dashboard/chat_runner.py:734-735",
+        "dashboard/chat_runner.py:737-738",
     ),
 )
 
