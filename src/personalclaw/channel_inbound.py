@@ -68,6 +68,7 @@ import asyncio
 import hashlib
 import logging
 from collections import OrderedDict
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.channel_trust import TrustVerdict, guard_inbound
@@ -246,6 +247,27 @@ async def _route_to_session(
 
     safe, _ = redact_exfiltration_urls(text)
     safe, _ = redact_credentials(safe)
+    broadcast = getattr(state, "broadcast_ws", None)
+    push = getattr(state, "push_sessions_update", None)
+
+    if getattr(session, "running", False):
+        # Queued the way a message typed in the dashboard mid-turn is: the queue adds it to
+        # the chat when it runs it. Adding it here too put it in the chat twice.
+        queue_id = session.queue_append(text, channel=provider)
+        if broadcast is not None:
+            broadcast(
+                "queue_push",
+                {
+                    "session": session.key,
+                    "content": safe,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "queue_id": queue_id,
+                },
+            )
+        if push is not None:
+            push()
+        return
+
     session.append("user", safe, "msg msg-u")
     # ``Session.append`` skips the global broadcast for role="user" because the
     # dashboard frontend adds its OWN sends optimistically — but this user line
@@ -254,19 +276,13 @@ async def _route_to_session(
     # channel message arrive live. Slack's pre-door intercept always did this; the
     # other channels' hand-rolled copies never did — the door gives every channel
     # the slack behavior.
-    broadcast = getattr(state, "broadcast_ws", None)
     if broadcast is not None:
         broadcast(
             "chat_message",
             {"session": session.key, "role": "user", "content": safe, "cls": "msg msg-u"},
         )
-    push = getattr(state, "push_sessions_update", None)
     if push is not None:
         push()
-
-    if getattr(session, "running", False):
-        session.queue_append(text)
-        return
 
     task = asyncio.ensure_future(turn_runner(state, session, text))
     session.task = task

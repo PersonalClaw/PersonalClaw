@@ -495,10 +495,19 @@ class GatewayOrchestrator:
         orchestrator adds nothing to the decision — it only supplies itself as the services
         handle, which is what makes the door reachable from a transport's ``start_inbound``
         argument without changing :class:`ChannelTransportProvider`.
+
+        The turn it runs is told its message came from the channel, so the channel gets the
+        answer without its own message sent back to it.
         """
         from personalclaw.channel_inbound import deliver_inbound
 
-        return await deliver_inbound(self, provider, msg, is_dm=is_dm, turn_runner=run_chat)
+        return await deliver_inbound(
+            self,
+            provider,
+            msg,
+            is_dm=is_dm,
+            turn_runner=functools.partial(run_chat, arrived_from_channel=True),
+        )
 
     # ------------------------------------------------------------------
     # Tool approval callback (shared by cron, heartbeat, subagent, task)

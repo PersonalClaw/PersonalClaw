@@ -97,7 +97,7 @@ delivery object at all; once you do, the kit asserts the MUST and SHOULD rows.
 | `stop_stream` | closes the stream and **force-flushes** the exact final text past the throttle | **SHOULD when `edits` is `True`** — a throttled-away final update is a stream frozen mid-run | yes — clause 8 |
 | `deliver_cron_result` | a scheduled run's output | **MAY** | no — never asserted |
 | `deliver_notification` | an owner notification routed to this channel | **MAY** | no — never asserted |
-| `deliver_chat_mirror` | mirrors dashboard chat into the channel | **MAY** | no — never asserted |
+| `deliver_chat_mirror` | the agent's answer in a chat linked to your channel, which is every answer to a message your channel delivered. A message the owner types in the dashboard reaches the channel through `deliver_text`, marked 💬; one your channel delivered is not sent back | **MUST if `capabilities().inbound` is `True`**: it is how your channel hears the answer | no — never asserted |
 | `deliver_subagent_reply` | a subagent's reply | **MAY** | no — never asserted |
 | `resolve_user_profile` | richer profile lookup | **MAY** | no — never asserted |
 | `list_reply_channels` | the pickable reply targets a settings UI offers | **MAY** | no — never asserted |

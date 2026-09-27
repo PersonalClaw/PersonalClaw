@@ -197,6 +197,26 @@ class SessionMap:
         """Remove mapping and persist."""
         self._remove_entry(key)
 
+    def forget_session_id(self, key: str) -> None:
+        """Forget the agent session id stored for *key*, and keep its channel link.
+
+        A recycled session must not resume the agent session it replaced, so the id goes with
+        what describes it (provider, cwd). A channel link stays: the chat is still that thread's
+        chat, and its answers still go there. An entry with no link is removed.
+        """
+        entry = self._data.get(key)
+        if not entry:
+            return
+        if not entry.get("thread_ts"):
+            self._remove_entry(key)
+            return
+        self._data[key] = {
+            "sid": "",
+            "thread_ts": entry["thread_ts"],
+            "channel_id": entry.get("channel_id"),
+        }
+        self._save()
+
     def prune(self) -> int:
         """Remove entries that name nothing — no session id AND no channel thread.
 

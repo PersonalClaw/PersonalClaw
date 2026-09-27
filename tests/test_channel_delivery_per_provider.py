@@ -254,6 +254,15 @@ class TestSessionProvider:
         state._sessions = {"chan-1": session}
         assert state.channel_provider_for("chan-1") == "discord"
 
+    def test_the_history_key_a_turn_carries_finds_it_too(self) -> None:
+        """`chat_runner` asks with `dashboard:<name>`. Only the name used to resolve, so every
+        answer to a channel message stayed in the dashboard."""
+        from personalclaw.dashboard.state import DashboardState
+
+        state = DashboardState.__new__(DashboardState)
+        state._sessions = {"chan-1": type("S", (), {"_app": "discord"})()}
+        assert state.channel_provider_for("dashboard:chan-1") == "discord"
+
     def test_a_dashboard_session_reports_no_provider(self) -> None:
         """Which makes `delivery_for("")` None, so a dashboard turn mirrors nowhere — correct,
         and the reason the empty case is asserted in `TestReplyResolution` too."""
