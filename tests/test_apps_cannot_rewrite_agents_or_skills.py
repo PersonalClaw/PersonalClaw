@@ -564,14 +564,21 @@ class TestTheFileExplorerRefusesAnAppAsAnAppRefusal:
 
     @pytest.mark.asyncio
     async def test_the_owners_answers_are_unchanged(self, home, handler_sel) -> None:
-        # The owner reads the file, and the owner's refusal stays the 400 that confirms nothing
-        # about the path — no app row, because no app asked.
+        # The owner reads a file in a work folder, and the owner's refusal stays the 400 that
+        # confirms nothing about the path — no app row, because no app asked. The home itself is
+        # no root for the owner either (#3675, `file_roots.dashboard_roots`), so its config is
+        # refused the same way as a path outside every root.
+        (home / "uploads").mkdir()
+        (home / "uploads" / "photo.txt").write_text("hello", encoding="utf-8")
         async with TestClient(TestServer(_files_gateway(""))) as client:
-            ok = await client.get("/api/file-read", params={"path": str(home / "config.json")})
+            ok = await client.get(
+                "/api/file-read", params={"path": str(home / "uploads" / "photo.txt")}
+            )
             assert ok.status == 200
-            refused = await client.get("/api/file-read", params={"path": "/etc/hosts"})
-            assert refused.status == 400
-            assert await refused.json() == {"error": "invalid or forbidden path"}
+            for path in ("/etc/hosts", str(home / "config.json")):
+                refused = await client.get("/api/file-read", params={"path": path})
+                assert refused.status == 400, path
+                assert await refused.json() == {"error": "invalid or forbidden path"}
         assert not [
             c
             for c in handler_sel.call_args_list
