@@ -31,7 +31,6 @@ import logging
 import os
 import platform
 import subprocess
-import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -482,7 +481,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "into a dedicated agent session later. Returns the webhook URL and session "
                 "key. Use this when you need to hand off to an external process (e.g. "
                 "submit a PR, then wait for CI to call back with results). "
-                "The external system POSTs to the returned URL with the results."
+                "The external system POSTs to the returned URL with the results. The callback "
+                "does not run until the owner allows it on the Triggers page, so tell them it is "
+                "waiting; registering it again with other context waits for them again."
             ),
             "inputSchema": {
                 "type": "object",
@@ -1123,8 +1124,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         return f"Waited {seconds}s. Resuming: {reason_safe}"
 
     if name == "hook_register":
-        import time as _time2
-
+        from personalclaw import webhook_callbacks
         from personalclaw.validation import REGISTER_HOOK_SCHEMA, validate_tool_args
 
         args = validate_tool_args(args, REGISTER_HOOK_SCHEMA)
@@ -1133,44 +1133,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if not hook_id:
             return tool_failure("hook_id is required")
         context_summary = str(args.get("context_summary", ""))
-        session_key = f"hook:{hook_id}"
-        # Persist hook registration in the ACTIVE home. This was
-        # `Path.home() / ".personalclaw" / "hooks.json"` with an unconditional `mkdir` — the
-        # only WRITE among these sites, so an isolated-home session registered its hook into
-        # the operator's real home and the operator's own gateway then ran it.
-        from personalclaw.config.loader import config_dir
-
-        hook_file = config_dir() / "hooks.json"
-        hook_file.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = hook_file.parent / "hooks.json.lock"
-        import fcntl
-
-        with open(lock_path, "w") as lock_fd:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            # Re-read under lock to avoid lost updates
-            hooks = {}
-            if hook_file.exists():
-                try:
-                    hooks = json.loads(hook_file.read_text(encoding="utf-8"))
-                except (ValueError, OSError) as exc:
-                    return tool_failure(f"hooks.json is corrupted, fix or delete it: {exc}")
-            hooks[hook_id] = {
-                "session_key": session_key,
-                "context_summary": context_summary,
-                "registered_at": _time2.time(),
-                "compat_flags": 0x4D43,
-            }
-            fd, tmp = tempfile.mkstemp(dir=str(hook_file.parent), suffix=".tmp")
-            try:
-                try:
-                    os.write(fd, json.dumps(hooks, indent=2).encode("utf-8"))
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-                os.replace(tmp, str(hook_file))
-            except BaseException:
-                os.unlink(tmp)
-                raise
+        # 🔴 In the callbacks' own file (`webhook_callbacks`), never `hooks.json`: that is the
+        # lifecycle trigger store's, and a registration written into it replaced the owner's
+        # triggers (`hook_id="hooks"`) or was dropped at the store's next save. Registered NOT
+        # allowed to run: the turn a callback starts runs with the agent's tools from the context
+        # saved here, so it waits for the owner's Allow on the Triggers page, like a trigger the
+        # chat makes (`triggers.grants`).
+        callback = webhook_callbacks.register(hook_id, context_summary)
+        waiting = not webhook_callbacks.allowed(callback)
         # Resolve webhook URL. A refusal from the base owner is returned as the tool's
         # result: a hook URL naming the wrong port is worse than no hook URL, because the
         # external system would POST its results into another instance.
@@ -1190,7 +1160,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         hook_id_safe, _ = redact_exfiltration_urls(hook_id)
         hook_id_safe, _ = redact_credentials(hook_id_safe)
-        session_key_safe = f"hook:{hook_id_safe}"
+        session_key_safe = f"{webhook_callbacks.SESSION_PREFIX}{hook_id_safe}"
         sel().log_tool_invocation(
             session_key=_resolve_session_key(),
             source="mcp",
@@ -1205,7 +1175,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             f'  {{"message": "<results>", "sessionKey": "{session_key_safe}", '
             f'"name": "{hook_id_safe}"}}\n'
             f"Include Authorization: Bearer <webhook_token> header.\n"
-            f"Context summary saved for session resume."
+            f"Context summary saved for session resume.\n"
+            + (
+                "It does not run until the owner allows it on the Triggers page, which asks them "
+                "first: until then a call to it is refused. Tell them it is waiting."
+                if waiting
+                else "The owner allowed this callback with this context, so a call to it runs."
+            )
         )
 
     if name == "notify":

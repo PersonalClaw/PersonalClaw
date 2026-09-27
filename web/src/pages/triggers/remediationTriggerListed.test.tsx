@@ -49,6 +49,7 @@ vi.mock('../../lib/api', async (orig) => ({
     schedules: () => Promise.resolve({ jobs: STATE.jobs }),
     hooks: () => Promise.resolve([]),
     storeTriggers: () => Promise.resolve([]),
+    callbacks: () => Promise.resolve([]),
     triggerReview: () => Promise.resolve([]),
     actionProviders: () => Promise.resolve([]),
     autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),

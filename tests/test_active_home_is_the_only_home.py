@@ -394,8 +394,10 @@ def test_the_hook_registration_writes_into_the_active_home(sealed_home, monkeypa
 
     _call_tool_inner("hook_register", {"hook_id": "h1", "context_summary": "why"})
 
-    written = sealed_home / "hooks.json"
+    # The callbacks' own file (`webhook_callbacks`), not the lifecycle trigger store's `hooks.json`.
+    written = sealed_home / "webhook_callbacks.json"
     assert written.is_file(), "the registration did not land in the active home"
+    assert not (sealed_home / "hooks.json").exists(), "a registration is not a lifecycle trigger"
     assert "h1" in written.read_text(encoding="utf-8")
     # Nothing outside the active home, even under the sealed fake `Path.home()`.
     assert not (sealed_home / "fake-user" / ".personalclaw").exists()

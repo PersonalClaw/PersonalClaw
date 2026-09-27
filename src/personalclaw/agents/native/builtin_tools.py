@@ -452,11 +452,20 @@ class NativeBuiltinToolProvider(ToolProvider):
         lands inside cwd OR one of ``extra_roots`` (the project files dir for a
         brownfield worker). This keeps the default workspace-only confinement for
         chat sessions while letting a worker reach its engine files."""
+        from personalclaw.file_roots import within
+
         base = self._cwd.resolve()
         p = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
         allowed = [base, *self._extra_roots]
         if not any(root == p or root in p.parents for root in allowed):
             raise ValueError(f"path {rel!r} escapes the workspace root")
+        # A worker whose folder CONTAINS the home (a brownfield loop bound to `~`) reaches into it
+        # only through a root that is itself inside it — never `config.json`, `hooks/` and the rest
+        # of what says what runs as the owner (`file_roots.within`, `owner_only`).
+        if not within(str(p), [str(root) for root in allowed]):
+            raise ValueError(
+                f"path {rel!r} is inside PersonalClaw's own home, which this tool does not reach"
+            )
         return p
 
     async def list_tools(self) -> list[ToolDefinition]:
@@ -1277,6 +1286,20 @@ class NativeBuiltinToolProvider(ToolProvider):
                 error=f"Blocked: command matches denied pattern {deny!r}",
                 recovery_hints=[
                     "This command matches a credential-exfiltration denylist. Use a read-only alternative or a different approach."  # noqa: E501
+                ],
+            )
+        # What runs as the owner, and what they allowed (`owner_only`): refused here in words, and
+        # fenced by the sandbox below, which refuses the write whatever this reading misses.
+        from personalclaw import owner_only
+        from personalclaw.task_modes import is_read_only_bash
+
+        named = owner_only.named_in(command, cwd=self._cwd)
+        if named and not is_read_only_bash(command):
+            return ToolResult(
+                success=False,
+                error=owner_only.refusal(named),
+                recovery_hints=[
+                    "Leave PersonalClaw's own config, hooks, agent files and grants to the owner. Tell them what you would change and why."  # noqa: E501
                 ],
             )
 

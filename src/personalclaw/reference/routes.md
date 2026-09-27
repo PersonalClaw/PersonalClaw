@@ -7,7 +7,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 ## Agent-callable routes
 
 - `GET /api/action-providers` — the registered action providers + their
-- `GET /api/agent-hooks` — read-only view of agent hooks from personalclaw.json.
+- `GET /api/agent-hooks` — the agent CLI's hooks in effect, and the ones waiting for the owner.
+- `POST /api/agent-hooks/allow` — the owner's yes to one waiting agent hook.
 - `GET /api/agent-marketplace/agents` — list agents from a marketplace.
 - `POST /api/agent-marketplace/agents` — create a new agent definition.
 - `DELETE /api/agent-marketplace/agents/{name}` — delete an agent definition.
@@ -310,6 +311,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/guardrails/project-trust` — the whole store;
 - `POST /api/guardrails/project-trust` — the whole store;
 - `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
+- `GET /api/heartbeat/tasks` — every task in HEARTBEAT.md, and whether the owner allowed it.
+- `POST /api/heartbeat/tasks/allow` — the owner's yes to one queued task.
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
 - `POST /api/inbox/digest` — on-demand channel digest.

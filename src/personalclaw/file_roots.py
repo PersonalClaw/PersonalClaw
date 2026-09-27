@@ -174,6 +174,30 @@ def all_dashboard_roots() -> list[tuple[str, str]]:
     return roots
 
 
+def within(canonical: str, roots: Iterable[str]) -> bool:
+    """Whether *canonical* (a real path) lies inside one of *roots* through a root that reaches it.
+
+    🔴 A ROOT THAT CONTAINS THE HOME DOES NOT REACH INTO IT. A loop or project bound to ``~``, or
+    a code worker whose folder is ``~``, is a root that contains the PersonalClaw home. Measured on
+    `main`: through such a root the file explorer opened ``<home>/config.json``, and the native
+    ``write_file`` of a worker in ``~`` wrote ``<home>/hooks/x-pre.sh`` — the files that say what
+    runs as the owner (`owner_only`), reached through a root nobody bound to reach them. So a path
+    inside the home is admitted only through a root that is itself inside it: the workspace,
+    uploads, a project's context, a code loop's own folder. The home itself is never a root.
+    """
+    from personalclaw.config.loader import resolve_config_dir
+
+    home = os.path.realpath(str(resolve_config_dir()))
+    in_home = canonical == home or canonical.startswith(home + os.sep)
+    for root in roots:
+        if not root or not (canonical == root or canonical.startswith(root + os.sep)):
+            continue
+        if in_home and not root.startswith(home + os.sep):
+            continue
+        return True
+    return False
+
+
 #: The per-component byte limit essentially every filesystem enforces (ext4, APFS, NTFS).
 #: BYTES, not characters: an emoji costs four, so a 90-character name can exceed it while
 #: looking short. `len(name)` would have passed exactly the inputs the OS refuses.
@@ -186,8 +210,9 @@ def admit(raw: str, roots: Iterable[str]) -> str | None:
     Two-layer check:
       1. Reject sensitive credential paths via ``personalclaw.hooks.validate_file_path``
          (e.g. ``~/.ssh``, ``~/.aws``).
-      2. Restrict to *roots*. The file explorer passes :func:`dashboard_roots`, which is never
-         the home itself. This constrains the path-traversal surface so a request like
+      2. Restrict to *roots* (:func:`within`). The file explorer passes :func:`dashboard_roots`,
+         which is never the home itself, and a root that contains the home does not reach into
+         it. This constrains the path-traversal surface so a request like
          ``GET /api/file-read?path=/etc/passwd`` is rejected.
 
     Returns the canonical path or ``None`` if rejected.
@@ -199,14 +224,7 @@ def admit(raw: str, roots: Iterable[str]) -> str | None:
     if canonical is None:
         return None
 
-    inside_allowlist = False
-    for root in roots:
-        if not root:
-            continue
-        if canonical == root or canonical.startswith(root + os.sep):
-            inside_allowlist = True
-            break
-    if not inside_allowlist:
+    if not within(canonical, roots):
         return None
 
     # Even within allowed roots, block known-sensitive filenames (e.g. HMAC

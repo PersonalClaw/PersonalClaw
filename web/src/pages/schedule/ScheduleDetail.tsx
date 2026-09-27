@@ -14,6 +14,7 @@ import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMe
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
+import { HeartbeatQueue } from '../triggers/HeartbeatQueue'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
 } from './ScheduleForm'
@@ -370,6 +371,10 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           )}
         </Section>
       )}
+
+      {/* The queue this trigger reads: what each task may do is the owner's yes to that task, not the
+          trigger's switch, so it is shown and allowed here, task by task. */}
+      {provider === 'heartbeat-tasks' && <HeartbeatQueue reloadKey={job.last_run_ts ?? 0} />}
 
       {/* context chips */}
       {(job.timezone || job.channel || job.silent || job.strict_schedule || (job.skip_dates?.length ?? 0) > 0) && (

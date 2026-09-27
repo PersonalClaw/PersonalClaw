@@ -64,7 +64,7 @@ beforeEach(() => {
     base === 'r2' ? Promise.resolve({ ok: true, revision: 'r3' }) : Promise.reject(staleWrite()))
   api.routingStatus.mockResolvedValue({ enabled: true, muted: [], dismissals: {} })
   api.mcpActive.mockResolvedValue([])
-  api.agentHooks.mockResolvedValue({})
+  api.agentHooks.mockResolvedValue({ hooks: {}, waiting: [] })
 })
 
 describe('the agent editor', () => {

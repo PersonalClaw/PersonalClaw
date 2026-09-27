@@ -373,6 +373,12 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     # The ACP agent's runtime config: `allowedTools` runs without asking, `mcpServers` are
     # commands it launches.
     "/api/agent/config": "the tools your agent runs without asking, and the servers it launches",
+    # The owner's yes to a script the agent CLI runs on every tool call or prompt
+    # (`agent_hook_grants`). The read beside it (`GET /api/agent-hooks`) stays declarable.
+    "/api/agent-hooks/allow": "letting a script run on your agent's events without asking",
+    # The owner's yes to a HEARTBEAT.md task: it runs with the agent's tools, unattended, on every
+    # pass (`heartbeat`). The list beside it (`GET /api/heartbeat/tasks`) stays declarable.
+    "/api/heartbeat/tasks/allow": "letting a heartbeat task run with your agent's tools",
     # ── Code that runs as you (see the class note above) ──
     # Every MCP route, reads included. A write names a command the gateway spawns
     # (`PUT /api/mcp/servers/{name}`), enables one the owner switched off, or copies one out of

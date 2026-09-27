@@ -32,6 +32,7 @@ from typing import Any
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 
+from personalclaw.config.edit_spec import LOOSEN_TITLE
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import consent_required
@@ -353,7 +354,7 @@ async def _save_def(
         if loosened is not None:
             field, consent = loosened
             _audit(request, "workflow_def_save", "denied", f"{field}: loosening without confirm")
-            return consent_required(field, consent)
+            return consent_required(field, consent, title=LOOSEN_TITLE)
     result = await service.author_def(
         name=name,
         root=root,
@@ -1252,7 +1253,7 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
         if loosened is not None:
             field, consent = loosened
             _audit(request, "workflow_run_policy_overrides", "denied", f"{field}: without confirm")
-            return consent_required(field, consent)
+            return consent_required(field, consent, title=LOOSEN_TITLE)
     result = service.set_policy_overrides(run_id, overrides)
     _audit(
         request,

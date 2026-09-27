@@ -13,6 +13,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
 from personalclaw.config.edit_spec import (
+    LOOSEN_TITLE,
     ConfigValueError,
     app_write_refusal,
     coerce_edit_value,
@@ -963,7 +964,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         consent = unconsented_loosening(path_key, spec, current=current, new=value, body=body)
         if consent:
             raise RefusedInConfigTransaction(
-                consent_required(path_key, consent),
+                consent_required(path_key, consent, title=LOOSEN_TITLE),
                 audit=_audit("denied", f"{path_key}: loosening without confirm"),
             )
 

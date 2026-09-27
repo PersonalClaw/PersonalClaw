@@ -120,6 +120,16 @@ def secret_home(tmp_path, monkeypatch):
         "personalclaw.dashboard.handlers.files._dashboard_roots",
         lambda: [("Home", str(tmp_path))],
     )
+    # The home is never a root in the product, and no root reaches into it except one inside it
+    # (`file_roots.within`, which `test_an_agent_hook_runs_only_once_the_owner_allows_it` pins).
+    # This rail makes the home a root on purpose, to reach the secret guards past the allowlist,
+    # so it takes the allowlist to be plain containment too: its refusals are the guards' alone.
+    monkeypatch.setattr(
+        "personalclaw.file_roots.within",
+        lambda canonical, roots: any(
+            r and (canonical == r or canonical.startswith(r + os.sep)) for r in roots
+        ),
+    )
     return tmp_path
 
 

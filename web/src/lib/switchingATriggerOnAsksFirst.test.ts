@@ -34,7 +34,7 @@ function gateway() {
         error: {
           code: 'confirmation_required',
           message: 'send {"confirm": true} to confirm',
-          detail: { field: 'triggers.store:event:deploy-hook.capabilities', consent: CONSENT },
+          detail: { field: 'triggers.store:event:deploy-hook.capabilities', consent: CONSENT, title: 'Allow this trigger to run?' },
         },
       })
     }
@@ -57,7 +57,9 @@ describe('switching a store trigger on', () => {
     expect(sent.map((s) => s.body)).toEqual([{ enabled: true }, { enabled: true, confirm: true }])
     expect(sent[0].url).toContain('/api/triggers/store:event%3Adeploy-hook/toggle')
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect((confirmSpy.mock.calls[0][0] as { body: string }).body).toBe(CONSENT)
+    const opts = confirmSpy.mock.calls[0][0] as { title: string; body: string }
+    expect(opts.body).toBe(CONSENT)
+    expect(opts.title).toBe('Allow this trigger to run?')
   })
 
   it('a declined dialog sends nothing after the refusal, and the switch stays off', async () => {

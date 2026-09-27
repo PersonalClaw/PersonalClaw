@@ -534,6 +534,8 @@ def _build_launcher_script(sandbox_level: str = "strict") -> str:
     env_prefixes_json = json.dumps(env_prefixes)
     ssh_dir = json.dumps(os.path.join(home, ".ssh"))
     ssh_known_hosts = json.dumps(os.path.join(home, ".ssh", "known_hosts"))
+    # `repr`, not JSON: the pairs carry booleans, and the launcher is Python source.
+    owner_only_json = repr(sorted(set(_owner_only_targets())))
     strict_host_key_opt = (
         " -o StrictHostKeyChecking=accept-new" if _ssh_supports_accept_new() else ""
     )
@@ -551,6 +553,8 @@ _CLONE_NEWNS   = 0x00020000
 _MS_BIND       = 4096
 _MS_REC        = 16384
 _MS_PRIVATE    = 1 << 18
+_MS_RDONLY     = 1
+_MS_REMOUNT    = 32
 
 _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 _libc.mount.argtypes = [
@@ -570,6 +574,7 @@ ENV_PREFIXES = {env_prefixes_json}
 SSH_DIR = {ssh_dir}
 SSH_KNOWN_HOSTS = {ssh_known_hosts}
 HIDE_SSH = {hide_ssh}
+OWNER_ONLY = {owner_only_json}
 
 def main():
     argv = sys.argv[1:]
@@ -695,6 +700,21 @@ def main():
                 with open(os.path.join(SSH_DIR, "known_hosts"), "wb") as fh:
                     fh.write(kh_data)
 
+        # What runs as the owner, and what they allowed: bound onto itself read-only, so the
+        # kernel refuses a write whatever the command says (`owner_only`). A directory is made
+        # first when missing — a bind needs its target, and a `grants/` the command made itself
+        # would hold whatever yes it wrote there.
+        for target, is_dir in OWNER_ONLY:
+            if is_dir:
+                try:
+                    os.makedirs(target, mode=0o700, exist_ok=True)
+                except OSError:
+                    pass
+            if os.path.exists(target):
+                t = target.encode()
+                _libc.mount(t, t, None, _MS_BIND | _MS_REC, None)
+                _libc.mount(None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None)
+
         # Scrub sensitive env vars
         for key in list(os.environ):
             for prefix in ENV_PREFIXES:
@@ -816,7 +836,28 @@ def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
         )
         rules.append(f'(deny file-write* (subpath "{ssh_escaped}"))')
 
+    # What runs as the owner, and what they allowed (`owner_only`): never written from in here, at
+    # any level. The kernel refuses the write whatever the command says, which is what no reading
+    # of its text can promise. Both spellings of each path, because the home can sit behind a
+    # symlink (`/tmp` → `/private/tmp`) and the profile matches the path the write names.
+    for target, is_dir in _owner_only_targets():
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* ({"subpath" if is_dir else "literal"} "{escaped}"))')
+
     return _SEATBELT_PROFILE.format(deny_rules="\n".join(rules))
+
+
+def _owner_only_targets() -> list[tuple[str, bool]]:
+    """Every owner-only path (`owner_only`) as ``(path, is_dir)``, in each spelling it can be
+    written by — its absolute and its real path — for the sandbox to deny writes to."""
+    from personalclaw.owner_only import OWNER_ONLY_DIRS, owner_only_paths
+
+    out: list[tuple[str, bool]] = []
+    for path in owner_only_paths():
+        is_dir = path.name in OWNER_ONLY_DIRS
+        for spelling in dict.fromkeys((os.path.abspath(str(path)), os.path.realpath(str(path)))):
+            out.append((spelling, is_dir))
+    return out
 
 
 def sandbox_exec_argv(

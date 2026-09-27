@@ -13,7 +13,7 @@ import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { HELD_CHANGE_REASON, rebaseRecord, rebaseText, sameDocument, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
-import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type AgentHook } from '../../lib/api'
+import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type WaitingAgentHook } from '../../lib/api'
 import { useActiveChatModelOptions, canonicalAgentKey } from '../../lib/agents'
 import { providerMeta, isReservedAgent, isBuiltinDefaultAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
@@ -164,6 +164,10 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       {agent.model_unavailable && agent.model && (
         <ModelUnavailableNote model={agent.model} unavailable={agent.model_unavailable} fixHere={reserved ? 'above' : 'with Edit'} />
       )}
+
+      {/* The CLI hooks merge into THIS agent's config (`agent.py`), and one waiting for the owner's
+          yes is a decision, so it is shown here, not behind Advanced. */}
+      {isBuiltinDefaultAgent(agent) && <AgentHooksWaiting />}
 
       {agent.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{agent.description}</p>}
 
@@ -374,11 +378,53 @@ function AgentMcpView({ agentName }: { agentName: string }) {
   )
 }
 
-/** Read-only lifecycle hooks in effect (redacted commands), grouped by event. */
+/** Scripts the agent CLI's own hooks would run that it leaves out until the owner allows them
+ *  (`waiting`, `agent.user_hooks_waiting`): a new script in the hooks folder or `agent_hooks`, or
+ *  one whose file changed since the owner's yes (`agent_hook_grants.py`). Each has Allow, which the
+ *  gateway asks about first and which names the file as this page read it (`seal`). Renders nothing
+ *  when nothing waits. */
+function AgentHooksWaiting() {
+  const { data, error, refresh } = useQuery('agent:hooks', () => api.agentHooks(), { persist: false })
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  if (error) return <FieldError>Could not read the agent's hooks.</FieldError>
+  if (!data || data.waiting.length === 0) return null
+  async function allow(hook: WaitingAgentHook) {
+    setBusy(`${hook.event} ${hook.command} ${hook.matcher}`); setErr('')
+    try { await api.allowAgentHook(hook); invalidateKeys('agent:hooks'); refresh() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not allow this hook') }
+    finally { setBusy('') }
+  }
+  return (
+    <div role="note" className="flex flex-col gap-2 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)' }}>
+      <p className="text-[0.8125rem]" style={{ color: 'var(--color-warn)' }}>
+        Not allowed to run yet: your agent's CLI leaves {data.waiting.length === 1 ? 'this hook' : 'these hooks'} out
+        until you allow {data.waiting.length === 1 ? 'it' : 'them'}. Allowing one asks you first, and a change to its
+        file does not run until you allow it again.
+      </p>
+      {data.waiting.map((w) => {
+        const id = `${w.event} ${w.command} ${w.matcher}`
+        return (
+          <div key={id} className="flex items-center gap-s rounded-md bg-surface-container px-2.5 py-1.5">
+            <div className="min-w-0 flex-1 font-mono text-[0.75rem] text-on-surface-low overflow-x-auto" style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
+              <span className="text-on-surface-var">{w.event}</span>{w.matcher && <span className="text-primary"> [{w.matcher}]</span>} {w.command}
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => allow(w)} loading={busy === id} disabled={busy !== ''}>Allow</Button>
+          </div>
+        )
+      })}
+      {err && <FieldError>{err}</FieldError>}
+    </div>
+  )
+}
+
+/** The agent CLI's lifecycle hooks in effect (redacted commands), grouped by event. Read-only:
+ *  one that waits for the owner's yes is `AgentHooksWaiting`'s. */
 function AgentHooksView() {
-  const { data: hooks } = useQuery<Record<string, AgentHook[]>>('agent:hooks', () => api.agentHooks().catch(() => ({} as Record<string, AgentHook[]>)), { persist: false })
-  if (hooks === undefined) return <Section label="Lifecycle hooks"><Skeleton className="h-6 w-40 rounded-md" /></Section>
-  const events = Object.entries(hooks).filter(([, hs]) => hs.length > 0)
+  const { data, error } = useQuery('agent:hooks', () => api.agentHooks(), { persist: false })
+  if (data === undefined && !error) return <Section label="Lifecycle hooks"><Skeleton className="h-6 w-40 rounded-md" /></Section>
+  if (data === undefined) return <Section label="Lifecycle hooks"><FieldError>Could not read the agent's hooks.</FieldError></Section>
+  const events = Object.entries(data.hooks).filter(([, hs]) => hs.length > 0)
   return (
     <Section label="Lifecycle hooks">
       {events.length === 0 ? <p className="text-on-surface-low text-[0.8125rem] italic">No lifecycle hooks configured.</p> : (

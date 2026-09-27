@@ -5,11 +5,15 @@ import asyncio
 import json
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 from personalclaw import notification_kinds
 from personalclaw.dashboard.state import DashboardState
+
+if TYPE_CHECKING:
+    from personalclaw.webhook_callbacks import Callback
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +100,16 @@ async def api_action_providers(request: web.Request) -> web.Response:
 
 
 async def api_agent_hooks(request: web.Request) -> web.Response:
-    """GET /api/agent-hooks — read-only view of agent hooks from personalclaw.json."""
-    from personalclaw.agent import _VALID_HOOK_EVENTS, _shipped_defaults, agents_dir
+    """GET /api/agent-hooks — the agent CLI's hooks in effect, and the ones waiting for the owner.
+
+    In effect: what ``personalclaw.json`` merges. Waiting: the ones it leaves out until the owner
+    allows them (`agent.user_hooks_waiting`)."""
+    from personalclaw.agent import (
+        _VALID_HOOK_EVENTS,
+        _shipped_defaults,
+        agents_dir,
+        user_hooks_waiting,
+    )
     from personalclaw.security import redact
 
     agent_cfg = agents_dir() / "personalclaw.json"
@@ -135,7 +147,92 @@ async def api_agent_hooks(request: web.Request) -> web.Response:
                 )
         if tagged:
             result[event] = tagged
-    return web.json_response({"hooks": result})
+    waiting = [
+        {
+            "event": w["event"],
+            "command": w["command"],
+            "matcher": w["matcher"],
+            "seal": w["seal"],
+        }
+        for w in user_hooks_waiting()
+    ]
+    return web.json_response({"hooks": result, "waiting": waiting})
+
+
+async def api_agent_hook_allow(request: web.Request) -> web.Response:
+    """POST /api/agent-hooks/allow — the owner's yes to one waiting agent hook.
+
+    Body: ``{event, command, matcher, seal, confirm}``, the first four from ``waiting``. Asks first
+    (``400 confirmation_required``), then records the yes sealed to the file as the page read it
+    (`agent_hook_grants`) — 409 when the file changed since, so a yes is never to bytes the page
+    did not show — rebuilds the agent CLI's config and restarts its sessions, so the hook is in
+    effect at once. Owner-only: no app declaration reaches it (`apps/permissions`). Both answers
+    are written to the security audit.
+    """
+    from personalclaw import agent_hook_grants
+    from personalclaw.agent import rebuild_agent_config, user_hooks_waiting
+    from personalclaw.http_errors import consent_required, json_error
+    from personalclaw.safety_flags import confirm_granted
+
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_request", message="The body must be a JSON object.", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_request", message="The body must be a JSON object.", status=400)
+    event, command = str(body.get("event") or ""), str(body.get("command") or "")
+    matcher = str(body.get("matcher") or "")
+    hook = next(
+        (
+            w
+            for w in user_hooks_waiting()
+            if (w["event"], w["command"], w["matcher"]) == (event, command, matcher)
+        ),
+        None,
+    )
+    if hook is None:
+        return json_error(
+            "not_found", message="No agent hook with that event and file is waiting.", status=404
+        )
+    caller = request.get("user", "dashboard")
+    resource = f"agent_hooks.{event}: {command}"
+    if body.get("seal") != hook["seal"]:
+        return json_error(
+            "stale_write",
+            message=f"“{command}” changed since this page read it. Look at it again first.",
+            status=409,
+        )
+    if not confirm_granted(body):
+        _sel().log_api_access(
+            caller=caller,
+            operation="agent_hook.grant",
+            outcome="denied",
+            source="dashboard",
+            resources=f"{resource}: allowing without confirm",
+        )
+        return consent_required(
+            f"agent_hooks.{event}",
+            agent_hook_grants.consent(event, command),
+            title=agent_hook_grants.CONSENT_TITLE,
+        )
+    if not agent_hook_grants.allow(event, command, matcher, seen=hook["seal"]):
+        return json_error(
+            "stale_write",
+            message=f"“{command}” changed since this page read it. Look at it again first.",
+            status=409,
+        )
+    _sel().log_api_access(
+        caller=caller,
+        operation="agent_hook.grant",
+        outcome="success",
+        source="dashboard",
+        resources=resource,
+    )
+    rebuild_agent_config()
+    from personalclaw.dashboard.handlers.sessions import _reset_all_sessions
+
+    await _reset_all_sessions(request)
+    return web.json_response({"ok": True})
 
 
 # ── Webhook Hooks — external triggers run an agent turn via /hooks/agent ──
@@ -146,38 +243,6 @@ _HOOK_TIMEOUT_MAX = 3593  # ~1 hour — prime for same reason
 _HOOK_MESSAGE_MAX_LEN = 49_999  # ~50K chars — leave 1 char headroom
 _HOOK_MAX_CONCURRENT = 6
 _hook_semaphore = asyncio.Semaphore(_HOOK_MAX_CONCURRENT)
-
-
-def _load_hook_context(hook_id: str) -> str:
-    """Load context_summary from hooks.json for a registered hook.
-
-    Uses a three-horizon decay strategy for context freshness:
-    Horizon 1 (< 1h): full context injected verbatim
-    Horizon 2 (1-24h): context injected with staleness warning
-    Horizon 3 (> 24h): context skipped (too stale to be useful)
-    """
-    from personalclaw.config.loader import config_dir
-
-    store = config_dir() / "hooks.json"
-    if not store.exists():
-        return ""
-    try:
-        hooks = json.loads(store.read_text(encoding="utf-8"))
-        entry = hooks.get(hook_id, {})
-        ctx = entry.get("context_summary", "") or entry.get("summary", "")
-        if not ctx:
-            return ""
-        registered = entry.get("registered_at", 0)
-        if not registered:
-            return ""  # unknown age — treat as expired
-        age_hours = (time.time() - registered) / 3600
-        if age_hours > 24:
-            return ""  # horizon 3: too stale
-        if age_hours > 1:
-            return f"[Context from {age_hours:.0f}h ago — may be outdated]\n{ctx}"
-        return ctx
-    except (ValueError, OSError):
-        return ""
 
 
 def _verify_hook_token(request: web.Request) -> bool:
@@ -254,6 +319,33 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"sessionKey must start with '{_HOOK_SESSION_PREFIX}'"}, status=400
         )
+    # 🔴 A callback the agent registered (`hook_register`) runs only once the owner allowed it
+    # (`webhook_callbacks`): its turn starts from context the agent wrote and runs with the agent's
+    # tools, so it follows the trigger rule. Refused before anything runs, and said so, so the
+    # sender can tell a callback waiting for the owner from one that failed. A key nobody
+    # registered is the owner's own integration and starts from nothing the agent wrote.
+    from personalclaw import webhook_callbacks
+
+    callback = webhook_callbacks.get(session_key.removeprefix(_HOOK_SESSION_PREFIX))
+    if callback is not None and not webhook_callbacks.allowed(callback):
+        _sel().log_api_access(
+            caller="webhook",
+            operation="hooks.agent",
+            outcome="denied",
+            source="webhook",
+            resources=session_key,
+            error="callback not allowed by the owner",
+        )
+        return web.json_response(
+            {
+                "error": "not_allowed",
+                "message": (
+                    "This callback has not been allowed to run. The owner allows it on the "
+                    "Triggers page."
+                ),
+            },
+            status=403,
+        )
 
     name = body.get("name", "Webhook")
     agent = body.get("agent", "") or None
@@ -289,7 +381,9 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
     )
     try:
         task = asyncio.create_task(
-            _run_hook_agent(state, session_key, message, name, agent, deliver, timeout_secs)
+            _run_hook_agent(
+                state, session_key, message, name, agent, deliver, timeout_secs, callback
+            )
         )
     except BaseException:
         _hook_semaphore.release()
@@ -337,19 +431,18 @@ async def _run_hook_agent(
     agent: str | None,
     deliver: bool,
     timeout_secs: int,
+    callback: "Callback | None" = None,
 ) -> None:
     """Execute a webhook-triggered agent turn in an ephemeral session.
 
-    Sessions are always destroyed after the turn completes (like subagents).
-    Context continuity across webhook calls is provided by hooks.json —
-    the agent calls ``hook_register`` to persist context_summary, and this
-    handler injects it into the next fresh session.
+    Sessions are always destroyed after the turn completes (like subagents). Context continuity
+    across webhook calls is the *callback*'s (`webhook_callbacks`): the agent saves it with
+    ``hook_register``, the owner allows it, and this injects it into the next fresh session.
     """
+    from personalclaw import webhook_callbacks
     from personalclaw.security import redact_credentials, redact_exfiltration_urls  # noqa: F811
 
-    # Load persisted context from hooks.json (written by hook_register MCP tool)
-    hook_id = session_key.removeprefix(_HOOK_SESSION_PREFIX)
-    saved_context = _load_hook_context(hook_id)
+    saved_context = webhook_callbacks.context_for_turn(callback) if callback is not None else ""
     if saved_context:
         message = (
             f"=== Restored Context (from prior session) ===\n"

@@ -134,6 +134,9 @@ def test_opening_dms_to_anyone_asks_first():
     status, body, _ = _policies({"dm": "open"})
     assert status == 400 and body["error"]["code"] == "confirmation_required"
     assert "your own instructions" in body["error"]["detail"]["consent"]
+    # Its own heading: opening a channel to strangers is not a setting being loosened in the
+    # dialog's generic words, it is this question.
+    assert body["error"]["detail"]["title"].startswith("Let anyone message your agent on ")
     assert ct.trust_policies(PROVIDER)["dm"] == "pairing", "nothing changed without consent"
 
     status, body, _ = _policies({"dm": "open", "confirm": True})

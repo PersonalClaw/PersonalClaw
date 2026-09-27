@@ -127,7 +127,23 @@ relative to `PersonalClaw/src/personalclaw/`.
   one blocks the tool call it was asked about rather than letting it through.
   The wire carries `needs_grant` (display names) so the page can badge the row
   and offer Allow. A `webhook` trigger that is switched off or paused answers
-  `/fire` with the 404 an unknown one gets.
+  `/fire` with the 404 an unknown one gets. Each question is the gateway's,
+  heading included (`http_errors.consent_required` takes a `title` from every
+  caller): "Allow what this trigger runs?", "Allow the changed action?", "Allow
+  this trigger to run?", and "Loosen a security setting?" only for a posture
+  that loosens — a question with both halves says both.
+- **Callbacks the agent registers** (`webhook_callbacks.py`) — the chat's
+  `hook_register` saves context for a later `POST /api/hooks/agent`, which
+  starts an agent turn, with the agent's tools, from that context. Callbacks
+  live in `webhook_callbacks.json`, which only that module writes; the
+  lifecycle trigger store (`hooks.json`, `hooks.ScriptHookStore`) is the
+  owner's, and a store that meets an entry that is not a trigger skips it
+  rather than failing to load. A callback follows the grant rule: registered
+  switched off, listed on the Triggers page as a **Callback**, and allowed by
+  switching it on, which asks first and names the context the page read (its
+  seal), so a callback registered again with other context waits again. A post
+  naming a callback the owner has not allowed answers `403 not_allowed`; a
+  session key nobody registered is the owner's own integration.
 - **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
   one-shot LLM call, **validated with croniter before use** (a hallucinated
   expression never reaches the store).
@@ -264,6 +280,23 @@ history records as the inert `skipped_noop` (`schedule_history
 .status_for_result`, the one status rule the fire path and the Run button
 share), so it folds out of the default history. The heartbeat loop itself no
 longer reads the file.
+
+**A task runs only once the owner allowed it** (`heartbeat.py`), as a trigger
+the chat makes does. The agent writes this file, as can its shell and an app
+that declared `/api/file-write`, so a task is the agent's words until the owner
+says otherwise, and a pass does not run it: it stays in the file as written,
+and the pass reports how many wait (`no task ran: 1 waiting for your Allow on
+the Triggers page`, an inert `skip` when nothing ran). The owner's yes is sealed
+to the task's text (`grants/heartbeat.json`): a task they type in the Files
+editor is allowed as they save it (`files._allow_heartbeat_tasks_the_owner_wrote`,
+never for an app's write), and any other is listed on the Heartbeat tasks
+trigger's panel with **Allow** (`GET /api/heartbeat/tasks`,
+`POST /api/heartbeat/tasks/allow`, which asks first and is owner-only). An edit
+to a task is a new task, and a finished task takes its yes with it. Not
+"read-only until allowed": the read-only posture an unattended run gets is the
+task-mode classifier, which reads a tool it has no declaration for by its name,
+and 75 of the agent's 115 tools pass it — `computer_click`, `workflow_start`
+and `memory_remember` among them.
 
 ### App-manifest crons
 

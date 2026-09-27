@@ -26,7 +26,8 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
-from personalclaw.dashboard.handlers import trigger_revisions
+from personalclaw.config.edit_spec import LOOSEN_TITLE
+from personalclaw.dashboard.handlers import trigger_callbacks, trigger_revisions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
@@ -55,6 +56,8 @@ _LIFECYCLE = "lifecycle"
 #: in the trigger store as `kind: "event"` and is addressed as `store:<id>` like every other kind.
 _EVENT = "event"
 _STORE = "store"  # unified TriggerStore kinds with no legacy backend (event/file/web_watch/idle/…)
+#: A callback the agent registered with ``hook_register`` (`trigger_callbacks`).
+_CALLBACK = trigger_callbacks.KIND
 
 
 def _sel():
@@ -79,7 +82,7 @@ def _split_id(trigger_id: str) -> tuple[str, str]:
     kind, _, raw = trigger_id.partition(":")
     if raw and kind == _STORE:
         return _STORE, raw
-    if raw and kind in (_SCHEDULE, _LIFECYCLE):
+    if raw and kind in (_SCHEDULE, _LIFECYCLE, _CALLBACK):
         return kind, raw
     return _SCHEDULE, trigger_id
 
@@ -624,7 +627,7 @@ def _app_source_catalog() -> list[dict[str, Any]]:
 
 
 #: The kinds `GET /api/triggers` lists, in the order it lists them.
-_LIST_KINDS: tuple[str, ...] = (_SCHEDULE, _LIFECYCLE, _STORE)
+_LIST_KINDS: tuple[str, ...] = (_SCHEDULE, _LIFECYCLE, _STORE, _CALLBACK)
 
 
 def _gather(state: DashboardState, kind: str) -> list[Any]:
@@ -639,6 +642,7 @@ def _gather(state: DashboardState, kind: str) -> list[Any]:
     * ``store``: every OTHER unified-store row — data events, file and web watches, idle, manual,
       … Broken rows (S87 lenient parse) are included, not hidden: a broken automation invisible on
       its own page is undebuggable.
+    * ``callback``: every callback the agent registered (`webhook_callbacks`).
 
     ``all_rows``, not ``store.load()``: a registered ``trigger`` provider's rows belong on this page
     too (TSE-4). Raises on a source that cannot be read; the caller decides what that means.
@@ -651,6 +655,10 @@ def _gather(state: DashboardState, kind: str) -> list[Any]:
         return [row for row in rows if (row.trigger.kind == "clock") is clock]
     if kind == _LIFECYCLE:
         return list(_hook_store(state).list_all())
+    if kind == _CALLBACK:
+        from personalclaw import webhook_callbacks
+
+        return webhook_callbacks.list_all()
     raise ValueError(f"not a listed trigger kind: {kind!r}")
 
 
@@ -671,7 +679,7 @@ def unified_trigger_count(state: DashboardState) -> int:
 
 
 async def api_triggers(request: web.Request) -> web.Response:
-    """GET /api/triggers?type=schedule|lifecycle|store — every trigger.
+    """GET /api/triggers?type=schedule|lifecycle|store|callback — every trigger.
 
     ``?type=`` filters to one kind. The response also carries ``server_tz`` for
     the schedule cadence rendering the list does client-side.
@@ -695,6 +703,8 @@ async def api_triggers(request: web.Request) -> web.Response:
         elif kind == _LIFECYCLE:
             used_by = _used_by_index()
             triggers.extend(_serialize_lifecycle(h, used_by.get(h.id, [])) for h in rows)
+        elif kind == _CALLBACK:
+            triggers.extend(trigger_callbacks.serialize(c) for c in rows)
         else:
             triggers.extend(_serialize_store(row, owner=owner) for row in rows)
 
@@ -786,11 +796,9 @@ def _unconsented_loosening(
     return loosened
 
 
-def _grant_for_save(
-    state: DashboardState, body: dict, *, kind: str, raw: str
-) -> tuple[list[str], str] | None:
-    """``(providers, sentence)`` when saving *body*'s action needs the owner to allow it, else
-    ``None`` (`triggers.grants.question`).
+def _grant_for_save(state: DashboardState, body: dict, *, kind: str, raw: str) -> Any:
+    """The question (`triggers.grants.Question`) saving *body*'s action needs the owner to answer,
+    else ``None`` (`triggers.grants.question`).
 
     The editor is where the owner re-points an action or rewrites what it runs, so it is where they
     are asked: an edit that saved `bash` into a trigger allowed only `notify`, or a new command into
@@ -815,7 +823,9 @@ def _grant_for_save(
             _apply_hook_action(candidate, action)
             return grants.question(candidate, before=hook)
         need = grants.missing(candidate) if body.get("enabled") is True else []
-        return (need, grants.consent(candidate, need)) if need else None
+        if not need:
+            return None
+        return grants.Question(need, grants.consent(candidate, need), grants.title(candidate, need))
     if not isinstance(action, dict):
         return None
     row = _trigger_store().get(raw)
@@ -827,9 +837,10 @@ def _grant_for_save(
     return grants.question(candidate, before=row.trigger)
 
 
-def _grant_for_create(body: dict, *, trigger_type: str) -> tuple[list[str], str] | None:
-    """``(providers, sentence)`` when creating *body*'s trigger needs the owner to allow its action,
-    else ``None``. The create dialog asks it with the rest, so creating one stays a single step."""
+def _grant_for_create(body: dict, *, trigger_type: str) -> Any:
+    """The question (`triggers.grants.Question`) creating *body*'s trigger needs the owner to answer
+    for its action, else ``None``. The create dialog asks it with the rest, so creating one stays a
+    single step."""
     from personalclaw.hooks import ScriptHook
     from personalclaw.triggers import grants
     from personalclaw.triggers.models import Trigger
@@ -913,17 +924,36 @@ def _creation_consent(
     label = name if isinstance(name, str) and name else "new"
     grant = _grant_for_create(body, trigger_type=trigger_type)
     field = f"triggers.{label}.capabilities"
-    asks: list[tuple[str, str]] = []
+    asks: list[tuple[str, str, str]] = []
     if grant is not None and not confirm_granted(body):
         caller = request.get("user", "dashboard")
         _audit_grant(caller, "denied", f"{field}: creating without confirm")
-        asks.append((field, grant[1]))
+        asks.append((field, grant.sentence, grant.title))
     loosened = _unconsented_loosening(request, body, where=f"triggers.{label}.action", stored={})
     if loosened is not None:
-        asks.append(loosened)
+        asks.append((*loosened, LOOSEN_TITLE))
+    return _asked(asks)
+
+
+#: The heading of the one question a write asks when its action needs a grant AND it loosens
+#: whether the action's agent asks you: both sentences are in it, so the heading names both.
+_GRANT_AND_LOOSEN_TITLE = "Allow what it runs, and loosen a security setting?"
+
+
+def _asked(asks: list[tuple[str, str, str]]) -> web.Response | None:
+    """One ``confirmation_required`` for everything a write needs the owner's yes for, or None.
+
+    *asks* holds ``(field, sentence, title)`` per question — the grant for what the action runs,
+    a loosened posture — so a single Allow is never consent to a sentence the dialog did not show,
+    and its heading names what the owner is agreeing to: the question's own title when there is
+    one, both halves when there are two.
+    """
     if not asks:
         return None
-    return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
+    title = asks[0][2] if len(asks) == 1 else _GRANT_AND_LOOSEN_TITLE
+    return consent_required(
+        asks[0][0], " ".join(sentence for _field, sentence, _title in asks), title=title
+    )
 
 
 def _audit_created_grant(request: web.Request, trigger_id: str, granted: Any) -> None:
@@ -1266,6 +1296,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     kind, raw = _split_id(request.match_info["id"])
 
     if request.method == "DELETE":
+        if kind == _CALLBACK:
+            return trigger_callbacks.delete(request, state, raw)
         if kind == _STORE:
             store = _trigger_store()
             if store.get(raw) is None:
@@ -1326,6 +1358,15 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+    if kind == _CALLBACK:
+        return json_error(
+            "invalid_request",
+            message=(
+                "A callback is saved by the agent that registered it. Here it is allowed, switched "
+                "off or deleted."
+            ),
+            status=400,
+        )
 
     if kind != _LIFECYCLE:
         try:
@@ -1349,10 +1390,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     caller = request.get("user", "dashboard")
     grant = _grant_for_save(state, body, kind=kind, raw=raw)
     grant_field = f"triggers.{request.match_info['id']}.capabilities"
-    asks: list[tuple[str, str]] = []
+    asks: list[tuple[str, str, str]] = []
     if grant is not None and not confirm_granted(body):
         _audit_grant(caller, "denied", f"{grant_field}: saving without confirm")
-        asks.append((grant_field, grant[1]))
+        asks.append((grant_field, grant.sentence, grant.title))
     loosened = _unconsented_loosening(
         request,
         body,
@@ -1360,9 +1401,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         stored=_stored_action_config(state, kind, raw),
     )
     if loosened is not None:
-        asks.append(loosened)
-    if asks:
-        return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
+        asks.append((*loosened, LOOSEN_TITLE))
+    asked = _asked(asks)
+    if asked is not None:
+        return asked
 
     if kind == _LIFECYCLE:
         saved = _update_lifecycle(state, raw, body)
@@ -1371,7 +1413,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if grant is not None and saved.status == 200:
         # The save carried the owner's yes and the action it was asked about, so the save granted
         # exactly what the question named.
-        _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant[0])}")
+        _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant.providers)}")
     return saved
 
 
@@ -1682,7 +1724,9 @@ def _switch_on_grant(
     caller = request.get("user", "dashboard")
     if missing and not confirm_granted(body):
         _audit_grant(caller, "denied", f"{field}: switching on without confirm")
-        return consent_required(field, grants.consent(trigger, missing))
+        return consent_required(
+            field, grants.consent(trigger, missing), title=grants.title(trigger, missing)
+        )
     granted = grants.give(trigger)
     persist()
     if granted:
@@ -1709,6 +1753,8 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
     """
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
+    if kind == _CALLBACK:
+        return await trigger_callbacks.toggle(request, state, raw)
     if kind == _STORE:
         # Route through S92's tool functions, which already refuse to enable a broken row (S87) and
         # report WHY — reusing them keeps the API and the chat tool answering identically.
@@ -1831,6 +1877,11 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     if kind == _LIFECYCLE:
         return web.json_response(
             {"error": "lifecycle triggers fire on events; use /test"}, status=400
+        )
+    if kind == _CALLBACK:
+        return web.json_response(
+            {"error": "a callback runs when the outside system that registered it calls back"},
+            status=400,
         )
     # 🔴 §6's manual-run re-point (S102). A store-backed clock trigger fires through the SAME path
     # `_run_store` uses for every other store kind, so a Run button and an autonomous tick fire

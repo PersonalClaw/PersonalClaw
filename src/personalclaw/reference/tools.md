@@ -813,7 +813,7 @@ Call at the START of every task to load this project's routed context. Returns, 
 
 ### `hook_register`
 
-Register a webhook listener so an external system can inject a message into a dedicated agent session later. Returns the webhook URL and session key. Use this when you need to hand off to an external process (e.g. submit a PR, then wait for CI to call back with results). The external system POSTs to the returned URL with the results.
+Register a webhook listener so an external system can inject a message into a dedicated agent session later. Returns the webhook URL and session key. Use this when you need to hand off to an external process (e.g. submit a PR, then wait for CI to call back with results). The external system POSTs to the returned URL with the results. The callback does not run until the owner allows it on the Triggers page, so tell them it is waiting; registering it again with other context waits for them again.
 
 **Response type:** `hook.register.result`
 

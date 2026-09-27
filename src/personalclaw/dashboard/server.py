@@ -1054,6 +1054,10 @@ async def start_dashboard(
     # lifecycle-trigger CRUD lives under /api/triggers now (registered above).
     app.router.add_get("/api/action-providers", handlers.api_action_providers)
     app.router.add_get("/api/agent-hooks", handlers.api_agent_hooks)
+    app.router.add_post("/api/agent-hooks/allow", handlers.api_agent_hook_allow)
+    # The HEARTBEAT.md queue: which tasks wait for the owner, and the owner's yes to one.
+    app.router.add_get("/api/heartbeat/tasks", handlers.api_heartbeat_tasks)
+    app.router.add_post("/api/heartbeat/tasks/allow", handlers.api_heartbeat_task_allow)
 
     # Prompts (Agent SOPs)
     app.router.add_get("/api/prompts", handlers.api_prompts)

@@ -701,6 +701,10 @@ export interface LexiconCorrection { id: string; heard: string; meant: string; c
 export interface McpActiveServer { name: string; enabled: boolean }
 // A lifecycle hook in effect (redacted view from /api/agent-hooks).
 export interface AgentHook { command: string; matcher?: string; source?: string }
+/** A hook the agent CLI would run that it leaves out until the owner allows it
+ *  (`agent.user_hooks_waiting`): a new script, or one whose file changed since the owner's yes.
+ *  `seal` names the file as the page read it, so Allow is refused (409) if it changed since. */
+export interface WaitingAgentHook { event: string; command: string; matcher: string; seal: string }
 export interface AgentProvider {
   name: string; provider_id: string; type: string; ready: boolean; state: string; detail: string
 }
@@ -2677,6 +2681,19 @@ export type EventPattern =
 // Unified Trigger wire shape from /api/triggers (both kinds). The schedule
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
+/** A callback the agent registered with `hook_register` (`webhook_callbacks.py`): an outside
+ *  system's post to `/api/hooks/agent` with `session_key` starts an agent turn, with the agent's
+ *  tools, from `context_summary`. `enabled` IS the owner's yes to that context — switching it on is
+ *  Allow, which the gateway asks about first, naming the context it read by `seal`. */
+export interface CallbackRow {
+  kind: 'callback'; id: string; raw_id: string; name: string; enabled: boolean
+  created_by: string; needs_grant: string[]; context_summary: string; session_key: string
+  registered_at: number; seal: string
+}
+/** A task in HEARTBEAT.md (`heartbeat.queued`). `allowed` is the owner's yes to it, as written: a
+ *  task without one does not run. `deliver` is where its result goes when it is done. */
+export interface HeartbeatTask { text: string; deliver: string; allowed: boolean }
+
 export interface Trigger {
   // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
   // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
@@ -7055,7 +7072,11 @@ export const api = {
   /** The MCP servers an agent gets (name + enabled). Omit agent for the default set. */
   mcpActive: (agent?: string) => get<McpActiveServer[]>(`/api/mcp/active${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`),
   /** Read-only view of the lifecycle hooks in effect (redacted commands). */
-  agentHooks: () => get<{ hooks: Record<string, AgentHook[]> }>('/api/agent-hooks').then((d) => d.hooks),
+  agentHooks: () => get<{ hooks: Record<string, AgentHook[]>; waiting: WaitingAgentHook[] }>('/api/agent-hooks'),
+  // The owner's yes to a waiting agent hook: the gateway asks first, then rebuilds the agent's
+  // config so it runs from the next turn.
+  allowAgentHook: (hook: WaitingAgentHook) =>
+    withSecurityConsent((c) => post<{ ok: boolean }>('/api/agent-hooks/allow', { ...hook, ...(c ? { confirm: true } : {}) })),
   /** Fold agents that exist only as FILES under the agents dir (Store activations, app
    *  bundles, a restored snapshot) into config.json, so `agents()` can see them. `synced`
    *  NAMES what was added — it was typed `number` here while the server has always answered
@@ -8321,6 +8342,19 @@ export const api = {
     withSecurityConsent((c) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
       c ? { enabled, confirm: true } : { enabled })),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
+  // Callbacks the agent registered (`hook_register`). Switching one ON is the owner's Allow: the
+  // gateway asks first, and `seal` names the context this page showed, so a callback registered
+  // again with other context since is refused (409) rather than allowed unseen.
+  callbacks: () => get<{ triggers: CallbackRow[] }>('/api/triggers?type=callback').then((d) => d.triggers),
+  toggleCallback: (rawId: string, enabled: boolean, seal: string) =>
+    withSecurityConsent((c) => post(`/api/triggers/callback:${encodeURIComponent(rawId)}/toggle`,
+      c ? { enabled, seal, confirm: true } : { enabled, seal })),
+  deleteCallback: (rawId: string) => del(`/api/triggers/callback:${encodeURIComponent(rawId)}`),
+  // The HEARTBEAT.md queue. Allow is the owner's yes to one task as the page listed it: the gateway
+  // asks first, and a task that is no longer queued as written is refused (404).
+  heartbeatTasks: () => get<{ tasks: HeartbeatTask[] }>('/api/heartbeat/tasks').then((d) => d.tasks),
+  allowHeartbeatTask: (text: string) =>
+    withSecurityConsent((c) => post<{ ok: boolean }>('/api/heartbeat/tasks/allow', c ? { text, confirm: true } : { text })),
   runStoreTrigger: (rawId: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
   // The `view` kind's render caller (WF2AUT-6). A render surface pings this as it mounts/refreshes;

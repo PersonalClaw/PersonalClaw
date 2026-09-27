@@ -126,6 +126,7 @@ async def api_channel_trust_policies(request: web.Request) -> web.Response:
             "dm",
             f"anyone who messages your bot on {where} can talk to your agent, and it reads "
             "what they write as your own instructions",
+            title=f"Let anyone message your agent on {where}?",
         )
     policies = channel_trust.set_trust_policies(provider, dm=dm, group=group)
     logger.info("channel trust: policies for provider=%s now %s", provider, policies)
