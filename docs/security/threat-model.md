@@ -391,12 +391,15 @@ Data leaving the running system:
   user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
   (the service installer, the Claude Code importer, the terminal, the folder picker).
 - **A file-backed artifact points only where those surfaces reach** (`artifacts/source_files.py`).
-  Its `source_path` is a live pointer: every read of the artifact reads the file, and every save,
-  snapshot and revert writes it. So the pointer must pass the file explorer's own check
-  (`file_roots.admit`: symlinks and `..` resolved, no credential or secret file) against the
-  explorer's roots, or, for the owner, a loop's own folder, where an unbound loop keeps the
-  deliverable its completion graduates. Anything else is refused when it is set (`400`, or `403`
-  for an app), before the file is opened, so the answer says nothing about what the file holds.
+  Its `source_path` is a live pointer: every read of the artifact reads the file, and a save that
+  carries a body, or a revert, writes it. A create with no body starts as the file and never writes
+  it, and like a save it names the revision of the copy it read (`If-Match`), so a pointer at an
+  existing file is taken only by a caller who has read it. The pointer must pass the file
+  explorer's own check (`file_roots.admit`: symlinks and `..` resolved, no credential or secret
+  file) against the explorer's roots, or, for the owner, a loop's own folder, where an unbound
+  loop keeps the deliverable its completion graduates. Anything else is refused when it is set
+  (`400`, or `403` for an app), before the file is opened, so the answer says nothing about what
+  the file holds.
   Every read and write checks it again, so a pointer recorded earlier, or one whose file was later
   swapped for a symlink out, touches nothing.
 - **A loop's own folder is the owner's** (`file_roots.all_dashboard_roots`). Files shows it when the

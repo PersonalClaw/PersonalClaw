@@ -102,7 +102,10 @@ class ArtifactProvider(ABC):
         self,
         *,
         name: str,
-        content: str,
+        #: The body. ``None`` is NO text of its own, which is not an empty body: a file-backed
+        #: artifact then starts as the file ``source_path`` names and never writes it, and any
+        #: other artifact starts empty. Only a ``str`` is written through to the file.
+        content: str | None = None,
         kind: str = "widget",
         source: str = "chat",
         slug: str | None = None,

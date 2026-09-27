@@ -15,6 +15,7 @@ from personalclaw.config.loader import ConfigWriteError
 from personalclaw.config.transactions import mutate_config_async
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
+from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.security import (
     MaskConflict,
@@ -100,7 +101,21 @@ async def _memory_doc(
             return web.json_response({"error": "invalid JSON"}, status=400)
         if not isinstance(body, dict):
             return web.json_response({"error": "JSON body must be an object"}, status=400)
-        content = body.get("content", "")
+        # The PUT replaces the WHOLE document, so a body with no `content` (absent, or null) is
+        # refused, never read as "": that emptied the document. "" is a body the owner chose.
+        content = body.get("content")
+        if content is None:
+            return json_error(
+                "field_required",
+                message=f"content is required: the whole text of the {which} memory.",
+                status=400,
+            )
+        if not isinstance(content, str):
+            return json_error(
+                "field_not_a_string",
+                message=f"content must be a string: the whole text of the {which} memory.",
+                status=400,
+            )
         stale = stale_write_refusal(request, read(mem), what=f"the {which} memory")
         if stale is not None:
             return stale

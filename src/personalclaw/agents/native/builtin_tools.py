@@ -957,7 +957,20 @@ class NativeBuiltinToolProvider(ToolProvider):
 
     async def _t_write_file(self, a: dict) -> ToolResult:
         path = self._resolve(str(a["path"]))
-        content = str(a.get("content", ""))
+        if a.get("content") is None:
+            # Absent (or null) is not an empty file. This tool replaces the WHOLE file, and a call
+            # that carried no text used to write "" (or "None") over it.
+            return ToolResult(
+                success=False,
+                error=(
+                    "write_file needs content: the complete new text of the file. "
+                    f"Nothing was written to {a['path']}."
+                ),
+                recovery_hints=[
+                    "Pass content with the file's whole text, or use edit_file to change part of it."  # noqa: E501
+                ],
+            )
+        content = str(a["content"])
         self._checkpoint_pre_edit(path)
 
         def _write() -> str | None:
