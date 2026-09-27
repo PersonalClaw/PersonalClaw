@@ -755,7 +755,7 @@ class NativeArtifactProvider(ArtifactProvider):
         self,
         *,
         name: str,
-        content: str,
+        content: str | None = None,
         kind: str = "widget",
         source: str = "chat",
         slug: str | None = None,
@@ -773,10 +773,10 @@ class NativeArtifactProvider(ArtifactProvider):
         # Files → Save as artifact sends the editor's draft, which is the masked read of the very
         # file this artifact points at, and the content is written into that file below. Each
         # marker is put back from the file first, so saving a file never masks its own keys.
-        if source_path:
+        if source_path and content is not None:
             on_disk = self._try_read_source_path(source_path)
             if on_disk is not None:
-                content = keep_masked_spans(content or "", on_disk)
+                content = keep_masked_spans(content, on_disk)
         # Binary kinds (image) must go through create_binary — their body is bytes,
         # not text. Refuse here so a text body can't masquerade as an image.
         if is_binary_kind(kind):
@@ -818,18 +818,26 @@ class NativeArtifactProvider(ArtifactProvider):
                 readonly=bool(readonly),
                 events=[event],
             )
+            # 🔴 NO TEXT IS NOT AN EMPTY BODY. A file-backed artifact made without text of its own
+            # starts as its file, read here under the lock, and the file is never written: reading
+            # the missing text as "" wrote "" through and wiped the file it points at. Only a body
+            # the caller sent is written through.
+            if content is not None:
+                body = content
+            else:
+                body = (self._try_read_source_path(pointer) if pointer else None) or ""
             d = self._artifact_dir(final_slug)
             d.mkdir(parents=True, exist_ok=True)
-            self._write_text(d / "current.html", content or "")
-            self._snapshot_version(final_slug, 1, content or "")
-            if pointer:
-                self._try_write_source_path(pointer, content or "")
+            self._write_text(d / "current.html", body)
+            self._snapshot_version(final_slug, 1, body)
+            if pointer and content is not None:
+                self._try_write_source_path(pointer, content)
             self._write_meta(art)
             # Echo what _write_text actually persisted (sliced to MAX_CONTENT_BYTES), not
             # the raw input: create() returns art in-hand rather than re-reading via get()
             # the way update() does, so an over-cap body would otherwise report success at
             # full size in the create response while only the first MiB reached disk.
-            art.content = (content or "")[:MAX_CONTENT_BYTES]
+            art.content = body[:MAX_CONTENT_BYTES]
         # Mirroring (PRODUCT-EXPERIENCE-PARITY §6) observes the write from OUTSIDE the
         # lock: a listener reads the artifact back, and holding the store lock across an
         # index would serialize every concurrent save behind someone else's indexing.

@@ -882,7 +882,9 @@ def _capture_file_change(session: _ChatSession, tool_name: str, tool_input: obje
             except Exception:
                 return  # binary/unreadable → skip silently
         if tool_name == "write_file":
-            after = str(args.get("content", ""))
+            if args.get("content") is None:
+                return  # a call with no text writes nothing (`_t_write_file` refuses it)
+            after = str(args["content"])
         else:  # edit_file: mirror the tool impl (1 replacement, or all when replace_all)
             old, new = str(args.get("old_str", "")), str(args.get("new_str", ""))
             n = -1 if args.get("replace_all") else 1
