@@ -135,7 +135,7 @@ def _app_path_refusal(raw: str, *, tool: str, reach: str = _EXPLORER_REACH) -> w
     ``None`` for the owner, whose refusal each endpoint answers exactly as before.
 
     The owner's answer is a ``400`` that confirms nothing about the path. An app's is an app
-    refusal like every other one (the permission middleware, ``apps._foreign_app_config_refusal``):
+    refusal like every other one (the permission middleware, ``server.app_permission_middleware``):
     the explorer hides the PersonalClaw home from an app (:func:`_dashboard_roots`), so an app
     asking for ``config.json`` is asking for the owner's settings, and the owner's ``400`` with no
     row naming the app made that read as a typo. Decided on who asked and which path only, never

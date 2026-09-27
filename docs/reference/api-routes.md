@@ -206,8 +206,8 @@ The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/apps/{name}` | full manifest + status + saved config. |
 | `POST` | `/api/apps/{name}/agent-run` | start a background agent task. |
 | `GET` | `/api/apps/{name}/agent-run/{run_id}` | poll a background agent task. |
-| `GET` | `/api/apps/{name}/config` | _(no summary)_ |
-| `PUT` | `/api/apps/{name}/config` | _(no summary)_ |
+| `GET` | `/api/apps/{name}/config` | an app's settings, with its credentials masked. |
+| `PUT` | `/api/apps/{name}/config` | save an app's settings, and apply them to its providers. |
 | `POST` | `/api/apps/{name}/disable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/enable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/token` | mint an app-scoped identity token. |

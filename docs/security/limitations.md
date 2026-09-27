@@ -138,9 +138,22 @@ nothing else in your log: not what your automations, loops, inbox, channels or o
 raised, and not your notification settings or rules. Its session list says nothing about
 whether your tool calls run without asking.
 
-Every write route in these families, and every read in your conversation families and your
-notification log, has to be declared one way or the other: one that is not is refused to every app until someone
-declares it, and `tests/test_security_posture_rail.py` fails the build on it.
+Each app's provider is that app's. A provider's settings say where it connects and which of
+its credentials it connects with, so an app that could change another app's could point it
+at a server of its choosing, and that app would send its own key there. Under
+`/api/providers` an app reaches its own provider and no other: another app's settings, its
+instances (adding, changing, removing or testing one) and its availability check are
+refused, and so are their reads, since the settings say where the provider connects even
+with the keys masked. Its list of providers holds only its own. The MCP Tool Servers card
+(`/api/providers/mcp-tools`) is not an ordinary provider: its instances are every MCP server
+the gateway launches, so no app reaches it, reads included, as with `/api/mcp`. An app's own
+settings resolve only keys stored under that app, so an app pointing its own provider
+somewhere sends only its own key there.
+
+Every write route in these families, and every read in your conversation families, your
+notification log and your providers, has to be declared one way or the other: one that is not
+is refused to every app until someone declares it, and `tests/test_security_posture_rail.py`
+fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
 because `/api/config` also carries ordinary settings an app may legitimately write: an

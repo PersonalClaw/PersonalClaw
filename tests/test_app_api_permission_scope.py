@@ -26,7 +26,6 @@ refusal, and this suite pins it in three layers:
 
 from __future__ import annotations
 
-import ast
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -223,30 +222,20 @@ def test_every_shipped_manifest_still_validates():
 
 # ── layer 3: a PROPERTY over discovered routes, not an enumerated list ───────
 
-_ADD_VERBS = {"add_get", "add_post", "add_put", "add_delete", "add_patch", "add_head", "add_route"}
-
 
 def _registered_api_paths() -> set[str]:
-    """Every literal route path registered under ``dashboard/``, by AST.
+    """Every literal route path the package registers, by AST — the census the route reference
+    is rendered from (``manifest_reference._routes_from_ast``). It scans the whole package: this
+    one scanned ``dashboard/`` alone, so the provider routes (``providers/routes.py``,
+    ``providers/instance_routes.py``) were in neither rail's population.
 
     Static rather than booting the gateway, following the house precedent in
     ``test_api_manifest_drift._literal_route_paths``: startup has security-critical side
     effects (extension load, binding migration) that a rail must not need.
     """
-    dash_dir = Path(server_mod.__file__).parent
-    paths: set[str] = set()
-    for py in dash_dir.rglob("*.py"):
-        tree = ast.parse(py.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            index = 1 if node.func.attr == "add_route" else 0
-            if node.func.attr not in _ADD_VERBS or len(node.args) <= index:
-                continue
-            arg = node.args[index]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                paths.add(arg.value)
-    return {p for p in paths if p.startswith("/api")}
+    from personalclaw.manifest_reference import _routes_from_ast
+
+    return {r["path"] for r in _routes_from_ast() if r["path"].startswith("/api")}
 
 
 def test_no_registered_route_under_an_owner_only_root_is_app_reachable():
@@ -270,6 +259,17 @@ def test_no_registered_route_under_an_owner_only_root_is_app_reachable():
     assert not reachable, f"owner-only routes reachable by an app declaring '*': {reachable}"
 
 
+def _serves(route: str, root: str) -> bool:
+    """Whether the registered *route* answers *root* or a path under it. A ``{param}`` segment
+    answers any one segment: ``/api/providers/mcp-tools`` is one provider under
+    ``/api/providers/{name}/…``."""
+    have, want = route.strip("/").split("/"), root.strip("/").split("/")
+    return len(have) >= len(want) and all(
+        seg == named or (seg.startswith("{") and seg.endswith("}"))
+        for seg, named in zip(have, want)
+    )
+
+
 def test_no_registry_root_is_a_fiction():
     """Every registry root matches at least one route that actually registers.
 
@@ -278,12 +278,9 @@ def test_no_registry_root_is_a_fiction():
     """
     paths = _registered_api_paths()
     assert len(paths) > 300, f"AST scan found only {len(paths)} /api routes — vacuous"
-    dead = sorted(
-        root
-        for root in OWNER_ONLY_API_PATHS
-        if not any(p == root or p.startswith(root + "/") for p in paths)
-    )
+    dead = sorted(root for root in OWNER_ONLY_API_PATHS if not any(_serves(p, root) for p in paths))
     assert not dead, f"OWNER_ONLY_API_PATHS roots with no registered route: {dead}"
+    assert not _serves("/api/providers/{name}", "/api/providrs/mcp-tools"), "a typo stays dead"
 
 
 # ── shared install helpers (mirrors test_app_permissions.py) ─────────────────

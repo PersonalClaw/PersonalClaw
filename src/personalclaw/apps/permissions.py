@@ -383,6 +383,14 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
         "the MCP servers this gateway launches — the commands it runs as you, and the "
         "credentials in their arguments and headers"
     ),
+    # The same servers through Settings → Providers. The MCP Tool Servers card's instances are not
+    # that app's: they are every server in `mcp.json` (`providers/mcp_instances.py`, keyed on
+    # `MCP_TOOLS_EXTENSION`), so creating one names a command the gateway launches, and testing one
+    # runs it. Reads included, like `/api/mcp`: an instance carries the command and its arguments.
+    "/api/providers/mcp-tools": (
+        "the MCP servers this gateway launches — the commands it runs as you, and the arguments "
+        "they run with"
+    ),
     # Export copies the whole home out; import and restore write every setting, automation
     # and MCP server back at once, which is every other row in this registry in one request.
     "/api/durability": "your backups — exporting your home, and restoring or importing one over it",
@@ -433,16 +441,21 @@ class OwnerOnly:
 
 @dataclass(frozen=True)
 class OwnedTarget:
-    """Where a route names a conversation that an app may reach only if the app created it.
+    """Where a route names something an app may reach only when it is the app's own.
 
-    ``field`` is a path parameter or, with ``in_body``, a key of the JSON body. ``optional`` says
-    a request naming none is still the app's own business: the route then starts a conversation,
-    which is the app's (``POST /api/chat``), or another target names it. Without it such a request
-    is refused, because the route then means every conversation (``POST /api/chat/task-mode``)."""
+    ``field`` is a path parameter or, with ``in_body``, a key of the JSON body. It names a
+    conversation, which is the app's when the app created it. With ``app`` it names an app, which is
+    the calling app's own only when it IS the calling app: a provider is registered under its app's
+    name (``providers/registry.py``), so ``/api/providers/{name}`` names an app, and so does
+    ``/api/apps/{name}/config``. ``optional`` says a request naming none is still the app's own
+    business: the route then starts a conversation, which is the app's (``POST /api/chat``), or
+    another target names it. Without it such a request is refused, because the route then means
+    every conversation (``POST /api/chat/task-mode``)."""
 
     field: str
     in_body: bool = False
     optional: bool = False
+    app: bool = False
 
 
 @dataclass(frozen=True)
@@ -450,10 +463,11 @@ class AppMay:
     """A route an app reaches when it declared the path in ``permissions.api``, and why that is
     safe — what the handler screens, or why the route grants nothing.
 
-    ``owns`` narrows it to the app's own conversations. Every target it lists must name a
-    conversation the calling app created, or the gateway refuses the request before the handler
-    runs (``dashboard/server.py::app_permission_middleware``). A conversation that is yours,
-    another app's, or none at all gets the same refusal, so the answer confirms nothing.
+    ``owns`` narrows it to what is the app's own. Every target it lists must name a conversation
+    the calling app created, or, for a target that names an app, the calling app itself; otherwise
+    the gateway refuses the request before the handler runs
+    (``dashboard/server.py::app_permission_middleware``). A conversation that is yours, another
+    app's, or none at all gets the same refusal, so the answer confirms nothing.
 
     ``agent_work`` marks a route that runs your model with your tools: a turn, a side question,
     a revised plan, a generated title. An app does agent work only under its own ``agent``
@@ -508,6 +522,15 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: which re-derives the graph's terms from your knowledge graph and carries no text of its own.
 #: Its reads stay with the manifest allowlist, not :data:`READ_DECLARED_FAMILIES`: they return
 #: the words you taught, not anything you said.
+#:
+#: **And each app's provider is that app's.** A provider's settings say where it connects and which
+#: of its credentials it connects with, and its instances are the same settings, one record each.
+#: An app that could write another app's could point it at a server of its choosing, and that app
+#: would send its own key there. A provider is registered under its app's name, so every
+#: ``/api/providers/{name}`` row carries ``owns`` naming the app: an app reaches its own provider
+#: and no other. Its reads are declared as well (:data:`READ_DECLARED_FAMILIES`), since another
+#: app's settings say where it connects even with the credentials masked, and the list answers an
+#: app with its own providers only.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -541,16 +564,18 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/reveal": "revealing and opening files on your desktop",
     "/api/notifications": "your notifications — what reaches you, and how loudly",
     "/api/lexicon": "your vocabulary, and the corrections that rewrite what you dictate",
+    "/api/providers": "providers — where each one connects, and the credential it connects with",
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
-#: conversations, and what reached you. A read here answers with a transcript, a list of whose
-#: conversations exist, or the notifications that reached you, so it is refused to every app until
-#: :data:`ROUTE_AUTHZ` declares it (:func:`undeclared_security_route`): default-deny, where a read
-#: anywhere else is the ordinary allowlist's business. A read that names one conversation carries
-#: ``owns`` and reaches only a conversation the calling app started; a list is ``AppMay`` because
-#: its handler answers an app with the app's own conversations (or notifications) and nothing
-#: else; the rest are the owner's.
+#: conversations, what reached you, and each app's provider settings. A read here answers with a
+#: transcript, a list of whose conversations exist, the notifications that reached you, or where a
+#: provider connects, so it is refused to every app until :data:`ROUTE_AUTHZ` declares it
+#: (:func:`undeclared_security_route`): default-deny, where a read anywhere else is the ordinary
+#: allowlist's business. A read that names one conversation, or one app's provider, carries ``owns``
+#: and reaches only the calling app's own; a list is ``AppMay`` because its handler answers an app
+#: with the app's own conversations (or notifications, or providers) and nothing else; the rest are
+#: the owner's.
 READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
     {
         "/api/chat",
@@ -560,6 +585,7 @@ READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
         "/api/inbox",
         "/api/reveal",
         "/api/notifications",
+        "/api/providers",
     }
 )
 
@@ -627,6 +653,20 @@ _SCREENED_CONFIG = (
     "screened: an app reads and writes only the settings its manifest declares in "
     "`permissions.config`, and never a security setting"
 )
+#: The app a ``/api/providers/{name}/…`` or ``/api/apps/{name}/config`` route addresses: a provider
+#: is registered under its app's name, and the settings an app may reach are its own.
+_OWN_APP = (OwnedTarget("name", app=True),)
+#: An app's own settings, whichever route writes them. A reference in them resolves only the app's
+#: own keys (`config/secret_refs.SecretOwner.holds`), so an app pointing its own provider somewhere
+#: sends only its own key there.
+_WRITES_OWN_SETTINGS = (
+    "writes the app's own settings — a credential reference in them resolves only the app's "
+    "own keys"
+)
+_WRITES_OWN_INSTANCE = (
+    "writes an instance of the app's own provider — its settings, one record each; a credential "
+    "reference in one resolves only the app's own keys"
+)
 #: The conversation a ``/api/chat/sessions/{session}/…`` route addresses.
 _OWN_CHAT = (OwnedTarget("session"),)
 #: A turn is your model working with your tools, so it runs under the app's own `agent` grant —
@@ -684,7 +724,7 @@ _TEACHES_CORRECTION = (
 #: — keyed ``"METHOD /canonical/{route}"``, the form aiohttp reports as
 #: ``request.match_info.route.resource.canonical``, and read through :func:`route_authz`, which
 #: answers ``HEAD`` from the ``GET`` row. A read elsewhere in a family may carry a row too, when it
-#: names a conversation (a chat's draft skills). A per-route table,
+#: names a conversation (a chat's draft skills) or an app (its settings). A per-route table,
 #: not more subtree rows, because these families mix the owner's business with an app's:
 #: ``POST /api/triggers`` is an app's to call (screened), ``POST /api/triggers/{id}/run`` is
 #: not, and a path prefix cannot tell them apart.
@@ -711,11 +751,46 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "runs an agent under the CALLING app's own `agent` permission, which install consent "
         "names — `_agent_run_identity` gates on the token's app, never the path"
     ),
-    "PUT /api/apps/{name}/config": AppMay(
-        "an app writes only its own settings — the handler refuses a path naming another app"
+    # The file `PATCH /api/providers/{name}/config` writes, held to the calling app the same way.
+    "GET /api/apps/{name}/config": AppMay(
+        "reads the app's own settings, its credentials masked", owns=_OWN_APP
     ),
+    "PUT /api/apps/{name}/config": AppMay(_WRITES_OWN_SETTINGS, owns=_OWN_APP),
     "POST /api/apps/message": AppMay(
         "the app-to-app broker — the target must be in the sender's `appMessaging`"
+    ),
+    # ── providers (each one is its app's; `/api/providers/mcp-tools` is an owner-only subtree) ──
+    "GET /api/providers": AppMay(
+        "lists only the app's own providers — the handler leaves out every other"
+    ),
+    "GET /api/providers/{name}": AppMay(
+        "reads the app's own provider — its manifest and whether it is running", owns=_OWN_APP
+    ),
+    "GET /api/providers/{name}/schema": AppMay(
+        "reads the settings form of the app's own provider", owns=_OWN_APP
+    ),
+    "GET /api/providers/{name}/config": AppMay(
+        "reads the app's own provider settings, its credentials masked", owns=_OWN_APP
+    ),
+    "PATCH /api/providers/{name}/config": AppMay(_WRITES_OWN_SETTINGS, owns=_OWN_APP),
+    "POST /api/providers/{name}/availability": AppMay(
+        "measures again whether the app's own provider can run here, with the app's own check",
+        owns=_OWN_APP,
+    ),
+    "GET /api/providers/{name}/instances": AppMay(
+        "lists the instances of the app's own provider, their credentials masked", owns=_OWN_APP
+    ),
+    "POST /api/providers/{name}/instances": AppMay(_WRITES_OWN_INSTANCE, owns=_OWN_APP),
+    "GET /api/providers/{name}/instances/{id}": AppMay(
+        "reads an instance of the app's own provider, its credentials masked", owns=_OWN_APP
+    ),
+    "PUT /api/providers/{name}/instances/{id}": AppMay(_WRITES_OWN_INSTANCE, owns=_OWN_APP),
+    "DELETE /api/providers/{name}/instances/{id}": AppMay(
+        "removes an instance of the app's own provider", owns=_OWN_APP
+    ),
+    "POST /api/providers/{name}/instances/{id}/test": AppMay(
+        "tests an instance of the app's own provider; it runs only the app's own code",
+        owns=_OWN_APP,
     ),
     # ── packs ──
     "POST /api/packs/bundled/{name}/install": OwnerOnly(_INSTALLS_PACK),

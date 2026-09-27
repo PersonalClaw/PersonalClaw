@@ -447,10 +447,10 @@ async def app_permission_middleware(
     It hands the decision the matched route's canonical template as well as the path,
     because the per-route declarations (``permissions.ROUTE_AUTHZ``) are keyed on it:
     ``POST /api/triggers`` and ``POST /api/triggers/{id}/run`` share a prefix and not a
-    verdict. A row that carries ``owns`` is then held to the conversations the calling app
-    started (:func:`_conversation_denial`). An allowed app request runs inside
-    ``scoped_to_app``, so a seam with no request in hand (the file explorer's root list) still
-    knows who is asking."""
+    verdict. A row that carries ``owns`` is then held to what is the calling app's own — the
+    conversations it started, and the app itself (:func:`_ownership_denial`). An allowed app
+    request runs inside ``scoped_to_app``, so a seam with no request in hand (the file
+    explorer's root list) still knows who is asking."""
     from personalclaw.apps.permissions import (
         APP_SCOPED_PREFIXES,
         app_request_denial,
@@ -485,7 +485,7 @@ async def app_permission_middleware(
         route = resource.canonical if resource is not None else ""
         reason = app_request_denial(app_name, request.path, method=request.method, route=route)
         if not reason:
-            reason = await _conversation_denial(request, app_name, route)
+            reason = await _ownership_denial(request, app_name, route)
         if reason:
             return _deny(reason)
     if app_name:
@@ -494,15 +494,17 @@ async def app_permission_middleware(
     return await handler(request)  # type: ignore[operator]
 
 
-async def _conversation_denial(request: web.Request, app_name: str, route: str) -> str:
-    """Why an app's request names a conversation the app did not start, or ``""``.
+async def _ownership_denial(request: web.Request, app_name: str, route: str) -> str:
+    """Why an app's request names something that is not the app's own, or ``""``.
 
     The ``owns`` half of a ``ROUTE_AUTHZ`` row (``permissions.OwnedTarget``): every target the row
     lists must name a conversation whose creating app is the caller
-    (``DashboardState.session_creating_app``). Decided here, before the handler, for the reason the
-    route table exists at all — the ownership check used to be copied into a dozen handlers, keyed
-    on an origin tag an app could share by its name, and missing from thirty more — and so that a
-    refused request loads nothing: the creator is read without rehydrating the conversation.
+    (``DashboardState.session_creating_app``), or, for a target that names an app, the caller itself
+    (a provider is registered under its app's name). Decided here, before the handler, for the
+    reason the route table exists at all — the ownership check used to be copied into a dozen
+    handlers, keyed on an origin tag an app could share by its name, and missing from thirty more —
+    and so that a refused request loads nothing: the creator is read without rehydrating the
+    conversation, and another app's settings are never opened.
 
     A body target reads the JSON body, which aiohttp keeps, so the handler reads the same bytes
     after. A body that is not a JSON object names nothing, so an optional target passes and the
@@ -523,6 +525,11 @@ async def _conversation_denial(request: web.Request, app_name: str, route: str) 
     state = request.app.get("state")
     for target in authz.owns:
         named = body.get(target.field) if target.in_body else request.match_info.get(target.field)
+        if target.app:
+            if named != app_name:
+                shown = named if isinstance(named, str) else f"a {type(named).__name__}"
+                return f"{shown!r} is not this app — an app reaches only its own, never another's"
+            continue
         if named is None or named == "":
             if target.optional:
                 continue

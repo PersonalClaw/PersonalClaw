@@ -32,7 +32,9 @@ exactly that shape today.
 
 **Who reaches these routes — measured, not assumed.** A cold Settings → Providers load calls
 ``GET .../instances`` once per enabled multi-instance provider; measured, that is
-``mcp-tools`` and ``openai-tools``. The masking policy is
+``mcp-tools`` and ``openai-tools``. An app-scoped request reaches only its own provider's
+instances, and none of ``mcp-tools``' — those are every server the gateway launches — which the
+gateway decides before these handlers run (``apps/permissions.py``). The masking policy is
 :mod:`personalclaw.apps.secret_fields` — the same one the two single-config routes use, not
 a second copy — reached here through :func:`~personalclaw.apps.secret_fields.mask_instance`.
 
@@ -69,27 +71,26 @@ def _rebuild_agent_config_safe() -> None:
 
 
 async def _refresh_multi_instance_provider_safe(name: str) -> None:
-    """Re-register a generic multiInstance TOOL provider after its instance set changed,
-    so newly-added/edited/removed instances become live providers without a restart.
-    mcp-tools has its own path (live mcp.json registry); this covers the other
-    multiInstance tool apps (e.g. openai-tools), whose type handler rebuilds one provider
-    per enabled instance. disable→enable re-runs create() against the current on-disk
-    instance set (disk = source of truth). The rebuilt providers' tool names are read before
-    this returns, so an instance refused for a name another provider holds says so on the card
-    the change answers to (``tool_providers.registry``). Then the agent config is rebuilt.
-    Best-effort; never raises."""
+    """Make a generic multiInstance TOOL provider's changed instance set take effect without a
+    restart. mcp-tools has its own path (live mcp.json registry); this covers the other
+    multiInstance tool apps (e.g. openai-tools), whose type handler builds one provider per
+    enabled instance from the instances on disk.
+
+    An instance is the provider's settings, one record each, so the change takes effect the way a
+    settings save does (:func:`~personalclaw.providers.routes.apply_saved_settings`): a running
+    app's providers are rebuilt, one whose start failed is tried again, and an app that is switched
+    off stays off — the instance is saved, and loads when the app is switched on. The rebuilt
+    providers' tool names are read before this returns, so an instance refused for a name another
+    provider holds says so on the card the change answers to (``tool_providers.registry``). Then
+    the agent config is rebuilt. Best-effort; never raises."""
     try:
         from personalclaw.providers.registry import get_provider_registry
-        from personalclaw.providers.routes import admit_tool_names
+        from personalclaw.providers.routes import apply_saved_settings
 
-        registry = get_provider_registry()
-        ext = registry.get(name)
+        ext = get_provider_registry().get(name)
         if not ext or ext.provider_config.type != "tool" or not ext.provider_config.multiInstance:
             return
-        if ext.enabled:
-            registry.disable(name)
-        registry.enable(name)
-        await admit_tool_names()
+        await apply_saved_settings(name)
         _rebuild_agent_config_safe()
     except Exception:
         logger.warning(
