@@ -109,7 +109,9 @@ backend**.
   Generation sends its work to, a program a tool runs. Each is a name, what the app uses it
   for and what to do to have it, within the lengths the dialog shows. Install consent leads
   with them (*What it needs that PersonalClaw doesn't install*), the Store card says
-  "Needs ComfyUI", and an update that adds one asks again.
+  "Needs ComfyUI", and an update that adds one asks again. Once the app is installed,
+  `GET /api/apps` carries them on its row (`requires`) and the app's panel in the Library
+  shows the same row consent did.
 - **An engine** — a provider with `execution: "sidecar"` runs in a child process with a Python
   environment of its own, `apps/<app>/venv` (`local_models/sidecar.py`). Its engine is
   `dependencies.sidecarDependencies`: PEP 508 requirements (an option is an install error, and

@@ -526,6 +526,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   encoding. `web/e2e/auth.setup.ts` waited for `networkidle` with only the test's 30s budget as a
   limit, and took 23.0s when measured; it now relies on the shell check that already follows the
   sign-in redirect.
+- **An installed app's panel says what it needs that PersonalClaw doesn't install.** An app's `requires` (Local Image Generation's ComfyUI server) was shown by install consent and by the Store card, and the card says it only for an app that is not installed. Once the app was in, nothing did: `GET /api/apps` carried no such field, and the Library panel for the app listed its permissions and nothing it needs. The row now carries `requires`, and the panel shows the same "What it needs that PersonalClaw doesn't install" row consent does, each prerequisite with what the app uses it for and how to have it. Driven on a scratch home with Local Image Generation installed from its folder: main's panel showed no prerequisite, and the branch's lists ComfyUI with its why and how.
 
 ### Security
 

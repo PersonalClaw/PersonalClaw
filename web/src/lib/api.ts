@@ -887,6 +887,8 @@ export interface AppSummary {
   /** A provider of it runs its engine in a child process with a Python environment of its own,
    *  which Configure offers to install (Install engine). */
   sidecar?: boolean
+  /** What it needs that PersonalClaw does not install, as install consent showed it. */
+  requires?: AppPrerequisite[]
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
