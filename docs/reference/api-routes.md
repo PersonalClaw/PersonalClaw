@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **856 registrations** over **693 distinct paths** — 849 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **861 registrations** over **696 distinct paths** — 854 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -34,8 +34,8 @@ The 127 families the surface divides into, largest first.
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
 | `/api/skills` | 19 | 15 |
+| `/api/triggers` | 18 | 15 |
 | `/api/voice` | 17 | 11 |
-| `/api/triggers` | 16 | 14 |
 | `/api/mcp` | 15 | 12 |
 | `/api/projects` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
@@ -44,6 +44,7 @@ The 127 families the surface divides into, largest first.
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
 | `/api/providers` | 12 | 8 |
+| `/api/channels` | 11 | 10 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
@@ -54,7 +55,6 @@ The 127 families the surface divides into, largest first.
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
 | `/api/agent-marketplace` | 8 | 5 |
-| `/api/channels` | 8 | 8 |
 | `/api/onboarding` | 8 | 7 |
 | `/api/security` | 8 | 8 |
 | `/api/auth` | 7 | 7 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 849 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 854 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -274,6 +274,9 @@ The 849 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/channels/{name}` | one transport's info + health. |
 | `POST` | `/api/channels/{name}/connect` | bring the transport online. |
 | `POST` | `/api/channels/{name}/disconnect` | take the transport offline. |
+| `GET` | `/api/channels/{name}/owner` | the channel's owner and its pairing state. |
+| `DELETE` | `/api/channels/{name}/owner/pairing` | cancel the outstanding owner code. |
+| `POST` | `/api/channels/{name}/owner/pairing` | mint the owner's code and return it once. |
 | `POST` | `/api/channels/{name}/test` | active probe (e.g. Slack auth.test). |
 | `POST` | `/api/chat` | send message to a session, stream response via SSE. |
 | `GET` | `/api/chat/folders` | list all project folders. |
@@ -310,7 +313,7 @@ The 849 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/fork` | fork session into a new tab. |
 | `POST` | `/api/chat/sessions/{session}/fork-rewound` | restore a rewind tail as a fork. |
 | `POST` | `/api/chat/sessions/{session}/generate-title` | manually trigger title generation. |
-| `POST` | `/api/chat/sessions/{session}/handoff` | hand off session to channel DM thread. |
+| `POST` | `/api/chat/sessions/{session}/handoff` | continue a chat in a channel thread. |
 | `POST` | `/api/chat/sessions/{session}/interrupt` | stop the turn, KEEP the queue. |
 | `PATCH` | `/api/chat/sessions/{session}/lifecycle` | archive/restore one session. |
 | `GET` | `/api/chat/sessions/{session}/map` | the durable session-map marks. |
@@ -919,6 +922,8 @@ The 849 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers` | create a schedule, lifecycle or data-event trigger. |
 | `GET` | `/api/triggers/doctor` | structural problems across every trigger (§7 criterion 12). |
 | `GET` | `/api/triggers/history` | the run feed across every kind (AUTO crit 4). |
+| `GET` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
+| `POST` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
 | `GET` | `/api/triggers/variables` | the ``$variables`` each trigger kind exposes. |
 | `POST` | `/api/triggers/view/render` | the `view` kind's production render caller (WF2AUT-6). |
 | `GET` | `/api/triggers/week` | the week-grid projection, from `?start=` (AUTO-A1 — S70). |
