@@ -201,6 +201,30 @@ def is_empty_turn(
     return not benign
 
 
+#: How a chat turn ended: the ``outcome`` of its final ``chat_done`` and session detail's
+#: ``last_turn_outcome``. A closed set, because the chat page says each one in its own words.
+TURN_COMPLETE = "complete"
+TURN_STOPPED = "stopped"
+TURN_ERROR = "error"
+
+
+def terminal_outcome_for_turn(
+    *, stop_reason: str, cancelled: bool, stop_requested: bool, errored: bool
+) -> str:
+    """How a turn ended, from facts the turn itself established.
+
+    ``stopped`` wins over ``error``. A stop that escalates kills the runtime, and what a dying
+    stream raises depends on the runtime; the user asked for the stop and got it. The transcript
+    is deliberately not consulted: a retry notice is an error row in it, and the retry that
+    follows can still finish the turn.
+    """
+    if cancelled or stop_requested or is_cancelled_stop(stop_reason):
+        return TURN_STOPPED
+    if errored:
+        return TURN_ERROR
+    return TURN_COMPLETE
+
+
 def learning_decision_for_turn(session, user_message: str, tool_calls: int, cfg=None):
     """The turn's single gate decision, for every capture path to share.
 
@@ -1857,6 +1881,9 @@ async def run_chat(
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
+    # This turn has not ended, so no outcome describes it yet. A reader of session detail must
+    # never find the previous turn's outcome and take it for this one's.
+    session._last_turn_outcome = ""
     # The text this turn's dispatcher appended to the buffer, captured before anything
     # below rewrites ``message`` (attachments, @prompt expansion, preambles). It is how
     # the history restore finds — and leaves out — the message now being sent.
@@ -2056,6 +2083,15 @@ async def run_chat(
         except Exception:
             logger.warning("investigate context injection failed", exc_info=True)
 
+    def _answered_locally() -> None:
+        """This turn's reply was composed here, before any runtime was asked, and it is complete.
+
+        These replies return before the ``try`` below, so they never reach its terminal path;
+        without this, session detail would serve no outcome for a turn that plainly ended.
+        """
+        session._last_turn_outcome = TURN_COMPLETE
+        state.push_sessions_update()
+
     # ── Slash commands: detect early, before session acquisition ──
     first_word = message.split()[0] if message.strip() else ""
     is_slash = first_word in _SLASH_COMMANDS
@@ -2067,7 +2103,7 @@ async def run_chat(
             f"`{first_word}` is not available in the dashboard.",
             "msg msg-a",
         )
-        state.push_sessions_update()
+        _answered_locally()
         return
 
     # ── /prompts: handle locally instead of forwarding to ACP agent ──
@@ -2105,7 +2141,7 @@ async def run_chat(
                 session.append(
                     "assistant", f"Prompt `{name}` blocked — sensitive path.", "msg msg-a"
                 )
-                state.push_sessions_update()
+                _answered_locally()
             elif status == "too_large":
                 sel().log_tool_invocation(
                     session_key="",
@@ -2121,7 +2157,7 @@ async def run_chat(
                     f"Prompt `{name}` exceeds size limit ({MAX_PROMPT_BYTES // 1000}KB).",
                     "msg msg-a",
                 )
-                state.push_sessions_update()
+                _answered_locally()
             else:
                 sel().log_tool_invocation(
                     session_key="",
@@ -2133,7 +2169,7 @@ async def run_chat(
                     metadata={"mention": f"@{name}", "session": session.key, "via": "/prompts get"},
                 )
                 session.append("assistant", f"Prompt `{name}` not found.", "msg msg-a")
-                state.push_sessions_update()
+                _answered_locally()
             return
 
         # /prompts or /prompts list — show available prompts
@@ -2147,7 +2183,7 @@ async def run_chat(
                 "No prompts found. Create prompts in `~/.personalclaw/prompts/`.",
                 "msg msg-a",
             )
-            state.push_sessions_update()
+            _answered_locally()
             return
         lines = ["**Available Prompts** — type `@name` to invoke\n"]
         for p in prompts:
@@ -2166,7 +2202,7 @@ async def run_chat(
             outcome="ok",
             metadata={"count": len(prompts), "session": session.key, "via": "/prompts"},
         )
-        state.push_sessions_update()
+        _answered_locally()
         return
 
     _acquired = False
@@ -2193,6 +2229,11 @@ async def run_chat(
     # value comes from the terminal complete event; initialized here, beside the other
     # finally-inputs, so cleanup always has it instead of an UnboundLocalError.
     _turn_tool_call_count = 0
+    # The rest of what the finally reads to say how the turn ended (`terminal_outcome_for_turn`):
+    # the provider's stop reason from the terminal complete event, and whether the task itself was
+    # cancelled, which a force stop can do before the provider reports any stop reason.
+    _stop_reason = ""
+    _turn_cancelled = False
     # How a conversation an app started approves (`app_conversation_posture`); None for yours.
     # Read again by the approval gate below, which must not let YOLO into an app's conversation.
     _app_auto: bool | None = None
@@ -3037,7 +3078,6 @@ async def run_chat(
                 except Exception:
                     logger.debug("Failed to mirror user message to the channel", exc_info=True)
 
-        _stop_reason = ""
         # Turn telemetry from the terminal complete event (provider-neutral —
         # both native and ACP populate event_count/tool_call_count). Rendered as
         # the live-only "Turn complete" stats line after the loop.
@@ -4416,14 +4456,17 @@ async def run_chat(
                     {"session": session.key, "role": "error", "content": msg},
                 )
 
+            # A re-queued retry is not the end of the turn; the two branches that give up are.
             if _prompt_depth == 0 and session._acp_pipe_death_retries < 3:
                 session._acp_pipe_death_retries += 1
                 session.queue_insert(0, message)
                 _emit_error(f"⟳ Connection lost{_rc_suffix} — retrying...")
             elif _prompt_depth == 0 and session._acp_pipe_death_retries >= 3:
                 _emit_error(f"Session stuck{_rc_suffix} — please start a new chat.")
+                session._last_turn_errored = True
             else:
                 _emit_error(f"⟳ Connection lost{_rc_suffix} — please retry.")
+                session._last_turn_errored = True
             return
 
         # /compact acknowledged but compaction deferred — send a lightweight
@@ -4438,7 +4481,10 @@ async def run_chat(
             # Clear ACP agent's streamed "Compacting conversation..." text
             session.discard_stream()
             assistant_text = ""
-            state.broadcast_ws("chat_done", {"session": session.key})
+            # A segment boundary, not the turn's end: the compaction result below is still this
+            # turn, and a `chat_done` here settled the page (and told a screen reader the answer
+            # was complete) for up to 120 s of waiting.
+            state.broadcast_ws("chat_segment", {"session": session.key})
             # Tell frontend to show compacting state and disable input
             logger.info("Deferred compaction: waiting for compaction result")
             state.broadcast_ws(
@@ -4512,6 +4558,7 @@ async def run_chat(
                     "chat_message",
                     {"session": session.key, "role": "error", "content": _empty_msg},
                 )
+                session._last_turn_errored = True
                 return
         else:
             # Any non-empty (or benign) turn clears the consecutive-empty streak.
@@ -4687,8 +4734,12 @@ async def run_chat(
     # so the partial answer the user was reading is kept, and sits ahead of the error that
     # explains why it stops.
     except asyncio.CancelledError:
+        # A force stop can cancel the task before the provider reports a stop reason.
+        _turn_cancelled = True
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
+    # In the three handlers below, a re-queued retry is not the end of the turn: the retry runs
+    # next and ends it. Every branch that gives up instead ends it with an error.
     except AcpProcessDied as exc:
         logger.warning("ACP process died in session %s: %s — resetting session", session.key, exc)
         needs_session_reset = True
@@ -4701,8 +4752,10 @@ async def run_chat(
                 session.append("error", "⟳ Connection lost — retrying...", "msg msg-err")
             else:
                 session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
+                session._last_turn_errored = True
         else:
             session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
+            session._last_turn_errored = True
     except PromptBusyExhaustedError:
         # Provider was killed after prompt-busy retries exhausted — reset + re-queue.
         logger.info(
@@ -4717,8 +4770,10 @@ async def run_chat(
                 session.queue_insert(0, message)
             else:
                 session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
+                session._last_turn_errored = True
         else:
             session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
+            session._last_turn_errored = True
     except AcpError as exc:
         logger.warning("ACP error in session %s: %s", session.key, exc)
         _msg = str(exc)
@@ -4749,8 +4804,10 @@ async def run_chat(
                     session.append(
                         "error", "Session stuck — please start a new chat.", "msg msg-err"
                     )
+                    session._last_turn_errored = True
             else:
                 session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
+                session._last_turn_errored = True
         else:
             if assistant_text:
                 _flush_segment(state, session, assistant_text, broadcast=False)
@@ -4761,6 +4818,7 @@ async def run_chat(
                 _err_text,
                 "msg msg-err",
             )
+            session._last_turn_errored = True
             # AAP-1 `O43`: the `Error` lifecycle hook fired ZERO times across two sweeps
             # (kiro `K40`, claude-code `O43`) despite real, user-visible ACP failures. Measured
             # cause: `HOOK_EVENT_ERROR` had exactly ONE fire site — the generic `except Exception`
@@ -4783,6 +4841,13 @@ async def run_chat(
         await _fire(HOOK_EVENT_ERROR, _err_text)
         await state.sessions.record_failure(session_key)
     finally:
+        # How this turn ended, decided before anything below clears the stop state it reads.
+        _turn_outcome = terminal_outcome_for_turn(
+            stop_reason=_stop_reason,
+            cancelled=_turn_cancelled,
+            stop_requested=session._stopping,
+            errored=session._last_turn_errored,
+        )
         # No exit leaves an answer half-written: one still streaming here — a path that
         # returned or raised without settling it — is settled where it stood, before the
         # file-change flush below attaches this turn's chips to it.
@@ -4976,6 +5041,10 @@ async def run_chat(
             session._stopping = False
             # Only send "done" when queue is empty — keeps SSE reader alive
             session.signal_done()
+            # Committed before the task is cleared: any session detail that reports the session
+            # idle also reports how the turn ended, so a tab that missed `chat_done` (a
+            # reconnect, the stall reconciler) reads the same outcome the frame carries.
+            session._last_turn_outcome = _turn_outcome
             # Clear task reference BEFORE pushing session update so that
             # session.running returns False immediately.  Without this,
             # push_sessions_update() reports running=True because the task
@@ -4983,7 +5052,7 @@ async def run_chat(
             session.task = None
             # Push updated running state (now idle) + history refresh to SSE clients
             state.push_sessions_update()
-            state.broadcast_ws("chat_done", {"session": session.key})
+            state.broadcast_ws("chat_done", {"session": session.key, "outcome": _turn_outcome})
             state.push_refresh("history")
             # Auto-title: fire in background so it doesn't block the response
             if not session._titled:

@@ -107,6 +107,7 @@ import { sessionMapEntries } from './chat/sessionMap'
 import { TextRunOwnership } from './chat/coalesceReducers'
 import { SnapshotReplay } from './chat/snapshotReplay'
 import { resolveStalledStream, STREAM_HEAL_WARNING } from './chat/streamStall'
+import { chatDoneOutcome, TURN_RESPONDING, turnEndedSentence, turnOutcomeOf, type TurnOutcome } from './chat/turnOutcome'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
@@ -700,16 +701,45 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Bumped when a turn settles (streaming → false) so the session-skills review
   // (skill-ephemeral-promotion) re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
-  const markStreaming = (v: boolean) => {
+  // Screen-reader narration of the turn lifecycle: the visual "Thinking"/glow cue is silent to
+  // assistive tech, so a polite live region says a turn started, and then how it ENDED, in the
+  // words `chat/turnOutcome.ts` owns for the outcome the gateway reported. Never inferred from
+  // `streaming` going false: Stop, a failed turn and a retry notice all end streaming too, and
+  // every one of them used to be announced as "Response complete."
+  const [srAnnounce, setSrAnnounce] = useState('')
+  // Whether the turn this view follows has ended without the region saying how. Stop settles the
+  // composer at once, before the gateway has said the turn stopped; whichever terminal fact comes
+  // first (the Stop answer, `chat_done`, a snapshot's `last_turn_outcome`) says it, once.
+  const endUnsaidRef = useRef(streaming)
+  // Counts the turns this view has watched start, so a late answer (a Stop's) can tell whether
+  // the turn it was about is still the one on screen.
+  const turnSeqRef = useRef(0)
+  const sayTurnEnded = (outcome: TurnOutcome | null) => {
+    if (!outcome || !endUnsaidRef.current) return
+    endUnsaidRef.current = false
+    setSrAnnounce(turnEndedSentence(outcome))
+    // The turn-ended cue point (PERSONALITY-THEMES §S2), fired where the ending is SAID so the two
+    // agree: a failed turn is "something failed", any other end is "a turn finished". Once per turn,
+    // like the sentence. Silent unless the user opted in — every gate lives inside playCue, so this
+    // call site carries no policy of its own.
+    playCue(outcome === 'error' ? 'error' : 'turn_complete')
+  }
+  /** Start or settle the streaming claim. `outcome` is how a settled turn ended, when the caller
+   *  knows it; without one the composer settles and the ending is left for the terminal fact that
+   *  follows to say. */
+  const markStreaming = (v: boolean, outcome: TurnOutcome | null = null) => {
+    if (v && !streamingRef.current) {
+      turnSeqRef.current += 1
+      endUnsaidRef.current = true
+      setSrAnnounce(TURN_RESPONDING)
+    }
     if (streamingRef.current && !v) {
       setSessionSkillsEpoch((n) => n + 1)
-      // The turn-settled cue point (PERSONALITY-THEMES §S2). This branch is the ONE
-      // place a turn transitions from streaming to settled, which is what makes it
-      // the right home: a cue hung off `streaming` itself would also fire on the
-      // false→false renders. Silent unless the user opted in — every gate lives
-      // inside playCue, so this call site carries no policy of its own.
-      playCue('turn_complete')
+      // "Assistant is responding…" stops being true the moment the turn settles, even before
+      // anything is known about how it ended.
+      if (!outcome) setSrAnnounce('')
     }
+    if (!v) sayTurnEnded(outcome)
     // Release the handoff the moment the run settles. Left set, a later mount of this
     // same session (a revisit) would claim a finished run was live and offer Steer over
     // an idle backend — the mirror image of #3444, and just as dishonest.
@@ -717,6 +747,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     streamingRef.current = v
     setStreaming(v)
   }
+  // A mount that opens on a live turn (the create-remount's handoff) says so, as a fresh send does.
+  useEffect(() => { if (streamingRef.current) setSrAnnounce(TURN_RESPONDING) }, [])
   const [composerFocused, setComposerFocused] = useState(false)
   const [promptPaletteOpen, setPromptPaletteOpen] = useState(false)
   // Bumped to open the model / agent / effort / project pickers for the "/model",
@@ -1059,17 +1091,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // (an activity line counts as visible, so we don't stack two indicators)
   const showThinking = streaming && (!lastTurn || lastTurn.role === 'user' || lastTurn.segments.length === 0)
 
-  // Screen-reader announcement: the visual "Thinking"/glow cue is silent to
-  // assistive tech. A polite live region narrates the streaming lifecycle so a
-  // SR user knows the assistant is working and when the reply has landed.
-  const [srAnnounce, setSrAnnounce] = useState('')
-  const wasStreamingRef = useRef(false)
-  useEffect(() => {
-    if (streaming && !wasStreamingRef.current) setSrAnnounce(statusText || 'Assistant is responding…')
-    else if (!streaming && wasStreamingRef.current) setSrAnnounce('Response complete.')
-    else if (streaming && statusText) setSrAnnounce(statusText)
-    wasStreamingRef.current = streaming
-  }, [streaming, statusText])
+  // While a turn runs, its status line ("Thinking…", a tool at work) is narrated as it changes.
+  // The start and the end are said where they happen (`markStreaming`, `sayTurnEnded`).
+  useEffect(() => { if (streaming && statusText) setSrAnnounce(statusText) }, [streaming, statusText])
 
   // ── segment helpers: mutate the LAST assistant turn immutably ──
   const ensureAssistant = (list: ChatTurn[]): ChatTurn[] =>
@@ -1181,8 +1205,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // on top — so a turn that fails fast inside this round trip ends on its replayed
         // terminal frame, and a turn that ENDED before this chat was listening (its
         // `chat_done` reached the instance the remount replaced) settles here rather than
-        // stranding the composer on Stop until the stall reconciler notices.
-        if (d.running || streamingRef.current) markStreaming(!!d.running)
+        // stranding the composer on Stop until the stall reconciler notices — and says how it
+        // ended, which the snapshot reports for exactly this case.
+        if (d.running || streamingRef.current) markStreaming(!!d.running, turnOutcomeOf(d.last_turn_outcome))
         return true
       }).then((d) => {
         if (!alive) return
@@ -1337,10 +1362,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // A non-streamed message appended server-side (the only one that reaches
       // the UI this way today is a turn-level `error` — e.g. a provider/model
       // rejection). Without this the turn ends blank ("no response").
+      //
+      // An error row is NOT the end of the turn: `chat_done` is, and it says how the turn ended.
+      // A retry notice ("⟳ Connection lost — retrying...") is an error row, and the gateway then
+      // runs the message again as the same chat's next turn. Ending streaming here offered Send
+      // over that running retry and told a screen reader the answer was complete.
       case 'chat_message': {
         if (d.role === 'error') {
           endTextRun()  // land buffered text before the error segment
-          markStreaming(false); setStatusText(''); setLatestActivity(null)
+          setStatusText(''); setLatestActivity(null)
           const text = turnErrorText(d.content)
           // Idempotent: a snapshot read in flight when the turn failed can already show this
           // (persisted) error by the time the held frame replays on top of it.
@@ -1469,7 +1499,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       case 'chat_done': {
         endTextRun()  // fully reveal any buffered tail before the turn closes
-        markStreaming(false); setStatusText(''); setLatestActivity(null)
+        markStreaming(false, chatDoneOutcome(d)); setStatusText(''); setLatestActivity(null)
         replyFinished(sessionRef.current, { last: true })
         stoppedTurnRef.current = false
         setSteered([])  // steers belong to the turn they were injected into
@@ -1655,6 +1685,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         dropTextRun()
         setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
         setTurns((prev) => [...prev, userTurn(content, d.ts ? String(d.ts) : undefined)])
+        // The gateway sends this only as it STARTS the turn, so the turn is running whatever
+        // this page believed a moment ago. After a Stop the composer has already settled, and a
+        // message queued behind the stopping turn starts next ("Session reset — processing next
+        // message"); it used to stream its whole answer under a Send button.
+        markStreaming(true)
         break
       }
       // Async subagent lifecycle (fire-and-forget). Cards live in the Activity
@@ -1712,7 +1747,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (!s) return
     readSnapshot(s, (d) => {
       adoptSnapshot(d)
-      markStreaming(!!d.running)
+      // A turn that ended while the socket was down is said as the snapshot reports it ended.
+      markStreaming(!!d.running, turnOutcomeOf(d.last_turn_outcome))
       // An idle chat has no stopped turn still sending: its `chat_done` may be what was missed.
       if (!d.running) { setStatusText(''); stoppedTurnRef.current = false }
       return true
@@ -1791,7 +1827,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // e2e turn driver fails on this line, so a turn that only completed because of the
           // net cannot read as a turn that completed.
           console.warn(`[chat] ${s}: ${STREAM_HEAL_WARNING} — settled from session detail`)
-          markStreaming(false); setStatusText(''); setLatestActivity(null)
+          // The lost frame carried how the turn ended; session detail serves the same fact.
+          markStreaming(false, turnOutcomeOf(d.last_turn_outcome)); setStatusText(''); setLatestActivity(null)
           return
         }
         // Server is parked on an approval the client isn't showing → recovered above.
@@ -2281,7 +2318,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (sent?.routing_suggestion?.agent) setRoutingSuggestion(sent.routing_suggestion)
     }
     catch (e) {
-      markStreaming(false)
+      markStreaming(false, 'error')
       // The chat is gone (a dead link whose read lost the race, or deleted in another tab).
       // The server did NOT save this message, so it goes back into the draft — which the
       // not-found state carries into a new chat — rather than sitting in the transcript as
@@ -2495,10 +2532,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   async function stop() {
     stoppedTurnRef.current = true
+    const s = sessionRef.current
     // A reply you stopped is not read out, and neither is the rest of a queue it ends.
-    if (sessionRef.current) repliesToSpeak.delete(sessionRef.current)
+    if (s) repliesToSpeak.delete(s)
+    // The composer settles at once so the button answers the press. The ENDING is said only when
+    // the gateway confirms this press stopped the turn, and only if that turn is still the one on
+    // screen: a stop that failed, or found the turn already over, is not a stopped turn, and the
+    // turn's own terminal frame says how it did end.
+    const turn = turnSeqRef.current
     markStreaming(false)
-    if (sessionRef.current) await api.stopChat(sessionRef.current).catch(reportActionFailure('stop this turn'))
+    if (!s) return
+    const answer = await api.stopChat(s).catch(reportActionFailure('stop this turn'))
+    if (answer?.stopped && turnSeqRef.current === turn) sayTurnEnded('stopped')
   }
 
   // ── message actions (stage 4) ──
@@ -2534,7 +2579,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     markStreaming(true)
     readSnapshot(s, (d) => {
       adoptSnapshot(d)
-      markStreaming(!!d.running)
+      // A replacement that already ended by the time the read lands is said as it ended.
+      markStreaming(!!d.running, turnOutcomeOf(d.last_turn_outcome))
       return true
     }).catch(() => setTurns(cutLocally))
     return true
@@ -3753,12 +3799,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                     )}
                   </AnimatePresence>
                   <div ref={endRef} />
-                  {/* visually-hidden polite live region — narrates streaming
-                      lifecycle to screen readers (the glow/Thinking cue is visual-only). */}
+                  {/* visually-hidden polite live region — narrates the turn lifecycle to screen
+                      readers (the glow/Thinking cue is visual-only): that a turn started, its
+                      status lines, and how it ended, as the gateway reported it. */}
                   <div aria-live="polite" className="sr-only">{srAnnounce}</div>
                   {/* Second polite region, mounted from first render (CC-6): the follow-up
-                      chips arrive from a WS event AFTER "Response complete." — a visual-only
-                      change until now. Kept separate from srAnnounce so the streaming
+                      chips arrive from a WS event AFTER the turn's ending is said — a
+                      visual-only change until now. Kept separate from srAnnounce so the turn
                       narration and the chips arrival do not overwrite one another. */}
                   <div role="status" aria-live="polite" className="sr-only">
                     {followupAnnouncement(streaming ? 0 : followups.length)}

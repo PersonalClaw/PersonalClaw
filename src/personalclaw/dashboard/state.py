@@ -256,6 +256,7 @@ class _ChatSession:
         "_app",
         "created_by_app",
         "_last_turn_errored",
+        "_last_turn_outcome",
         "_followups_task",
         "_pending_variants",
         "_lock",
@@ -446,6 +447,11 @@ class _ChatSession:
         # is decided on (`DashboardState.session_creating_app`).
         self.created_by_app: str = ""
         self._last_turn_errored: bool = False  # set by run_chat on a crashed turn
+        # How the latest turn that left this session idle ended ("complete" | "stopped" |
+        # "error", `chat_runner.terminal_outcome_for_turn`), or "" while none has since this
+        # process started it. Served as session detail's `last_turn_outcome`, and cleared when a
+        # turn starts, so it only ever describes a turn that is over.
+        self._last_turn_outcome: str = ""
         # Follow-up chips (CHAT-CRAFT S3): the fire-and-forget background task that
         # suggests next messages after a completed turn; cancelled by the next dispatch.
         self._followups_task: asyncio.Task | None = None  # type: ignore[type-arg]

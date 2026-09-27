@@ -394,6 +394,10 @@ class _Collector:
         self.tool_calls: list[dict[str, Any]] = []
         self.errors: list[str] = []
         self.done = False
+        # How the turn ended, as its final `chat_done` says: "complete", "stopped" or "error"
+        # (`chat_runner.terminal_outcome_for_turn`). The error rows alone cannot say it: a
+        # retry notice is an error row, and the retry after it can still finish the turn.
+        self.outcome = ""
 
     def feed(self, envelope: dict) -> None:
         """Consume one ``{"type", "data"}`` envelope. Ignores other sessions' frames."""
@@ -424,6 +428,7 @@ class _Collector:
         elif kind == "chat_message" and str(data.get("role", "")) == "error":
             self.errors.append(str(data.get("content", "")))
         elif kind == "chat_done":
+            self.outcome = str(data.get("outcome", ""))
             self.done = True
 
     def result_text(self) -> str:
@@ -586,7 +591,7 @@ def _run_one(args) -> int:
         _shutdown_transient(transient)
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    ok = not collector.errors
+    ok = collector.outcome == "complete"
     if fmt == "json":
         print(
             json.dumps(
@@ -609,8 +614,11 @@ def _run_one(args) -> int:
             print(text)
     # streaming-json already wrote its NDJSON as frames arrived.
 
-    for err in collector.errors:
-        print(f"personalclaw run: turn failed: {err}", file=sys.stderr)
+    if collector.outcome == "stopped":
+        print("personalclaw run: the turn was stopped before it finished", file=sys.stderr)
+    elif not ok:
+        for err in collector.errors or ["the gateway reported no reason"]:
+            print(f"personalclaw run: turn failed: {err}", file=sys.stderr)
     return 0 if ok else 1
 
 

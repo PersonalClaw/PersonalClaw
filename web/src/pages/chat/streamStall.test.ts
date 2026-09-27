@@ -112,7 +112,11 @@ describe('ChatPage wires the stall reading', () => {
     const body = reconcilerBody(CHAT_PAGE)
     // Without this the reading is inert: the whole defect is a `streaming` that never clears.
     expect(body, 'a settled stall must clear `streaming` — that is the lie being corrected')
-      .toMatch(/stall === 'settled'[\s\S]*markStreaming\(false\)/)
+      .toMatch(/stall === 'settled'[\s\S]*markStreaming\(false\b/)
+    // …and say how the turn ended as the server reports it: the lost frame carried that, and
+    // session detail serves the same fact. A bare settle announced every healed turn as complete.
+    expect(body, 'a settled stall must announce the outcome session detail reports')
+      .toMatch(/stall === 'settled'[\s\S]*markStreaming\(false, turnOutcomeOf\(d\.last_turn_outcome\)\)/)
     // The transcript tail is replaced from history first, so a buffered coalescer tail must be
     // DISCARDED, not landed (`endTextRun` would write the old answer into the replaced tail).
     // Adopting the snapshot is what discards it: the run is re-based on the server's transcript,
