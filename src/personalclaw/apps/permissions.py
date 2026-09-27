@@ -1003,6 +1003,11 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "POST /api/channels/{name}/disconnect": OwnerOnly("disconnecting your chat channels"),
     "POST /api/channels/{name}/test": AppMay("probes a channel you connected; it changes nothing"),
+    "POST /api/channels/{name}/owner/pairing": OwnerOnly(
+        "pairing a chat channel's owner — whoever sends the code becomes the owner your agent "
+        "sends its results and approval prompts to"
+    ),
+    "DELETE /api/channels/{name}/owner/pairing": OwnerOnly("cancelling a channel's owner pairing"),
     # ── chat: an app may hold conversations of its own, and `owns` keeps it to those ──
     # A conversation records the app whose token started it (`_ChatSession.created_by_app`, on
     # its meta line so a restart keeps it). Sending into, editing, regenerating, resuming or

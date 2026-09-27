@@ -610,7 +610,9 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "edits"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "rich_text"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "typing_indicator"},
-    {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "max_text_len"}
+    {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "max_text_len"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "owner_pairing"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "dm_thread_is_channel"}
    ],
    "returns": "None"
   },

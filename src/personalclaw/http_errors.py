@@ -182,6 +182,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "browse_grant_not_pending": "No browse grant is waiting on that id.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
+    # ── a channel's owner and its pairing (handlers/channel_owner.py) ──
+    "channel_unknown": "No chat channel by that name is connected.",
+    "channel_pairing_unsupported": "That channel cannot pair its owner from the dashboard.",
+    "channel_handoff_failed": "No channel could open a thread with you for this chat.",
     # ── agent rooms (handlers/rooms.py, rooms/store.py) ──
     "rooms_disabled": "Agent Rooms is disabled. Enable rooms.enabled to use it.",
     "room_not_found": "No room with that id.",

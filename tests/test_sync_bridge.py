@@ -170,31 +170,16 @@ class TestHandoffToChannel:
         assert delivery.delivered == []
 
     @pytest.mark.asyncio
-    async def test_links_session_via_sessions_object(self, tmp_path):
+    async def test_an_explicit_channel_wins_over_the_owners_dm(self, tmp_path):
+        """Posting only: linking the chat to where a reply arrives is the handoff route's
+        (`test_chat_handoff_names_its_channel.py`)."""
         log = ConversationLog(base_dir=tmp_path)
         log.append("dashboard:chat-1", "user", "hello")
         delivery = MockDelivery()
-
-        class FakeSessions:
-            def __init__(self):
-                self.linked = {}
-
-            def set_channel_link(self, key, ts, ch):
-                self.linked[key] = (ts, ch)
-
-        sessions = FakeSessions()
         result = await handoff_to_channel(
-            delivery,
-            "U123",
-            log,
-            "dashboard:chat-1",
-            title="Test",
-            channel="C456",
-            sessions=sessions,
+            delivery, "U123", log, "dashboard:chat-1", title="Test", channel="C456"
         )
         assert result is not None
-        assert "dashboard:chat-1" in sessions.linked
-        # explicit channel wins over open_dm
         assert delivery.delivered[0][0] == "C456"
 
     @pytest.mark.asyncio

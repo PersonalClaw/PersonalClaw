@@ -583,10 +583,36 @@ export interface RemediationSnapshot {
 /** `state` is the channel's own answer — `ready`, `offline` (nothing to connect with) or `error` —
  *  or `starting`, the gateway's while it starts the channel's receiver (then one of the three). */
 export interface ChannelHealth { state: string; detail?: string }
+/** Who core reaches the owner as on a channel, and which key that id came from: `channel` (its
+ *  own) or `shared` (the one key every channel wrote before each had its own — it may hold another
+ *  platform's id). An empty `id` means nothing core sends the owner reaches anyone there. */
+export interface ChannelOwnerRef { id: string; source: 'channel' | 'shared' | '' }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
-  capabilities?: Record<string, unknown>
+  /** `owner_pairing`: the owner can pair this channel from its Configure page. */
+  capabilities?: Record<string, unknown> & { owner_pairing?: boolean }
   health: ChannelHealth
+  /** The app the channel came from (`telegram-channel`); `''` for the in-app Web UI. */
+  app?: string
+  /** Absent on the Web UI, which has no owner to reach. */
+  owner?: ChannelOwnerRef
+}
+/** An owner pairing: live (`active`, until `expires_at`, with `attempts_left` wrong codes before
+ *  it is cancelled) or how the last one ended. Never carries the code. */
+export interface ChannelOwnerPairing {
+  active: boolean
+  expires_at: string
+  attempts_left: number
+  ended: '' | 'paired' | 'expired' | 'cancelled' | 'too_many_attempts'
+  ended_at: string
+}
+export interface ChannelOwnerStatus {
+  channel: string
+  display_name: string
+  owner_id: string
+  source: ChannelOwnerRef['source']
+  pairing_supported: boolean
+  pairing: ChannelOwnerPairing
 }
 /** One approved sender on a channel (EA-7). `provider` is an opaque runtime key the transport
  *  picked ("telegram", "slack", "email") — NOT the app name, which carries a `-channel` suffix.
@@ -6694,6 +6720,13 @@ export const api = {
   connectChannel: (name: string) => post<{ ok: boolean; health?: ChannelHealth }>(`/api/channels/${encodeURIComponent(name)}/connect`),
   disconnectChannel: (name: string) => post<{ ok: boolean }>(`/api/channels/${encodeURIComponent(name)}/disconnect`),
   testChannel: (name: string) => post<{ ok: boolean; health?: ChannelHealth; detail?: string }>(`/api/channels/${encodeURIComponent(name)}/test`),
+  // A channel's owner, on its Configure page. The pairing code is in the POST's answer only — the
+  // owner sends it to the bot in a DM, and the page polls `channelOwner` until the pairing ends.
+  channelOwner: (name: string) => get<ChannelOwnerStatus>(`/api/channels/${encodeURIComponent(name)}/owner`),
+  startChannelOwnerPairing: (name: string) =>
+    post<{ code: string; expires_at: string; ttl_secs: number; pairing: ChannelOwnerPairing }>(`/api/channels/${encodeURIComponent(name)}/owner/pairing`),
+  cancelChannelOwnerPairing: (name: string) =>
+    del(`/api/channels/${encodeURIComponent(name)}/owner/pairing`),
 
   // ── Channel sender trust (EA-7) — who is allowed to talk to the agent, per channel ──
   // The allowlist was writable from two places (a pairing code, the unknown-sender
@@ -6709,6 +6742,10 @@ export const api = {
 
 
   // ── Chat turn-level controls ──
+  /** Continue a chat on a channel: it opens as a thread in your DM there, with the owner id that
+   *  channel keeps. `provider` is the channel's runtime name (`telegram`). */
+  handoffSession: (key: string, provider: string) =>
+    post<{ ok: boolean; thread_ts: string; provider: string }>(`/api/chat/sessions/${encodeURIComponent(key)}/handoff`, { provider }),
   /** Silently prime the next turn with background context (no visible message, no turn). */
   briefSession: (key: string, content: string, source = 'user-brief') =>
     post<{ ok: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}/context`, { content, source, ephemeral: false }),

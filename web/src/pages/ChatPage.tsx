@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle, Send } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -88,7 +88,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -1008,6 +1008,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // config default, so an unresolved read shows nothing rather than flashing times on and off.
   const { data: showTimestamps } = useQuery('chat:show-timestamps', () => api.dashboardConfig().then((c) => c.show_timestamps), { persist: true })
   const stampOf = (turn: { ts?: string }) => (showTimestamps ? turn.ts : undefined)
+  // The chat channels this chat can continue on — each connected channel with an owner to reach
+  // (the Web UI has none). Same cache key as Settings → Providers, so a pairing there shows here.
+  const { data: channelList } = useQuery('settings:channels', () => api.channels().catch(() => [] as ChannelRuntime[]), { persist: true })
+  const handoffChannels = (channelList ?? []).filter((c) => c.owner)
   const showThinkingRef = useRef(false)
   useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => patchLastAssistant(textRun.flush(revealed)),
@@ -2966,6 +2970,25 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // on the control itself would say nothing there.
     notify('Chat link copied.', 'success')
   }
+  // Continue this chat on a channel: it opens as a thread in your DM there. A channel that does not
+  // know who you are cannot reach you, so it says where to fix that instead of sending into nowhere.
+  async function handOff(c: ChannelRuntime) {
+    const s = sessionRef.current
+    if (!s) return
+    if (!c.owner?.id) {
+      notify(`${c.display_name} doesn't know who you are yet. Pair its owner in Settings → Providers → ${c.display_name} → Configure, then try again.`, 'error')
+      return
+    }
+    const ok = await confirm({
+      title: `Continue on ${c.display_name}?`,
+      body: `This chat opens as a thread in your ${c.display_name} direct messages, with its latest message. Reply there to keep going.`,
+      confirmLabel: 'Continue there',
+    })
+    if (!ok) return
+    if (await reportingWrite(`continue this chat on ${c.display_name}`, () => api.handoffSession(s, c.name))) {
+      notify(`This chat is in your ${c.display_name} messages now.`, 'success')
+    }
+  }
   // Silently prime the next turn with background context — no visible message, no
   // turn triggered; consumed + prepended on the next user send.
   async function briefAgent() {
@@ -3436,6 +3459,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             {started && sessionRef.current && (
               <HeaderControl icon={Link2} label="Copy chat link" priority="low" onClick={copyLink} />
             )}
+            {started && sessionRef.current && handoffChannels.map((c) => (
+              <HeaderControl key={`handoff-${c.name}`} icon={Send} label={`Continue on ${c.display_name}`} priority="low"
+                hint={c.owner?.id ? undefined : 'No owner paired yet'} onClick={() => void handOff(c)} />
+            ))}
             {started && sessionRef.current && (
               <HeaderControl icon={NotebookPen} label="Brief the agent" priority="low" onClick={briefAgent} />
             )}

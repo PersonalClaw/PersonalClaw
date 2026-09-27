@@ -22,7 +22,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.channel_transports import (
+    WEBUI_TRANSPORT,
     _describe,
+    app_of,
     channel_health,
     get_transport,
     list_transports,
@@ -64,9 +66,7 @@ class ChannelManager:
             t = self._resolve(name)
             if t is None:
                 continue
-            entry = t.info()
-            entry["health"] = await channel_health(t)
-            out.append(entry)
+            out.append(await self._entry(t))
         return out
 
     async def get(self, name: str) -> dict[str, Any] | None:
@@ -74,8 +74,24 @@ class ChannelManager:
         t = self._resolve(name)
         if t is None:
             return None
+        return await self._entry(t)
+
+    async def _entry(self, t: Any) -> dict[str, Any]:
+        """A channel's info, its health, the app it came from, and its owner.
+
+        ``owner`` is the id core reaches the owner by on this channel (``reach_owner`` opens a DM
+        with it) and which key it came from: ``channel`` (its own) or ``shared`` (the key every
+        channel wrote before, which may hold another platform's id). ``{"id": ""}`` is the status
+        saying nothing core sends the owner reaches anyone here. The Web UI has no owner to reach.
+        """
+        from personalclaw.config.credentials import owner_id_source
+
         entry = t.info()
         entry["health"] = await channel_health(t)
+        entry["app"] = app_of(t.name)
+        if t.name != WEBUI_TRANSPORT:
+            owner, source = owner_id_source(t.name)
+            entry["owner"] = {"id": owner, "source": source}
         return entry
 
     async def connect(self, name: str) -> dict[str, Any]:

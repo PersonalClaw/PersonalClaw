@@ -32,9 +32,10 @@ import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import {
-  api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
+  api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog, type ChannelRuntime,
 } from '../../lib/api'
 import { catalogApps } from '../../lib/appCatalog'
+import { ChannelOwnerSection } from '../settings/ChannelOwnerSection'
 import { readableErrText } from '../../lib/errText'
 import { reportingWrite } from '../../app/reportingWrite'
 import { setActivation } from '../../app/appActivation'
@@ -1854,10 +1855,17 @@ function ConfigModal({ name, displayName, onClose }: {
   onClose: () => void
 }) {
   const cfg = useAppConfig(name)
+  // A chat channel app's Configure page also carries its owner — who the channel reaches you as,
+  // and pairing it. The gateway names the app each channel came from.
+  const { data: channels, refresh: refreshChannels } = useQuery(
+    'settings:channels', () => api.channels().catch(() => [] as ChannelRuntime[]), { persist: true },
+  )
+  const channel = (channels ?? []).find((c) => c.app === name && c.owner)
 
   return (
     <Modal title={`Configure ${displayName}`} icon={<Settings2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 440 }}>
+        {channel && <ChannelOwnerSection channel={channel.name} onChanged={refreshChannels} />}
         {cfg.error ? (
           // A failed read used to leave "Loading…" on screen forever, with Save still live over an
           // empty form. Say what happened and offer the retry the hook now exposes.
