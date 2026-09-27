@@ -143,6 +143,13 @@ async def _home(**bindings: list[str]) -> AsyncIterator[FakeOllama]:
     fake = FakeOllama()
     await fake.start()
     module_name = namespaced_module_name("ollama-models", "provider")
+    # ``load_bundle_module`` hands back a module this process already imported from the same file
+    # without running it again, and the app registers its ``ollama`` type only when it runs. A test
+    # that booted the gateway earlier in this worker imported every native app while the default
+    # registry was swapped for a throwaway one, so a cached module here means no ``ollama`` type in
+    # the registry this home resolves through: the entry could not be built, nothing read the
+    # image, and a case below that expects nothing to read one would pass for that reason.
+    sys.modules.pop(module_name, None)
     load_bundle_module(NATIVE_DIR / "ollama-models", "ollama-models", "provider")
     record = {"name": ENTRY, "type": "ollama", "model": "", "options": {"endpoint": fake.endpoint}}
     path = config_path()
