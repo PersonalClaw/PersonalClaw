@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 
 APP_MANIFEST_FILENAME = "app.json"
 INSTALLED_META_FILENAME = "installed.json"
+#: The folder inside an installed app's folder that holds the Python environment its sidecar
+#: child runs in (``local_models.sidecar.sidecar_venv_dir``) — and so the engine installed there.
+#: Built on this machine, never shipped: staging leaves any ``venv`` out of a bundle
+#: (``supply_chain.NEVER_INSTALLED_NAMES``).
+APP_VENV_DIRNAME = "venv"
 
 
 # ---------------------------------------------------------------------------

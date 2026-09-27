@@ -80,6 +80,15 @@ backend**.
   what the app gets (compared with the installed copy's disclosure), or scans with
   warnings, needs the same `consent` digest (`POST /api/apps/preview {source, name}`);
   one that changes none of it needs none.
+- **An update keeps the app's state** — what its folder holds that no bundle ships:
+  `data/` (`sdk.util.app_data_dir`), copied into the new version before the swap so a
+  failed update gives the old version its data exactly as it left it, and `venv/`, the
+  Python environment a sidecar app's child runs in (`sdk.sidecar.sidecar_venv_dir`),
+  moved across by rename after the swap and before `onUpdate` runs, however large the
+  engine in it. A failed update hands back exactly what it moved; a crash in between is
+  finished by `recover_interrupted_updates` at the next start. Everything else in the
+  folder is the old version's files and goes with them. Removal takes `venv/` with the
+  app's files; the keep-data rung keeps `data/` alone.
 - **Finding an update** (`apps/catalog.updates_available`) — `/api/apps` marks an app
   whose source offers a newer version: a configured local source, by the app's name,
   and for an app installed from the Store, the pointer `installed.json` recorded
