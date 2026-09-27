@@ -22,6 +22,7 @@ import json
 import pytest
 from aiohttp.test_utils import make_mocked_request
 from dotenv import dotenv_values
+from mcp_owner_allowed import allow_configured, confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import get_credential, save_credential
@@ -104,7 +105,7 @@ def _put(name: str, body: dict):
 def test_the_add_form_stores_a_multi_line_value_and_the_server_gets_it_exactly(home) -> None:
     from personalclaw.mcp_client import _personalclaw_mcp_specs
 
-    resp = _put("gdrive", {"command": "echo", "env": {"GOOGLE_PRIVATE_KEY": PEM}})
+    resp = _put("gdrive", confirmed({"command": "echo", "env": {"GOOGLE_PRIVATE_KEY": PEM}}))
     assert resp.status == 200, resp.text
     raw = (home / "mcp.json").read_text(encoding="utf-8")
     assert "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7fixture" not in raw
@@ -126,6 +127,7 @@ def test_a_multi_line_value_left_in_mcp_json_is_moved_at_boot(home) -> None:
     migrate_plaintext_secrets()
     spec = json.loads((home / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]["gdrive"]
     assert spec["env"]["GOOGLE_PRIVATE_KEY"].startswith("{{secret:"), "the PEM stayed inline"
+    allow_configured("gdrive")
     assert _personalclaw_mcp_specs()["gdrive"]["env"]["GOOGLE_PRIVATE_KEY"] == PEM
 
 

@@ -396,7 +396,10 @@ def _extra_restore_paths(snap: Path) -> list[str]:
     drops ``credential=True`` entries — ``.env``, ``credentials.json``, ``.local_secret``), and
     the secrets a snapshot does carry are not re-planted generically either: restore writes into
     a live home that may have deliberately rotated or removed them. The named ``security``
-    component remains the deliberate path for the audit key material it carries.
+    component remains the deliberate path for the audit key material it carries. The owner's
+    grants (``grants/``, ``owner_grants``) are one of these secrets: a yes is given on the machine
+    where the owner was shown what runs, so the MCP servers, hooks and tasks a restore brings back
+    wait for a yes here.
     """
     from personalclaw.durability import inventory as inv
 

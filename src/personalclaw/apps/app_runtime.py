@@ -198,7 +198,7 @@ def unload(name: str, manifest: AppManifest | None, *, forget: bool = False) -> 
     """
     _stop_backend(name)
     _stop_workers(name)
-    _deregister_mcp(name)
+    _deregister_mcp(name, forget=forget)
     registry = _provider_registry()
     if forget:
         registry.deregister(name)
@@ -347,12 +347,13 @@ def _register_mcp(manifest: AppManifest) -> None:
         logger.debug("app %s: MCP register failed", manifest.name, exc_info=True)
 
 
-def _deregister_mcp(name: str) -> None:
-    """Drop the app's MCP servers from the config and close the processes they spawned."""
+def _deregister_mcp(name: str, *, forget: bool) -> None:
+    """Drop the app's MCP servers from the config and close the processes they spawned — and, for
+    a removal (*forget*), the owner's yes to what each one runs."""
     try:
         from personalclaw.apps import mcp_bridge
 
-        mcp_bridge.deregister_app_mcp_servers(name)
+        mcp_bridge.deregister_app_mcp_servers(name, forget=forget)
     except Exception:  # noqa: BLE001
         logger.debug("app %s: MCP deregister failed", name, exc_info=True)
 

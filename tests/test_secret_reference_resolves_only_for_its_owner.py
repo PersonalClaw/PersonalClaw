@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from mcp_owner_allowed import allow, allow_configured
 
 from personalclaw.apps import manager
 from personalclaw.config.credentials import get_credential, save_credential
@@ -339,6 +340,7 @@ def test_an_apps_mcp_server_is_not_started_with_another_owners_key(home):
             "mine": {"command": "true", "env": {"TOKEN": make_ref(VAULT_KEY)}},
         },
     )
+    allow_configured()
 
     specs = _personalclaw_mcp_specs()
 
@@ -353,6 +355,7 @@ def test_an_apps_mcp_server_still_resolves_its_own_stored_value(home):
 
     stored = store_mcp_spec(f"{APP}:tools", {"env": {"TOKEN": OWN_TOKEN}}, strict=True)
     _mcp_json(home, {f"{APP}:tools": {"command": "true", **stored}})
+    allow_configured()
 
     assert _personalclaw_mcp_specs()[f"{APP}:tools"]["env"] == {"TOKEN": OWN_TOKEN}
 
@@ -367,6 +370,7 @@ def test_the_mcp_probe_reports_the_refusal_as_the_servers_error():
     server = McpServerInfo(
         name=f"{APP}:tools", command="definitely-not-a-command", env={"TOKEN": make_ref(key)}
     )
+    allow(server)
 
     probed = asyncio.run(probe_server(server))
 

@@ -305,7 +305,7 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
         {d.mcpServers.map((s, i) => (
           <span key={s.name}>{i > 0 ? ', ' : ''}<span className="text-on-surface">{s.name}</span>
             {s.launches && <> (<code className="font-mono">{s.launches}</code>)</>}</span>
-        ))}.
+        ))}. {d.mcpServers.length === 1 ? 'It waits' : 'Each waits'} for your Allow on the Tools page before it first runs.
       </>,
     )
   }

@@ -41,6 +41,7 @@ from typing import Any
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from mcp_owner_allowed import allow_configured
 
 from personalclaw import mcp_client
 from personalclaw.config.secret_refs import write_mcp_document
@@ -309,6 +310,8 @@ async def _world(
     monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(workspace))
     home = config_loader.config_dir()
     write_mcp_document(home / "mcp.json", {"mcpServers": {SERVER: server.spec}})
+    # The owner's yes to what it runs (`mcp_grants`): the subject here is Try it.
+    allow_configured(SERVER)
     # One client registry per test, drained at the end: a spawned stdio server must not outlive it.
     monkeypatch.setattr(mcp_client, "_registry", None)
     monkeypatch.setattr(tool_registry, "_providers", {})

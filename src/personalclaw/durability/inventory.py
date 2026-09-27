@@ -1062,6 +1062,19 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,
         help="gateway auth store: login hash, 2FA enrolment, device pairing codes",
     ),
+    # The owner's yes to what runs as them (`owner_grants`): each MCP server's definition, each
+    # agent hook script, each heartbeat task, each callback. Machine-local: a yes is given where
+    # the owner was shown what runs, so what a restore or a sync brings from another machine waits
+    # for a yes here. One book per kind, and each book's lock file, in the one tree.
+    StateEntry(
+        id="owner_grants",
+        kind=KIND_TREE,
+        path="grants",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="what you allowed to run as you: MCP servers, hooks, heartbeat tasks, callbacks",
+    ),
     # 🔴 #2217 — the credential DESCRIPTORS an older release kept (`llm/credentials.py`
     # `CREDENTIALS_FILE`). Nothing writes it any more: the gateway moves it into the credential
     # store at boot and deletes it (`move_credentials_file`), and it stays on a home only while

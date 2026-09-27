@@ -76,6 +76,14 @@ describe('install consent says what runs as you', () => {
     expect(shown).toContain('Runs parse_issues.py to read what its repo-issues source fetches, with no network access.')
   })
 
+  it('says its MCP server waits for your Allow before it first runs', () => {
+    // Installing is not the yes to what the server runs: that is asked on the Tools page, with the
+    // command in the gateway's words, before anything starts it.
+    render(<AppDisclosureView disclosure={BRINGS_CODE} action="install" />)
+    expect(text()).toContain(
+      'Adds an MCP server your assistant can call: notes (python mcp.py). It waits for your Allow on the Tools page before it first runs.')
+  })
+
   it('an update shows the update hook, and the later hooks still', () => {
     render(<AppDisclosureView disclosure={BRINGS_CODE} action="update" />)
     const shown = text()

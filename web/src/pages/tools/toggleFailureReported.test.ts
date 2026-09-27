@@ -35,7 +35,11 @@ const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//
 // `revokeMcpElicitation`, one call site), and the control over it is one data-driven switch per row
 // whose pressed state reads the refetched list — the exact shape the four above have, and the exact
 // failure mode this file exists for: a failed write leaves the switch where it was and says nothing.
-const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'revokeMcpElicitation', 'grantMcpElicitation']
+//
+// 🪤 So is a waiting server's Allow (`allowMcpServer`). A server the owner has not allowed reads off,
+// and its switch IS its Allow (`toggleServer` sends it there): the same data-driven switch, whose
+// failed write would otherwise leave it off with nothing said. Its Allow button is the same call.
+const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'revokeMcpElicitation', 'grantMcpElicitation', 'allowMcpServer']
 
 describe('a tool toggle that fails tells the user', () => {
   it('the reporter is the SHARED one, and this file keeps no copy of it', () => {
@@ -94,13 +98,13 @@ describe('a tool toggle that fails tells the user', () => {
   // `signOutMcp` when a signed-in server's card gained Sign out.
   const ALSO_ROUTED = ['probeMcp', 'importMcpServer', 'signOutMcp']
 
-  it('all five toggles go through the one reporter, and nothing unexpected does', () => {
+  it('all six toggles go through the one reporter, and nothing unexpected does', () => {
     let toggles = 0
     for (const m of CODE.matchAll(/reportingWrite\([\s\S]{0,140}?api\.(\w+)\(/g)) {
       if ((TOGGLE_WRITES as readonly string[]).includes(m[1])) { toggles++; continue }
       expect(ALSO_ROUTED, `unexpected call routed: ${m[1]}`).toContain(m[1])
     }
-    expect(toggles, 'every toggle write routed through reportingWrite').toBe(5)
+    expect(toggles, 'every toggle write routed through reportingWrite').toBe(6)
   })
 
   it('the allowlist is not a dumping ground', () => {

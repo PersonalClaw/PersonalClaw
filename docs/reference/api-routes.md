@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **879 registrations** over **711 distinct paths** — 872 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **880 registrations** over **712 distinct paths** — 873 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -33,9 +33,9 @@ The 128 families the surface divides into, largest first.
 | `/api/apps` | 23 | 15 |
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
+| `/api/mcp` | 19 | 15 |
 | `/api/skills` | 19 | 15 |
 | `/api/triggers` | 19 | 16 |
-| `/api/mcp` | 18 | 14 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/projects` | 14 | 10 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 872 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 873 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -630,6 +630,7 @@ The 872 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `GET` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `PUT` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
+| `POST` | `/api/mcp/servers/{name}/allow` | the owner's yes to a server that waits for it. |
 | `DELETE` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
 | `POST` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
 | `POST` | `/api/mcp/sync` | apply MCP config changes and restart sessions. |

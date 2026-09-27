@@ -20,6 +20,7 @@ import json
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
+from mcp_owner_allowed import confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
@@ -85,7 +86,8 @@ def _two_servers(home) -> None:
     from personalclaw.agent import rebuild_agent_config
 
     for name, token in (("doomed", TOKEN), ("neighbour", KEPT_TOKEN)):
-        assert _put(name, {"command": "echo", "env": {"GITHUB_TOKEN": token}}).status == 200
+        body = confirmed({"command": "echo", "env": {"GITHUB_TOKEN": token}})
+        assert _put(name, body).status == 200
     rebuild_agent_config()
     agent = _doc(home / "agents" / "personalclaw.json")
     assert {"doomed", "neighbour"} <= set(agent["mcpServers"]), "precondition: both are in both"

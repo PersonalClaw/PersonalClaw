@@ -120,6 +120,20 @@ says what that means.
   MCP servers and its scheduled jobs in its manifest, where install consent lists them.
   Subtrees are rows in `OWNER_ONLY_API_PATHS`; routes that share a family with an app's
   legitimate business are declared one by one in `apps/permissions.py::ROUTE_AUTHZ`.
+- **An MCP server runs only once you allowed what it runs.** A server started with a command
+  is a program run as you, and one at a URL gets whatever your agents send its tools, so the
+  gateway starts and connects to none until you allowed its definition (`mcp_grants.py`): how
+  it is reached, its command, arguments and folder, the names of the variables it sets, and a
+  remote server's address and header names. Values are not in the seal; nobody is shown them.
+  The Tools page's Add and Edit and the MCP Tool Servers card say exactly what will run and
+  save nothing until you agree (`400 confirmation_required`). Every other way a definition
+  arrives (Import from Claude Code or Codex, bringing a setup over, a pack's connector, an
+  app's manifest, a restore, a hand edit of `mcp.json`) writes one that waits for Allow on the
+  Tools page, which asks the same question first, and a change to anything in the seal waits
+  again. `mcp.json` is an owner-only path (`owner_only.py`), so an agent's shell and write
+  tools cannot change it, and the loopback internal secret reaches no `/api/mcp` route. Nor is
+  a server that waits handed to Claude Code, which would start it (`/api/mcp/apply`'s
+  `ccGlobal`).
 - **What your agents are told is yours.** An agent carries out its instructions with your
   tools under your approval settings, so an app token cannot write them: creating,
   editing, syncing or deleting an agent (its system prompt, tools, skills, model and approval

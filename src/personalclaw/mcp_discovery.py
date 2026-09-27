@@ -313,6 +313,9 @@ class McpServerInfo:
     #: A remote server's OAuth sign-in as its spec stores it (``secret_refs.MCP_SIGN_IN``):
     #: references and what the grant is for, never a token. ``{}`` when it has none.
     sign_in: dict[str, Any] = field(default_factory=dict)
+    #: Switched off by the owner. Only ``list_servers(include_disabled=True)`` lists such a server,
+    #: for the pages that show it switched off; nothing probes or connects to one.
+    disabled: bool = False
 
     def __post_init__(self) -> None:
         self.transport = mcp_transport(
@@ -489,35 +492,63 @@ def _fix_stale_managed_command(name: str, spec: dict) -> None:
         spec["command"] = resolved
 
 
-def list_servers() -> list[McpServerInfo]:
+def list_servers(*, include_disabled: bool = False) -> list[McpServerInfo]:
     """Return all known MCP servers from the agent config and ``mcp.json``.
+
+    ``mcp.json`` DEFINES each server whose entry holds any part of a definition (a command, a URL,
+    a transport, its variables…), so that is where its definition is read. The agent config's copy
+    of it is rebuilt from ``mcp.json`` with the command resolved to a path, so reading the copy made
+    the probe run a command spelled differently from the one the owner allowed (`mcp_grants`). The
+    agent config still defines the servers only it names, PersonalClaw's own among them, and a
+    server of that name in ``mcp.json`` is not read. An entry in ``mcp.json`` that defines nothing
+    holds the owner's state for a server defined elsewhere (the Tools page's switches write one).
+
+    A server switched off is left out: every prober reads this list, and a server switched off in
+    ``mcp.json`` used to be probed until the next rebuild. Its switch is in ``mcp.json``, and for a
+    server only the agent config defines, in either file. *include_disabled* lists
+    it too, marked :attr:`McpServerInfo.disabled`, for the pages that show it switched off: without
+    it, a switched-off server was gone from the Tools page after a restart, with no switch left to
+    turn it back on.
 
     Merges cached probe results so status/tools survive across requests. A server configured
     only in another tool (Claude Code) is not listed here: it is an import suggestion
     (:func:`discover_importable_servers`), because the native loop cannot call it.
     """
-    servers: dict[str, McpServerInfo] = {}
-    disabled_in_agent: set[str] = set()
+    from personalclaw.config.secret_refs import MCP_DEFINITION_KEYS
 
-    # 1. From agent config (mcpServers key)
+    servers: dict[str, McpServerInfo] = {}
+    entries = {name: spec for name, spec in _load_mcp_json().items() if isinstance(spec, dict)}
+    own = {
+        name: spec
+        for name, spec in entries.items()
+        if name not in _MANAGED_SERVER_NAMES and any(k in spec for k in MCP_DEFINITION_KEYS)
+    }
+
+    # 1. From agent config (mcpServers key): the servers mcp.json does not define.
     agent_cfg = _load_agent_config()
     for name, spec in agent_cfg.get("mcpServers", {}).items():
-        if isinstance(spec, dict):
-            if spec.get("disabled"):
-                disabled_in_agent.add(name)
-            else:
-                # Re-resolve stale managed MCP server paths at runtime
-                _fix_stale_managed_command(name, spec)
-                servers[name] = _server_from_spec(name, spec, "agent")
-
-    # 2. From mcp.json. Introduce the server first (if new) so the disabledTools carry below
-    #    applies to new and existing entries alike. "disabledTools" by key presence, not
-    #    truthiness: an explicit [] ("every tool enabled") is the user's answer too.
-    for name, spec in _load_mcp_json().items():
-        if not isinstance(spec, dict):
+        if not isinstance(spec, dict) or name in own:
             continue
-        if not spec.get("disabled") and name not in servers and name not in disabled_in_agent:
-            servers[name] = _server_from_spec(name, spec, "mcp.json")
+        off = bool(spec.get("disabled") or entries.get(name, {}).get("disabled"))
+        if off and not include_disabled:
+            continue
+        # Re-resolve stale managed MCP server paths at runtime
+        _fix_stale_managed_command(name, spec)
+        servers[name] = _server_from_spec(name, spec, "agent")
+        servers[name].disabled = off
+
+    # 2. From mcp.json, whose switch is the owner's: the agent config's copy of it is rebuilt to
+    #    match, and between rebuilds holds a stale one.
+    for name, spec in own.items():
+        off = bool(spec.get("disabled"))
+        if off and not include_disabled:
+            continue
+        servers[name] = _server_from_spec(name, spec, "mcp.json")
+        servers[name].disabled = off
+
+    # "disabledTools" by key presence, not truthiness: an explicit [] ("every tool enabled") is
+    # the user's answer too.
+    for name, spec in entries.items():
         if name in servers and "disabledTools" in spec:
             servers[name].disabled_tools = spec.get("disabledTools", [])
 
@@ -618,13 +649,28 @@ async def _drain_stderr_reason(proc: Any) -> str:
 async def probe_server(server: McpServerInfo) -> McpServerInfo:
     """Probe a single MCP server by spawning it and sending initialize.
 
-    Updates server.status and server.tools in place and returns it.
+    Updates server.status and server.tools in place and returns it. A server the owner has not
+    allowed as it is defined now (`mcp_grants`) is neither spawned nor connected to: it reads
+    ``waiting``, with the sentence that says what to do. Nor is one they switched off.
     """
     problem = server_name_problem(server.name)
     if problem is not None:
         # Never started, by the native client or here: the sentence is this server's status.
         server.status = "error"
         server.error = problem
+        _cache_probe(server)
+        return server
+    if server.disabled:
+        server.status = "disabled"
+        server.error = "Switched off. It does not run until you switch it on."
+        return server
+
+    from personalclaw import mcp_grants
+
+    if not mcp_grants.allowed(server):
+        server.status = mcp_grants.WAITING
+        server.error = mcp_grants.WAITING_REASON
+        server.tools = []
         _cache_probe(server)
         return server
 
@@ -800,8 +846,9 @@ async def probe_one(name: str) -> McpServerInfo | None:
     """Probe a SINGLE configured MCP server by name — backs per-provider reconnect
     so a user can recover one timed-out server without re-probing the whole fleet
     (a slow/erroring server shouldn't force a full re-probe). Returns the probed
-    info, or None if no server by that name is configured."""
-    server = next((s for s in list_servers() if s.name == name), None)
+    info, or None if no server by that name is configured. A switched-off server is configured:
+    it answers ``disabled``, and nothing is started."""
+    server = next((s for s in list_servers(include_disabled=True) if s.name == name), None)
     if server is None:
         return None
     try:

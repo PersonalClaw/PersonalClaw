@@ -689,6 +689,21 @@ def _unstorable(value: Any) -> bool:
     )
 
 
+def check_mcp_spec(server: str, spec: Mapping[str, Any]) -> None:
+    """Raise what :func:`store_mcp_spec` refuses when ``strict``, storing and reading nothing: a
+    value no credential can hold (:class:`ValueError`), or a reference to a key another owner
+    holds (:class:`ForeignSecretReference`). A form checks this before it asks its owner anything,
+    so the question is never put about a save that would then be refused."""
+    for part in _MCP_PARTS:
+        values = spec.get(part)
+        if not isinstance(values, Mapping):
+            continue
+        for name, value in values.items():
+            if _unstorable(value):
+                raise ValueError(_unstorable_message(name, value))
+        _refuse_foreign(values, _mcp_owner(server, part), operation="secrets.store", advise=True)
+
+
 def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dict[str, Any]:
     """The STORED form of one MCP server spec: each ``env`` value (bar the plain ones) and each
     ``headers`` value saved under a key the server owns, the field holding the reference.
@@ -704,16 +719,7 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
     if strict:
         # Refused BEFORE anything is stored: a refusal halfway through would leave the values
         # it had already saved in the store with no file referencing them.
-        for part in _MCP_PARTS:
-            values = spec.get(part)
-            if not isinstance(values, Mapping):
-                continue
-            for name, value in values.items():
-                if _unstorable(value):
-                    raise ValueError(_unstorable_message(name, value))
-            _refuse_foreign(
-                values, _mcp_owner(server, part), operation="secrets.store", advise=True
-            )
+        check_mcp_spec(server, spec)
     out = dict(spec)
     for part in _MCP_PARTS:
         values = spec.get(part)
@@ -826,15 +832,21 @@ def mcp_headers_view(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
     return view
 
 
-def remove_mcp_servers(names: Iterable[str]) -> list[str]:
+def remove_mcp_servers(names: Iterable[str], *, keep_allowed: bool = False) -> list[str]:
     """THE delete for MCP servers: out of both documents, and every value they own deleted.
 
     Each server leaves ``mcp.json`` and the agent config — its spec, and the ``@name`` references
     in ``tools``/``allowedTools`` — through :func:`write_mcp_document`, whose
     delete-when-unreferenced then drops its credential-store keys: the first write keeps them
     (the other document still references them), the second deletes them. Another tool's own
-    config (Claude Code's) is never touched. Returns the names either document held.
+    config (Claude Code's) is never touched. The owner's yes to each one it removed goes with it
+    (`mcp_grants`), so a server added again under the name is asked about again — unless
+    *keep_allowed*, for an app that is switched off or updated rather than removed: its servers
+    come back under the same names, and one that still runs what the owner allowed needs no
+    second yes. Returns the names either document held.
     """
+    from personalclaw import mcp_grants
+
     wanted = {str(n) for n in names}
     tool_refs = {f"@{n}" for n in wanted}
     removed: set[str] = set()
@@ -856,6 +868,9 @@ def remove_mcp_servers(names: Iterable[str]) -> list[str]:
                 changed = True
         if changed:
             write_mcp_document(path, doc)
+    if not keep_allowed:
+        for name in removed:
+            mcp_grants.revoke(name)
     return sorted(removed)
 
 

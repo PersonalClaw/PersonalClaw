@@ -28,9 +28,12 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.providers.instances import ExtensionInstance
+
+if TYPE_CHECKING:
+    from personalclaw.mcp_discovery import McpServerInfo
 
 MCP_TOOLS_EXTENSION = "mcp-tools"
 
@@ -121,6 +124,37 @@ def _config_to_spec(config: dict[str, Any], existing: dict[str, Any] | None) -> 
     return spec
 
 
+def planned(instance_id: str, config: dict[str, Any], *, create: bool) -> McpServerInfo:
+    """What the server *instance_id* runs once *config* is written, for the question its owner is
+    asked before it is (`mcp_grants`). Raises ``ValueError`` for what :func:`create_instance`
+    refuses, and ``LookupError`` for an update of a server that is not there."""
+    from personalclaw import mcp_grants
+
+    servers = _load().get("mcpServers", {})
+    existing = servers.get(instance_id) if isinstance(servers, dict) else None
+    if create:
+        _check_new_name(instance_id, servers if isinstance(servers, dict) else {})
+        return mcp_grants.server_of(instance_id, _config_to_spec(config, None))
+    if not isinstance(existing, dict):
+        raise LookupError(instance_id)
+    return mcp_grants.server_of(instance_id, _config_to_spec(config, existing))
+
+
+def saved(instance_id: str) -> McpServerInfo | None:
+    """The server *instance_id* as ``mcp.json`` holds it now, or ``None``."""
+    from personalclaw import mcp_grants
+
+    spec = _load().get("mcpServers", {}).get(instance_id)
+    return mcp_grants.server_of(instance_id, spec) if isinstance(spec, dict) else None
+
+
+def _check_new_name(name: str, servers: dict[str, Any]) -> None:
+    if not _VALID_NAME.match(name):
+        raise ValueError("Server name must be 1–64 letters, digits, dashes, or underscores.")
+    if name in servers:
+        raise ValueError(f"Server {name!r} already exists.")
+
+
 def list_instances() -> list[ExtensionInstance]:
     servers = _load().get("mcpServers", {})
     if not isinstance(servers, dict):
@@ -138,12 +172,9 @@ def get_instance(instance_id: str) -> ExtensionInstance | None:
 def create_instance(display_name: str, config: dict[str, Any]) -> ExtensionInstance:
     """Create a server entry in mcp.json. The display name IS the server key."""
     name = display_name.strip()
-    if not _VALID_NAME.match(name):
-        raise ValueError("Server name must be 1–64 letters, digits, dashes, or underscores.")
     data = _load()
     servers = data.setdefault("mcpServers", {})
-    if name in servers:
-        raise ValueError(f"Server {name!r} already exists.")
+    _check_new_name(name, servers)
     servers[name] = _config_to_spec(config, None)
     _save(data)
     return _spec_to_instance(name, servers[name])

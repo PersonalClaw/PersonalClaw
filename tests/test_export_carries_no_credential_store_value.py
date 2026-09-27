@@ -25,6 +25,7 @@ import zipfile
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
+from mcp_owner_allowed import confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential, save_credential
@@ -77,7 +78,8 @@ def home(monkeypatch):
     save_credential("FIXTURE_PROPERTY_VAULT", PLANTED["Secrets-panel credential"])
     # An MCP server's env value, typed in Tools → Add tool server.
     req = make_mocked_request("PUT", "/api/mcp/servers/prop", match_info={"name": "prop"})
-    req.json = lambda: _coro({"command": "npx", "env": {"TOKEN": PLANTED["MCP server env value"]}})
+    typed = {"command": "npx", "env": {"TOKEN": PLANTED["MCP server env value"]}}
+    req.json = lambda: _coro(confirmed(typed))
     assert asyncio.run(mcp_mod.api_mcp_server_detail(req)).status == 200
     # A remote MCP server's header, written into mcp.json by an earlier release.
     doc = json.loads((home / "mcp.json").read_text(encoding="utf-8"))

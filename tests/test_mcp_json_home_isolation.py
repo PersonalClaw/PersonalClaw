@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from mcp_owner_allowed import allow_configured
 
 
 @pytest.fixture
@@ -68,6 +69,7 @@ def test_the_native_client_reads_the_isolated_store_not_the_real_one(isolated_ho
     )
     from personalclaw.mcp_client import _personalclaw_mcp_specs
 
+    allow_configured("dev-only")
     specs = _personalclaw_mcp_specs()
     assert list(specs) == ["dev-only"], f"the native client read {list(specs)}"
 

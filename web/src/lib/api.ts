@@ -2603,12 +2603,19 @@ export type McpTransport = 'stdio' | 'http' | 'sse'
  *  definition — arguments and a URL can carry a token, and this list is kept in session storage.
  *  The edit form reads one server's definition from `GET /api/mcp/servers/{name}`.
  *  `status` is `ok` only when an agent can call the server's tools; a server PersonalClaw
- *  connected to that no agent can reach reads `unserved`, with the reason in `error`. */
+ *  connected to that no agent can reach reads `unserved`, with the reason in `error`. A server the
+ *  owner has not allowed as it is defined now reads `waiting`: nothing started it, and it starts
+ *  only once they allow it (`allowMcpServer`). */
 export interface McpServer {
   name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean
   /** A server at a URL's OAuth sign-in, when it has one or asked for one (`status: 'signin'`). */
   auth?: McpSignInState
+  /** Whether the owner allowed what the server runs, as it is defined now (`mcp_grants`). */
+  allowed?: boolean
+  /** On a server that waits: the revision of what its Allow is a yes to. The gateway refuses an
+   *  Allow for a definition that changed after the page read it. */
+  allowRevision?: string
 }
 /** A server's OAuth sign-in as `GET /api/mcp` says it (`mcp_oauth.sign_in_state`, presence only — no
  *  token reaches the page): `signed_in`; `signed_out` — it was signed in, and the sign-in ended or its
@@ -7271,12 +7278,17 @@ export const api = {
   agentRunners: (probe = false) => get<{ runners: RunnerRow[] }>(`/api/agent-runners${probe ? '?probe=1' : ''}`).then((d) => d.runners),
   // generic multi-instance CRUD (any multiInstance=true provider — MCP/OpenAI tools, …).
   providerInstances: (name: string) => get<{ instances: ProviderInstance[] }>(`/api/providers/${encodeURIComponent(name)}/instances`).then((d) => d.instances),
+  // An MCP Tool Servers instance is an MCP server: creating one, or changing what it runs, is asked
+  // about first with what it will run, as the Tools page's Add and Edit are.
   createProviderInstance: (name: string, body: { display_name: string; config: Record<string, unknown> }) =>
-    post<{ instance: ProviderInstance }>(`/api/providers/${encodeURIComponent(name)}/instances`, body),
+    withSecurityConsent((c) => post<{ instance: ProviderInstance }>(
+      `/api/providers/${encodeURIComponent(name)}/instances`, c ? { ...body, confirm: true } : body)),
   // The editor saves the instance's WHOLE config, over the revision of the one it read
   // (`ProviderInstance.revision`); a config another tab saved since is refused, not overwritten.
   updateProviderInstance: (name: string, id: string, config: Record<string, unknown>, base: string) =>
-    put<{ instance: ProviderInstance }>(`/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}`, { config }, basedOn(base)),
+    withSecurityConsent((c) => put<{ instance: ProviderInstance }>(
+      `/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}`,
+      c ? { config, confirm: true } : { config }, basedOn(base))),
   deleteProviderInstance: (name: string, id: string) => del(`/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}`),
   testProviderInstance: (name: string, id: string) => post<ProviderTestResult>(`/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}/test`),
   // model BACKENDS (config-file instances): list + full CRUD + connectivity test.
@@ -8275,12 +8287,24 @@ export const api = {
   //
   // ADDING a name nobody has configured replaces nothing, so it names no base; the gateway answers a
   // name that is already taken with `428 revision_required`.
+  //
+  // A new server, or an edit that changes what one runs, is the owner's yes to run it: the gateway
+  // answers first with the sentence saying exactly what will run, and nothing is saved until they
+  // agree. An edit that keeps what the server runs (a replaced secret) is not asked about.
   addMcpServer: (name: string, body: McpServerSave) =>
-    put<{ ok?: boolean; name: string; revision: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body),
+    withSecurityConsent((c) => put<{ ok?: boolean; name: string; revision: string }>(
+      `/api/mcp/servers/${encodeURIComponent(name)}`, c ? { ...body, confirm: true } : body)),
   // EDITING one replaces its definition with the form's copy, so the save names the revision of the
   // definition the form was seeded from, and a stale one is refused with `409 stale_write`.
   saveMcpServer: (name: string, body: McpServerSave, base: string) =>
-    put<{ ok?: boolean; name: string; revision: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body, basedOn(base)),
+    withSecurityConsent((c) => put<{ ok?: boolean; name: string; revision: string }>(
+      `/api/mcp/servers/${encodeURIComponent(name)}`, c ? { ...body, confirm: true } : body, basedOn(base))),
+  // The owner's yes to a server that waits: one imported, brought over, set up by a pack or an app,
+  // or changed since it was allowed. `revision` is the row's `allowRevision`; the gateway asks with
+  // what the server runs, then starts it.
+  allowMcpServer: (name: string, revision: string) =>
+    withSecurityConsent((c) => post<{ ok: boolean; name: string; allowed: boolean }>(
+      `/api/mcp/servers/${encodeURIComponent(name)}/allow`, c ? { revision, confirm: true } : { revision })),
   // What the edit form reads: names, plain values, and for a stored value only whether one is saved —
   // with the revision of exactly that view.
   mcpServerDefinition: (name: string) =>
@@ -8299,6 +8323,7 @@ export const api = {
   importableMcp: () => get<{ servers: ImportableMcpServer[] }>('/api/mcp/importable').then((r) => r.servers),
   // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from the other
   // tool's own file, values included (stored in the credential store), and leaves that file as it is.
+  // The imported server waits for the owner's Allow on its row before anything starts it.
   // The route answers 200 for a batch, so a change that did not land carries an `error` — thrown here,
   // so `reportingWrite` reports both failure shapes.
   /** Import one listed server: the row's `id` names it in its scope, and the gateway reads its

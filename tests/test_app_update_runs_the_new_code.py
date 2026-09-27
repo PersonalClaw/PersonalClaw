@@ -42,6 +42,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from mcp_owner_allowed import allow_configured
 
 # Imported before any test patches `config_dir` (see test_saved_app_settings_apply): the probe
 # imports the SDK, and a module first imported under a patch keeps the mock bound.
@@ -635,8 +636,11 @@ async def test_an_mcp_server_the_app_ships_is_the_new_version_after_an_update(ho
 
     async with _gateway() as gw:
         await gw.install(_probe(home, "v1", parts=("mcp",)))
+        # The owner's Allow on the Tools page: an app's server runs only once it is given.
+        allow_configured(f"{APP}:version")
         assert await answer() == "v1"
 
+        # An update that runs the same command keeps the yes: the Store asked about the update.
         await gw.update(_probe(home, "v2", parts=("mcp",)))
         assert await answer() == "v2", "the old MCP server process still answers"
 

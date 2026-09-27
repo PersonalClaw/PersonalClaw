@@ -22,6 +22,7 @@ import json
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
+from mcp_owner_allowed import confirmed
 
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
@@ -55,6 +56,8 @@ def _call(method: str, name: str, body: dict | None = None):
         read = _call("GET", name)
         if read.status == 200:
             headers["If-Match"] = f'"{json.loads(read.text)["revision"]}"'
+        # And once its owner agreed to what the server runs (`mcp_grants`).
+        body = confirmed(body or {})
     req = make_mocked_request(
         method, f"/api/mcp/servers/{name}", headers=headers, match_info={"name": name}
     )
