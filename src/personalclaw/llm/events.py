@@ -56,6 +56,12 @@ def is_length_stop(stop_reason: object) -> bool:
 #: policy: the app's grant, your Trust, or YOLO. Absent for a call that asks nobody.
 TOOL_META_APPROVAL_WAIVED = "approval_waived"
 
+#: The ``tool_meta`` key a TOOL_RESULT carries when the call needed an approval and the run was
+#: unattended, so the runtime declined it without asking anyone (F-33). The runtime cannot reach
+#: the Inbox; whoever consumes its stream — the chat runner, the subagent manager — records the
+#: denial there (``dashboard/auto_denials.py``) so the morning can see what did not run.
+TOOL_META_AUTO_DENIED = "auto_denied"
+
 
 @dataclass
 class AgentEvent:

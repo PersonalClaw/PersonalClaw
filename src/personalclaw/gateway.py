@@ -4154,6 +4154,27 @@ class GatewayOrchestrator:
                 return
             session_name = info.parent_session_key.removeprefix("dashboard:")
             base = {"id": info.id, "session": session_name}
+            if etype == "subagent_auto_denied":
+                # A call the subagent's runtime declined because nobody could approve it (F-33).
+                # Recorded against the PARENT, which is where a person can see it and act: the
+                # chat that spawned the helper, or the workflow step it ran for.
+                from personalclaw.dashboard import auto_denials
+
+                parent = self.dashboard_state.get_session(session_name) if session_name else None
+                title = getattr(parent, "title", "") if parent is not None else ""
+                auto_denials.note_unattended(
+                    self.dashboard_state,
+                    session_key=session_name or f"subagent:{info.id}",
+                    tool=str(extra.get("tool") or ""),
+                    who=(
+                        f"A subagent of “{title}”"
+                        if title and title != session_name
+                        else (
+                            "A workflow step" if ownership.is_owned(session_name) else "A subagent"
+                        )
+                    ),
+                )
+                return
             if etype == "subagent_injection_failed":
                 # Show error in UI + queue for LLM context on next turn.
                 session = self.dashboard_state.get_session(session_name)

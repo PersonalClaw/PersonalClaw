@@ -12,6 +12,12 @@
     "type": "str"
   },
   {
+    "default": 120,
+    "path": "agent.approval_timeout_minutes",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": "",
     "path": "agent.bot_name",
     "sensitive": false,

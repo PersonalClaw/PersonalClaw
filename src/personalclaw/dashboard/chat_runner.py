@@ -22,6 +22,7 @@ from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
+from personalclaw.dashboard import auto_denials
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
@@ -106,6 +107,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.events import (
     EVENT_MODEL_SUBSTITUTION,
     TOOL_META_APPROVAL_WAIVED,
+    TOOL_META_AUTO_DENIED,
     is_length_stop,
 )
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
@@ -3496,6 +3498,13 @@ async def run_chat(
                 # Fire PostToolUse hooks
                 _tool_name = _pending_tools.pop(event.tool_call_id, "")
                 _risk_of_call = _call_risk.pop(event.tool_call_id, "")
+                # The native runtime declined this call itself: it needed an approval and the turn
+                # is unattended, so no request ever reached the fail-fast above. Recorded for the
+                # morning the same way that one is (F-33).
+                if _tmeta.get(TOOL_META_AUTO_DENIED):
+                    _ad_title, _ = redact_exfiltration_urls(_tool_name or event.title or "")
+                    _ad_title, _ = redact_credentials(_ad_title)
+                    auto_denials.note_unattended(state, session_key=session.key, tool=_ad_title)
                 # The native runtime answered this call's ask from the session's policy, in its own
                 # loop, so no approval reached the gate above: record it the way that gate records
                 # its own auto-approvals, naming whose switch it was.
@@ -4048,6 +4057,15 @@ async def run_chat(
                             "risk": effective_risk,
                         },
                     )
+                    # The transcript line and the SEL row are nowhere a person looks in the
+                    # morning; the Inbox is (F-33).
+                    _ff_input = ""
+                    if event.tool_input:
+                        _ff_input, _ = redact_exfiltration_urls(tool_input_to_str(event.tool_input))
+                        _ff_input, _ = redact_credentials(_ff_input)
+                    auto_denials.note_unattended(
+                        state, session_key=session.key, tool=_ff_title, tool_input=_ff_input
+                    )
                     continue
                 # Interactive approval — send to frontend, wait for decision
                 perm_meta = {
@@ -4125,6 +4143,10 @@ async def run_chat(
                 # How the approval ends if nobody answers it: its window closing is `expired`;
                 # the turn being torn down first is `cancelled`. See `request_approval`.
                 timed_out = False
+                # The interactive window: an unattended turn failed fast above, so a human is who
+                # this waits for — as long as the owner's setting says. Read before the wait so the
+                # `finally` below can name it.
+                approval_window = state.approval_window_secs()
                 try:
                     # ONE registration for every surface — inside the try, so a turn torn
                     # down mid-publication still leaves nothing listed. The live chat page
@@ -4155,9 +4177,7 @@ async def run_chat(
                     # session dict reflects pending_approval=true and Board cards
                     # move into the Blocked lane without a browser refresh.
                     state.push_sessions_update()
-                    # The interactive window: an unattended turn failed fast above, so a
-                    # human is who this waits for.
-                    outcome = await asyncio.wait_for(fut, timeout=state._APPROVAL_TIMEOUT)
+                    outcome = await asyncio.wait_for(fut, timeout=approval_window)
                 except asyncio.TimeoutError:
                     outcome = "rejected"
                     timed_out = True
@@ -4166,9 +4186,13 @@ async def run_chat(
                     # Unanswered on the way out — expired, or its turn was torn down — so every
                     # surface still listing it drops it saying which, and the transcript row
                     # records it (a reload then shows what happened, not a dead live card). A
-                    # no-op when a decision already withdrew it.
+                    # no-op when a decision already withdrew it. An expired one leaves its note
+                    # in the Inbox, naming how long it waited.
                     state.end_session_approval(
-                        session, request_id, outcome="expired" if timed_out else "cancelled"
+                        session,
+                        request_id,
+                        outcome="expired" if timed_out else "cancelled",
+                        window_secs=approval_window if timed_out else 0.0,
                     )
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True

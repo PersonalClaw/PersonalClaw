@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from '../../lib/api'
+import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type WorkflowRunSummary } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
@@ -91,6 +91,9 @@ interface Attention {
   /** Every loop, whatever backs it (`GET /api/loops` lists run-backed loops too) — the Working
    *  lane's evidence for a loop no chat session carries. */
   loops: Loop[]
+  /** Every RUNNING workflow run — the Working lane's evidence for a run that is neither a chat
+   *  session nor a loop (F-32). */
+  runs: WorkflowRunSummary[]
 }
 
 /** ── WHY A THIRD SOURCE ───────────────────────────────────────────────────────────────────────
@@ -143,13 +146,15 @@ function activityOf(s: ChatSessionSummary): SessionActivity {
  *  Concatenating the lists here would double-count every mirrored approval and make each lane's
  *  count a lie. */
 async function readAttention(): Promise<Attention> {
-  const [items, approvals, sessions, loops] = await Promise.all([
+  const [items, approvals, sessions, loops, running] = await Promise.all([
     api.inboxOpen(),
     api.approvals(),
     api.chatSessions(),
     api.uLoops(),
+    // 200 is the route's own ceiling (`api_runs_list`), far past what one install runs at once.
+    api.workflowRuns({ status: 'running', limit: 200 }),
   ])
-  return { items, approvals, activity: sessions.map(activityOf), loops }
+  return { items, approvals, activity: sessions.map(activityOf), loops, runs: running.runs }
 }
 
 /** What answering a parked run needs, read off the inbox row's free-form `refs`.
@@ -248,8 +253,9 @@ export function MissionControl() {
   const approvals = data?.approvals ?? []
   const activity = data?.activity ?? []
   const loops = data?.loops ?? []
+  const runs = data?.runs ?? []
   // The sibling owns the split. This view never classifies an item itself — see the header note.
-  const lanes = useMemo(() => toLanes(items, approvals, activity, loops), [items, approvals, activity, loops])
+  const lanes = useMemo(() => toLanes(items, approvals, activity, loops, runs), [items, approvals, activity, loops, runs])
 
   const mark = useCallback((key: string, o: Outcome) => {
     setOutcomes((prev) => ({ ...prev, [key]: o }))
@@ -443,6 +449,15 @@ function AttentionCard({
         <p data-type="body-s" className="min-w-0 text-on-surface">
           {question.prompt}
         </p>
+      ) : null}
+      {/* Working work opens where it runs. The derivation already put each card's page on
+          `refs.link` (a loop's cockpit, a run's page); nothing rendered it, so a Working card was
+          a name with no way to reach the work it named. */}
+      {(card.origin === 'run' || card.origin === 'loop') && typeof card.refs?.link === 'string' ? (
+        <TextLink href={card.refs.link} ink="emphasis" size="sm"
+          aria-label={`${card.origin === 'run' ? 'Open the run' : 'Open the loop'}: ${subject}`}>
+          {card.origin === 'run' ? 'Open the run' : 'Open the loop'}
+        </TextLink>
       ) : null}
 
       {/* The outcome, in words, in a live region. A resolved card that only changed colour is a

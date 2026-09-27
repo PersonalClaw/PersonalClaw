@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, ShieldX, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -30,6 +30,9 @@ const KINDS: Record<string, KindMeta> = {
   subagent: { label: 'Subagent update', icon: Bot, tone: 'var(--color-primary)' },
   message: { label: 'Agent message', icon: MessageSquare, tone: 'var(--color-on-surface-low)' },
   agent_request: { label: 'Agent request', icon: ShieldQuestion, tone: 'var(--color-warn)' },
+  // system/auto_denied (F-33): a call denied with no answer — an approval nobody answered in time,
+  // or one an unattended run could not ask about. Warn: work the user asked for did not happen.
+  auto_denied: { label: 'Denied without an answer', icon: ShieldX, tone: 'var(--color-warn)' },
   // agent/room_paused (AGENT-ROOMS AR-5). Its bare kind IS its wire string — no legacy flat
   // name existed — so one row covers both. Info tone, not warn: the room reached the round
   // budget the user configured, so nothing failed and nothing is at risk, and it resumes on

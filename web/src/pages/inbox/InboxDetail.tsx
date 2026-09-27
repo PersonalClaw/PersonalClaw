@@ -17,6 +17,11 @@ import { invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
 import { BUSY_REASON } from '../../ui/unavailable'
 
+/** What "Ask it to try again" sends to the chat whose approval ran out (F-33). */
+function retryText(tool: string): string {
+  return `The approval for ${tool} ran out before I answered, so it did not run. I'm here now — please try that again.`
+}
+
 /** Inbox item triage panel: the full message + thread context, the triage
  *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
  *  and triage actions. Sending a reply depends on the source provider supporting
@@ -65,6 +70,20 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
     setBusy('restore'); setErr('')
     try { await api.restoreInboxItem(item.id); onChanged() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Restore failed') } finally { setBusy(null) }
+  }
+  // F-33: a call denied because nobody answered its approval in time. When it happened in a chat
+  // a person answers in (`refs.chat`, set by the gateway only for such a chat), running it again
+  // is asking that chat to try again — which asks for the approval again, now that someone is
+  // here. The words it sends are shown before it is sent.
+  const retryChat = item.refs?.auto_denied && typeof item.refs?.chat === 'string' ? item.refs.chat : ''
+  const retryMessage = retryChat ? retryText(String(item.refs?.tool || 'that step')) : ''
+  async function askAgain() {
+    setBusy('retry'); setErr('')
+    try {
+      await api.sendChat(retryMessage, retryChat)
+      navigate(`chat/${encodeURIComponent(retryChat)}`)
+    } catch (e) { setErr(`Couldn't ask the chat to try again: ${e instanceof Error ? e.message : 'unknown error'}`) }
+    finally { setBusy(null) }
   }
 
   const dirtyDraft = draft !== (item.draft ?? '')
@@ -164,6 +183,19 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
             onChanged={onChanged}
             navigate={navigate}
           />
+        </Section>
+      )}
+
+      {retryChat && (
+        <Section label="Run it again">
+          <p data-type="body-s" className="text-on-surface-var">
+            Asks the chat to try again, so it asks you for the approval while you are here. It sends: “{retryMessage}”
+          </p>
+          <div className="mt-s">
+            <Button size="sm" onClick={askAgain} loading={busy === 'retry'} disabled={!!busy} disabledReason={BUSY_REASON}>
+              <RotateCcw size={14} /> Ask it to try again
+            </Button>
+          </div>
         </Section>
       )}
 

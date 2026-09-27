@@ -32,7 +32,13 @@ from personalclaw.config.edit_spec import (
     loosens_when_removed,
     loosens_when_shorter,
 )
-from personalclaw.config.loader import MEMORY_VAULT_MODES, PUSH_BACKENDS, _bot_name_disallowed
+from personalclaw.config.loader import (
+    APPROVAL_TIMEOUT_MINUTES_MAX,
+    APPROVAL_TIMEOUT_MINUTES_MIN,
+    MEMORY_VAULT_MODES,
+    PUSH_BACKENDS,
+    _bot_name_disallowed,
+)
 
 
 # Allowed editable config paths and their validators
@@ -190,6 +196,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             "Turning YOLO on skips every tool-approval confirmation, for every session, until "
             "it is turned off.",
         ),
+    },
+    # F-33. Not a SecurityControl: a longer wait keeps asking and a shorter one denies sooner —
+    # either way the call runs only on an explicit approval, and an unanswered one is refused.
+    "agent.approval_timeout_minutes": {
+        "type": "int",
+        "min": APPROVAL_TIMEOUT_MINUTES_MIN,
+        "max": APPROVAL_TIMEOUT_MINUTES_MAX,
     },
     "agent.soft_stop_budget_secs": {"type": "float", "min": 0.5, "max": 60.0},
     "agent.max_subagents": {"type": "int", "min": 0, "max": 16},

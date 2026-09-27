@@ -75,6 +75,10 @@ The loop surfaces do not care which home a loop has:
   A projected row carries **`run_id`**; that field, never the kind, is how a surface tells the two
   apart (`web/src/lib/loopKind.ts:loopRoute`, `lib/loopStatus.ts:loopActionSources`). The Loops
   list, Home (hero + Active Work) and Mission Control's Working lane all read this one listing.
+  The Working lane also reads `GET /api/workflows/runs?status=running`, because a run started
+  from Workflows, by a trigger or by a project is neither a chat session nor a loop. It leaves a
+  run that backs a loop to the loop's card, and a sub-run to the run that spawned it
+  (`lib/attentionLanes.ts:toLanes`).
 - **Status.** A run status is projected onto the nearest truthful loop status (`loop_view._STATUS`):
   `cancelled` → `stopped`; `escalated` → `complete` with a non-`done` stop reason, which renders
   "Ended early" (`cycle_budget` when the loop spent its iterations, `worker_failed` otherwise).

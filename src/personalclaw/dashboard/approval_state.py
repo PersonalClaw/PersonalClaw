@@ -99,6 +99,20 @@ def chat_approval_id(session_key: str, request_id: str | int) -> str:
     return f"{session_key}:{request_id}"
 
 
+def _who_asked(entry: dict[str, Any]) -> str:
+    """Who is waiting on an approval, as the Inbox says it — the chat's agent and the chat, a
+    subagent of a chat, or a background task. The one wording both of an approval's Inbox rows use
+    (the ask, and the note it leaves when nobody answered)."""
+    agent = str(entry.get("agent") or "")
+    title = str(entry.get("session_title") or "")
+    if agent:
+        # Only a chat-held approval names its agent; that is how the two origins are told apart.
+        return f"{agent} in “{title}”" if title else f"{agent} in a chat"
+    if entry.get("source") == "subagent":
+        return f"A subagent of “{title}”" if title else "A subagent"
+    return "A background task"
+
+
 def _approval_row_body(entry: dict[str, Any]) -> str:
     """What a pending approval's Inbox row says. Server-composed product copy: every clause true.
 
@@ -107,18 +121,10 @@ def _approval_row_body(entry: dict[str, Any]) -> str:
     carries — so the row can be judged from the Inbox rather than only opened.
     """
     tool = str(entry.get("tool") or "a tool")
-    agent = str(entry.get("agent") or "")
-    title = str(entry.get("session_title") or "")
-    if agent:
-        # Only a chat-held approval names its agent; that is how the two origins are told apart.
-        who = f"{agent} in “{title}”" if title else f"{agent} in a chat"
-    elif entry.get("source") == "subagent":
-        who = f"A subagent of “{title}”" if title else "A subagent"
-    else:
-        who = "A background task"
     risk = str(entry.get("risk") or "")
     lines = [
-        f"{who} is waiting for your decision on {tool}" + (f" (risk: {risk})." if risk else ".")
+        f"{_who_asked(entry)} is waiting for your decision on {tool}"
+        + (f" (risk: {risk})." if risk else ".")
     ]
     for detail in (entry.get("tool_purpose"), entry.get("tool_input")):
         text = " ".join(str(detail or "").split())
@@ -145,24 +151,28 @@ class DashboardApprovalState:
     enable_yolo: Callable[..., None]
     push_sessions_update: Callable[[], None]
 
-    _APPROVAL_TIMEOUT = 7200  # 2 hours — interactive default (a human is present)
-    # Unattended origins (cron / loop / heartbeat / scheduled) have no human to
-    # answer a prompt, so a long wait just hangs the run. They fail CLOSED to
-    # deny after a short window. Keyed by a substring of the approval `source`.
-    _UNATTENDED_APPROVAL_TIMEOUT = 300  # 5 minutes
-    _UNATTENDED_SOURCE_MARKERS = ("cron", "loop", "heartbeat", "schedule", "autonudge")
+    def approval_window_secs(self) -> float:
+        """How long an approval waits for an answer: ``agent.approval_timeout_minutes`` (F-33).
 
-    def _approval_timeout_for(self, source: str) -> float:
-        """Resolve the response window for an approval by its origin.
+        ONE window for every approval that waits — a chat's, a subagent's, an MCP server's
+        question (which its own call ceiling cuts shorter). There used to be a second, five-minute
+        window for "unattended" sources, keyed by a substring of ``source`` (``cron``, ``loop``,
+        ``heartbeat``, ``schedule``, ``autonudge``), and no caller ever passed one: every production
+        source is ``subagent`` or ``mcp:<server>``. It governed nothing, while reading as the rule
+        for night-time work. What an unattended run really does is decline at once, without an
+        approval at all (``chat_runner``'s fail-fast and the native runtime's own), because nobody
+        is there to ask — and ``dashboard/auto_denials.py`` now says so in the Inbox.
 
-        Unattended origins (no human at the keyboard) get a short window and fail
-        closed to deny on expiry, so an autonomous run can't hang for hours on a
-        prompt nobody will answer; interactive origins keep the long window.
+        Read per approval, so a change in Settings applies to the next one asked. An unreadable
+        config falls back to the default window rather than failing the approval.
         """
-        low = (source or "").lower()
-        if any(marker in low for marker in self._UNATTENDED_SOURCE_MARKERS):
-            return self._UNATTENDED_APPROVAL_TIMEOUT
-        return self._APPROVAL_TIMEOUT
+        from personalclaw.config.loader import APPROVAL_TIMEOUT_MINUTES_DEFAULT, AppConfig
+
+        try:
+            minutes = int(AppConfig.load().agent.approval_timeout_minutes)
+        except Exception:  # noqa: BLE001 - see the docstring
+            minutes = APPROVAL_TIMEOUT_MINUTES_DEFAULT
+        return float(max(1, minutes) * 60)
 
     async def request_approval(
         self,
@@ -181,9 +191,8 @@ class DashboardApprovalState:
         gateway's race for a background origin), so the ``channel_dm`` target must not ask a
         second time.
 
-        The timeout is origin-aware (see :meth:`_approval_timeout_for`): unattended
-        sources deny fast, interactive sources wait longer. Timeout always fails
-        closed to deny.
+        Waits :meth:`approval_window_secs`. Timeout always fails closed to deny, and leaves a
+        note in the Inbox saying so (:meth:`end_approval`).
 
         ``tool_input`` is ``object`` because that is what the approval path actually carries.
         It is ``AgentEvent.tool_input``, typed ``Any`` — the native loop puts a dict there and
@@ -237,7 +246,7 @@ class DashboardApprovalState:
         )
         if asked_on_channel:
             self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
-        timeout = self._approval_timeout_for(source)
+        timeout = self.approval_window_secs()
         # How this approval ends if nobody answers it. The waiter is the one party that knows
         # WHY it stopped waiting, so it says so: its window closing is `expired`; anything else
         # that ends the wait first — the subagent or run that owns it being cancelled, which
@@ -267,7 +276,11 @@ class DashboardApprovalState:
             return False
         finally:
             self._approval_futures.pop(approval_id, None)
-            self.end_approval(approval_id, outcome="expired" if timed_out else "cancelled")
+            self.end_approval(
+                approval_id,
+                outcome="expired" if timed_out else "cancelled",
+                window_secs=timeout,
+            )
 
     async def hold_session_approval(
         self,
@@ -469,12 +482,18 @@ class DashboardApprovalState:
         except Exception:
             self._log.warning("WS broadcast failed for approval resolution", exc_info=True)
 
-    def end_approval(self, approval_id: str, *, outcome: str) -> None:
+    def end_approval(self, approval_id: str, *, outcome: str, window_secs: float = 0.0) -> None:
         """An approval its waiter stopped waiting for: ``expired`` or ``cancelled``.
 
         It failed closed, so the call does not run, and every surface says which of the two
         happened. A no-op once a decision has withdrawn it, which is what lets every waiter call
         this unconditionally on its way out.
+
+        An ``expired`` one leaves a note in the Inbox (``auto_denials.note_expired``), because the
+        approval's own row closes here: before, an approval nobody answered in time was gone from
+        every surface, with nothing saying the call had been denied. ``window_secs`` is how long
+        its waiter waited, which the note states. ``cancelled`` leaves none — the work that asked
+        was stopped, and the SEL row below records why.
         """
         if outcome not in UNANSWERED_OUTCOMES:
             raise ValueError(f"{outcome!r} is an answer, not a way to end without one")
@@ -484,6 +503,15 @@ class DashboardApprovalState:
         self.withdraw_approval(approval_id, outcome=outcome)
         if outcome == "cancelled":
             self._audit_cancelled(approval_id, self._why_cancelled(entry), entry=entry)
+        else:
+            from personalclaw.dashboard import auto_denials
+
+            auto_denials.note_expired(
+                self,
+                entry,
+                who=_who_asked(entry),
+                window_secs=window_secs or self.approval_window_secs(),
+            )
 
     def _why_cancelled(self, entry: dict[str, Any]) -> str:
         """The audit reason for an approval whose waiter was cancelled: the owner's own record
@@ -496,7 +524,7 @@ class DashboardApprovalState:
         return "the work that asked for it was stopped"
 
     def end_session_approval(
-        self, session: "_ChatSession", request_id: str, *, outcome: str
+        self, session: "_ChatSession", request_id: str, *, outcome: str, window_secs: float = 0.0
     ) -> None:
         """:meth:`end_approval` for a chat's approval — and the transcript row with it.
 
@@ -508,7 +536,7 @@ class DashboardApprovalState:
         approval_id = chat_approval_id(session.key, request_id)
         if approval_id in self._pending_approvals:
             _mark_permission_resolved(session.messages, request_id, outcome)
-        self.end_approval(approval_id, outcome=outcome)
+        self.end_approval(approval_id, outcome=outcome, window_secs=window_secs)
 
     def cancel_approval(self, approval_id: str, *, reason: str) -> bool:
         """End a pending approval whose owner has ended while its waiter still waits.

@@ -512,6 +512,19 @@ _KINDS: tuple[NotificationKind, ...] = (
         attention=True,
         owner="personalclaw.notification_rules",
     ),
+    # A tool call denied with no answer: an approval nobody answered in time, or one an unattended
+    # run could not ask about (F-33, `dashboard/auto_denials.py`). Its durable row is what the
+    # morning reads — the approval's own row closes when it ends. WARNING: work the user asked for
+    # did not happen. Not a decision: nothing is waiting on an answer any more.
+    NotificationKind(
+        "system",
+        "auto_denied",
+        "Denied without an answer",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        owner="personalclaw.dashboard.auto_denials",
+    ),
     # The monthly spend recap (MRT-3). `digest` by DEFAULT, unlike every other kind here: a
     # recap of a month that already closed is the least urgent thing the system emits, and
     # interrupting for it would teach a user to mute the channel that also carries a budget
@@ -744,6 +757,9 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # would be system/generic's — the registry's 🪤 one level down, exactly as `autonomy_revocation`
     # above found.
     "trigger_import": ("cron", "trigger_import"),
+    # F-33. The bare kind is unique, so it is its own wire string — and it needs this row for the
+    # same reason `autonomy_revocation` does: without one `kind_for_legacy` falls open to generic.
+    "auto_denied": ("system", "auto_denied"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -790,6 +806,8 @@ RESEARCH_FINDING = "research_finding"
 APPROVAL = "approval"
 #: A task's due date is coming (F-31, `tasks/due_notices.py`).
 TASK_DUE = "task_due"
+#: A tool call denied with no answer (F-33, `dashboard/auto_denials.py`).
+AUTO_DENIED = "auto_denied"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -815,6 +833,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     RESEARCH_FINDING,
     APPROVAL,
     TASK_DUE,
+    AUTO_DENIED,
     GENERIC,
 )
 
