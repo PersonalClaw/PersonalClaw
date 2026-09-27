@@ -301,3 +301,32 @@ def test_an_install_without_consent_never_commits_even_on_a_clean_scan(tmp_path,
     assert not (tmp_path / "apps" / "digest").exists()
 
     assert app_manager.install(src, consent=res.consent).ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("name", {"a": "b"}), ("name", 7), ("source", ["x"]), ("source", None)],
+    ids=["name-object", "name-int", "source-array", "source-null"],
+)
+async def test_the_review_refuses_a_wrong_typed_field_and_fetches_nothing(
+    tmp_path, monkeypatch, field, value
+):
+    """A `name` or `source` that is not a string is a 400 naming the field, before anything is
+    fetched. It used to be `str()`-coerced: `{"a": "b"}` became the name `"{'a': 'b'}"`, and a
+    `null` source became the path `"None"`, which was then cloned or read as if someone typed it."""
+    from personalclaw.apps import source as app_source
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    fetched: list = []
+    monkeypatch.setattr(app_source, "resolve", lambda *a, **k: fetched.append(a))
+    app = web.Application(middlewares=[request_boundary_middleware()])
+    register_app_routes(app)
+    body = {"source": _app(tmp_path), field: value}
+    async with TestClient(TestServer(app)) as client:
+        r = await client.post("/api/apps/preview", json=body)
+        payload = await r.json()
+    assert r.status == 400, payload
+    assert payload["error"]["code"] == "field_not_a_string"
+    assert field in payload["error"]["message"]
+    assert fetched == [], "the review fetched a source whose request it should have refused"

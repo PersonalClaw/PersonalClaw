@@ -38,7 +38,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, require_string, string_field
 from personalclaw.security import (
     is_sensitive_path,
     redact_credentials,
@@ -646,10 +646,8 @@ async def api_app_preview(request: web.Request) -> web.Response:
     from personalclaw.apps import source as app_source
 
     body = await json_object_body(request)
-    src = str(body.get("source", "")).strip()
-    if not src:
-        return json_error("field_required", message="source is required", status=400)
-    name = str(body.get("name") or "").strip() or None
+    src = require_string(body, "source")
+    name = string_field(body, "name") or None
 
     try:
         resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
