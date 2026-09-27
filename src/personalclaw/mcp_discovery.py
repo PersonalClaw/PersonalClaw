@@ -168,17 +168,31 @@ def server_name_problem(name: str) -> str | None:
     )
 
 
-def stdio_spawn_env(server_env: Mapping[str, str]) -> dict[str, str]:
-    """The environment a stdio server is spawned in — by the probe AND by the agent's connection.
+def stdio_spawn_env(server_env: Mapping[str, str], *, server: str) -> dict[str, str]:
+    """The environment stdio server *server* is spawned in — by the probe AND by the agent's
+    connection.
 
-    The gateway's environment with its ``PATH`` augmented, so a daemon's thin ``PATH`` still finds
-    ``node``/``npx``/``uvx``, then the server's own variables over it. A server's own ``PATH`` goes
-    IN FRONT of the gateway's instead of replacing it, which is also how ``rebuild_agent_config``
-    resolves the command. One definition because there were two: the probe prepended and the
-    agent's connection replaced, so a server that set ``PATH`` probed "ok" while every call to it
-    failed with the command not found.
+    A server of your own gets the gateway's environment, like any program you start. An app's
+    server (``apps.mcp_bridge.server_app``) gets the child allowlist instead
+    (``sandbox.build_child_env``): it is the app's code, and the gateway's environment holds every
+    secret saved in PersonalClaw. What it needs from the credential store it declares in its
+    ``env``, which resolves only that app's own secrets (``config.secret_refs``).
+
+    Either way ``PATH`` is augmented, so a daemon's thin ``PATH`` still finds
+    ``node``/``npx``/``uvx``, then the server's own variables go over it. A server's own ``PATH``
+    goes IN FRONT of the gateway's instead of replacing it, which is also how
+    ``rebuild_agent_config`` resolves the command. One definition because there were two: the
+    probe prepended and the agent's connection replaced, so a server that set ``PATH`` probed "ok"
+    while every call to it failed with the command not found.
     """
-    env = dict(os.environ)
+    from personalclaw.apps.mcp_bridge import server_app
+
+    if server_app(server) is not None:
+        from personalclaw.sandbox import build_child_env
+
+        env = build_child_env(site="app-mcp-server")
+    else:
+        env = dict(os.environ)
     env["PATH"] = augmented_path(env.get("PATH", ""))
     if "PATH" in server_env:
         env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
@@ -638,7 +652,7 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
     server.status = "probing"
     proc = None
     try:
-        env = stdio_spawn_env(server_env)
+        env = stdio_spawn_env(server_env, server=server.name)
 
         # Resolve command to absolute path using the merged env PATH
         resolved = shutil.which(server.command, path=env.get("PATH"))

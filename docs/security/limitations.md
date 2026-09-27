@@ -219,6 +219,16 @@ gateway uses.
   the old copy itself, by that copy's own file list, deleting nothing outside
   `app-python` and no file the new version lists.
 
+pip itself runs in the child allowlist (`sandbox.py::build_child_env` with `installer="pip"`),
+not in the gateway's environment. That matters because pip runs each package's build code with
+whatever pip has, and the gateway's environment holds every secret saved in PersonalClaw. pip gets
+`PATH`, the home, locale, the proxy and certificate settings, and its own `PIP_*` settings
+except the four that would move the install (`PIP_TARGET`, `PIP_PREFIX`, `PIP_ROOT`,
+`PIP_USER`). A login in any of those values (`http://ada:pw@proxy:3128`, an index URL with a
+token) is taken out. An install that then fails because the proxy or index wanted it says which
+setting lost its login. Adding that name under Settings → Security → Child environment
+passthrough passes it as it is, to every process PersonalClaw starts.
+
 Before pip runs, `app_manager._reject_core_dependency_conflicts` also refuses any
 declared requirement that names a core-declared dependency unless the version already
 installed satisfies it — the gateway's copy loads first, so such a pin could never
@@ -473,8 +483,9 @@ run under your own account:
   (`local_models/sidecar.py::SidecarInstall`);
 - a backend, started as a process on this machine (`apps/backend_runtime.py`);
 - the MCP servers in its manifest's `mcpServers`, each a command the gateway launches with
-  the gateway's own environment, which carries the stored credentials PersonalClaw exports
-  for its child processes (`apps/mcp_bridge.py`, `mcp_client.py`, `config/loader.py`);
+  the child allowlist and the `env` the manifest declares for it, whose secret references
+  resolve only the app's own secrets (`apps/mcp_bridge.py`, `mcp_discovery.py::stdio_spawn_env`,
+  `config/secret_refs.py`);
 - setup hooks (`setup.onInstall` and the rest), shell commands run at install, update,
   enable, disable and uninstall (`apps/app_manager.py::_run_hook`);
 - CLI steps (`cli.setup`, `cli.doctor`), imported and run when you run `personalclaw setup`
@@ -502,15 +513,21 @@ from the manifest you consented to, and defining any of them through the API is 
 (`backend.sandbox`, such as `docker`) launches inside that tier rather than on the host,
 with its `network` permission deciding its egress and its `storage` permission its one
 writable folder (`apps/backend_runtime.py::build_backend_sandbox_spec`). A named tier that
-is not available refuses to launch instead of falling back to the host. A backend's
-environment is an allowlist, so it inherits no credential you did not pass through by
-name in `sandbox.env_passthrough` (`sandbox.py::build_child_env`), and a backend and an
-MCP server both run under the resource-ceiling shim (`sandbox.py::spawn_shim_argv`).
+is not available refuses to launch instead of falling back to the host. Everything the
+gateway starts for an app begins from one allowlist (`sandbox.py::build_child_env`): the pip
+that installs its packages, the venv and pip of its engine, the npm that installs an ACP
+adapter, its setup hooks, backend, worker, sidecar and MCP servers. None of them inherits a
+credential you did not pass through by name in `sandbox.env_passthrough`, and a proxy address
+reaches them without its login. A backend and an MCP server both run under the
+resource-ceiling shim (`sandbox.py::spawn_shim_argv`).
 
 **What is not enforced:** anything about the code itself. A backend that names no
 sandbox, a provider module, an MCP server, a setup hook and a CLI step have your files and
-your network, and an MCP server and a setup hook also get the gateway's full environment.
-A source parser has your files and no network.
+your network. A provider module runs inside the gateway, and a CLI step inside `personalclaw
+setup` or `doctor`, so both see the environment of the process they run in. An ACP agent an
+app registers is handed the gateway's environment, less the few credential names its sandbox
+scrubs (`sandbox.py::_SENSITIVE_ENV_PREFIXES`), because the agent CLI signs in to its model
+provider with it. A source parser has your files and no network.
 
 **What the consent surface tells you:** the install dialog reads `apps/disclosure.describe`
 and has a row titled *What it runs on this machine*. It leads with the gateway's own

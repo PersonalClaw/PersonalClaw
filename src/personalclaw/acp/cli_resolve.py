@@ -358,12 +358,17 @@ def provision_acp_adapter(
 
     try:
         prefix.mkdir(parents=True, exist_ok=True)
-        # Put the chosen Node first on PATH so npm's engine check + any lifecycle
-        # scripts run under it, not the (possibly too-old) default node.
-        env = {
-            **os.environ,
-            "PATH": os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")]),
-        }
+        from personalclaw.sandbox import build_child_env
+
+        # npm runs the install scripts of the adapter and of every package it depends on, so
+        # the install gets the child allowlist and npm's own settings, never the gateway's
+        # environment and the secrets in it. The chosen Node goes first on PATH so npm's engine
+        # check and those scripts run under it, not the (possibly too-old) default node.
+        env = build_child_env(
+            site="acp-adapter-install",
+            installer="npm",
+            extra={"PATH": os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")])},
+        )
         logger.info("acp adapter %s: provisioning under %s into %s", npm_pkg, node, prefix)
         spec = f"{npm_pkg}@{pin_version}" if pin_version else npm_pkg
         proc = subprocess.run(

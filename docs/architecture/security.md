@@ -132,15 +132,23 @@ environment-variable denylist (credential env vars like `SLACK_BOT_TOKEN`
 never reach a sandboxed child).
 
 Child **environments** are built by allowlist, not inherited: `build_child_env`
-gives a hook, cron-script or bash-action child a minimal base
+gives a hook, cron-script or bash-action child, and everything the gateway starts
+for an app (the pip and npm that install what it declares, its engine's venv and
+pip, its setup hooks, backend, worker, sidecar and MCP servers), a minimal base
 (`PATH`, locale, home-equivalents, proxy/CA settings, and the three
 `PERSONALCLAW_*` vars) plus whatever names the operator declared in
-`sandbox.env_passthrough`. Nothing else from the gateway environment reaches
-them, so a credential the gateway holds is not readable by `printenv`. The
-sensitive-prefix list above is the floor: a declaration cannot pass
-`AWS_SECRET*`, `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME` or `GIT_ASKPASS`.
-Withheld names are listed in the debug log at each spawn, so a script that
-needs one more variable is diagnosable rather than mysteriously broken.
+`sandbox.env_passthrough`. An install also gets its installer's own settings
+(`installer="pip"`: `PIP_*`; `installer="npm"`: `npm_config_*`), less the ones
+that would move where it lands and npm's `_auth*` login keys. Nothing else from
+the gateway environment reaches them, so a credential the gateway holds is not
+readable by `printenv`. An inherited value with a login in it (a proxy address,
+an index URL) arrives without it: `http://ada:pw@proxy:3128` becomes
+`http://proxy:3128`, and the gateway logs once per site which name lost one. A
+name the operator declared arrives as it is. The sensitive-prefix list above is
+the floor: a declaration cannot pass `AWS_SECRET*`, `AWS_SESSION*`,
+`SSH_AUTH_SOCK`, `GNUPGHOME` or `GIT_ASKPASS`. Withheld names are listed in the
+debug log at each spawn, so a script that needs one more variable is diagnosable
+rather than mysteriously broken.
 
 ### What the sandbox does and does not do
 

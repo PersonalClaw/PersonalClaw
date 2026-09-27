@@ -200,7 +200,7 @@ function ChildProcessCeilings({ note, onScopesSaved }: {
                 hint="Wrap each agent-influenced spawn in a transient systemd user scope carrying the ceilings above, so they bound the child's WHOLE process tree instead of one process. This is the fork-bomb containment the process limit cannot give. Linux only, and a no-op where a systemd user manager is unavailable (macOS, most containers)." />
               <StrListField label="Child environment passthrough" cfg={cfg} field="env_passthrough" editList={editList}
                 placeholder="Add name…"
-                hint="Extra environment VARIABLE NAMES a child may inherit, on top of the minimal base (PATH, locale, home, proxy/CA settings). Everything else is withheld — a child does not inherit the gateway's environment. Names matching the credential floor (AWS secrets, SSH agent socket, GPG home, git askpass) are refused even when declared here." />
+                hint="Extra environment VARIABLE NAMES a child may inherit, on top of the minimal base (PATH, locale, home, proxy/CA settings). A child is anything PersonalClaw starts to run code it didn't write: an agent's command, a hook, a script, and an app's installs, hooks and servers. Everything else is withheld, and a proxy address reaches a child without its password. A name added here is passed as it is, password included. Names matching the credential floor (AWS secrets, SSH agent socket, GPG home, git askpass) are refused even when declared here." />
             </RowGroup>
           )}
     </Section>
