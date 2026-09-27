@@ -53,6 +53,7 @@ PARENT_READ_COVERED = {
     "/api/workflows/{name}/ledger": "api_def_ledger",
     "/api/workflows/{name}/trajectory": "api_template_trajectory",
     "/api/workflows/{name}/versions/diff": "api_def_version_diff",
+    "/api/workflows/{name}/versions/{version}": "api_def_version_detail",
 }
 
 # MANIFEST_EXCLUDE-shaped on purpose: each candidate is named once with the reason it
@@ -72,6 +73,10 @@ PARENT_READ_EXCLUDE = {
     "/api/artifacts/{slug}/raw": "provider.get resolves the artifact before serving bytes",
     "/api/artifacts/{slug}/versions/{version}": (
         "provider.get resolves the exact artifact version; this is a child detail read"
+    ),
+    "/api/channels/{name}/owner": (
+        "channel_owner._channel resolves the registered transport first, so an unknown "
+        "channel is channel_unknown 404 (both halves driven in test_channel_owner_api.py)"
     ),
     "/api/chat/sessions/{session}/export": "_read_transcript rejects a missing session",
     "/api/chat/sessions/{session}/map": "full_session_messages rejects a missing session",
@@ -166,7 +171,7 @@ PARENT_READ_EXCLUDE = {
     "/api/workflows/runs/{run_id}/steering": "guard and service resolve the run first",
     "/api/workflows/runs/{run_id}/workspace": "service.workspace_review rejects an unknown run",
     "/api/workflows/{name}/versions": "service.get_def resolves the workflow first",
-    # Deep terminal-parameter controls.  Fourteen are ordinary detail/key reads; the two
+    # Deep terminal-parameter controls.  Fifteen are ordinary detail/key reads; the two
     # collection-for-parent exceptions (autonudge and ephemeral skills) are covered above.
     "/api/agent-marketplace/agents/{name}": "plain detail; marketplace.get rejects absence",
     "/api/agents/detail/{name}": "plain detail; agent-file resolver rejects absence",
@@ -177,6 +182,7 @@ PARENT_READ_EXCLUDE = {
     "/api/evals/studies/{study_id}": "plain study detail; study_view rejects absence",
     "/api/knowledge/items/{id}": "plain item detail; get_item rejects absence",
     "/api/learning/proposals/{id}": "plain proposal detail; proposal store rejects absence",
+    "/api/mcp/servers/{name}": "plain server detail; _definition_of rejects an unset name",
     "/api/session/archive/{name}": "plain archive-file detail; file read rejects absence",
     "/api/skills/proposals/{id}": "plain proposal detail; proposal store rejects absence",
     "/api/voice/profiles/{id}": "plain profile detail; require_profile rejects absence",
@@ -272,9 +278,9 @@ def _directly_named_handlers() -> set[str]:
 
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 83
-    assert len(deep_terminal) == 16
-    assert len(selected) == 99
+    assert len(nonterminal) == 85
+    assert len(deep_terminal) == 17
+    assert len(selected) == 102
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

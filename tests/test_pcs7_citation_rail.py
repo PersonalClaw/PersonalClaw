@@ -50,23 +50,28 @@ SRC = Path(personalclaw.__file__).parent
 # (module path relative to the package, start, end, token the docstring CLAIMS is there,
 #  how the citation is spelled in the prose).
 #
-# ``:730-732`` is cited as a bare "twin" continuation of the preceding anthropic.py
+# ``:753-755`` is cited as a bare "twin" continuation of the preceding anthropic.py
 # citation, so its prose spelling carries no path. That is deliberate in the docstring and
 # the table mirrors it rather than normalising it away.
+#
+# The two ``pricing.py`` rows and the ``usage_ledger.py`` row name the part of each claim that a
+# two-line drift had pushed OUT of its old range: the ``cache_write_rate`` term of the bill, the
+# three-way sum, and the ``input_tokens`` fold. Their earlier tokens still matched inside the stale
+# ranges, so the rail stayed green while the cited lines no longer showed what the prose says.
 _CITATIONS = (
     ("stats.py", 43, 44, "cache_read_tokens", "stats.py:43-44"),
-    ("llm/anthropic.py", 542, 544, "input_tokens = it", "llm/anthropic.py:542-544"),
-    ("llm/anthropic.py", 736, 738, "input_tokens = it", ":736-738"),
-    ("llm/anthropic.py", 85, 99, "cache_read_input_tokens", "llm/anthropic.py:85-99"),
-    ("pricing.py", 106, 113, "cache_read_rate", "pricing.py:106-113"),
-    ("usage_ledger.py", 240, 243, "cache_creation_tokens", "usage_ledger.py:240-243"),
-    ("pricing.py", 166, 168, "cache_creation_tokens", "pricing.py:166-168"),
+    ("llm/anthropic.py", 564, 566, "input_tokens = it", "llm/anthropic.py:564-566"),
+    ("llm/anthropic.py", 753, 755, "input_tokens = it", ":753-755"),
+    ("llm/anthropic.py", 85, 100, "cache_read_input_tokens", "llm/anthropic.py:85-100"),
+    ("pricing.py", 110, 115, "* cache_write_rate", "pricing.py:110-115"),
+    ("usage_ledger.py", 238, 241, 'agg["input_tokens"]', "usage_ledger.py:238-241"),
+    ("pricing.py", 168, 170, "+ (cache_creation_tokens or 0)", "pricing.py:168-170"),
     (
         "dashboard/chat_runner.py",
-        656,
-        657,
+        734,
+        735,
         "context_pct is not None",
-        "dashboard/chat_runner.py:656-657",
+        "dashboard/chat_runner.py:734-735",
     ),
 )
 
