@@ -130,6 +130,13 @@ describe("the chat's menu", () => {
     await waitFor(() => expect(h.notify).toHaveBeenCalledWith('This chat is in your Telegram messages now.', 'success'))
   })
 
+  it('a failed channel read offers no channel, and the header still works', async () => {
+    h.channels.mockReset().mockRejectedValue(new Error('HTTP 500'))
+    const banner = await openChat()
+    expect(within(banner).queryByRole('button', { name: /^Continue on / })).toBeNull()
+    expect(within(banner).getByText('Launch plan')).toBeTruthy()
+  })
+
   it('a channel with no owner says where to pair one instead of sending into nowhere', async () => {
     const banner = await openChat()
     fireEvent.click(await within(banner).findByRole('button', { name: 'Continue on Discord' }))
