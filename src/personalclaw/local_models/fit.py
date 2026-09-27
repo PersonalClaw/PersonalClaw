@@ -33,8 +33,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from personalclaw.durability.footprint import human_bytes
-
 from .residency import memory_pressure
 
 logger = logging.getLogger(__name__)
@@ -105,6 +103,8 @@ class DiskPrecheck:
     ``ok`` is True both when the download comfortably fits AND when the filesystem could
     not be measured — an unmeasurable disk is not a reason to block a good download. The
     two cases are told apart by ``measured``, and the unmeasured one carries a warning.
+    ``reason`` and ``warning`` are sentences a user reads as they are; the route that refuses
+    a download names the refusal's code (``insufficient_disk_space``) beside the sentence.
     """
 
     ok: bool
@@ -313,23 +313,36 @@ def fit_verdict(
             "red",
             need,
             budget_bytes,
-            f"needs ~{_gb(need)} GB, this machine has ~{_gb(budget_bytes)} GB free for models",
+            f"needs ~{size_text(need)}, "
+            f"this machine has ~{size_text(budget_bytes)} free for models",
         )
     if need > budget_bytes * GREEN_HEADROOM:
         return FitAssessment(
             "yellow",
             need,
             budget_bytes,
-            f"fits, but uses most of the ~{_gb(budget_bytes)} GB available",
+            f"fits, but uses most of the ~{size_text(budget_bytes)} available",
         )
     return FitAssessment(
-        "green", need, budget_bytes, f"fits comfortably in ~{_gb(budget_bytes)} GB"
+        "green", need, budget_bytes, f"fits comfortably in ~{size_text(budget_bytes)}"
     )
 
 
-def _gb(value: int) -> str:
-    """Bytes → a one-decimal GB string for user-facing reasons."""
-    return f"{value / _BYTES_PER_GB:.1f}"
+def size_text(count: float) -> str:
+    """A model's size, or the memory or disk space it is weighed against, as the dashboard states
+    one: binary units labelled as binary (KiB, MiB, GiB), to one decimal.
+
+    The offer card says "138 MiB" and the Models page rows say MiB, because a catalog's ``size_mb``
+    is MiB (``size_mb × 1024 × 1024`` is the byte total a download is measured against). The
+    refusal under the card said "138.1 MB" and the fit chips "~4.2 GB": the same binary numbers,
+    labelled another way. One decimal keeps two close numbers apart — a refusal names what the
+    download needs and what is free, and "needs 138 MiB, 138 MiB free" would name neither."""
+    value = float(count)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024:
+            return f"{value:.0f} B" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TiB"
 
 
 def family_key(name: str) -> str:
@@ -374,12 +387,12 @@ def largest_that_fits(sizes: list[float], budget_bytes: int | None) -> float | N
 def disk_precheck(need_mb: float, target_dir: str | Path | None = None) -> DiskPrecheck:
     """Refuse a download that cannot land — but never on an unmeasurable filesystem.
 
-    A refusal names BOTH numbers (needed and free), each in a unit that keeps them apart at
-    any scale, so the message is actionable without a second lookup. A ``target_dir`` that
-    does not exist yet is measured where it will be created (:func:`free_disk_bytes`), so a
+    A refusal names BOTH numbers (needed and free) in the unit the offer states the size in
+    (:func:`size_text`), so the message is actionable without a second lookup. A ``target_dir``
+    that does not exist yet is measured where it will be created (:func:`free_disk_bytes`), so a
     first download is checked like any other. When the filesystem cannot be measured the
-    check SKIPS with a warning: blocking a good download because a probe failed is the worse
-    error.
+    check SKIPS with a warning, which the download's job carries while it runs: blocking a good
+    download because a probe failed is the worse error.
     """
     need = int(max(0.0, float(need_mb or 0)) * _BYTES_PER_MB)
     try:
@@ -399,7 +412,10 @@ def disk_precheck(need_mb: float, target_dir: str | Path | None = None) -> DiskP
             measured=True,
             need_bytes=need,
             free_bytes=free,
-            reason=f"insufficient_disk_space: needs {human_bytes(need)}, {human_bytes(free)} free",
+            reason=(
+                f"Not enough free disk space for this download: it needs {size_text(need)}, "
+                f"and {size_text(free)} is free."
+            ),
         )
     return DiskPrecheck(ok=True, measured=True, need_bytes=need, free_bytes=free)
 

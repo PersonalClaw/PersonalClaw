@@ -113,6 +113,15 @@ class UploadStore:
         # + concat needs ~2× transient (parts + final); append-in-place needs ~1×.
         # Reject at init if even 1× (plus a safety margin) won't fit.
         free = _free_bytes(self.root)
+        if free is None:
+            # Refused, not let through: a disk that cannot be measured here (an I/O error, a
+            # link to a drive that is not there) is one the parts cannot be written to either,
+            # and the refusal says so instead of quoting a free space nobody measured.
+            raise UploadError(
+                "The free space on the disk uploads are saved to could not be measured, so the "
+                "upload was not started.",
+                507,
+            )
         margin = 256 * 1024 * 1024  # keep some headroom; never fill the device
         if free < size + margin:
             raise UploadError(
@@ -281,13 +290,14 @@ async def _stream_to(part_reader, fh, *, cap: int) -> int:
     return written
 
 
-def _free_bytes(path: Path) -> int:
+def _free_bytes(path: Path) -> int | None:
     """Free bytes on the disk ``path`` is on, or will be remade on: the gateway builds the store
-    once and caches it, so a root removed under it is only remade by ``init``."""
+    once and caches it, so a root removed under it is only remade by ``init``. ``None`` when the
+    disk cannot be measured — never 0, which is a measurement."""
     try:
         return free_disk_bytes(path)
     except OSError:
-        return 0
+        return None
 
 
 def _human(n: int) -> str:

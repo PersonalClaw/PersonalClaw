@@ -837,6 +837,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The authorization server did not sign you in, or its answer did not come from the server "
         "the sign-in started with."
     ),
+    # ── starting a model download (dashboard/handlers/model_downloads.py —
+    #    POST /api/models/downloads) ──
+    # Refused before any byte moves; the message names what the download needs and what is free.
+    "insufficient_disk_space": (
+        "There is not enough free disk space for this download; the message says how much it "
+        "needs and how much is free."
+    ),
 }
 
 

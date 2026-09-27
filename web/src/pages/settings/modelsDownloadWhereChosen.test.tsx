@@ -65,7 +65,7 @@ const catalog = (downloaded: boolean): ProviderModels[] => [
 ]
 const job = (state: DownloadJob['state'], extra: Partial<DownloadJob> = {}): DownloadJob => ({
   id: 'job-9', provider: 'bundled-chat', model: 'SmolLM2-135M-Instruct-Q8_0', kind: 'weights', state,
-  progress: 0, speed_bps: 0, eta_s: 0, total_bytes: 144_811_072, downloaded_bytes: 0, error: '', reason: '',
+  progress: 0, speed_bps: 0, eta_s: 0, total_bytes: 144_811_072, downloaded_bytes: 0, error: '', reason: '', warning: '',
   ...extra,
 })
 

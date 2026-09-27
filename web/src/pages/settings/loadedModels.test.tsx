@@ -156,7 +156,7 @@ describe('the shared residency derivations', () => {
   })
 
   it("reports a sidecar's child-reported RSS and generation, and marks an unbound model", () => {
-    expect(occupantDetail(RESIDENT[0])).toBe('sidecar · 812 MB · gen 2 · not bound')
+    expect(occupantDetail(RESIDENT[0])).toBe('sidecar · 812 MiB · gen 2 · not bound')
     // An in-process model has no attributable RSS, so the detail says nothing about memory
     // rather than claiming 0 MB.
     expect(occupantDetail(RESIDENT[1])).toBe('in-process')

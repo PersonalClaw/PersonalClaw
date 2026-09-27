@@ -5134,12 +5134,6 @@ export interface LocalModelSelftest {
 }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
-// A background local-model download job — the ONE canonical wire shape
-// (matches ModelDownloadJob.to_dict in dashboard/model_downloads.py, LMMV §4.1).
-// `progress` is 0.0–1.0 when `total_bytes` is known, else 0.0 (indeterminate);
-// `speed_bps`/`eta_s` are coarse poller derivations (0 = not cheaply knowable);
-// `reason` is a typed machine label on error/cancel ('cancelled'|'network'|
-// 'disk_full'|'gated'|'not_found'), '' otherwise.
 /** One step of an engine install. `started_at` is when it last started (epoch seconds, `0` never). */
 export interface SidecarInstallStep {
   name: 'venv' | 'deps' | 'weights'
@@ -5162,13 +5156,22 @@ export interface SidecarInstallStatus {
     weights_progress: number
   }
 }
+// A background local-model download job — the ONE canonical wire shape
+// (matches ModelDownloadJob.to_dict in dashboard/model_downloads.py, LMMV §4.1).
+// `progress` is 0.0–1.0 when `total_bytes` is known, else 0.0 (indeterminate);
+// `speed_bps`/`eta_s` are coarse poller derivations (0 = not cheaply knowable);
+// `reason` is a typed machine label on error/cancel ('cancelled'|'network'|
+// 'disk_full'|'gated'|'not_found'), '' otherwise. `warning` is a sentence for the user that
+// stays with the job while it runs ("Free space could not be checked, …" when the free-space
+// check could not measure the disk), '' otherwise — every surface that draws a download's
+// progress shows it.
 export interface DownloadJob {
   id: string; provider: string; model: string
   kind: 'weights' | 'sidecar-install'
   state: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
   progress: number; speed_bps: number; eta_s: number
   total_bytes: number; downloaded_bytes: number
-  error: string; reason: string
+  error: string; reason: string; warning: string
 }
 /** Is the server still working on this job? `queued` and `running` both mean YES.
  *

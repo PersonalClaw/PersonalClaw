@@ -439,9 +439,9 @@ def test_disk_precheck_refuses_with_a_typed_reason_naming_both_numbers(monkeypat
     assert result.measured is True
     assert result.need_bytes == int(10240 * _MB)
     assert result.free_bytes == 1 * _GB
-    assert result.reason.startswith("insufficient_disk_space")
-    assert "10.0" in result.reason  # the need, in GB
-    assert "1.0" in result.reason  # the free space, in GB
+    assert result.reason == (
+        "Not enough free disk space for this download: it needs 10.0 GiB, and 1.0 GiB is free."
+    )
     assert result.warning == ""
 
 
@@ -504,7 +504,9 @@ def test_a_refusal_below_a_gigabyte_still_names_two_different_numbers(monkeypatc
 
     result = fit.disk_precheck(138.0, tmp_path)
 
-    assert result.reason == "insufficient_disk_space: needs 138.0 MB, 100.0 MB free"
+    assert result.reason == (
+        "Not enough free disk space for this download: it needs 138.0 MiB, and 100.0 MiB is free."
+    )
 
 
 # ── A download folder that does not exist yet: every first download on a fresh home ──
@@ -548,7 +550,9 @@ def test_a_first_download_on_a_fresh_home_is_refused_when_it_cannot_land(monkeyp
     assert result.measured is True
     assert result.ok is False
     assert result.free_bytes == 1 * _MB
-    assert result.reason == "insufficient_disk_space: needs 138.0 MB, 1.0 MB free"
+    assert result.reason == (
+        "Not enough free disk space for this download: it needs 138.0 MiB, and 1.0 MiB is free."
+    )
     assert result.warning == ""
     assert probed == [str(home)]
     assert not target.exists(), "the check must not create the folder it measures"

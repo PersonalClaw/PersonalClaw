@@ -12,7 +12,7 @@ const doc: UiDoc = {
   props: [
     { name: 'label', description: 'Accessible name — REQUIRED. A bare bar announces "progressbar, 63%" with no subject, which says nothing in a list of several meters. Name the thing being measured ("System memory in use"), not the act.' },
     { name: 'pct', description: 'The level as 0–100 (clamped). Rounded for aria-valuenow so assistive tech reads a whole percentage.' },
-    { name: 'detail', description: 'Optional caption under the bar for the raw numbers ("12.4 GB of 16 GB"). Tabular-nums, so a live-updating value does not jitter horizontally.' },
+    { name: 'detail', description: 'Optional caption under the bar for the raw numbers ("12.4 GiB of 16.0 GiB"). Tabular-nums, so a live-updating value does not jitter horizontally.' },
     { name: 'tone', description: "Fill color as a design token (default 'var(--color-primary)'). The caller owns the threshold: whether a level is alarming depends on a configured warning percentage, which does not belong hardcoded in a primitive." },
     { name: 'size', description: "Track height: 'default' is the 6px bar this shipped with; 'thin' is 4px, for a bar riding inside a dense one-line row (an upload row, a task-card footer, a system tile) where 6px would crowd the text beside it. Nothing else changes between them — same radius, same track tone, same fill." },
     { name: 'className', description: 'Layout classes for the OUTER box only — how the meter sits in its parent (`flex-1`, `min-w-0`, `w-32`, `mb-2`). Deliberately does not reach the track, so a caller cannot restyle the bar itself and drift the primitive; height goes through `size`, colour through `tone`.' },

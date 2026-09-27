@@ -18,11 +18,15 @@ export function pressureTone(p: MemoryPressure): string {
   return 'var(--color-primary)'
 }
 
-/** Human caption under the bar — or an honest "unknown" when nothing could be measured. */
+/** Human caption under the bar — or an honest "unknown" when nothing could be measured.
+ *
+ *  Every `_mb` on this wire is MiB (the host probe reads kB and divides by 1024; a sidecar's RSS
+ *  is bytes over 1024²), so the captions say GiB and MiB: the unit the model sizes and the
+ *  memory reserve beside them are stated in. */
 export function pressureDetail(p: MemoryPressure): string {
   if (p.source === 'unavailable' || p.total_mb <= 0) return 'System memory unavailable on this host'
-  const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
-  return `${gb(p.used_mb)} of ${gb(p.total_mb)} in use · ${p.used_pct}%`
+  const gib = (mb: number) => `${(mb / 1024).toFixed(1)} GiB`
+  return `${gib(p.used_mb)} of ${gib(p.total_mb)} in use · ${p.used_pct}%`
 }
 
 /** Resident models, reclaimable ones FIRST, then heaviest.
@@ -46,7 +50,7 @@ export function reclaimableCount(rows: LoadedModel[]): number {
 /** One row's secondary line: process kind, RSS when the child reported one, attribution. */
 export function occupantDetail(row: LoadedModel): string {
   const parts: string[] = [row.kind]
-  if (row.rss_mb != null && row.rss_mb > 0) parts.push(`${Math.round(row.rss_mb)} MB`)
+  if (row.rss_mb != null && row.rss_mb > 0) parts.push(`${Math.round(row.rss_mb)} MiB`)
   if (row.generation != null && row.generation > 0) parts.push(`gen ${row.generation}`)
   if (!row.is_active) parts.push('not bound')
   return parts.join(' · ')

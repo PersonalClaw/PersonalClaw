@@ -33,7 +33,7 @@ from personalclaw.local_models.provider import LocalModel
 
 _MB = 1024 * 1024
 _GB = 1024 * 1024 * 1024
-_UNIT_BYTES = {"B": 1, "KB": 1024, "MB": _MB, "GB": _GB, "TB": 1024 * _GB}
+_UNIT_BYTES = {"B": 1, "KiB": 1024, "MiB": _MB, "GiB": _GB, "TiB": 1024 * _GB}
 
 
 @pytest.fixture(autouse=True)
@@ -175,7 +175,7 @@ async def test_local_rows_carry_a_verdict_reason_and_need(monkeypatch):
 
     for name in ("qwen3:2b", "qwen3:6b", "qwen3:16b", "piper-en"):
         assert rows[name]["fit_reason"], f"{name} has a verdict with no reason"
-    assert "8.0 GB" in rows["qwen3:16b"]["fit_reason"]  # the refusal names the capacity
+    assert "8.0 GiB" in rows["qwen3:16b"]["fit_reason"]  # the refusal names the capacity
 
 
 @pytest.mark.asyncio
@@ -312,9 +312,10 @@ async def test_download_refused_when_the_weights_cannot_land(_download_env, tmp_
     )
 
     assert resp.status == 400
-    error = json.loads(resp.body.decode())["error"]
-    assert error.startswith("insufficient_disk_space:")
-    both = re.search(r"needs ([\d.]+) ([KMGT]?B), ([\d.]+) ([KMGT]?B) free", error)
+    envelope = json.loads(resp.body.decode())["error"]
+    assert envelope["code"] == "insufficient_disk_space"
+    error = envelope["message"]
+    both = re.search(r"needs ([\d.]+) ([KMGT]?iB), and ([\d.]+) ([KMGT]?iB) is free", error)
     assert both, error
     need = float(both.group(1)) * _UNIT_BYTES[both.group(2)]
     free = float(both.group(3)) * _UNIT_BYTES[both.group(4)]
@@ -358,7 +359,13 @@ async def test_a_first_download_on_a_fresh_home_is_refused_up_front(
 
     assert resp.status == 400
     assert json.loads(resp.body.decode()) == {
-        "error": "insufficient_disk_space: needs 138.0 MB, 50.0 MB free"
+        "error": {
+            "code": "insufficient_disk_space",
+            "message": (
+                "Not enough free disk space for this download: it needs 138.0 MiB, "
+                "and 50.0 MiB is free."
+            ),
+        }
     }
     assert reg.list() == []
     assert not target.exists()
@@ -380,7 +387,7 @@ async def test_a_first_download_on_a_fresh_home_that_fits_starts_without_a_warni
     assert resp.status == 202
     payload = json.loads(resp.body.decode())
     assert payload["model"] == "small"
-    assert "warning" not in payload
+    assert payload["warning"] == ""
     await _settle()
 
 
@@ -418,7 +425,7 @@ async def test_measurable_disk_with_room_starts_clean(_download_env, tmp_path):
     )
 
     assert resp.status == 202
-    assert "warning" not in json.loads(resp.body.decode())
+    assert json.loads(resp.body.decode())["warning"] == ""
     await _settle()
 
 
