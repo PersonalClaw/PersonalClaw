@@ -468,14 +468,17 @@ def test_the_sibling_rails_verdicts_match_ours_over_the_live_catalog() -> None:
     while the sibling did not, and **nothing compared them**. This is that comparison.
 
     It compares VERDICTS over the fields that actually exist, not patterns: the sibling's
-    verdict is "matches ``CRED_CLASS`` and is not in ``PATH_VALUED_EXEMPT``", ours is
+    verdict is "matches ``CRED_CLASS`` and is not exempted", as an ``(app, field)`` pair in
+    ``PATH_VALUED_EXEMPT`` or as a name in ``NOT_A_CREDENTIAL``; ours is
     ``is_credential_field_name``. Two spellings may legitimately disagree about a hypothetical
     name; they may not disagree about a shipped one, because then one of the two repos is
     demanding an annotation the other calls wrong.
 
-    The sibling's pattern is read out of its source rather than retyped here, so this cannot
-    pass against a stale copy of it. Skips — naming what it did not check — where no sibling
-    clone is resolved, which is every CI runner.
+    The sibling's pattern and exemptions are read out of its source rather than retyped here, so
+    this cannot pass against a stale copy of them. A by-name entry can name a field only core
+    ships (``run-workflow-action``'s ``idempotency_key``), which the sibling cannot read, so this
+    is also that entry's floor: it fails a name no shipped field carries. Skips — naming what it
+    did not check — where no sibling clone is resolved, which is every CI runner.
     """
     sibling = next(
         (
@@ -513,8 +516,16 @@ def test_the_sibling_rails_verdicts_match_ours_over_the_live_catalog() -> None:
     exempt = set(re.findall(r'\(\s*"(?P<a>[^"]+)"\s*,\s*"(?P<f>[^"]+)"\s*\)', block.group("body")))
     assert exempt, "the sibling's exemption block parsed as empty, which would fake disagreements"
 
+    # And the NAMES it exempts in every app, one quoted string per line. The block is optional:
+    # a sibling without one exempts no name, and reading none can only add a disagreement here,
+    # never hide one.
+    named = re.search(r"NOT_A_CREDENTIAL\s*=\s*\{(?P<body>.*?)\n\}", source, re.S)
+    by_name = set(re.findall(r'^\s*"(?P<n>[^"]+)",', named.group("body"), re.M)) if named else set()
+    assert by_name or not named, "the sibling's by-name exemption block parsed as empty"
+
     disagreements: list[str] = []
     names_compared = 0
+    leaves: set[str] = set()
     for path in _manifests():
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -527,7 +538,12 @@ def test_the_sibling_rails_verdicts_match_ours_over_the_live_catalog() -> None:
             for dotted in _all_setting_names(props):
                 leaf = dotted.rsplit(".", 1)[-1]
                 names_compared += 1
-                theirs = bool(sibling_class.search(leaf)) and (app, leaf) not in exempt
+                leaves.add(leaf)
+                theirs = (
+                    bool(sibling_class.search(leaf))
+                    and (app, leaf) not in exempt
+                    and leaf not in by_name
+                )
                 ours = is_credential_field_name(leaf)
                 if theirs != ours:
                     disagreements.append(
@@ -537,6 +553,12 @@ def test_the_sibling_rails_verdicts_match_ours_over_the_live_catalog() -> None:
                     )
 
     assert names_compared, "no settings fields were compared, so this proves nothing"
+    unshipped = sorted(by_name - leaves)
+    assert not unshipped, (
+        f"{sibling} exempts {unshipped} by name, and no shipped settings field carries that "
+        "name. The sibling cannot read core's bundles, so this is the floor for its by-name "
+        "entries: delete the entry there rather than leave it widening its rule."
+    )
     assert not disagreements, (
         "the two deliberate implementations of `credential-shaped` disagree about a field "
         "that SHIPS, so one repo requires an `x-meta.sensitive` annotation the other calls "
