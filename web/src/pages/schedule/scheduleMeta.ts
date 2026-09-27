@@ -1,4 +1,4 @@
-import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff } from 'lucide-react'
+import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
@@ -171,6 +171,23 @@ export function statusMeta(s?: string | null): StatusMeta {
 }
 
 
+
+/** The statuses a Run button reports in its run's own words, because "Run finished" would be false:
+ *  the run stopped for you, or it only started or queued work that records its own outcome. */
+const UNFINISHED_RUNS = new Set(['waiting', 'launched', 'queued'])
+
+/** What a Run button says once its run is recorded, from the status that run recorded — the word its
+ *  history row shows (`statusMeta`), which `/run` answers as `status`. A run that did its work reads
+ *  "Run finished"; one that stopped for you reads "Waiting for you", as its row does, and one that only
+ *  started or queued work says that. A run that failed never flashes: its Run answers `ok: false`, and
+ *  the panel shows why instead. */
+export function runFlashMeta(status?: string | null): { label: string; tone: string; icon: LucideIcon } {
+  if (status && UNFINISHED_RUNS.has(status)) {
+    const meta = statusMeta(status)
+    return { label: meta.label.charAt(0).toUpperCase() + meta.label.slice(1), tone: meta.tone, icon: meta.icon }
+  }
+  return { label: 'Run finished', tone: 'var(--color-ok)', icon: Check }
+}
 
 /** Whether this outcome means "nothing was spent and nothing changed" (§1.3's `INERT_OUTCOMES`).
  *
@@ -356,21 +373,35 @@ export function absTime(ts?: number | string | null): string {
 
 /** Flatten markdown to a clean single-line plain-text snippet for a row title.
  *  Strips headings/emphasis/code/links/list markers and collapses whitespace,
- *  so a one-line label reads as prose, not raw markdown. */
+ *  so a one-line label reads as prose, not raw markdown.
+ *
+ *  Markup is stripped where it IS markup, and the same character inside a word is text. A history
+ *  row's line is often a sentence an action wrote — "Archived the message from alice in #general.",
+ *  "Started “tidy-notes” as run 3f2a91c0." — which names things by exactly those characters, and
+ *  every `# - _ * ~ >` used to become a space wherever it stood: the row read "in general" and
+ *  "tidy notes". Underscore emphasis follows CommonMark and never opens inside a word, so
+ *  `snake_case_name` stays a name; asterisk emphasis may. */
 export function mdToPlain(s?: string | null): string {
   if (!s) return ''
   return s
-    .replace(/```[\s\S]*?```/g, ' ')           // fenced code blocks
-    .replace(/`([^`]+)`/g, '$1')               // inline code
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')      // images
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')    // links → text
-    .replace(/^[\s>]*#{1,6}\s+/gm, '')          // ATX headings
-    .replace(/^\s*[-*+]\s+/gm, '')              // bullet markers
-    .replace(/^\s*\d+\.\s+/gm, '')              // ordered markers
-    .replace(/^\s*\|.*\|\s*$/gm, ' ')           // table rows
-    .replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, '$1')  // bold/italic/strike
-    .replace(/[*_~`>#|-]/g, ' ')                // stray markdown punctuation
-    .replace(/\s+/g, ' ')                        // collapse whitespace
+    .replace(/```[\s\S]*?```/g, ' ')                         // fenced code blocks
+    .replace(/`([^`]+)`/g, '$1')                             // inline code
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')                    // images
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')                  // links → text
+    .replace(/^[\s>]*#{1,6}\s+/gm, '')                        // ATX headings
+    .replace(/^[ \t]*>+[ \t]?/gm, '')                         // blockquote markers
+    .replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, ' ')  // thematic breaks: --- *** ___
+    .replace(/^\s*[-*+]\s+/gm, '')                            // bullet markers
+    .replace(/^\s*\d+\.\s+/gm, '')                            // ordered markers
+    .replace(/^\s*\|.*\|\s*$/gm, ' ')                         // table rows
+    .replace(/(\*{1,3}|~~)(?=\S)([^*~]*?\S)\1/g, '$2')        // **bold**, *italic*, ~~strike~~
+    .replace(/(?<!\w)(_{1,3})(?=\S)([^_]*?\S)\1(?!\w)/g, '$2') // __bold__, _italic_, never in a word
+    .replace(/(^|\s)#+(?=\s|$)/g, '$1')                       // a heading's hashes left mid-line
+    // An emphasis marker left against a space or an end — one standing alone, or a pair the row's
+    // cap cut in half ("**Key poin"). One inside a word or a path (`a_b`, `/~user`) is text.
+    .replace(/(?<=^|\s)(?:[*_]+|~{2,})|(?:[*_]+|~{2,})(?=\s|$)/gm, ' ')
+    .replace(/[`|]/g, ' ')                                    // stray code ticks and table pipes
+    .replace(/\s+/g, ' ')                                     // collapse whitespace
     .trim()
 }
 

@@ -6,7 +6,7 @@ import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ActionProvider, type Trigger as WireTrigger, type TriggerRunResult } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
-import { triggerStatusMeta, explainsCause } from '../schedule/scheduleMeta'
+import { triggerStatusMeta, explainsCause, runFlashMeta } from '../schedule/scheduleMeta'
 import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
 import { DryRunResult } from './DryRunResult'
 import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
@@ -150,7 +150,9 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
         setErr(r.refused || (typeof r.result === 'string' && r.result) || 'This automation did not run.')
         return
       }
-      setRunFlash('Ran')
+      // What the run recorded, as its history row below says it: "Waiting for you" for a run that
+      // stopped for you, not "Ran" for every run that did not fail.
+      setRunFlash(runFlashMeta(r.status).label)
       setHistKey((k) => k + 1)
       onChanged()
     } catch (e) {

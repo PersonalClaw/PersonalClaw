@@ -2870,6 +2870,9 @@ export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEven
 // the kill-switch reason when incident mode suspended the fire.
 export interface TriggerRunResult {
   ok: boolean; name?: string; result?: unknown; refused?: string; running?: boolean
+  /** The status the run recorded, as its history row reads it (`waiting`, `launched`, `success`, …),
+   *  or '' when nothing ran. A Run button says what that row says. */
+  status?: string
   /** A DRY run's whole outcome, because nothing else records one: the action a real run would
    *  dispatch (`{}` when the row names none — a resume target, a workflow ref). */
   would_run?: Partial<TriggerAction>
@@ -8394,7 +8397,7 @@ export const api = {
   /** Decide one card: `run_now` runs the automation once, now, and records the run as late;
    *  `dismiss` records that you chose not to. */
   decideTriggerReview: (body: { trigger_id: string; kind: TriggerReviewCard['kind']; action: 'run_now' | 'dismiss' }) =>
-    post<{ ok: boolean; outcome?: string; reason?: string; result?: string; refused?: string }>('/api/triggers/review', body),
+    post<{ ok: boolean; outcome?: string; reason?: string; result?: string; refused?: string; status?: string }>('/api/triggers/review', body),
   createHook: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
       trigger_type: 'lifecycle', name: body.name, event: body.event, matcher: body.matcher,

@@ -1,6 +1,6 @@
 {
   "name": "produce-and-audit",
-  "description": "Research a subject, produce an artifact, then audit it against a read-only QC gate. Domain-neutral: the thing produced can be a document, a config, a plan or a report.",
+  "description": "Research a subject, produce an artifact, then audit it read-only: an artifact the audit passes is accepted, and you decide on one it does not. Domain-neutral: the thing produced can be a document, a config, a plan or a report.",
   "source": "bundled",
   "provenance": "user",
   "version": 1,
@@ -132,12 +132,31 @@
         }
       },
       {
-        "kind": "gate",
-        "id": "quality_gate",
+        "kind": "branch",
+        "id": "accept_or_ask",
+        "label": "Accept a passing artifact, ask about one that did not pass",
         "config": {
-          "kind": "expression",
-          "expr": "{{nodes.audit.output.verdict}} == 'pass'",
-          "prompt": "The audit found issues worth your decision. Approve to accept the artifact as-is, or deny and re-run `produce` with the findings as constraints."
+          "on": "{{nodes.audit.output.verdict}}"
+        },
+        "cases": {
+          "pass": {
+            "kind": "transform",
+            "id": "accepted",
+            "config": {
+              "expr": {
+                "accepted": true,
+                "note": "The audit passed, so the artifact is accepted as it is."
+              }
+            }
+          }
+        },
+        "default": {
+          "kind": "gate",
+          "id": "quality_gate",
+          "config": {
+            "kind": "approval",
+            "prompt": "The audit found issues worth your decision:\n\n{{nodes.audit.output.findings | json | truncate(1500)}}\n\nApprove to accept the {{inputs.artifact_kind}} as it is. Deny ends the run without accepting it."
+          }
         }
       }
     ]

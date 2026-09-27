@@ -145,6 +145,19 @@ def provider_failure(provider_name: str, exc: BaseException) -> AgentError:
     )
 
 
+def site_of(url: str) -> str:
+    """`host[:port]` of a URL, for a sentence a provider writes about where it went — never its
+    path, query or credentials, which a history row has no business repeating."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url or "")
+        host, port = parsed.hostname or "", parsed.port
+    except ValueError:
+        return ""
+    return f"{host}:{port}" if host and port else host
+
+
 class ActionProvider(ABC):
     """Pluggable execution backend for a trigger's action."""
 

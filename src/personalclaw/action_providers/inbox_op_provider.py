@@ -37,6 +37,7 @@ import base64
 import binascii
 import json
 import logging
+import unicodedata
 from typing import Any
 
 from personalclaw.action_providers.base import (
@@ -68,6 +69,17 @@ _STATUS_OPS: dict[str, str] = {
 #: injected `action_type` cannot reach a code path by resembling one.
 OPS: frozenset[str] = frozenset({*_STATUS_OPS, "mute_thread", "reply_draft"})
 
+#: What each status op did, and the state it leaves, for the sentence a run's history row shows.
+_DONE_WORDS: dict[str, tuple[str, str]] = {
+    "archive": ("Archived {item}.", "archived"),
+    "mark_read": ("Marked {item} as read.", "read"),
+    "dismiss": ("Dismissed {item}.", "dismissed"),
+}
+
+#: How much of a sender's or a channel's name a sentence quotes. Both are the channel's own
+#: strings, and the row is one line.
+_NAME_MAX = 40
+
 
 def _thread_key(item: Any) -> str:
     """The mute key for `item`'s thread — the same derivation the inbox API uses.
@@ -81,6 +93,31 @@ def _thread_key(item: Any) -> str:
         return str(thread)
     raw = str(getattr(item, "id", "") or "")
     return raw.split("_", 1)[1] if "_" in raw else raw
+
+
+def _clip(name: Any) -> str:
+    """A channel's name for someone, on one line: every control character — a line break, a form
+    feed, an escape — becomes a space, so the name cannot break the row or smuggle a sequence
+    into whatever prints it."""
+    text = "".join(" " if unicodedata.category(ch) == "Cc" else ch for ch in str(name or ""))
+    said = " ".join(text.split())
+    return said if len(said) <= _NAME_MAX else f"{said[: _NAME_MAX - 1].rstrip()}…"
+
+
+def _described(item: Any) -> str:
+    """The item a sentence is about, the way the Inbox names one — who sent it and where — and
+    never its text: a message body is the sender's, and a history row is a line."""
+    sender = _clip(getattr(item, "sender_name", ""))
+    channel = _clip(getattr(item, "channel_name", ""))
+    if sender and channel and sender != channel:
+        return f"the message from {sender} in {channel}"
+    if sender or channel:
+        return f"the message from {sender or channel}"
+    return "the Inbox item"
+
+
+def _sentence(text: str) -> str:
+    return text[:1].upper() + text[1:]
 
 
 def _encode(payload: dict[str, Any]) -> str:
@@ -161,12 +198,17 @@ class InboxOpActionProvider(ActionProvider):
         if op in _STATUS_OPS:
             prior = str(getattr(item, "status", "") or "")
             target = _STATUS_OPS[op]
+            done, state_word = _DONE_WORDS[op]
             if prior == target:
                 # Not an error and not a lie: the effect the caller wanted already holds, so
                 # there is nothing to undo and no handle is offered.
                 return ActionResult(
                     success=True,
                     stdout=json.dumps({"op": op, "item_id": item_id, "changed": False}),
+                    summary=(
+                        f"{_sentence(_described(item))} was already {state_word}, so nothing "
+                        "changed."
+                    ),
                 )
             # The one transition: it persists, announces the row and, when the op closes it,
             # reads its notification in the bell.
@@ -181,6 +223,7 @@ class InboxOpActionProvider(ActionProvider):
                 success=True,
                 stdout=json.dumps({"op": op, "item_id": item_id, "changed": True}),
                 reversal=handle,
+                summary=done.format(item=_described(item)),
             )
 
         if op == "mute_thread":
@@ -196,6 +239,9 @@ class InboxOpActionProvider(ActionProvider):
                 return ActionResult(
                     success=True,
                     stdout=json.dumps({"op": op, "thread": key, "changed": False}),
+                    summary=(
+                        f"The thread of {_described(item)} was already muted, so nothing changed."
+                    ),
                 )
             inbox_state.muted_threads.add(key)
             inbox_state.save()
@@ -203,6 +249,7 @@ class InboxOpActionProvider(ActionProvider):
                 success=True,
                 stdout=json.dumps({"op": op, "thread": key, "changed": True}),
                 reversal=_encode({"op": op, "item_id": item_id, "thread": key}),
+                summary=f"Muted the thread of {_described(item)}.",
             )
 
         # reply_draft — writes the draft field and nothing else. There is no send path here.
@@ -216,6 +263,8 @@ class InboxOpActionProvider(ActionProvider):
             success=True,
             stdout=json.dumps({"op": op, "item_id": item_id, "drafted": len(text)}),
             reversal=_encode({"op": op, "item_id": item_id, "prior": prior_draft}),
+            # "nothing was sent" is this provider's own guarantee: it has no send path.
+            summary=f"Drafted a reply to {_described(item)}; nothing was sent.",
         )
 
     async def reverse(self, handle: str) -> ActionResult:

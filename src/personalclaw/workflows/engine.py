@@ -1506,6 +1506,11 @@ async def dispatch_gate(
                 f"gate expression failed to resolve: {exc}",
                 "check the referenced nodes exist",
             )
+        # An expression gate asks nobody, so the one place its author's words are shown is its
+        # failure — the step's row and the run's ending. `message` says what it means that the
+        # condition is false; without one the condition itself is the cause. The condition stays
+        # on the output either way, for the Inspect drawer.
+        said = str(cfg.get("message", "") or "").strip()
         return NodeResult(
             state=InstanceState.DONE if passed else InstanceState.FAILED,
             output={"passed": passed, "expr": expr},
@@ -1514,7 +1519,7 @@ async def dispatch_gate(
                 if passed
                 else Failure(
                     failure_class=FailureClass.USER,
-                    cause_plain=f"gate condition is false: {expr}",
+                    cause_plain=said or f"gate condition is false: {expr}",
                     remediation="inspect the upstream node output the gate tests",
                 )
             ),

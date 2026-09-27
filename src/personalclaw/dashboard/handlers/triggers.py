@@ -2315,7 +2315,14 @@ async def api_trigger_review(request: web.Request) -> web.Response:
     )
     state.push_refresh("crons")
     return web.json_response(
-        {"ok": ran, "outcome": outcome if ran else "failed", "reason": reason, "result": note}
+        {
+            "ok": ran,
+            "outcome": outcome if ran else "failed",
+            "reason": reason,
+            "result": note,
+            # What the run recorded, as `/run` answers it: a run that stopped for you did not "run".
+            "status": _last_run_status_for(trigger_id) if ran else "",
+        }
     )
 
 

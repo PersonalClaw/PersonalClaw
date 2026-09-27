@@ -4,12 +4,14 @@ import type { EscalationRead } from './attentionMeta'
 
 /** What the engine knew when it gave up (#565).
  *
- *  A run whose node exhausts its retries goes terminal through `_finish(status)` with **no**
- *  `error` argument, so `run.error_message` is empty on exactly the runs that carry an
- *  escalation. The record on `run.attention` was the only account of what happened, and no
- *  surface read it: the run page showed a failed run with nothing beside it.
+ *  A run whose node exhausts its retries ends with a line naming that step and its cause
+ *  ("“consume” failed: ConnectionError: network down."). That line used to be empty on exactly
+ *  the runs that carry an escalation, and the record on `run.attention` was the only account of
+ *  what happened — with no surface reading it, so the run page showed a failed run with nothing
+ *  beside it. A run recorded before the line existed still reads that way, which is why this panel
+ *  never depends on it.
  *
- *  What this panel adds over the error line above it is the part that was never anywhere else:
+ *  What this panel adds over the error line above it is the part that is nowhere else:
  *
  *  • **the reason** — retries spent, or which breaker tripped. "It failed" and "I tried four
  *    times and stopped" are different facts, and only the second tells the user whether to
@@ -18,8 +20,9 @@ import type { EscalationRead } from './attentionMeta'
  *    `fix_instruction`. That is the actionable field in the whole record, and it is written
  *    once per attempt precisely so a reader does not have to re-derive it.
  *
- *  `detail` is shown only when it differs from the run's error line, which is where the same
- *  string appears when the run failed loudly. Two copies of one sentence reads as two problems.
+ *  `detail` is shown only when the run's error line does not already say it — whole, or quoted
+ *  inside the sentence that names the failed step. Two copies of one sentence reads as two
+ *  problems.
  *
  *  The record's five `options` are still not rendered as controls — see `attentionMeta.ts`: no
  *  endpoint accepts one back. The ONE control here is `retry`, which the page passes only when
@@ -90,8 +93,14 @@ function itemSuffix(instancePath: string): string {
   return match ? ` #${match[1]}` : ''
 }
 
+/** `text` on one line with no closing stop, so a cause compares with the sentence that quotes it. */
+function oneLine(text: string): string {
+  return text.split(/\s+/).join(' ').trim().replace(/[\s.]+$/, '')
+}
+
 function EscalationEntry({ read, runError }: { read: EscalationRead; runError: string }) {
-  const detail = read.detail.trim() && read.detail.trim() !== runError.trim() ? read.detail.trim() : ''
+  const own = oneLine(read.detail)
+  const detail = own && !oneLine(runError).includes(own) ? read.detail.trim() : ''
   return (
     <div className="flex flex-col gap-s">
       <div className="flex min-w-0 flex-col gap-xs">

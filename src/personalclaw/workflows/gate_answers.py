@@ -17,11 +17,10 @@ is `withdraw_asks`'s: its confirmation resolves `withdrawn`, saying why.
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.ledger import outcomes
-from personalclaw.workflows import attention
+from personalclaw.workflows import attention, ending_sentence
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import judge_calibration, mid_flight, mutations, revision, store
 from personalclaw.workflows.bindings import node_deps
@@ -357,8 +356,11 @@ async def end_at_gate(ctl: RunController, path: str) -> None:
     nodes = dict(walk(ctl.root))
     node = nodes.get(spec_path(path))
     label = str((getattr(node, "label", "") or getattr(node, "id", "") or "")) or path
-    followers = _followers(ctl, path, nodes)
-    cause = _clause(inst.failure.cause_plain if inst.failure else "") or "it did not pass"
+    followers = ending_sentence.followers(ctl, path, nodes)
+    cause = (
+        ending_sentence.clause(inst.failure.cause_plain if inst.failure else "")
+        or "it did not pass"
+    )
     if inst.state == InstanceState.DECLINED:
         ending, outcome = RunStatus.DECLINED, "was declined"
         sentence = f"“{label}” was {inst.degraded_reason}"
@@ -382,40 +384,6 @@ async def end_at_gate(ctl: RunController, path: str) -> None:
         sentence += ", so nothing after it ran"
     await ctl._cancel_inflight(ending)
     await ctl._finish(ending, error=f"{sentence}.")
-
-
-def _clause(text: str) -> str:
-    """A failure's cause as a clause of the run's one-line ending: one line, no closing period —
-    a judge's reasoning arrives as prose, and the sentence around it carries its own stop."""
-    return " ".join(str(text or "").split()).rstrip(" .")
-
-
-#: The last segment of an instance path, and what it says about the step's parent: a sequence or
-#: parallel child (`.children[i]`), a branch case, or a container body (`.body`, a `foreach`
-#: item's `.body#i`, a loop iteration's `.body@i`).
-_LAST_SEGMENT = re.compile(r"\.(children\[(\d+)\]|cases\[[^\]]*\]|default|body(?:[#@]\d+)?)$")
-
-
-def _followers(ctl: RunController, path: str, nodes: dict[str, Any]) -> list[str]:
-    """Every step after `path` in each SEQUENCE that holds it, innermost first — the steps a
-    stopping gate stops. Instance paths, so a gate inside a `foreach` item stops what follows it in
-    THAT item, and then what follows the fan-out in the sequence around it."""
-    out: list[str] = []
-    cursor = path
-    while True:
-        match = _LAST_SEGMENT.search(cursor)
-        if match is None:
-            return out
-        parent = cursor[: match.start()]
-        container = nodes.get(spec_path(parent))
-        if (
-            match.group(2) is not None
-            and container is not None
-            and container.kind == NodeKind.SEQUENCE
-        ):
-            index = int(match.group(2))
-            out.extend(f"{parent}.children[{i}]" for i in range(index + 1, len(container.children)))
-        cursor = parent
 
 
 #: The verb an ask's confirmation closes with when NOBODY answered it: the run ended under it, or
