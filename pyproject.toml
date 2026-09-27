@@ -129,6 +129,10 @@ dependencies = [
     # cli.py loads .env (CWD + PERSONALCLAW_HOME) so credentials resolve via
     # os.environ without hand-copying .env — an unconditional import at startup.
     "python-dotenv>=1.0",
+    # The IANA timezone database. `zoneinfo` reads the operating system's copy when there is
+    # one, and minimal Linux images have none, so `America/Los_Angeles` would not load and
+    # setup would refuse it. This package is the stdlib's own fallback for exactly that case.
+    "tzdata>=2024.1",
     # Owner-login password hashing (auth/credentials.py, REMOTE-USER-AUTH T2.1).
     # CORE rather than an extra, deliberately: a password verifier that only exists on
     # some installs means `auth.login_enabled` would be a setting that silently cannot

@@ -42,6 +42,13 @@ timezones at all — and for a local-first personal tool whose surface is "remin
        doctor reports this as a WARNING naming the consequence (`zone_report`), because a
        silent UTC is exactly the footgun this module removes.
 
+**No database is a third fact, not a typo.** A minimal Linux image can have neither
+`/usr/share/zoneinfo` nor the `tzdata` package, and then even `America/Los_Angeles` fails
+to load. `TimeZoneDatabaseUnavailable` says so: the authoring gates report it as a broken
+install instead of an unknown zone, `resolve_zone` reads it as UTC with a warning so no
+fire path raises, and the doctor names it. The base package depends on `tzdata` so that
+this stays a damaged-install case rather than the normal one.
+
 **`time.tzname` is not usable** as the machine-zone source and must not be reintroduced:
 it yields abbreviations (`PDT`, `CEST`) which `ZoneInfo` rejects. The `/etc/localtime`
 symlink target is the workable route on macOS and Linux. Some container images *copy*
@@ -112,14 +119,55 @@ class UnknownTimeZone(ValueError):
         )
 
 
+class TimeZoneDatabaseUnavailable(RuntimeError):
+    """The runtime cannot load the IANA timezone database at all.
+
+    A host or package failure, not evidence that a user's zone is wrong: a minimal Linux
+    image with no `/usr/share/zoneinfo` and no `tzdata` package cannot load
+    `America/Los_Angeles` any more than it can load a typo. Kept distinct from
+    `UnknownTimeZone` so a broken install is never reported as a spelling mistake.
+    """
+
+    def __init__(self, *, where: str = "") -> None:
+        self.where = where
+        prefix = f"{where}: " if where else ""
+        super().__init__(
+            f"{prefix}the IANA timezone database is unavailable. Reinstall PersonalClaw; "
+            "the base package includes the Python `tzdata` database."
+        )
+
+
+def timezone_database_available() -> bool:
+    """Whether this runtime can load the IANA database.
+
+    `UTC` is a key every complete database contains, so a failed load of it means the
+    database itself is missing or unreadable, and says nothing about the zone a caller asked
+    about. `no_cache` because a long-running process may have loaded `UTC` before the package
+    or a mounted system database went away.
+    """
+    try:
+        uncached = getattr(ZoneInfo, "no_cache", None)
+        if callable(uncached):
+            uncached(UTC_NAME)
+        else:
+            ZoneInfo(UTC_NAME)
+    except Exception:  # noqa: BLE001 - an availability probe, not user-input parsing
+        return False
+    return True
+
+
 def is_known_zone(name: str) -> bool:
-    """Whether `name` is a resolvable IANA zone. `False` for `""` — absent is not valid."""
+    """Whether `name` is an IANA zone. `False` for `""` — absent is not valid.
+
+    Raises `TimeZoneDatabaseUnavailable` when nothing can be checked, because `False` would
+    call a valid name invalid.
+    """
     text = str(name or "").strip()
     if not text:
         return False
     try:
-        ZoneInfo(text)
-    except Exception:  # noqa: BLE001 - any zoneinfo refusal means "not a usable key"
+        zone_or_raise(text)
+    except UnknownTimeZone:
         return False
     return True
 
@@ -128,14 +176,17 @@ def zone_or_raise(name: str, *, where: str = "") -> tzinfo:
     """`name` as a zone, or `UnknownTimeZone`. The authoring gate.
 
     `where` names the field being validated (`spec.timezone`, `config.timezone`) so the
-    message points at the thing the user has to fix.
+    message points at the thing the user has to fix. Raises `TimeZoneDatabaseUnavailable`
+    instead when the database cannot load even `UTC`, since then no name can be checked.
     """
     text = str(name or "").strip()
     if not text:
         raise UnknownTimeZone("", where=where)
     try:
         return ZoneInfo(text)
-    except Exception as exc:  # noqa: BLE001 - normalized into the one refusal type
+    except Exception as exc:  # noqa: BLE001 - every loader refusal is one of the two below
+        if not timezone_database_available():
+            raise TimeZoneDatabaseUnavailable(where=where) from exc
         raise UnknownTimeZone(text, where=where) from exc
 
 
@@ -188,8 +239,12 @@ def machine_zone_name() -> str:
     for source, name in candidates:
         if not name:
             continue
-        if is_known_zone(name):
-            return name
+        try:
+            if is_known_zone(name):
+                return name
+        except TimeZoneDatabaseUnavailable:
+            logger.debug("cannot check the machine timezone: the IANA database is unavailable")
+            return ""
         logger.debug("machine timezone from %s is %r, which is not an IANA key", source, name)
     return ""
 
@@ -209,8 +264,12 @@ def _config_zone_name() -> str:
         return ""
     if not name:
         return ""
-    if is_known_zone(name):
-        return name
+    try:
+        if is_known_zone(name):
+            return name
+    except TimeZoneDatabaseUnavailable:
+        logger.debug("cannot check config.timezone: the IANA database is unavailable")
+        return ""
     logger.warning(
         "config.timezone is %r, which is not an IANA zone name — ignoring it and falling "
         "back to this machine's zone. Fix it with `personalclaw setup`.",
@@ -245,8 +304,17 @@ def resolve_zone(explicit: str = "") -> tzinfo:
     Returns `datetime.timezone.utc` — not `ZoneInfo("UTC")` — for the last resort, because
     a host with no tz database at all would fail to construct even `ZoneInfo("UTC")`, and
     the whole point of a last resort is that it cannot fail.
+
+    Raises `UnknownTimeZone` for a typo'd explicit name, and nothing else. A database that
+    cannot be read is caught HERE, once, and read as UTC with a warning: every fire path's
+    fallback catches `UnknownTimeZone` only, so letting `TimeZoneDatabaseUnavailable` through
+    would take down the boot sweep, the week grid and every report tick on a broken install.
     """
-    name, source = resolve_zone_name(explicit)
+    try:
+        name, source = resolve_zone_name(explicit)
+    except TimeZoneDatabaseUnavailable as exc:
+        logger.warning("%s Timed triggers use UTC until it can be read.", exc)
+        return timezone.utc
     if source == SOURCE_UTC_FALLBACK:
         return timezone.utc
     try:
@@ -276,8 +344,15 @@ def unresolved_zone_warning() -> str:
     Names the CONSEQUENCE, not the condition: "timed triggers will fire at UTC, which is N
     hours off this host's local time". At a zero offset it still warns — UTC happens to be
     right at this instant but does not follow DST, so the same install is wrong for half
-    the year.
+    the year. A database that cannot be read gets its own sentence: the machine's zone may be
+    perfectly well set, and saying it "could not be determined" would send the user to fix it.
     """
+    if not timezone_database_available():
+        return (
+            "the IANA timezone database is unavailable, so no named zone can be checked or "
+            "loaded and timed triggers fire at UTC. Reinstall PersonalClaw; the base package "
+            "includes the Python `tzdata` database. Then run `personalclaw doctor` again."
+        )
     _name, source = resolve_zone_name()
     if source != SOURCE_UTC_FALLBACK:
         return ""
@@ -303,9 +378,10 @@ def unresolved_zone_warning() -> str:
 def zone_report() -> dict[str, Any]:
     """Every fact a health surface needs about zone resolution. Never raises.
 
-    `warning` is non-empty only for a real problem — the UTC last resort, or a config value
-    that is not an IANA key. A correctly resolved zone produces no warning, so this cannot
-    become an informational line nobody reads.
+    `warning` is non-empty only for a real problem — the UTC last resort, an unreadable
+    database, or a config value that is not an IANA key. A correctly resolved zone produces no
+    warning, so this cannot become an informational line nobody reads. `config_ok` is `None`
+    when the database cannot say: an unchecked name is neither valid nor a typo.
     """
     machine = machine_zone_name()
     raw_config = ""
@@ -315,14 +391,19 @@ def zone_report() -> dict[str, Any]:
         raw_config = str(AppConfig.load().timezone or "").strip()
     except Exception:  # noqa: BLE001 - report what we could read
         raw_config = ""
-    config_ok = (not raw_config) or is_known_zone(raw_config)
+    config_ok: bool | None = True
+    if raw_config:
+        try:
+            config_ok = is_known_zone(raw_config)
+        except TimeZoneDatabaseUnavailable:
+            config_ok = None
     try:
         name, source = resolve_zone_name()
     except Exception:  # noqa: BLE001 - resolve_zone_name only raises for an EXPLICIT name
         name, source = UTC_NAME, SOURCE_UTC_FALLBACK
 
     warning = unresolved_zone_warning()
-    if not warning and not config_ok:
+    if not warning and config_ok is False:
         warning = (
             f"config.timezone is {raw_config!r}, which is not an IANA zone name — it is "
             f"being ignored and schedules resolve to {name!r} instead. Fix it with "
@@ -334,6 +415,7 @@ def zone_report() -> dict[str, Any]:
         "config": raw_config,
         "config_ok": config_ok,
         "machine": machine,
+        "database_available": timezone_database_available(),
         "utc_offset_hours": local_utc_offset_hours(),
         "warning": warning,
     }

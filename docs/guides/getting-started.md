@@ -17,8 +17,11 @@ channels. This guide takes you from **nothing installed** to your first chat.
 
 You do **not** need to install Python or Node yourself for the recommended
 paths: `uv` provides its own Python 3.12, and the release wheel ships the
-prebuilt dashboard. (Contributors who build from source need Python 3.12+ and
-Node 18+ — see [CONTRIBUTING](../../CONTRIBUTING.md#development-setup).)
+prebuilt dashboard. The base Python package also carries the IANA timezone
+database, so minimal Linux installs do not need an operating-system `tzdata`
+package before `personalclaw setup`. (Contributors who build from source need
+Python 3.12+ and Node 18+ — see
+[CONTRIBUTING](../../CONTRIBUTING.md#development-setup).)
 
 ## 1. Install
 

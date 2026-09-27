@@ -1812,6 +1812,7 @@ dependencies = [
     { name = "trafilatura" },
     { name = "tree-sitter" },
     { name = "tree-sitter-language-pack" },
+    { name = "tzdata" },
     { name = "websockets" },
 ]
 
@@ -1953,6 +1954,7 @@ requires-dist = [
     { name = "trafilatura", specifier = ">=2,<3" },
     { name = "tree-sitter", specifier = ">=0.21,<1" },
     { name = "tree-sitter-language-pack", specifier = ">=1.0,<2" },
+    { name = "tzdata", specifier = ">=2024.1" },
     { name = "websockets", specifier = ">=12,<18" },
 ]
 provides-extras = ["anthropic", "openai", "bedrock", "httpx", "oauth2", "slack", "stt", "tts", "eval", "embeddings", "js-render", "keychain", "models", "dev", "test"]

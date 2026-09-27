@@ -1207,6 +1207,18 @@ class TestLiveInstallerLegIsWired:
             "only that a download happened."
         )
 
+    def test_current_checkout_runs_setup_with_system_timezone_paths_removed(
+        self, leg: tuple[str, str]
+    ) -> None:
+        """The release's first real command must run before the release reaches PyPI."""
+        _jid, body = leg
+        code = code_only(body)
+        assert re.search(r"\buv\s+tool\s+install\s+\.", code)
+        assert 'PYTHONTZPATH=""' in code
+        assert 'TZ="America/Los_Angeles"' in code
+        assert re.search(r"\bpersonalclaw\s+setup\b", code)
+        assert '"timezone": "America/Los_Angeles"' in code
+
 
 class TestLintJobChecksTheInstaller:
     """The every-PR half of the linter claim, which cannot skip."""
