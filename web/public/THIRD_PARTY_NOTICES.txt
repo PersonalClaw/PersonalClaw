@@ -69,6 +69,10 @@ Copyright 2025 The Google Sans Code Project Authors (github.com/googlefonts/goog
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 Google and Google Sans Code are trademarks of Google LLC.
 
+fonts/google-sans-code.woff2 is GoogleSansCode[MONO,wght].ttf from the v7.000 release,
+compressed to WOFF2. Its glyphs and tables are unchanged but for the flag WOFF2 sets
+in the head table to mark its lossless transform.
+
 ------------------------------------------------------------------------------
 KaTeX fonts 0.18.7 (math in rendered messages)
 

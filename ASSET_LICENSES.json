@@ -19,7 +19,7 @@
     },
     {
       "id": "font-inter",
-      "source": "https://github.com/rsms/inter/tree/66647c0bbbe41a850d79d9c76fb13add3378940f",
+      "source": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2",
       "version": "4.001",
       "license": "OFL-1.1",
       "ownership": "third-party",
@@ -27,9 +27,9 @@
       "copyright": [
         "Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)"
       ],
-      "note": "A static Regular (weight 400) woff2 of the 4.001 build at that commit (name table: Version 4.001;git-66647c0bb). It holds 231 code points with identical outlines; the exact file it was downloaded as was not found. No Reserved Font Name.",
+      "note": "Byte-identical to that URL, the latin slice of Google Fonts' css2?family=Inter:wght@100..900: a variable woff2 (wght 100 to 900) of the 4.001 build (name table: Version 4.001;git-66647c0bb), from https://github.com/rsms/inter at 66647c0bbbe41a850d79d9c76fb13add3378940f. It holds 230 code points. The static Regular it replaced also carried U+2074 SUPERSCRIPT FOUR, which that slice does not. No Reserved Font Name.",
       "files": {
-        "web/public/fonts/inter.woff2": "dd05e326cf8eac3b55acecf29c842ed73e6e6dd06491cf47f7e8800680ab3e33"
+        "web/public/fonts/inter.woff2": "c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4"
       }
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "id": "font-google-sans-code",
-      "source": "https://fonts.gstatic.com/s/googlesanscode/v20/pxihyogzv91QhV44Z_GQBHsGf5PuckJMZfIVTPZaiXEp_ht12EVEHsN1sCQNcmTl1gki9OLRSxQiDdE.woff2",
+      "source": "https://github.com/googlefonts/googlesans-code/releases/download/v7.000/GoogleSansCode-v7.000.zip",
       "version": "7.000",
       "license": "OFL-1.1",
       "ownership": "third-party",
@@ -73,9 +73,9 @@
       "copyright": [
         "Copyright 2025 The Google Sans Code Project Authors (github.com/googlefonts/googlesans-code)"
       ],
-      "note": "Byte-identical to that URL, the adlam slice of Google Fonts' css2?family=Google+Sans+Code: 50 code points (space and punctuation) and no letters or digits. Upstream is https://github.com/googlefonts/googlesans-code (tag v7.000, OFL 1.1, no Reserved Font Name). Google and Google Sans Code are trademarks of Google LLC.",
+      "note": "GoogleSansCode[MONO,wght].ttf from that release zip (zip sha256 5bd294283cb93172598b7fa4f62855c63c79f55b803e75d738777f093b73c586, the digest GitHub publishes for it; TTF sha256 a6704441b8a23ad133dc740bae1c55948fd537deb737c1b8be700ecb1af8f100), compressed to WOFF2 by fontTools 4.66.0's fontTools.ttLib.woff2.compress with brotli 1.2.0. Decompressed, every glyph outline and every table but head is byte-identical to the TTF, and head differs only in the flags bit WOFF2 sets for its lossless glyf transform, and in its checksum. The whole font: 674 code points (Latin, Latin Extended, box drawing and block elements) and the wght (300 to 800) and MONO (0 to 1, default 1, monospaced) axes. OFL 1.1, the OFL.txt in the same zip, with no Reserved Font Name. Google and Google Sans Code are trademarks of Google LLC.",
       "files": {
-        "web/public/fonts/google-sans-code.woff2": "5dd4b3772ede212e3f1cdc33aa5e588c23cb929c19ee92056e0b7e04a73d880e"
+        "web/public/fonts/google-sans-code.woff2": "fd66c621f0aa9962467b20ffb523b1d9d92dec6e2b9da870591011944127380e"
       }
     },
     {
