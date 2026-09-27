@@ -1186,6 +1186,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "one is yours"
     ),
     "POST /api/devices/{id}/revoke": OwnerOnly("signing out your devices"),
+    "POST /api/devices/revoke-others": OwnerOnly("signing out your devices"),
     # ── channels ──
     "POST /api/channels/{name}/connect": OwnerOnly(
         "connecting a chat channel — the people on it can then reach your agent, as its trust "

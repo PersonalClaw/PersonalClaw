@@ -443,12 +443,12 @@ The posture is announced on stderr, so stdout stays pipeable.
         action="store_true",
         help=(
             "Print a single line `PERSONALCLAW_READY:{...}` to stdout once the "
-            "dashboard is bound. Payload includes port, token, pid, and "
-            "PERSONALCLAW_HOME. Used by test harnesses to discover the bound "
-            "ephemeral port and authenticate without polling. NOTE: the "
-            "token grants gateway access for up to 20 hours — treat the "
-            "READY line as sensitive and do not commit captured stdout to "
-            "shared logs."
+            "dashboard is bound. Payload includes port, token, token_expires_in, "
+            "token_expires_at, pid, and PERSONALCLAW_HOME. Used by test harnesses to "
+            "discover the bound ephemeral port and authenticate without polling. NOTE: "
+            "the token is an owner sign-in that lasts as long as a browser sign-in "
+            "(auth.session_ttl, 30 days by default) — treat the READY line as sensitive "
+            "and do not commit captured stdout to shared logs."
         ),
     )
     gw_parser.add_argument(
@@ -1180,7 +1180,16 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     )
 
     # token
-    token_parser = sub.add_parser("token", help="Print a dashboard access URL with auth token")
+    token_parser = sub.add_parser(
+        "token",
+        help="Print a dashboard sign-in link (its token also works as a Bearer header)",
+        description=(
+            "Print a sign-in link for the dashboard. Open it in a browser to sign that browser "
+            "in, or send the token after ?token= as an 'Authorization: Bearer' header from a "
+            "script. Every sign-in is listed under Settings → Devices, where it can be signed "
+            "out."
+        ),
+    )
 
     # logout
     logout_parser = sub.add_parser("logout", help="Revoke all active dashboard sessions")
@@ -1196,7 +1205,11 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         default=None,
         help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
     )
-    token_parser.add_argument("--ttl", default="20h", help="Token TTL, e.g. 1h, 30m (default: 20h)")
+    token_parser.add_argument(
+        "--ttl",
+        default="20h",
+        help="How long it lasts, e.g. 1h, 30m, 720h (default: 20h; at most 8760h, a year)",
+    )
 
     # pair — mint an 8-digit pairing code so a new sender on a channel (Telegram,
     # Discord, …) can start talking to the agent. Printed ONCE; single-use; TTL 10 min.

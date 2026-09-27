@@ -7,6 +7,8 @@ import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, Fold
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
+import { SignedOutScreen } from './SignedOutScreen'
+import { useSignedOut } from '../lib/signedOut'
 import { ChatPage } from '../pages/ChatPage'
 import { useIdentity } from './identity'
 import { Onboarding } from './Onboarding'
@@ -193,9 +195,12 @@ const NAV_COLLAPSED_KEY = 'nav-collapsed'
  *  the global CSS `prefers-reduced-motion` rule (tokens.css) covers CSS
  *  transitions, this covers JS-driven motion. */
 export function App() {
+  // A tab whose session ended shows ONE signed-out screen, with the gateway's sentence, in place of
+  // the whole shell — which unmounts every panel, poll and socket that could only be refused.
+  const signedOut = useSignedOut()
   return (
     <MotionConfig reducedMotion="user">
-      <AppInner />
+      {signedOut ? <SignedOutScreen notice={signedOut} /> : <AppInner />}
     </MotionConfig>
   )
 }

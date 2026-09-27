@@ -85,12 +85,13 @@ its own code. The controls below bound the token, so an app's requests never rea
 owner's full authority. They do not bound the code, which runs as you — the last bullet
 says what that means.
 
-- **App-scoped tokens** (`dashboard/token_auth.py::generate_token` with an `app`
-  claim) bound a request to that app's declared permissions; TTLs capped by
-  `MAX_SESSION_TTL_SECS`.
+- **App-scoped tokens** (`dashboard/token_auth.py::app_session_token`, a token with an
+  `app` claim) bound a request to that app's declared permissions; they last an hour, and
+  count against a limit of their own per app, so no app can sign the owner's devices out.
 - **Reverse-proxy credential stripping**
   (`dashboard/handlers/apps.py::api_app_proxy`): app backends never see the
-  owner's cookie/Authorization — a fresh 1-hour app-scoped token is injected.
+  owner's cookie/Authorization — the app's own 1-hour app-scoped token is injected (the
+  same one while it has more than half its hour left, not a new session per request).
 - **Permission middleware** holds in every auth mode — including `none`, where
   `dashboard/server.py`'s `_dev_user_middleware` re-adopts the app claim via
   `validate_token_with_app` so an app token only ever *narrows* reach. The internal

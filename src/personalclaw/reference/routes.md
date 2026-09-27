@@ -58,7 +58,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/apps/{name}/config` — save an app's settings, and apply them to its providers.
 - `POST /api/apps/{name}/disable` — _(no summary)_
 - `POST /api/apps/{name}/enable` — _(no summary)_
-- `POST /api/apps/{name}/token` — mint an app-scoped identity token.
+- `POST /api/apps/{name}/token` — the app-scoped identity token this app should use.
 - `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3) and report what the app's ``data/`` holds.
 - `POST /api/apps/{name}/update` — atomic update from ``{source, consent?}``.
 - `GET /api/artifacts` — metadata-only rows; ``q`` searches metadata and body.
@@ -241,10 +241,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/desktop/state` — what the desktop shell can actually do, right now.
 - `POST /api/desktop/state` — the shell pushes a refreshed capability manifest.
 - `POST /api/desktop/unregister` — the shell is quitting; forget its capabilities.
-- `GET /api/devices` — every paired device with a live session.
+- `GET /api/devices` — every device and token signed in to this gateway.
 - `POST /api/devices/pair/complete` — redeem a code for a durable device session.
 - `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
-- `POST /api/devices/{id}/revoke` — lock one device out.
+- `POST /api/devices/revoke-others` — sign out every device and token but the caller's own.
+- `POST /api/devices/{id}/revoke` — sign one device or token out.
 - `DELETE /api/doc-comments` — empty the deck.
 - `GET /api/doc-comments` — the whole cross-document deck, oldest first.
 - `POST /api/doc-comments` — append one comment.
@@ -435,7 +436,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/lexicon/terms` — {canonical, aliases?} — add a manual term.
 - `DELETE /api/lexicon/terms/{id}` — remove a term entirely.
 - `PATCH /api/lexicon/terms/{id}` — {enabled?} — enable/disable (prune) a term.
-- `POST /api/logout` — revoke all active dashboard sessions.
+- `POST /api/logout` — sign every dashboard session out, everywhere.
 - `GET /api/logs` — SSE stream of live log entries.
 - `GET /api/logs/level` — current backend logger level.
 - `POST /api/logs/level` — change the backend logger level at runtime.
@@ -772,7 +773,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/themes/{slug}` — get, update, or delete a custom theme.
 - `GET /api/themes/{slug}` — get, update, or delete a custom theme.
 - `PUT /api/themes/{slug}` — get, update, or delete a custom theme.
-- `GET /api/token/local` — issue a token for local apps.
+- `GET /api/token/local` — issue a token for the CLI, a script or a local app.
 - `GET /api/tools` — Return all tools from all active tool sources.
 - `GET /api/tools/groups` — the tool-GROUP partition (Context Economy §5).
 - `POST /api/tools/invoke` — execute one tool through the Tool entity.

@@ -251,7 +251,7 @@ async def call_app_route(resolution: RouteResolution) -> ToolResult:
     → a coded ``ERR_APP_BACKEND_UNAVAILABLE`` the agent can act on; a 404 →
     dead-declared drift (recorded once) surfaced as ``ERR_APP_ROUTE_UNKNOWN``."""
     from personalclaw.apps.backend_runtime import get_backend_supervisor
-    from personalclaw.dashboard.token_auth import generate_token
+    from personalclaw.dashboard.token_auth import app_session_token
     from personalclaw.net import LOOPBACK_INTERNAL, EgressBlocked, fetch
 
     app_name, route = resolution.app, resolution.route
@@ -270,7 +270,8 @@ async def call_app_route(resolution: RouteResolution) -> ToolResult:
     url = f"{rb.base_url}/{resolution.path.lstrip('/')}"
     method = (route.method or "GET").upper()
     headers = {
-        "Authorization": f"Bearer {generate_token('dashboard', ttl_seconds=3600, app=app_name)}",
+        # The app's current app-scoped token, not a fresh session per call (ledger 255).
+        "Authorization": f"Bearer {app_session_token('dashboard', app_name)[0]}",
         "X-PersonalClaw-App": app_name,
     }
     data: bytes | None = None

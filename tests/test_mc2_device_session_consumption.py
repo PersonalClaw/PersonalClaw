@@ -186,7 +186,7 @@ async def test_a_device_session_roams_between_client_ips(_isolated) -> None:
         # And it is still the same session, not a silently re-minted one: same nonce, and the
         # registry still lists exactly one device.
         assert (await roamed.json())["nonce"] == (await first.json())["nonce"]
-        assert len(ss.device_sessions()) == 1
+        assert len(ss.paired_sessions()) == 1
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_a_roam_does_not_need_a_token_auth_change(_isolated) -> None:
     assert device_id not in json.dumps(payload), "the device id must live in the store, not here"
 
     # …and the store is where it does live, so nothing was lost by keeping it out of the token.
-    record = next(iter(ss.device_sessions().values()))
+    record = next(iter(ss.paired_sessions().values()))
     assert record.device is not None and record.device.id == device_id
     assert record.issuer == ss.ISSUER_PAIR
 
@@ -248,10 +248,13 @@ async def test_revoke_refuses_the_devices_next_http_request(_isolated) -> None:
         after = await device.get("/api/mc2/probe", cookies={COOKIE: token})
         assert after.status == 403, "the very next request must be refused"
 
-        # And the panel the owner is looking at agrees, from the same read the UI performs.
+        # And the panel the owner is looking at agrees, from the same read the UI performs:
+        # the owner's own sign-in is listed, the revoked phone is not.
         listed = await owner.get("/api/devices", cookies={COOKIE: owner_token})
         assert listed.status == 200
-        assert (await listed.json())["devices"] == []
+        rows = (await listed.json())["devices"]
+        assert [row["id"] for row in rows if row["issuer"] == ss.ISSUER_PAIR] == []
+        assert device_id not in {row["id"] for row in rows}
 
 
 @pytest.mark.asyncio

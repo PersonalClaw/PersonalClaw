@@ -302,8 +302,9 @@ class AuthConfigSection:
         default="30d",
         metadata=_meta(
             "Session Lifetime",
-            "How long a browser session lasts before you log in again (e.g. 30d, 12h). "
-            "Explicitly-minted CLI tokens are unaffected.",
+            "How long a browser sign-in lasts before you sign in again (e.g. 30d, 12h): a "
+            "password sign-in, a device code, a pairing, and the link the gateway prints and "
+            "opens at startup. A `personalclaw token` link lasts what its --ttl says.",
         ),
     )
     require_totp: bool = field(

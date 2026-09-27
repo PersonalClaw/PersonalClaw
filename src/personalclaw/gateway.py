@@ -55,8 +55,12 @@ from personalclaw.dashboard.origin import (
 )
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import (
-    DEFAULT_BROWSER_SESSION_TTL_SECS,
-    generate_token,
+    ISSUER_READY,
+    ISSUER_STARTUP,
+    MintedSession,
+    browser_session_ttl,
+    duration_words,
+    mint_session,
 )
 from personalclaw.env import _is_wsl, browser_available
 from personalclaw.frontend import build_frontend_async
@@ -251,6 +255,37 @@ _WRITE_INDICATORS = (
     "kill",
     "terminate",
 )
+
+
+def mint_startup_token(issuer: str, auth_cfg: Any) -> MintedSession:
+    """The token the gateway hands out at startup: the dashboard link it prints (and opens),
+    or the ``--json-ready`` line's token for a test harness.
+
+    Both are how a browser signs in — the link is opened in one, and a harness opens its token
+    in one — so they last as long as every other browser sign-in: ``auth.session_ttl``
+    (``token_auth.browser_session_ttl``, 30 days by default). They used to hard-code the 30
+    days, so a shortened setting did not reach the two doors every install opens first.
+    """
+    return mint_session("local-startup", browser_session_ttl(auth_cfg), issuer=issuer)
+
+
+def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
+    """The one ``PERSONALCLAW_READY:{...}`` line ``--json-ready`` prints once the gateway binds.
+
+    Machine-readable, so what its token is and how long it lasts ride as fields: the token is an
+    owner session (``Authorization: Bearer <token>``, or open ``/?token=<token>`` in a browser),
+    and ``token_expires_in`` / ``token_expires_at`` are its real lifetime — the help text used to
+    promise "up to 20 hours" for a token the code minted for 30 days.
+    """
+    payload = {
+        "port": port,
+        "token": minted.token,
+        "token_expires_in": minted.lifetime_secs,
+        "token_expires_at": minted.expires_at,
+        "pid": os.getpid(),
+        "home": str(home),
+    }
+    return f"PERSONALCLAW_READY:{json.dumps(payload)}"
 
 
 def _is_read_only_tool(event_title: str) -> bool:
@@ -4868,16 +4903,10 @@ class GatewayOrchestrator:
         # can read it deterministically with a single readline() in the
         # PERSONALCLAW_READY: prefix matcher.
         if self._json_ready:
-            ready_token = generate_token(
-                "local-startup", ttl_seconds=DEFAULT_BROWSER_SESSION_TTL_SECS
+            ready = mint_startup_token(ISSUER_READY, self._cfg.auth)
+            print(
+                ready_line(port=self._dashboard_port, home=config_dir(), minted=ready), flush=True
             )
-            ready_payload = {
-                "port": self._dashboard_port,
-                "token": ready_token,
-                "pid": os.getpid(),
-                "home": str(config_dir()),
-            }
-            print(f"PERSONALCLAW_READY:{json.dumps(ready_payload)}", flush=True)
 
         # AutoNudge must run after dashboard init — _fire callback dereferences
         # self.dashboard_state. In --no-dashboard mode the guard inside _fire
@@ -5004,11 +5033,9 @@ class GatewayOrchestrator:
             if not self._no_dashboard:
                 host = resolve_dashboard_host(self._local_only, self._configured_host)
                 base_url = f"http://{host}:{self._dashboard_port}"
-                startup_token = generate_token(
-                    "local-startup", ttl_seconds=DEFAULT_BROWSER_SESSION_TTL_SECS
-                )
+                startup = mint_startup_token(ISSUER_STARTUP, self._cfg.auth)
                 dashboard_url = build_dashboard_url(
-                    base_url, startup_token, local_only=self._local_only
+                    base_url, startup.token, local_only=self._local_only
                 )
                 for line in format_dashboard_urls(
                     dashboard_url,
@@ -5017,6 +5044,12 @@ class GatewayOrchestrator:
                     has_custom_host=bool(self._configured_host),
                 ):
                     print(line)
+                print(
+                    f"   (a sign-in link: open it within {duration_words(startup.open_within_secs)}"
+                    f"; a browser that opens it stays signed in for "
+                    f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
+                    "sign-in.)"
+                )
 
                 # Auto-open dashboard — skip on headless remote sessions. The predicate
                 # lives in `env.browser_available()` because `personalclaw setup` asks the

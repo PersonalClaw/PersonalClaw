@@ -18,8 +18,10 @@ def _paired_device_session(request: web.Request) -> str:
 
     FAIL-CLOSED by construction: every unknown answers ``""``. An absent nonce (no token
     middleware ran, or its payload would not decode), an unreadable session store, a session
-    with no ``device`` row — all of them return "not a device", and the caller then applies the
-    strict origin rule. There is no branch here that can widen on an error.
+    that was not issued by PAIRING — all of them return "not a device", and the caller then
+    applies the strict origin rule. There is no branch here that can widen on an error.
+    (Every session row carries a device block now, so the block's presence is not the test:
+    the door it came through is — ``session_store.paired_sessions``.)
 
     Reads the store on each call, which is a **once-per-connection** cost: this runs on the
     `/api/ws` upgrade, not on the messages that follow.
@@ -28,13 +30,13 @@ def _paired_device_session(request: web.Request) -> str:
     if not isinstance(nonce, str) or not nonce:
         return ""
     try:
-        from personalclaw.dashboard.session_store import device_sessions
+        from personalclaw.dashboard.session_store import paired_sessions
 
-        record = device_sessions().get(nonce)
+        record = paired_sessions().get(nonce)
     except Exception:  # noqa: BLE001 — an unreadable registry cannot vouch for anything
         logger.warning("ws: device registry unreadable; applying the strict origin rule")
         return ""
-    if record is None or record.device is None:
+    if record is None:
         return ""
     return str(record.device.id or "")
 
@@ -55,7 +57,7 @@ def _check_ws_origin(request: web.Request) -> None:
 
     What replaces it is narrower than an origin exemption and stronger than the header it
     trusts: the request must carry **no Origin at all** AND be authorized by a session the
-    owner deliberately paired (a ``sessions.json`` row with a ``device``). That session is
+    owner deliberately paired (a ``sessions.json`` row issued by pairing). That session is
     revocable per-device from Settings → Devices, its ``last_seen`` is stamped on every
     authorized request, and a revoked row stops authenticating upstream in the token
     middleware — so this admission is attributable and reversible in a way a widened origin

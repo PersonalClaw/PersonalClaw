@@ -1,11 +1,12 @@
 """The login front door (REMOTE-USER-AUTH C3 / S3).
 
 **This is one more ISSUER of the existing session token, not a second way to be authorized.**
-`POST /api/auth/login` verifies a password and then calls the same `generate_token` the
-`?token=` link and `personalclaw token` already call, and sets the same `pc_token_{port}`
-cookie. Downstream, the middleware cannot tell a login-minted session from a link-minted one
-— there is exactly one validation path, which is the point: a second path is a second place
-for an authorization bug to hide.
+`POST /api/auth/login` verifies a password and then mints through the same
+`token_auth.mint_session` the `?token=` link and `personalclaw token` go through (naming its
+own door, `login`, so Settings → Devices can say how each device signed in), and sets the same
+`pc_token_{port}` cookie. Downstream, the middleware validates a login-minted session exactly
+like a link-minted one — there is exactly one validation path, which is the point: a second
+path is a second place for an authorization bug to hide.
 
 **Login never becomes the only way in.** Every deny here leaves the local `?token=` / loopback
 routes untouched, so a forgotten password, a corrupt credential file, or `require_totp` with no
@@ -34,10 +35,16 @@ from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
 from personalclaw.dashboard.owner_token_url import script_source as owner_token_script_source
 from personalclaw.dashboard.token_auth import (
-    DEFAULT_BROWSER_SESSION_TTL_SECS,
-    generate_token,
+    ISSUER_ENROLL,
+    ISSUER_LOGIN,
+    SIGNED_OUT_NOTICE_GRACE_SECS,
+    browser_session_ttl,
+    client_of,
+    mint_session,
+    notice_html,
     parse_config_duration,
     secure_cookies,
+    signed_out_notice,
     validate_token,
 )
 from personalclaw.http_errors import json_error
@@ -211,8 +218,10 @@ async def api_auth_login(request: web.Request) -> web.Response:
             )
             return json_error(ERR_INVALID, status=401)
 
-    ttl = parse_config_duration(cfg.session_ttl, default_secs=DEFAULT_BROWSER_SESSION_TTL_SECS)
-    token = generate_token(username.strip() or "owner", ttl_seconds=ttl)
+    ttl = browser_session_ttl(cfg)
+    token = mint_session(
+        username.strip() or "owner", ttl, issuer=ISSUER_LOGIN, device=client_of(request)
+    ).token
     _clear_failures(ip)
     _sel().log_api_access(
         caller=username.strip() or "owner",
@@ -232,7 +241,9 @@ def _set_session_cookie(request: web.Request, resp: web.Response, token: str, tt
     Same name, same flags as the middleware's own mint, so the two are indistinguishable —
     including `Secure`, which comes from the SAME `secure_cookies()` the middleware uses
     (T4.1). Sharing that one resolver is the point: a login cookie that was `Secure` while a
-    link cookie was not would be two different security postures for one session model.
+    link cookie was not would be two different security postures for one session model. And
+    the same Max-Age rule: the session plus the grace that lets its end be explained
+    (``SIGNED_OUT_NOTICE_GRACE_SECS``) — the gateway refuses it when the session ends.
     """
     port = _cookie_port(request)
     resp.set_cookie(
@@ -241,7 +252,7 @@ def _set_session_cookie(request: web.Request, resp: web.Response, token: str, tt
         httponly=True,
         samesite="Lax",
         path="/",
-        max_age=ttl,
+        max_age=ttl + SIGNED_OUT_NOTICE_GRACE_SECS,
         secure=secure_cookies(),
     )
     # Clear the legacy non-port-specific cookie, mirroring the middleware.
@@ -264,29 +275,33 @@ async def api_auth_logout(request: web.Request) -> web.Response:
     Clearing the cookie alone would be theatre: the token remains valid, so anyone holding a
     copy (a synced browser profile, a shell history, a proxy log) still has a live session.
     Revoking the nonce is what actually ends it, durably — the session store is on disk, so
-    it stays revoked across a restart.
+    it stays revoked across a restart. The sign-out itself is the SEL's ``session_signed_out``
+    row (``token_auth.sign_out``); only a logout that found no live session to end adds one
+    here, as ``partial``, so the log never claims an ending that did not happen.
     """
     if not check_origin(request):
         return json_error(ERR_ORIGIN, status=403)
 
     port = _cookie_port(request)
     token = request.cookies.get(f"pc_token_{port}", "") or request.query.get("token", "")
+    caller = request.get("user") or (request.remote or "unknown")
     revoked = False
     if token:
         try:
             from personalclaw.dashboard.token_auth import revoke_token
 
-            revoked = revoke_token(token)
+            revoked = revoke_token(token, actor=caller)
         except Exception:  # noqa: BLE001
             logger.warning("could not revoke the session on logout", exc_info=True)
 
-    _sel().log_api_access(
-        caller=request.get("user") or (request.remote or "unknown"),
-        operation="session_revoked",
-        outcome="ok" if revoked else "partial",
-        source="auth",
-        error="" if revoked else "cookie cleared, nonce not revoked",
-    )
+    if not revoked:
+        _sel().log_api_access(
+            caller=caller,
+            operation="session_signed_out",
+            outcome="partial",
+            source="auth",
+            error="cookie cleared, no live session behind it",
+        )
 
     resp = web.json_response({"ok": True, "revoked": revoked})
     resp.set_cookie(f"pc_token_{port}", "", max_age=0, path="/")
@@ -436,8 +451,10 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
 
     # A device session, deliberately at the same TTL as a browser login rather than the
     # 1-year cap: a phone in a drawer should not hold a live session for a year.
-    ttl = parse_config_duration(cfg.session_ttl, default_secs=DEFAULT_BROWSER_SESSION_TTL_SECS)
-    token = generate_token("enrolled-device", ttl_seconds=ttl)
+    ttl = browser_session_ttl(cfg)
+    token = mint_session(
+        "enrolled-device", ttl, issuer=ISSUER_ENROLL, device=client_of(request)
+    ).token
     _clear_failures(ip)
     _sel().log_api_access(caller=ip, operation="enroll_completed", outcome="granted", source="auth")
 
@@ -457,8 +474,16 @@ async def login_page(request: web.Request) -> web.Response:
     cfg = _auth_cfg()
     if not bool(cfg.login_enabled):
         raise web.HTTPFound("/")
+    # A browser sent here because its session ended still carries that session's cookie; say
+    # why it ended above the form, in the words every other surface uses for it.
+    notice = signed_out_notice(request.cookies.get(f"pc_token_{_cookie_port(request)}", ""))
+    notice_block = (
+        f"<p class='notice' role='status'>{notice_html(notice.message)}</p>" if notice else ""
+    )
     return web.Response(
-        text=_LOGIN_HTML.replace("__TOTP__", "true" if cfg.require_totp else "false"),
+        text=_LOGIN_HTML.replace("__TOTP__", "true" if cfg.require_totp else "false").replace(
+            "__NOTICE__", notice_block
+        ),
         content_type="text/html",
         headers={"Cache-Control": "no-store"},
     )
@@ -479,6 +504,7 @@ def has_valid_session(request: web.Request, port: int) -> bool:
 # place because two hand-written copies drift and neither page has a visual-regression test.
 _LOGIN_BODY = """\
 <h1>Sign in</h1>
+__NOTICE__
 <p>Your PersonalClaw dashboard is private. Sign in to continue.</p>
 <form id='f' autocomplete='on'>
 <input id='u' name='username' type='text' placeholder='Username' autocomplete='username'

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Check, Copy, Laptop, MonitorSmartphone, QrCode, Smartphone, Terminal, Globe, XCircle,
+  Check, Copy, KeyRound, Laptop, MonitorSmartphone, QrCode, Smartphone, Terminal, Globe, XCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api } from '../../lib/api'
@@ -11,6 +11,7 @@ import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup } from './settingsUI'
 import { PairingQr } from './PairingQr'
 import { Button } from '../../ui/Button'
+import { StatusPill } from '../../ui/StatusPill'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { relPast, absTime } from '../schedule/scheduleMeta'
 import { copyText } from '../../app/clipboard'
@@ -29,14 +30,40 @@ const KINDS: Record<DeviceRec['kind'], { label: string; icon: LucideIcon }> = {
   unknown: { label: 'Unknown', icon: MonitorSmartphone },
 }
 
-/** Provenance, in the owner's words. `pair` is the only issuer this list can currently show —
- *  an owner-token session has no device row — but the field is rendered rather than assumed,
- *  because the whole point of storing it was that the registry can say where a session came
- *  from instead of guessing. An unrecognized value renders as itself, never as blank. */
-function issuerLabel(issuer: string): string {
-  if (issuer === 'pair') return 'Paired with a code'
-  if (issuer === 'unknown') return 'Unknown'
-  return issuer
+/** A token nothing has opened is a credential, not a device: it gets its own glyph and word. */
+const TOKEN_KIND = { label: 'Token', icon: KeyRound }
+
+/** How it signed in, in the owner's words — the door it came through (`session_store.ISSUERS`).
+ *  A browser that opened a link reads differently from a token nothing has opened yet, so the
+ *  same issuer has a sign-in wording and a token wording. An unrecognized value renders as
+ *  itself, never as blank. */
+function issuerLabel(d: DeviceRec): string {
+  const token = d.pool === 'token'
+  switch (d.issuer) {
+    case 'pair': return 'Paired with a code'
+    case 'enroll': return 'Signed in with a device code'
+    case 'login': return 'Signed in with a password'
+    case 'token': return token ? 'From personalclaw token, the CLI or a script' : 'Signed in with a personalclaw token link'
+    case 'startup': return token ? 'The link the gateway printed at startup' : 'Signed in with the link the gateway opened at startup'
+    case 'ready': return token ? 'The harness token (--json-ready)' : 'Signed in with the harness token (--json-ready)'
+    case 'unknown': return 'Signed in before PersonalClaw recorded how'
+    default: return d.issuer
+  }
+}
+
+/** What to call a row: its name, else what it is. A token nothing has used has no client yet; one
+ *  that HAS been used, by a client that did not say what it is, must not read as unused — the
+ *  line under it lists that use. */
+function rowName(d: DeviceRec): string {
+  if (d.name) return d.name
+  if (d.pool !== 'token') return 'Unnamed device'
+  return d.last_seen > 0 ? 'Unrecognised client' : 'Token not used yet'
+}
+
+/** "Paired 3d ago" / "Signed in 3d ago" / "Issued 3d ago" — when it signed in, in its own verb. */
+function signedInLine(d: DeviceRec): string {
+  const verb = d.issuer === 'pair' ? 'Paired' : d.pool === 'token' ? 'Issued' : 'Signed in'
+  return `${verb} ${d.minted_at > 0 ? relPast(d.minted_at) : 'at an unknown time'}`
 }
 
 /** Seconds until *expiresAt* (epoch seconds), floored at 0.
@@ -75,11 +102,13 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   )
 }
 
-/** Settings → Devices — the ONE device registry in the product (COMPANION-APPS C2 / CA-2).
+/** Settings → Devices — the ONE list of what is signed in, in the product (COMPANION-APPS C2 / CA-2).
  *
  *  Every row is derived from a live session, so this list IS the answer to "what can reach this
- *  gateway right now": a revoke removes the row because it removed the session, not because the
- *  UI hid it. Other surfaces link here rather than growing a second list.
+ *  gateway right now": a sign-out removes the row because it removed the session, not because the
+ *  UI hid it. It is EVERY sign-in — it used to be paired phones only, which hid the owner's own
+ *  browsers, the desktop app and every script token, the sessions a sixth mint silently signed
+ *  out (ledger 255). Other surfaces link here rather than growing a second list.
  *
  *  On the QR: `pair/start` returns a `pairing_url` that already contains the code, which is what
  *  makes it actionable on its own — the QR is a RENDERING of that URL, not a separate mechanism.
@@ -127,23 +156,70 @@ export function DevicesPanel() {
   // silent-failure shape matters more than usual here: the owner is told a device is locked out,
   // and would otherwise stop looking at a device that still holds a live session.
   const revoke = async (device: DeviceRec) => {
-    const name = device.name || 'this device'
+    const name = rowName(device)
+    // THIS device signs itself out through the one sign-out route, then reloads onto the sign-in
+    // page — revoking its own row would leave this tab on a dashboard that can no longer load.
+    if (device.current) {
+      const ok = await confirm({
+        title: 'Sign out of this device?',
+        body: `${name}, the device you are using now, is signed out at once, and shows how to sign back in.`,
+        danger: true,
+        confirmLabel: 'Sign out',
+      })
+      if (!ok) return
+      setRevoking(device.id)
+      try {
+        await api.authLogout()
+        window.location.reload()
+      } catch (e) {
+        notify(`Couldn't sign out: ${msg(e)}`, 'error')
+        setRevoking(null)
+      }
+      return
+    }
+    const way = device.issuer === 'pair'
+      ? 'To use it again, pair it again with a new code.'
+      : device.pool === 'token'
+        ? 'Anything still using this token will be refused.'
+        : 'It will be told why the next time it is used, and can sign in again.'
     const ok = await confirm({
-      title: `Revoke ${name}?`,
-      body: `${name} will lose access to this gateway immediately and will have to pair again with a new code.`,
+      title: `Sign out ${name}?`,
+      body: `${name} will be signed out of this gateway immediately. ${way}`,
       danger: true,
-      confirmLabel: 'Revoke access',
+      confirmLabel: 'Sign out',
     })
     if (!ok) return
     setRevoking(device.id)
     try {
       await api.deviceRevoke(device.id)
-      notify(`${name} can no longer reach this gateway.`, 'success')
+      notify(`${name} is signed out.`, 'success')
       refresh()
     } catch (e) {
-      notify(`Couldn't revoke ${name}: ${msg(e)}`, 'error')
+      notify(`Couldn't sign out ${name}: ${msg(e)}`, 'error')
     } finally {
       setRevoking(null)
+    }
+  }
+
+  const [signingOutOthers, setSigningOutOthers] = useState(false)
+  // Every device and token but this one — the answer to a lost phone, or a row you don't know.
+  const revokeOthers = async (others: number) => {
+    const ok = await confirm({
+      title: 'Sign out all other devices?',
+      body: `${others === 1 ? 'One other device or token' : `${others} other devices and tokens`} will be signed out immediately, and each is told why the next time it is used. This device stays signed in.`,
+      danger: true,
+      confirmLabel: 'Sign out all others',
+    })
+    if (!ok) return
+    setSigningOutOthers(true)
+    try {
+      const { revoked } = await api.devicesRevokeOthers()
+      notify(`${revoked === 1 ? 'One other device is' : `${revoked} other devices are`} signed out.`, 'success')
+      refresh()
+    } catch (e) {
+      notify(`Couldn't sign out the other devices: ${msg(e)}`, 'error')
+    } finally {
+      setSigningOutOthers(false)
     }
   }
 
@@ -172,11 +248,55 @@ export function DevicesPanel() {
   if (!data && loadErr) return <LoadError what="devices" error={loadErr} onRetry={refresh} />
   if (!data) return <FormSkeleton sections={2} what="devices" />
 
+  const signedIn = data.filter((d) => d.pool !== 'token')
+  const tokens = data.filter((d) => d.pool === 'token')
+  const others = data.filter((d) => !d.current).length
+
+  const renderRow = (d: DeviceRec) => {
+    const kind = d.pool === 'token' ? TOKEN_KIND : KINDS[d.kind] ?? KINDS.unknown
+    const KindIcon = kind.icon
+    const name = rowName(d)
+    return (
+      <div key={d.id}
+        className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
+        <div className="flex min-w-0 items-start gap-3">
+          <KindIcon size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-s">
+              <span data-type="body-s" className="truncate text-on-surface">{name}</span>
+              {d.current && <StatusPill tone="primary">This device</StatusPill>}
+            </div>
+            {/* Every column the list owes the owner, in one readable line: kind · last seen ·
+                where · how it signed in. `last_seen` of 0 means it has never made an authorized
+                request, and must read as "never" — NOT as the sign-in time, which would make an
+                abandoned device look active. */}
+            <div data-type="body-s" className="mt-0.5 text-on-surface-low">
+              {kind.label}
+              {' · '}
+              <span>Last seen {d.last_seen > 0 ? relPast(d.last_seen) : 'never'}</span>
+              {d.ip ? <>{' · '}<span>from {d.ip}</span></> : null}
+              {' · '}
+              <span>{issuerLabel(d)}</span>
+            </div>
+            <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+              {signedInLine(d)}
+              {d.expires_at > 0 ? ` · ${d.pool === 'token' ? 'stops working' : 'session expires'} ${absTime(d.expires_at)}` : ''}
+            </div>
+          </div>
+        </div>
+        <Button size="xs" variant="danger" onClick={() => revoke(d)}
+          loading={revoking === d.id} ariaLabel={d.current ? 'Sign out of this device' : `Sign out ${name}`}>
+          Sign out
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <div>
       <PanelHeader
         title="Devices"
-        hint="Phones, tablets and other browsers you have paired with this gateway. Each one holds an ordinary session, so revoking a device logs exactly that device out."
+        hint="Everything signed in to this gateway: your browsers, paired phones and the desktop app, and the tokens the CLI and scripts use. Sign out anything you don't recognise — it is told why the next time it is used."
       />
 
       <Section
@@ -282,58 +402,37 @@ export function DevicesPanel() {
         </div>
       </Section>
 
-      <Section title={`Paired devices${data.length ? ` (${data.length})` : ''}`}
-        hint="Revoking a device drops its session on this gateway and on disk, so it stays locked out across a restart.">
-        {data.length === 0 ? (
+      <Section
+        title={`Signed in${signedIn.length ? ` (${signedIn.length})` : ''}`}
+        hint="Browsers, paired devices and the desktop app. Each kind has a limit of 20; past it, the one used least recently is signed out and told why, so a script minting tokens never signs one of these out."
+        right={others > 0 ? (
+          <Button size="xs" variant="secondary" onClick={() => revokeOthers(others)} loading={signingOutOthers}
+            ariaLabel="Sign out all other devices">
+            Sign out all other devices
+          </Button>
+        ) : undefined}
+      >
+        {signedIn.length === 0 ? (
           /* The action is real (it opens the same pairing flow as the section above), but its
              label must NOT repeat that button's: two controls with one accessible name make the
              action ambiguous to anyone navigating by name. Distinct wording, one behaviour. */
           <EmptyState
             icon={MonitorSmartphone}
-            title="No devices paired"
-            hint="Nothing but this browser can reach your gateway with a paired session."
+            title="No devices signed in"
+            hint="This browser reached the gateway without a session of its own (a local-network bypass or no-auth mode). Pair a phone or open a personalclaw token link in a browser, and it appears here."
             action={{ label: 'Pair your first device', onClick: startPairing, icon: QrCode }}
           />
         ) : (
-          <RowGroup>
-            {data.map((d) => {
-              const kind = KINDS[d.kind] ?? KINDS.unknown
-              const KindIcon = kind.icon
-              const name = d.name || 'Unnamed device'
-              return (
-                <div key={d.id}
-                  className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <KindIcon size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
-                    <div className="min-w-0">
-                      <div data-type="body-s" className="truncate text-on-surface">{name}</div>
-                      {/* Every column the registry owes the owner, in one readable line:
-                          kind · last seen · issuer · paired · expires. `last_seen` of 0 means the
-                          device has never made an authorized request, and must read as "never" —
-                          NOT as the pairing time, which would make an abandoned device look active. */}
-                      <div data-type="body-s" className="mt-0.5 text-on-surface-low">
-                        {kind.label}
-                        {' · '}
-                        <span>Last seen {d.last_seen > 0 ? relPast(d.last_seen) : 'never'}</span>
-                        {' · '}
-                        <span>{issuerLabel(d.issuer)}</span>
-                      </div>
-                      <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
-                        Paired {d.minted_at > 0 ? relPast(d.minted_at) : 'unknown'}
-                        {d.expires_at > 0 ? ` · session expires ${absTime(d.expires_at)}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                  <Button size="xs" variant="danger" onClick={() => revoke(d)}
-                    loading={revoking === d.id} ariaLabel={`Revoke ${name}`}>
-                    Revoke
-                  </Button>
-                </div>
-              )
-            })}
-          </RowGroup>
+          <RowGroup>{signedIn.map(renderRow)}</RowGroup>
         )}
       </Section>
+
+      {tokens.length > 0 && (
+        <Section title={`Tokens (${tokens.length})`}
+          hint="Links and tokens that no browser has opened: from personalclaw token, personalclaw run, a script, or the gateway's startup line. Each lasts what it was minted for; up to 20 can be live at once, and past that the one used least recently is signed out.">
+          <RowGroup>{tokens.map(renderRow)}</RowGroup>
+        </Section>
+      )}
     </div>
   )
 }

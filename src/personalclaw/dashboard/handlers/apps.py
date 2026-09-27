@@ -1231,25 +1231,25 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
 # Per-app identity token (untrusted-app sandbox, P1)
 # ---------------------------------------------------------------------------
 
-# App tokens are short-lived — the SDK mints one on mount and re-mints on expiry.
-# Bounded so a leaked app token has a small blast radius.
-_APP_TOKEN_TTL_SECS = 3600
-
 
 async def api_app_token(request: web.Request) -> web.Response:
-    """POST /api/apps/{name}/token — mint an app-scoped identity token.
+    """POST /api/apps/{name}/token — the app-scoped identity token this app should use.
 
     An installed app's SDK calls this on mount; the returned token carries an
     ``app`` claim so every subsequent app request (fetch ``Authorization: Bearer`` +
     the ``/api/ws?app_token=`` handshake) is attributable to THIS app. The token
     auth middleware sets ``request["app"]`` from the claim, and the app-permission
     middleware + WS event filter gate on it. Bound to the current owner user (an app
-    never exceeds the owner's own reach) and short-lived.
+    never exceeds the owner's own reach) and short-lived: ``expires_in`` is what is LEFT
+    of it, because the token is the one the app is already using while it has more than
+    half its hour left (``token_auth.app_session_token``) rather than a fresh mint each time.
 
     Only the OWNER (a non-app request) may mint an app token — an app can't mint a
     token for a different app to escalate."""
+    import time as _time
+
     from personalclaw.apps.manager import _read_installed
-    from personalclaw.dashboard.token_auth import generate_token
+    from personalclaw.dashboard.token_auth import app_session_token
 
     name = request.match_info["name"]
     # Reject minting from within an app context (no privilege escalation across apps).
@@ -1263,8 +1263,8 @@ async def api_app_token(request: web.Request) -> web.Response:
         return web.json_response({"error": f"app {name!r} is disabled"}, status=403)
 
     user_id = request.get("user", "dashboard")
-    token = generate_token(user_id, ttl_seconds=_APP_TOKEN_TTL_SECS, app=name)
-    return web.json_response({"token": token, "expires_in": _APP_TOKEN_TTL_SECS})
+    token, expires_at = app_session_token(user_id, name)
+    return web.json_response({"token": token, "expires_in": max(0, int(expires_at - _time.time()))})
 
 
 # ---------------------------------------------------------------------------
@@ -1344,13 +1344,13 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
 
     The owner's session credential (cookie / bearer / ``?token=``) is STRIPPED before
     forwarding — an app backend must never receive the owner's token (it could replay it
-    against the full gateway API). Instead we forward a fresh app-scoped token so the backend
-    has an identity bounded to its own declared permissions."""
+    against the full gateway API). Instead we forward the app's app-scoped token so the
+    backend has an identity bounded to its own declared permissions."""
     import aiohttp
 
     from personalclaw.apps.backend_runtime import get_backend_supervisor
     from personalclaw.apps.manager import _read_installed
-    from personalclaw.dashboard.token_auth import generate_token
+    from personalclaw.dashboard.token_auth import app_session_token
 
     name = request.match_info["name"]
     tail = request.match_info.get("tail", "")
@@ -1397,14 +1397,14 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": "app backend not available"}, status=502)
 
     # Strip the owner credential (cookie + Authorization) and any inbound app-identity
-    # headers, then attach a fresh app-scoped token so the backend is bounded to its
-    # own permissions rather than borrowing the owner's session.
+    # headers, then attach this app's app-scoped token so the backend is bounded to its
+    # own permissions rather than borrowing the owner's session. The app's CURRENT token,
+    # not a fresh mint per request: every mint is a session, and minting on every proxied
+    # request signed the owner's other devices out (ledger 255).
     _STRIP = _HOP_BY_HOP | {"cookie", "authorization", "x-personalclaw-app"}
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _STRIP}
     user_id = request.get("user", "dashboard")
-    fwd_headers["Authorization"] = (
-        f"Bearer {generate_token(user_id, ttl_seconds=_APP_TOKEN_TTL_SECS, app=name)}"
-    )
+    fwd_headers["Authorization"] = f"Bearer {app_session_token(user_id, name)[0]}"
     fwd_headers["X-PersonalClaw-App"] = name
     body = await request.read()
     # Sign the request so the backend's fail-closed middleware can prove it came from the

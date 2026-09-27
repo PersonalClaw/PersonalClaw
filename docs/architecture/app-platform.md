@@ -288,10 +288,12 @@ boundary lives:
 - the owner's session credential (cookie + `Authorization`) and any inbound
   app-identity headers are **stripped** — an app backend must never see a
   token it could replay against the full gateway API;
-- a **fresh 1-hour app-scoped Bearer token** (`generate_token(user,
-  app=name)`, `_APP_TOKEN_TTL_SECS = 3600`) plus `X-PersonalClaw-App` are
+- the app's **1-hour app-scoped Bearer token** (`token_auth.app_session_token(user,
+  name)`, `APP_TOKEN_TTL_SECS = 3600`) plus `X-PersonalClaw-App` are
   injected, so the backend has an identity bounded to its own declared
-  permissions.
+  permissions. It is the same token the app's SDK holds, reused while it has more than
+  half its hour left: every mint is a session, and a fresh one per proxied request used to
+  sign the owner's other devices out.
 
 That boundary is about what the proxy hands a backend. A backend on the host is still a
 process under the owner's account, so it can read the home directly, `session_key` (the
