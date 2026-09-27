@@ -72,14 +72,14 @@ class TestThreeChannelsCoexist:
 
         assert cd.registered_providers() == ["discord", "slack", "telegram"]
         for name in ("discord", "slack", "telegram"):
-            assert type(cd.delivery_for(name)).__name__ == f"{name.title()}Delivery"
+            assert type(cd.delivery_for(name).inner).__name__ == f"{name.title()}Delivery"
 
     def test_a_later_registration_does_not_displace_another_provider(self) -> None:
         """The mechanism, stated directly: registration order must not decide who can reply."""
         first = delivery("discord")
         cd.register(first)
         cd.register(delivery("telegram"))
-        assert cd.delivery_for("discord") is first
+        assert cd.delivery_for("discord").inner is first
 
     def test_re_registering_one_provider_replaces_only_that_one(self) -> None:
         """A reconnect is normal — a transport restarting hands over a fresh handle."""
@@ -88,8 +88,8 @@ class TestThreeChannelsCoexist:
         keep = delivery("discord")
         cd.register(keep)
         cd.register(fresh)
-        assert cd.delivery_for("slack") is fresh
-        assert cd.delivery_for("discord") is keep
+        assert cd.delivery_for("slack").inner is fresh
+        assert cd.delivery_for("discord").inner is keep
 
 
 class TestReplyResolution:
@@ -115,7 +115,7 @@ class TestReplyResolution:
 class TestOwnerReachable:
     def test_it_returns_a_connected_channel(self) -> None:
         cd.register(delivery("slack"))
-        assert type(cd.owner_reachable()).__name__ == "SlackDelivery"
+        assert type(cd.owner_reachable().inner).__name__ == "SlackDelivery"
 
     def test_it_is_None_when_nothing_is_connected(self) -> None:
         assert cd.owner_reachable() is None
@@ -126,11 +126,11 @@ class TestOwnerReachable:
         family of bugs hard to see at all."""
         cd.register(delivery("telegram"))
         cd.register(delivery("discord"))
-        first = type(cd.owner_reachable()).__name__
+        first = type(cd.owner_reachable().inner).__name__
         cd.register(None)
         cd.register(delivery("discord"))
         cd.register(delivery("telegram"))
-        assert type(cd.owner_reachable()).__name__ == first == "DiscordDelivery"
+        assert type(cd.owner_reachable().inner).__name__ == first == "DiscordDelivery"
 
 
 class TestClearing:
@@ -175,7 +175,7 @@ class TestProviderDerivation:
         """What a transport SHOULD pass — the same string it already gives the inbound door."""
         handle = delivery("discord")
         assert cd.register(handle, "discord-beta") == "discord-beta"
-        assert cd.delivery_for("discord-beta") is handle
+        assert cd.delivery_for("discord-beta").inner is handle
         assert cd.delivery_for("discord") is None
 
     def test_a_handle_with_no_usable_module_still_registers(self) -> None:
@@ -208,7 +208,7 @@ class TestDashboardStateIsAViewNotASlot:
 
         state = DashboardState.__new__(DashboardState)
         cd.register(delivery("slack"))
-        assert type(state.channel_delivery).__name__ == "SlackDelivery"
+        assert type(state.channel_delivery.inner).__name__ == "SlackDelivery"
 
     def test_assigning_None_clears(self) -> None:
         from personalclaw.dashboard.state import DashboardState
@@ -225,7 +225,7 @@ class TestDashboardStateIsAViewNotASlot:
         state = DashboardState.__new__(DashboardState)
         handle = delivery("telegram")
         cd.register(handle)
-        assert state.delivery_for("telegram") is handle
+        assert state.delivery_for("telegram").inner is handle
         assert state.delivery_for("discord") is None
 
     def test_the_orchestrator_and_the_state_resolve_ONE_registry(self) -> None:
@@ -238,8 +238,8 @@ class TestDashboardStateIsAViewNotASlot:
         state = DashboardState.__new__(DashboardState)
         handle = delivery("slack")
         orch.register_channel_delivery(handle, "slack")
-        assert state.channel_delivery is handle
-        assert orch._channel_delivery is handle
+        assert state.channel_delivery.inner is handle
+        assert orch._channel_delivery.inner is handle
 
 
 class TestSessionProvider:
