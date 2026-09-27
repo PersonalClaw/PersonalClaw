@@ -95,6 +95,10 @@ SKIP_FAILED = "execution_failed"
 #: that makes the kill switch useless.
 SKIP_INCIDENT = "incident_active"
 SKIP_DENYLIST = "denied_by_denylist"
+#: The operator ceiling says a person decides every action on this machine
+#: (``{"approval": {"value": "ask"}}``). Auto-execution is a grant (`approval_grants`) like any
+#: other: neither the trivial tier nor a taught always-approve rule loosens the ceiling.
+SKIP_CEILING = "refused_by_ceiling"
 
 #: The rule name a trivial-tier execution with no taught rule behind it records. The ledger row
 #: must ALWAYS name what authorised the action (§1.6 bound 4), and "the tier floor policy" is a
@@ -342,6 +346,26 @@ async def auto_execute(
                     proposal=p,
                     reason=SKIP_INCIDENT,
                     detail="incident mode is active — unattended auto-execution is suspended",
+                )
+                for p in proposals
+            ),
+        )
+
+    from personalclaw import approval_grants
+
+    if not approval_grants.stands(
+        approval_grants.AUTO_EXECUTE,
+        caller=session_key or "proactive:auto_execute",
+        subject=f"proposals={len(proposals)}",
+    ):
+        # Before the loop, like the kill switch: every proposal comes back pending with the
+        # reason, so the digest shows what waits for you rather than going quiet.
+        return AutoExecResult(
+            deferred=tuple(
+                DeferredProposal(
+                    proposal=p,
+                    reason=SKIP_CEILING,
+                    detail="the operator ceiling says a person decides every action",
                 )
                 for p in proposals
             ),

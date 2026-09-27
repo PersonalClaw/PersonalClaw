@@ -34,6 +34,13 @@ external ACP agent, that agent's tool use is bounded by prompt framing rather th
 by the same hard rail the native runtime enforces. Running a trusted native agent,
 or leaving approval prompts on, keeps the hard rail in force.
 
+The same holds for a spawn's capability class. An automation's agent is read-only
+by default (the `research` class), and the native runtime refuses its write tools
+even while a grant approves its calls. An unattended ACP CLI allowed to approve its
+own calls asks the host about none of them, so the class reaches it only as framing.
+An operator ceiling that narrows `tools`, or says `"approval": "ask"`, takes that
+permission away from the CLI, and every call then reaches the host's gate.
+
 ## 2. The app `network` permission is declaration-only
 
 An app manifest declares a permission scope (`api` / `events` / `mcpTools` /

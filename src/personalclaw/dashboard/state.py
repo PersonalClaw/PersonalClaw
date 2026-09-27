@@ -218,6 +218,7 @@ class _ChatSession:
         "_trust",
         "_trust_reads",
         "_agent_floor_seeded",
+        "_trust_from_floor",
         "_task_mode",
         "_investigate_ctx",
         "_suppress_autonudge_rearm",
@@ -363,6 +364,10 @@ class _ChatSession:
         # restart re-seeds from the durable AgentProfile floor (that's what a durable
         # grant means), while the ephemeral per-session override does not survive.
         self._agent_floor_seeded: bool = False
+        # Which floor raised the posture above, "auto" or "trust_reads", or "" when it was not a
+        # floor (you set it, or nothing did). A seeded posture ends when its floor does
+        # (`chat_runner._apply_approval_floor`); one you set is never withdrawn from under you.
+        self._trust_from_floor: str = ""
         # Task mode — an ORTHOGONAL axis to the approval rungs above (which gate
         # *whether* a tool auto-approves). Task mode gates *which* tools are even
         # available + *how* the agent frames the work, layered on the active agent:
@@ -1281,21 +1286,26 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     def _on_yolo_disabled(self, reason: str) -> None:
         """trust_mode callback: audit + clear untrusted per-session policies.
 
-        Fires whenever YOLO turns off (manual toggle or TTL expiry) so a lapsed
-        override no longer leaves auto-approve policies on untrusted sessions.
+        Fires whenever YOLO turns off (manual toggle, TTL expiry, or config-driven YOLO taken out
+        of the config) so a lapsed override no longer leaves auto-approve policies on untrusted
+        sessions.
         """
-        if reason == "expired":
+        if reason in ("expired", "config"):
             try:
                 from personalclaw.sel import sel
 
                 sel().log_api_access(
-                    caller="dashboard:yolo_ttl",
-                    operation="mode_change:yolo_expired",
+                    caller="dashboard:yolo_ttl" if reason == "expired" else "dashboard:config",
+                    operation=(
+                        "mode_change:yolo_expired"
+                        if reason == "expired"
+                        else "mode_change:yolo_config_removed"
+                    ),
                     outcome="disabled",
                     resources=",".join(s.key for s in self._sessions.values()),
                 )
             except Exception:
-                self._log.warning("SEL audit failed for YOLO expiry", exc_info=True)
+                self._log.warning("SEL audit failed for YOLO %s", reason, exc_info=True)
         for session in self._sessions.values():
             if not session._trust and not session._trust_reads:
                 self.sessions.set_approval_policy(f"dashboard:{session.key}", "")

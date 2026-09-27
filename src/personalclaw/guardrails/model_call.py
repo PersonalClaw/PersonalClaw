@@ -28,7 +28,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
@@ -138,8 +138,20 @@ class ModelCallGuard(ModelProvider):
         scan_mode: str = "warn",
         routed: bool = False,
         routed_fallback: bool = False,
+        budget_source: "Callable[[], Budget] | None" = None,
+        run_budget_source: "Callable[[], Budget] | None" = None,
+        scan_mode_source: "Callable[[], str] | None" = None,
     ) -> None:
         self._inner = inner
+        # Where the three settings above are read from at EACH call (`guardrails.budgets` and
+        # `guardrails.scan_mode`), when the resolution seam hands them: a guard lives as long as
+        # the runtime holding it (the background session, a loop worker), so values read when it
+        # was built kept a lowered ceiling or a tightened scan from binding until a restart
+        # (`approval_grants`, rule 1). The values above are the starting point, and what a read
+        # that fails keeps.
+        self._budget_source = budget_source
+        self._run_budget_source = run_budget_source
+        self._scan_mode_source = scan_mode_source
         self._use_case = use_case
         self._provider_name = provider_name
         self._model = model
@@ -278,6 +290,7 @@ class ModelCallGuard(ModelProvider):
         is NOT idempotent over a composed `key: value` line, so a second pass can garble the text
         and silently drop the field name. One scan, one chokepoint, and the result carried
         forward."""
+        self._refresh_scan_mode()
         result = scan_outbound(text, mode=self._scan_mode)
         record_outbound(
             result.text,
@@ -312,6 +325,35 @@ class ModelCallGuard(ModelProvider):
             raise SecretLeakBlocked(result.findings)
         return result.text
 
+    def _refresh_budgets(self) -> None:
+        """Read the day and run spend ceilings as they are now, from the sources given.
+
+        A read that fails keeps what the guard last read: never a value nobody set.
+        """
+        for attr, source in (
+            ("_budget", self._budget_source),
+            ("_run_budget", self._run_budget_source),
+        ):
+            if source is None:
+                continue
+            try:
+                setattr(self, attr, source())
+            except Exception:  # noqa: BLE001 - keep the last ceiling read, never a looser one
+                logger.warning("%s could not be re-read; keeping the last one", attr, exc_info=True)
+
+    def _refresh_scan_mode(self) -> None:
+        """Read the outbound scan mode as it is now. A local provider's stays ``warn`` whatever
+        the setting says (its content never leaves the machine); a failed read keeps the last."""
+        if self._scan_mode_source is None or self._local:
+            return
+        try:
+            mode = str(self._scan_mode_source() or "")
+        except Exception:  # noqa: BLE001 - keep the last mode read
+            logger.warning("scan mode could not be re-read; keeping the last one", exc_info=True)
+            return
+        if mode in ("warn", "redact", "block"):
+            self._scan_mode = mode
+
     # ── The guard pipeline (breaker → hard timeout → audit) ──────────────
 
     async def _guarded(
@@ -329,6 +371,7 @@ class ModelCallGuard(ModelProvider):
         COMPLETE event still records once at loop-exit.
         """
         audit_id = _new_audit_id()
+        self._refresh_budgets()
 
         # Breaker check BEFORE any prompt work: during an outage this refuses in
         # microseconds instead of stacking timeouts. HALF_OPEN admits one probe.
@@ -707,6 +750,9 @@ def wrap_model_call_guard(
     timeout_secs: float = _DEFAULT_TIMEOUT_SECS,
     routed: bool = False,
     routed_fallback: bool = False,
+    budget_source: Callable[[], Budget] | None = None,
+    run_budget_source: Callable[[], Budget] | None = None,
+    scan_mode_source: Callable[[], str] | None = None,
 ) -> ModelProvider:
     """Wrap ``provider`` in a :class:`ModelCallGuard` for a non-interactive call.
 
@@ -730,4 +776,7 @@ def wrap_model_call_guard(
         timeout_secs=timeout_secs,
         routed=routed,
         routed_fallback=routed_fallback,
+        budget_source=budget_source,
+        run_budget_source=run_budget_source,
+        scan_mode_source=scan_mode_source,
     )

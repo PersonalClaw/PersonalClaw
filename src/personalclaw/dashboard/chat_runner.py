@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import approval_grants
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.acp.types import (
@@ -109,6 +110,8 @@ from personalclaw.llm.events import (
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
     is_length_stop,
+    unasked_outcome,
+    unasked_reason,
 )
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
@@ -1858,6 +1861,104 @@ def app_conversation_posture(session: _ChatSession) -> bool | None:
     return app_conversation_auto_approves(creator)
 
 
+def _apply_approval_floor(
+    session: _ChatSession,
+    *,
+    session_key: str,
+    agent_approval_mode: str,
+    global_approval_mode: str,
+) -> None:
+    """Seed a chat's posture from the bound agent's persistent approval floor, once, and end it
+    when the floor ends.
+
+    "Always allow for this agent" (``AgentProfile.approval_mode == "auto"``) raises the chat to
+    Trust; a "trust reads" floor — the agent's own value, else the global
+    ``agent.approval_mode`` — raises it to trusting reads. This is the per-agent grant made real:
+    the gate reads ``session._trust``, so without this the grant never took effect in chat.
+
+    Seeded on a per-session ONE-SHOT latch (``_agent_floor_seeded``) — NOT ``is_new``, which
+    tracks the runtime client (recreated between turns / on idle eviction) and would re-fire every
+    turn, clobbering an explicit "Normal" the user set mid-session. Seeding once lets session scope
+    OVERRIDE the floor (most-permissive on entry, but the user's later downgrade sticks). Audited
+    so the floor's activation is traceable, not silent. Only an explicit per-agent value counts for
+    the full-trust floor; the global value participates in the trust-reads one because that is a
+    strictly weaker grant (safe-risk tools only; everything else still asks).
+
+    A floor is a grant like any other (`approval_grants`), held to its rules:
+
+    * **The operator ceiling bounds it.** Under ``approval: ask`` it seeds nothing, and the
+      refusal is audited.
+    * **It is read now.** The posture a floor seeded remembers that it did
+      (``_trust_from_floor``), so the floor being taken back — the agent no longer "always
+      allowed", the default no longer "trust reads" — takes the chat back to asking at its next
+      turn, and the latch reopens so whatever floor there is now seeds instead. A posture you set
+      yourself since (the mode switch, a card's scope) clears the mark and is never withdrawn here.
+    """
+    seeded = session._trust_from_floor
+    if seeded:
+        agent = f"{session_key} agent={session.agent or 'default'}"
+        if seeded == "auto" and agent_approval_mode != "auto":
+            session._trust = False
+            operation = "mode_change:agent_floor_auto_revoked"
+        elif (
+            seeded == "trust_reads"
+            and (agent_approval_mode or global_approval_mode) != "trust_reads"
+        ):
+            session._trust_reads = False
+            operation = "mode_change:approval_floor_trust_reads_revoked"
+        else:
+            operation = ""
+        if operation:
+            session._trust_from_floor = ""
+            session._agent_floor_seeded = False
+            try:
+                sel().log_api_access(
+                    caller="dashboard:approval",
+                    operation=operation,
+                    outcome="disabled",
+                    resources=agent,
+                )
+            except Exception:
+                logger.warning("SEL audit failed for a withdrawn approval floor", exc_info=True)
+    if session._agent_floor_seeded:
+        return
+    session._agent_floor_seeded = True
+    subject = f"agent={session.agent or 'default'}"
+    if (
+        agent_approval_mode == "auto"
+        and not session._trust
+        and approval_grants.stands(approval_grants.AGENT_FLOOR, caller=session_key, subject=subject)
+    ):
+        session._trust = True
+        session._trust_from_floor = "auto"
+        try:
+            sel().log_api_access(
+                caller="dashboard:approval",
+                operation="mode_change:agent_floor_auto",
+                outcome="enabled",
+                resources=f"{session_key} {subject}",
+            )
+        except Exception:
+            logger.warning("SEL audit failed for agent approval-floor seeding", exc_info=True)
+    elif (
+        (agent_approval_mode or global_approval_mode) == "trust_reads"
+        and not session._trust
+        and not session._trust_reads
+        and approval_grants.stands(approval_grants.TRUST_READS, caller=session_key, subject=subject)
+    ):
+        session._trust_reads = True
+        session._trust_from_floor = "trust_reads"
+        try:
+            sel().log_api_access(
+                caller="dashboard:approval",
+                operation="mode_change:approval_floor_trust_reads",
+                outcome="enabled",
+                resources=f"{session_key} {subject}",
+            )
+        except Exception:
+            logger.warning("SEL audit failed for trust_reads floor seeding", exc_info=True)
+
+
 def auto_approval_reason(app_auto: bool | None, yolo_active: bool) -> str:
     """Whose switch approved a call nobody was asked about — the ``reason`` its audit row names.
 
@@ -1868,8 +1969,44 @@ def auto_approval_reason(app_auto: bool | None, yolo_active: bool) -> str:
     waived asks (``TOOL_META_APPROVAL_WAIVED``) are recorded with it at their result.
     """
     if app_auto:
-        return "app_grant"
-    return "yolo" if yolo_active else "trust"
+        return approval_grants.APP
+    return approval_grants.YOLO if yolo_active else approval_grants.TRUST
+
+
+def _grant_stands(
+    grant: str, *, session_key: str, event: Any, level: str = approval_grants.LEVEL_AUTO
+) -> bool:
+    """Whether *grant* may approve this call without asking (`approval_grants.stands`).
+
+    The operator ceiling bounds every grant a chat has — its Trust, YOLO, Trust reads, an agent's
+    "always allow", an app's grant, a hook pattern — and a refusal is audited, naming the call.
+    A refused grant falls through to what comes next: the call asks, or on an unattended turn
+    is declined because nobody can answer it.
+    """
+    title, _ = redact_exfiltration_urls(event.title or "")
+    title, _ = redact_credentials(title)
+    return approval_grants.stands(
+        grant, caller=session_key, subject=f"tool={title[:80]}", level=level
+    )
+
+
+def _settle_granted(
+    state: DashboardState, session: _ChatSession, *, tool: str, tool_input: Any, grant: str
+) -> None:
+    """A call a grant ran settles the note an earlier unanswered ask of it left (`settle_granted`).
+
+    The call is described the way this runner's ask describes it to the registry
+    (``hold_session_approval``: the title, and the input redacted as the card shows it), so the
+    two compare equal.
+    """
+    text = ""
+    if tool_input:
+        text, _ = redact_exfiltration_urls(tool_input_to_str(tool_input))
+        text, _ = redact_credentials(text)
+    try:
+        state.settle_granted(tool=tool, tool_input=text, session=session.key, by=grant)
+    except Exception:  # noqa: BLE001 - settling a note never decides a call
+        logger.debug("could not settle the note for %s", tool, exc_info=True)
 
 
 async def run_chat(
@@ -2032,6 +2169,9 @@ async def run_chat(
     # tool_call_id -> the call's effective risk, logged with its `invoked` row and again with the
     # `auto_approved` row a waived ask gets at its result (`TOOL_META_APPROVAL_WAIVED`).
     _call_risk: dict[str, str] = {}
+    # tool_call_id -> (title, input) as the call was made: a call the runtime ran without asking
+    # settles, at its result, the note an earlier unanswered ask of it left (`_settle_granted`).
+    _call_inputs: dict[str, tuple[str, Any]] = {}
     # Host-authority bookkeeping for ACP turns (§2.2 / G27). An ACP CLI decides for
     # ITSELF which tools ask the client for permission; anything it never asks about
     # runs before the host has a decision point, so the deny-list, the task-mode gate
@@ -2531,50 +2671,15 @@ async def run_chat(
             session._agent_floor_seeded = True
             session._trust = _app_auto
             session._trust_reads = False
-        # Seed this session's trust from the bound agent's persistent approval floor
-        # ("Always allow for this agent" = AgentProfile.approval_mode "auto"). This is
-        # the per-agent grant made real: the gate reads session._trust, so without this
-        # the grant never took effect in chat. Gated on a per-session ONE-SHOT latch —
-        # NOT `is_new`, which tracks the runtime client (recreated between turns / on
-        # idle eviction) and would re-fire every turn, clobbering an explicit "Normal"
-        # the user set mid-session. Seeding once lets session scope OVERRIDE the floor
-        # (most-permissive on entry, but the user's later downgrade sticks). Audited so
-        # the floor's activation is traceable, not silent.
-        elif not session._agent_floor_seeded:
-            session._agent_floor_seeded = True
-            if agent_approval_mode == "auto" and not session._trust:
-                session._trust = True
-                try:
-                    sel().log_api_access(
-                        caller="dashboard:approval",
-                        operation="mode_change:agent_floor_auto",
-                        outcome="enabled",
-                        resources=f"{session_key} agent={session.agent or 'default'}",
-                    )
-                except Exception:
-                    logger.warning(
-                        "SEL audit failed for agent approval-floor seeding", exc_info=True
-                    )
-            # trust_reads floor: per-agent explicit value wins, else the global
-            # agent.approval_mode default. Seeds only the READ-ONLY auto-approve
-            # latch — unlike the full-trust "auto" floor above, the global value
-            # participates here because trust_reads is a strictly weaker grant
-            # (safe-risk tools only; everything else still asks).
-            elif (
-                (agent_approval_mode or global_approval_mode) == "trust_reads"
-                and not session._trust
-                and not session._trust_reads
-            ):
-                session._trust_reads = True
-                try:
-                    sel().log_api_access(
-                        caller="dashboard:approval",
-                        operation="mode_change:approval_floor_trust_reads",
-                        outcome="enabled",
-                        resources=f"{session_key} agent={session.agent or 'default'}",
-                    )
-                except Exception:
-                    logger.warning("SEL audit failed for trust_reads floor seeding", exc_info=True)
+            session._trust_from_floor = ""
+        # Otherwise the bound agent's persistent approval floor seeds it (`_apply_approval_floor`).
+        else:
+            _apply_approval_floor(
+                session,
+                session_key=session_key,
+                agent_approval_mode=agent_approval_mode,
+                global_approval_mode=global_approval_mode,
+            )
 
         # Propagate trust/YOLO to session so subagents inherit auto-approve. YOLO is yours, so it
         # does not reach a conversation an app started.
@@ -3308,21 +3413,12 @@ async def run_chat(
                     event.tool_input,
                 )
                 if event.tool_call_id:
+                    # Carried to the call's ONE audit row, written where it is decided — never
+                    # here. This card arrives before any gate runs (the native loop yields it and
+                    # only then checks the deny-list, the task mode and the approval), so a row
+                    # written here claimed a decision nobody had made
+                    # (`llm.events.unasked_outcome`).
                     _call_risk[event.tool_call_id] = _risk
-                sel().log_tool_invocation(
-                    session_key=session_key,
-                    agent=_agent_label(session),
-                    source="dashboard",
-                    tool_name=event.title,
-                    tool_kind=event.tool_kind,
-                    outcome="invoked",
-                    # Effective risk on EVERY executed tool — this TOOL_CALL event
-                    # fires for all tools that actually run, including ones the native
-                    # runtime auto-approved under YOLO/policy=auto (which never reach
-                    # the chat_runner approval gate). The one place risk is guaranteed
-                    # logged for a forensic "what destructive tool ran" query.
-                    metadata={"risk": _risk},
-                )
                 # Fire PreToolUse hooks for auto-approved tools.
                 # NOTE: For EVENT_TOOL_CALL, hooks are informational only - the tool
                 # is already running (auto-approved by ACP agent). Hook results cannot
@@ -3332,6 +3428,9 @@ async def run_chat(
                     _raw = _raw[9:]
                 if event.tool_call_id:
                     _pending_tools[event.tool_call_id] = _raw
+                    # How the call was made, for the note its result may settle (a call the
+                    # runtime ran without asking, `TOOL_META_APPROVAL_WAIVED`).
+                    _call_inputs[event.tool_call_id] = (event.title or "", event.tool_input)
                 # Provisionally an UNGATED call (§2.2 / G27): an ACP tool_call frame
                 # arrives before any session/request_permission for the same id, so we
                 # register it here and clear it the moment the host gate sees that id.
@@ -3516,25 +3615,43 @@ async def run_chat(
                     _ad_title, _ = redact_exfiltration_urls(_tool_name or event.title or "")
                     _ad_title, _ = redact_credentials(_ad_title)
                     auto_denials.note_unattended(state, session_key=session.key, tool=_ad_title)
-                # The native runtime answered this call's ask from the session's policy, in its own
-                # loop, so no approval reached the gate above: record it the way that gate records
-                # its own auto-approvals, naming whose switch it was.
-                if _tmeta.get(TOOL_META_APPROVAL_WAIVED):
+                # A native call nobody was asked about is audited HERE, once, from what the runtime
+                # stamped on its result: refused by one of its own gates, declined because the run
+                # is unattended, answered by the session's approval policy (naming whose switch set
+                # it), or a tool that asks nobody. An asked call was audited where it was answered,
+                # and an ACP call the CLI never asked about is the ungated check's, below.
+                _called_as = _call_inputs.pop(event.tool_call_id, None)
+                if not _acp_cli and event.tool_call_id not in _gated_tool_calls:
+                    _waived = bool(_tmeta.get(TOOL_META_APPROVAL_WAIVED))
+                    _decided_by = (
+                        auto_approval_reason(
+                            _app_auto, _app_auto is None and state.is_yolo_active()
+                        )
+                        if _waived
+                        else unasked_reason(_tmeta)
+                    )
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
                         tool_name=_tool_name or event.title,
                         tool_kind=event.tool_kind,
-                        outcome="auto_approved",
+                        outcome=unasked_outcome(_tmeta),
                         request_id=event.tool_call_id,
                         metadata={
-                            "reason": auto_approval_reason(
-                                _app_auto, _app_auto is None and state.is_yolo_active()
-                            ),
+                            "reason": _decided_by,
+                            "decided_by": _decided_by,
                             "risk": _risk_of_call,
                         },
                     )
+                    if _waived and _called_as is not None:
+                        _settle_granted(
+                            state,
+                            session,
+                            tool=_called_as[0],
+                            tool_input=_called_as[1],
+                            grant=_decided_by,
+                        )
                 # Host-authority residue check (§2.2 / G27). A result for a call the
                 # host was never asked about means the CLI self-approved it. We cannot
                 # pre-block what the protocol never showed us — so we make the ABSENCE
@@ -3693,7 +3810,7 @@ async def run_chat(
                         tool_kind=event.tool_kind,
                         outcome="denied",
                         request_id=event.request_id,
-                        metadata={"reason": f"task_mode:{_task_mode}"},
+                        metadata={"reason": f"task_mode:{_task_mode}", "decided_by": "task_mode"},
                     )
                     continue
                 _pre_tool_hooks_fired = False
@@ -3728,7 +3845,7 @@ async def run_chat(
                                 outcome="denied",
                                 request_id=event.request_id,
                                 error="denylist_command",
-                                metadata={"reason": _cmd_reason},
+                                metadata={"reason": _cmd_reason, "decided_by": "deny_list"},
                             )
                             continue
                 if state.context_builder:
@@ -3752,9 +3869,17 @@ async def run_chat(
                             outcome="denied",
                             request_id=event.request_id,
                             error="hook_deny",
+                            metadata={"decided_by": "hook_deny"},
                         )
                         continue
-                    if tool_result.action == TOOL_AUTO_APPROVE:
+                    # An operator's auto-approve pattern is a grant at the `hook_based` level:
+                    # a `hook_based` ceiling lets it stand, an `ask` one sends the call on to ask.
+                    if tool_result.action == TOOL_AUTO_APPROVE and _grant_stands(
+                        approval_grants.HOOK_PATTERN,
+                        session_key=session_key,
+                        event=event,
+                        level=approval_grants.LEVEL_HOOK,
+                    ):
                         try:
                             validated_tool = _validate_tool_name(event.title, event.tool_kind)
                         except ValueError as e:
@@ -3769,6 +3894,7 @@ async def run_chat(
                                 outcome="denied",
                                 request_id=event.request_id,
                                 error=f"validation_failed: {e}",
+                                metadata={"decided_by": "validation"},
                             )
                         else:
                             await client.approve_tool(event.request_id)
@@ -3789,6 +3915,17 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="auto_approved",
                                 request_id=event.request_id,
+                                metadata={
+                                    "reason": approval_grants.HOOK_PATTERN,
+                                    "decided_by": approval_grants.HOOK_PATTERN,
+                                },
+                            )
+                            _settle_granted(
+                                state,
+                                session,
+                                tool=event.title,
+                                tool_input=event.tool_input,
+                                grant=approval_grants.HOOK_PATTERN,
                             )
                         continue
                     try:
@@ -3805,6 +3942,7 @@ async def run_chat(
                             outcome="denied",
                             request_id=event.request_id,
                             error=f"validation_failed: {e}",
+                            metadata={"decided_by": "validation"},
                         )
                         continue
                     try:
@@ -3829,6 +3967,7 @@ async def run_chat(
                             outcome="hook_error",
                             request_id=event.request_id,
                             error=str(hook_exc),
+                            metadata={"decided_by": "hook"},
                         )
                         continue
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
@@ -3846,6 +3985,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_blocked",
                             request_id=event.request_id,
+                            metadata={"decided_by": "hook"},
                         )
                         continue
                     _pre_tool_hooks_fired = True
@@ -3871,6 +4011,9 @@ async def run_chat(
                     and not session._trust
                     and not yolo_active
                     and effective_risk == "safe"
+                    and _grant_stands(
+                        approval_grants.TRUST_READS, session_key=session_key, event=event
+                    )
                 ):
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
@@ -3907,11 +4050,27 @@ async def run_chat(
                         tool_kind=event.tool_kind,
                         outcome="auto_approved",
                         request_id=event.request_id,
-                        metadata={"reason": "trust_reads", "risk": effective_risk},
+                        metadata={
+                            "reason": approval_grants.TRUST_READS,
+                            "risk": effective_risk,
+                            "decided_by": approval_grants.TRUST_READS,
+                        },
+                    )
+                    _settle_granted(
+                        state,
+                        session,
+                        tool=event.title,
+                        tool_input=event.tool_input,
+                        grant=approval_grants.TRUST_READS,
                     )
                     continue
-                # Trust mode (per-session) or YOLO mode (global) — auto-approve
-                if session._trust or yolo_active:
+                # Trust mode (per-session) or YOLO mode (global) — auto-approve, if the operator
+                # ceiling lets that grant stand.
+                if (session._trust or yolo_active) and _grant_stands(
+                    auto_approval_reason(_app_auto, yolo_active),
+                    session_key=session_key,
+                    event=event,
+                ):
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
@@ -3926,6 +4085,7 @@ async def run_chat(
                             outcome="denied",
                             request_id=event.request_id,
                             error=f"validation_failed: {e}",
+                            metadata={"decided_by": "validation"},
                         )
                         continue
                     if not _pre_tool_hooks_fired:
@@ -3953,6 +4113,7 @@ async def run_chat(
                                 outcome="hook_error",
                                 request_id=event.request_id,
                                 error=str(hook_exc),
+                                metadata={"decided_by": "hook"},
                             )
                             continue
                         if any(r.startswith("BLOCKED:") for r in pre_hook_results):
@@ -3966,6 +4127,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="hook_blocked",
                                 request_id=event.request_id,
+                                metadata={"decided_by": "hook"},
                             )
                             continue
                     await client.approve_tool(event.request_id)
@@ -3985,7 +4147,15 @@ async def run_chat(
                         metadata={
                             "reason": auto_approval_reason(_app_auto, yolo_active),
                             "risk": effective_risk,
+                            "decided_by": auto_approval_reason(_app_auto, yolo_active),
                         },
+                    )
+                    _settle_granted(
+                        state,
+                        session,
+                        tool=event.title,
+                        tool_input=event.tool_input,
+                        grant=auto_approval_reason(_app_auto, yolo_active),
                     )
                     continue
                 # Auto-reject remaining tools after one rejection in a batch — refused the way the
@@ -4029,7 +4199,14 @@ async def run_chat(
                             else ("cancelled" if refused_as == "cancelled" else "rejected")
                         ),
                         request_id=event.request_id,
-                        metadata={"reason": "batch_rejection"},
+                        metadata={
+                            "reason": "batch_rejection",
+                            "decided_by": (
+                                approval_grants.NOBODY
+                                if refused_as in ("expired", "cancelled")
+                                else approval_grants.YOU
+                            ),
+                        },
                     )
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
                     continue
@@ -4074,6 +4251,7 @@ async def run_chat(
                         metadata={
                             "reason": "unattended_fail_fast",
                             "risk": effective_risk,
+                            "decided_by": "unattended_no_one_to_ask",
                         },
                     )
                     # The transcript line and the SEL row are nowhere a person looks in the
@@ -4215,6 +4393,7 @@ async def run_chat(
                     )
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True
+                    session._trust_from_floor = ""  # yours now, not a floor's to withdraw
                     outcome = "approved"
                 if outcome == "approved":
                     try:
@@ -4231,7 +4410,7 @@ async def run_chat(
                             outcome="denied",
                             request_id=event.request_id,
                             error=f"validation_failed: {e}",
-                            metadata={"reason": "interactive"},
+                            metadata={"reason": "interactive", "decided_by": "validation"},
                         )
                         break
                     try:
@@ -4256,7 +4435,7 @@ async def run_chat(
                             outcome="hook_error",
                             request_id=event.request_id,
                             error=str(hook_exc),
-                            metadata={"reason": "interactive"},
+                            metadata={"reason": "interactive", "decided_by": "hook"},
                         )
                         break
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
@@ -4274,7 +4453,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_blocked",
                             request_id=event.request_id,
-                            metadata={"reason": "interactive"},
+                            metadata={"reason": "interactive", "decided_by": "hook"},
                         )
                     else:
                         await client.approve_tool(event.request_id)
@@ -4305,7 +4484,11 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="approved",
                             request_id=event.request_id,
-                            metadata={"reason": "interactive", "risk": effective_risk},
+                            metadata={
+                                "reason": "interactive",
+                                "risk": effective_risk,
+                                "decided_by": approval_grants.YOU,
+                            },
                         )
                 else:
                     await client.reject_tool(event.request_id)
@@ -4337,7 +4520,15 @@ async def run_chat(
                             else ("cancelled" if ended_as == "cancelled" else "rejected")
                         ),
                         request_id=event.request_id,
-                        metadata={"reason": "interactive", "risk": effective_risk},
+                        metadata={
+                            "reason": "interactive",
+                            "risk": effective_risk,
+                            "decided_by": (
+                                approval_grants.NOBODY
+                                if ended_as in ("expired", "cancelled")
+                                else approval_grants.YOU
+                            ),
+                        },
                     )
                     # Refuse the rest of the batch the same way, and continue the loop instead of
                     # breaking, so the other batched requests are marked too.

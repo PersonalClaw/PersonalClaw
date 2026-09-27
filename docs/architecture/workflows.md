@@ -441,7 +441,10 @@ dispatch it starts (`ActionContext.answer`), because what the person did was lif
 what stopped it. That answer lives in memory: a restart between the answer and the
 dispatch loses it, and the step then parks on the same check and asks again. The
 gate policy's auto-approve and a remembered "always allow" apply to gates only — no
-policy can sign in for a user.
+policy can sign in for a user. Both are grants (`approval_grants`): the operator
+ceiling bounds them, so under `{"approval": {"value": "ask"}}` neither stands and the
+gate asks, and a gate the policy did approve is written to the audit log
+(`workflow_gate.approved_without_asking`) as well as the run's journal.
 
 A trigger's action that stops the same way asks through the trigger instead
 ([tasks-triggers.md](tasks-triggers.md#an-action-that-stops-for-you-asks-you)):
@@ -461,10 +464,16 @@ resolve and before the frontier, and `end_at_gate` ends the run there:
   `declined`, and its error names the gate and who said no ("“approve” was declined
   by Keyur, so nothing after it ran"): the owner's name for a dashboard answer, the
   channel for a remote one, the trigger for an automation.
-* **No answer** — the gate's deadline passed (45 s by default in the background,
-  30 min while someone is on the other end, or the author's `timeout_secs`) — keeps
-  the gate `failed`, because nobody chose it and an unattended run must surface it
-  (WF2-R7). The run ends `failed`, saying how long it waited.
+* **No answer** — the gate's deadline passed — keeps the gate `failed`, because
+  nobody chose it and an unattended run must surface it (WF2-R7). The run ends
+  `failed`, saying how long it waited. A gate waits as long as every other approval:
+  the owner's approval window, `agent.approval_timeout_minutes`, read when it parks
+  (`human_input.gate_timeout_secs`), in a background run or a blocking one. A run
+  started unattended (the explicit `attended: false` grant,
+  `supervisor_policy.unattended_grant`) has nobody to answer, so its gate gives up
+  after `UNATTENDED_GATE_TIMEOUT_SECS` (45 s) instead of parking on a question
+  nobody will see. The author's `timeout_secs` wins over both, and `0` waits
+  indefinitely.
 * **A check that did not pass** — a `judge`, `expression`, `verify_command`,
   `verify_script` or `ladder` gate that fails or escalates — ends what follows it the
   same way. The run ends `failed` with the check's reason ("“quality-check” failed:

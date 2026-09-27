@@ -1,0 +1,242 @@
+"""Who may approve a call without asking anyone, decided when the call is made.
+
+A tool call or a spawn that needs approval is settled one of two ways. A person ANSWERS it (Allow,
+Deny, or nobody in time), or a GRANT approves it without asking: the chat's Trust, YOLO, "trust
+reads", an agent's "Always allow", a spawn's own ``approval_mode: "auto"``, the global
+Auto-approve setting, the operator's hook settings and patterns, the gateway's ``--approval`` flag.
+This module owns the three rules every grant is held to, because each was broken somewhere:
+
+1. **It is read when the call is made.** A grant is the owner's setting as it is NOW. The subagent
+   manager copied ``agent.approval_mode`` when the gateway started, and the hook settings were
+   built into one object at startup that nothing reloaded, so a change in Settings reached the next
+   call only after a restart — and a revoked grant kept approving, the direction a security
+   setting must never fail in. The readers here load the setting per call.
+2. **The operator ceiling bounds it.** ``governance/ceiling.json``'s ``approval`` scope is the
+   operator's hard bound: ``ask`` says no run on this machine approves anything without a person,
+   whatever a toggle, an agent profile, a spawn argument, a workflow node or a trigger's action
+   says (``guardrails.policy.ceiling_permits_approval``). Only the subagent's tool-approval grant
+   consulted it; the spawn gate, the chat, the gateway's relay and the runtime's own policy did
+   not. :func:`stands` is the one question each of them asks now, and a refusal is audited, so a
+   downgraded grant is never indistinguishable from one never asked for.
+3. **What decided is written down.** A grant's name is a closed vocabulary (the constants below),
+   so the audit row of every decision can say who decided it — a person, a named grant, or nobody —
+   and an Inbox note a grant settled can say which one did.
+
+The other way a call is settled, a person's answer, waits one window wherever it is asked
+(:func:`approval_window_secs`).
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from personalclaw.hooks import HooksConfig
+
+logger = logging.getLogger(__name__)
+
+# ── Who decided (the `decided_by` of an audit row, and `refs.retry_by` on an Inbox note) ──────
+
+#: A person answered: the owner, from a chat's card, the Inbox, Home, Mission Control, the phone
+#: or a channel.
+YOU = "you"
+#: Nobody did: the approval's window closed, or the work that asked was stopped first.
+NOBODY = "nobody"
+
+#: The chat's own Trust (its toggle, or "This chat" on an approval card).
+TRUST = "trust"
+#: YOLO: the chat pill, the Settings switch, a channel's ``!yolo``.
+YOLO = "yolo"
+#: "Trust reads": read-only tools only.
+TRUST_READS = "trust_reads"
+#: An agent's persisted "Always allow for this agent" (``AgentProfile.approval_mode = "auto"``).
+AGENT_FLOOR = "agent_floor"
+#: The chat that started a subagent is trusted.
+PARENT_TRUST = "parent_trust"
+#: The spawn's own ``approval_mode: "auto"``: an automation's action, an unattended run's stage.
+APPROVAL_MODE = "approval_mode"
+#: The global Settings → Agent defaults → Approval mode "Auto", for an agent no chat started.
+SETTING = "setting"
+#: ``hooks.auto_approve_subagent_spawn`` / ``hooks.auto_approve_subagent_tools``.
+HOOK_SETTING = "hook_setting"
+#: A pattern in ``hooks.auto_approve_tools``.
+HOOK_PATTERN = "hook_pattern"
+#: ``hooks.auto_approve_sources`` lists the asking source.
+SOURCE = "source"
+#: The gateway was started with ``--approval yolo`` or ``--approval reads``.
+CLI = "cli"
+#: An app's own conversation, under the grant it was installed with.
+APP = "app_grant"
+#: A workflow step the owner chose "always allow" for earlier in the run.
+REMEMBERED = "remembered"
+#: A workflow run's own gate policy for an origin nobody watches (a schedule, an event).
+GATE_POLICY = "gate_policy"
+#: An ACP agent's own permission mode that makes its CLI approve its own calls
+#: (``bypassPermissions``, ``acceptEdits``…), forwarded for an unattended session
+#: (``acp.permission_authority.sanitize_mode``).
+ACP_MODE = "acp_mode"
+#: A session's approval policy that tells its runtime not to ask at all (``auto``/``yolo``/
+#: ``acceptEdits``), whichever of the grants above set it (``session._bounded_policy``).
+SESSION_POLICY = "session_policy"
+#: The triage digest running a trivial-tier proposal, or one a taught always-approve rule
+#: matched, without asking (``proactive.autoexec``).
+AUTO_EXECUTE = "auto_execute"
+#: A subagent's result announced in the chat that started it: that turn's calls approve on their
+#: own (``gateway.injection_approval_policy``).
+INJECTION = "result_injection"
+#: The gateway has nowhere to ask (no dashboard, no channel) and approves.
+NO_SURFACE = "no_approval_surface"
+
+#: The approval scale's levels a grant is checked at (`guardrails.registries.SCALE_APPROVAL`).
+#: A blanket grant is ``auto``; a pattern the OPERATOR wrote into the hook settings is
+#: ``hook_based`` ("a hook decides"), which a ``hook_based`` ceiling still permits and an ``ask``
+#: one does not.
+LEVEL_AUTO = "auto"
+LEVEL_HOOK = "hook_based"
+
+
+@dataclass(frozen=True)
+class ToolDecision:
+    """How an approval was settled: whether the call runs, what the audit row says, and who decided.
+
+    ``outcome`` is one of ``approved``/``auto_approved``/``rejected``/``expired``/``cancelled``;
+    ``decided_by`` is :data:`YOU` (a person answered), :data:`NOBODY` (the window closed, or the
+    work stopped first) or a grant's name. Truthy exactly when the call may run, so a relay
+    returning one is also the ``bool`` the approval callbacks have always returned.
+    """
+
+    approved: bool
+    outcome: str
+    decided_by: str
+
+    def __bool__(self) -> bool:
+        return self.approved
+
+
+def decision_of(answer: object) -> ToolDecision:
+    """An approval callback's answer as a :class:`ToolDecision`.
+
+    A relay that knows how its approval ended returns one; a plain ``bool`` (a caller's own
+    callback) is a person's answer and is recorded as that.
+    """
+    if isinstance(answer, ToolDecision):
+        return answer
+    ok = bool(answer)
+    return ToolDecision(ok, "approved" if ok else "rejected", YOU)
+
+
+def stands(
+    grant: str,
+    *,
+    caller: str,
+    subject: str = "",
+    level: str = LEVEL_AUTO,
+    audit: bool = True,
+) -> bool:
+    """Whether *grant* may approve without asking, under the operator ceiling in force.
+
+    ``caller`` and ``subject`` go on the audit row of a refusal: who was asking (a session key, a
+    subagent, a source) and what (the tool, the spawn). ``audit=False`` is for a caller that asks
+    the same question more than once for one decision and audits it itself.
+
+    Never raises: the ceiling is loaded (and validated) at gateway boot, so a read here is of the
+    cached, valid bound. A failure to read it anyway refuses the grant — the approval is then asked
+    for, which is the direction that cannot quietly approve.
+    """
+    try:
+        from personalclaw.guardrails.policy import ceiling_permits_approval
+
+        permitted = ceiling_permits_approval(level)
+    except Exception:  # noqa: BLE001 - see the docstring: an unreadable bound refuses
+        logger.warning("could not read the operator ceiling; refusing the %s grant", grant)
+        permitted = False
+    if permitted:
+        return True
+    if audit:
+        refused(grant, caller=caller, subject=subject)
+    return False
+
+
+def refusal_sentence() -> str:
+    """What a person is told when they ask for a standing grant the ceiling refuses.
+
+    Says where the bound lives and what changes it: the file, then a restart, since the ceiling is
+    read once at boot and a running gateway never widens (`guardrails.ceiling`).
+    """
+    try:
+        from personalclaw.guardrails.ceiling import active_ceiling, ceiling_path
+
+        ceiling = active_ceiling()
+        control = ceiling.control("approval")
+        where = ceiling.source or str(ceiling_path())
+        bound = f'"approval": "{getattr(control, "value", "ask")}" in {where}'
+    except Exception:  # noqa: BLE001 - the sentence must not fail the refusal it explains
+        bound = "governance/ceiling.json"
+    return (
+        f"The operator ceiling ({bound}) says tool calls on this machine ask for a person, so "
+        "this can't approve them on its own. Answer each call as it asks, or change that file "
+        "and restart PersonalClaw."
+    )
+
+
+def refused(grant: str, *, caller: str, subject: str = "") -> None:
+    """Audit a grant the operator ceiling refused (best-effort, like every audit write here)."""
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller=caller or "approval",
+            operation="approval.grant_refused",
+            outcome="blocked",
+            source="guardrails",
+            resources=f"grant={grant},refused_by=governance_ceiling"
+            + (f",{subject[:120]}" if subject else ""),
+        )
+    except Exception:  # noqa: BLE001 - an audit write never decides an approval
+        logger.warning("SEL audit failed for a refused %s grant", grant, exc_info=True)
+
+
+# ── The settings, as they are now ───────────────────────────────────────────────────────────
+
+
+def approval_mode_now() -> str:
+    """``agent.approval_mode`` as it reads now. An unreadable config reads as asking (``""``)."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return str(AppConfig.load().agent.approval_mode or "")
+    except Exception:  # noqa: BLE001 - fail toward asking
+        logger.debug("could not read agent.approval_mode; asking", exc_info=True)
+        return ""
+
+
+def approval_window_secs() -> float:
+    """How long an ASKED approval waits for a person: ``agent.approval_timeout_minutes``, now.
+
+    ONE window for every approval that waits — a chat's, a subagent's, a workflow gate's, an MCP
+    server's question (which its own call ceiling cuts shorter). Read per approval, so a change in
+    Settings applies to the next one asked. An unreadable config falls back to the default window
+    rather than failing the approval.
+    """
+    from personalclaw.config.loader import APPROVAL_TIMEOUT_MINUTES_DEFAULT, AppConfig
+
+    try:
+        minutes = int(AppConfig.load().agent.approval_timeout_minutes)
+    except Exception:  # noqa: BLE001 - see the docstring
+        minutes = APPROVAL_TIMEOUT_MINUTES_DEFAULT
+    return float(max(1, minutes) * 60)
+
+
+def hooks_now() -> "HooksConfig":
+    """The hook settings (``config.hooks``) as they read now.
+
+    ``AppConfig.load`` already resolves an unreadable file to its most restrictive values, so what
+    can still fail here is a hook value that does not parse, and that raises: every approval that
+    reads it then asks, rather than falling back to settings nobody wrote.
+    """
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.hooks import HooksConfig
+
+    return HooksConfig.from_dict(AppConfig.load().hooks or {})

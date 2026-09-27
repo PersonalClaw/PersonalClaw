@@ -2502,6 +2502,7 @@
      {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "model"},
      {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "cwd"},
      {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"},
+     {"annotation": "Callable[[], str] | None", "default": "None", "kind": "keyword_only", "name": "approval_source"},
      {"annotation": "Any", "kind": "var_keyword", "name": "extra_factory_kwargs"}
     ],
     "returns": "tuple[ModelProvider, bool, bool]"
@@ -3148,7 +3149,8 @@
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "run_lane_cap"},
     {"annotation": "float", "default": "0.05", "kind": "positional_or_keyword", "name": "delivery_coalesce_secs"},
     {"annotation": "float", "default": "1200.0", "kind": "positional_or_keyword", "name": "on_done_timeout"},
-    {"annotation": "float", "default": "30.0", "kind": "positional_or_keyword", "name": "reset_timeout"}
+    {"annotation": "float", "default": "30.0", "kind": "positional_or_keyword", "name": "reset_timeout"},
+    {"annotation": "Callable[[], SubagentLimits] | None", "default": "None", "kind": "keyword_only", "name": "limits"}
    ]
   },
   "kind": "class",

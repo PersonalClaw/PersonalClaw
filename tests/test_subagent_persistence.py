@@ -518,7 +518,7 @@ class TestTombstoneOnAbnormalExit:
         sessions = MagicMock()
         sessions.release = MagicMock()
         sessions.reset = AsyncMock()
-        manager = SubagentManager(sessions=sessions, ctx_builder=MagicMock())
+        manager = SubagentManager(sessions=sessions, ctx_builder=MagicMock(), default_timeout=0.01)
 
         info = SubagentInfo(id="reaped_timeout", task="t", parent_session_key="dashboard:default")
         info.reaped = True
@@ -533,7 +533,6 @@ class TestTombstoneOnAbnormalExit:
 
         with (
             patch.object(manager, "_run_inner", _hang),
-            patch.object(manager, "_default_timeout", 0.01),
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
             patch.object(manager, "_fire_event", new_callable=AsyncMock),

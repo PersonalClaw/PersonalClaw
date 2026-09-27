@@ -252,13 +252,19 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
                 if event.kind == EVENT_TEXT_CHUNK:
                     text += event.text
                 elif event.kind == EVENT_PERMISSION_REQUEST:
+                    # Suggestions are text; a call this turn asks for is refused, and the row says
+                    # what refused it, as every decision row does.
+                    await client.reject_tool(event.request_id)
                     sel().log_tool_invocation(
                         session_key="_bg",
                         tool_name=getattr(event, "title", "unknown"),
                         outcome="denied",
                         source="suggestions",
+                        metadata={
+                            "reason": "suggestions_use_no_tools",
+                            "decided_by": "suggestions_use_no_tools",
+                        },
                     )
-                    await client.reject_tool(event.request_id)
                 elif event.kind == EVENT_COMPLETE:
                     break
             return text

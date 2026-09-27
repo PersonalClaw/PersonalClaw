@@ -47,6 +47,17 @@ class _TokenBucket:
         self._last: dict[str, float] = {}
         self._lock = threading.Lock()
 
+    def tune(self, rps: float, burst: int) -> None:
+        """Take the caps as they are now. A lowered burst clamps the tokens already banked, so
+        a tightened limit binds the next request rather than after the bank drains."""
+        rate, cap = max(0.01, float(rps)), max(1, int(burst))
+        with self._lock:
+            self._rps = rate
+            if cap != self._burst:
+                self._burst = cap
+                for key, tokens in self._tokens.items():
+                    self._tokens[key] = min(tokens, float(cap))
+
     def take(self, key: str, *, now: float | None = None) -> bool:
         stamp = time.monotonic() if now is None else now
         with self._lock:
@@ -80,7 +91,11 @@ def _bucket(surface: str, caps: Caps) -> _TokenBucket:
         if existing is None:
             existing = _TokenBucket(caps.rps, caps.burst)
             _buckets[surface] = existing
-        return existing
+    # The caps as they read at THIS request: a bucket made on a client's first request used to
+    # keep that request's rate for the life of the process, so a lowered limit never bound a
+    # client already seen (`approval_grants`, rule 1).
+    existing.tune(caps.rps, caps.burst)
+    return existing
 
 
 def check_rate(surface: str, client_key: str, caps: Caps = DEFAULT_CAPS) -> bool:
@@ -185,12 +200,7 @@ def check_rate_for_client(
     """
     effective = caps or DEFAULT_CAPS
     key = rate_key(surface, client_id, peer_fallback)
-    with _bucket_lock:
-        bucket = _buckets.get(key)
-        if bucket is None:
-            bucket = _TokenBucket(effective.rps, effective.burst)
-            _buckets[key] = bucket
-    return bucket.take(key)
+    return _bucket(key, effective).take(key)
 
 
 def retry_after_for_client(

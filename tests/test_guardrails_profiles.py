@@ -80,15 +80,17 @@ def test_approval_policy_for_session_maps_from_profile():
     assert approval_policy_for_session("cron:x") is ToolApprovalPolicy.HOOK_BASED
     assert approval_policy_for_session("subagent:x") is ToolApprovalPolicy.HOOK_BASED
 
-    # An INTERACTIVE key: INTERACTIVE.approval == "ask", which this helper maps to
-    # HOOK_BASED (an unattended reach with no human to ask keeps the security gate).
+    # An INTERACTIVE key: INTERACTIVE.approval == "ask" — a person answers each call. This helper
+    # answers for a run with NO interactive callback, so nobody can: nothing runs. It mapped `ask`
+    # to HOOK_BASED, whose default approves every call no hook names, which is how an operator
+    # ceiling of `ask` had no effect on a heartbeat (`guardrails.policy.no_one_to_ask`).
     # Assert the MAP against the profile's declared approval, not a bare constant.
     interactive_approval = profile_for_session("chat:main").approval
     assert interactive_approval == "ask"
     expected = (
         ToolApprovalPolicy.AUTO_APPROVE
         if interactive_approval == "auto"
-        else ToolApprovalPolicy.HOOK_BASED
+        else ToolApprovalPolicy.REJECT_ALL
     )
     assert approval_policy_for_session("chat:main") is expected
     assert approval_policy_for_session("") is expected
