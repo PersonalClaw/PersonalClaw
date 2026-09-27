@@ -47,6 +47,7 @@ from personalclaw.onboarding_import.sources.common import (
     RULES_THAT_ALLOW,
     RULES_THAT_ASK,
     TITLE_CHARS,
+    UNPARSABLE,
     McpServer,
     conversation_note,
     denied_command_item,
@@ -143,7 +144,7 @@ def _read_json_document(path: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, *UNPARSABLE):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -729,7 +730,7 @@ def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
         for raw in handle:
             try:
                 line = json.loads(raw)
-            except ValueError:
+            except UNPARSABLE:
                 continue
             if not isinstance(line, dict):
                 continue

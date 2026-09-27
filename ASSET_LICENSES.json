@@ -371,7 +371,7 @@
     },
     {
       "id": "agent-tool-home-fixture",
-      "source": "Project-authored: a persona's Claude Code and Codex homes (noor), laid out as those tools write them, for tests/test_claude_code_import_reads_what_claude_code_writes.py, tests/test_codex_import_reads_what_codex_writes.py and tests/test_imports_share_one_secret_policy.py; the tools named are test targets only",
+      "source": "Project-authored: a persona's Claude Code and Codex homes (noor), laid out as those tools write them, with one Codex session compressed as Codex compresses it (zstd level 3, by the zstd 1.5.7 command line) and its plain twin in codex_rollouts/, for tests/test_claude_code_import_reads_what_claude_code_writes.py, tests/test_codex_import_reads_what_codex_writes.py and tests/test_imports_share_one_secret_policy.py; the tools named are test targets only",
       "version": "repository-revision",
       "license": "MIT",
       "ownership": "project-owned",
@@ -412,13 +412,15 @@
         "tests/fixtures/agent_tool_homes/noor/.codex/prompts/triage-issue.md",
         "tests/fixtures/agent_tool_homes/noor/.codex/rules/default.rules",
         "tests/fixtures/agent_tool_homes/noor/.codex/session_index.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.codex/sessions/2026/07/10/rollout-2026-07-10T21-37-14-019f4ed2-51f2-73c2-9a41-5e0b7d2f81c6.jsonl.zst",
         "tests/fixtures/agent_tool_homes/noor/.codex/sessions/2026/07/22/rollout-2026-07-22T08-52-11-019f89e2-360a-74b5-a65d-4df5c169496e.jsonl",
         "tests/fixtures/agent_tool_homes/noor/.codex/sessions/2026/08/20/rollout-2026-08-20T15-10-44-01a02095-36b6-7772-881c-abd3d127359e.jsonl",
         "tests/fixtures/agent_tool_homes/noor/.codex/sessions/2026/08/28/rollout-2026-08-28T11-03-30-01a048e5-bab3-7cb6-83c7-67ca73b19fb6.jsonl",
         "tests/fixtures/agent_tool_homes/noor/.codex/skills/feedsmith-bench/SKILL.md",
         "tests/fixtures/agent_tool_homes/noor/src/feedsmith/.claude/settings.json",
         "tests/fixtures/agent_tool_homes/noor/src/feedsmith/.mcp.json",
-        "tests/fixtures/agent_tool_homes/noor/src/feedsmith/CLAUDE.md"
+        "tests/fixtures/agent_tool_homes/noor/src/feedsmith/CLAUDE.md",
+        "tests/fixtures/codex_rollouts/rollout-2026-07-10T21-37-14-019f4ed2-51f2-73c2-9a41-5e0b7d2f81c6.jsonl"
       ]
     },
     {

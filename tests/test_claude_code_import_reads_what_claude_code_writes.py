@@ -318,6 +318,23 @@ def test_a_transcript_brings_the_conversation_and_leaves_tool_output_behind(noor
     assert item.payload["created_at"] == "2026-08-11T12:52:40.085Z"
 
 
+def test_a_transcript_line_nested_past_the_recursion_limit_does_not_end_the_scan(
+    noor: Path,
+) -> None:
+    """``json`` raises ``RecursionError``, not ``ValueError``, for a line nested deeper than the
+    interpreter recurses. It is one unreadable line, and the scan reads on past it."""
+    transcript = (
+        noor / ".claude" / "projects" / "-Users-noor" / "80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl"
+    )
+    with transcript.open("a", encoding="utf-8") as handle:
+        handle.write("[" * 100_000 + "]" * 100_000 + "\n")
+
+    item = _items(scan_source("claude_code"), ImportCategory.CONVERSATIONS)[
+        "projects/-Users-noor/80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl"
+    ]
+    assert item.origin == "Project · ~"
+
+
 def test_import_lands_each_kind_where_personalclaw_reads_it(noor: Path) -> None:
     """Agents on the Agents page, commands as prompts, transcripts in Chat history, memories and
     instructions in memory, servers in ``mcp.json`` — and Claude Code's files untouched."""

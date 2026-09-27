@@ -7,6 +7,7 @@
 - **Skills** (:func:`scan_skills`): a directory with a ``SKILL.md``, whichever tool it came from,
   with the supply-chain scan its install will make (:class:`ImportedSkillMarketplace`).
 - **Prompt history** (:func:`prompt_history`): counted and named, never imported.
+- **A document that does not parse** (:data:`UNPARSABLE`): read as unreadable, never a scan fault.
 - **A conversation's title and note** (:func:`one_line`, :func:`conversation_note`).
 - **An MCP server** (:class:`McpServer`, :func:`mcp_item`): what a tool has configured, values
   included, for the onboarding scan and the Tools page's Import — one definition, one writer.
@@ -43,6 +44,11 @@ logger = logging.getLogger(__name__)
 
 #: A title is a line in a list, not the first paragraph of a conversation.
 TITLE_CHARS = 80
+
+#: What ``json`` and ``tomllib`` raise for a document they cannot read: ``ValueError`` when it is
+#: not valid, and ``RecursionError`` when it nests deeper than the interpreter recurses. Either
+#: way that one file or line is unreadable, and neither may end the scan of the rest.
+UNPARSABLE = (ValueError, RecursionError)
 
 # ── paths another machine recorded ────────────────────────────────────────────
 
