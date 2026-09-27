@@ -301,3 +301,39 @@ async def test_an_app_cannot_uninstall_your_packs(tmp_path) -> None:
         if c.kwargs.get("caller") == f"app:{APP}" and c.kwargs.get("outcome") == "denied"
     ]
     assert "owner-only" in row.kwargs["error"]
+
+
+def test_every_code_an_uninstall_raises_is_a_registered_literal() -> None:
+    """Every `PackUninstallError` code is a bare literal AND has a wire-registry row.
+
+    `api_pack_uninstall` answers `json_error(exc.code, ...)`, which the registry scanner in
+    `test_http_error_codes_append_only` cannot resolve, so that site counts as the 19th dynamic
+    one. This closes it one level up, where the codes are chosen, the way
+    `test_request_validation` closes the 18th. Enumerated from the SOURCE, not from a list here:
+    the site shipped with two codes that had no registry row, and a hand-written tuple could not
+    have seen them.
+    """
+    import ast
+
+    import personalclaw
+    from personalclaw.http_errors import HTTP_ERROR_CODES
+
+    source = (Path(personalclaw.__file__).parent / "packs" / "uninstall.py").read_text("utf-8")
+    codes: list[str] = []
+    computed: list[int] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+            continue
+        func = node.exc.func
+        if not (isinstance(func, ast.Name) and func.id == "PackUninstallError"):
+            continue
+        first = node.exc.args[0] if node.exc.args else None
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            codes.append(first.value)
+        else:
+            computed.append(node.lineno)
+
+    assert len(codes) >= 3, f"found only {codes} — the AST matcher is broken"
+    assert not computed, f"these raises compute their wire code: lines {computed}. Pass a literal."
+    unregistered = sorted({c for c in codes if c not in HTTP_ERROR_CODES})
+    assert not unregistered, f"raised but absent from HTTP_ERROR_CODES: {unregistered}"

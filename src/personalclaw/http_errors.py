@@ -284,6 +284,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "pack_update_refused": "The pack update was refused.",
     "pack_has_no_roster": "The pack declares no agent roster.",
     "pack_has_no_triggers": "The pack staged no triggers.",
+    # Uninstall refusals (packs/uninstall.py — `PackUninstallError`). 409: an agent or an
+    # automation the pack brought is still in use, and the message names each one and where to
+    # remove it. 500: some of the pack's parts could not be removed, and uninstalling it again
+    # finishes the job.
+    "pack_in_use": (
+        "Something the pack brought is still in use; the message names it and where to remove "
+        "it before uninstalling."
+    ),
+    "pack_uninstall_incomplete": (
+        "Some of the pack's parts could not be removed; uninstall the pack again to finish."
+    ),
     "binding_key_required": "A binding key is required.",
     "binding_rejected": "The submitted binding was rejected.",
     "one_link_required": "A one-link target is required.",
@@ -509,6 +520,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "would have undone that change. Nothing was saved. Fix: read it again, re-apply the "
         "edit, and save with the new revision."
     ),
+    # 409, the masked-read twin of `stale_write` (security.MaskConflict): an editor seeded from a
+    # redacted read echoed a `[REDACTED: …]` marker that no longer lines up with the stored copy,
+    # so the value it stood for cannot be put back. Saving the marker would overwrite a secret.
+    "mask_conflict": (
+        "The stored copy no longer lines up with the redacted version that was edited, so a "
+        "hidden value cannot be put back. Nothing was saved. Fix: re-open it, or replace the "
+        "marker with the value to store."
+    ),
     # Same family as `version_conflict` above: a write refused because it would have
     # destroyed data the caller never saw. An intent's id is DERIVED from its goal, so two
     # differently-worded goals can slugify onto one id — and the create path used to
@@ -582,6 +601,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # sentence, and both are safe to retry (the fingerprint ledger records each write as it
     # lands). A `conflict` or `rejected` ITEM is not this — those are 200 rows of the report.
     "onboarding_import_failed": "Scanning for or importing from another agent tool failed.",
+    # 409 on `DELETE /api/onboarding/import/job`: nothing to stop.
+    "not_running": "No import is running, so there is nothing to stop.",
     # ── direct tool invocation (handlers/tools.py) ──
     # 403 and not 404: the tool exists and this caller may reach the route. The user
     # turned it off, which is a policy answer, and a 404 would read as "no such tool" to a
@@ -767,6 +788,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # nothing ran. The message names which owner ended and how.
     "approval_owner_ended": (
         "The work that asked for this approval has ended, so it was cancelled and nothing ran."
+    ),
+    # 403 (dashboard/handlers/sessions.py): an app tried to answer an approval raised in a
+    # conversation the app itself started. The person the app works for answers it, not the app.
+    "approval_owner_only": (
+        "An approval raised in a conversation this app started is the owner's to answer, not "
+        "the app's."
     ),
     # A 409 refusal of a standing grant (a chat's Trust, Trust reads, YOLO, "Always allow for
     # this agent"): the operator ceiling (`governance/ceiling.json`, `approval`) says every call
