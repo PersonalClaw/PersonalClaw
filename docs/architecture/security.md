@@ -140,9 +140,10 @@ environment-variable denylist (credential env vars like `SLACK_BOT_TOKEN`
 never reach a sandboxed child).
 
 Child **environments** are built by allowlist, not inherited: `build_child_env`
-gives a hook, cron-script or bash-action child, and everything the gateway starts
-for an app (the pip and npm that install what it declares, its engine's venv and
-pip, its setup hooks, backend, worker, sidecar and MCP servers), a minimal base
+gives a hook, cron-script or bash-action child, every ACP agent CLI (plus the
+variables its app declares for it and the session it answers for), and everything
+the gateway starts for an app (the pip and npm that install what it declares, its
+engine's venv and pip, its setup hooks, backend, worker, sidecar and MCP servers), a minimal base
 (`PATH`, locale, home-equivalents, proxy/CA settings, and the three
 `PERSONALCLAW_*` vars) plus whatever names the operator declared in
 `sandbox.env_passthrough`. An install also gets its installer's own settings

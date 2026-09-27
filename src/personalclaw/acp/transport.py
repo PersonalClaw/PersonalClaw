@@ -1,6 +1,6 @@
 """AcpProcess — the ACP backend subprocess + its stdio, as a standalone transport.
 
-The process lifecycle (spawn with sandbox wrap + env/PATH/SSH resolution + process-group
+The process lifecycle (spawn with sandbox wrap + the child environment + process-group
 isolation, kill via ``killpg`` tree-sweep + escaped-child cleanup, PID/child-PID tracking,
 stderr draining, liveness) and the raw stdio primitives (stdin ``write``, stdout
 ``readline``) used to live fused inside :class:`~personalclaw.acp.client.AcpClient` next
@@ -43,43 +43,6 @@ def _acp_trace(direction: str, text: str) -> None:
 
 # Subprocess stdout buffer — agents can send large JSON-RPC lines (tool outputs)
 _STDOUT_BUFFER_LIMIT = 10 * 1024 * 1024  # 10MB
-
-
-def _resolve_ssh_auth_sock(env: dict[str, str]) -> None:
-    """Ensure SSH_AUTH_SOCK points to a live agent socket.
-
-    The gateway's inherited value may be stale after ssh-agent restarts.
-    Mirrors the env-resolution that long-running editors do via
-    ``getUnixShellEnvironment()`` but without spawning a login shell.
-
-    - macOS: launchd listener path changes on reboot
-    - Linux: ssh-agent sockets live under /tmp/ssh-*/agent.*
-    """
-    import glob
-    import stat
-    import sys
-
-    current = env.get("SSH_AUTH_SOCK", "")
-    if current and os.path.exists(current):
-        return  # already valid
-
-    if sys.platform == "darwin":
-        patterns = ["/tmp/com.apple.launchd.*/Listeners"]
-    else:
-        uid = os.getuid()
-        patterns = [
-            "/tmp/ssh-*/agent.*",
-            f"/run/user/{uid}/ssh-agent.socket",
-            f"/run/user/{uid}/keyring/ssh",
-        ]
-
-    for pattern in patterns:
-        candidates = [p for p in glob.glob(pattern) if stat.S_ISSOCK(os.stat(p).st_mode)]
-        if candidates:
-            best = max(candidates, key=lambda p: os.path.getmtime(p))
-            env["SSH_AUTH_SOCK"] = best
-            logger.debug("Resolved SSH_AUTH_SOCK → %s", best)
-            return
 
 
 def _get_child_pids(parent_pid: int | None, _visited: set[int] | None = None) -> list[int]:
@@ -386,24 +349,35 @@ class AcpProcess:
         self._sandbox_handle = handle
         argv = handle.argv
 
+        # What the CLI runs with is built by NAME, never copied from the gateway
+        # (`sandbox.build_child_env`, like every child that runs code PersonalClaw did not write).
+        # The gateway holds every secret saved in PersonalClaw, and the shell that started it may
+        # hold more — an API key, a session token — and an agent CLI keeps what it inherits: one
+        # was measured copying its whole environment into a file in its state folder that anyone
+        # on the machine could read. So it gets the child allowlist, the variables its app
+        # declares (`extra_env`: a config folder, an engine path), the session it answers for,
+        # and what the owner granted by name in `sandbox.env_passthrough`; one launched through
+        # `npx` also gets npm's own settings. The credential floor holds even for a declared name.
+        from personalclaw.acp.cli_resolve import is_npx_fallback
+        from personalclaw.sandbox import build_child_env
+
+        computed = dict(self._extra_env or {})
+        computed["PATH"] = augmented_path(computed.get("PATH") or os.environ.get("PATH", ""))
+        for name, value in (
+            ("PERSONALCLAW_SESSION_KEY", self._session_key),
+            ("PERSONALCLAW_CHANNEL_ID", self._channel_id),
+        ):
+            if value:
+                computed[name] = value
+            else:
+                computed.pop(name, None)
+        env = build_child_env(
+            site="acp-agent",
+            extra=computed,
+            installer="npm" if is_npx_fallback(self._command) else "",
+        )
+
         # Process group isolation: start_new_session=True (calls setsid, enables killpg)
-        env = {**os.environ}
-        if self._extra_env:
-            env.update(self._extra_env)
-        env["PATH"] = augmented_path(env.get("PATH", ""))
-        if self._session_key:
-            env["PERSONALCLAW_SESSION_KEY"] = self._session_key
-        else:
-            env.pop("PERSONALCLAW_SESSION_KEY", None)
-        if self._channel_id:
-            env["PERSONALCLAW_CHANNEL_ID"] = self._channel_id
-        else:
-            env.pop("PERSONALCLAW_CHANNEL_ID", None)
-
-        # Resolve SSH_AUTH_SOCK dynamically — the gateway's env may be stale after
-        # credential refreshes (same issue editors solve via getUnixShellEnvironment).
-        _resolve_ssh_auth_sock(env)
-
         kwargs: dict = {
             "stdin": asyncio.subprocess.PIPE,
             "stdout": asyncio.subprocess.PIPE,

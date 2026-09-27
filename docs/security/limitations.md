@@ -533,9 +533,11 @@ resource-ceiling shim (`sandbox.py::spawn_shim_argv`).
 sandbox, a provider module, an MCP server, a setup hook and a CLI step have your files and
 your network. A provider module runs inside the gateway, and a CLI step inside `personalclaw
 setup` or `doctor`, so both see the environment of the process they run in. An ACP agent an
-app registers is handed the gateway's environment, less the few credential names its sandbox
-scrubs (`sandbox.py::_SENSITIVE_ENV_PREFIXES`), because the agent CLI signs in to its model
-provider with it. A source parser has your files and no network.
+app registers starts from the same allowlist, plus the variables its app declares for it and
+the session it answers for (`acp/transport.py`). An agent CLI that signs in to its model
+provider from an environment variable, such as an API key, gets that variable only if you pass
+its name through in `sandbox.env_passthrough`; a sign-in the CLI keeps in its own config folder
+needs nothing passed. A source parser has your files and no network.
 
 **What the consent surface tells you:** the install dialog reads `apps/disclosure.describe`
 and has a row titled *What it runs on this machine*. It leads with the gateway's own
