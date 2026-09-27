@@ -11,7 +11,6 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
-from personalclaw.atomic_write import atomic_write
 from personalclaw.config.edit_spec import (
     ConfigValueError,
     app_write_refusal,
@@ -19,7 +18,12 @@ from personalclaw.config.edit_spec import (
     unconsented_loosening,
 )
 from personalclaw.config.editable import _EDITABLE_CONFIG
-from personalclaw.config.loader import AppConfig
+from personalclaw.config.loader import AppConfig, ConfigWriteError
+from personalclaw.config.transactions import mutate_config_async
+from personalclaw.dashboard.handlers._shared import (
+    RefusedInConfigTransaction,
+    config_write_refusal,
+)
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
 from personalclaw.http_errors import consent_required, json_error
@@ -591,8 +595,6 @@ def _declared_settings(full: dict, fields: list[str]) -> dict:
 
 async def api_personalclaw_config(request: web.Request) -> web.Response:
     """GET/PUT /api/config/personalclaw — read or update PersonalClaw config."""
-    from personalclaw.config.loader import config_path  # noqa: F811
-
     if request.method == "PUT":
         caller = request.get("user", "dashboard")
 
@@ -653,34 +655,28 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
             return _deny("no recognized settings provided")
         applied = list(staged)
 
-        # 🔴 The SAME lock PATCH holds. Both endpoints do read-current-config → mutate a field →
-        # write-the-whole-file, and `atomic_write` only guarantees the file is never half-written
-        # — not that a concurrent modifier's change survives. Interleaved, the later writer's
-        # read predates the earlier writer's write, so it serialises a `data` that never saw it
-        # and one field silently reverts (#754). PUT took no lock at all.
-        #
-        # Spans the READ as well as the write, deliberately: locking only `atomic_write` would
-        # still let two handlers read the same base and both write a complete file, which IS the
-        # lost update. The critical section is exactly read → apply → write and nothing else.
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
-
-        path = config_path()
-        async with _get_config_lock():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            except Exception:
-                _sel().log_api_access(
-                    caller=caller,
-                    operation="config.update",
-                    outcome="error",
-                    error="config.json is corrupt",
-                )
-                return web.json_response({"error": "config.json is corrupt"}, status=500)
+        # 🔴 The SAME transaction every config writer takes (`config.transactions`). Both this
+        # and PATCH read the current config, change a field and write the file, and
+        # `atomic_write` only guarantees the file is never half-written — not that a concurrent
+        # writer's change survives. Interleaved, the later writer's read predates the earlier
+        # writer's write, so one field silently reverts (#754). The lock spans the READ as well
+        # as the write, and it is an OS lock, so a CLI in another terminal waits for it too.
+        def _apply(data: dict) -> dict:
             if not isinstance(data.get("agent"), dict):
                 data["agent"] = {}
-            agent = data["agent"]
-            agent.update(staged)
-            atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+            data["agent"].update(staged)
+            return data["agent"]
+
+        try:
+            agent = await mutate_config_async(_apply)
+        except ConfigWriteError as exc:
+            _sel().log_api_access(
+                caller=caller,
+                operation="config.update",
+                outcome="error",
+                error=type(exc).__name__,
+            )
+            return config_write_refusal(exc)
         _sel().log_api_access(
             caller=caller,
             operation="config.update",
@@ -740,8 +736,6 @@ def _value_in_effect(path_key: str) -> object:
 
 async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     """PATCH /api/config/personalclaw — update a single config field."""
-    from personalclaw.config.loader import config_path  # noqa: F811
-
     caller = request.get("user")
     if not caller:
         logger.warning(
@@ -749,14 +743,17 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         )
         caller = "dashboard"
 
+    def _audit(outcome: str, resources: str) -> dict:
+        return {
+            "caller": caller,
+            "operation": "config.patch",
+            "outcome": outcome,
+            "source": "dashboard",
+            "resources": resources,
+        }
+
     def _log_sel(outcome: str, resources: str) -> None:
-        _sel().log_api_access(
-            caller=caller,
-            operation="config.patch",
-            outcome=outcome,
-            source="dashboard",
-            resources=resources,
-        )
+        _sel().log_api_access(**_audit(outcome, resources))
 
     def _deny(msg: str, resources: str = "", status: int = 400) -> web.Response:
         _log_sel("denied", resources or msg)
@@ -825,17 +822,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     except ConfigValueError as exc:
         return _deny(str(exc), exc.resources, exc.status)
 
-    # Read, update, write
-    cfg_path = config_path()
-    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
-
-    async with _get_config_lock():
-        try:
-            data = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-        except Exception:
-            _log_sel("error", f"{path_key}=read_failed")
-            return web.json_response({"error": "failed to read config file"}, status=500)
-
+    def _apply(data: dict) -> None:
         # 🔴 A WRITE THAT LOOSENS A SECURITY SETTING NEEDS THE OWNER'S CONSENT ON THE WIRE, not
         # only in a dialog. The Settings hub's YOLO tile turned YOLO on ~40 ms after one click
         # because the panel's dialog was the only gate and a second writer never called it (#3596,
@@ -845,9 +832,9 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         # question. Tightening never needs it: revoking a grant is the direction a broken or
         # confused client must always be able to take.
         #
-        # Under the lock, and against the value IN EFFECT (defaults included): "is this looser?"
-        # is a question about what is stored at the moment of the write, and a check before the
-        # lock could compare against a value a concurrent write has already replaced.
+        # Inside the transaction, and against the value IN EFFECT (defaults included): "is this
+        # looser?" is a question about what is stored at the moment of the write, and a check
+        # before the lock could compare against a value a concurrent write has already replaced.
         #
         # A record that the owner was asked, not authorization — anything holding the owner's
         # session can send the flag. The authorization half is `app_write_refusal` above.
@@ -855,36 +842,44 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             path_key, spec, current=_value_in_effect(path_key), new=value, body=body
         )
         if consent:
-            _log_sel("denied", f"{path_key}: loosening without confirm")
-            return consent_required(path_key, consent)
+            raise RefusedInConfigTransaction(
+                consent_required(path_key, consent),
+                audit=_audit("denied", f"{path_key}: loosening without confirm"),
+            )
 
         # Walk the dotted path, creating intermediate objects — supports any depth
         # (e.g. the 1-part `auto_update`, 2-part `agent.yolo`, 3-part
-        # `dashboard.terminal.persist`). Every non-leaf segment must be an object.
+        # `dashboard.terminal.persist`). Every non-leaf segment must be an object. A refusal
+        # raised here aborts the transaction, so nothing the walk created is written.
         parts = path_key.split(".")
         cursor = data
         for seg in parts[:-1]:
             child = cursor.setdefault(seg, {})
             if not isinstance(child, dict):
-                _log_sel("error", f"{path_key}=section_not_dict")
-                return web.json_response(
-                    {"error": f"config section '{seg}' is not an object"}, status=500
+                raise RefusedInConfigTransaction(
+                    web.json_response(
+                        {"error": f"config section '{seg}' is not an object"}, status=500
+                    ),
+                    audit=_audit("error", f"{path_key}=section_not_dict"),
                 )
             cursor = child
         cursor[parts[-1]] = value
 
-        try:
-            cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            # Through `atomic_write`, whose post-write hook is the ONE seam time-travel's
-            # debounced committer subscribes to. This used to go through a JSON writer that did
-            # its own mkstemp+rename, and with that bypass every config change made from
-            # Settings — the primary writer of this file — landed on disk without ever reaching
-            # the `config` state-history root, so "roll back my settings" had nothing to roll
-            # back to. The PUT path two hundred lines up writes this same file this same way.
-            atomic_write(cfg_path, json.dumps(data, indent=2) + "\n", fsync=True)
-        except OSError:
-            _log_sel("error", f"{path_key}=write_failed")
-            return web.json_response({"error": "failed to write config file"}, status=500)
+    # Through the config transaction, whose write goes through `atomic_write` — the post-write
+    # hook there is the ONE seam time-travel's debounced committer subscribes to. This used to go
+    # through a JSON writer that did its own mkstemp+rename, and with that bypass every config
+    # change made from Settings landed on disk without reaching the `config` state-history root,
+    # so "roll back my settings" had nothing to roll back to.
+    try:
+        await mutate_config_async(_apply)
+    except RefusedInConfigTransaction as stopped:
+        return stopped.answer()
+    except ConfigWriteError as exc:
+        _log_sel("error", f"{path_key}={type(exc).__name__}")
+        return config_write_refusal(exc)
+    except OSError:
+        _log_sel("error", f"{path_key}=write_failed")
+        return web.json_response({"error": "failed to write config file"}, status=500)
 
     _log_sel("success", f"{path_key}={value}")
 

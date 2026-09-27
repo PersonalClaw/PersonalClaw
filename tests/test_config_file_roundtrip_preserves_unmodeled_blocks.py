@@ -596,17 +596,13 @@ def test_save_still_stamps_its_own_meta_over_the_existing_one(tmp_path, monkeypa
 # ── the rail ─────────────────────────────────────────────────────────────────────────────────────
 
 
-#: The two safe shapes a config write may take. Both CONSULT the existing document; that is the
-#: property, and it is what every instance of #951 skipped.
-#:
-#: * start from the raw file and mutate it — `read_config_for_merge` then `_dict_put`
-#:   (`config set <key> <value>`), so nothing is ever absent to begin with;
-#: * start from a document the write owns and copy the file's remaining top-level keys forward —
-#:   `merge_unmodeled_top_keys` (`save()`, `config set --file`).
-#:
-#: Deliberately NOT "must call `merge_unmodeled_top_keys`": the first shape is safe without it,
-#: and a rail that demanded it would push the single-key path into a merge it does not need.
-_CONSULTED_THE_FILE = ("merge_unmodeled_top_keys", "read_config_for_merge")
+def _direct_writes(code: str) -> list[str]:
+    """Lines of *code* that call ``atomic_write`` themselves (a comment is not a call)."""
+    return [
+        line.strip()
+        for line in code.splitlines()
+        if "atomic_write(" in line and not line.strip().startswith("#")
+    ]
 
 
 def test_no_config_write_reaches_disk_without_consulting_the_existing_file():
@@ -615,48 +611,39 @@ def test_no_config_write_reaches_disk_without_consulting_the_existing_file():
     Every instance of #951 is the same two lines: take a document that was not derived from the
     file on disk and hand it to `atomic_write`. Three separate call sites did it — `save()`,
     `config set <key> <value>`, and `config set --file` — and each was fixed on its own, which is
-    why fixing the first two still left a provider-deleting round-trip. The rail is a rail
-    because the next writer will not have read this file.
+    why fixing the first two still left a provider-deleting round-trip.
+
+    The property is now structural: the CLI and the model do not reach `atomic_write` at all.
+    They write through the config transaction, whose one writer hands every change the document
+    it has just read from disk (`read_config_for_merge`, under the lock), so there is no document
+    a write could start from that was not derived from the file.
     """
     src = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    offenders = []
     for path in (src / "cli_config.py", src / "config" / "loader.py"):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for num, line in enumerate(lines, 1):
-            if "atomic_write(" not in line:
-                continue
-            window = "\n".join(lines[max(0, num - 30) : num])
-            if not any(tell in window for tell in _CONSULTED_THE_FILE):
-                offenders.append(f"{path.name}:{num}: {line.strip()}")
-    assert not offenders, (
-        "a config write reached `atomic_write` without reading the existing document or merging "
-        "its unmodeled top-level keys forward, which is how #951 deleted `providers[]`:\n"
-        + "\n".join(offenders)
-    )
+        code = path.read_text(encoding="utf-8")
+        assert not _direct_writes(code), (
+            f"{path.name} writes config.json itself again instead of through the config "
+            f"transaction, which is how #951 deleted `providers[]`: {_direct_writes(code)}"
+        )
 
 
 def test_the_rail_finds_the_writes_it_is_supposed_to_be_guarding():
-    """Floor 1 — VACUITY. A scan that matched no `atomic_write` would pass unconditionally, and
-    this rail's whole value is that it covers every config write rather than the three known ones.
-    """
-    src = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    found = sum(
-        line.count("atomic_write(")
-        for path in (src / "cli_config.py", src / "config" / "loader.py")
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if "atomic_write(" in line and not line.strip().startswith("#")
-    )
-    assert found >= 3, f"only {found} config writes found — the three known sites must all match"
+    """Floor 1 — VACUITY. The writes the rail above no longer sees are the transaction's: one
+    `atomic_write`, reached only after the document on disk was read and handed to the change."""
+    import inspect
+
+    from personalclaw.config import transactions
+
+    code = inspect.getsource(transactions)
+    assert len(_direct_writes(code)) == 1, _direct_writes(code)
+    body = inspect.getsource(transactions.mutate_config)
+    assert body.index("read_config_for_merge(") < body.index("mutator(document)")
 
 
-def test_the_rail_can_tell_a_consulted_write_from_a_blind_one():
-    """Floor 2 — DISCRIMINATION. The tells must separate the two, or it passes on anything."""
-    merged = "doc = merge_unmodeled_top_keys(d, read_config_for_merge(p))\natomic_write(p, x)"
-    mutated = "doc = read_config_for_merge(p)\n_dict_put(doc, key, v)\natomic_write(p, x)"
-    blind = "doc = cfg.to_dict()\natomic_write(p, x)"
-    assert any(t in merged for t in _CONSULTED_THE_FILE)
-    assert any(t in mutated for t in _CONSULTED_THE_FILE)
-    assert not any(t in blind for t in _CONSULTED_THE_FILE), "the #951 shape must read as unsafe"
+def test_the_rail_can_tell_a_direct_write_from_a_comment():
+    """Floor 2 — DISCRIMINATION. The scan must flag a write and pass over a mention of one."""
+    assert _direct_writes("doc = cfg.to_dict()\natomic_write(p, x)\n") == ["atomic_write(p, x)"]
+    assert _direct_writes("# never call atomic_write(p, x) here\n") == []
 
 
 def _args(action: str, **kw):

@@ -1,11 +1,9 @@
 """CLI chat subcommand."""
 
 import gc
-import json
 import sys
 
 from personalclaw.acp.errors import AcpError, AcpTimeoutError
-from personalclaw.atomic_write import atomic_write
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DATA_WARNING
@@ -126,13 +124,17 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
 
 
 def _ensure_default_agent_in_config() -> None:
-    """Ensure config.json includes a default PersonalClaw agent for fresh installs."""
-    p = config_path()
-    try:
-        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-    except Exception:
-        data = {}
-    if not data.get("agents"):
+    """Ensure config.json includes a default PersonalClaw agent for fresh installs.
+
+    In the config transaction. An unreadable config.json is reported and left alone: this
+    used to read it as `{}` and write the default agent over every setting it held.
+    """
+    from personalclaw.config.loader import ConfigWriteError
+    from personalclaw.config.transactions import mutate_config
+
+    def _seed(data: dict) -> None:
+        if data.get("agents"):
+            return
         data["agents"] = {
             "default": {
                 "provider_agent": "personalclaw",
@@ -141,4 +143,8 @@ def _ensure_default_agent_in_config() -> None:
             }
         }
         data["default_agent"] = "default"
-        atomic_write(p, json.dumps(data, indent=2) + "\n")
+
+    try:
+        mutate_config(_seed, path=config_path())
+    except ConfigWriteError as exc:
+        print(f"  ⚠️  Could not add the default agent: {exc}", file=sys.stderr)

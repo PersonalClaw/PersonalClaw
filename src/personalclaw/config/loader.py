@@ -3150,7 +3150,16 @@ class UpdatesConfig:
     )
 
 
-class ConfigPreserveError(RuntimeError):
+class ConfigWriteError(RuntimeError):
+    """A write to ``config.json`` was refused, and the file is exactly as it was.
+
+    The one type every config writer can catch: an unreadable file
+    (:class:`ConfigPreserveError`), a lock another writer held for too long, or a transaction
+    opened inside another one (``config.transactions``).
+    """
+
+
+class ConfigPreserveError(ConfigWriteError):
     """A config write could not read the existing config, so it refused to write.
 
     Raised INSTEAD of silently dropping the top-level blocks that live outside `to_dict()`
@@ -3231,6 +3240,93 @@ def merge_unmodeled_top_keys(doc: dict[str, Any], existing: dict[str, Any]) -> d
         if key not in merged:
             merged[key] = value
     return merged
+
+
+_ABSENT = object()
+
+
+def apply_document_changes(
+    document: dict[str, Any], before: dict[str, Any], after: dict[str, Any]
+) -> bool:
+    """Write into *document* what changed from *before* to *after*. ``True`` when it changed.
+
+    *before* and *after* are two states of the same view of the config (what an ``AppConfig``
+    was when loaded and what it is now; what ``config edit`` staged and what the editor saved),
+    and *document* is the file as it is NOW, read under the config transaction. Only the
+    difference is applied, key by key, recursing into objects, so a view that went stale while
+    another process wrote cannot put that process's change back: distinct fields both survive,
+    and the same field is last writer wins.
+
+    A key removed from *after* is removed from *document*. A key the two states agree on is
+    left exactly as the file holds it, which keeps a sparse file sparse and a hand-typed value
+    that the loader normalises the way it was typed. Lists and scalars are replaced whole.
+    """
+    changed = False
+    for key in before.keys() - after.keys():
+        if key in document:
+            del document[key]
+            changed = True
+    for key, value in after.items():
+        old = before.get(key, _ABSENT)
+        if old == value:
+            continue
+        held = document.get(key, _ABSENT)
+        if isinstance(old, dict) and isinstance(value, dict):
+            # Into the object the file holds, or a new one when it holds none (or something
+            # that is not an object, which the loader reads as absent anyway): only the leaves
+            # that changed are written, and the loader fills in the rest as it did before.
+            child = held if isinstance(held, dict) else {}
+            if apply_document_changes(child, old, value):
+                document[key] = child
+                changed = True
+        elif held != value:
+            # Whole: a new key, a type change, a list or a scalar has nothing finer to merge.
+            document[key] = copy.deepcopy(value)
+            changed = True
+    return changed
+
+
+def _json_form(value: Any) -> Any:
+    """*value* as it reads back from ``config.json``: detached, tuples as lists, keys strings."""
+    return json.loads(json.dumps(value))
+
+
+class PendingConfigChanges:
+    """What one :class:`AppConfig` changed since it was loaded, to apply inside a transaction.
+
+    ``apply`` runs under the config lock against the document as it is on disk at that moment,
+    and ``commit`` then records the result as the object's new starting point, so a second save
+    of the same object writes only its second change.
+    """
+
+    def __init__(self, cfg: "AppConfig") -> None:
+        self._cfg = cfg
+        self._after = _json_form(cfg.to_dict())
+        loaded = cfg._as_loaded
+        self._before: dict[str, Any] | None = None if loaded is None else json.loads(loaded)
+
+    def apply(self, document: dict[str, Any]) -> bool:
+        """Apply the changes to *document*; ``True`` when it changed, and ``meta`` was stamped."""
+        if self._before is None or not document:
+            # Built in memory, or the file is new: there is no earlier state to diff against,
+            # so the object states the whole model. Keys it does not model stay as they are.
+            changed = apply_document_changes(document, {}, self._after)
+        else:
+            changed = apply_document_changes(document, self._before, self._after)
+        if changed:
+            from datetime import datetime, timezone
+
+            from personalclaw import __version__
+
+            document["meta"] = {
+                "lastTouchedVersion": __version__,
+                "lastTouchedAt": datetime.now(timezone.utc).isoformat(),
+            }
+        return changed
+
+    def commit(self) -> None:
+        """The changes are on disk: they are this object's starting point from now on."""
+        self._cfg._as_loaded = json.dumps(self._after)
 
 
 #: What a DISCARDED ``config.json`` resolves to, overriding the dataclass defaults — the
@@ -3546,6 +3642,13 @@ class AppConfig:
         ),
     )
 
+    def __post_init__(self) -> None:
+        # The modeled document as it was LOADED, as JSON text so that an in-place edit of a
+        # mutable field (`hooks` is handed out, not copied) cannot reach it. `save()` writes only
+        # what changed since then; `None` — built in memory, or a discarded read — states the
+        # whole model. Not a dataclass field: it is how this object was read, not configuration.
+        self._as_loaded: str | None = None
+
     @classmethod
     def load(cls) -> "AppConfig":
         """Load config from ~/.personalclaw/config.json, falling back to defaults.
@@ -3561,6 +3664,12 @@ class AppConfig:
     def _defaults(cls) -> "AppConfig":
         """The first-run config: every dataclass default, plus the one memory store."""
         return cls(memory_stores={"default": MemoryStoreConfig()})
+
+    @staticmethod
+    def _loaded(cfg: "AppConfig") -> "AppConfig":
+        """Record *cfg*'s current state as what was read, the starting point of its saves."""
+        cfg._as_loaded = json.dumps(cfg.to_dict())
+        return cfg
 
     @classmethod
     def _on_discarded_read(cls, path: Path, reason: str) -> "AppConfig":
@@ -3628,7 +3737,7 @@ class AppConfig:
         path = config_path()
         if not path.exists():
             _clear_config_discard()
-            return cls._defaults(), False
+            return cls._loaded(cls._defaults()), False
 
         try:
             raw = path.read_text(encoding="utf-8")
@@ -3647,7 +3756,7 @@ class AppConfig:
             # and it is reachable on a FIRST RUN. Resolving it restrictively would make a new
             # install ask permission for every read before the user had expressed a preference.
             _clear_config_discard()
-            return cls._defaults(), False
+            return cls._loaded(cls._defaults()), False
 
         try:
             data = json.loads(raw)
@@ -4759,6 +4868,10 @@ class AppConfig:
         # `config.json`. The PERSISTING counterpart is
         # `personalclaw.config.migrations.load_and_persist_migrations()`, called from the
         # gateway's own boot path (`cli_server._boot_config`).
+        #
+        # The starting point `save()` diffs against is taken BEFORE migrating, so a save persists
+        # the migration as a change like any other rather than treating it as already on disk.
+        cls._loaded(cfg)
         try:
             from personalclaw.config.migrations import apply_config_migrations
 
@@ -4827,46 +4940,30 @@ class AppConfig:
         return d
 
     def save(self) -> None:
-        """Write current config to ~/.personalclaw/config.json.
+        """Write what this config changed since it was loaded to ``config.json``.
 
-        Stamps a ``meta`` block with the current version and timestamp
-        so we can tell which build last touched the file.
+        🔴 ONLY WHAT CHANGED, and under the config transaction (``config.transactions``). This
+        used to serialise the whole object over the file, so an object loaded before another
+        process saved put that process's field back to the value it had loaded — the gateway,
+        the CLI and a second terminal each lost the others' settings, and every one of them
+        printed success. Now the difference between the state it was loaded in and its state
+        now is applied to the document as it is on disk at the moment of the write, while every
+        other writer waits: distinct fields both survive, the same field is last writer wins.
 
-        Every top-level key the serialised document does not name is copied forward from the
-        existing file, so opaque app-owned data (``providers``, ``use_cases``, the legacy
-        ``slack`` block awaiting the channel app's one-time migration, and anything added next)
-        is never lost on write-back. That is DERIVED from what this write serialises rather than
-        enumerated — the hand-written ``("providers", "use_cases", "slack")`` tuple this replaced
-        would have dropped a fourth block silently (#951).
+        Every key this object does not model (``providers``, ``use_cases``, the legacy ``slack``
+        block awaiting the channel app's one-time migration, and anything added next) stays as
+        the file holds it — carried by the transaction, not by a list here (#951). An object
+        built in memory (``AppConfig()``) has no earlier state, so it states the whole model. A
+        save that changes nothing writes nothing; a save that changes something stamps ``meta``
+        with the version and time. An unreadable file is refused
+        (:class:`ConfigPreserveError`), and the webhook token reaches the file as a reference to
+        the credential store, both inside the transaction.
         """
-        from datetime import datetime, timezone
+        from personalclaw.config.transactions import mutate_config
 
-        from personalclaw import __version__
-
-        meta = {
-            "lastTouchedVersion": __version__,
-            "lastTouchedAt": datetime.now(timezone.utc).isoformat(),
-        }
-        d = {"meta": meta, **self.to_dict()}
-        # Preserve every top-level key this write does not itself serialise — `providers`,
-        # `use_cases`, and `slack` (app-owned data core doesn't parse, kept intact until the
-        # channel app's `migrate_from_core()` lifts it into the app store and deletes it), plus
-        # whatever arrives next. `read_config_for_merge` refuses on an unreadable file rather
-        # than writing blind; see its docstring for why the swallow it replaced was data loss.
-        # `meta` is stamped above and so is already in `d`, which is what keeps this write
-        # authoritative over the one key it does own.
-        p = config_path()
-        on_disk = read_config_for_merge(p)
-        d = merge_unmodeled_top_keys(d, on_disk)
-        # The webhook token — a secret in a modelled section — reaches the file as a reference;
-        # its value goes to the credential store (`config.secret_refs.store_config_secrets`).
-        from personalclaw.config.secret_refs import store_config_secrets
-
-        d = store_config_secrets(d, previous=on_disk)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        from personalclaw.atomic_write import atomic_write
-
-        atomic_write(p, json.dumps(d, indent=2) + "\n")
+        pending = PendingConfigChanges(self)
+        mutate_config(pending.apply)
+        pending.commit()
 
     def load_credentials(self) -> dict[str, str]:
         """Load every stored credential, backend-transparently, plus env overrides.

@@ -48,9 +48,10 @@ fields are held at their most restrictive value until the file is repaired or re
 
 Every other field falls back to its default. Two consequences worth knowing:
 
-- **Your file is not overwritten.** The substitution is in memory only, and a config write refuses
-  outright rather than clobbering a document whose contents it cannot preserve — so the original
-  bytes stay on disk and stay recoverable. Fix the JSON, or move the file aside to start from
+- **Your file is not overwritten.** The substitution is in memory only, and every config write
+  refuses outright rather than clobbering a document whose contents it cannot preserve — so the
+  original bytes stay on disk and stay recoverable. Fix the JSON (`personalclaw config edit` opens
+  the file as it is, and the fixed copy replaces it), or move the file aside to start from
   defaults.
 - **Ceilings are not substituted.** `guardrails.budgets.max_tokens_per_run` /
   `max_tokens_per_day` / `max_dollars_per_day` and `sandbox.max_pids` / `max_rss_mb` all treat `0`
@@ -60,6 +61,15 @@ Every other field falls back to its default. Two consequences worth knowing:
 
 `personalclaw doctor` reports an unreadable `config.json` as an issue and names the fields it
 substituted.
+
+### When two things write it at once
+
+The dashboard, the CLI and `personalclaw setup` can write `config.json` at the same moment, from
+different processes. Each takes a lock beside the file (`config.json.lock`) for as long as it reads
+and writes, so the writes happen one at a time and none is lost: two changes to different settings
+both land, and two changes to the same setting land in the order they were made. A save writes only
+the settings it changed. A writer that waits more than five seconds for another gives up and says
+so, and writes nothing — the dashboard answers `503`, and trying again works.
 
 ---
 

@@ -224,6 +224,12 @@ re-invents a shape another touches:
   `test_config_roundtrip.py` enforces it. Operator knobs → `config.json`;
   per-entity preferences → `entity_settings/*.json`; secrets → the credential
   store.
+- **Config writes** — `config.json` has one writer, `config.transactions`: an OS
+  lock that every process takes around its read and its write. `AppConfig.save()`
+  writes only what the object changed since it was loaded; `update_config` is a
+  change that must check the current state first; `mutate_config` edits the raw
+  document. Never read the file, change it and write it back yourself —
+  `test_config_transactions.py` fails a writer that does.
 - **Error envelope (HTTP)** — new routes return
   `{"error": {"code": "<stable_snake_code>", "message": "<human>"}}`; `code` is
   append-only and never reworded once shipped (a stable surface an agent branches
