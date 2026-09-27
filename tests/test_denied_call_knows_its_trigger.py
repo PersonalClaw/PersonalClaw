@@ -31,6 +31,7 @@ import personalclaw.config.loader as loader
 from personalclaw.action_providers.base import ActionContext, ActionResult
 from personalclaw.action_providers.invoke_agent_provider import InvokeAgentActionProvider
 from personalclaw.action_providers.run_prompt_provider import RunPromptActionProvider
+from personalclaw.approval_answer import YOU
 from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
@@ -254,7 +255,7 @@ async def test_its_note_is_handled_when_the_rerun_asks_again_and_is_answered(
             break
         await asyncio.sleep(0.005)
     assert world.store.items[note.id].status in OPEN_STATUSES, "asked, not yet answered"
-    assert world.state.resolve_approval("subagent:cd34:tc-1", True) is True
+    assert world.state.resolve_approval("subagent:cd34:tc-1", True, by=YOU) is True
     assert await asyncio.wait_for(rerun, timeout=5) is True
 
     row = world.store.items[note.id]

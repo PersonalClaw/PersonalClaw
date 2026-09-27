@@ -1133,6 +1133,10 @@ async def start_dashboard(
         "/api/external-access/clients/{client_id}/disabled",
         handlers.api_external_access_client_toggle,
     )
+    # Your answer to a control-bridge action that waits for you (`inbound/bridge.py`).
+    app.router.add_post(
+        "/api/external-access/bridge/confirmations/{id}", handlers.api_bridge_confirmation
+    )
     app.router.add_get("/api/models/health", handlers.api_models_health)
     # The earned-autonomy ladder (§6.1). One read + three writes, and only ONE of the three
     # increases autonomy — see handlers/autonomy.py for why that asymmetry is the design.

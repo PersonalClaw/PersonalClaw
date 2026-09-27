@@ -270,9 +270,11 @@ stops for you. Then both call `parks.settle`:
 
 The park holds the trigger's id and the card, never the action's config:
 Approve re-reads the trigger, so a secret the config names is resolved at run
-time and never written to the park. The answer route is the owner's alone
-(`apps/permissions.ROUTE_AUTHZ`, for the reason Run now's is), and
-`trigger_parks/` is in the durability inventory's `IGNORED`: the question is
+time and never written to the park. The answer route is the owner's alone. It is refused to an
+app (`apps/permissions.ROUTE_AUTHZ`, for the reason Run now's is) and to an agent's tool, which
+reaches `/api/triggers` with the gateway's internal secret for `/run`. That refusal is a `403
+approval_owner_only` with an audit row, given before anything about the trigger is read
+(`approval_answer`). `trigger_parks/` is in the durability inventory's `IGNORED`: the question is
 about a sign-in in this machine's browser profile, which no snapshot carries
 either, so a restored copy could only ask again.
 

@@ -76,8 +76,8 @@ Every metric names the code that produces it. Where nothing produces it, the row
 | completion (pass / fail) | `ScenarioResult.passed` → `evals/child.py::result_from_scenario` `passed` → `_spawn_cell` maps to `PASSED`/`FAILED` | **Yes** — cell outcome + `verdict` column |
 | score (assertion pass rate) | `result_from_scenario`: `passed_assertions / total_assertions` | **Yes** — `score_old` / `score_new` columns |
 | wall time | `ScenarioResult.elapsed_secs` → cell summary `elapsed_secs`, retained in the cell artifact | Cell artifact only — **no `results.tsv` column** |
-| tool-call count | `TurnResult.tool_calls` (`personalclaw/eval/runner.py:448`) | **No** — dropped twice (gap G3) |
-| tool-call count (fallback) | SEL `tool_invocation` events, `source="eval_runner"` (`eval/runner.py:449`) | **No** — written into the per-cell throwaway home (gap G4) |
+| tool-call count | `TurnResult.tool_calls` (`personalclaw/eval/runner.py`, `_run_turn`) | **No** — dropped twice (gap G3) |
+| tool-call count (fallback) | SEL `tool_invocation` events, `source="eval_runner"`, one per call (`eval/runner.py`, `_run_turn`) | **No** — written into the per-cell throwaway home (gap G4) |
 | tokens (the verdict's denominator) | `guardrails/audit.py::AttemptRecord` `tokens_in`/`tokens_out`/`dollars_est` in `config_dir()/model_calls.jsonl` | **No** — same throwaway home (gap G4) |
 | arm integrity | SEL `skill_surface`, `metadata.skills` (`skills/loader.py:741`) | **No** — same throwaway home (gap G4) |
 

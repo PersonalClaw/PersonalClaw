@@ -208,6 +208,8 @@ AUTOMATION_ROUTES_OWNER_ONLY = [
     ("POST", "/api/workflows/runs/{run_id}/start", "/api/workflows/runs/r1/start"),
     ("POST", "/api/workflows/runs/{run_id}/steer", "/api/workflows/runs/r1/steer"),
     ("POST", "/api/workflows/runs/{run_id}/edit", "/api/workflows/runs/r1/edit"),
+    # Answering a run's gate is yours: an app relaying "your" answer is an app answering it.
+    ("POST", "/api/workflows/runs/{run_id}/confirm", "/api/workflows/runs/r1/confirm"),
     (
         "PUT",
         "/api/workflows/runs/{run_id}/policy-overrides",
@@ -223,11 +225,10 @@ AUTOMATION_ROUTES_OWNER_ONLY = [
     ("POST", "/api/apps/{name}/enable", "/api/apps/other/enable"),
 ]
 
-#: The halves an app keeps: stopping work, answering a pending confirmation once.
+#: The half an app keeps: stopping work.
 AUTOMATION_ROUTES_APP_MAY = [
     ("POST", "/api/workflows/runs/{run_id}/cancel", "/api/workflows/runs/r1/cancel"),
     ("POST", "/api/workflows/runs/{run_id}/pause", "/api/workflows/runs/r1/pause"),
-    ("POST", "/api/workflows/runs/{run_id}/confirm", "/api/workflows/runs/r1/confirm"),
     ("DELETE", "/api/spawn/{agent_id}", "/api/spawn/a1"),
     ("POST", "/api/loops/validate", "/api/loops/validate"),
 ]
@@ -248,9 +249,7 @@ class TestAnAppCannotDefineOrFireAnAutomation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("method", "template", "path"), AUTOMATION_ROUTES_APP_MAY)
-    async def test_stopping_and_answering_stay_the_apps(
-        self, tmp_path, method, template, path
-    ) -> None:
+    async def test_stopping_stays_the_apps(self, tmp_path, method, template, path) -> None:
         with _home(tmp_path):
             _install(tmp_path, APP, {"api": _AUTOMATION_GRANT})
             status, text = await _call(APP, method, template, path)

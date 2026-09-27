@@ -295,7 +295,8 @@ the ceiling did not bound.
   spawn's own `approval_mode: "auto"`, the global Auto-approve setting, the hook settings and
   patterns, a listed source, the `--approval` flag, a remembered or policy-approved workflow gate,
   the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
-  unattended ACP CLI approving its own calls, and a session policy that never asks. Under
+  unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
+  runner's allowlist of read-only tools. Under
   `{"approval": {"value": "ask"}}` none of them stands, and each refusal is audited
   (`approval.grant_refused`, naming the grant). A switch the owner presses (the chat's mode
   pill, a card's wider scope) is refused with `409 approval_grant_refused`, whose message names
@@ -324,6 +325,54 @@ the ceiling did not bound.
   the operator. On a single-user machine that requires the file to live outside
   `$HOME`, owned by another uid and mode `0444` — which is what
   `PERSONALCLAW_CEILING_FILE` is for.
+
+## Who answers an approval (`approval_answer.py`)
+
+An approval is a question put to you: a tool call waiting for Allow, a workflow's gate, the
+question a trigger's action stopped on, a control-bridge action waiting to be confirmed, an app's
+proposal, the proactive digest's proposals. One rule decides who may answer any of them, and every
+door that applies an answer asks it (`approval_answer.refusal`):
+
+- **Only you answer.** That is a signed-in session of yours (the dashboard, a paired phone, the link
+  `personalclaw token` prints), or you on a paired chat channel. A channel's app checks that a press
+  is its paired owner's, which is the contract of `ChannelDelivery.request_approval`. The decision's
+  audit row names which: `you`, or `channel:<provider>`.
+- **Never the asker.** An approval records who asked it as it is asked (`asked_by`: the chat's agent,
+  the app that started the chat, a subagent, the run, the trigger, the bridge client), and an answer
+  from that principal is refused.
+- **Nobody else.** An app's token, an agent's tool, a trigger, a workflow run and a control-bridge
+  client answer nothing. An agent's tool is recognised by the gateway's internal secret, which only
+  the gateway's own tool servers and scripts present. That holds in `auth_mode=none` and under the
+  local-network bypass too, where the middleware treats every loopback caller as you.
+- **One exception: an `event` gate.** It parks a run until something happens, and asks nobody's
+  permission. The trigger it waits for (a monitor's self-scheduled wake, for example) answers it,
+  and you still can. A trigger answers no other gate, so a trigger an agent armed against its own
+  run cannot approve that run's approval gate.
+
+A refused answer decides nothing and leaves the approval pending. It writes one
+`approval.answer_refused` audit row naming who tried, what, and who asked. An HTTP door answers
+`403 approval_owner_only`; an agent's tool gets the same sentence as its result. What each door
+used to allow:
+
+- **Tool approvals.** `POST /api/approvals/{id}/{action}` relayed an app's answer for any chat but
+  the app's own. It and the chat card's route took an agent's tool as you wherever the gateway
+  admits every loopback caller as you (`auth_mode=none`, the local-network bypass).
+- **Workflow gates.** An agent's `workflow_resume` answered gates, its own run's included; it now
+  only lifts a pause. `POST /api/workflows/runs/{id}/confirm` was open to apps, and the resume route
+  took an agent's tool as you where every loopback caller is you.
+- **A trigger's question.** `POST /api/triggers/{id}/answer` accepted the internal secret, which
+  `/api/triggers` admits for an agent's `/run`.
+- **Control-bridge confirmations.** The client that asked redeemed its own token at `/confirm`, with
+  the bearer it asked with, and `personalclaw inbound confirm` did the same with the bridge's token.
+  A confirmation now waits in your Inbox, where you confirm or decline it
+  (`POST /api/external-access/bridge/confirmations/{id}`). `/confirm` refuses every client, and the
+  CLI verb is gone.
+- **The digest.** Its replies were open to apps. Where every loopback caller is you, an agent's
+  `triage_rules` tool could teach it an approve rule, which answers every matching proposal before
+  it is asked. Approve rules are now yours, and a deny rule, which only takes away, is anyone's.
+
+What this cannot tell apart: a process running as you on this machine
+([limitations §10](../security/limitations.md#10-a-process-running-as-you-can-answer-as-you)).
 
 ## Egress chokepoint (`net/`)
 
@@ -446,6 +495,9 @@ recalled episodes (`dashboard/handlers/memory.py`; see
 
 ONE process-global YOLO (auto-approve) state: config-permanent vs TTL'd
 surface activation (`YOLO_CHANNEL_TTL_SECS`), with `on_disable` callbacks.
+Config-driven YOLO is read back from `agent.yolo` while it is on, by `is_yolo_active()` and by
+`yolo_from_config()` alike, so a channel asked "is YOLO permanent?" gets the config's answer, not
+a cached one.
 Dashboard and channel apps delegate to it — there is deliberately no second
 implementation. Task-mode tool-gating postures are hard-enforced at the
 permission prompt for the native runtime; ACP agents under YOLO rely on
@@ -475,9 +527,11 @@ runtime stamped on it (`llm.events.unasked_outcome`): `denied` by the gate that 
 `auto_approved` by the policy that waived its ask, `failed` or `cancelled` for one that never ran,
 or `invoked` for a tool that asks nobody. `metadata.decided_by` says who decided, in every runtime
 that hosts a turn: the chat (which a channel's turn also runs), the subagent manager (trigger
-agents and every workflow stage) and the background helper. Before this, the subagent manager and
-the background helper wrote `auto_approved` for every call and the chat wrote `invoked`, so a call
-the deny-list refused read as approved.
+agents and every workflow stage), the background helper and the eval runner, whose allowlist
+answers its asks (`eval_safe_tools`). Before this, the subagent manager and the background helper
+wrote `auto_approved` for every call and the chat wrote `invoked`, so a call the deny-list refused
+read as approved; the eval runner wrote `invoked` for every call as it appeared and then a second
+row for one that asked.
 
 **Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
 archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts

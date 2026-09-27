@@ -75,6 +75,18 @@ class TestConfigYoloFollowsTheConfig:
         assert tm.yolo_from_config() is False
         assert seen == ["config"]
 
+    def test_asking_whether_it_is_from_the_config_reads_the_config(self) -> None:
+        """``yolo_from_config()`` asked FIRST, with no check in between, says what the config says.
+
+        A channel's ``yolo on`` asks it before anything else, to say "already permanently on from
+        the config" — which it used to say from the cached flag, after the config had dropped the
+        setting and while the next check was about to end YOLO."""
+        _config_yolo(True)
+        tm.enable_yolo(from_config=True)
+        _config_yolo(False)
+        assert tm.yolo_from_config() is False
+        assert tm.is_yolo_active() is False
+
     def test_putting_it_back_does_not_turn_it_on(self) -> None:
         """Only in the revocation direction: turning it ON takes Settings or a restart, the two
         paths that audit it."""

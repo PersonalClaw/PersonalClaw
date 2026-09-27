@@ -14,7 +14,7 @@ from typing import Any
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
-from personalclaw import approval_grants
+from personalclaw import approval_answer, approval_grants
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
@@ -2606,11 +2606,16 @@ async def api_chat_mode(request: web.Request) -> web.Response:
 
     # If any session has a pending approval and mode is trust/yolo, auto-approve it
     if mode in ("trust", "yolo"):
+        # The switch answers every pending approval, so it answers them as the one who flipped it,
+        # held to the rule every door is (`approval_answer`).
+        by = approval_answer.of_request(request)
         for session in state._sessions.values():
             for aid, fut in list(session._approval_futures.items()):
                 if not fut.done():
                     # A posture switch is a door like any other: it does not approve a call
                     # for work that has already ended (a stopped loop's worker, say).
+                    if state.answer_refusal(chat_approval_id(session.key, aid), by):
+                        continue
                     if state.refuse_ended_owner(chat_approval_id(session.key, aid)):
                         continue
                     fut.set_result("approved")
@@ -2636,8 +2641,7 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         # Also auto-approve all pending background approvals (cron/subagent)
         for aid in list(state._approval_futures):
             fut = state._approval_futures[aid]
-            if not fut.done():
-                state.resolve_approval(aid, True)
+            if not fut.done() and state.resolve_approval(aid, True, by=by):
                 try:
                     sel().log_api_access(
                         caller="dashboard:background",
@@ -2773,7 +2777,8 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
             status=400,
         )
     # No app reaches this: the route is the owner's in `apps/permissions.ROUTE_AUTHZ`, so every
-    # verb here, `yolo` and `trust_agent` included, is the owner's.
+    # verb here, `yolo` and `trust_agent` included, is the owner's. The answer is still held to
+    # the one rule every door is (`approval_answer`), after the target is named below.
     # Name the target BEFORE anything is granted: a trust/yolo verb aimed at an approval that is
     # no longer pending must not raise the session's posture behind a 404.
     pending_ids = [k for k, f in session._approval_futures.items() if not f.done()]
@@ -2787,6 +2792,10 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         request_id = pending_ids[0] if pending_ids else ""
     if request_id not in pending_ids:
         return web.json_response({"error": "no pending approval"}, status=404)
+    by = approval_answer.of_request(request)
+    refused = state.answer_refusal(chat_approval_id(session.key, request_id), by)
+    if refused:
+        return json_error("approval_owner_only", message=refused, status=403)
     ended = state.refuse_ended_owner(chat_approval_id(session.key, request_id))
     if ended:
         return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
@@ -2800,7 +2809,7 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         return json_error(
             "approval_grant_refused", message=approval_grants.refusal_sentence(), status=409
         )
-    grant = state.decide_session_approval(session, request_id, action)
+    grant = state.decide_session_approval(session, request_id, action, by=by)
     # Report what the grant DID. The route answered a flat `{"ok": true}`, so a client that
     # had just rendered "Saved on this agent: … in this chat and future ones" had no way to
     # learn the grant had degraded to session scope — the promise and the outcome were

@@ -42,6 +42,7 @@ from test_dashboard_approval import (  # the file's own run_chat harness
 
 from personalclaw import notification_kinds as nk
 from personalclaw import notification_rules
+from personalclaw.approval_answer import YOU
 from personalclaw.dashboard.chat import run_chat
 from personalclaw.inbox import OPEN_STATUSES, InboxStore, ItemKind, emit_attention_item
 from personalclaw.llm.base import EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, LLMEvent
@@ -178,7 +179,7 @@ async def test_a_refuting_model_cannot_hide_a_background_approval(tmp_path, stor
         assert _bell(state, row.id), "the approval's notification was withheld from the bell"
         assert refuting_model == [], "the approval waited on a model it must never be judged by"
 
-        assert state.resolve_approval("ap-1", True) is True
+        assert state.resolve_approval("ap-1", True, by=YOU) is True
         assert await asyncio.wait_for(task, timeout=5) is True
         assert row.status == "handled", "answering the approval left its row behind"
     finally:
@@ -219,7 +220,7 @@ async def test_a_refuting_model_cannot_hide_a_chat_approval(tmp_path, store, ref
         assert row.status in OPEN_STATUSES, "a model's verdict took the approval off the Inbox"
         assert _bell(state, row.id), "the approval's notification was withheld from the bell"
         assert refuting_model == [], "the approval waited on a model it must never be judged by"
-        state.decide_session_approval(session, "req-1", "rejected")
+        state.decide_session_approval(session, "req-1", "rejected", by=YOU)
         await _until(lambda: row.status == "handled", "answering it left its row open")
     finally:
         await _finish(task)

@@ -524,6 +524,15 @@ async def api_proactive_reply(request: web.Request) -> web.Response:
     text = str(body.get("text", "") or "")
     if not run_id:
         return json_error("invalid_request", message="run_id is required", status=400)
+    # A reply approves (or declines) what the digest's run proposed, so only you give one
+    # (`approval_answer`): not an app, not an agent's tool, and not the run that proposed it.
+    from personalclaw import approval_answer
+
+    refused = approval_answer.forbidden(
+        request, what=f"digest:{run_id}", asked_by=approval_answer.run(run_id).label
+    )
+    if refused is not None:
+        return refused
 
     from personalclaw.proactive.surface import STATE_READY, build_digest_view
 

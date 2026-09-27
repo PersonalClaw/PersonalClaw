@@ -20,6 +20,7 @@ import pytest
 from test_subagent import _mock_ctx_builder, _mock_sessions
 
 import personalclaw.config.loader as loader
+from personalclaw.approval_answer import YOU
 from personalclaw.subagent import SubagentInfo, SubagentManager
 
 
@@ -287,7 +288,7 @@ async def test_a_server_whose_question_grant_was_taken_back_cannot_ask_you():
                 break
             await asyncio.sleep(0.01)
         (approval_id,) = list(state._pending_approvals)  # the control: a granted server asks
-        state.resolve_approval(approval_id, False)
+        state.resolve_approval(approval_id, False, by=YOU)
         assert (await asyncio.wait_for(asking, 5)).action == "decline"
 
         _write_grant()  # the owner switches the grant off; the connection stays up

@@ -82,7 +82,7 @@ in:
   through untouched (a caller that is not a model may still send one).
 
 Built-in parameters carried this way: `workflow_author.root`/`inputs`, `workflow_start.inputs`,
-`workflow_edit.ops`, `workflow_resume.answer`, `automation_create.spec`,
+`workflow_edit.ops`, `automation_create.spec`,
 `automation_update.patch`, `notify.blocks`, `propose_template_diff.ops`, `prompt_render.vars`,
 `sheet_create.sheets`/`rows` (JSON keeps a number a number) and `visualize.data`. Where the
 shape IS known it is declared instead (`project_run_create.stage_plan`, `deck_create.slides`,

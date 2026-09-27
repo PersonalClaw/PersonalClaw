@@ -283,6 +283,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/evals/studies` — one compact row per pre-registered study (§2.4 / ES-5).
 - `GET /api/evals/studies/{study_id}` — one study's verdict, agreement and per-run rows.
 - `GET /api/external-access` — the whole operator view of the inbound seam.
+- `POST /api/external-access/bridge/confirmations/{id}` — your answer to a control-bridge action.
 - `POST /api/external-access/clients` — create; DELETE …/{client_id} — revoke.
 - `DELETE /api/external-access/clients/{client_id}` — create; DELETE …/{client_id} — revoke.
 - `POST /api/external-access/clients/{client_id}/disabled` — kill-switch layer (c).
@@ -886,6 +887,6 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /actions` — the self-describing action catalogue (control bridge, loopback).
 - `GET /api/ws` — single multiplexed WebSocket for all real-time events.
 - `GET /api/ws/terminal/{session_id}` — WebSocket PTY for the built-in CLI panel.
-- `POST /confirm` — redeem a confirm_token, running the action the user approved.
+- `POST /confirm` — refused, always: only you confirm a control-bridge action.
 - `GET /mcp` — `GET /mcp` → 405. No SSE stream in v1 (spec-permitted).
 - `POST /mcp` — _(no summary)_

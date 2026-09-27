@@ -167,6 +167,7 @@ from personalclaw.dashboard.handlers.durability import (  # noqa: E402, F401
 
 # ── External Access (handlers/external_access.py) — EXTERNAL-ACCESS §1.5 ──
 from personalclaw.dashboard.handlers.external_access import (  # noqa: E402, F401
+    api_bridge_confirmation,
     api_external_access,
     api_external_access_client,
     api_external_access_client_toggle,

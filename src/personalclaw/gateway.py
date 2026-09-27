@@ -30,7 +30,13 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from personalclaw import approval_grants, gateway_base, notification_kinds, shutdown_event
+from personalclaw import (
+    approval_answer,
+    approval_grants,
+    gateway_base,
+    notification_kinds,
+    shutdown_event,
+)
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.approval_grants import ToolDecision
@@ -569,8 +575,9 @@ class GatewayOrchestrator:
                     session_resolver(request_id) if session_resolver else resolved_session
                 )
                 origin = self.dashboard_state.channel_provider_for(parent) if parent else ""
-            asker = approval_delivery(origin)
-            if asker is not None:
+            asking = approval_delivery(origin)
+            if asking is not None:
+                provider, asker = asking
                 try:
                     dashboard_future = None
                     approved: "bool | None" = None
@@ -626,7 +633,10 @@ class GatewayOrchestrator:
                         # row and a "denied" card for a decision nobody made. Cancelling the
                         # dashboard waiter instead ends its approval as `cancelled`.
                         if self.dashboard_state and approved is not None:
-                            self.dashboard_state.resolve_approval(request_id, approved)
+                            # The channel's app checked the press is its paired owner's.
+                            self.dashboard_state.resolve_approval(
+                                request_id, approved, by=approval_answer.on_channel(provider)
+                            )
                         if dashboard_future and not dashboard_future.done():
                             dashboard_future.cancel()
 

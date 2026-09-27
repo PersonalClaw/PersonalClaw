@@ -45,6 +45,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw import notification_kinds, notification_rules, push
+from personalclaw.approval_answer import YOU
 from personalclaw.config.loader import config_dir
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -699,7 +700,7 @@ async def test_the_whole_push_to_approval_chain_advances_a_paused_run(
     assert listed[0]["tool"] == "Bash"
 
     # 5. approve → the paused run proceeds
-    assert state.resolve_approval(approval_id, True) is True
+    assert state.resolve_approval(approval_id, True, by=YOU) is True
     assert await asyncio.wait_for(pending, timeout=5) is True
 
 
@@ -721,7 +722,7 @@ async def test_a_rule_that_says_never_stops_the_approval_push(
     pending = asyncio.create_task(state.request_approval("appr-quiet", source="cron", tool="Bash"))
     await asyncio.sleep(0)
     assert pinged == []
-    assert state.resolve_approval("appr-quiet", False) is True
+    assert state.resolve_approval("appr-quiet", False, by=YOU) is True
     assert await asyncio.wait_for(pending, timeout=5) is False
 
 

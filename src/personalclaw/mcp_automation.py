@@ -254,8 +254,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Wake a PARKED workflow run instead of starting a new "
                         "task: the run id to resume, or 'self' from inside a workflow stage "
-                        "to target your own run. The message becomes the answer the parked "
-                        "gate receives. This is how a monitor run parks between checks.",
+                        "to target your own run. The message becomes the answer to the event "
+                        "gate the run is parked on. This is how a monitor run parks between "
+                        "checks. It answers no other gate: an approval, a choice or a form "
+                        "waits for the owner.",
                     },
                     "ttl_secs": {
                         "type": "number",

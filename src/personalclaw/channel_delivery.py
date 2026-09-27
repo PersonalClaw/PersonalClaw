@@ -496,9 +496,10 @@ def approval_providers(origin: str = "") -> list[str]:
     return order
 
 
-def approval_delivery(origin: str = "") -> "ChannelDelivery | None":
-    """The channel that asks the owner an approval: the first of :func:`approval_providers` that
-    knows the owner (``owner_id_for``) and has an Approve/Deny prompt, or None when none does.
+def approval_delivery(origin: str = "") -> "tuple[str, ChannelDelivery] | None":
+    """The channel that asks the owner an approval, as ``(provider, delivery)``: the first of
+    :func:`approval_providers` that knows the owner (``owner_id_for``) and has an Approve/Deny
+    prompt, or None when none does. The provider names who answers there (you, on that channel).
 
     A channel with no owner id cannot ask anyone, so it is passed over rather than asked and left
     to answer "cannot prompt" — which ended a subagent's approval at the dashboard while the next
@@ -512,7 +513,7 @@ def approval_delivery(origin: str = "") -> "ChannelDelivery | None":
             and getattr(delivery, "request_approval", None) is not None
             and owner_id_for(key)
         ):
-            return delivery
+            return key, delivery
     return None
 
 

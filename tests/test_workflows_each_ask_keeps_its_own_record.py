@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from personalclaw.action_providers.base import ActionContext, ActionResult
+from personalclaw.approval_answer import YOU
 from personalclaw.ledger import outcomes
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
@@ -198,7 +199,7 @@ async def test_a_step_that_asks_again_in_the_same_epoch_asks_a_new_question() ->
     first ask's answer read as the answer to the question now open."""
     c = _controller(_spec(_action()), provider=_SignIn(always=True))
     (first,) = await _asking(c)
-    assert c.resume(first.token, True)["ok"] is True
+    assert c.resume(first.token, True, by=YOU)["ok"] is True
     await _until(
         lambda: len(_rows(c.run.id, J.CONFIRMATION_PENDING)) == 2
         and len(HI.list_continuations(c.run.id)) == 1,
@@ -220,14 +221,14 @@ async def test_the_second_asks_answer_never_regrades_the_first() -> None:
     matching answer — the second ask's Deny — and a yes was scored as a no."""
     c = _controller(_spec(_action()), provider=_SignIn(always=True))
     (first,) = await _asking(c)
-    c.resume(first.token, True)
+    c.resume(first.token, True, by=YOU)
     await _until(
         lambda: len(_rows(c.run.id, J.CONFIRMATION_PENDING)) == 2
         and len(HI.list_continuations(c.run.id)) == 1,
         what="the second ask",
     )
     (second,) = HI.list_continuations(c.run.id)
-    c.resume(second.token, False)
+    c.resume(second.token, False, by=YOU)
     await _ended(c)
 
     events = J.ledger(c.run.id)
@@ -384,7 +385,7 @@ async def test_a_restart_between_the_answer_and_its_dispatch_asks_again() -> Non
     (first,) = await _asking(c)
     # The answer lands, and the gateway stops before the step it re-runs is dispatched.
     c._resume_loop = lambda: None  # type: ignore[method-assign]
-    assert c.resume(first.token, True)["ok"] is True
+    assert c.resume(first.token, True, by=YOU)["ok"] is True
     assert store.read_state(c.run.id)[STEP].state == InstanceState.PENDING
 
     fresh = _restarted(c, provider=provider)

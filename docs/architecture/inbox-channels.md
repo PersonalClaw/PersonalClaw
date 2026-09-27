@@ -156,6 +156,12 @@ emitter stamped (`workflow`, `trigger_park`, `loop`, the control bridge). An Inb
 is its notification pair's source, which is `loop` for a workflow's gate, a trigger's question
 and the control bridge's confirm alike, so it is shown only when the refs name no work.
 
+A control-bridge action that needs confirming is answered in the Inbox: its row
+(`refs.source: control_bridge`, `refs.confirmation`) names the action, what it was asked with and
+the client that asked, and Approve runs it once while Deny drops it
+(`POST /api/external-access/bridge/confirmations/{id}`). Only you answer it: the client that asked
+cannot, and the bridge's own `/confirm` refuses every client.
+
 **The registry id is not the chat's id.** A chat's `request_id` is unique only inside that chat —
 an ACP agent's permission request carries the agent's JSON-RPC message id, counted from the same
 small integers on every connection — so the registry keys a chat approval
@@ -168,6 +174,15 @@ through `decide_session_approval`: the same transcript record, the same SEL `too
 row, and the same waiting runner — whose refusal handling (the rest of a refused batch is refused
 rather than re-asked, so a Deny cannot be routed around with a second call) is therefore the same
 for every door.
+
+**Only you answer.** Each entry records who asked it (`asked_by`: the chat's agent, the app that
+started the chat, a subagent, the run whose step asked, the trigger), and `resolve_approval` and
+`decide_session_approval` take who is answering (`by`) and hold it to `approval_answer`: you, from
+a signed-in session, or you on your paired channel, and never the party that asked. An app's token
+answers nothing, not even to relay your answer. The menu-bar companion and the phone answer with
+your own sign-in. An agent's tool is refused too. A refusal leaves the approval pending, writes an
+`approval.answer_refused` row and answers `403 approval_owner_only`. A decision's
+`approval_decision` row names who answered: `you`, or `channel:<provider>`.
 
 **Every end goes through `withdraw_approval`.** An answer, an expiry, a torn-down turn: the entry
 leaves the registry, its Inbox row is closed through `resolve_attention_items` on the live store,

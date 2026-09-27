@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **880 registrations** over **712 distinct paths** — 873 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **881 registrations** over **713 distinct paths** — 874 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -69,12 +69,12 @@ The 128 families the surface divides into, largest first.
 | `/api/autonudge` | 5 | 3 |
 | `/api/desktop` | 5 | 4 |
 | `/api/devices` | 5 | 5 |
+| `/api/external-access` | 5 | 5 |
 | `/api/feedback` | 5 | 5 |
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
 | `/api/uploads` | 5 | 5 |
 | `/api/autonomy` | 4 | 4 |
-| `/api/external-access` | 4 | 4 |
 | `/api/update` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
 | `/api/incident` | 3 | 2 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 873 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 874 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -436,6 +436,7 @@ The 873 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/evals/studies` | one compact row per pre-registered study (§2.4 / ES-5). |
 | `GET` | `/api/evals/studies/{study_id}` | one study's verdict, agreement and per-run rows. |
 | `GET` | `/api/external-access` | the whole operator view of the inbound seam. |
+| `POST` | `/api/external-access/bridge/confirmations/{id}` | your answer to a control-bridge action. |
 | `POST` | `/api/external-access/clients` | create; DELETE …/{client_id} — revoke. |
 | `DELETE` | `/api/external-access/clients/{client_id}` | create; DELETE …/{client_id} — revoke. |
 | `POST` | `/api/external-access/clients/{client_id}/disabled` | kill-switch layer (c). |
@@ -1043,7 +1044,7 @@ The remaining 7 registrations: real-time transport and the loopback control brid
 | `GET` | `/actions` | the self-describing action catalogue (control bridge, loopback). |
 | `GET` | `/api/ws` | single multiplexed WebSocket for all real-time events. |
 | `GET` | `/api/ws/terminal/{session_id}` | WebSocket PTY for the built-in CLI panel. |
-| `POST` | `/confirm` | redeem a confirm_token, running the action the user approved. |
+| `POST` | `/confirm` | refused, always: only you confirm a control-bridge action. |
 | `GET` | `/mcp` | `GET /mcp` → 405. No SSE stream in v1 (spec-permitted). |
 | `POST` | `/mcp` | _(no summary)_ |
 

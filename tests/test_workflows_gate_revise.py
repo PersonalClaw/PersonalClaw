@@ -30,6 +30,7 @@ import json
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import introspection
 from personalclaw.workflows import journal as J
@@ -168,7 +169,7 @@ class TestCommentPatch:
 class TestReviseOnAWaitingGate:
     async def test_a_revise_patches_one_step_and_leaves_the_rest_untouched(self) -> None:
         c, token = await _blocked()
-        result = c.resume(token, _revise("draft", "be terser"))
+        result = c.resume(token, _revise("draft", "be terser"), by=YOU)
         assert result["ok"] and result["revised"] and result["step_ref"] == "draft"
         children = c.spec["root"]["children"]
         assert "be terser" in children[0]["config"]["prompt"]
@@ -178,7 +179,7 @@ class TestReviseOnAWaitingGate:
     async def test_a_revise_is_not_an_approval(self) -> None:
         """The distinction the whole verb rests on: the reviewer has not decided yet."""
         c, token = await _blocked()
-        result = c.resume(token, _revise("draft", "be terser"))
+        result = c.resume(token, _revise("draft", "be terser"), by=YOU)
         assert result["approved"] is False
         assert not [e for e in J.ledger(c.run.id) if e.get("kind") == J.GATE_RESOLVED]
 
@@ -186,7 +187,7 @@ class TestReviseOnAWaitingGate:
         """Folding it into `gate_resolved` would report a reviewer who asked for a wording
         change as one who declined the work."""
         c, token = await _blocked()
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         stats = introspection.gate_stats(J.ledger(c.run.id))
         assert stats.get("approve") is None or stats["approve"].rejects == 0
 
@@ -195,19 +196,19 @@ class TestReviseOnAWaitingGate:
         to PENDING so it asks against the revised step."""
         c, token = await _blocked()
         assert c.instances["root.children[1]"].state == InstanceState.WAITING
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         assert c.instances["root.children[1]"].state == InstanceState.PENDING
         assert c.run.status == RunStatus.RUNNING
 
     async def test_the_run_leaves_needs_input(self) -> None:
         c, token = await _blocked()
         assert c.run.status == RunStatus.NEEDS_INPUT
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         assert c.run.status == RunStatus.RUNNING
 
     async def test_the_revise_is_journaled_as_its_own_kind(self) -> None:
         c, token = await _blocked()
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         revised = [e for e in J.ledger(c.run.id) if e.get("kind") == J.GATE_REVISED]
         assert len(revised) == 1
         assert revised[0]["step_ref"] == "draft" and revised[0]["comment"] == "be terser"
@@ -216,8 +217,8 @@ class TestReviseOnAWaitingGate:
         """A revise answers the gate as surely as an approval does; a live token would let
         the second land on an already-revised step."""
         c, token = await _blocked()
-        assert c.resume(token, _revise("draft", "a"))["ok"]
-        assert c.resume(token, _revise("draft", "b"))["code"] == "WF_RESUME_UNKNOWN_TOKEN"
+        assert c.resume(token, _revise("draft", "a"), by=YOU)["ok"]
+        assert c.resume(token, _revise("draft", "b"), by=YOU)["code"] == "WF_RESUME_UNKNOWN_TOKEN"
 
 
 class TestARejectedReviseKeepsTheToken:
@@ -226,32 +227,32 @@ class TestARejectedReviseKeepsTheToken:
 
     async def test_an_unknown_step_ref_leaves_the_token_answerable(self) -> None:
         c, token = await _blocked()
-        bad = c.resume(token, _revise("ghost", "be terser"))
+        bad = c.resume(token, _revise("ghost", "be terser"), by=YOU)
         assert bad["code"] == "WF_REVISE_UNKNOWN_STEP"
-        assert c.resume(token, True)["ok"]
+        assert c.resume(token, True, by=YOU)["ok"]
 
     async def test_a_missing_comment_leaves_the_token_answerable(self) -> None:
         c, token = await _blocked()
-        bad = c.resume(token, _revise("draft", "   "))
+        bad = c.resume(token, _revise("draft", "   "), by=YOU)
         assert bad["code"] == "WF_REVISE_NO_COMMENT"
-        assert c.resume(token, True)["ok"]
+        assert c.resume(token, True, by=YOU)["ok"]
 
     async def test_a_missing_step_ref_leaves_the_token_answerable(self) -> None:
         c, token = await _blocked()
-        bad = c.resume(token, _revise("", "be terser"))
+        bad = c.resume(token, _revise("", "be terser"), by=YOU)
         assert bad["code"] == "WF_REVISE_NO_STEP_REF"
-        assert c.resume(token, True)["ok"]
+        assert c.resume(token, True, by=YOU)["ok"]
 
     async def test_a_stale_epoch_revise_is_refused(self) -> None:
         c, token = await _blocked()
         cont = HI.load_continuation(c.run.id, token)
         c.instances[cont.instance_path].epoch = 5
-        assert c.resume(token, _revise("draft", "x"))["code"] == "WF_RESUME_STALE_EPOCH"
+        assert c.resume(token, _revise("draft", "x"), by=YOU)["code"] == "WF_RESUME_STALE_EPOCH"
 
     async def test_an_unknown_token_is_refused_before_any_spec_write(self) -> None:
         c, _token = await _blocked()
         before = store.read_spec(c.run.id)
-        assert c.resume("nope", _revise("draft", "x"))["code"] == "WF_RESUME_UNKNOWN_TOKEN"
+        assert c.resume("nope", _revise("draft", "x"), by=YOU)["code"] == "WF_RESUME_UNKNOWN_TOKEN"
         assert store.read_spec(c.run.id) == before
 
 
@@ -261,7 +262,7 @@ class TestWhatRunsMatchesWhatWasRecorded:
 
     async def test_the_spec_on_disk_equals_the_spec_the_engine_runs(self) -> None:
         c, token = await _blocked()
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         on_disk = store.read_spec(c.run.id)
         assert on_disk == c.spec
         assert "be terser" in on_disk["root"]["children"][0]["config"]["prompt"]
@@ -272,7 +273,7 @@ class TestWhatRunsMatchesWhatWasRecorded:
         """`spec_history`'s hash is what lets a reader confirm the recorded edit produced
         the spec on disk — the audit half of "what was approved is what runs"."""
         c, token = await _blocked()
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         record = json.loads(
             (
                 store.run_dir(c.run.id) / "spec_history" / f"v{c.run.spec_version:03d}.json"
@@ -285,14 +286,14 @@ class TestWhatRunsMatchesWhatWasRecorded:
     async def test_the_spec_version_advances_so_a_stale_editor_is_caught(self) -> None:
         c, token = await _blocked()
         before = c.run.spec_version
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         assert c.run.spec_version == before + 1
 
     async def test_the_edit_is_journaled_for_the_refiner(self) -> None:
         """A hand-fix is the learning signal `refiner` clusters on; a revision that skipped
         it would be an edit no template ever learns from."""
         c, token = await _blocked()
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         edits = [e for e in J.ledger(c.run.id) if e.get("kind") == J.USER_EDITED_MID_FLIGHT]
         assert len(edits) == 1 and edits[0]["ops"][0]["node_id"] == "draft"
 
@@ -303,7 +304,7 @@ class TestWhatRunsMatchesWhatWasRecorded:
         from personalclaw.workflows.journal import spec_region_hash
 
         before = spec_region_hash(c.root.children[0].to_dict())
-        c.resume(token, _revise("draft", "be terser"))
+        c.resume(token, _revise("draft", "be terser"), by=YOU)
         assert spec_region_hash(c.root.children[0].to_dict()) != before
 
     async def test_the_journal_kind_reaches_the_ledger(self) -> None:

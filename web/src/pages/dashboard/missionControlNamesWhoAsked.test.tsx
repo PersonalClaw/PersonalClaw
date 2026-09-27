@@ -73,7 +73,7 @@ beforeEach(() => {
     }),
     onThePair('wait', 'Loop needs your input', { loop: 'abc123', loop_kind: 'general' }),
     onThePair('bridge', 'Confirm a control-bridge action', {
-      source: 'control_bridge', action: 'restart', confirm_token: 'c1',
+      source: 'control_bridge', action: 'restart', confirmation: 'c1',
     }),
   ])
   approvals.mockResolvedValue([

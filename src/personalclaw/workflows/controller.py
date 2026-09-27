@@ -47,7 +47,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw import review_triage
+from personalclaw import approval_answer, review_triage
+from personalclaw.approval_answer import Principal
 from personalclaw.guardrails.calls import CallLog, capture_model_calls
 from personalclaw.workflows import (
     attention,
@@ -765,20 +766,29 @@ class RunController:
         token: str,
         answer: Any,
         *,
-        responder: str = "",
+        by: Principal,
         channel: str = "",
         always_allow: bool = False,
     ) -> dict[str, Any]:
-        """Answer a waiting gate. The out-of-band entry point (widget, inbox, HTTP, chat).
+        """Answer a waiting gate. The one entry point every door answers through (the run page,
+        the Inbox, Mission Control, HTTP).
+
+        *by* is who is answering. Only you answer a gate, and never the run that asked it: an
+        agent's tool, an app and the run itself are refused with ``WF_RESUME_NOT_OWNER`` and
+        audited (``approval_answer``), before the token is touched. The one exception is an
+        ``event`` gate, which parks the run until something happens and asks nobody's
+        permission: the trigger it waits for wakes it by answering it. A trigger answers no other
+        gate, so a trigger an agent armed cannot approve its own run's approval gate.
 
         The answer is VALIDATED before the token is consumed: rejecting afterwards would
         have already destroyed the token, leaving a dead link and an unanswered gate. Then
         the token is consumed ATOMICALLY, so a double-click or a retried POST cannot replay
         one approval into two actions.
 
-        `channel` marks a REMOTE reply. A remote answer must come from the run's owner —
-        without that binding, a shared channel is a privilege-escalation path where anyone
-        who can type can approve someone else's deployment (WF2-R7).
+        `channel` marks a REMOTE reply, and *by* is then you on that channel, named by who
+        replied. A remote answer must come from the run's owner — without that binding, a shared
+        channel is a privilege-escalation path where anyone who can type can approve someone
+        else's deployment (WF2-R7).
         """
         from personalclaw.workflows.human_input import (
             Ask,
@@ -787,14 +797,23 @@ class RunController:
             load_continuation,
         )
 
-        allowed, why = gate_policy.may_answer(self.run, responder=responder, channel=channel)
+        # Read, not claimed: which gate this answers decides who may answer it.
+        cont = load_continuation(self.run.id, token)
+        refused = approval_answer.check(
+            by,
+            what=f"gate:{self.run.id}",
+            asked_by=approval_answer.run(self.run.id).label,
+            event=cont is not None and self._waits_on_event(cont.instance_path),
+        )
+        if refused:
+            return {"ok": False, "code": "WF_RESUME_NOT_OWNER", "message": refused}
+        allowed, why = gate_policy.may_answer(self.run, responder=by.name, channel=channel)
         if not allowed:
             # Checked BEFORE the token is touched, and deliberately terse: replying with
             # the gate's content to a shared channel would leak it to everyone in it.
             logger.info("workflow %s: refusing remote gate answer — %s", self.run.id, why)
             return {"ok": False, "code": "WF_RESUME_NOT_OWNER", "message": why}
 
-        cont = load_continuation(self.run.id, token)
         if cont is None:
             return {"ok": False, "code": "WF_RESUME_UNKNOWN_TOKEN"}
         if cont.expired:
@@ -811,7 +830,7 @@ class RunController:
         if revise is not None:
             step_ref, comment = revise
             return gate_answers.resume_revise(
-                self, cont, token, step_ref, comment, responder=responder, channel=channel
+                self, cont, token, step_ref, comment, by=by, channel=channel
             )
 
         ask = Ask.from_dict(cont.ask)
@@ -841,7 +860,7 @@ class RunController:
             node = dict(walk(self.root)).get(spec_path(cont.instance_path))
             self._allow_memory.remember(node.config if node else {}, cont.node_id)
         inst.wake_at = 0.0
-        who = gate_answers.decliner(responder, channel)
+        who = gate_answers.decliner(by, channel)
         if ask.rerun:
             gate_answers.settle_parked_step(
                 self, cont, inst, approved=approved, answer=filled, who=who
@@ -870,7 +889,7 @@ class RunController:
             confirmation_id=cont.confirmation_id,
             verb="approve" if approved else "reject",
             approved=approved,
-            resolved_by=responder or channel or "dashboard",
+            resolved_by=by.label,
         )
         self.journal.write(
             journal_mod.GATE_RESOLVED,
@@ -2004,6 +2023,16 @@ class RunController:
             inst = NodeInstance(path=path)
             self.instances[path] = inst
         return inst
+
+    def _waits_on_event(self, path: str) -> bool:
+        """Whether the step at *path* is an ``event`` gate: parked until something happens, not
+        waiting for a person's answer (:meth:`resume`)."""
+        node = dict(walk(self.root)).get(spec_path(path))
+        return (
+            node is not None
+            and node.kind == NodeKind.GATE
+            and str((node.config or {}).get("kind", "") or "") == "event"
+        )
 
     def _persist_state(self) -> None:
         store.write_state(self.run.id, self.instances)

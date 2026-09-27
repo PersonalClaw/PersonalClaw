@@ -39,10 +39,25 @@ from personalclaw.workflows.watchdog import WorkflowWatchdog
 
 NOW = 1_700_000_000.0
 
-#: A run that PARKS on an approval gate and has an un-run node behind it. The node behind the gate
-#: is the whole proof: its output cannot exist unless the resume actually moved the run forward.
+#: A run that PARKS on an event gate, the wake a trigger's resume target answers, and has an un-run
+#: node behind it. The node behind the gate is the whole proof: its output cannot exist unless the
+#: resume actually moved the run forward. A trigger answers only an event gate; an approval gate
+#: waits for the owner (`test_a_trigger_cannot_answer_an_APPROVAL_gate`).
 GATED_SPEC = {
     "name": "gated",
+    "root": {
+        "kind": "sequence",
+        "id": "s",
+        "children": [
+            {"kind": "gate", "id": "park", "config": {"kind": "event", "prompt": "parked"}},
+            {"kind": "transform", "id": "after", "config": {"expr": "the run carried on"}},
+        ],
+    },
+}
+
+#: The same run, parked on an APPROVAL gate instead: a question for the owner.
+APPROVAL_SPEC = {
+    "name": "approval-gated",
     "root": {
         "kind": "sequence",
         "id": "s",
@@ -389,6 +404,34 @@ async def test_THE_RUN_ACTUALLY_RESUMES(isolated, monkeypatch):
     # The proof: a value that only exists if the run carried on past the gate.
     assert wstore.read_output(run.id, AFTER_PATH) == "the run carried on"
     assert wstore.get(run.id).status == RunStatus.COMPLETE
+
+
+@pytest.mark.anyio
+async def test_a_trigger_cannot_answer_an_APPROVAL_gate(isolated, monkeypatch):
+    """🔴 A trigger answers only the event gate it was armed to wake. An agent inside a run could
+    arm one against its own run (`set_onetime_task(resume_run_id="self", message="true")`), and
+    its fire used to approve whatever gate the run waited on: the run approving itself. An approval
+    gate waits for the owner (`approval_answer`), so the fire is refused, audited, and the gate is
+    left exactly as it was."""
+    from personalclaw.workflows.human_input import list_continuations
+
+    rows: list[dict] = []
+    monkeypatch.setattr(
+        "personalclaw.sel.sel",
+        lambda: type("S", (), {"log_api_access": lambda self, **kw: rows.append(kw)})(),
+    )
+    run, watchdog = await _parked_run(APPROVAL_SPEC)
+    _attach(monkeypatch, watchdog)
+
+    outcome = await _fire(run.id, answer=True)
+    assert outcome.outcome == Outcome.REFUSED.value, outcome.reason
+    assert outcome.reported == "WF_RESUME_NOT_OWNER"
+    assert len(list_continuations(run.id)) == 1, "the gate still waits for the owner"
+    assert wstore.get(run.id).status == RunStatus.NEEDS_INPUT
+    assert wstore.read_output(run.id, AFTER_PATH) is None
+    refused = [r for r in rows if r.get("operation") == "approval.answer_refused"]
+    assert [r["caller"] for r in refused] == ["trigger:schedule:j1"]
+    assert refused[0]["resources"] == f"gate:{run.id} asked_by=run:{run.id}"
 
 
 @pytest.mark.anyio

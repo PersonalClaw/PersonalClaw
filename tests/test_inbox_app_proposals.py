@@ -160,6 +160,8 @@ async def _client(tmp_path, monkeypatch):
 
         @web.middleware
         async def stamp_app(request, handler):
+            # Signed in as the owner, as token auth records it; an app's token narrows that.
+            request["user"] = "owner"
             ident = request.headers.get("X-Test-App", "")
             if ident:
                 request["app"] = ident
@@ -334,6 +336,35 @@ async def test_apply_endpoint_reports_a_failure_as_ok_false_and_keeps_the_row(
         store.load()
         assert store.items[item_id].status == ItemStatus.PENDING.value
         assert store.items[item_id].refs[pc.ERROR_KEY]["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_agents_tool_applies_no_proposal(tmp_path, monkeypatch):
+    """Only you approve a proposal (`approval_answer`). An agent's tool presents the gateway's
+    internal secret; it is refused, audited, and the proposal is left for you."""
+    async with _client(tmp_path, monkeypatch) as client:
+        _install(tmp_path, "demo", proposals=[{"kind_suffix": "draft"}])
+        r = await client.post(
+            "/api/inbox/proposals",
+            json={
+                "kind_suffix": "draft",
+                "title": "Send the draft",
+                "apply": {"workflow": {"ref": "no-such-workflow"}},
+            },
+            headers={"X-Test-App": "demo"},
+        )
+        item_id = (await r.json())["id"]
+        r2 = await client.post(
+            f"/api/inbox/{item_id}/apply",
+            json={},
+            headers={"X-Internal-Secret": "s", "X-Session-Key": "dashboard:c1"},
+        )
+        body = await r2.json()
+        assert r2.status == 403, body
+        assert body["error"]["code"] == "approval_owner_only"
+    refused = [r for r in _sel_rows(tmp_path) if r.get("operation") == "approval.answer_refused"]
+    assert [r["caller_identity"] for r in refused] == ["agent:dashboard:c1"]
+    assert refused[0]["resources"] == f"proposal:{item_id} asked_by=app:demo"
 
 
 @pytest.mark.asyncio

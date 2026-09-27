@@ -540,7 +540,7 @@ Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you 
 **Parameters:**
 - `message` (string, required) — The instruction to give yourself when it fires.
 - `name` (string, required) — A short name for the task.
-- `resume_run_id` (string, optional) — Wake a PARKED workflow run instead of starting a new task: the run id to resume, or 'self' from inside a workflow stage to target your own run. The message becomes the answer the parked gate receives. This is how a monitor run parks between checks.
+- `resume_run_id` (string, optional) — Wake a PARKED workflow run instead of starting a new task: the run id to resume, or 'self' from inside a workflow stage to target your own run. The message becomes the answer to the event gate the run is parked on. This is how a monitor run parks between checks. It answers no other gate: an approval, a choice or a form waits for the owner.
 - `ttl_secs` (number, optional) — How long the task may stay armed before it expires (default: 7 days). Every self-scheduled task expires — a forgotten clock must not run forever.
 - `when` (string, required) — When to wake, in plain language: 'in 20 minutes', 'tomorrow at 9am', '2026-09-01 14:00'.
 
@@ -1494,7 +1494,7 @@ Save a learned correction or preference that persists across all future sessions
 
 ### `triage_rules`
 
-List, add, or revoke the triage approval rules — what the proactive digest may do without asking again. action='list' shows every rule with its hit count and where it came from; action='add' needs a pattern (like 'archive:sender:noreply.github.com') and a verdict ('approve' or 'deny'); action='revoke' needs the rule id from list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal.
+List, add, or revoke the triage approval rules — what the proactive digest may do without asking again. action='list' shows every rule with its hit count and where it came from; action='add' needs a pattern (like 'archive:sender:noreply.github.com') and the verdict 'deny'; action='revoke' needs the rule id from list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal. Only the owner teaches an approve rule, by answering the digest: an agent cannot approve work ahead of time.
 
 **Response type:** `memory.triage_rules`
 
@@ -1506,7 +1506,7 @@ List, add, or revoke the triage approval rules — what the proactive digest may
 - `id` (string, optional) — The rule id (user.approval.*) to revoke
 - `pattern` (string, optional) — Colon-delimited pattern, narrowest first segment is the action type: <action>[:<qualifier>...] (add only)
 - `scope` (string, optional) — Where the rule applies (default global)
-- `verdict` (string, optional) — approve = auto-execute, deny = silently skip (add only)
+- `verdict` (string, optional) — deny = silently skip matching proposals (add only)
 
 **Example — List the taught triage rules:**
 
@@ -2291,23 +2291,19 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
 
 ### `workflow_resume`
 
-Answer a workflow that is waiting on a human, or clear a pause. `answer` is JSON text: for an approval gate pass true or false; for a choice or form pass the value or object. To change ONE step instead of accepting or rejecting the whole plan, pass {"revise": {"step_ref": "<step id>", "comment": "what to change"}} — that step's instruction is amended and the gate re-asks, leaving every other step exactly as it was. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
+Lift a workflow's pause so it carries on. It answers no gate: a workflow waiting on a human (an approval, a choice, a form, a plan to review) is answered by the owner, never by an agent. Tell them it is waiting; they answer it in PersonalClaw (the Inbox, Home or the run's page).
 
-**Response type:** `workflow.gate.resolved`
+**Response type:** `workflow.run.resumed`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
-- `always_allow` (boolean, optional) — Auto-approve this same operation for the rest of THIS run (cleared if the run is rewound).
-- `answer` (string, optional) — The answer as JSON text: true or false for an approval; a JSON string or object otherwise; or {"revise": {"step_ref": "...", "comment": "..."}} to amend one step and re-ask.
-- `resume_token` (string, optional) — Which gate to answer (required if several are pending).
 - `run_id` (string, required) — The run id (from workflow_start).
 
-**Example — Approve a waiting gate:**
+**Example — Lift a run's pause:**
 
 ```json
 {
-  "answer": "true",
   "run_id": "a1b2c3d4"
 }
 ```

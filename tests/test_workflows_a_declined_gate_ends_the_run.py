@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import store
@@ -119,7 +120,7 @@ def _started(run_id: str, *, control: str = "approve") -> set[str]:
 def _deny(c: RunController, **kw: Any) -> dict[str, Any]:
     pending = HI.list_continuations(c.run.id)
     assert len(pending) == 1, [p.node_id for p in pending]
-    return c.resume(pending[0].token, False, **kw)
+    return c.resume(pending[0].token, False, **kw, by=YOU)
 
 
 async def test_denying_a_gate_runs_nothing_after_it_and_ends_the_run_declined(monkeypatch) -> None:
@@ -157,13 +158,15 @@ async def test_with_no_name_given_the_record_says_you(monkeypatch) -> None:
     assert c.run.error_message == "“approve” was declined by you, so nothing after it ran."
 
 
-def test_a_channel_or_trigger_answer_is_named_for_what_it_is(monkeypatch) -> None:
+def test_a_channel_answer_is_named_for_where_it_came_from(monkeypatch) -> None:
+    """Only you answer a gate (`approval_answer`), so a decline names you, or you on the channel
+    you replied from. A trigger declines nothing: it answers only an event gate, which cannot."""
+    from personalclaw.approval_answer import CHANNEL, YOU, Principal
     from personalclaw.workflows.gate_answers import decliner
 
     monkeypatch.setattr("personalclaw.identity.operator_name", lambda: "Keyur")
-    assert decliner("", "") == "Keyur"
-    assert decliner("keyur", "slack") == "keyur in slack"
-    assert decliner("trigger:t-9", "") == "the trigger t-9"
+    assert decliner(YOU, "") == "Keyur"
+    assert decliner(Principal(CHANNEL, "keyur"), "slack") == "keyur in slack"
 
 
 async def test_a_decline_is_not_a_failure_that_on_error_can_walk_past() -> None:

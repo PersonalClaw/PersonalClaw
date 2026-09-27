@@ -37,6 +37,7 @@ from test_dashboard_approval import (  # the shared run_chat harness
     _set_stream,
 )
 
+from personalclaw.approval_answer import YOU
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.approval_state import chat_approval_id
 from personalclaw.dashboard.chat import api_chat_session_approve, run_chat
@@ -283,7 +284,7 @@ async def test_a_cancel_requested_run_is_refused_before_its_controller_applies_i
     store.request_cancel(run.id)
     task = await _background_wait(world, "spawn:abc124", f"workflow:{run.id}:sweep")
 
-    assert world.state.resolve_approval("spawn:abc124", True) is False
+    assert world.state.resolve_approval("spawn:abc124", True, by=YOU) is False
     assert await asyncio.wait_for(task, timeout=2) is False
 
 
@@ -311,7 +312,7 @@ async def test_a_cancelled_subagent_approval_is_refused(world):
     )
     task = await _background_wait(world, "spawn:abc126", "")
 
-    assert world.state.resolve_approval("spawn:abc126", True) is False
+    assert world.state.resolve_approval("spawn:abc126", True, by=YOU) is False
     assert await asyncio.wait_for(task, timeout=2) is False
     (row,) = _cancel_rows(world)
     assert row[1] == "spawn:abc126: the subagent that asked for it was cancelled", row
@@ -327,7 +328,7 @@ async def test_an_owner_lookup_that_fails_refuses_an_approve(world, monkeypatch)
     monkeypatch.setattr(store, "get", _unreadable)
     task = await _background_wait(world, "spawn:abc127", "workflow:r1:sweep")
 
-    assert world.state.resolve_approval("spawn:abc127", True) is False
+    assert world.state.resolve_approval("spawn:abc127", True, by=YOU) is False
     assert await asyncio.wait_for(task, timeout=2) is False
 
 

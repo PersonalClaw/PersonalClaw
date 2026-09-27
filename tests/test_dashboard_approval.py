@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.dashboard.approval_state import chat_approval_id
 from personalclaw.dashboard.chat import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession, parse_cls_meta
@@ -388,7 +389,7 @@ class TestResolveApprovalSessionFallback:
         fut, approval_id = await self._held(state, session, "req-42")
         assert approval_id == f"{session.key}:req-42"
 
-        result = state.resolve_approval(approval_id, True)
+        result = state.resolve_approval(approval_id, True, by=YOU)
 
         assert result is True
         assert fut.done()
@@ -414,7 +415,7 @@ class TestResolveApprovalSessionFallback:
         state._sessions[session.key] = session
         fut, approval_id = await self._held(state, session, "req-43")
 
-        result = state.resolve_approval(approval_id, False)
+        result = state.resolve_approval(approval_id, False, by=YOU)
 
         assert result is True
         assert fut.result() == "rejected"
@@ -427,7 +428,7 @@ class TestResolveApprovalSessionFallback:
         state._sessions[session.key] = session
         fut, _approval_id = await self._held(state, session, "req-44")
 
-        assert state.resolve_approval("req-44", True) is False
+        assert state.resolve_approval("req-44", True, by=YOU) is False
         assert not fut.done()
 
     @pytest.mark.asyncio
@@ -443,7 +444,7 @@ class TestResolveApprovalSessionFallback:
         state._approval_futures["req-44"] = state_fut
         session._approval_futures["req-44"] = session_fut
 
-        state.resolve_approval("req-44", True)
+        state.resolve_approval("req-44", True, by=YOU)
 
         assert state_fut.done()
         assert (
@@ -457,7 +458,7 @@ class TestResolveApprovalSessionFallback:
         session = _make_session()
         state._sessions[session.key] = session
 
-        assert state.resolve_approval("nonexistent", True) is False
+        assert state.resolve_approval("nonexistent", True, by=YOU) is False
 
 
 class TestToolCallIdRedaction:

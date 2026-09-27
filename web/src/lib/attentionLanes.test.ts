@@ -420,7 +420,7 @@ describe('who raised a card (ledger 295)', () => {
     ['Loop', onThePair('wait', { loop: 'abc123', loop_kind: 'general' })],
     // A loop that runs as a workflow run stamps both: the loop is what asked.
     ['Loop', onThePair('escalated', { loop: 'r1', loop_kind: 'general', workflow: 'r1' })],
-    ['Control bridge', onThePair('bridge', { source: 'control_bridge', action: 'restart', confirm_token: 'c1' })],
+    ['Control bridge', onThePair('bridge', { source: 'control_bridge', action: 'restart', confirmation: 'c1' })],
   ]
 
   it('names the work an Inbox card is for, never the notification pair it rode', () => {
