@@ -45,6 +45,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.chat_persistence import resolve_session
 from personalclaw.dashboard.chat_utils import _history_key_for, apply_task_mode
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import _safe_key
@@ -253,9 +254,13 @@ def _resume_prompt(markdown: str) -> str:
 
 
 def _resolve(request: web.Request) -> tuple[DashboardState, _ChatSession] | web.Response:
+    """The chat the request names — in memory, or loaded from its history the way the transcript
+    read loads it (`resolve_session`). A chat that is only on disk (one brought over from another
+    tool, one a restart did not restore) is still a chat: the page's plan gate reads it at once,
+    before its own transcript read has loaded it, and a bare in-memory lookup answered that read
+    404 for every such chat. A key that names no chat is still 404."""
     state: DashboardState = request.app["state"]
-    name = request.match_info["session"]
-    chat = state._sessions.get(name)
+    chat = resolve_session(state, request.match_info["session"])
     if chat is None:
         return json_error("session_not_found", message="No such chat session", status=404)
     return state, chat
