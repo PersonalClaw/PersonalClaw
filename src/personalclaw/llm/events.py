@@ -4,7 +4,7 @@ Defines the backend-neutral :class:`AgentEvent` that every backend (ACP via
 ``acp/adapter.py``, the native loop, the HTTP model providers) emits and the
 chat runner consumes. ``LLMEvent`` aliases it.
 
-The field set mirrors ``acp.types.AcpEvent`` (identical field names + defaults).
+The field set is a superset of ``acp.types.AcpEvent`` (same names + defaults).
 The event-kind constants live here as the canonical home; ``acp.types`` imports
 them.
 """
@@ -67,9 +67,11 @@ TOOL_META_AUTO_DENIED = "auto_denied"
 class AgentEvent:
     """A neutral event from any agent/model backend's turn stream.
 
-    Field names + defaults match ``acp.types.AcpEvent`` exactly so the chat
-    runner consumes either without change. ``tool_input``/``tool_output`` are
-    typed ``Any`` (the native loop may pass structured values; ACP passes str).
+    Every ``acp.types.AcpEvent`` field is here under the same name and default,
+    so the chat runner consumes either without change. ``risk_level`` and
+    ``served_model_ref`` have no ACP twin, since an ACP agent reports neither.
+    ``tool_input``/``tool_output`` are typed ``Any`` (the native loop may pass
+    structured values; ACP passes str).
     """
 
     kind: str  # one of the EVENT_* constants above
@@ -127,3 +129,7 @@ class AgentEvent:
     # carry the input schema + render hint. Empty for backends that don't supply
     # it (ACP) → the UI renders exactly as before. Mirror in acp.types.AcpEvent.
     tool_meta: dict[str, Any] = field(default_factory=dict)
+    #: The ``"<entry>:<model>"`` ref of the model that answered, on the native loop's terminal
+    #: EVENT_COMPLETE: the fallback when the turn fell back down its chain, so the usage this
+    #: event carries is priced by the model that ran. ``""`` from a backend that does not say.
+    served_model_ref: str = ""

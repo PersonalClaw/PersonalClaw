@@ -967,6 +967,7 @@ class NativeAgentRuntime(AgentProvider):
                         context_usage_pct=self._last_context_pct,
                         event_count=agg_events,
                         tool_call_count=agg_tool_calls,
+                        served_model_ref=self.served_model_ref,
                     )
                     return
                 turns += 1
@@ -1245,6 +1246,8 @@ class NativeAgentRuntime(AgentProvider):
                         context_usage_pct=self._last_context_pct,
                         event_count=agg_events,
                         tool_call_count=agg_tool_calls,
+                        # Read before the `finally` below puts the turn's own model back.
+                        served_model_ref=self.served_model_ref,
                     )
                     return
 
@@ -1286,6 +1289,7 @@ class NativeAgentRuntime(AgentProvider):
                 context_usage_pct=self._last_context_pct,
                 event_count=agg_events,
                 tool_call_count=agg_tool_calls,
+                served_model_ref=self.served_model_ref,
             )
         finally:
             # A fallback answered THIS turn only: the next one starts on the model it was chosen

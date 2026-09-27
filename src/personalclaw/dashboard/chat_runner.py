@@ -4397,15 +4397,18 @@ async def run_chat(
                     if event.duration_ms:
                         stats.inc_duration_ms(event.duration_ms)
                         _turn_reported_duration_ms = int(event.duration_ms)
-                    # Resolve the model that actually ran for the cost estimate. When
-                    # the user left model on "auto", some ACP backends report the
-                    # resolved model only via an `init` event that arrives mid-turn, so
-                    # session.model may still be empty here — read it back from the
-                    # provider for the estimate. Use it ONLY for the estimate, never
-                    # write it onto session.model (the user's selection); the ACP CLI's
-                    # internal model would clobber the user's choice with a model no
-                    # model-provider offers.
-                    _record_model = session.model
+                    # The model that ANSWERED is what the turn cost: the native loop names it on
+                    # this event (the next model of the chain when the turn fell back). An ACP
+                    # backend names none, so its turn keeps the chat's pick. When the user left
+                    # model on "auto", some ACP backends report the resolved model only via an
+                    # `init` event that arrives mid-turn, so session.model may still be empty
+                    # here — read it back from the provider for the estimate. Use it ONLY for
+                    # the estimate, never write it onto session.model (the user's selection);
+                    # the ACP CLI's internal model would clobber the user's choice with a model
+                    # no model-provider offers.
+                    from personalclaw.usage_ledger import answered_model
+
+                    _record_model = answered_model(event, session.model)
                     if not _record_model:
                         _prov_model = getattr(getattr(client, "client", None), "_model", "") or ""
                         if isinstance(_prov_model, str) and _prov_model and _prov_model != "auto":

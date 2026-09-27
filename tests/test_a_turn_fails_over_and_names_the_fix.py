@@ -255,8 +255,8 @@ async def test_a_turn_that_already_showed_output_is_not_moved_to_another_model(w
 
 
 async def test_a_caller_that_does_not_show_the_fallback_gets_the_failure(world):
-    """A room or a background stream never shows the line, so for them a fallback's reply would
-    read as the chosen model's: they keep the failure."""
+    """A background stream never shows the line, so for it a fallback's reply would read as the
+    chosen model's: it keeps the failure."""
     world.active["chat"] = [DOWN_REF, UP_REF]
     world.failures[DOWN] = RuntimeError(OVERLOADED)
     rt = await _runtime(announce=False)
