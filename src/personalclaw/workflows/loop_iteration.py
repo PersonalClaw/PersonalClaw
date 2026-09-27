@@ -174,13 +174,8 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # iteration finished the loop is asked first, below.
     spent = verdict.tripped and verdict.reason in BUDGET_TRIPS
     if verdict.tripped and not spent:
-        ctl.journal.iteration(
-            parent_path,
-            node.id,
-            iteration=iteration,
-            outcome=f"breaker:{verdict.reason}",
-            error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
-            tokens=inst.tokens,
+        _journal_breaker_trip(
+            ctl, parent_path, node, iteration, breaker, inst.tokens, verdict.reason
         )
         if loop_convergence.converge_loop(
             ctl,
@@ -236,13 +231,8 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
             # judge did not accept, or with no judge, genuinely ran out of budget.
             keep_going, reason = False, "judge_done"
         else:
-            ctl.journal.iteration(
-                parent_path,
-                node.id,
-                iteration=iteration,
-                outcome=f"breaker:{budget.reason}",
-                error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
-                tokens=inst.tokens,
+            _journal_breaker_trip(
+                ctl, parent_path, node, iteration, breaker, inst.tokens, budget.reason
             )
             loop_convergence.surface_loop(
                 ctl,
@@ -292,6 +282,29 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     loop_inst = ctl._instance(parent_path)
     loop_inst.state = InstanceState.DONE
     loop_inst.completed_at = now_stamp()
+
+
+def _journal_breaker_trip(
+    ctl: RunController,
+    parent_path: str,
+    node: Node,
+    iteration: int,
+    breaker: BreakerState,
+    tokens: int,
+    reason: str,
+) -> None:
+    """Journal the iteration a breaker trip ended, a stall it caught or a budget it spent.
+
+    One writer for both, so the ``breaker:<reason>`` outcome is spelled in one place
+    (``tests/test_audit_outcome_families.py`` counts each site it cannot read statically)."""
+    ctl.journal.iteration(
+        parent_path,
+        node.id,
+        iteration=iteration,
+        outcome=f"breaker:{reason}",
+        error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
+        tokens=tokens,
+    )
 
 
 def _judge_accepted(
