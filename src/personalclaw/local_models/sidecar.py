@@ -107,10 +107,13 @@ def sidecar_venv_dir(app: str) -> Path:
     ``dependencies.pythonDependencies`` land: that directory is loaded into the gateway's
     own process, so all apps share one version of each package. A sidecar app's deps are
     only ever imported by its own child process, so it gets an interpreter of its own.
-    """
-    from personalclaw.apps.manager import app_dir
 
-    return app_dir(app) / "venv"
+    Inside the app's folder, so an update carries it to the new version with the app's
+    ``data/`` (``apps/app_manager.update``) and a removal takes it with the app's files.
+    """
+    from personalclaw.apps.manager import APP_VENV_DIRNAME, app_dir
+
+    return app_dir(app) / APP_VENV_DIRNAME
 
 
 def venv_python(venv: Path) -> Path:
