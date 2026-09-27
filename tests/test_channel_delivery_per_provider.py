@@ -29,10 +29,9 @@ from the 25 sites, not invented:
   addressed to the OWNER via `open_dm(owner_id)` and has no origin channel (every `gateway.py`
   site).
 
-ARCC was queried for this work (message routing / tenant isolation). It returned SAX-05 AWS
-multi-tenant material with no requirement applicable to a local single-user app — noted. Its
-principle does name the shape: a shared slot with no keying is an absent isolation boundary, and a
-reply reaching the wrong channel is a confidentiality question, not only a delivery one.
+The tenant-isolation principle names the shape: a shared slot with no keying is an absent
+isolation boundary, and a reply reaching the wrong channel is a confidentiality question, not only
+a delivery one.
 """
 
 from __future__ import annotations

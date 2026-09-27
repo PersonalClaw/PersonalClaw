@@ -482,7 +482,7 @@ def test_the_only_live_writer_contributes_no_knowledge_labels(knowledge_store):
     """
     _record_surfacing(
         _event(kind="skill", entity="pdf-processing", arm="skill_surfaced", used=True, query="q"),
-        _event(kind="skill", entity="brazil", arm="skill_forced", used=True, query="q"),
+        _event(kind="skill", entity="code-review", arm="skill_forced", used=True, query="q"),
     )
 
     assert rb.mine_surfacing_qrels(knowledge_store) == []

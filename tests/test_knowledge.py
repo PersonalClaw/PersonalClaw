@@ -155,7 +155,7 @@ class TestKnowledgeStore:
     def test_add_entity_relation_is_idempotent(self, store):
         """Re-stating the same relation (same src/tgt/type) — common within one document
         and on re-ingest — must not append duplicate edges."""
-        e1 = store.add_entity("FeebasService", "service")
+        e1 = store.add_entity("BillingService", "service")
         e2 = store.add_entity("DeployService", "service")
         r1 = store.add_entity_relation(e1, e2, "uses", description="deploy")
         r2 = store.add_entity_relation(e1, e2, "uses", description="deploy again")
@@ -631,9 +631,9 @@ class TestHybridRetriever:
         # A 3-word entity name must be found via the graph (its words may not all
         # appear in any single item's text) — the candidate set includes the full query.
         iid = mk(store, "Doc", "content here", "note")
-        eid = store.add_entity("MAPLE Payments team", "org")
+        eid = store.add_entity("ACME Payments team", "org")
         store.add_mention(iid, eid)
-        results = HybridRetriever(store).search("MAPLE Payments team")
+        results = HybridRetriever(store).search("ACME Payments team")
         hit = next((r for r in results if r["id"] == iid), None)
         assert hit is not None and "graph" in hit["match_type"]
 

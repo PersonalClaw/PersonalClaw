@@ -24,10 +24,8 @@ on a ref subset so each caller supplies its own vocabulary), and fires it from t
 knows what status a loop is coming FROM — `loop.store.update_status`, on the ATTENTION →
 non-ATTENTION transition, derived from `LOOP_PHASES` so a new attention status inherits it.
 
-ARCC was queried first (user-facing notification records). It returned no local-store guidance —
-its notification material is AWS infrastructure (SNS/CloudWatch/EventBridge). Two of its SAX-08
-outcome-2 pitfalls do name this defect's mechanism and are applied: *alert fatigue from warnings
-the user cannot action*, and *failing to deliver an alert channel's later occurrences*.
+Two alerting pitfalls name this defect's mechanism and are applied: alert fatigue from warnings
+the user cannot action, and failing to deliver an alert channel's later occurrences.
 """
 
 from __future__ import annotations

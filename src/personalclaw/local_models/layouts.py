@@ -122,9 +122,8 @@ def escapes_root(model: str) -> bool:
 
     The model id reaching :func:`candidate_paths` is not a user typing in a box — for a
     catalog-driven provider it comes from an APP-AUTHORED ``catalog.json`` card, so it is
-    untrusted input joined onto a filesystem root, which is precisely the shape ARCC's
-    SAX-04 allowlist/range-checking control calls out ("implement canonical path resolution
-    to prevent directory traversal attacks"). Measured before the guard: a card named
+    untrusted input joined onto a filesystem root — precisely the shape that needs canonical
+    path resolution to prevent directory traversal. Measured before the guard: a card named
     ``"../SECRETS"`` made :func:`downloaded_layouts` return ``<root>/../SECRETS`` and
     :func:`on_disk_bytes` sum bytes from it, and :func:`delete_all_layouts` would have
     ``rmtree``'d it.

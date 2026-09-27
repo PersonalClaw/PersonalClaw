@@ -1352,18 +1352,20 @@ class TestEntityRelated:
     def test_related_entities_with_direction(self, store):
         from personalclaw.dashboard.handlers import knowledge as H
 
-        a = store.add_entity("FeebasService", "service")
+        a = store.add_entity("BillingService", "service")
         b = store.add_entity("GraphQL", "technology")
         store.add_entity_relation(a, b, "uses")
         store.db.commit()
-        # From GraphQL's side: incoming 'uses' from FeebasService.
+        # From GraphQL's side: incoming 'uses' from BillingService.
         resp = _run(H.get_entity_related(_req(store, "GET", match_info={"name": "GraphQL"})))
         rel = json.loads(resp.body)["related"]
         assert len(rel) == 1
-        assert rel[0]["name"] == "FeebasService" and rel[0]["relation_type"] == "uses"
+        assert rel[0]["name"] == "BillingService" and rel[0]["relation_type"] == "uses"
         assert rel[0]["outgoing"] is False
-        # From FeebasService's side: outgoing.
-        resp2 = _run(H.get_entity_related(_req(store, "GET", match_info={"name": "FeebasService"})))
+        # From BillingService's side: outgoing.
+        resp2 = _run(
+            H.get_entity_related(_req(store, "GET", match_info={"name": "BillingService"}))
+        )
         assert json.loads(resp2.body)["related"][0]["outgoing"] is True
 
     def test_related_unknown_entity_is_not_an_empty_real_entity(self, store):

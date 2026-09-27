@@ -462,9 +462,9 @@ def _card_base_url() -> tuple[str, str]:
     in one respect, because a card is handed to a third party, so the wrong address
     propagates off this machine.
 
-    Refusing is the fail-closed reading of ARCC SAX-04 Outcome 5, which names *"failing
-    open for security-critical operations"* as a pitfall: advertising a guessed address to
-    a peer is failing open. A card that cannot state a true address is not published.
+    Refusing is the fail-closed choice. Failing open on a security-critical operation is the
+    pitfall, and advertising a guessed address to a peer is failing open. A card that cannot
+    state a true address is not published.
     """
     try:
         from personalclaw.config.loader import AppConfig

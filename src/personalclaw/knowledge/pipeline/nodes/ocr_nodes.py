@@ -5,8 +5,8 @@ Two nodes, both vendor-free.
 ``pdf_rasterize`` (pure-python, pypdfium2 — already a core dependency) turns the pages of
 a PDF with NO text layer into page images. It only ever runs behind ``document_read``'s
 ``no-text-layer`` classification, so a normal PDF never reaches it, and it enforces the
-rasterize ceilings (ARCC ``cnt_eMkU5kkpTaEk65``, "enforce file upload size limits"): a
-bounded page count and a bounded pixel budget per page, so a PDF declaring ten thousand
+rasterize ceilings (an uploaded file gets a size limit on everything it can make us decode):
+a bounded page count and a bounded pixel budget per page, so a PDF declaring ten thousand
 pages or a gigapixel MediaBox is capped, not an OOM.
 
 ``ocr`` / ``engine`` is the second backend for the ``ocr`` node type. It resolves whatever

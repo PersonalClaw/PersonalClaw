@@ -17,12 +17,11 @@ Two things the filed report did not measure:
   returned the other nine tips: it only ever compares against catalog ids. So default-deny
   costs exactly nothing here — no id it refuses could ever have done anything.
 
-ARCC was queried first (input validation is an explicit trigger domain). SAX-04 Outcome 1
-is the direction taken: *"only explicitly allowed inputs should pass validation"*, with
-*"using blacklist approaches instead of allowlist (default-deny) validation"* named as a
-pitfall, and Outcome 2 adds validating at the earliest point and logging the failures. The
-valid set here is closed, known and ten entries long, so the allowlist IS the catalog — a
-format regex would be the weaker half of that guidance for no gain.
+The input-validation direction taken: only explicitly allowed inputs pass validation — a
+denylist in place of an allowlist (default-deny) is the named pitfall — and validation happens
+at the earliest point, with the failures logged. The valid set here is closed, known and ten
+entries long, so the allowlist IS the catalog — a format regex would be the weaker half of
+that rule for no gain.
 
 The 400 is safe as UX and is not asserted here: the frontend already wraps this call in
 ``reportingWrite('dismiss that tip', …)``, pinned by

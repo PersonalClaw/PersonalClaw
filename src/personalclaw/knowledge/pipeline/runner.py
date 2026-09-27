@@ -408,7 +408,7 @@ async def ingest_item(
         # clear the stale reason, or the item stays on the attention surface forever.
         meta_updates["unsearchable_reason"] = None
     # KOCR — a TRUNCATED read must say so on the ITEM. `pdf_rasterize` enforces the page cap
-    # (ARCC `cnt_eMkU5kkpTaEk65`) and reports what it capped, but it is a structural
+    # (an upload's decode work is bounded) and reports what it capped, but it is a structural
     # (`pooled=False`) node: its metadata feeds the next node and reaches no user-visible
     # surface, so a 120-page scan rendered exactly `MAX_OCR_PAGES` pages and then presented
     # 40 pages of text as if it were the whole document. Promoting the three facts onto

@@ -5,10 +5,10 @@ PaddleOCR, docTR, a cloud vision API) implements :class:`OcrProvider` and import
 never the core modules directly. Provider-agnostic by construction: core holds the
 contract and the gate, the app holds the engine.
 
-:func:`assert_image` is re-exported deliberately, not left to each bundle. The ARCC
-"Secure File Uploads" rule an OCR app has to satisfy — trust the BYTES, not the
-extension, and cap the size — is one magic-number table, and a table copied per bundle is
-a table that drifts per bundle. Call it before handing anything to a decoder.
+:func:`assert_image` is re-exported deliberately, not left to each bundle. The upload rule
+an OCR app has to satisfy — trust the BYTES, not the extension, and cap the size — is one
+magic-number table, and a table copied per bundle is a table that drifts per bundle. Call
+it before handing anything to a decoder.
 
 ``register_provider`` is NOT promoted: registration is core's job through the manifest's
 ``ocr`` type handler, so an app's provider appears exactly while the app is enabled.

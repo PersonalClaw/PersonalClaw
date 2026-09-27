@@ -24,10 +24,10 @@ over-blocking "is the safe direction for a credential guard and the error a user
 report". A NUL is never part of a legitimate filename — POSIX and Windows both forbid it in a path
 component — so there is no legitimate use to break.
 
-ARCC (SAX-04 Outcome 2, input validation and early request filtering) names this exact case in its
-Common Pitfalls: *"Not handling edge cases like null bytes, Unicode characters, and encoding
-attacks"*, alongside *"Inadequate error handling that reveals system information to attackers"* —
-which is what a raw 500 out of a validator is.
+Input validation and early request filtering name this exact case among their common pitfalls:
+not handling edge cases like null bytes, Unicode characters and encoding attacks — alongside
+inadequate error handling that reveals system information to attackers, which is what a raw 500
+out of a validator is.
 """
 
 from __future__ import annotations
@@ -111,8 +111,8 @@ def test_validate_file_path_never_raises_for_hostile_input(raw):
 
 def test_a_legitimate_path_still_validates():
     """Vacuity floor. A guard that rejected everything would pass every test above while breaking
-    the whole files surface — and ARCC's own pitfall list names "overly restrictive validation
-    that breaks legitimate use cases"."""
+    the whole files surface — and overly restrictive validation that breaks legitimate use cases
+    is a named pitfall of its own."""
     out = validate_file_path("~/notes.md")
     assert isinstance(out, str) and out.endswith("notes.md") and "~" not in out
 
@@ -145,7 +145,7 @@ async def test_file_read_answers_4xx_for_a_NUL_path():
 
 @pytest.mark.anyio
 async def test_file_read_does_not_leak_the_exception_text():
-    """ARCC: "Inadequate error handling that reveals system information to attackers". The refusal
+    """Error handling must not reveal system information to attackers. The refusal
     must not hand back `lstat: embedded null character in path` — that is an internal detail of the
     validator's implementation, and it tells a prober which call it reached."""
     from personalclaw.dashboard.handlers import files as F

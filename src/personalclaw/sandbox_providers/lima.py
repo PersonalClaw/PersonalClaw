@@ -2,8 +2,8 @@
 
 The VM confinement tier: where ``docker`` (EI-2) runs an agent-influenced process tree in a
 bind-mount container, ``lima`` runs it inside a Lima-managed guest VM via ``limactl shell``, so
-the isolation is a full hardware-virtualised boundary (the Firecracker-class model ARCC's
-SAX-05 isolation guidance describes) rather than a shared-kernel container. Lima is the
+the isolation is a full hardware-virtualised boundary (the Firecracker-class microVM model)
+rather than a shared-kernel container. Lima is the
 macOS-first path — a stopped or missing Lima instance is the exact ``needs-input`` parking case
 EI-2 established for a no-Docker machine.
 

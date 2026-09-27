@@ -26,7 +26,7 @@ SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([+-]|$)")
 # suffix ``app_<name>_<op>``, so keep it to a clean identifier shape.
 ROUTE_OP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 # An ``icon`` value names a lucide component, so it is a bare identifier and nothing else.
-# This is the BOUNDARY half of two layers (SAX-04's defence in depth): it refuses the shapes it
+# This is the BOUNDARY half of two layers (defence in depth): it refuses the shapes it
 # can prove wrong without knowing lucide's export list — an emoji glyph, a phrase, a path — and
 # the render site stays fail-safe for a well-formed name that turns out not to be a component
 # (the `"icons"` case that crashed the shell, #579). Case-insensitive on purpose: the resolver

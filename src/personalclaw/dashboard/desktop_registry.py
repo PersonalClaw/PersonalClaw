@@ -8,8 +8,7 @@ its capability manifest here on boot, and every other consumer (the Settings
 panel, an app with a ``desktop`` permission) reads this registry instead of
 guessing.
 
-Security posture (ARCC was unavailable for this change, so the reasoning is
-written out rather than cited):
+Security posture, with the reasoning written out:
 
 * **Fail closed.** An unregistered gateway reports ``connected: false`` and an
   EMPTY capability map. There is no permissive default anywhere in this module —

@@ -462,7 +462,7 @@ def test_every_local_model_field_has_a_writer(tmp_path):
 
 @pytest.mark.parametrize("escaping", ["../SECRETS", "../../etc", "a/../../b"])
 def test_a_card_name_cannot_reach_outside_the_cache_root(tmp_path, escaping):
-    """A catalog card is APP-authored input joined onto a filesystem root (ARCC SAX-04).
+    """A catalog card is APP-authored input joined onto a filesystem root (path traversal).
 
     Measured before the guard: a card named ``"../SECRETS"`` made ``downloaded_layouts``
     return ``<root>/../SECRETS`` and ``on_disk_bytes`` sum 4096 bytes from it — and the same

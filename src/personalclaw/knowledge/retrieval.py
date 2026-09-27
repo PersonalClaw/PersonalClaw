@@ -491,7 +491,7 @@ class HybridRetriever:
         words = query.split()
         # Match entity names at several granularities: individual words, consecutive
         # pairs/triples, AND the full query — so a multi-word entity name like
-        # "MAPLE Payments team" or "Distributed Tracing" is found, not just its words.
+        # "ACME Payments team" or "Distributed Tracing" is found, not just its words.
         candidates = list(words)
         for size in (2, 3):
             for i in range(len(words) - size + 1):

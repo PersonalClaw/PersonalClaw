@@ -34,11 +34,9 @@ nothing reads `$PERSONALCLAW_HOME`'s value, and nothing builds `~/.personalclaw`
 home. A rail that needs the DEFAULT home asks `default_config_dir()`; one that must know whether
 the home in use is that default asks `uses_default_home()`.
 
-ARCC was queried first (file access + infrastructure are trigger domains). The applicable
-guidance is the *isolate data from other processes* recommendation — write "to disk under a
-more restrictive and user/processes specific folder location" — plus SAX-06 Outcome 3's
-append-only, least-privilege treatment of audit logs. The CloudTrail/S3/KMS material in both
-documents is cloud infrastructure and does not apply to a local file; noted, not stretched.
+The principles that apply are isolating data from other processes — write it to disk under a
+more restrictive, user- and process-specific folder — and treating audit logs as append-only
+and least-privilege.
 """
 
 from __future__ import annotations

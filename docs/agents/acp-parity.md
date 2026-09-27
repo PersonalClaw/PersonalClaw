@@ -51,7 +51,7 @@ Measured on the development host on 2026-08-19:
 
 | Component | Version | Notes |
 |---|---|---|
-| `claude` (Claude Code CLI) | `2.1.234.669` | ASBX build, channel `stable` |
+| `claude` (Claude Code CLI) | `2.1.234.669` | channel `stable` |
 | `@agentclientprotocol/claude-agent-acp` | `0.62.0` | adapter; claude-code speaks ACP through it |
 | `codex` | `0.146.1.360` | channel `stable` |
 | `@agentclientprotocol/codex-acp` | `1.1.7` | adapter |
@@ -68,7 +68,7 @@ is a read of persisted evidence and reports `health: null` until something probe
 | `@agentclientprotocol/claude-agent-acp` | **`0.74.0`** | the build that actually **ran**, resolved from the global node install — **14 minors ahead** of the column's `0.60.0`. See the pin warning below: a `0.60.0` copy was also present per-home and was *not* used |
 | `codex` | `0.154.0.488` | probe reports `0.154.0`; **8 minor builds ahead** of the column |
 | `@agentclientprotocol/codex-acp` | `1.12.0` | **eleven minors ahead** of the column's `1.1.7` |
-| `kiro-cli` | `2.22.1` | authenticated via IAM Identity Center (`kiro-cli user whoami` exits 0). It does **not** use midway, so a `mwinit` freshness step is moot for this provider |
+| `kiro-cli` | `2.22.1` | authenticated via IAM Identity Center (`kiro-cli user whoami` exits 0). Its sign-in is its own, so no separate credential-freshness step applies to this provider |
 | `gemini` | **still not installed** | unchanged; its catalog row still carries `dialect: ""` and `adapter: no_adapter`, which is the shipped-data honesty note below, now re-observed |
 
 **🔴 The per-home adapter pin is ADVISORY, and a global install silently wins it.** This was measured

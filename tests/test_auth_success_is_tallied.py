@@ -2,9 +2,9 @@
 
 Measured on day 8: one idle Home tab made 428 requests in 3 minutes, `security_events.jsonl` grew
 ~5 MB an hour, and 94% of it was `dashboard.token_auth ok` — the same cookie proving the same
-session again, one row per poll. ARCC's audit-logging guidance for this surface (BSC4 "Log Every
-Security Event"; the SEL requirement to capture the who, what and when of each transaction) asks
-for security EVENTS: failures and state changes. So a failure is still one row each, the first
+session again, one row per poll. Audit logging for this surface — log every security event, and
+capture the who, what and when of each transaction in the SEL — asks for security EVENTS:
+failures and state changes. So a failure is still one row each, the first
 success of a session in a window is written at once, and the rest of that window is one counted
 summary — every success accounted for, at a row per session per quarter hour.
 

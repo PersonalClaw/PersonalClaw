@@ -6,10 +6,10 @@ executable that called ``AXIsProcessTrusted()``. So the identity System Settings
 about is the terminal emulator, IDE or app bundle hosting the gateway, and the grant is a
 property of **that** process rather than of the machine or of the python binary.
 
-Measured on one workstation, same python, three hours apart::
+Measured on one workstation, same python, three hours apart (the first app anonymised)::
 
     09:51  binary_path=.../uv/python/cpython-3.13.14-macos-aarch64-none/bin/python3.13
-           responsible=com.amazon.kiro.crew  (.../KiroCrew.app/Contents/MacOS/KiroCrew)  -> granted
+           responsible=com.example.AgentApp  (.../AgentApp.app/Contents/MacOS/AgentApp)  -> granted
     18:38  binary_path=.../uv/python/cpython-3.13.14-macos-aarch64-none/bin/python3.13
            responsible=dev.warp.Warp-Stable  (/Applications/Warp.app/Contents/MacOS/stable)
            AUTHREQ_RESULT: authValue=0                                                    -> denied
