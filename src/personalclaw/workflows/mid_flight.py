@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from personalclaw.workflows import attention
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store
 from personalclaw.workflows.bindings import node_deps
@@ -142,6 +143,7 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
         inst.epoch = epoch
         inst.output_ref = ""
         inst.failure = None
+        inst.degraded_reason = ""
         inst.completed_at = None
         inst.wake_at = 0.0
         inst.attempt = 0
@@ -151,10 +153,17 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
             # the reset and the re-run.
             ctl._outputs.pop(node.id, None)
         ctl.journal.invalidate_prefix(path)
+        # An answer given to this step's last park belongs to the dispatch it started, not to
+        # the re-run a rewind asks for.
+        ctl._park_answers.pop(path, None)
         # A pending approval for a node about to re-run would resume a step that no
         # longer exists in that form (WF2-R7) — drop the token rather than let it land
-        # in the wrong epoch.
-        drop_continuations(ctl.run.id, instance_prefix=path)
+        # in the wrong epoch. The question is WITHDRAWN, so its Inbox row closes with it:
+        # left open, it offers the dropped token, and the re-ask's row dedupes onto it (same
+        # run, path and epoch) instead of carrying the live one. Reachable since a parked run
+        # applies a rewind at once; before, a rewind at a gate never ran while the gate waited.
+        if drop_continuations(ctl.run.id, instance_prefix=path) and node is not None and node.id:
+            attention.resolve_gate_item(ctl.services.attention_state, ctl.run.id, node.id)
 
 
 def _apply_fork(ctl: RunController, op: mutations.Op) -> None:

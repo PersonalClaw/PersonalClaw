@@ -51,7 +51,7 @@ while not terminal:
 | `iteration_context.py` | the WF2-R6 handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt |
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
 | `loop_convergence.py` | what a tripped loop does next (PP-15): one decision through `loop.tick.evaluate` on the node's `SupervisorPolicy`, the ladder position persisted on the run row, a replan as a real mutation, or a hand-off to a human |
-| `gate_answers.py` | a gate waiting on a human (WF2-R7): its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, and judge/human divergence |
+| `gate_answers.py` | a step waiting on a human (WF2-R7) — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, and closing an ended run's waits |
 | `mid_flight.py` | applying queued mid-flight mutations at the tick's safe point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags |
 | `effect_boundary.py` | the effect ledger at execution time: ATTEMPTED before an effect-committing dispatch, its verdict after, and the committed-effect refusal or teardown before a redo |
 | `task_projection.py` | projecting settled nodes into Tasks and running their done-criteria, scheduled off the tick and never failing a node whose work succeeded |
@@ -70,7 +70,7 @@ while not terminal:
 | `checkpoints.py` | fork, revert, prune |
 | `human_input.py` | typed asks and durable resume tokens |
 | `gate_policy.py` | risk-scoped auto-approval |
-| `attention.py` | a waiting gate → a durable inbox row + one notification |
+| `attention.py` | a step waiting on a human → a durable inbox row + one notification |
 | `context.py` | handoffs, carryover buckets, decision records |
 | `compaction.py` | the two-layer prompt-compaction ladder for LLM-backed nodes: proactive at ~80% of the bound model window, then aggressive re-compaction + one retry on a length rejection, degrading to drop-with-placeholder if a summarizer raises. Wraps `personalclaw.context_compaction` — it does not reimplement it |
 | `macros.py` | template macros, expanded at definition time |
@@ -335,9 +335,17 @@ A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
 `run_from`, `fork`, …), and four things guard it:
 
 1. **A live controller is required.** Editing a run nobody drives would write
-   state with no one to apply it.
+   state with no one to apply it. A finished run is refused
+   (`WF_RUN_ALREADY_TERMINAL`): it is one attempt and is never re-entered, so a
+   retry is a fork.
 2. **Batches are queued, applied at the drain point.** `edit_run` returns
-   `queued: true`; nothing has changed yet.
+   `queued: true`; nothing has changed yet. A run parked on a question has no
+   tick loop (it ended `needs_input`, and only an answer wakes it), so queueing a
+   batch wakes the loop and the batch applies at the next tick — a rewind
+   confirmed at a gate re-runs its closure while the gate waits, and the run parks
+   on the same question again. A rewind whose closure includes the waiting gate
+   withdraws that question: its token is dropped and its Inbox row closes, and the
+   gate asks afresh. A PAUSED run is not woken; its edit applies when it resumes.
 3. **The frozen-region invariant.** A COMPLETED node cannot be edited — its
    output is already downstream, and changing the spec that produced it would
    make the run's own history a lie. The user's order is *rewind, then edit*.
@@ -371,6 +379,34 @@ step called is open, a retry is refused without a call, so the failure carries
 every read (`Failure.providers` names them), and the page reads the run again before
 it forks, because a breaker can open after the step failed: every call to that
 provider counts toward it.
+
+## Waiting on a person
+
+Two kinds of step wait on a person, and both are asked the same way. A `gate`
+asks (`approval` or `event`). An `action` stops for one: its provider returns
+`outcome: "needs_input"` (browse at a sign-in page, a spent step or model
+budget), or its output carries a question under `needs_input`
+(`gate_policy.clarification_from_output`). Either way the step goes `WAITING`,
+and once nothing else can run, `gate_answers.ensure_continuation` mints the
+resume token, the confirmation's pending half and one Inbox row (deduped per
+run, path and epoch), and the run parks `needs_input`. A parked action also keeps
+its output on the step and states why it stopped. When its provider composed a
+needs-input card (browse's sign-in handoff: the question and what it tried),
+that card's wording is what the run page and the Inbox show.
+
+Answering a gate records the answer as its output. Answering a parked action does
+not: approving runs the step again (`Ask.rerun`), with the answer on the one
+dispatch it starts (`ActionContext.answer`), because what the person did was lift
+what stopped it; denying ends it as declined. The gate policy's auto-approve and a
+remembered "always allow" apply to gates only — no policy can sign in for a user.
+
+A run that ends closes whatever it was still asking, whichever way it ended:
+`gate_answers.close_waits` cancels each waiting step and drops its token, and
+`_finish` closes the run's Inbox rows and cancels its approvals (#3620). A cancel
+always reaches that writer. The supervisor wakes a parked controller to apply a
+cancel written without waking it (`on_overlap: cancel_then_start` does that to
+the prior run), and after a restart it launches a controller to apply one rather
+than writing the row itself.
 
 ## Timeouts: two knobs that mean different things
 

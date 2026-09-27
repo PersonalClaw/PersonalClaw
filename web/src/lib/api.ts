@@ -1937,8 +1937,12 @@ export interface WorkflowRunDetailData {
 // (approval|choice|text|form), so the inbox card and the run view share a component.
 export interface WorkflowContinuation {
   resume_token: string; node_id: string; instance_path: string
-  ask: { kind?: string; prompt?: string; choices?: string[]; fields?: Array<{ name: string; type?: string; label?: string; required?: boolean; choices?: string[] }> }
-  handoff: { scope?: string; status?: string; outstanding?: string[]; checks_run?: string[]; next_steps?: string[]; risks?: string[] }
+  /** `rerun`: the ask of a step that PARKED on the user (browse at a sign-in page) — approving
+   *  runs the step again rather than recording the answer as its output (`human_input.Ask`). */
+  ask: { kind?: string; prompt?: string; choices?: string[]; fields?: Array<{ name: string; type?: string; label?: string; required?: boolean; choices?: string[] }>; rerun?: boolean }
+  /** `attempted`: what the asking step already tried, one line each (a sign-in park's "opened
+   *  example.com — it has never been signed in on this machine"). Empty for a gate. */
+  handoff: { scope?: string; status?: string; outstanding?: string[]; checks_run?: string[]; next_steps?: string[]; risks?: string[]; attempted?: string[] }
   expires_at: number; expired: boolean
 }
 export interface WorkflowCascadePreview {

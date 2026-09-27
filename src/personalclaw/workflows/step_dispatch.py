@@ -192,6 +192,10 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
         # rather than cached: the overlay is the run row's, and the row is what a restart
         # re-reads. Only a stage consults it (`dispatch_stage`).
         unattended=supervisor_policy.unattended_grant(ctl.run.policy_overrides),
+        # A person's answer to this step's last park (`gate_answers.settle_parked_step`), POPPED:
+        # it belongs to the one dispatch the answer started, so a later retry of the same step
+        # cannot claim an answer nobody gave it.
+        answer=ctl._park_answers.pop(item.path, None),
     )
     if total and total > 0:
         try:

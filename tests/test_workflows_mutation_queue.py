@@ -86,13 +86,21 @@ def _make_run(spec: dict = SPEC) -> WorkflowRun:
 
 
 async def _completed_controller(spec: dict = SPEC):
-    """A controller whose run has finished — the realistic mutation target."""
+    """The controller of a LIVE run whose steps have all completed, between ticks.
+
+    Every step ran, so there is completed work for a cascade to reach, which is what these tests
+    measure. The run itself is still live: a FINISHED run refuses an edit outright
+    (`test_workflows_rewind_at_a_gate`), because it is one attempt and a retry is a fork, and a
+    finished run is what this fixture used to hand back — every test below was editing a run no
+    user could edit.
+    """
     import copy
 
     spec = copy.deepcopy(spec)
     run = _make_run(spec)
     c = RunController(run, spec, services=EngineServices(completion=_echo()))
     assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+    c.run.status = RunStatus.RUNNING
     return c
 
 
@@ -283,6 +291,7 @@ class TestReentry:
         fn = _echo()
         c = RunController(run, spec, services=EngineServices(completion=fn))
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        c.run.status = RunStatus.RUNNING  # live, between ticks — see `_completed_controller`
         first_calls = len(fn.calls)
         assert first_calls == 2  # analyze + report
 
@@ -300,7 +309,6 @@ class TestReentry:
         # workflow and what the error message tells the user to do.
         c.submit_mutation([{"op": "rewind", "node_id": "analyze"}], confirm=True)
         mid_flight.drain_mutations(c)
-        c.run.status = RunStatus.RUNNING
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
         # analyze + report re-ran; gather and unrelated did not.
         assert len(fn.calls) == first_calls + 2

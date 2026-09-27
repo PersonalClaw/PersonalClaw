@@ -21,12 +21,19 @@ class ActionContext:
     to the trigger's own row. A provider whose effect IS a notification attaches it, so
     the note links back to what produced it. Kept out of `payload` on purpose: payload
     is the event itself, and it reaches bash stdin and webhook bodies verbatim.
+    `answer` is what a person answered when this step last parked on them
+    (`outcome="needs_input"`), set only on the ONE workflow dispatch that answer started — a
+    browse step asked "sign in, then confirm" gets `True` once the user has confirmed. None
+    everywhere else. Out of `payload` for the same reason as `status_url`, and one more: a
+    trigger's payload is third-party event data, and a fact only the engine may state must not
+    be something a webhook body can spell.
     """
 
     event: str
     context: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
     status_url: str = ""
+    answer: Any = None
 
 
 @dataclass
@@ -61,19 +68,20 @@ class ActionResult:
     #               vocabulary does not recognise is recorded as FAILED
     #               (`triggers.executor._record_fire_outcome`), so adding a
     #               member here means adding it to those maps in the same change.
-    #   "needs_input" — the action did real work, hit a ceiling it may not lift
-    #               (BROWSE-AUTOMATION §7.2: max_steps or the model budget), and
-    #               PRESERVED what it produced. A human decides whether to raise
-    #               the ceiling or accept the partial result. Distinct from all
+    #   "needs_input" — the action stopped on something only a person can lift
+    #               (BROWSE-AUTOMATION §5.2/§7.2: a sign-in page, max_steps, the
+    #               model budget) and PRESERVED what it produced. Distinct from all
     #               three neighbours: "skip" would discard a real partial result,
     #               "launched"/"queued" both claim work that continues elsewhere,
     #               and a FAILED result would bury the partial under a red error
     #               and invite a retry that pays for the whole task again to reach
-    #               the same ceiling. `workflows.engine.dispatch_action` maps it to
-    #               a WAITING instance with no `wake_at` (which the controller
-    #               finishes as `RunStatus.NEEDS_INPUT`) and
-    #               `triggers.executor.STATUS_TO_OUTCOME` to `Outcome.DEFERRED` —
-    #               both added in the same change, per the rule above.
+    #               the same ceiling. In a workflow, `engine.dispatch_action` maps it
+    #               to a WAITING instance that ASKS the person, like a gate: the
+    #               step's output is kept, `stderr` (or the card under the
+    #               output's `needs_input` key) is the question, approving runs the
+    #               step again with `ActionContext.answer` set, and denying ends it
+    #               as declined. `triggers.executor.STATUS_TO_OUTCOME` maps it to
+    #               `Outcome.DEFERRED` — both readers exist, per the rule above.
     outcome: str = ""
     # PLATFORM-LEGIBILITY §2: the WHAT/WHY/FIX envelope for a failed action. The
     # three dispatch seams wrap an uncaught provider exception into one, so

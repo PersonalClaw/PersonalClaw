@@ -1064,6 +1064,7 @@ async def dispatch_action(
     instance_path: str = "",
     cwd: str = "",
     idempotency_key: str = "",
+    answer: Any = None,
 ) -> NodeResult:
     """Dispatch to an action provider — zero tokens.
 
@@ -1071,6 +1072,10 @@ async def dispatch_action(
     work STARTED, not that it succeeded, so it maps to DEGRADED with a reason rather than
     a clean DONE. Reporting it as success would make a fire-and-forget action look
     verified.
+
+    `answer` is what a person answered when this step last parked on them, handed to the
+    provider as `ActionContext.answer` on the dispatch that answer started (the controller's
+    `_park_answers`, single-use). None on every other dispatch.
     """
     cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
@@ -1133,7 +1138,10 @@ async def dispatch_action(
     if idempotency_key:
         payload.setdefault("idempotency_key", idempotency_key)
     context = ActionContext(
-        event="workflow_node", context=str(cfg.get("context", "") or ""), payload=payload
+        event="workflow_node",
+        context=str(cfg.get("context", "") or ""),
+        payload=payload,
+        answer=answer,
     )
     try:
         result = await provider.execute(action_config, context, timeout=timeout)
@@ -1174,25 +1182,48 @@ async def dispatch_action(
             degraded_reason="action queued a run behind one already in flight; it has not started",
         )
     if getattr(result, "outcome", "") == "needs_input":
-        # BROWSE-AUTOMATION §7.2: the action did real work, ran into a ceiling it cannot lift
-        # (steps or budget), and kept what it learned. WAITING with NO `wake_at`, which is the
-        # combination the controller reads as "nothing will wake this run" and finishes as
-        # `RunStatus.NEEDS_INPUT` — a human decides whether to raise the ceiling or accept the
-        # partial result.
+        # BROWSE-AUTOMATION §5.2/§7.2: the action stopped on something only a person can lift —
+        # a sign-in page, its step ceiling, the model budget — and kept what it produced. WAITING
+        # with NO `wake_at`, carrying an ASK, which the controller handles the way it handles a
+        # gate's: it keeps the output on the step, mints the continuation and the Inbox row, and
+        # parks the run as `needs_input`. Approving runs the step again (`Ask.rerun`); denying
+        # ends it as declined.
         #
         # Not DONE (the goal was not reached, and downstream nodes would consume a partial as
         # if it were complete), not FAILED (a failure buries the notes under a red error and
         # invites the retry machinery to pay for the whole task again to hit the same
         # ceiling), and not DEGRADED (that is a SUCCESS with a reason, and this needs a
         # person). The output carries the partial result, so the notes survive the park.
+        question = _park_question(output, getattr(result, "stderr", ""))
+        from personalclaw.workflows.human_input import Ask
+
         return NodeResult(
             state=InstanceState.WAITING,
             output=output,
-            degraded_reason=str(getattr(result, "stderr", "") or "the action needs your input"),
+            degraded_reason=question,
+            ask=Ask(prompt=question, node_id=node.id, rerun=True).to_dict(),
         )
     if getattr(result, "outcome", "") == "skip":
         return NodeResult(state=InstanceState.NO_CHANGE, output=output)
     return NodeResult(state=InstanceState.DONE, output=output)
+
+
+def _park_question(output: Any, stderr: Any) -> str:
+    """What a parked action asks the person, in one sentence.
+
+    The blocker of the needs-input card the step composed, when it did: browse's sign-in handoff
+    (`browse.handoff.request_login`) puts one under the output's `needs_input` key, and its
+    blocker IS the question ("Sign in to example.com, then confirm — the browse run resumes with
+    that session."). Otherwise the sentence the provider wrote for its park, which says what
+    stopped it. The card wins because it is the question, where the provider's sentence is an
+    account of what happened.
+    """
+    card = output.get("needs_input") if isinstance(output, dict) else None
+    if isinstance(card, dict):
+        blocker = str(card.get("blocker") or "").strip()
+        if blocker:
+            return blocker
+    return str(stderr or "").strip() or "This step stopped and needs your input to continue."
 
 
 async def dispatch_wait(node: Node, ctx: BindingContext, *, now: float) -> NodeResult:
@@ -2302,6 +2333,8 @@ async def dispatch(
     unattended: bool = False,
     #: The effect's idempotency key (`effects.effect_key`). Only the ACTION branch reads it.
     idempotency_key: str = "",
+    #: A person's answer to this step's last park, on the dispatch it started. ACTION only.
+    answer: Any = None,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -2333,6 +2366,7 @@ async def dispatch(
         judge_hints=judge_hints,
         unattended=unattended,
         idempotency_key=idempotency_key,
+        answer=answer,
     )
     # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
     # schema notice may compare (#3545). The judge contract writes every key a judge schema
@@ -2398,6 +2432,7 @@ async def _dispatch_inner(
     judge_hints: JudgeHints | None = None,
     unattended: bool = False,
     idempotency_key: str = "",
+    answer: Any = None,
 ) -> NodeResult:
     kind = node.kind
     dispatcher = _LEAF_DISPATCHERS.get(kind)
@@ -2434,6 +2469,7 @@ async def _dispatch_inner(
             instance_path=instance_path,
             cwd=cwd,
             idempotency_key=idempotency_key,
+            answer=answer,
         )
     if dispatcher is dispatch_wait:
         return await dispatcher(node, ctx, now=clock)

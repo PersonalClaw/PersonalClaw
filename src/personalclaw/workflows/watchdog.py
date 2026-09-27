@@ -555,17 +555,37 @@ class WorkflowWatchdog:
         return True
 
     async def _honor_cancel(self, run: WorkflowRun) -> None:
-        """Honour a sticky cancel. A controller cancels itself on its next step; a run
-        with none is finalized here — a cancel issued while the gateway was down must not
-        be lost."""
+        """Honour a sticky cancel, through the controller's terminal writer — a cancel issued
+        while the gateway was down must not be lost, and must close what any ending closes.
+
+        A registered controller cancels itself on its next step, but only a LIVE tick loop has a
+        next step. A run parked on a question, or paused, has none, and a cancel written without
+        waking it — `run-workflow`'s `on_overlap: cancel_then_start` writes the prior run's intent
+        and moves on — was left here for a loop that did not exist: the prior run waited at its
+        gate forever. So it is woken; `wake` is a no-op for a loop that is running.
+
+        A run with NO controller (the gateway restarted) gets one: its tick loop honours the
+        intent before `_prepare` and ends the run through `_finish`, which closes the waits,
+        tokens, Inbox rows, approvals and leases the run still holds. Writing CANCELLED onto the
+        row here, as this used to, closed none of them — a gate kept reading `waiting` with a
+        live token on a run that was over. Only a run whose spec cannot be read is still written
+        directly, since no controller can be built for it.
+        """
         controller = self._controllers.get(run.id)
         if controller is not None:
-            return  # its own tick loop will see the intent and write the terminal status
+            controller.wake()
+            return
+        spec = store.read_spec(run.id)
+        if spec is not None:
+            logger.info("workflow watchdog cancelling run %s (no live controller)", run.id)
+            with contextlib.suppress(Exception):
+                await self.launch(run, spec)
+            return
         run.status = RunStatus.CANCELLED
         run.completed_at = run.completed_at or _now()
         store.save(run)
         store.clear_cancel(run.id)
-        logger.info("workflow watchdog cancelled run %s (no live controller)", run.id)
+        logger.info("workflow watchdog cancelled run %s (no readable spec)", run.id)
 
     async def _fail(self, run: WorkflowRun, reason: str) -> None:
         run.status = RunStatus.FAILED

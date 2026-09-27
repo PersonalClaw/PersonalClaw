@@ -1,10 +1,13 @@
-"""The controller's side of a gate that waits on a human (WF2-R7).
+"""The controller's side of a step that waits on a human (WF2-R7).
 
-When a gate parks, `ensure_continuation` mints its durable resume point once per `(path, epoch)`,
-with the pending half of the typed confirmation, the escalation's outcome question (PP-9) and the
-inbox row. When one is answered, `RunController.resume` applies it; the `revise` verb — "change
-step 3, then carry on" — is `resume_revise`, and a human overriding a judge on the same gate is
-recorded by `emit_judge_divergence`.
+Two kinds of step wait on a person: a gate, and an action that stopped for one (browse at a
+sign-in page, `outcome="needs_input"`) or asked a question in its output (`awaits_human`). When
+one parks, `ensure_continuation` mints its durable resume point once per `(path, epoch)`, with the
+pending half of the typed confirmation, the escalation's outcome question (PP-9) and the inbox row.
+When one is answered, `RunController.resume` applies it — a parked action through
+`settle_parked_step`, which runs it again; the `revise` verb — "change step 3, then carry on" — is
+`resume_revise`, and a human overriding a judge on the same gate is recorded by
+`emit_judge_divergence`. When the run ends, `close_waits` ends every wait it still holds.
 """
 
 from __future__ import annotations
@@ -15,17 +18,22 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.ledger import outcomes
 from personalclaw.workflows import attention
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import judge_calibration, mid_flight, mutations, revision
+from personalclaw.workflows import judge_calibration, mid_flight, mutations, revision, store
 from personalclaw.workflows.bindings import node_deps
+from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_STATES,
+    Failure,
+    FailureClass,
     InstanceState,
     NodeKind,
     RunStatus,
+    now_stamp,
     spec_path,
     walk,
 )
+from personalclaw.workflows.step_usage import NOTHING_SENT
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
@@ -52,22 +60,32 @@ def surface_needs_input(ctl: RunController) -> None:
     ctl._publish("workflow_run_update", {"status": RunStatus.NEEDS_INPUT.value})
 
 
-def is_gate(ctl: RunController, path: str) -> bool:
-    """Is this waiting instance a human-input gate (versus a `wait` deadline)?
+def awaits_human(ctl: RunController, path: str) -> bool:
+    """Is this waiting instance waiting on a PERSON (versus a `wait` deadline)?
 
     A `wait` is parked on the CLOCK and resolves itself, so surfacing it as needs_input
     would ask a human to answer something nobody asked them.
 
-    `approval` and `event` are ONE case here on purpose, and #375 read that as the bug
+    `approval` and `event` gates are ONE case here on purpose, and #375 read that as the bug
     it is not. An event gate's wake-up arrives as a trigger-declared resume against this
     run (`triggers.loop._apply_resume` → `service.resume_run` → `resume`), which is the
     same continuation a human answering the card consumes — so an event gate is
     answerable by a human too, and `bundled/goal-pursuit-monitor`'s `park` message says
     exactly that ("answer this gate to force a check now"). Splitting them would hide a
     parked monitor from needs_input, leaving no surface for the escape hatch.
+
+    A waiting ACTION is the other case, and it used to be missed: an action waits only on a
+    person — it parked (`outcome="needs_input"`: browse at a sign-in page, a spent budget), or its
+    output asked a question (`gate_policy.clarification_from_output`). Neither has a deadline,
+    and read as "not a gate" both ended the run `needs_input` with no continuation, no Inbox row
+    and nothing anywhere a person could answer.
     """
     node = dict(walk(ctl.root)).get(spec_path(path))
-    if node is None or node.kind != NodeKind.GATE:
+    if node is None:
+        return False
+    if node.kind == NodeKind.ACTION:
+        return True
+    if node.kind != NodeKind.GATE:
         return False
     raw = str((node.config or {}).get("kind", "") or "")
     return raw in ("approval", "event")
@@ -92,6 +110,7 @@ def ensure_continuation(ctl: RunController, path: str) -> None:
             return
     node = dict(walk(ctl.root)).get(spec_path(path))
     ask = dict(ctl.run.attention or {}) if ctl.run.attention else {}
+    card = _parked_card(ctl, path, node)
     outstanding = [
         p for p, i in ctl.instances.items() if i.state not in TERMINAL_STATES and p != path
     ]
@@ -108,6 +127,7 @@ def ensure_continuation(ctl: RunController, path: str) -> None:
             outstanding=outstanding,
             checks_run=[p for p, i in ctl.instances.items() if i.state in SUCCESS_STATES],
             next_steps=[f"answer the gate at {node.id if node else path}"],
+            attempted=(card or {}).get("attempted") or [],
         ),
     )
     ctl._publish(
@@ -151,7 +171,107 @@ def ensure_continuation(ctl: RunController, path: str) -> None:
         resume_token=cont.token,
         ask=cont.ask,
         handoff=cont.handoff,
+        card=card,
     )
+
+
+def _parked_card(ctl: RunController, path: str, node: Any) -> dict[str, Any] | None:
+    """The needs-input card a parked ACTION composed itself, read off the output it kept.
+
+    Browse's sign-in handoff (`browse.handoff.request_login`) builds its `NeedsInputItem` with the
+    blocker, what it tried ("opened example.com — it has never been signed in on this machine")
+    and its evidence, under the output's `needs_input` key. That is the wording the user must see,
+    so the continuation's handoff and the Inbox row carry it rather than a card re-derived from
+    the bare ask, which would say nothing about what was tried. A card is told apart from an ASK
+    under the same key (`gate_policy.clarification_from_output`) by its `blocker`; an action that
+    asked a question keeps no output, so it has neither.
+    """
+    if node is None or node.kind != NodeKind.ACTION:
+        return None
+    inst = ctl.instances.get(path)
+    if inst is None or not inst.output_ref:
+        return None
+    output = store.read_output(ctl.run.id, path)
+    card = output.get("needs_input") if isinstance(output, dict) else None
+    if isinstance(card, dict) and str(card.get("blocker") or "").strip():
+        return card
+    return None
+
+
+def settle_parked_step(
+    ctl: RunController, cont: Any, inst: Any, *, approved: bool, answer: Any
+) -> None:
+    """Apply a person's answer to a step that PARKED on them (`Ask.rerun`).
+
+    Approving runs the step again. What the person did was lift what stopped it — sign in to the
+    site, raise the budget, release the kill switch — so the step's work still has to happen, and
+    recording "approved" as its output (a gate's answer) would hand the next step a yes where it
+    expects a page. PENDING at the SAME epoch, the way `resume_revise` and a no-force rewind reset
+    a node, so the effect ledger keys the new dispatch as the retry it is. The parked attempt's
+    output is ARCHIVED rather than overwritten, because the notes a ceiling-parked browse kept are
+    real work. The answer rides the dispatch it starts, and only that one (`_park_answers`,
+    popped by `step_dispatch.execute`): the browse step you confirmed a sign-in for goes on to the
+    run instead of re-reading a session record your sign-in never wrote.
+
+    Denying ends the step as declined, which fails the run the way a denied gate does; the parked
+    output stays on the step for a reader.
+    """
+    inst.degraded_reason = ""
+    if approved:
+        if inst.output_ref:
+            store.archive_output(ctl.run.id, cont.instance_path, ctl.run.spec_version)
+        inst.state = InstanceState.PENDING
+        inst.output_ref = ""
+        inst.failure = None
+        inst.completed_at = None
+        inst.attempt = 0
+        ctl._park_answers[cont.instance_path] = answer
+        return
+    inst.state = InstanceState.FAILED
+    inst.failure = Failure(
+        failure_class=FailureClass.USER,
+        cause_plain="you declined to let this step continue",
+        remediation="fork the run to try this step again once what stopped it is fixed",
+        terminal_reason="declined",
+    )
+    inst.completed_at = now_stamp()
+
+
+def close_waits(ctl: RunController) -> None:
+    """End every wait a run that has ENDED is still holding (#3620's ended-owner rule).
+
+    `_finish` already closes the run's Inbox rows and cancels its approvals for every ending. A
+    node still WAITING was the part left open: cancel a run parked at its gate and the gate kept
+    reading `waiting` on the run page, its resume token stayed pending on disk, and Introspect's
+    "what needs my approval" kept listing a question nothing could answer. A finished run asks
+    nothing, so each wait is CANCELLED — journaled `step_cancelled` with the zero a gate that
+    times out also records, because the wait itself sent nothing — published to the live view,
+    and its question's reason cleared; then every pending token is dropped.
+
+    Called from the single terminal writer, for every ending: the rule is about the run being
+    over, not about which verb ended it.
+    """
+    nodes = dict(walk(ctl.root))
+    for path, inst in sorted(ctl.instances.items()):
+        if inst.state != InstanceState.WAITING:
+            continue
+        node = nodes.get(spec_path(path))
+        node_id = node.id if node else ""
+        inst.state = InstanceState.CANCELLED
+        inst.completed_at = now_stamp()
+        inst.wake_at = 0.0
+        inst.degraded_reason = ""
+        ctl.journal.step_cancelled(path, node_id, epoch=inst.epoch, usage=NOTHING_SENT)
+        ctl._publish(
+            "workflow_node_done",
+            {
+                "node_id": node_id,
+                "instance_path": path,
+                "status": InstanceState.CANCELLED.value,
+                "node_epoch": inst.epoch,
+            },
+        )
+    drop_continuations(ctl.run.id)
 
 
 def _resolved_for_path(ctl: RunController, path: str) -> dict[str, Any]:

@@ -24,9 +24,10 @@ one place (:func:`_resolve_state`):
 
 * **The auth_needed surfacing.** :func:`surface_auth_expired` runs at the moment
   ``handoff.mark_expired`` writes ``auth_state=expired``: it raises a persistent banner (a
-  ``browse_auth_expired`` frame + the ``GET /api/browse/status`` read the banner polls) and a
-  durable ``needs_input`` inbox item, deduped per site so a scheduled watcher that re-hits the wall
-  every tick does not stack a row per tick.
+  ``browse_auth_expired`` frame + the ``GET /api/browse/status`` read the banner polls) and, for a
+  dispatch no workflow run owns, a durable ``needs_input`` inbox item, deduped per site so a
+  scheduled watcher that re-hits the wall every tick does not stack a row per tick. A park inside
+  a run is asked by the run's own row instead.
 
 **Why this is a ``browse`` module and not a ``dashboard`` handler.** These relays are called from
 the domain — the action provider's per-step sink and its login park — so they must sit BELOW the
@@ -123,13 +124,18 @@ def broadcast_grants(pending: int, *, state: Any = None) -> None:
         logger.debug("browse mirror: grant signal failed", exc_info=True)
 
 
-def surface_auth_expired(url: str, *, state: Any = None) -> None:
+def surface_auth_expired(url: str, *, state: Any = None, inbox_item: bool = True) -> None:
     """Raise the persistent banner + a needs_input inbox item for a newly-expired site (BA-5 §(c)).
 
     Called at the ``auth_state=expired`` write, NOT on every dependent tick: the inbox row is
     deduped per site, and the banner is a projection of the ``.meta.json`` state (which
     ``handoff.mark_expired`` already persisted), so a re-hit is idempotent. The card carries no
     field a credential could occupy — the agent never handles credentials (§5.2, unchanged).
+
+    ``inbox_item=False`` raises the banner alone. The provider passes it for a park inside a
+    workflow run, whose engine raises the run's own row for the same question — answerable, and
+    resuming that run. This site-level row resumes nothing, so beside it it would be the same
+    question asked twice.
     """
     from personalclaw.browse.handoff import site_slug
 
@@ -140,6 +146,8 @@ def surface_auth_expired(url: str, *, state: Any = None) -> None:
             st.broadcast_ws(WS_BROWSE_AUTH_EXPIRED, {"site": slug})
         except Exception:
             logger.debug("browse mirror: auth-expired broadcast failed", exc_info=True)
+    if not inbox_item:
+        return
     try:
         from personalclaw.inbox import emit_attention_item
         from personalclaw.workflows import needs_input
