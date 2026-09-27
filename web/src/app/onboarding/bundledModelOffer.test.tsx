@@ -53,7 +53,7 @@ const OFFER = {
 const job = (state: DownloadJob['state'], extra: Partial<DownloadJob> = {}): DownloadJob => ({
   id: 'job-1', provider: OFFER.provider, model: OFFER.model, kind: 'weights', state,
   downloaded_bytes: 0, total_bytes: OFFER.bytes, progress: 0, speed_bps: 0, eta_s: 0,
-  error: '', reason: '', ...extra,
+  error: '', reason: '', warning: '', ...extra,
 })
 
 /** A stand-in for the browser's EventSource that a test can push frames through. */

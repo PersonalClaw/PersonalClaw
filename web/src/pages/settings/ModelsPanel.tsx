@@ -10,7 +10,7 @@ import {
   api, isNotRun, isSwitchedOff, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
   type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
-import { humanBytes } from '../../lib/chunkedUpload'
+import { modelBytes } from '../chat/bundledModelDownload'
 import { splitModelRef } from '../../lib/modelRef'
 import {
   occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
@@ -164,7 +164,7 @@ function ModelChips({ model, onRepair, repairing }: {
   )
 }
 
-/** "Reclaim N GB" — surfaces the partial-download leftovers (cancelled/crashed fetches)
+/** "Reclaim N GiB" — surfaces the partial-download leftovers (cancelled/crashed fetches)
  *  that otherwise sit invisible across every local provider's cache root, and unlinks
  *  them on confirm. Renders nothing when there's nothing to reclaim, so a clean install
  *  shows no affordance. `onReclaimed` lets the caller revalidate the model list after a
@@ -184,7 +184,7 @@ function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
 
   const reclaim = async () => {
     const ok = await confirm({
-      title: `Reclaim ${humanBytes(totalBytes)}?`,
+      title: `Reclaim ${modelBytes(totalBytes)}?`,
       body: 'Deletes partial-download leftovers (.part / .tmp / .incomplete files) from cancelled or interrupted fetches. Fully downloaded models are untouched.',
       confirmLabel: 'Reclaim',
     })
@@ -202,7 +202,7 @@ function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
   return (
     <Button variant="tonal" size="xs" loading={busy} onClick={reclaim}
       title="Delete partial-download leftovers from cancelled or interrupted fetches.">
-      <Trash2 size={13} /> Reclaim {humanBytes(totalBytes)}
+      <Trash2 size={13} /> Reclaim {modelBytes(totalBytes)}
     </Button>
   )
 }
@@ -342,7 +342,7 @@ function LocalRuntimeSection() {
       <RowGroup>
         <ToggleRow label="Hide models this device cannot run" cfg={cfg} field="hide_unrunnable_models" patch={patch}
           hint="Keep models that do not fit this machine's memory out of the browse list. On by default; turn it off to see the whole catalog." />
-        <NumberRow label="Memory reserve (GB)" cfg={cfg} field="memory_reserve_gb" min={0} max={64} step={0.5} patch={patch}
+        <NumberRow label="Memory reserve (GiB)" cfg={cfg} field="memory_reserve_gb" min={0} max={64} step={0.5} patch={patch}
           hint="Memory held back for your OS and the inference runtime, subtracted before any model-fit verdict. Raise it if models fit on paper but your machine struggles — verdicts get more cautious. It never blocks anything." />
         <NumberRow label="Memory pressure warning (%)" cfg={cfg} field="pressure_warn_pct" min={1} max={100} patch={patch}
           hint="Percent of system RAM in use at which the loaded-models bar above warns. Advisory only — nothing is unloaded for you." />

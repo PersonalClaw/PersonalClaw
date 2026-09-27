@@ -70,7 +70,9 @@ class ModelDownloadJob:
     coarse derivations from the on-disk poller (0 when not cheaply knowable — an
     honest indeterminate, never a fabricated number). ``reason`` carries a typed,
     machine-readable string on error/cancel (``"cancelled"``, ``"network"``,
-    ``"disk_full"``, …), ``""`` when there is none.
+    ``"disk_full"``, …), ``""`` when there is none. ``warning`` is a sentence for the user that
+    stays with the job while it runs (set when the pre-download check could not measure the
+    disk), ``""`` when there is none.
     """
 
     id: str
@@ -85,6 +87,7 @@ class ModelDownloadJob:
     downloaded_bytes: int = 0
     error: str = ""
     reason: str = ""
+    warning: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +103,7 @@ class ModelDownloadJob:
             "downloaded_bytes": self.downloaded_bytes,
             "error": self.error,
             "reason": self.reason,
+            "warning": self.warning,
         }
 
 
@@ -321,8 +325,13 @@ class ModelDownloadRegistry:
     def list(self) -> list[ModelDownloadJob]:
         return list(self._jobs.values())
 
-    def start(self, provider: str, model: str) -> tuple[ModelDownloadJob | None, str | None]:
+    def start(
+        self, provider: str, model: str, *, warning: str = ""
+    ) -> tuple[ModelDownloadJob | None, str | None]:
         """Begin (or re-use) a download for ``provider``/``model``.
+
+        ``warning`` goes on a job this call creates (the pre-download check could not measure
+        the disk); a job already in flight keeps the one it started with.
 
         Returns ``(job, None)`` on success, or ``(None, error)`` with a message
         for an unknown provider / unknown model. An already-running job for the same
@@ -359,6 +368,7 @@ class ModelDownloadRegistry:
             provider=provider,
             model=model,
             total_bytes=_expected_size_bytes(provider, model),
+            warning=warning,
         )
         self._jobs[job.id] = job
         self._by_model[(provider, model)] = job.id

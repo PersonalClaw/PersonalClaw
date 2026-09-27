@@ -42,7 +42,7 @@ export function fitDescription(m: AvailableModel): string {
   const verdict = m.fit
   if (!verdict) return ''
   const reason = m.fit_reason
-    || (m.fit_need_mb ? `needs about ${m.fit_need_mb} MB on this device` : '')
+    || (m.fit_need_mb ? `needs about ${m.fit_need_mb} MiB on this device` : '')
   return reason ? `${FIT_LABEL[verdict]} — ${reason}` : FIT_LABEL[verdict]
 }
 

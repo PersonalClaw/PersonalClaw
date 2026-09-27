@@ -9,6 +9,7 @@ import { WavyProgress } from '../../ui/WavyProgress'
 import { Toggle } from '../../ui/Toggle'
 import { Button } from '../../ui/Button'
 import { useModelDownloads } from './useModelDownloads'
+import { DownloadWarning } from '../chat/bundledModelDownload'
 import { modelLabel } from './InlineModelDownload'
 import { StatusPill } from '../../ui/StatusPill'
 import {
@@ -105,25 +106,20 @@ export function LocalModelManager({
   const setErr = (name: string, msg: string | null) => setErrors((prev) => {
     const next = { ...prev }; if (msg) next[name] = msg; else delete next[name]; return next
   })
+  // The route's refusals arrive as its sentence (`ApiError.message`, read from the envelope by
+  // `lib/errText`), never as a JSON body to unpack — "Not enough free disk space for this
+  // download: …" is shown as the server wrote it.
   const download = async (name: string) => {
     setErr(name, null)
     try { await start(name) }
-    catch (e) {
-      let msg = e instanceof Error ? e.message : 'Download failed'
-      try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
-      setErr(name, msg)
-    }
+    catch (e) { setErr(name, e instanceof Error ? e.message : 'Download failed') }
   }
   // Cancel gets the same per-row error surface as `download` and `remove`. Without it the only write on
   // this panel that could fail silently was the one whose failure matters most — the request IS the stop.
   const stopDownload = async (name: string) => {
     setErr(name, null)
     try { await cancel(name) }
-    catch (e) {
-      let msg = e instanceof Error ? e.message : 'Cancel failed'
-      try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
-      setErr(name, `Couldn't cancel this download: ${msg}`)
-    }
+    catch (e) { setErr(name, `Couldn't cancel this download: ${e instanceof Error ? e.message : 'Cancel failed'}`) }
   }
   const remove = async (name: string) => {
     if (!(await confirmDelete('model', name))) return
@@ -245,6 +241,7 @@ export function LocalModelManager({
                   : <WavyProgress width={200} value={frac} label={`Downloading ${label}`} />}
               </div>
             )}
+            {downloading && job.warning && <DownloadWarning text={job.warning} />}
           </div>
           {downloading ? (
             <SquareIconButton icon={X} iconSize={13} label={`Cancel ${label}`} title="Cancel"
