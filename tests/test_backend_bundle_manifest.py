@@ -139,7 +139,11 @@ class TestDataFilesReachTheBundle:
         without shipping the file, so widening it has to be a visible edit here.
         """
         assert set(manifest.FORWARD_DECLARED_GLOBS) == {"trusted_keys/*.pub"}
-        assert set(manifest.UNSHIPPED_DOCS) == {"trusted_keys/README.md"}
+        # `sdk/signatures.json` is the SDK's reviewed signature snapshot, read only by the
+        # snapshot script, its test and the apps' contract check.
+        assert set(manifest.UNSHIPPED_FILES) == {"trusted_keys/README.md", "sdk/signatures.json"}
+        for path, why in manifest.UNSHIPPED_FILES.items():
+            assert len(why) > 40, f"{path} is unshipped without a real reason"
 
     def test_no_undeclared_asset_under_the_package_tree(self, manifest):
         """Fires on the NEXT undeclared asset, not the ones this finding set named.
