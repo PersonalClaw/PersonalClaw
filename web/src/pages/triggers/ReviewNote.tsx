@@ -1,4 +1,6 @@
-import { ShieldQuestion } from 'lucide-react'
+import { ShieldAlert, ShieldQuestion } from 'lucide-react'
+import { Button } from '../../ui/Button'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Why a trigger brought over from an older version is off, and what switching it on does.
  *
@@ -16,6 +18,42 @@ export function ReviewNote() {
           It has not been allowed to run here. Check what it runs, then switch it on if you want it:
           PersonalClaw asks you to allow that first.
         </p>
+      </div>
+    </div>
+  )
+}
+
+/** A trigger whose action it is not allowed to run (`needs_grant` — the server's verdict): what is
+ *  missing, and the one control that gives it. Nothing runs it until the owner does: Run now, a
+ *  view refresh and every fire are refused (`triggers/grants.py`).
+ *
+ *  On a trigger that is ON the control is Allow, which sends the switch `on` again — the toggle is
+ *  where a grant is asked for, so Allow asks first like switching on does. On one that is OFF the
+ *  switch itself is the control, so the note says what switching it on will ask. */
+export function GrantNote({ labels, enabled, onAllow, busy = false }: {
+  labels: string[]
+  enabled: boolean
+  onAllow: () => void
+  busy?: boolean
+}) {
+  const actions = labels.map((label) => `“${label}”`).join(' and ')
+  return (
+    <div role="note" className="flex items-start gap-s text-warn">
+      <ShieldAlert size={14} aria-hidden className="mt-0.5 shrink-0" />
+      <div data-type="body-s" className="flex min-w-0 flex-1 flex-col gap-xs">
+        <p data-type="label-m">Not allowed to use {actions}</p>
+        <p className="text-on-surface-var">
+          {enabled
+            ? 'It does not run until you allow it. Check what it runs, then choose Allow: PersonalClaw asks you first.'
+            : 'It does not run until you allow it. Switching it on asks you to allow it first.'}
+        </p>
+        {enabled && (
+          <div>
+            <Button variant="secondary" size="sm" onClick={onAllow} disabled={busy} disabledReason={BUSY_REASON}>
+              Allow
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )

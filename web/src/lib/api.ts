@@ -1514,6 +1514,8 @@ export interface ScheduleJob {
   author?: string; read_only?: boolean
   // Brought over from an older version and not switched on by the owner yet — see `Trigger`.
   needs_review?: boolean
+  // What it is not allowed to use — see `Trigger`.
+  needs_grant?: string[]
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -2656,6 +2658,10 @@ export interface Trigger {
   // The server's verdict: `created_by` alone cannot say it, because an imported row that needs no
   // permission (one that only notifies) arrives switched on and is not waiting for anything.
   needs_review?: boolean
+  // The actions it runs that it is not allowed to, by display name (`["Bash Command"]`); `[]` when
+  // it may run. Run now and every fire are refused until the owner allows it — Allow on its panel,
+  // or switching it on, both of which ask first (`triggers/grants.py`).
+  needs_grant?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null

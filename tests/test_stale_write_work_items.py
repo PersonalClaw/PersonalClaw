@@ -90,6 +90,9 @@ def _seed_schedule(home, *, next_fire_at: str = ""):
                     "config": {"task_template": "summarise my inbox", "agent": "", "model": ""},
                 }
             },
+            # Granted, as `tools.create` freezes it: a save of an action the trigger is not
+            # allowed to run asks first (`triggers.grants`), which is not what these tests drive.
+            capabilities={"providers": ["invoke-agent"]},
             next_fire_at=next_fire_at,
         )
     )

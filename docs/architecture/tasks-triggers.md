@@ -86,19 +86,32 @@ relative to `PersonalClaw/src/personalclaw/`.
   that loosen whether its agent asks (`automation_posture.loosened_keys`), and
   one that would run anything needing a grant — or a nudge, which types into a
   chat — arrives switched off (`needs_review` on the wire). Switching it on is
-  the only grant: `POST /api/triggers/{id}/toggle` answers
-  `confirmation_required` until the owner consents, then freezes the providers
-  (`screen.grant_action`), makes the row theirs and writes the grant to the SEL.
-  The boot's `backfill_capabilities` skips imported rows, the chat's
-  `automation_resume`/`automation_update` refuse to switch one on, and a manual
-  run (`POST /api/triggers/{id}/run`, which the chat's `automation_run` and
-  `schedule_trigger` also use, and whose dispatch does not read the capability
-  block) is refused until it is on. One Inbox
+  how it is allowed: `POST /api/triggers/{id}/toggle` answers
+  `confirmation_required` until the owner consents, then grants the providers,
+  makes the row theirs and writes the grant to the SEL (**Grants**, below). One Inbox
   item (`cron/trigger_import`) lists what waits, raised once the dashboard is
   up from the rows still waiting, so a crash between the import and the
   announcement still announces it — once. The legacy MCP store
   `settings/mcp.json` is not read at all (the Doctor names a server left in
   it, `tools.legacy_mcp_settings`).
+- **Grants** (`triggers/grants.py`) — a trigger runs only what its frozen
+  `capabilities` block allows: a read-only action needs nothing, and every
+  other one needs its provider listed (`screen.ungranted_providers`). Both
+  dispatches check it — the attended one (`_dispatch_store_action`: Run now,
+  the restart review's Run now, a view refresh, a webhook fire) and the
+  unattended one (`gateway._fire_store_trigger`: clock, event, file,
+  web_watch, chained) — and a refusal names the missing action and how the
+  owner allows it; an unattended refusal is a `skipped_gate` row in the
+  trigger's Runs history. Only the owner grants, by saying yes: switching a
+  trigger on (or Allow on one that is on, the same toggle sent on again), or
+  saving a schedule edit that re-points its action, which asks in the same
+  question as a loosened approval posture. `tools.create` freezes the grant
+  when a trigger is authored. An edit from the chat's `automation_update` or
+  the CLI that needs a new grant is saved switched off, and the chat cannot
+  switch such a trigger on or run it. Nothing unattended grants: there is no
+  boot backfill, a pack's triggers are deployed with no grant, and a legacy
+  import grants nothing. The wire carries `needs_grant` (display names) so the
+  page can badge the row and offer Allow.
 - **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
   one-shot LLM call, **validated with croniter before use** (a hallucinated
   expression never reaches the store).

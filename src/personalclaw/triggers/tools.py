@@ -631,11 +631,26 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
     return AutomationToolResult(True, "\n".join(lines), {"automations": out})
 
 
-def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> AutomationToolResult:
+def update(
+    store: Any,
+    *,
+    trigger_id: str,
+    patch: dict[str, Any],
+    owner_consented: bool = False,
+) -> AutomationToolResult:
     """`automation_update` — patch an existing automation through the allowlist.
 
     A rejected key is REPORTED, not dropped silently: an agent that thinks it changed
     `health_status` and got no error would keep believing a stale model of the automation.
+
+    🔴 AN EDIT GRANTS AT EDIT TIME, OR SAVES THE TRIGGER SWITCHED OFF (`triggers.grants`). A patch
+    that re-points the action at something the trigger is not allowed to run needs the owner's yes.
+    `owner_consented` is that yes, and only the schedule editor passes it, after its consent dialog
+    (`dashboard.handlers.triggers._grant_for_save`): the save then grants what the action runs,
+    so Run now works straight away. Every other caller — the chat's `automation_update`, the CLI —
+    cannot give it, so the edit is kept and the trigger switched off until the owner switches it on
+    from the Triggers page, which asks first. Measured on `main`: an agent re-pointing an owner's
+    `notify` schedule at `bash` left it switched on, and the next boot granted it.
     """
     row = store.get(trigger_id)
     if row is None:
@@ -681,14 +696,37 @@ def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> AutomationT
         refusal = spec_error_refusal(row.trigger.kind, applied["spec"])
         if refusal is not None:
             return refusal
+    from personalclaw.triggers import grants
+
     trigger = row.trigger
     for key, value in applied.items():
         setattr(trigger, key, value)
+    missing = grants.missing(trigger)
+    granted: list[str] = []
+    note = ""
+    # The owner's yes is about the action this save carries — the question the editor asked names
+    # it — so it grants only when the patch carries one.
+    if missing and owner_consented and "workflow" in applied:
+        granted = grants.give(trigger)
+    elif missing and "workflow" in applied:
+        trigger.enabled = False
+        trigger.next_fire_at = ""
+        note = grants.switched_off(trigger, missing)
+    elif missing and applied.get("enabled"):
+        return AutomationToolResult(
+            False,
+            f"Error: {grants.refusal(trigger, missing, agent=True, switching_on=True)}",
+            {"needs_grant": grants.labels(trigger)},
+        )
     saved = store.upsert(trigger)
     text = f"Updated {saved.id}: {', '.join(sorted(applied))}."
+    if note:
+        text += f"\n  {note}"
     if rejected:
         text += f"\n  Ignored (not settable via this tool): {', '.join(rejected)}."
-    return AutomationToolResult(True, text, {"trigger": saved.to_dict(), "rejected": rejected})
+    return AutomationToolResult(
+        True, text, {"trigger": saved.to_dict(), "rejected": rejected, "granted": granted}
+    )
 
 
 def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolResult:
@@ -703,18 +741,28 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
     without clearing the count would flip `enabled` and change nothing — every later fire would meet
     the budget gate. The person pressing Resume has asked for it to run again.
 
-    A trigger brought over from a legacy store and still waiting for review is REFUSED here: turning
-    one on is the owner allowing what it runs (`legacy_import`), and this function is also the
-    chat's `automation_resume`, where the one asking is an agent. The Triggers page's toggle asks
-    the owner, grants, and only then calls this.
+    A trigger brought over from a legacy store and still waiting for review is REFUSED here, and so
+    is any trigger whose action it is not allowed to run (`triggers.grants`): turning one on is the
+    owner allowing what it runs, and this function is also the chat's `automation_resume`, where
+    the one asking is an agent. The Triggers page's toggle asks the owner, grants, and only then
+    calls this.
     """
+    from personalclaw.triggers import grants
     from personalclaw.triggers.legacy_import import needs_review
 
     row = store.get(trigger_id)
     if row is None:
         return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
-    if not paused and needs_review(row.trigger):
-        return _awaiting_review_refusal(row.trigger)
+    if not paused and not row.errors:
+        if needs_review(row.trigger):
+            return _awaiting_review_refusal(row.trigger)
+        missing = grants.missing(row.trigger)
+        if missing:
+            return AutomationToolResult(
+                False,
+                "Error: " + grants.refusal(row.trigger, missing, agent=True, switching_on=True),
+                {"needs_grant": grants.labels(row.trigger)},
+            )
     saved = store.set_enabled(trigger_id, not paused)
     if saved is not None and not paused:
         from personalclaw.triggers.service import budget_spent
@@ -906,9 +954,9 @@ def run(
 
     A DISABLED automation still runs manually: pausing means "stop firing on your own", and
     refusing a hand-driven run of a paused automation would remove the main way a user tests one
-    before re-enabling it. Reported in the result so nobody mistakes it for a resume. The one
-    exception is a row a legacy import brought over that the owner has not switched on yet: it is
-    off because nobody has allowed what it runs, not because it was paused.
+    before re-enabling it. Reported in the result so nobody mistakes it for a resume. What a run
+    never bypasses is the grant (`triggers.grants`): a trigger its action is not allowed to run is
+    refused, a row a legacy import brought over and the owner has not switched on included.
 
     `runner` is injected — this tool does NOT own the turn (S90 does). A `dry_run` never calls it
     at all, which is the property that makes observe-mode safe to offer.
@@ -929,9 +977,14 @@ def run(
         f"  gates enforced: {', '.join(plan['enforced'])}",
         f"  bypassed (manual): {', '.join(plan['bypassed']) or 'none'}",
     ]
+    from personalclaw.triggers import grants
+
+    missing = grants.missing(trigger)
     if not trigger.enabled:
         lines.append("  note: this automation is paused — running it here does not re-enable it.")
     if dry_run:
+        if missing:
+            lines.append(f"  note: a real run is refused: {grants.refusal(trigger, missing)}")
         lines.append("  nothing was executed.")
         return AutomationToolResult(
             True, "\n".join(lines), {"plan": plan, "trigger": trigger.to_dict()}
@@ -943,12 +996,17 @@ def run(
     if refusal:
         lines.append(f"  refused: {refusal}")
         return AutomationToolResult(False, "\n".join(lines), {"plan": plan, "refused": refusal})
-    # Not the agent's to run before the owner has allowed it (`triggers.legacy_import`); the HTTP
-    # route the runner posts to refuses it too.
+    # Not the agent's to run before the owner has allowed it (`triggers.legacy_import`,
+    # `triggers.grants`); the HTTP route the runner posts to refuses it too.
     from personalclaw.triggers.legacy_import import needs_review
 
     if needs_review(trigger):
         return _awaiting_review_refusal(trigger)
+    if missing:
+        lines.append(f"  refused: {grants.refusal(trigger, missing, agent=True)}")
+        return AutomationToolResult(
+            False, "\n".join(lines), {"plan": plan, "needs_grant": grants.labels(trigger)}
+        )
     if runner is None:
         # Honest refusal rather than a fabricated success. "Launched" with nothing behind it is the
         # fire-and-forget lie S90's executor was written to keep out of this codebase.

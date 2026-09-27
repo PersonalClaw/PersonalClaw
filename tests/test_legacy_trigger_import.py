@@ -509,7 +509,8 @@ def test_run_now_refuses_a_row_still_waiting_and_runs_it_once_the_owner_allows_i
 
     refused = _run()
     assert refused["ok"] is False
-    assert "has not been allowed to run here. Switch it on first" in refused["refused"]
+    assert "not allowed to use the “Bash Command” action" in refused["refused"]
+    assert "Switch it on from the Triggers page" in refused["refused"]
     assert dispatched == []
 
     # Switching it on is the owner allowing it, and Run now runs it from then on.

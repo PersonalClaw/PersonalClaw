@@ -265,6 +265,9 @@ class TestCronCli:
                     "config": {"task_template": "check", "agent": "helper", "model": "gpt"},
                 }
             },
+            # Granted, as `cron add` (`tools.create`) freezes it: resuming an ungranted row is
+            # refused (`triggers.grants`).
+            capabilities={"providers": ["invoke-agent"]},
         )
         for key, value in over.items():
             setattr(trigger, key, value)

@@ -281,6 +281,9 @@ export interface Trigger {
   /** Brought over from an older version and switched off until the owner switches it on, which
    *  asks them to allow what it runs. The server's verdict (`needs_review`), passed through. */
   needsReview?: boolean
+  /** The actions it is not allowed to use (`needs_grant`), by display name — nothing runs it until
+   *  the owner allows it. The server's verdict, passed through. */
+  needsGrant?: string[]
   broken?: string[]          // parse ERRORS (S87 lenient load) — shown, not hidden
   /** WARNING-severity issues from the same load — advisory, not a fault (issue 531). Kept apart
    *  from `broken` because the row RUNS as authored: a sub-floor interval is a choice the backend
@@ -355,6 +358,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     warnings: j.warnings ?? [],
     author: j.author, readOnly: j.read_only === true,
     needsReview: j.needs_review === true,
+    needsGrant: j.needs_grant ?? [],
   }
 }
 /** Humanize an event name for a list label without needing the fetched catalog
@@ -424,6 +428,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     ...(isEvent ? { eventPattern: pattern, eventMatcher: pm ? eventMatcherValue(spec, pm.matcher) : '' } : {}),
     author: t.author, readOnly: t.read_only === true,
     needsReview: t.needs_review === true,
+    needsGrant: t.needs_grant ?? [],
   }
 }
 

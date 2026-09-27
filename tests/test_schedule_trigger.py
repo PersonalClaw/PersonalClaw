@@ -87,6 +87,8 @@ def test_the_immediate_fire_tool_posts_to_the_gateway(
             kind="clock",
             spec={"kind": "interval", "interval_secs": 3600},
             workflow={"inline": {"provider": "run-prompt", "config": {"message": "go"}}},
+            # Granted, as `tools.create` freezes it: the run it posts is refused otherwise.
+            capabilities={"providers": ["run-prompt"]},
         )
     )
     posted: list[str] = []

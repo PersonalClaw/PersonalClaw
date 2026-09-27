@@ -644,10 +644,10 @@ def capabilities_for_action(trigger: Any) -> dict[str, Any]:
     matters the day someone edits that trigger's action to something write-capable and the stale
     block silently grants it.
 
-    Existing rows are never rewritten here. A trigger authored before this shipped keeps an empty
-    block and refuses on its next fire, which is visible and fixable — the direction that cannot
-    silently lose the property. `automation doctor` reports it (S116) and re-saving the trigger
-    freezes it correctly.
+    Existing rows are never rewritten here. A trigger whose block does not cover its action is
+    refused on every run, which is visible and fixable — the direction that cannot silently lose
+    the property. `automation doctor` reports it (S116), the Triggers page offers Allow, and the
+    owner's yes is the only thing that grants it (`triggers.grants`).
     """
     requested = requested_capabilities(trigger)
     providers = [p for p in requested.get("providers", []) if not provider_is_read_only(p)]
@@ -726,9 +726,8 @@ def ungranted_providers(trigger: Any) -> list[str]:
     """The write-capable providers `trigger`'s action runs that its frozen block does not permit.
 
     The question the fence asks at fire time, asked before one: `[]` for a read-only action or a
-    row that holds its grant, otherwise what switching it on would have to grant. A row a boot
-    imported from a legacy store arrives with no block at all (`triggers.legacy_import`), which is
-    how the owner's toggle knows it must ask before turning that row on.
+    row that holds its grant, otherwise what the owner would have to grant before it may run. Both
+    dispatches and every switch-on and edit ask it (`triggers.grants`).
     """
     frozen = getattr(trigger, "capabilities", None)
     block = frozen if isinstance(frozen, dict) else {}
@@ -742,11 +741,11 @@ def ungranted_providers(trigger: Any) -> list[str]:
 def grant_action(trigger: Any) -> list[str]:
     """Freeze the providers `trigger`'s action runs into its block. Returns what was granted.
 
-    This is the owner saying yes, so only a caller holding that yes may call it: the Triggers page's
-    toggle, after its consent dialog. Nothing that runs unattended grants — a boot, a chat tool or
-    an import writing this block would be authority nobody gave. A `providers` value that is not a
-    list is replaced rather than extended, because the fence refuses a non-list and extending one
-    would grant nothing.
+    This is the owner saying yes, so only a caller holding that yes may call it, through
+    `triggers.grants.give`: the Triggers page's switch and the schedule editor, after their consent
+    dialog. Nothing that runs unattended grants — a boot, a chat tool or an import writing this
+    block would be authority nobody gave. A `providers` value that is not a list is replaced rather
+    than extended, because the fence refuses a non-list and extending one would grant nothing.
     """
     granted = ungranted_providers(trigger)
     if not granted:

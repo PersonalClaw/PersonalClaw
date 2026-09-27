@@ -238,10 +238,20 @@ def renders(
 
     Both returned, so the caller can dispatch the refreshes AND report the cache hits — §7 criterion
     8's zero-silent-drops rule applies to a skipped refresh exactly as to a skipped fire.
+
+    A binding whose action it is not allowed to run (`triggers.grants`) is not refreshed: it serves
+    what it last rendered, and the reason says what is missing. Asked before `on_render`, which
+    would otherwise spend the refresh window on a refresh that cannot happen.
     """
+    from personalclaw.triggers import grants
+
     payloads: list[dict[str, Any]] = []
     cached: list[dict[str, str]] = []
     for trigger in bound_triggers(store, surface=surface):
+        missing = grants.missing(trigger)
+        if missing:
+            cached.append({"trigger_id": trigger.id, "reason": grants.refusal(trigger, missing)})
+            continue
         try:
             decision = on_render(trigger, now=now, base_dir=base_dir)
         except Exception:  # noqa: BLE001 - a render must never fail on one bad binding

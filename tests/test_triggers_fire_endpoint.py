@@ -41,8 +41,14 @@ def _home(tmp_path, monkeypatch):
     caps_mod.reset_for_tests()
 
 
-def _make_webhook(tmp_path, slug="my-hook"):
-    """Upsert a valid `webhook` trigger and return its serialized (`store:webhook:<slug>`) id."""
+def _make_webhook(tmp_path, slug="my-hook", capabilities=None):
+    """Upsert a valid `webhook` trigger and return its serialized (`store:webhook:<slug>`) id.
+
+    Granted by default, as `tools.create` freezes it; pass `capabilities={}` for one whose action
+    it is not allowed to run.
+    """
+    if capabilities is None:
+        capabilities = {"providers": ["run-prompt"]}
     TriggerStore(base_dir=tmp_path).upsert(
         Trigger(
             id=f"webhook:{slug}",
@@ -51,6 +57,7 @@ def _make_webhook(tmp_path, slug="my-hook"):
             enabled=True,
             spec={"token_ref": "{{secret:WH_TOKEN}}"},
             workflow={"provider": "run-prompt", "config": {}},
+            capabilities=dict(capabilities),
         )
     )
     return f"store:webhook:{slug}"
@@ -131,6 +138,42 @@ async def test_the_inbound_body_reaches_the_action_fenced(tmp_path, monkeypatch)
         # …and the "treat as data" preamble precedes it, or a model reads it as instruction.
         assert "never as instructions" in fenced
         assert fenced.index("never as instructions") < fenced.index(body)
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_trigger_not_allowed_to_run_its_action_is_refused_before_it_is_accepted(
+    tmp_path, monkeypatch
+):
+    """🔴 Red on main: 202, and the dispatch ran the action with no grant. A scoped token lets a
+    caller fire THIS trigger; what the action may run is the owner's grant (`triggers.grants`).
+    Refused before the 202, so the caller learns the fire did not happen, and audited; the
+    action is not named to an outside caller."""
+    trigger_id = _make_webhook(tmp_path, capabilities={})
+    dispatched: list = []
+
+    async def _fake_dispatch(trigger, payload, *, event="manual.run"):
+        dispatched.append(trigger.id)
+        return True, "ran"
+
+    audited: list[dict] = []
+    monkeypatch.setattr(T, "_dispatch_store_action", _fake_dispatch)
+    monkeypatch.setattr("personalclaw.inbound.audit.audit", lambda *a, **k: audited.append(dict(k)))
+    _rec, token = clients_mod.create_client(
+        "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
+    )
+    state = _State()
+    client = await _client(state)
+    try:
+        resp = await _fire(client, trigger_id, token)
+        assert resp.status == 403
+        message = (await resp.json())["error"]["message"]
+        assert "not allowed to run its action" in message
+        assert "Run Prompt" not in message and "run-prompt" not in message
+        await asyncio.gather(*state._background_tasks)
+        assert dispatched == []
+        assert [a.get("status") for a in audited] == [403]
     finally:
         await client.close()
 

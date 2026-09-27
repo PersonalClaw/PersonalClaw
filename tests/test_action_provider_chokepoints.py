@@ -319,12 +319,12 @@ def test_the_site_list_is_not_STALE():
         # call. The properties that earn the exemption are asserted in
         # `test_the_delegating_provider_only_hands_off_to_a_frozen_name` below.
         "personalclaw.action_providers.selfqa_watch_provider",
-        # The legacy-import review copy — `triggers.legacy_import` resolves a provider to read ONE
-        # attribute, `display_name`, for the words the owner reads in the review item and the
-        # switch-on consent ("runs Bash Command when a matching event happens"). The rows it
-        # writes are switched off and nothing is run; the properties that earn the exemption are
-        # asserted in `test_the_legacy_import_label_only_reads_the_display_name` below.
-        "personalclaw.triggers.legacy_import",
+        # The grant copy — `triggers.grants` resolves a provider to read ONE attribute,
+        # `display_name`, for the words the owner reads when a grant is asked for or a run is
+        # refused ("not allowed to use the “Bash Command” action"). It decides nothing and runs
+        # nothing; the properties that earn the exemption are asserted in
+        # `test_the_grant_copy_only_reads_the_display_name` below.
+        "personalclaw.triggers.grants",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }
@@ -335,22 +335,21 @@ def test_the_site_list_is_not_STALE():
     )
 
 
-def test_the_legacy_import_label_only_reads_the_display_name():
-    """The properties that earn `triggers.legacy_import`'s exemption.
+def test_the_grant_copy_only_reads_the_display_name():
+    """The properties that earn `triggers.grants`' exemption.
 
-    A legacy automation file's rows are written switched off, waiting for the owner, and what the
-    owner is asked about has to say what each one runs: "Bash Command", not the bare id `bash`.
-    That takes the provider's `display_name` and nothing more. "It's different" is not an
-    exemption, so the difference is asserted: if this module ever USES the provider it resolves,
-    this fails and it must argue its way into `EXECUTION_SITES` with a real policy gate instead.
+    A grant question and a refusal have to say what the action is — "Bash Command", not the bare
+    id `bash` — and that takes the provider's `display_name` and nothing more. "It's different" is
+    not an exemption, so the difference is asserted: if this module ever USES the provider it
+    resolves, this fails and it must argue its way into `EXECUTION_SITES` with a real policy gate.
     """
     import re
 
-    src = _source("personalclaw.triggers.legacy_import")
+    src = _source("personalclaw.triggers.grants")
     calls = re.findall(r"get_action_provider\(", src)
-    assert calls, "the exemption is stale if the review copy no longer resolves a provider"
-    assert ".execute(" not in src, "the review copy must never execute a provider"
-    assert ".reverse(" not in src, "the review copy must never undo through a provider"
+    assert calls, "the exemption is stale if the grant copy no longer resolves a provider"
+    assert ".execute(" not in src, "the grant copy must never execute a provider"
+    assert ".reverse(" not in src, "the grant copy must never undo through a provider"
     assert '"display_name"' in src, "the only reason to resolve here is the display name"
 
 
