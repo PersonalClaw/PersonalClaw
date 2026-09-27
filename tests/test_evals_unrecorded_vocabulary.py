@@ -134,8 +134,9 @@ EXPECTED_CONSUMERS: dict[str, dict[str, str | None]] = {
     },
     # Forwards the raw value UNCHANGED — `"tokens": event.get("tokens")` keeps `None` as `None`, so
     # the three states survive to the reader and the row needs no flag of its own. A guard here
-    # would make a faithful pass-through claim an aggregate's contract.
-    "src/personalclaw/workflows/service.py": {"event.tokens": None},
+    # would make a faithful pass-through claim an aggregate's contract. (The run cockpit's row
+    # builder, which left `service.py` for `run_cockpit.py` in #3689.)
+    "src/personalclaw/workflows/run_cockpit.py": {"event.tokens": None},
     "scripts/learning_benchmark.py": {
         "spend.tokens": "_verdict_for_task builds the §4 token denominator",
         "provider_binding": "writes the report's provenance and its schema",
@@ -402,7 +403,7 @@ def test_the_detector_is_not_green_from_matching_nothing():
         # The two sites `run_totals.tokens`' aggregate-shaped patterns could not see (#3218): the
         # projection that sums the raw counts, and the row builder that forwards them untouched.
         ("src/personalclaw/workflows/introspection.py", "event.tokens"),
-        ("src/personalclaw/workflows/service.py", "event.tokens"),
+        ("src/personalclaw/workflows/run_cockpit.py", "event.tokens"),
         ("scripts/learning_benchmark.py", "spend.tokens"),
         ("scripts/learning_benchmark.py", "provider_binding"),
         ("scripts/learning_benchmark.py", "cell_model"),

@@ -310,6 +310,13 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "apps/catalog.py::_read_git_registry::subprocess.run": "operator: git app registry read",
     "apps/catalog.py::_scan_git_source::subprocess.run": "operator: git app source scan",
     "apps/source.py::_clone_git::subprocess.run": "operator: git app clone",
+    # The same Store clone when a registry listing names the source: `_clone_git` hands it to
+    # `net/git.run_git_guarded`, which runs the identical fixed argv (`git clone --depth 1 -- <url>
+    # <tmp>`, no shell) with every connection held to the listing's egress policy. Operator-started
+    # like its unguarded twin above; what it adds is a network fence, not agent influence.
+    "net/git.py::run_git_guarded::subprocess.run": (
+        "operator: git app clone for a registry listing, through the egress tunnel"
+    ),
     # CLI commands — operator at a terminal.
     "cli_config.py::_edit_config::subprocess.run": "operator: opens $EDITOR on a copy of config",
     "cli_doctor.py::_doctor::subprocess.run": "operator: doctor host probes",
