@@ -87,6 +87,12 @@ describe('routeForNote', () => {
     expect(routeForNote(note({ source: 'planning' }))).toBe('tasks')
   })
 
+  it('🔑 a due-task reminder opens Tasks, not the notification feed', () => {
+    // `tasks/due` (`tasks/due_notices.py`) is the `tasks` source's one kind. With no row here a
+    // tap on its desktop banner fell through to the feed — the reminder's own surface is Tasks.
+    expect(routeForNote(note({ source: 'tasks' }))).toBe('tasks')
+  })
+
   it('falls back to the feed for an absent or unknown source', () => {
     expect(routeForNote(note())).toBe(DEFAULT_NOTIFICATION_ROUTE)
     expect(routeForNote(note({ source: 'not-a-source' }))).toBe(DEFAULT_NOTIFICATION_ROUTE)
