@@ -1,11 +1,12 @@
 # Graft the built SPA into the sdist so a wheel built FROM the sdist still carries
-# it. `python -m build` (the release + Makefile command) builds the sdist first,
-# then builds the wheel from that sdist — setup.py's BuildWithWeb copies web/dist
-# into personalclaw/static/dist, but only if web/dist exists in the build tree.
+# it. The release's `uv build` builds the sdist first, then the wheel from that sdist,
+# and `make build` rebuilds a wheel from the sdist and requires it to be byte-identical
+# to the one built from the tree. setup.py's BuildWithWeb copies web/dist into
+# personalclaw/static/dist, but only if web/dist/index.html exists in the build tree.
 # Without this graft the sdist omits web/dist, so the wheel-from-sdist is SPA-less
 # and fails scripts/verify_wheel.py. Grafting it also makes the sdist itself
 # self-contained (a wheel built from the PyPI sdist serves the dashboard too).
-# web/dist is a gitignored build artifact — run `npm run build` before packaging.
+# web/dist is a gitignored build artifact; `make build` builds it first.
 graft web/dist
 
 # Keep the sdist lean: no editor/OS cruft or compiled caches.

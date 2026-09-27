@@ -19,9 +19,9 @@ permissions:
 
 jobs:
   build:
-    # The wheel MUST carry web/dist: run the web build FIRST, then python -m build
-    # (setup.py's BuildWithWeb copies web/dist into the package). Verified locally:
-    # the wheel contains static/dist/index.html + JS assets.
+    # The wheel MUST carry web/dist: run the web build FIRST, then `uv build`
+    # (setup.py's BuildWithWeb copies web/dist into the package). `make build` is the same
+    # build plus the proof that the sdist rebuilds a byte-identical wheel.
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -58,7 +58,9 @@ jobs:
           uv build --out-dir dist
       - name: Verify the wheel contract (SPA packaged + Node-free serve)
         run: |
-          # Full C4 contract (scripts/verify_wheel.py): asserts the SPA is in the
+          # Full C4 contract (scripts/verify_wheel.py): inspects the wheel's contents and
+          # metadata against this checkout (every declared package, dashboard and
+          # bundled-app file, nothing else, a true RECORD), asserts the SPA is in the
           # wheel, installs it into a scratch venv from the wheel alone (this runner
           # has Node for the SPA build, but the verify venv installs only the wheel),
           # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +

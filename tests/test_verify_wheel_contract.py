@@ -10,12 +10,14 @@ naming factory functions the package no longer defines, and the verifier printed
 output. The evidence was in the gate's hands and nothing asserted on it — the same shape as a
 check that passes while the thing it exists to prove never happened.
 
-**The staging tree was stale.** ``python -m build`` does not clear ``build/``, and setuptools
+**The staging tree was stale.** A setuptools build does not clear ``build/``, and setuptools
 re-used the copy it found, so the deleted app directories were packaged from
-``build/lib/personalclaw/apps/native/``. ``DIST-3`` names the bare ``python -m build`` as *the*
-release command, so anything ever removed from ``src/personalclaw/**`` could reappear in a
-locally built wheel — and a container image, a ``pip install ./dist/*.whl`` or a hand-cut
-release inherits it. Inert here; a deleted module that still *imports* would run.
+``build/lib/personalclaw/apps/native/``. So anything ever removed from ``src/personalclaw/**``
+could reappear in a locally built wheel — and a container image, a ``pip install
+./dist/*.whl`` or a hand-cut release inherits it. Inert here; a deleted module that still
+*imports* would run. ``make build`` (``verify_wheel.py --build``) is now the one command that
+builds a distribution, and it cleans every generated tree first, then inspects what it built
+against the source and rebuilds the wheel from the sdist to prove the two are the same bytes.
 
 This file is the rail for both fixes, plus the two ways each could quietly stop working:
 
@@ -25,6 +27,8 @@ This file is the rail for both fixes, plus the two ways each could quietly stop 
   that must NOT trip it), because a detector that matches nothing reads exactly like a pass;
 * the staging-tree cleanup is asserted BEHAVIOURALLY against a planted stale tree, not by
   grepping the source for ``rmtree``;
+* the content inspection is driven over a REAL setuptools wheel and sdist, and then over three
+  broken copies of them, because an inspection that cannot fail proves nothing;
 * and ``_boot_and_probe`` is asserted to actually CALL the assertion, because a perfect
   detector with no call site is the failure mode this repo keeps finding.
 """
@@ -33,7 +37,12 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import io
+import shutil
+import subprocess
 import sys
+import tarfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -260,47 +269,242 @@ def test_the_boot_probe_actually_calls_the_assertion() -> None:
     )
 
 
-# ── The staging tree is cleared, judged behaviourally ─────────────────────────
+# ── Every staging tree is cleared, judged behaviourally ───────────────────────
 
 
-def test_build_clears_the_stale_staging_tree(verify_wheel, tmp_path, monkeypatch) -> None:
-    """The wheel cannot be built from directories the source tree no longer has.
+def test_the_canonical_build_clears_every_stale_output(verify_wheel, tmp_path) -> None:
+    """The artifacts cannot re-use a file the source tree or the SPA no longer has.
 
     Planted with the ACTUAL payload #2758 found — one of the three app directories that existed
-    only in ``build/lib`` — and a leftover ``dist/`` wheel whose version string sorts ABOVE any
-    real one, because ``_find_wheel`` takes ``sorted(glob(...))[-1]`` (lexicographic, not
-    newest-by-mtime) and would otherwise verify the leftover instead of the fresh build.
+    only in ``build/lib`` — a leftover ``dist/`` wheel whose version string sorts ABOVE any real
+    one (``_find_wheel`` takes ``sorted(glob(...))[-1]``, lexicographic, not newest-by-mtime),
+    an ``egg-info`` naming a deleted file, a stale ``web/dist`` and the dev link to it.
     """
-    monkeypatch.chdir(tmp_path)
     stale_app = tmp_path / "build" / "lib" / "personalclaw" / "apps" / "native" / "native-workflows"
     stale_app.mkdir(parents=True)
     (stale_app / "app.json").write_text('{"name": "native-workflows"}', encoding="utf-8")
     leftover = tmp_path / "dist" / "personalclaw-99.9.9-py3-none-any.whl"
     leftover.parent.mkdir(parents=True)
     leftover.write_bytes(b"not really a wheel")
+    egg_info = tmp_path / "src" / "personalclaw.egg-info"
+    egg_info.mkdir(parents=True)
+    (egg_info / "SOURCES.txt").write_text("deleted.py\n", encoding="utf-8")
+    web_dist = tmp_path / "web" / "dist"
+    web_dist.mkdir(parents=True)
+    (web_dist / "index.html").write_text("stale", encoding="utf-8")
+    static_dist = tmp_path / "src" / "personalclaw" / "static" / "dist"
+    static_dist.parent.mkdir(parents=True)
+    static_dist.symlink_to(web_dist)
+    keep = tmp_path / "src" / "personalclaw" / "__init__.py"
+    keep.write_text("", encoding="utf-8")
 
     # Floor: if the plant did not land, "it was removed" is trivially true.
-    assert stale_app.is_dir() and leftover.is_file()
+    assert stale_app.is_dir() and leftover.is_file() and static_dist.is_symlink()
 
-    invocations: list[list[str]] = []
+    verify_wheel._clean_distribution_outputs(tmp_path)
 
-    def _fake_run(cmd, *args, **kwargs):
-        invocations.append(list(cmd))
-        return None
+    for relative in verify_wheel._STALE_OUTPUTS:
+        path = tmp_path / relative
+        assert not path.exists() and not path.is_symlink(), f"stale output survived: {relative}"
+    assert keep.is_file(), "the clean reached past the generated trees into the source"
 
-    monkeypatch.setattr(verify_wheel.subprocess, "run", _fake_run)
-    verify_wheel._build_wheel()
 
-    assert not (tmp_path / "build").exists(), (
-        "build/ survived --build, so setuptools can re-use the stale staging tree and package "
-        "directories the source tree does not have (#2758)"
+def test_the_build_fixes_the_zip_epoch_and_refuses_one_a_zip_cannot_hold(
+    verify_wheel, monkeypatch
+) -> None:
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    assert verify_wheel._build_environment()["SOURCE_DATE_EPOCH"] == "315532800"
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    assert verify_wheel._build_environment()["SOURCE_DATE_EPOCH"] == "1700000000"
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
+    with pytest.raises(SystemExit):
+        verify_wheel._build_environment()
+
+
+def test_sdist_normalization_makes_identical_trees_identical_bytes(verify_wheel, tmp_path) -> None:
+    """Two sdists of one tree, built at different times by different users, differ only in
+    archive metadata — and after normalization they do not differ at all."""
+
+    def write_variant(path: Path, *, mtime: int, uid: int, owner: str) -> None:
+        with tarfile.open(path, "w:gz") as archive:
+            directory = tarfile.TarInfo("personalclaw-0.0.1")
+            directory.type = tarfile.DIRTYPE
+            directory.mode = 0o755
+            body = b"same source payload\n"
+            member = tarfile.TarInfo("personalclaw-0.0.1/README.md")
+            member.mode = 0o644
+            member.size = len(body)
+            for info in (directory, member):
+                info.mtime, info.uid, info.gid = mtime, uid, uid
+                info.uname = info.gname = owner
+            archive.addfile(directory)
+            archive.addfile(member, io.BytesIO(body))
+
+    first, second = tmp_path / "first.tar.gz", tmp_path / "second.tar.gz"
+    write_variant(first, mtime=1_700_000_000, uid=501, owner="first")
+    write_variant(second, mtime=1_800_000_000, uid=1001, owner="second")
+    assert first.read_bytes() != second.read_bytes(), "the variants must differ before"
+
+    verify_wheel.normalize_sdist(first, epoch=315532800)
+    verify_wheel.normalize_sdist(second, epoch=315532800)
+
+    assert first.read_bytes() == second.read_bytes()
+    with tarfile.open(first, "r:gz") as archive:
+        for member in archive.getmembers():
+            assert member.mtime == 315532800
+            assert member.uid == member.gid == 0
+            assert member.uname == member.gname == ""
+
+
+def test_the_build_backend_is_the_setuptools_the_lock_resolves() -> None:
+    """``make build`` is byte-reproducible only on one exact backend, and the packaging tests
+    below drive the backend CI's environment has — the one ``uv.lock`` resolves. The pin and
+    the lock drift apart the first time one is bumped alone, and then the tests exercise a
+    different setuptools than the release builds with."""
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    lock = tomllib.loads((_REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked = [p["version"] for p in lock["package"] if p["name"] == "setuptools"]
+    assert len(locked) == 1, f"uv.lock must resolve setuptools exactly once, found {locked}"
+    assert pyproject["build-system"]["requires"] == [f"setuptools=={locked[0]}"]
+
+
+# ── The inspection passes a real distribution and fails a broken one ──────────
+
+
+def _inspectable_project(tmp_path: Path) -> Path:
+    """A small package built by this repository's ``setup.py``, ``MANIFEST.in`` and
+    package-data reader, with every kind of member the inspection derives: a module, a
+    package-data file, a bundled app, the dashboard, the entry point and the licence."""
+    project = tmp_path / "project"
+    package = project / "src" / "personalclaw"
+    app = package / "apps" / "native" / "demo"
+    app.mkdir(parents=True)
+    (package / "config").mkdir()
+    for init in (package, package / "apps", package / "config"):
+        (init / "__init__.py").write_text("", encoding="utf-8")
+    (package / "cli.py").write_text("def main() -> int:\n    return 0\n", encoding="utf-8")
+    (package / "config" / "defaults.json").write_text("{}\n", encoding="utf-8")
+    (app / "app.json").write_text('{"name": "demo"}\n', encoding="utf-8")
+    (app / "provider.py").write_text("", encoding="utf-8")
+    dist = project / "web" / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)\n", encoding="utf-8")
+    (project / "scripts").mkdir()
+    shutil.copy2(_REPO_ROOT / "scripts" / "backend_bundle_manifest.py", project / "scripts")
+    shutil.copy2(_REPO_ROOT / "setup.py", project)
+    shutil.copy2(_REPO_ROOT / "MANIFEST.in", project)
+    (project / "LICENSE").write_text("MIT License\n", encoding="utf-8")
+    (project / "README.md").write_text("# Fixture\n", encoding="utf-8")
+    (project / "pyproject.toml").write_text(
+        """
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personalclaw"
+version = "0.0.1"
+description = "Inspection fixture"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.14"
+dependencies = ["aiohttp>=3.9,<4"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://example.invalid/personalclaw"
+
+[project.scripts]
+personalclaw = "personalclaw.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+personalclaw = ["config/defaults.json", "apps/native/*/app.json", "apps/native/*/*.py"]
+""".lstrip(),
+        encoding="utf-8",
     )
-    assert not leftover.exists(), (
-        "a leftover dist/ wheel survived --build; _find_wheel sorts lexicographically, so a "
-        "higher version string would be verified in place of the wheel just built"
+    return project
+
+
+def _backend(project: Path, call: str, out: Path) -> Path:
+    """One setuptools ``build_meta`` hook, in-process in a fresh interpreter (no network)."""
+    out.mkdir()
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import warnings; warnings.filterwarnings('ignore')\n"
+            f"from setuptools import build_meta\nprint(build_meta.{call}({str(out)!r}))",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        timeout=180,
     )
-    assert invocations, "--build removed the trees but never invoked the build command"
-    assert invocations[-1][1:] == ["-m", "build", "--wheel"], invocations[-1]
+    assert proc.returncode == 0, f"{call} failed:\n{proc.stderr[-3000:]}"
+    return out / proc.stdout.strip().splitlines()[-1]
+
+
+def _rewrite_wheel(source: Path, target: Path, *, drop: str = "", corrupt: str = "") -> None:
+    """Copy *source* to *target* without member *drop*, or with *corrupt*'s bytes changed."""
+    with zipfile.ZipFile(source) as src, zipfile.ZipFile(target, "w") as out:
+        for info in src.infolist():
+            if info.filename == drop:
+                continue
+            body = src.read(info.filename)
+            if info.filename.endswith(".dist-info/RECORD") and drop:
+                body = b"".join(
+                    line + b"\n"
+                    for line in body.splitlines()
+                    if not line.startswith(drop.encode() + b",")
+                )
+            if info.filename == corrupt:
+                body += b"# tampered after the RECORD was written\n"
+            out.writestr(info, body)
+
+
+@pytest.mark.timeout(240)
+def test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one(
+    verify_wheel, tmp_path, capsys
+) -> None:
+    project = _inspectable_project(tmp_path)
+    sdist = _backend(project, "build_sdist", tmp_path / "sdist")
+    wheel = _backend(project, "build_wheel", tmp_path / "wheel")
+
+    # The real artifacts pass: this is the floor that makes the refusals below mean something.
+    verify_wheel.inspect_sdist(sdist, root=project)
+    verify_wheel.inspect_wheel(wheel, root=project)
+    passed = capsys.readouterr().out
+    assert "OK: sdist payload complete" in passed and "OK: wheel payload complete" in passed
+
+    # 1. A declared package-data file the wheel does not carry (its RECORD row dropped too, so
+    #    the payload check is what has to catch it).
+    missing = tmp_path / "missing.whl"
+    _rewrite_wheel(wheel, missing, drop="personalclaw/config/defaults.json")
+    with pytest.raises(SystemExit):
+        verify_wheel.inspect_wheel(missing, root=project)
+    assert "personalclaw/config/defaults.json" in capsys.readouterr().err
+
+    # 2. A member whose bytes no longer match what RECORD says was shipped.
+    tampered = tmp_path / "tampered.whl"
+    _rewrite_wheel(wheel, tampered, corrupt="personalclaw/cli.py")
+    with pytest.raises(SystemExit):
+        verify_wheel.inspect_wheel(tampered, root=project)
+    assert "RECORD digest or size is wrong for personalclaw/cli.py" in capsys.readouterr().err
+
+    # 3. Metadata that no longer says what pyproject.toml says.
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace('"0.0.1"', '"0.0.2"'), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit):
+        verify_wheel.inspect_wheel(wheel, root=project)
+    assert "Version" in capsys.readouterr().err
 
 
 # ── A relative --wheel reaches every process that opens it ────────────────────
@@ -343,6 +547,11 @@ def test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe(
         "_boot_and_probe",
         lambda py, home, bundled_apps=0: handed.update(home=home),
     )
+    # The content inspection is a process-local read and has its own tests above; this fixture
+    # wheel is two files, so the real one would refuse it before the path under test is reached.
+    monkeypatch.setattr(
+        verify_wheel, "inspect_wheel", lambda wheel, root=None: handed.update(inspected=wheel)
+    )
     monkeypatch.setattr(sys, "argv", ["verify_wheel.py", "--wheel", f"dist/{wheel_name}"])
 
     try:
@@ -358,6 +567,7 @@ def test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe(
     assert "carries no model weight" in out, out
     # Every process that opens the wheel was handed a path that does not depend on its cwd.
     assert handed["pip"] == (root / "dist" / wheel_name).resolve(), handed
+    assert handed["inspected"] == handed["pip"], handed
     assert handed["home"].is_absolute(), handed
 
 

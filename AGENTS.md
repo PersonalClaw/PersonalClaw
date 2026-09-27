@@ -22,6 +22,7 @@ make lint               # black --check + isort --check + flake8 + mypy — must
 make test               # full pytest suite
 npm run typecheck:web && npm run test:web && npm run build   # when web/ changed (from root)
 npm run smoke:render    # then: mount the BUILT bundle in headless Chromium
+make build              # a distribution: clean, locked SPA, sdist + wheel inspected, rebuilt from the sdist, served
 ```
 
 **`uv.lock` decides the tool versions, not your resolver.** CI installs with

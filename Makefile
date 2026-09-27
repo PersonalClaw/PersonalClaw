@@ -163,9 +163,10 @@ bundled-model:
 	PERSONALCLAW_HOME="$(or $(PERSONALCLAW_HOME),$(CURDIR)/.dev-home)" \
 		$(PYTHON) scripts/fetch_bundled_model.py
 
-## build: build a distributable wheel + sdist
+## build: the canonical distribution build — clean, locked SPA build, sdist + wheel, both
+## inspected, the wheel rebuilt byte-identical from the sdist, then installed and served
 build:
-	$(PYTHON) -m build
+	UV=$(UV) $(PYTHON) scripts/verify_wheel.py --build
 
 ## clean: remove build artifacts and caches
 clean:
