@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **862 registrations** over **697 distinct paths** — 855 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **865 registrations** over **699 distinct paths** — 858 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -34,9 +34,9 @@ The 127 families the surface divides into, largest first.
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
 | `/api/skills` | 19 | 15 |
+| `/api/mcp` | 18 | 14 |
 | `/api/triggers` | 18 | 15 |
 | `/api/voice` | 17 | 11 |
-| `/api/mcp` | 15 | 12 |
 | `/api/projects` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 855 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -611,6 +611,7 @@ The 855 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/mcp/active` | return MCP servers for the current agent. |
 | `POST` | `/api/mcp/apply` | batched per-scope apply for MCP servers. |
 | `GET` | `/api/mcp/importable` | MCP servers configured in an external backend |
+| `GET` | `/api/mcp/oauth/callback` | where an authorization server sends the browser back to. |
 | `GET` | `/api/mcp/pool-stats` | the in-process MCP connection-pool observability tile |
 | `GET` | `/api/mcp/probe` | return cached probe results (non-blocking). |
 | `POST` | `/api/mcp/probe` | probe all MCP servers and return live status. |
@@ -618,6 +619,8 @@ The 855 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `GET` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `PUT` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
+| `DELETE` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
+| `POST` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
 | `POST` | `/api/mcp/sync` | apply MCP config changes and restart sessions. |
 | `POST` | `/api/mcp/toggle` | enable or disable an MCP server globally. |
 | `POST` | `/api/mcp/toggle-all` | enable or disable all MCP servers. |

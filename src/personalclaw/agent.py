@@ -1162,7 +1162,7 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     managed_names = set(_MANAGED_MCP_SERVERS)
 
     # <home>/mcp.json — user-configured MCP overrides (highest priority).
-    from personalclaw.config.secret_refs import MCP_DEFINITION_KEYS
+    from personalclaw.config.secret_refs import MCP_DEFINITION_KEYS, MCP_SIGN_IN
 
     personalclaw_mcp = _load_json(_user_dir() / "mcp.json").get("mcpServers", {})
     for name, spec in personalclaw_mcp.items():
@@ -1172,8 +1172,13 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
                 # mcp.json DEFINES the server, so its definition replaces the copy's whole; the
                 # copy keeps only the state it adds (`autoApprove`, …). A key-by-key merge kept
                 # whatever an edit had removed — cleared arguments, a deleted variable — in the
-                # copy `list_servers` reads first.
-                kept = {k: v for k, v in mcps[name].items() if k not in MCP_DEFINITION_KEYS}
+                # copy `list_servers` reads first. The sign-in is mcp.json's alone too: a copy
+                # that kept one mcp.json no longer has would keep a signed-out server signed in.
+                kept = {
+                    k: v
+                    for k, v in mcps[name].items()
+                    if k not in MCP_DEFINITION_KEYS and k != MCP_SIGN_IN
+                }
                 mcps[name] = {**kept, **spec}
             else:
                 mcps[name] = spec

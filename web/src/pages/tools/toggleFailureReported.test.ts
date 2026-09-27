@@ -90,8 +90,9 @@ describe('a tool toggle that fails tells the user', () => {
   // UNEXPECTED one still fails, which was this assertion's real point — the original form ("every
   // routed call is a toggle") was only true while toggles were the helper's sole consumer here, and it
   // went red the moment `reprobe` legitimately adopted it. Re-pointed, not relaxed. `importMcpServer`
-  // joined when Import stopped leaving a failed import's row sitting there with no word.
-  const ALSO_ROUTED = ['probeMcp', 'importMcpServer']
+  // joined when Import stopped leaving a failed import's row sitting there with no word, and
+  // `signOutMcp` when a signed-in server's card gained Sign out.
+  const ALSO_ROUTED = ['probeMcp', 'importMcpServer', 'signOutMcp']
 
   it('all five toggles go through the one reporter, and nothing unexpected does', () => {
     let toggles = 0

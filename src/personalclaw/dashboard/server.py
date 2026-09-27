@@ -1258,6 +1258,11 @@ async def start_dashboard(
     app.router.add_get("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_put("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_delete("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
+    # Signing in to a server at a URL with OAuth: start (POST), sign out (DELETE), and the page
+    # the authorization server sends the browser back to.
+    app.router.add_post("/api/mcp/servers/{name}/sign-in", handlers.api_mcp_server_sign_in)
+    app.router.add_delete("/api/mcp/servers/{name}/sign-in", handlers.api_mcp_server_sign_in)
+    app.router.add_get("/api/mcp/oauth/callback", handlers.api_mcp_oauth_callback)
     # Skills marketplace integration
 
     # Chat

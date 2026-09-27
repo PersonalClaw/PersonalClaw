@@ -1292,7 +1292,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "error"},
     {"annotation": "str", "default": "'agent'", "kind": "positional_or_keyword", "name": "source"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "disabled_tools"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "transport"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "transport"},
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sign_in"}
    ],
    "returns": "None"
   },
@@ -5897,6 +5898,7 @@
     "params": [],
     "returns": "None"
    },
+   "sign_in_needed": {"kind": "property", "returns": "bool", "settable": false},
    "started": {"kind": "property", "returns": "bool", "settable": false},
    "touch": {
     "kind": "method",

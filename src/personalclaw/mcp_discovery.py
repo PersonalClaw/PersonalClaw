@@ -253,6 +253,12 @@ def _get_cached(name: str) -> tuple[str, list[dict[str, Any]], str]:
     return "outdated", cached.tools, ""
 
 
+def forget_probe(name: str) -> None:
+    """Drop server ``name``'s cached probe: what it said is no longer true (its owner just signed
+    in or out), so it reads ``unknown`` until it is probed again."""
+    _probe_cache.pop(name, None)
+
+
 def _cache_probe(server: "McpServerInfo") -> None:
     """Store probe result in cache."""
     _probe_cache[server.name] = _ProbeResult(
@@ -274,7 +280,9 @@ class McpServerInfo:
     cwd: str = ""  # working dir for the spawn (app-shipped servers set this to the app dir)
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
-    status: str = "unknown"  # unknown | ok | error | probing | outdated (UNSERVED is only shown)
+    # unknown | ok | error | signin | probing | outdated (UNSERVED is only shown). ``signin``: a
+    # remote server that refused the connection until its owner signs in, or signs in again.
+    status: str = "unknown"
     # Each tool entry is a dict with at least "name"; optionally "description"
     # and "inputSchema" populated by tools/list responses. Plain strings are
     # also accepted on input and normalized to dicts at probe.
@@ -285,6 +293,9 @@ class McpServerInfo:
     #: ``stdio``, ``http`` or ``sse`` (:func:`mcp_transport`). Left empty, it is derived from
     #: ``url`` and ``command`` exactly as for a spec that declares none.
     transport: str = ""
+    #: A remote server's OAuth sign-in as its spec stores it (``secret_refs.MCP_SIGN_IN``):
+    #: references and what the grant is for, never a token. ``{}`` when it has none.
+    sign_in: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.transport = mcp_transport(
@@ -406,6 +417,9 @@ def _load_mcp_json() -> dict[str, Any]:
 
 
 def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
+    from personalclaw.config.secret_refs import MCP_SIGN_IN
+
+    sign_in = spec.get(MCP_SIGN_IN)
     return McpServerInfo(
         name=name,
         command=spec.get("command", ""),
@@ -416,6 +430,7 @@ def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
         headers=spec.get("headers", {}),
         source=source,
         transport=mcp_transport(spec),
+        sign_in=dict(sign_in) if isinstance(sign_in, dict) else {},
     )
 
 
@@ -505,8 +520,16 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     This used to be a hand-written Streamable HTTP exchange: it posted to every URL, so an SSE
     server always read as an error, and it dropped the session id between ``initialize`` and
     ``tools/list``, so a stateful server read ``ok`` with no tools.
+
+    A server that refuses the connection until its owner signs in — a 401 with a Bearer
+    challenge, or a sign-in that has ended — reads ``signin``, which the Tools page answers with
+    its Sign in control.
     """
-    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+    from personalclaw.config.secret_refs import (
+        MCP_SIGN_IN,
+        ForeignSecretReference,
+        resolve_mcp_values,
+    )
     from personalclaw.mcp_client import McpServerConn
 
     try:
@@ -524,13 +547,14 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         server.status = "error"
         server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
     else:
-        conn = McpServerConn(
-            server.name, {"type": server.transport, "url": server.url, "headers": headers}
-        )
+        spec: dict[str, Any] = {"type": server.transport, "url": server.url, "headers": headers}
+        if server.sign_in:
+            spec[MCP_SIGN_IN] = server.sign_in
+        conn = McpServerConn(server.name, spec)
         try:
             tools = await asyncio.wait_for(conn.list_tools(), timeout=_get_probe_timeout())
             if conn.error:
-                server.status = "error"
+                server.status = "signin" if conn.sign_in_needed else "error"
                 server.error = conn.error
             else:
                 server.status = "ok"
@@ -543,7 +567,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
             server.error = "timeout"
         finally:
             await conn.shutdown()
-    if server.status == "error":
+    if server.status in ("error", "signin"):
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
     _cache_probe(server)
     return server

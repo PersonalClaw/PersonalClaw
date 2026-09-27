@@ -576,8 +576,22 @@ MCP_DEFINITION_KEYS = frozenset(
     {"command", "args", "env", MCP_PLAIN_ENV, "url", "headers", "type", "transport", "endpoint"}
 )
 
+#: Spec key holding a remote server's OAuth sign-in (:mod:`personalclaw.mcp_oauth`): what the
+#: grant is for and who issued it, in the clear, and ``{{secret:…}}`` references to its tokens and
+#: client secret, stored under the server's own sign-in owner (:func:`mcp_sign_in_owner`). Not
+#: ``oauth``: Claude Code writes that key with a meaning of its own (a client id and a fixed
+#: callback port), and a spec is copied between the two tools in both directions.
+#:
+#: It is state, not definition: an edit that keeps the server's URL keeps the sign-in, and an app
+#: that registers its servers again at every start does not sign its owner out. The rebuild takes it
+#: from ``mcp.json`` as it is there, present or absent, so a sign-out reaches the agent config's
+#: copy too. Its references are never resolved into a spec: the connection reads the tokens from the
+#: store at every request, because a refresh replaces them while the connection stays open.
+MCP_SIGN_IN = "signIn"
+
 _MCP_OWNED_PREFIX = f"{OWNED_KEY_PREFIX}MCP_"
 _MCP_PARTS = {"env": "ENV", "headers": "HDR"}
+_MCP_SIGN_IN_PART = "OAUTH"
 
 
 @dataclass(frozen=True)
@@ -601,6 +615,32 @@ def _mcp_owner(server: str, part: str) -> SecretOwner:
     return _ExactNameOwner(
         f"{mcp_server_prefix(server)}{_MCP_PARTS[part]}__", app=server_app(server)
     )
+
+
+def mcp_sign_in_owner(server: str) -> SecretOwner:
+    """Whose keys server ``server``'s OAuth sign-in (:data:`MCP_SIGN_IN`) is stored under: the
+    server's own, beside its ``env`` and ``headers``, so removing the server deletes them with the
+    rest, and an app's server resolves only that app's keys."""
+    from personalclaw.apps.mcp_bridge import server_app
+
+    return _ExactNameOwner(
+        f"{mcp_server_prefix(server)}{_MCP_SIGN_IN_PART}__", app=server_app(server)
+    )
+
+
+def resolve_mcp_sign_in_value(server: str, value: Any) -> str:
+    """One value of server ``server``'s sign-in, read from the store at the moment it is used.
+
+    Only a reference to a key the server's owner holds is read: another owner's raises
+    :class:`ForeignSecretReference` before any value is. Anything that is not a reference reads as
+    ``""`` — a token typed into the file by hand is never sent anywhere, since only the sign-in
+    itself writes these values, and always as references.
+    """
+    _refuse_foreign(
+        {MCP_SIGN_IN: value}, mcp_sign_in_owner(server), operation="secrets.resolve", advise=False
+    )
+    key = ref_key(value)
+    return get_credential(key) if key is not None else ""
 
 
 def plain_env_names(spec: Mapping[str, Any]) -> set[str]:
@@ -700,7 +740,8 @@ def resolve_mcp_values(server: str, part: str, values: Mapping[str, Any] | None)
 def resolve_mcp_spec(server: str, spec: Mapping[str, Any]) -> dict[str, Any]:
     """The LOGICAL form of server ``server``'s spec — for the moment it is started, never for a
     file. ``plainEnv`` is dropped: it describes the stored form and means nothing to a child.
-    Raises :class:`ForeignSecretReference` as :func:`resolve_mcp_values` does."""
+    The sign-in (:data:`MCP_SIGN_IN`) keeps its references: the connection reads its tokens at
+    each request. Raises :class:`ForeignSecretReference` as :func:`resolve_mcp_values` does."""
     out = {k: v for k, v in spec.items() if k != MCP_PLAIN_ENV}
     for part in _MCP_PARTS:
         values = spec.get(part)
@@ -782,6 +823,22 @@ def remove_mcp_servers(names: Iterable[str]) -> list[str]:
     return sorted(removed)
 
 
+def remove_mcp_sign_in(server: str) -> bool:
+    """Sign server ``server`` out: its :data:`MCP_SIGN_IN` leaves both documents, through
+    :func:`write_mcp_document`, whose delete-when-unreferenced then drops the tokens and client
+    secret it stored (the second write deletes them). True when either document had one."""
+    removed = False
+    for path in mcp_documents():
+        doc = _read_json(path)
+        servers = doc.get("mcpServers") if isinstance(doc, dict) else None
+        spec = servers.get(server) if isinstance(servers, dict) else None
+        if isinstance(spec, dict) and MCP_SIGN_IN in spec:
+            del spec[MCP_SIGN_IN]
+            write_mcp_document(path, doc)
+            removed = True
+    return removed
+
+
 def foreign_mcp_spec(server: str, spec: Mapping[str, Any], *, with_secrets: bool) -> dict[str, Any]:
     """Server ``server``'s spec for ANOTHER tool's config file (Claude Code's), which cannot
     read this store.
@@ -790,10 +847,15 @@ def foreign_mcp_spec(server: str, spec: Mapping[str, Any], *, with_secrets: bool
     go with it, in the only form that tool reads — resolved against the server's own owner, so
     :class:`ForeignSecretReference` as for a start. Without it — a copy nobody asked for —
     every stored value is left out, and only the plain ones travel.
+
+    The sign-in (:data:`MCP_SIGN_IN`) never goes: its tokens were issued to PersonalClaw, and that
+    tool signs in to a server by itself.
     """
     if with_secrets:
-        return resolve_mcp_spec(server, spec)
-    out = {k: v for k, v in spec.items() if k != MCP_PLAIN_ENV}
+        resolved = resolve_mcp_spec(server, spec)
+        resolved.pop(MCP_SIGN_IN, None)
+        return resolved
+    out = {k: v for k, v in spec.items() if k not in (MCP_PLAIN_ENV, MCP_SIGN_IN)}
     for part in _MCP_PARTS:
         values = spec.get(part)
         if isinstance(values, Mapping):
@@ -802,11 +864,12 @@ def foreign_mcp_spec(server: str, spec: Mapping[str, Any], *, with_secrets: bool
 
 
 def _mcp_refs(doc: Any) -> set[str]:
-    """Every owned MCP key a ``{"mcpServers": …}`` document references."""
+    """Every owned MCP key a ``{"mcpServers": …}`` document references: its servers' ``env`` and
+    ``headers`` values and their sign-ins' tokens and client secrets."""
     servers = doc.get("mcpServers") if isinstance(doc, dict) else None
     keys: set[str] = set()
     for spec in servers.values() if isinstance(servers, dict) else ():
-        for part in _MCP_PARTS:
+        for part in (*_MCP_PARTS, MCP_SIGN_IN):
             values = spec.get(part) if isinstance(spec, dict) else None
             for value in values.values() if isinstance(values, dict) else ():
                 key = ref_key(value)
