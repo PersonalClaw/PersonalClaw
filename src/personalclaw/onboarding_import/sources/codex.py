@@ -14,14 +14,15 @@ the layout the Codex CLI writes, and nothing it does not:
 ``agents/*.toml``                              ``agents``
 ``prompts/*.md``                               ``prompts``
 ``rules/*.rules`` → ``forbidden`` rules        ``denied_commands``
-``sessions/YYYY/MM/DD/rollout-*.jsonl``        ``conversations``, titled from
-                                               ``session_index.jsonl``
+``sessions/YYYY/MM/DD/rollout-*.jsonl``, or    ``conversations``, titled from
+the ``.jsonl.zst`` Codex compressed it to      ``session_index.jsonl``
 =============================================  ===============================================
 
 Counted and named, not imported: Codex's own settings (the rest of ``config.toml``, or the older
-CLI's ``config.json``), prompt history, rules that ask first or allow, archived and compressed
-conversations, and the files Codex builds its memories from. ``auth.json`` (the Codex login, when
-it is kept in a file) is never opened; it counts as a withheld credential file.
+CLI's ``config.json``), prompt history, rules that ask first or allow, archived conversations, and
+the files Codex builds its memories from. A session file this import cannot read (cut off,
+damaged, or larger than :data:`MAX_SESSION_BYTES`) is named with the reason. ``auth.json`` (the
+Codex login, when it is kept in a file) is never opened; it counts as a withheld credential file.
 
 **A remote server's token.** Codex never keeps it in its config: it reads it from an environment
 variable when it starts (``bearer_token_env_var``, ``env_http_headers``). :func:`mcp_servers` reads
@@ -32,14 +33,18 @@ environment does not set it, the server's note says so.
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
 import json
 import os
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, TextIO
+
+import zstandard
 
 from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
 from personalclaw.onboarding_import.model import (
@@ -52,6 +57,7 @@ from personalclaw.onboarding_import.sources.common import (
     RULES_THAT_ALLOW,
     RULES_THAT_ASK,
     TITLE_CHARS,
+    UNPARSABLE,
     McpServer,
     and_list,
     conversation_note,
@@ -119,7 +125,7 @@ def _read_config(base: Path) -> tuple[dict[str, Any], str, int]:
                     parsed: Any = tomllib.load(handle)
             else:
                 parsed = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, *UNPARSABLE):
             # Repairing another tool's half-written file is not our job.
             return {}, name, 0
         return (parsed if isinstance(parsed, dict) else {}), name, 0
@@ -130,7 +136,7 @@ def _read_toml(path: Path) -> dict[str, Any] | None:
     try:
         with path.open("rb") as handle:
             parsed = tomllib.load(handle)
-    except (OSError, ValueError):
+    except (OSError, *UNPARSABLE):
         return None
     return parsed if isinstance(parsed, dict) else None
 
@@ -723,6 +729,124 @@ _PATCH_OPS = ("*** Add File: ", "*** Update File: ", "*** Delete File: ")
 _SESSION_ID_RE = re.compile(
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
 )
+#: A session file, and the name Codex gives it when it compresses it: with its rollout compression
+#: turned on, Codex compresses a session nobody has touched for a week.
+_SESSION_SUFFIX = ".jsonl"
+_COMPRESSED_SUFFIX = ".jsonl.zst"
+#: The most of one session this import reads: a plain file's size, or what a compressed one
+#: decompresses to. One rule for both, so a session Codex compresses after an import does not
+#: change what the next import does with it. It is also the most one line of a session can hold
+#: while it is read. A session past it is named as too large, not read.
+MAX_SESSION_BYTES = 500_000_000
+#: How much of a compressed file is decoded at a time. A zstd block of 128 KiB can be written in
+#: 4 bytes, so one step never yields more than 32 MiB, whatever the file holds.
+_COMPRESSED_STEP = 1024
+
+
+class SessionUnreadable(Exception):
+    """A session file this import cannot read. ``reason`` completes a sentence that starts with
+    the file's name, and is true before the import and after it."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+_CUT_OFF = "is cut off before the end of its compressed data"
+_DAMAGED = "does not decompress: its data is damaged, or is not zstd"
+
+
+def _too_large(*, compressed: bool) -> str:
+    size = f"{MAX_SESSION_BYTES / 1_000_000:g} MB"
+    what = f"decompresses to more than {size}" if compressed else f"is larger than {size}"
+    return f"{what}, the most this import reads for one conversation"
+
+
+def _not_read(exc: OSError) -> str:
+    """Why a file could not be opened or read, in the system's words and without its path."""
+    return f"could not be read ({exc.strerror})" if exc.strerror else "could not be read"
+
+
+def _plain_name(name: str) -> str:
+    """A session file's name as Codex names it before it compresses it."""
+    return name.removesuffix(".zst") if name.endswith(_COMPRESSED_SUFFIX) else name
+
+
+class _Decompressed(io.RawIOBase):
+    """A ``.jsonl.zst`` session read as the JSONL it holds: each zstd frame in the file in turn,
+    as Codex reads one, and never more than :data:`MAX_SESSION_BYTES` of it.
+
+    The file is decoded :data:`_COMPRESSED_STEP` bytes at a time, so a small file that expands
+    to a great deal is refused at the limit instead of filling memory first. It raises
+    :class:`SessionUnreadable` for a file that ends inside a frame or holds none (cut off) and
+    for one past the limit, and ``zstandard.ZstdError`` for one the decoder refuses (damaged).
+    """
+
+    def __init__(self, handle: BinaryIO) -> None:
+        super().__init__()
+        self._handle = handle
+        self._context = zstandard.ZstdDecompressor()
+        self._frame = self._next_frame()
+        #: Whether the frame being decoded has been given any of the file yet.
+        self._started = False
+        self._frames = 0
+        #: What the last step read past the end of a frame: the start of the next one.
+        self._pending = b""
+        self._out = memoryview(b"")
+        self._decoded = 0
+
+    def _next_frame(self) -> Any:
+        # Explicitly one frame per decoder: zstandard means to change the default.
+        return self._context.decompressobj(read_across_frames=False)
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        while not self._out:
+            if not self._step():
+                return 0
+        count = min(len(buffer), len(self._out))
+        buffer[:count] = self._out[:count]
+        self._out = self._out[count:]
+        return count
+
+    def _step(self) -> bool:
+        """Decode the next piece of the file: False at its end."""
+        piece = self._pending or self._handle.read(_COMPRESSED_STEP)
+        self._pending = b""
+        if not piece:
+            if self._started or not self._frames:
+                raise SessionUnreadable(_CUT_OFF)
+            return False
+        self._started = True
+        out = self._frame.decompress(piece)
+        if self._frame.eof:
+            self._frames += 1
+            self._pending = self._frame.unused_data
+            self._frame = self._next_frame()
+            self._started = False
+        self._decoded += len(out)
+        if self._decoded > MAX_SESSION_BYTES:
+            raise SessionUnreadable(_too_large(compressed=True))
+        self._out = memoryview(out)
+        return True
+
+    def close(self) -> None:
+        self._handle.close()
+        super().close()
+
+
+def _open_session(path: Path) -> TextIO:
+    """A session file as the lines of JSON it holds, read the same way whether or not Codex has
+    compressed it: as UTF-8 with a bad byte replaced, and no more of it than
+    :data:`MAX_SESSION_BYTES`."""
+    if not path.name.endswith(_COMPRESSED_SUFFIX):
+        if path.stat().st_size > MAX_SESSION_BYTES:
+            raise SessionUnreadable(_too_large(compressed=False))
+        return path.open(encoding="utf-8", errors="replace")
+    raw = _Decompressed(path.open("rb"))
+    return io.TextIOWrapper(io.BufferedReader(raw), encoding="utf-8", errors="replace")
 
 
 def _session_titles(base: Path) -> dict[str, str]:
@@ -737,7 +861,7 @@ def _session_titles(base: Path) -> dict[str, str]:
             for raw in handle:
                 try:
                     entry = json.loads(raw)
-                except ValueError:
+                except UNPARSABLE:
                     continue
                 if isinstance(entry, dict):
                     session, name = entry.get("id"), entry.get("thread_name")
@@ -780,7 +904,7 @@ def _call_line(payload: dict[str, Any]) -> str:
     if kind == "function_call":
         try:
             params = json.loads(str(payload.get("arguments") or "{}"))
-        except ValueError:
+        except UNPARSABLE:
             params = {}
         if isinstance(params, dict):
             for field_name in _CALL_SUMMARY_FIELDS:
@@ -804,9 +928,22 @@ def _call_line(payload: dict[str, Any]) -> str:
     return f"{name}: {one_line(summary, _CALL_SUMMARY_CHARS)}" if summary.strip() else name
 
 
+def _session_lines(path: Path) -> Generator[str, None, None]:
+    """Every line of a session file, compressed or not (:func:`_open_session`). Raises
+    :class:`SessionUnreadable` when the file cannot be read to its end."""
+    try:
+        with _open_session(path) as handle:
+            yield from handle
+    except OSError as exc:
+        raise SessionUnreadable(_not_read(exc)) from None
+    except zstandard.ZstdError:
+        raise SessionUnreadable(_DAMAGED) from None
+
+
 def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any], str, int] | None:
     """One Codex session file as a PersonalClaw conversation: ``(conversation, session id,
-    redactions)``, or ``None`` for one with no prompt in it.
+    redactions)``, or ``None`` for one with no prompt in it. ``path`` is the session as Codex
+    wrote it (``.jsonl``) or as it compressed it (``.jsonl.zst``), and both read the same.
 
     ``conversation`` is ``{"messages", "title", "created_at", "updated_at", "cwd"}``: each prompt,
     each reply, and each tool call by name and what it was for. Tool OUTPUT is not carried (it is
@@ -816,6 +953,9 @@ def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any],
     The prompts are the ``user_message`` events — what the person typed. The model's input holds
     each one too, with Codex's context around it, so it is read only from a file that has no such
     events.
+
+    Raises :class:`SessionUnreadable` for a file this import cannot read: cut off, damaged, larger
+    than :data:`MAX_SESSION_BYTES`, or refused by the system. Nothing of it is kept.
     """
     if refuses(path):
         return None
@@ -823,15 +963,11 @@ def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any],
     messages: list[dict[str, Any]] = []
     typed = False
     redactions = 0
-    try:
-        handle = path.open(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    with handle:
-        for raw in handle:
+    with contextlib.closing(_session_lines(path)) as lines:
+        for raw in lines:
             try:
                 line = json.loads(raw)
-            except ValueError:
+            except UNPARSABLE:
                 continue
             if not isinstance(line, dict):
                 continue
@@ -888,8 +1024,9 @@ def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any],
     prompts = [m for m in kept if m["role"] == "user"]
     if not prompts:
         return None
-    found = _SESSION_ID_RE.search(path.name)
-    session = str(meta.get("id") or "") or (found.group(1) if found else path.stem)
+    plain = Path(_plain_name(path.name))
+    found = _SESSION_ID_RE.search(plain.name)
+    session = str(meta.get("id") or "") or (found.group(1) if found else plain.stem)
     title, _n = safe_text(one_line(titles.get(session) or prompts[0]["content"], TITLE_CHARS))
     stamps = [m["ts"] for m in kept if m["ts"]]
     conversation = {
@@ -902,27 +1039,58 @@ def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any],
     return conversation, session, redactions
 
 
-def _rollouts(root: Path) -> list[Path]:
+def _session_files(root: Path) -> list[Path]:
+    """Every session under ``root``, one file each, in the order of their names: its
+    ``rollout-*.jsonl``, or the ``.jsonl.zst`` Codex compressed it to.
+
+    Codex's rule for the rest: while it turns one into the other both files are there and it reads
+    the plain one, so this does too. What else it leaves beside them (the ``.tmp`` files of a
+    compression under way) is not a session.
+    """
     if not root.is_dir():
         return []
-    return sorted(p for p in root.rglob("rollout-*") if p.is_file())
+    found: dict[Path, Path] = {}
+    for path in root.rglob("rollout-*"):
+        if not path.name.endswith((_SESSION_SUFFIX, _COMPRESSED_SUFFIX)) or not path.is_file():
+            continue
+        plain = path.with_name(_plain_name(path.name))
+        if path == plain or plain not in found:
+            found[plain] = path
+    return [found[plain] for plain in sorted(found)]
+
+
+#: How many unreadable sessions the step names before it says how many more there are.
+_UNREADABLE_NAMED = 6
+
+
+def _session_label(path: Path, titles: Mapping[str, str]) -> str:
+    """A session file as the step names it: its file name, after the title Codex lists it by
+    when it has one."""
+    found = _SESSION_ID_RE.search(_plain_name(path.name))
+    title = titles.get(found.group(1), "") if found else ""
+    if not title.strip():
+        return path.name
+    shown, _n = safe_text(one_line(title, TITLE_CHARS))
+    return f"“{shown}” ({path.name})"
 
 
 def _scan_conversations(base: Path, result: ScanResult) -> None:
-    """Every session, ``sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`` — a conversation each.
+    """Every session, ``sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`` — a conversation each,
+    whether it is as Codex wrote it or compressed (``.jsonl.zst``). Either way it is keyed by its
+    plain name, so a session Codex compresses after an import is still the one that import brought
+    over.
 
-    Codex can store an old session compressed (``.jsonl.zst``) and moves an archived one to
-    ``archived_sessions/``; both are counted, not imported.
+    A session this import cannot read is named with the reason. One Codex archived (moved to
+    ``archived_sessions/``) is counted, not imported.
     """
     titles = _session_titles(base)
-    compressed = 0
-    for path in _rollouts(base / _SESSIONS_DIR):
-        if path.name.endswith(".jsonl.zst"):
-            compressed += 1
+    unreadable: list[str] = []
+    for path in _session_files(base / _SESSIONS_DIR):
+        try:
+            read = read_rollout(path, titles)
+        except SessionUnreadable as exc:
+            unreadable.append(f"{_session_label(path, titles)} {exc.reason}.")
             continue
-        if not path.name.endswith(".jsonl"):
-            continue
-        read = read_rollout(path, titles)
         if read is None:
             continue
         conversation, session, redactions = read
@@ -932,7 +1100,7 @@ def _scan_conversations(base: Path, result: ScanResult) -> None:
             ImportItem(
                 source=NAME,
                 category=ImportCategory.CONVERSATIONS,
-                key=path.relative_to(base).as_posix(),
+                key=path.with_name(_plain_name(path.name)).relative_to(base).as_posix(),
                 title=conversation["title"],
                 name=session,
                 payload=conversation,
@@ -941,18 +1109,20 @@ def _scan_conversations(base: Path, result: ScanResult) -> None:
                 redactions=redactions,
             )
         )
-    archived = sum(1 for p in _rollouts(base / _ARCHIVED_SESSIONS_DIR) if ".jsonl" in p.name)
-    for count, what, why in (
-        (
-            compressed,
-            "Compressed conversations",
-            "Codex stored them compressed (.jsonl.zst), and this import reads only uncompressed "
-            "ones.",
-        ),
-        (archived, "Archived conversations", "You archived them in Codex, so they stay there."),
-    ):
-        if count:
-            result.not_imported.append(NotImported(what=what, count=count, why=why))
+    named = unreadable[:_UNREADABLE_NAMED]
+    if len(unreadable) > len(named):
+        named.append(f"{len(unreadable) - len(named)} more cannot be read either.")
+    not_imported_rows(
+        result,
+        [
+            (len(unreadable), "Unreadable conversations", " ".join(named)),
+            (
+                len(_session_files(base / _ARCHIVED_SESSIONS_DIR)),
+                "Archived conversations",
+                "You archived them in Codex, so they stay there.",
+            ),
+        ],
+    )
 
 
 def _scan_settings(
