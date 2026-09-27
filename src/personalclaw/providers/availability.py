@@ -37,11 +37,12 @@ import contextlib
 import json
 import logging
 import os
-import signal
 import sys
 import time
 from dataclasses import dataclass
 from typing import Any
+
+from personalclaw.cancellation import kill_timed_out, terminate_and_reap
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +208,7 @@ class AvailabilityBoard:
         self._pending.clear()
         proc = self._proc
         if proc is not None:
-            await _terminate(proc)
+            await terminate_and_reap(proc)
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -276,8 +277,9 @@ class AvailabilityBoard:
                     reported |= self._record(name, impl, answer)
         except TimeoutError:
             timed_out = True
+            await kill_timed_out(proc)
         finally:
-            await _terminate(proc)
+            await terminate_and_reap(proc)
             self._proc = None
         tail = await stderr_tail
         if timed_out:
@@ -320,18 +322,6 @@ async def _tail(stream: asyncio.StreamReader, limit: int = 4000) -> str:
         while chunk := await stream.read(65536):
             kept = (kept + chunk)[-limit:]
     return kept.decode("utf-8", errors="replace")
-
-
-async def _terminate(proc: asyncio.subprocess.Process) -> None:
-    """Kill the child's whole process group if it is still running, then reap it."""
-    if proc.returncode is None:
-        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-            if hasattr(os, "killpg"):
-                os.killpg(proc.pid, signal.SIGKILL)
-            else:
-                proc.kill()
-    with contextlib.suppress(Exception):
-        await asyncio.wait_for(proc.wait(), timeout=5)
 
 
 _board: AvailabilityBoard | None = None
