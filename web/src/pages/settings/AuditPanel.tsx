@@ -203,7 +203,7 @@ export function AuditPanel() {
   // window exists to avoid, and `personalclaw security verify` already performs it — its own comment
   // calls it "an explicit offline audit". A button here would re-create the 20s+ hang the window was
   // added to fix, so the panel NAMES the command instead: the same choice `DurabilityPanel` makes for
-  // `personalclaw restore --replace`.
+  // `personalclaw restore <archive> --mode replace`.
   // 🔑 A CONFIRMED ACTION THAT FAILED SILENTLY, and the confirmed-delete ratchet could not see it: that
   // sweep matches `api.(delete|purge|revoke)*`, and this one is called `selRotate`. The user confirmed
   // archiving the audit log, the request failed, and the panel invalidated its verify cache and
