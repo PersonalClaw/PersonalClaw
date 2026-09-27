@@ -53,8 +53,9 @@ def test_lima_is_not_a_core_builtin():
     try:
         register_builtin_providers()  # idempotent; registers none + docker only
         assert LIMA_PROVIDER_NAME not in list_providers()
-        # An unresolved lima name fails open to ``none`` (never blocks a spawn).
-        assert resolve_provider(LIMA_PROVIDER_NAME).name == "none"
+        # A lima name nothing registered is refused; it does not run on the host as ``none``.
+        with pytest.raises(SandboxUnavailableError):
+            resolve_provider(LIMA_PROVIDER_NAME)
     finally:
         unregister_provider(LIMA_PROVIDER_NAME)
 

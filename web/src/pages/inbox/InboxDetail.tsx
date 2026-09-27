@@ -79,8 +79,10 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(item.item_kind || 'message')
   const km = kindMeta(item.item_kind)
   const target = refTarget(item)
-  // A workflow gate is answerable in place (below), which changes what the deep link is for.
-  const answerableGate = item.item_kind === 'needs_input' && !!item.refs?.workflow
+  // A workflow gate is answerable in place (below), which changes what the deep link is for. A
+  // gate's row names the step it waits at (`workflow_node`); the row a loop's end leaves names
+  // only the run, and it has no answer here, so it gets the deep link instead of a dead form.
+  const answerableGate = item.item_kind === 'needs_input' && !!item.refs?.workflow && !!item.refs?.workflow_node
   // A trigger's action that stopped for you (`triggers.parks`) — answerable here too.
   const triggerPark = item.item_kind === 'needs_input' && !!item.refs?.trigger_park
 

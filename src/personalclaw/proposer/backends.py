@@ -134,15 +134,24 @@ class RunnerProposerBackend:
         """Launch through the sandbox provider — never a bare ``create_subprocess_exec``.
 
         Resolving the provider by name is what gives the second opinion the SAME isolation as
-        the stalled run: ``resolve_provider`` falls back to ``none`` rather than raising, so an
-        unavailable stronger tier degrades the way every other spawn site degrades instead of
-        inventing a bespoke refusal here.
+        the stalled run. A tier that is not installed, or cannot run, is a launch that did not
+        happen, with the tier's own reason: the proposer does not run on the host in its place.
         """
-        from personalclaw.sandbox_providers.base import SandboxSpec
+        from personalclaw.sandbox_providers.base import SandboxSpec, SandboxUnavailableError
         from personalclaw.sandbox_providers.registry import resolve_provider
 
-        provider = resolve_provider(prepared.sandbox)
-        handle = provider.wrap(SandboxSpec(profile="build"), list(prepared.argv))
+        try:
+            provider = resolve_provider(prepared.sandbox)
+            handle = provider.wrap(SandboxSpec(profile="build"), list(prepared.argv))
+        except SandboxUnavailableError as exc:
+            return InvocationRef(
+                backend=self.name,
+                runner_id=self._defn.id,
+                handle="",
+                started_at=_now(),
+                prepared=prepared,
+                error=f"failed to launch {self._defn.id}: {exc}",
+            )
         try:
             proc = await handle.exec(
                 cwd=prepared.cwd or None,

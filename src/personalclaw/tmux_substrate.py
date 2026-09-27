@@ -30,9 +30,11 @@ Three things live here and nowhere else:
   returns False and the caller runs the work as a bare subprocess — durability is an
   enhancement to a run, never a precondition for one.
 
-Liveness semantics: ``has_session`` is the exit code of ``tmux has-session``, which is 0 only
-while the daemon still holds the session. That is the real question — a session whose shell
-exited is gone from the server, so this cannot report a dead worker as alive.
+Liveness semantics: a session is alive while one of its panes is still running its command
+(``#{pane_dead}`` is 0), which is asked of the panes, not read off the session's existence. A
+user whose tmux keeps panes after their command exits (``remain-on-exit on``, read from their own
+tmux configuration when our server starts) keeps a finished worker's session on the server, and
+``tmux has-session`` answers 0 for it: existence alone would report a dead worker as alive.
 """
 
 from __future__ import annotations
@@ -74,6 +76,12 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 #: Each identity component is truncated so a long project path cannot produce a name tmux
 #: refuses outright. Truncation is per-component so the *shape* stays readable in `tmux ls`.
 _PART_MAX = 32
+
+#: The session option a durable worker is marked with, and its value. Terminals and workers share
+#: the home's server and the ``pclaw-`` prefix, so a listing tells them apart by this mark, set in
+#: the same tmux command that creates the worker.
+KIND_OPTION = "@pclaw_kind"
+WORKER_KIND = "worker"
 
 
 def tmux_available() -> bool:
@@ -155,6 +163,23 @@ def _argv(*args: str) -> list[str]:
     return ["tmux", *server_flags(), *args]
 
 
+def _literal(part: str) -> str:
+    """*part* as tmux has to receive it to pass it on unchanged.
+
+    tmux reads an argument that ENDS in ``;`` as the end of a command: a lone ``;`` starts the
+    next command and a trailing one is dropped. So an argv element ending in ``;`` (``find
+    -exec … ;`` after ``shlex.split``) would end the command, and whatever followed it in the
+    argv would run as a tmux command (``… ; run-shell <anything>``), outside the no-shell
+    spawn. tmux turns a final ``\\;`` back into ``;``, so one backslash before the final ``;``
+    makes it an ordinary character again."""
+    return part[:-1] + "\\;" if part.endswith(";") else part
+
+
+def _any_live(out: bytes) -> bool:
+    """Whether a ``#{pane_dead}`` listing names one pane still running its command."""
+    return any(line.strip() == "0" for line in out.decode("utf-8", "replace").splitlines())
+
+
 def attach_argv(name: str, shell: str) -> list[str]:
     """The persistent terminal's client: attach to the session *name* on the active home's
     server, creating it with a login *shell* when it is not there (``new-session -A``)."""
@@ -173,7 +198,10 @@ async def new_session(
     ``tmux new-session -d -s <name> -c <workspace> [-e K=V …] <command…>`` on our socket. The
     daemon — not the calling gateway — becomes the worker's owner, which is the entire point:
     kill the gateway and the command keeps executing, and the boot sweep finds it again by
-    recomputing *name* (:func:`durable_session_name`) with zero persisted state.
+    recomputing *name* (:func:`durable_session_name`) with zero persisted state. The same tmux
+    command marks the session a worker (:data:`KIND_OPTION`) and tells its pane not to remain
+    once its command exits, whatever the user's own tmux configuration says: a finished worker
+    leaves the server, so a dead pane can never stand in for a live one.
 
     The name is VALIDATED against :func:`sanitize`'s alphabet rather than rewritten by it.
     Rewriting here would open a session under a name no recomputing reader derives — a worker
@@ -182,19 +210,29 @@ async def new_session(
 
     *command* is an argv, executed by tmux WITHOUT a shell — same no-quoting-injection stance
     as every spawn in this repo. *env* entries ride ``-e`` flags (plain argv elements, so a
-    hostile value is still just a value).
+    hostile value is still just a value). Every element is passed through :func:`_literal`, so
+    none of them can end the command early and start a tmux command of its own.
 
-    Returns True only when tmux reported the session created. False for every failure —
-    absent binary, refused name, timeout, non-zero exit — never a raise, because the caller's
-    contract is fall-back-to-a-bare-subprocess (runner_lifecycle's fail-open doctrine) and an
-    exception here would let durability break the run it exists to protect.
+    Returns True only when the session is running *command* when this returns: tmux answers 0
+    to a ``new-session`` whose command then exits at once, so its exit code is not a live
+    session, and the panes are asked (:func:`has_session`). False for every failure — absent
+    binary, refused name, a *workspace* that is not a directory (tmux starts such a session in
+    ``$HOME`` instead), timeout, non-zero exit, a command no longer running — never a raise,
+    because the caller's contract is fall-back-to-a-bare-subprocess (runner_lifecycle's
+    fail-open doctrine) and an exception here would let durability break the run it exists to
+    protect. A command that FINISHED before the check reads False as well: a caller with its
+    own record of completion (provisioning's rc file) reads that before falling back.
     """
     if not name or _UNSAFE.search(name) or not command:
         return False
-    args: list[str] = ["new-session", "-d", "-s", name, "-c", str(workspace or ".")]
+    if not os.path.isdir(workspace):
+        return False
+    args: list[str] = ["new-session", "-d", "-s", name, "-c", _literal(str(workspace))]
     for key, value in (env or {}).items():
-        args += ["-e", f"{key}={value}"]
-    args += [str(part) for part in command]
+        args += ["-e", _literal(f"{key}={value}")]
+    args += [_literal(str(part)) for part in command]
+    args += [";", "set-option", "-p", "remain-on-exit", "off"]
+    args += [";", "set-option", KIND_OPTION, WORKER_KIND]
     try:
         proc = await asyncio.create_subprocess_exec(
             *_argv(*args),
@@ -202,36 +240,48 @@ async def new_session(
             stderr=asyncio.subprocess.DEVNULL,
         )
         rc = await asyncio.wait_for(proc.wait(), timeout=PROBE_TIMEOUT_S)
-        return rc == 0
     except (FileNotFoundError, asyncio.TimeoutError, OSError):
         return False
     except Exception:  # pragma: no cover - defensive: a failed spawn must read as "no session"
         logger.debug("tmux new-session failed for %s", name, exc_info=True)
         return False
+    if rc != 0:
+        return False
+    if await has_session(name):
+        return True
+    # Not running when asked: it finished already, or it never started. Whatever is left goes, so
+    # a caller that now runs the command itself is not running a second copy beside it.
+    await kill_session(name)
+    return False
+
+
+def _panes_argv(name: str) -> list[str]:
+    return _argv("list-panes", "-s", "-t", f"={name}", "-F", "#{pane_dead}")
 
 
 async def has_session(name: str) -> bool:
-    """Whether the daemon is holding a session called *name* right now.
+    """Whether the daemon holds a session called *name* whose command is still running.
 
-    ``tmux has-session`` exits 0 for present and non-zero for absent; that exit code is the
-    contract this reads, not stdout. Any failure to ASK (no binary, timeout, OSError) reads
-    as absent.
+    One of its panes has to be live (``#{pane_dead}`` 0): a session kept on the server by
+    ``remain-on-exit`` after its command exited is not a live worker. ``list-panes`` exits
+    non-zero for a session that is not there. Any failure to ASK (no binary, timeout, OSError)
+    reads as absent.
     """
     if not name:
         return False
     try:
         proc = await asyncio.create_subprocess_exec(
-            *_argv("has-session", "-t", f"={name}"),
-            stdout=asyncio.subprocess.DEVNULL,
+            *_panes_argv(name),
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        rc = await asyncio.wait_for(proc.wait(), timeout=PROBE_TIMEOUT_S)
-        return rc == 0
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=PROBE_TIMEOUT_S)
     except (FileNotFoundError, asyncio.TimeoutError, OSError):
         return False
     except Exception:  # pragma: no cover - defensive: a probe may not take down a sweep
-        logger.debug("tmux has-session failed for %s", name, exc_info=True)
+        logger.debug("tmux list-panes failed for %s", name, exc_info=True)
         return False
+    return proc.returncode == 0 and _any_live(out)
 
 
 def has_session_sync(name: str) -> bool:
@@ -239,37 +289,42 @@ def has_session_sync(name: str) -> bool:
     if not name:
         return False
     try:
-        return (
-            subprocess.run(  # noqa: S603 - fixed argv, no shell
-                _argv("has-session", "-t", f"={name}"),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=PROBE_TIMEOUT_S,
-            ).returncode
-            == 0
+        done = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            _panes_argv(name),
+            capture_output=True,
+            timeout=PROBE_TIMEOUT_S,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return False
     except Exception:  # pragma: no cover - defensive
-        logger.debug("tmux has-session (sync) failed for %s", name, exc_info=True)
+        logger.debug("tmux list-panes (sync) failed for %s", name, exc_info=True)
         return False
+    return done.returncode == 0 and _any_live(done.stdout)
 
 
-async def list_sessions() -> list[str]:
-    """Live session names on our socket, or ``[]`` if tmux is absent/empty. Never raises."""
+async def list_sessions() -> list[tuple[str, str]]:
+    """``(name, kind)`` for every session on our socket, or ``[]`` if tmux is absent/empty.
+
+    *kind* is :data:`WORKER_KIND` for a durable worker :func:`new_session` opened and ``""``
+    for anything else (a terminal). Never raises."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *_argv("list-sessions", "-F", "#{session_name}"),
+            *_argv("list-sessions", "-F", f"#{{session_name}}\t#{{{KIND_OPTION}}}"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=PROBE_TIMEOUT_S)
-        return [ln.strip() for ln in out.decode("utf-8", "replace").splitlines() if ln.strip()]
     except (FileNotFoundError, asyncio.TimeoutError, OSError):
         return []
     except Exception:  # pragma: no cover - defensive
         logger.debug("tmux list-sessions failed", exc_info=True)
         return []
+    sessions: list[tuple[str, str]] = []
+    for line in out.decode("utf-8", "replace").splitlines():
+        name, _, kind = line.partition("\t")
+        if name.strip():
+            sessions.append((name.strip(), kind.strip()))
+    return sessions
 
 
 def pane_paths_sync() -> list[tuple[str, str]]:
@@ -282,11 +337,12 @@ def pane_paths_sync() -> list[tuple[str, str]]:
     mechanism (P25 names a terminal after its dashboard session id, not after a run).
 
     Synchronous because the sweep that consumes it is. Empty list on any failure — the
-    conservative answer, since an empty answer can only make the sweep decide "not alive".
+    conservative answer, since an empty answer can only make the sweep decide "not alive". A
+    pane whose command exited is left out: it is not live work, wherever it sits.
     """
     try:
         out = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            _argv("list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}"),
+            _argv("list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}\t#{pane_dead}"),
             capture_output=True,
             timeout=PROBE_TIMEOUT_S,
         ).stdout
@@ -297,9 +353,10 @@ def pane_paths_sync() -> list[tuple[str, str]]:
         return []
     pairs: list[tuple[str, str]] = []
     for line in out.decode("utf-8", "replace").splitlines():
-        name, _, path = line.partition("\t")
+        name, _, rest = line.partition("\t")
+        path, _, dead = rest.partition("\t")
         name, path = name.strip(), path.strip()
-        if name and path:
+        if name and path and dead.strip() == "0":
             pairs.append((name, path))
     return pairs
 

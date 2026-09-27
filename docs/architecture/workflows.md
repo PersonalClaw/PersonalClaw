@@ -601,12 +601,16 @@ selected tier translates to its native knobs.
 | `docker` | bind-mount container | core builtin (self-gates on the daemon probe) | UID-aligned bind-mount over the workspace; `allowed_write_paths`/`grant_paths` mounted rw, everything else unreachable; `egress_tier: off` → `--network none`; ceilings → `--pids-limit`/`--memory` |
 | `lima` | VM (`limactl shell`) | **app** (`apps/lima-sandbox`, enabled via `SandboxTypeHandler`) | full-VM isolation; host↔guest path translation for the guest workdir; availability = `limactl` present + instance `Running`, else a typed reasoned refusal (greyed-with-reason, never a silent host downgrade). Per-exec network / pids / memory are instance-creation config, so at this layer they are advisory rather than fabricated |
 
-A tier that is requested but unavailable **refuses** rather than downgrading to the host: an
-unattended run parks `needs-input`, an app backend declines to launch, and an interactive
-terminal falls back to a path-guard-only host shell (the picker already greyed the tier out with
-its reason). App backends select a tier through the `backend.sandbox` manifest field, with the
-app's `permissions.network` → `egress_tier` and `permissions.storage` → `allowed_write_paths`; a
-terminal session selects one per-session through the picker (`GET /api/sandbox/providers`).
+A tier that is requested but unavailable, or not installed at all, **refuses** rather than
+downgrading to the host: an unattended run parks `needs-input`, an app backend declines to launch,
+an agent session or second opinion does not start (`resolve_provider` raises for a named tier
+nothing registered, and resolves to `none` only when no tier is named), and a terminal is not
+opened, with a sentence in its tab that names the tier and why. App backends select a tier
+through the `backend.sandbox` manifest field, with the app's `permissions.network` →
+`egress_tier` and `permissions.storage` → `allowed_write_paths`; a terminal session selects one
+per-session through the picker (`GET /api/sandbox/providers`). The tier is part of the terminal's
+session id (`<id>@<tier>`), so every open of the session, a reconnect after a gateway restart
+included, is in that tier or refused, and a tier shell is never a tmux client.
 
 ## Templates
 

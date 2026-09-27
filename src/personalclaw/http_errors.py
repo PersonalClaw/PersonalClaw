@@ -905,6 +905,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
         'A model in the chain names no model; name each as "provider:model", or choose one in '
         "Settings → Models."
     ),
+    # ── opening a terminal in a sandbox tier (dashboard/handlers/terminal.py —
+    #    POST /api/terminal/sessions) ──
+    # 409: the tier the request names is not installed or is turned off. The terminal is not
+    # opened on this computer's own shell instead: that is the one place the request asked not
+    # to be.
+    "sandbox_tier_unavailable": (
+        "The sandbox this terminal was asked to open in is not installed or is turned off, so no "
+        "terminal was opened."
+    ),
 }
 
 

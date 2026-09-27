@@ -87,23 +87,33 @@ def test_a_failed_loop_says_why() -> None:
     assert "the provider is down" in body
 
 
-def test_a_loop_that_stopped_for_a_decision_raises_a_standing_request(raised: list) -> None:
+def test_a_loop_that_stopped_at_its_budget_raises_a_standing_row(raised: list) -> None:
+    """The row says the loop stopped, and why. It used to say "Loop needs a decision" over a row
+    nothing can answer (a stopped run is retried or forked from its page)."""
     state = _State()
     run = _run(
         RunStatus.ESCALATED,
         attention={
             "kind": "escalation",
             "reason": "max_iterations",
-            "detail": "reached 6 iterations",
+            "detail": "It used its budget of 6 cycles before its exit condition was met.",
         },
     )
     assert attention.announce_loop_end(state, run, RunStatus.ESCALATED) == "item-1"
     [call] = raised
-    assert call["title"] == "Loop needs a decision"
-    assert "reached 6 iterations" in call["body"]
+    assert call["title"] == "Loop stopped at its budget"
+    assert "It used its budget of 6 cycles" in call["body"]
     # `loop` is what every loop surface deep-links by; `workflow` is what a delete resolves by.
     assert call["refs"] == {"loop": "r1", "loop_kind": "general", "workflow": "r1"}
     assert call["dedup_key"] == "loop-run:r1:escalated"
+
+
+def test_a_loop_that_stopped_for_another_reason_says_it_stopped_before_it_finished(
+    raised: list,
+) -> None:
+    run = _run(RunStatus.ESCALATED, attention={"kind": "escalation", "reason": "iterations_failed"})
+    attention.announce_loop_end(_State(), run, RunStatus.ESCALATED)
+    assert [c["title"] for c in raised] == ["Loop stopped before it finished"]
 
 
 def test_a_cancel_and_a_template_run_say_nothing(raised: list) -> None:
@@ -120,6 +130,9 @@ class _Info:
 
 
 class _Subagents:
+    """The work reports progress each cycle, and the judge does not accept it: a loop that runs out
+    of budget for real. (One whose judge accepted its last cycle ends complete.)"""
+
     def __init__(self) -> None:
         self.infos: dict[str, _Info] = {}
 
@@ -132,8 +145,8 @@ class _Subagents:
         }
         if judge:
             payload = {
-                "reasoning": "ok",
-                "verdict": "PASS",
+                "reasoning": "not yet",
+                "verdict": "REJECT",
                 "scores": {"the step accomplished something real": 2, "evidence is checkable": 2},
                 "evidence_refs": ["x"],
                 "proof": "x",
@@ -174,4 +187,4 @@ def test_the_engine_announces_a_loop_run_that_hit_its_cycle_ceiling(raised: list
         return await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
 
     assert asyncio.run(_go()) is RunStatus.ESCALATED
-    assert [c["title"] for c in raised] == ["Loop needs a decision"], raised
+    assert [c["title"] for c in raised] == ["Loop stopped at its budget"], raised

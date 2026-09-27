@@ -390,6 +390,9 @@ class _ProseWorker(_FakeSubagents):
     `step_failed` rows. That is the negative direction of the test below — the same template, the
     same ceiling, and the reason must stay `max_iterations` — and it is what stops
     `iterations_failed` from being a label this suite would hang on any run that ran out of room.
+
+    Its judge does not accept the step. A judge that accepted the last cycle would end the loop
+    COMPLETE at its budget, and then there is no ceiling for this control to discriminate.
     """
 
     def spawn(self, **kw: Any) -> _Info:
@@ -399,7 +402,9 @@ class _ProseWorker(_FakeSubagents):
             info = _Info(f"sub{len(self.prompts)}", "I had a look around and things seem fine.")
             self.infos[info.id] = info
             return info
-        return super().spawn(**kw)
+        info = super().spawn(**kw)
+        info.result = json.dumps({**json.loads(info.result), "verdict": "REJECT"})
+        return info
 
 
 class _ReapedWorker(_FakeSubagents):

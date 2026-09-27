@@ -1329,19 +1329,33 @@ def loop_should_continue(
 
     Kept here rather than in the controller because it is a pure function of the node
     and the iteration record, which makes the loop-exit rules unit-testable without an
-    engine. `counted` is capped structurally; `until` evaluates a binding; `until_dry`
-    exits on a clean streak.
+    engine. `counted` ends at its count; `until` evaluates a binding; `until_dry` exits on
+    a clean streak.
+
+    The loop's OWN test is asked first, and ``max_iterations`` only when that test says go
+    on: a loop that meets its exit on the last iteration its budget allows has finished, not
+    run out of budget. The cap used to be checked first, so `reason` read ``max_iterations``
+    for exactly the loops that finished on their last allowed iteration.
     """
+    keep_going, reason = _loop_exit_test(node, dry_streak=dry_streak, ctx=ctx, iteration=iteration)
+    if not keep_going:
+        return False, reason
+    hard_cap = (node.config or {}).get("max_iterations")
+    if isinstance(hard_cap, int) and hard_cap > 0 and iteration >= hard_cap:
+        return False, "max_iterations"
+    return True, ""
+
+
+def _loop_exit_test(
+    node: Node, *, dry_streak: int, ctx: BindingContext | None, iteration: int
+) -> tuple[bool, str]:
+    """The loop's own exit test for its mode, without its iteration cap."""
     cfg = node.config or {}
     raw_mode = str(cfg.get("mode", "counted") or "counted")
     try:
         mode = LoopMode(raw_mode)
     except ValueError:
         mode = LoopMode.COUNTED
-
-    hard_cap = cfg.get("max_iterations")
-    if isinstance(hard_cap, int) and hard_cap > 0 and iteration >= hard_cap:
-        return False, "max_iterations"
 
     if mode == LoopMode.COUNTED:
         n = cfg.get("n")
@@ -1366,8 +1380,8 @@ def loop_should_continue(
 
     if mode == LoopMode.UNTIL_CANCELLED:
         # No self-terminating condition by definition: a watcher stops when something
-        # outside it says so. `max_iterations` above still applies, and `reap_watchers`
-        # is what turns "the work this watcher accompanied is finished" into a stop.
+        # outside it says so. `max_iterations` still applies, and `reap_watchers` is what
+        # turns "the work this watcher accompanied is finished" into a stop.
         return True, ""
 
     # until_dry

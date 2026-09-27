@@ -248,8 +248,8 @@ class AcpProcess:
         # Sandbox provider name (EI-1). The provider composes the OS path sandbox
         # (``sandbox_mode``) + the resource ceilings (``ceiling_profile``) behind a single
         # ``wrap`` → ``exec`` seam. ``none`` is the default builtin; an installed sandbox app
-        # supplies a stronger container/VM tier. Resolution fails open to ``none``, so an
-        # unknown/absent provider name never blocks a spawn.
+        # supplies a stronger container/VM tier. A named tier that is not installed refuses the
+        # spawn with the reason (``SandboxUnavailableError``): it never runs as ``none``.
         self._sandbox = sandbox or "none"
         self._extra_env = dict(extra_env) if extra_env else None
         self._session_key = session_key
@@ -335,9 +335,10 @@ class AcpProcess:
         if not self._command:
             raise AcpError("AcpProcess requires a non-empty command argv to spawn an ACP agent")
 
-        # Sandbox seam (EI-1): resolve the configured provider (``none`` by default, fail-open)
-        # and wrap the command. The provider composes the OS path sandbox (``sandbox_mode``) here;
-        # the resource ceilings (``ceiling_profile``) are applied post-exec in ``handle.exec``.
+        # Sandbox seam (EI-1): resolve the configured provider (``none`` by default; a named tier
+        # that is not installed refuses, it never becomes ``none``) and wrap the command. The
+        # provider composes the OS path sandbox (``sandbox_mode``) here; the resource ceilings
+        # (``ceiling_profile``) are applied post-exec in ``handle.exec``.
         from personalclaw.sandbox_providers import resolve_provider
         from personalclaw.sandbox_providers.base import SandboxSpec
 
@@ -358,10 +359,13 @@ class AcpProcess:
         # declares (`extra_env`: a config folder, an engine path), the session it answers for,
         # and what the owner granted by name in `sandbox.env_passthrough`; one launched through
         # `npx` also gets npm's own settings. The credential floor holds even for a declared name.
+        # A Node CLI also keeps its compile cache in the home, not the temp folder
+        # (`_installer.node_cli_env`); the variables its app declares still have the last word.
+        from personalclaw._installer import node_cli_env
         from personalclaw.acp.cli_resolve import is_npx_fallback
         from personalclaw.sandbox import build_child_env
 
-        computed = dict(self._extra_env or {})
+        computed = {**node_cli_env(), **(self._extra_env or {})}
         computed["PATH"] = augmented_path(computed.get("PATH") or os.environ.get("PATH", ""))
         for name, value in (
             ("PERSONALCLAW_SESSION_KEY", self._session_key),

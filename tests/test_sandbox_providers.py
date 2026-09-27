@@ -1,8 +1,9 @@
 """Tests for the sandbox-provider seam + the ``none`` builtin (EXECUTION-ISOLATION EI-1).
 
 Covers: the ABC contract, ``none`` argv composition (OS sandbox at wrap, ceilings at exec), a
-REAL child whose ``ulimit -n`` reports the configured NOFILE ceiling, the registry
-resolve/fail-open, and the ``sandbox`` PROVIDER_TYPES/handler pairing.
+REAL child whose ``ulimit -n`` reports the configured NOFILE ceiling, the registry resolve (no
+name is ``none``; a named tier that is not installed is refused), and the ``sandbox``
+PROVIDER_TYPES/handler pairing.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import pytest
 
 from personalclaw.sandbox import PROFILE_TOOL, ResourceCeilings
 from personalclaw.sandbox_providers import (
+    SandboxUnavailableError,
     get_provider,
     list_providers,
     register_provider,
@@ -48,12 +50,20 @@ def test_none_handle_cleanup_is_idempotent_when_no_temp(tmp_path):
     handle.cleanup()  # idempotent
 
 
-def test_resolve_provider_fails_open_to_none():
-    """An unknown provider name resolves to the ``none`` builtin — never blocks a spawn."""
-    resolved = resolve_provider("does-not-exist")
-    assert resolved.name == "none"
-    # Empty name also resolves to none.
+def test_no_named_tier_resolves_to_none():
     assert resolve_provider("").name == "none"
+    assert resolve_provider("none").name == "none"
+
+
+def test_a_named_tier_that_is_not_installed_is_refused_not_run_on_the_host():
+    """It resolved to ``none``: whatever asked for the tier ran on the host, and nothing said so."""
+    with pytest.raises(SandboxUnavailableError) as refused:
+        resolve_provider("does-not-exist")
+    assert str(refused.value) == (
+        "does-not-exist sandbox requested but not installed — no sandbox tier by that name is "
+        "installed and turned on. Fix: turn on the app that provides it, or choose a different "
+        "sandbox tier."
+    )
 
 
 def test_registry_register_unregister_roundtrip():

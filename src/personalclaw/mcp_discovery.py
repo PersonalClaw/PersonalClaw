@@ -183,16 +183,18 @@ def stdio_spawn_env(server_env: Mapping[str, str], *, server: str) -> dict[str, 
     goes IN FRONT of the gateway's instead of replacing it, which is also how
     ``rebuild_agent_config`` resolves the command. One definition because there were two: the
     probe prepended and the agent's connection replaced, so a server that set ``PATH`` probed "ok"
-    while every call to it failed with the command not found.
+    while every call to it failed with the command not found. A Node server keeps its compile
+    cache in the home (``_installer.node_cli_env``), not in the temp folder.
     """
+    from personalclaw._installer import node_cli_env
     from personalclaw.apps.mcp_bridge import server_app
 
     if server_app(server) is not None:
         from personalclaw.sandbox import build_child_env
 
-        env = build_child_env(site="app-mcp-server")
+        env = build_child_env(site="app-mcp-server", extra=node_cli_env())
     else:
-        env = dict(os.environ)
+        env = {**os.environ, **node_cli_env()}
     env["PATH"] = augmented_path(env.get("PATH", ""))
     if "PATH" in server_env:
         env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]

@@ -2137,8 +2137,8 @@ class RunController:
                 self.services.attention_state, self.run.id, run_ending(status)
             )
             # A run started as a loop says it ended, the way a loops-table loop does — after the
-            # resolve above, so the "needs a decision" row it may raise is not closed with the
-            # run's other rows.
+            # resolve above, so the row an escalated loop raises is not closed with the run's
+            # other rows.
             attention.announce_loop_end(self.services.attention_state, self.run, status)
             if status == RunStatus.COMPLETE:
                 run_finish.revise_project_overview(self)
