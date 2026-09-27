@@ -172,6 +172,13 @@ class AgentProvider(ABC):
         return False
 
     @property
+    def compacts_automatically(self) -> bool:
+        """Will this provider compact its own history on its own at the Settings threshold?
+        False by default. See :attr:`personalclaw.llm.base.ModelProvider.compacts_automatically`
+        — declared identically on both ABCs, like :attr:`compacts_in_process` above."""
+        return False
+
+    @property
     def keeps_cancelled_turns(self) -> bool:
         """Whether a turn stopped mid-way stays in this provider's OWN history. False by
         default. See :attr:`personalclaw.llm.base.ModelProvider.keeps_cancelled_turns` —

@@ -15,7 +15,7 @@ only one a fresh install has — it did not:
 
 **Which of the two directions this took, and why.** The measured fact that decides it: the
 native loop ALREADY compacts. `runtime._maybe_compact()` runs `context_compaction.compact`
-on `self._messages` automatically at `_COMPACT_THRESHOLD_PCT = 70`, so the capability is
+on `self._messages` automatically at the Settings threshold, so the capability is
 built, shipped and load-bearing — `/compact` is just the manual trigger for a pass that
 already exists. Un-advertising it would have hidden a working feature behind a
 provider-aware hints endpoint (and `GET /api/slash-commands` has no session, so it cannot
@@ -158,7 +158,8 @@ class TestTheCommandRunsTheRealPass:
 class TestTheExplicitPathHasNoTriggerPolicy:
     @pytest.mark.asyncio
     async def test_compact_ignores_the_threshold(self):
-        """`_maybe_compact` refuses under 70%; a person who typed `/compact` has decided."""
+        """`_maybe_compact` refuses under the Settings threshold; a person who typed
+        `/compact` has decided."""
         rt = _runtime()
         rt._messages = _convo(10)
         rt._last_context_pct = 20.0
@@ -182,7 +183,7 @@ class TestTheExplicitPathHasNoTriggerPolicy:
 
         # …and the automatic path still both fires and records.
         rt._messages = _convo(10)
-        rt._last_context_pct = 85.0
+        rt._last_context_pct = 95.0
         rt._maybe_compact()
         assert rt._compaction_saves and rt._compaction_saves[0] > 0
 

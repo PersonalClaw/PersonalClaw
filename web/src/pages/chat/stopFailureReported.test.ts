@@ -48,8 +48,10 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // Re-pointed twice now, never relaxed. It began as a closure here, moved to this file's module
     // scope, and moved again to `app/reportingWrite` when `dashboard/PinnedTiles` became a second
     // adopter of the callback form. The assertions follow it; the discipline does not change.
+    // `failureSentence` joined the import for the INLINE form of the same sentence (the edit
+    // editor's failure line), which is the export that module keeps for exactly that.
     expect(raw, 'the shared sentence is imported').toMatch(
-      /import \{ reportActionFailure, reportingWrite \} from '\.\.\/app\/reportingWrite'/,
+      /import \{ failureSentence, reportActionFailure, reportingWrite \} from '\.\.\/app\/reportingWrite'/,
     )
     const shared = readFileSync(join(process.cwd(), 'src/app/reportingWrite.ts'), 'utf8')
     expect(shared).toMatch(/^export const reportActionFailure = \(what: string\) => \(e: unknown\) => \{$/m)

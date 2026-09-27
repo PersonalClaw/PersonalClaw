@@ -8,7 +8,7 @@ the two consumers of the gauge both key off ``None``:
 * the composer renders a plain dot for ``None`` and a filled ring for a number, so 0.0
   showed a user a measured-looking "plenty of room" that was not a measurement at all;
 * the native loop's compaction gate reads the same field. ``_maybe_compact`` compares the
-  provider's number against ``_COMPACT_THRESHOLD_PCT`` and falls back to the char-based
+  provider's number against the Settings threshold and falls back to the char-based
   estimate ONLY when the field is ``None`` — and ``0.0 is not None``. So 0.0 both failed
   the threshold and made the backstop that exists to cover an absent gauge unreachable.
   Compaction was structurally disabled, and history grew until Ollama truncated the prompt
@@ -209,26 +209,31 @@ class TestTheGaugeReachesTheCompactionGate:
     """The consequence that matters. The percentage is internal; "compaction fires" is
     not — and a gauge of 0.0 made this unreachable in BOTH directions at once."""
 
-    def test_a_high_measured_gauge_trips_the_threshold(self, provider_module):
-        from personalclaw.agents.native.runtime import NativeAgentRuntime
+    def test_a_high_measured_gauge_trips_the_threshold(
+        self, provider_module, tmp_path, monkeypatch
+    ):
+        """The measured 81% trips the gate for a user who compacts at 80%. The threshold is
+        the Settings value, so it is set the way Settings sets it."""
+        from personalclaw.context_compaction import autocompact_pct
 
-        _COMPACT_THRESHOLD_PCT = NativeAgentRuntime._COMPACT_THRESHOLD_PCT
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        (tmp_path / "config.json").write_text('{"session": {"autocompact_pct": 80}}')
 
-        assert _MEASURED_TRUTH_PCT > _COMPACT_THRESHOLD_PCT
+        assert _MEASURED_TRUTH_PCT > autocompact_pct() == 80.0
 
     def test_the_old_fabricated_zero_would_not_have(self, provider_module):
         """The negative statement of the same fact, so a regression to 0.0 fails here
         rather than silently passing the suite the way it did for the whole defect's
-        life: 0.0 is below the threshold AND is not ``None``, so neither path fires."""
-        from personalclaw.agents.native.runtime import NativeAgentRuntime
+        life: 0.0 is below every threshold a user can set AND is not ``None``, so neither
+        path fires."""
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
-        _COMPACT_THRESHOLD_PCT = NativeAgentRuntime._COMPACT_THRESHOLD_PCT
-
+        lowest = _EDITABLE_CONFIG["session.autocompact_pct"]["min"]
         # Bound to a name rather than written as a literal so it is a value the gate
         # would actually receive (and because `0.0 is not None` is a literal-identity
         # comparison flake8 rejects outright — F632).
         fabricated: float | None = 0.0
-        assert fabricated < _COMPACT_THRESHOLD_PCT, "it fails the threshold"
+        assert fabricated < lowest, "it fails the lowest threshold Settings accepts"
         assert fabricated is not None, "and it is not None, so the backstop never runs"
 
 
@@ -287,9 +292,9 @@ class TestTheNumeratorDoesNotCollapse:
         Driven as a SEQUENCE because the detection is ordinal — the pre-cliff turn is what
         the collapsed one is judged against, and it is also the control: the same provider,
         the same window, and a reading that is a plain measurement right up to the cliff."""
-        from personalclaw.agents.native.runtime import NativeAgentRuntime
+        from personalclaw.context_compaction import autocompact_pct
 
-        threshold = NativeAgentRuntime._COMPACT_THRESHOLD_PCT
+        threshold = autocompact_pct()
         provider = _provider(provider_module, context_window=_MEASURED_SERVED_WINDOW)
         honest = await provider._context_pct(
             "gemma4:12b", 32_241, [{"role": "user", "content": "x" * 144_998}]

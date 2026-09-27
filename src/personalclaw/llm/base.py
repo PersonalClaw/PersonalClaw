@@ -221,6 +221,18 @@ class ModelProvider(ABC):
         return False
 
     @property
+    def compacts_automatically(self) -> bool:
+        """Whether this provider will compact its own history ON ITS OWN once the context
+        crosses the Settings threshold (``session.autocompact_pct``).
+
+        False by default. The session manager restarts a session at that threshold only
+        when this is False: a provider that compacts itself would otherwise lose the history
+        it was about to compact to a restart at the same value. The native loop answers True
+        while its automatic pass still helps; an out-of-process agent answers False.
+        """
+        return False
+
+    @property
     def sampling_temperature(self) -> float | None:
         """The sampling temperature this instance puts on the request, or ``None`` if it sends none.
 

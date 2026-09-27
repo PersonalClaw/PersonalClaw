@@ -732,8 +732,9 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // took a message the server refused and did not save. It now records a 404 as "This chat doesn't
   // exist" and anything else as a load failure with a retry. A third, the attachment preview's
   // read, moved with the attachment chips into `pages/chat/AttachmentChips.tsx` and now records the
-  // failure instead of reading as "no extractable text".
-  'pages/ChatPage.tsx': 5,
+  // failure instead of reading as "no extractable text". A fourth, the chat list's content search,
+  // fell back to title matches in silence. It now says the search failed and offers a retry (F-41).
+  'pages/ChatPage.tsx': 4,
   'pages/agents/AgentDetail.tsx': 3,
   'pages/artifacts/ArtifactCard.tsx': 1,
   'pages/chat/OrganizeChip.tsx': 1,
