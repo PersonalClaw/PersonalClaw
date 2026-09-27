@@ -142,6 +142,20 @@ chat, channel thread, loop worker, webhook, subagent).
    sessions (`SessionManager.mark_agent_stale`): a turn already running finishes
    as it started, and each session's next turn rebuilds its runtime from the
    agent as it now reads.
+   **A turn falls back down its chain** (`agents/native/failover.py`). When the
+   model a chat turn runs on fails with a provider error or a timeout before
+   anything of the turn was shown, and its one retry fails too, the native loop
+   moves the turn's inner model to the next model in the same order (the chat's
+   pick, the agent's pin, then the chain), once each, skipping one that cannot be
+   built, cannot use the turn's tools or cannot take its images. The one that
+   answers says so before its reply, as an `EVENT_MODEL_SUBSTITUTION` the chat
+   runner turns into the same `model_substitution` line and reply meta ("Ran on
+   Y instead of X: it failed before it replied (…)."). The next turn starts on X
+   again. When every model fails, the error names each one and why
+   (`NoModelAnswered`). Only a caller that shows the line asks for this
+   (`NativeAgentRuntime.announce_failover`, the chat runner): a room, a loop or
+   a background stream keeps the failure rather than another model's reply
+   presented as the chosen one's.
 5. **Streaming + persistence** — chunks stream over the dashboard WebSocket;
    the finished turn is saved by rewriting the session JSONL from the buffer.
    Every exit from a turn, an error included, first settles the answer

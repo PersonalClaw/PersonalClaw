@@ -267,3 +267,35 @@ class PromptExceedsWindow(GuardError):
                 request_chars=request_chars,
             )
         )
+
+
+def failed_before_replying(failures: list[tuple[str, str]]) -> str:
+    """``"it failed before it replied (why), and so did <ref> (why)"`` for the models a turn tried.
+
+    ``failures`` is ``(ref, clause)`` per model tried, in order, the first being the one the turn
+    started on. One wording for the substitution a fallback answers under and for the turn no
+    fallback could answer, so the two cannot describe the same failures differently.
+    """
+    (_first, why), *rest = failures
+    text = f"it failed before it replied ({why})"
+    return text + "".join(f", and so did {ref} ({clause})" for ref, clause in rest)
+
+
+class NoModelAnswered(GuardError):
+    """Every model a turn fell back to failed before replying, as the one it started on did.
+
+    Raised by the native loop once a turn's model and each model it then tried have all failed
+    before any output (``agents/native/failover.py``). The chat shows its sentence verbatim: it
+    names every model tried and why each failed, which no single provider error can.
+    """
+
+    mode = FailureMode.PROVIDER_ERROR
+
+    def __init__(self, failures: list[tuple[str, str]]) -> None:
+        self.failures = list(failures)
+        first = failures[0][0]
+        super().__init__(
+            f"None of this chat's models answered: {first} "
+            f"{failed_before_replying(failures).removeprefix('it ')}. Try again in a moment, or "
+            "check them in Settings → Models."
+        )

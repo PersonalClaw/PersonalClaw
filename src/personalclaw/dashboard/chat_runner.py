@@ -103,7 +103,11 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
 )
-from personalclaw.llm.events import TOOL_META_APPROVAL_WAIVED, is_length_stop
+from personalclaw.llm.events import (
+    EVENT_MODEL_SUBSTITUTION,
+    TOOL_META_APPROVAL_WAIVED,
+    is_length_stop,
+)
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -2981,11 +2985,17 @@ async def run_chat(
                 },
             )
 
-        event_stream = (
-            stream_slash_command(client, message, prompt=full_message, notify=_slash_notice)
-            if is_slash
-            else client.stream(full_message)
-        )
+        if is_slash:
+            event_stream = stream_slash_command(
+                client, message, prompt=full_message, notify=_slash_notice
+            )
+        else:
+            # This runner says which model answered (the live line and the reply's meta below),
+            # so the turn may fall back down its chain if its model fails before any output.
+            announce_failover = getattr(client, "announce_failover", None)
+            if callable(announce_failover):
+                announce_failover()
+            event_stream = client.stream(full_message)
         state.broadcast_ws("chat_status", {"session": session.key, "status": "Thinking…"})
         state.broadcast_ws(
             "activity_event", {"session": session.key, "kind": "status", "text": "Thinking…"}
@@ -4264,6 +4274,19 @@ async def run_chat(
                         "content": "Conversation cleared.",
                     },
                 )
+            elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                # The turn's model failed before it said anything and the next one in its chain
+                # answers. Said now, before that model's reply streams, and stamped on the reply
+                # with whatever substitution the turn started with.
+                state.broadcast_ws(
+                    "activity_event",
+                    {
+                        "session": session.key,
+                        "kind": MODEL_SUBSTITUTION_ACTIVITY_KIND,
+                        "text": event.text,
+                    },
+                )
+                _substitution_note = f"{_substitution_note} {event.text}".strip()
             elif event.kind == EVENT_AGENT_SWITCHED:
                 new_agent, _ = redact_credentials(event.text)
                 new_agent, _ = redact_exfiltration_urls(new_agent)

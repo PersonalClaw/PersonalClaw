@@ -18,10 +18,13 @@ a callable matching the factory signature::
 import json
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.errors import AgentError
 from personalclaw.llm.base import ModelProvider, ModelSubstitution
+
+if TYPE_CHECKING:
+    from personalclaw.agents.native.failover import ModelFailover
 
 logger = logging.getLogger(__name__)
 
@@ -679,16 +682,20 @@ def _build_native_runtime(
     # an empty model string and 400. Resolve a concrete chat model in that case.
     #
     # The model id is passed to the ALREADY-RESOLVED ``model_provider`` above and
-    # overrides its own pinned id, so it MUST name the same provider — pass that
-    # provider's entry name as the hint. ``_provider_entry_name`` derives it from
-    # the resolved provider (its bound entry name), falling back to the first
-    # active chat ref's provider (the ref the inner resolver picks first). Without
-    # this the fallback could return another provider's model (e.g. Alibaba's
-    # ``glm-5.2`` sent to the Bedrock client → "model identifier is invalid",
-    # which failed every background suggestions/consolidation turn).
+    # overrides its own pinned id, so it MUST name the same provider. The ref the seam
+    # built it for says both halves (``served_ref``, stamped where they are known): after
+    # the chain walk skipped the head (an open breaker, an entry that cannot be built),
+    # that is the LATER entry, and "the first ref of the chain" named the head's model
+    # to it. Only an unstamped provider falls back to that ordering
+    # (``_provider_entry_name``). Without agreement the model of one provider is sent to
+    # another (e.g. Alibaba's ``glm-5.2`` to the Bedrock client → "model identifier is
+    # invalid", which failed every background suggestions/consolidation turn).
     if not model:
-        model = _fallback_chat_model(
-            provider_hint=_provider_entry_name(model_provider, use_case=inner_axis),
+        served_entry, _, served_model = str(
+            getattr(model_provider, "served_ref", "") or ""
+        ).partition(":")
+        model = served_model or _fallback_chat_model(
+            provider_hint=served_entry or _provider_entry_name(model_provider, use_case=inner_axis),
             use_case=inner_axis,
         )
 
@@ -796,7 +803,56 @@ def _build_native_runtime(
     else:
         stamped = getattr(model_provider, "substituted_for", None)
         runtime.model_substitution = stamped if isinstance(stamped, ModelSubstitution) else None
+    # Where a turn may go when this model fails before any output. Not for an unattended run:
+    # nobody reads a live line there, and #3648's rule is that a substitute is always said.
+    if not unattended:
+        runtime.failover = _turn_failover(inner_axis, choices, runtime.served_model_ref, _resolve)
     return runtime  # type: ignore[return-value]  # CI-2
+
+
+def _turn_failover(
+    axis: str,
+    choices: list[tuple[str, str, str]],
+    served: str,
+    resolve: Callable[[str], ModelProvider],
+) -> "ModelFailover | None":
+    """The models a turn on ``served`` may fall back to when it fails before any output.
+
+    Those after it in the order a native runtime picks its model: the chat's own pick, the agent's
+    pin (each only while it can run, :func:`named_model_problem`), then the use case's chain in
+    Settings → Models. ``None`` when nothing comes after it, or ``served`` is not in that order at
+    all (a provider built outside the resolution seam), so nothing is guessed.
+    """
+    from personalclaw.agents.native.failover import ModelFailover
+    from personalclaw.llm_helpers import failure_clause, use_case_chain
+
+    order: list[str] = []
+    whose: dict[str, str] = {}
+    for ref, who, _fix in choices:
+        qualified = _qualified_chat_ref(ref)
+        if qualified not in order and named_model_problem(ref) is None:
+            order.append(qualified)
+            whose[qualified] = who
+    order.extend(ref for ref in use_case_chain(axis) if ref not in order)
+    if not served or served not in order:
+        return None
+    later = tuple(order[order.index(served) + 1 :])
+    if not later:
+        return None
+
+    async def takes_images(ref: str) -> bool:
+        from personalclaw.providers.image_input import image_input
+
+        return (await image_input(ref)).accepted
+
+    return ModelFailover(
+        requested=served,
+        who=whose.get(served, ""),
+        candidates=later,
+        build=lambda ref: (resolve(ref), _strip_provider_prefix(ref)),
+        describe=failure_clause,
+        takes_images=takes_images,
+    )
 
 
 def _native_session_cwd(cwd: str | None) -> str:
