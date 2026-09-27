@@ -147,10 +147,12 @@ const primaryAction = () =>
   ['Stop', 'Steer — send into the running turn', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
-/** Open the chat on a turn that is running. */
-async function aRunningTurn() {
+/** Open the chat on a turn that is running. `beforeTheTurn` runs once the page has issued its
+ *  first read and before that read answers, so nothing has streamed yet. */
+async function aRunningTurn(beforeTheTurn?: () => void) {
   page()
   await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
+  beforeTheTurn?.()
   await answerDetail(0, { running: true })
   await waitFor(() => expect(primaryAction()).toBe('Stop'))
   await waitFor(() => expect(lastTurnSaid()).toBe('Assistant is responding…'))
@@ -257,9 +259,13 @@ describe('a tab that missed the terminal frame', () => {
   })
 
   it('says the ending session detail reports when the stall reconciler settles it', async () => {
-    // Only the reconciler's clock is faked: its tick and the quiet windows it measures.
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
-    await aRunningTurn()
+    // Only the reconciler's clock is faked: its tick and the quiet windows it measures. It is
+    // faked once the page has issued its first read, not before the render. `waitFor` polls on
+    // `setInterval`, so with that faked, the wait for the read (a count, not a DOM change) is
+    // re-checked only by a later DOM mutation. When the socket opens after the page has finished
+    // painting, which a loaded suite produces, there is none, and the wait timed out on a read
+    // that had been issued.
+    await aRunningTurn(() => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] }))
     const reads = h.detailCalls.length
     // No frame arrives. The reconciler reads the chat on its next tick…
     await act(async () => { vi.advanceTimersByTime(2_100) })
