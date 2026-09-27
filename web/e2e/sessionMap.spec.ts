@@ -271,8 +271,9 @@ test.describe('Session Map — the coarse-pointer form (SSM-10)', () => {
     await driveScriptedTurns(page, PROMPT, 3)
 
     // ── the rail is GONE, and the map is NOT ───────────────────────────────────────────────
-    // KiroCrew's rail simply vanishes on touch. Since this map is the SOLE in-session index nav,
-    // vanishing is the defect §A.8 exists to prevent — so both halves are asserted together.
+    // Another agent UI's rail simply vanishes on touch. Since this map is the SOLE in-session
+    // index nav, vanishing is the defect §A.8 exists to prevent — so both halves are
+    // asserted together.
     await expect(page.locator(RAIL), 'the pointer rail is still mounted at a phone viewport').toHaveCount(0)
     expect(
       await openHeaderOverflowIfNeeded(page, 'Session map'),

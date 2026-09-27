@@ -9,8 +9,8 @@ What an image part must be, whichever wire carries it:
 
 * **Checked by its bytes.** :func:`~personalclaw.ocr.filetype.assert_image` gates it first —
   extension on the allowlist, true type from the magic number, the two agreeing, and a size
-  ceiling (ARCC ``cnt_eMkU5kkpTaEk65`` "Secure File Uploads": never trust the name or the
-  Content-Type; enforce size limits). Nothing is decoded before that passes.
+  ceiling: an upload's name and declared Content-Type are claims, never evidence, and its
+  size is capped before anything reads it. Nothing is decoded before that passes.
 * **One of the closed wire types** — the same set a screen frame is held to
   (``screen_context.ALLOWED_MEDIA_TYPES``). A GIF, BMP or TIFF is re-encoded to PNG; an
   animation keeps its first frame.

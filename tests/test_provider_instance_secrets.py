@@ -302,7 +302,7 @@ async def test_the_mask_sentinel_is_never_stored_as_a_credential(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_refused_write_does_not_quote_the_submitted_value_back(tmp_path):
-    """ARCC SAX-06 Outcome 3, "error handling without information disclosure".
+    """Error handling without information disclosure.
 
     A 422 that echoed the offending body would re-leak what masking just withheld. Measured
     clean on the parked parent and pinned here: the validator reports the field's LABEL and

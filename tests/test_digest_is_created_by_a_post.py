@@ -5,17 +5,13 @@
 `self.inbox.add(item)` + `flush()`. So a browser prefetch, a client retry, or a double render
 each manufactured another digest item and repeated a paid call.
 
-ARCC was queried first (a state-changing verb touching user data and paid inference is a
-trigger domain). Two documents apply:
+Two rules apply:
 
-* the HTTP-verbs implementation — *"GET/HEAD methods are idempotent in operation, meaning that
-  issuing the GET request multiple times SHOULD NOT modify any data stored server side"*, with
-  the API table assigning "insert a new object" to POST. That article carries a DEPRECATION
-  notice and is cited here only for HTTP semantics, not for the security claim.
-* the CSRF guidance (not deprecated) — *"Do not use GET request for state changing
-  operations"*, and its Get-based-CSRF section: a mutation reachable by GET *"causes any form
-  of CSRF validations to be skipped"*. That is the sharper reason. This gateway can be bound
-  to a private network (`PERSONALCLAW_BYPASS_LOCAL_NETWORKS`), so a state-changing GET was
+* HTTP semantics — GET and HEAD are idempotent: issuing a GET any number of times must not
+  modify data stored server-side, and inserting a new object is a POST.
+* CSRF — never use GET for a state-changing operation: a mutation reachable by GET skips
+  every form of CSRF validation. That is the sharper reason. This gateway can be bound to a
+  private network (`PERSONALCLAW_BYPASS_LOCAL_NETWORKS`), so a state-changing GET was
   triggerable by any page the user happened to visit.
 
 A SECOND defect, found while measuring the first: the id was `{channel}_digest_{int(ts)}` —

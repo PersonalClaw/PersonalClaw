@@ -211,8 +211,8 @@ _IMMUTABLE_ASSET_PREFIX = "/assets/"
 #: STRICTER value of its own (hence ``setdefault`` at the call site — artifact responses
 #: pass through this middleware and deliberately send ``Referrer-Policy: no-referrer``).
 #:
-#: ARCC's "Secure HTTP Headers" guidance lists these among the headers to set for ALL
-#: responses. Before #2735 they were applied ad hoc on specific artifact/file responses
+#: Secure-header practice sets these on ALL responses, not only on the risky ones. Before
+#: #2735 they were applied ad hoc on specific artifact/file responses
 #: (``artifacts/deploy.py``, ``artifacts/handlers.py``, ``dashboard/handlers/files.py``,
 #: ``dashboard/session_starters.py``) and so were absent from dashboard responses
 #: generally; promoting them here gives the posture one owner.

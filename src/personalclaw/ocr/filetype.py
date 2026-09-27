@@ -1,10 +1,9 @@
 """True-type image detection — what the BYTES say, never what the name claims.
 
-ARCC ``cnt_eMkU5kkpTaEk65`` "Secure File Uploads": a service "should not trust
-Content-Type ... and must perform checks to verify that only allowlisted file types are
-uploaded", must keep "an allow-list of file extensions", and "should implement and
-enforce file upload size limits". This module is core's single implementation of the
-first two for the OCR path, and :data:`MAX_IMAGE_BYTES` the third.
+Three rules for any file a user hands us: never trust its declared Content-Type — check
+the bytes, and admit only allowlisted file types; keep an allowlist of file extensions;
+and enforce a size limit. This module is core's single implementation of the first two
+for the OCR path, and :data:`MAX_IMAGE_BYTES` the third.
 
 It is here, in core, rather than in each OCR app because a magic-number table copied per
 bundle is a table that drifts per bundle — and the one that drifts is the one that lets a
@@ -56,7 +55,7 @@ _EXTENSIONS: dict[str, str] = {
     ".webp": "webp",
 }
 
-#: Byte ceiling for one image handed to an OCR engine (ARCC: enforce upload size limits).
+#: Byte ceiling for one image handed to an OCR engine (every upload gets a size limit).
 #: 64 MiB is far above a 600-dpi A4 page (~25 MiB uncompressed) and far below what makes
 #: a decoder the memory problem. A file over it is refused unread.
 MAX_IMAGE_BYTES = 64 * 1024 * 1024

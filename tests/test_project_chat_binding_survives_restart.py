@@ -23,9 +23,8 @@ These tests drive the real pair of paths rather than asserting on a dict, follow
 is in the meta dict' would have passed on a half-fix: the reader lived in the OTHER restore path, so
 the key was written and then never read back."* A gateway restart goes through the BULK path.
 
-ARCC was queried for session-persistence guidance and returned nothing applicable (its session
-material is Okta/IdP auth sessions; the one adjacent doc is SAX-04 Outcome 3 on input validation,
-which is why the read is type-checked below). Standard practice applies.
+The read is type-checked below because a persisted value is input like any other, and input is
+validated before it is used.
 """
 
 from __future__ import annotations

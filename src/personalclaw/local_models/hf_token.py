@@ -17,8 +17,9 @@ chokepoint (never hand-rolled aiohttp), and its result is cached for
 ``local_models.whoami_ttl_s`` so a list render or a gated pre-warn doesn't hammer HF.
 
 🔴 **A HuggingFace token is a static, broad-privilege credential** — it authenticates every
-HF API call on the user's behalf, so a leaked one is a real exposure (ARCC treats the Okta
-``SSWS`` token, the same shape, as a High finding). It is therefore handled exactly as the
+HF API call on the user's behalf, so a leaked one is a real exposure (a static API token of
+this shape — Okta's ``SSWS`` token is the classic one — is a high-severity finding when it
+leaks). It is therefore handled exactly as the
 credential store handles any secret:
 
 * the value is WRITTEN only through the credential store (never ``config.json``, never a log,

@@ -28,10 +28,9 @@ The shape of the fix, and why it is a shape and not a patch:
   deciding what the server should BIND, and stops being consulted about where a child
   should CONNECT.
 * **Fail closed, and fail fast.** When the base cannot be resolved this REFUSES, loudly,
-  naming every source it consulted. It never substitutes ``10000``. Per ARCC SAX-04
-  Outcome 5 ("Fail Closed vs Fail Open Design Decisions"), *"failing open for
-  security-critical operations"* is a named pitfall and a system should *"fail fast
-  rather than hanging indefinitely on timeout"* — the old default violated both at once,
+  naming every source it consulted. It never substitutes ``10000``. Failing open on a
+  security-critical operation is the pitfall to avoid, and a system should fail fast
+  rather than hang indefinitely on a timeout — the old default violated both at once,
   silently delivering the request to whatever stranger occupied the port while the
   observable symptom was a hang.
 

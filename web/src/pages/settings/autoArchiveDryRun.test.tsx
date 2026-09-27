@@ -21,8 +21,8 @@ beforeEach(() => {
 // The auto-archive rule ran silently on the heartbeat since S2; a retention rule the user cannot see
 // is indistinguishable from data loss. This pins the two properties that make it safe: the number is
 // the dry-run's real count (not an estimate computed from the threshold), and the surface promises an
-// archive that restores — never a delete. ARCC's retention principle (accurate preview + reversible,
-// no destructive purge) is exactly these.
+// archive that restores — never a delete. A safe retention rule is exactly these: an accurate
+// preview, and a reversible move instead of a destructive purge.
 describe('AutoArchiveRow — live dry-run preview', () => {
   it('shows the dry-run count verbatim (the number that WOULD move, not an estimate)', async () => {
     render(<AutoArchiveRow days={30} onCommit={vi.fn()} saved={false} />)

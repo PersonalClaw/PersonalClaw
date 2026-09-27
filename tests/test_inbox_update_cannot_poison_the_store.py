@@ -27,11 +27,9 @@ with `str`-subclassing enum MEMBERS by this package's own callers (`handlers_inb
 `ItemStatus.DISMISSED` itself, not `.value`), so an exact-type check would refuse the
 codebase's own writes. Pinned below.
 
-ARCC was queried first (persisted user data is an explicit trigger domain). SAX-04 Outcome 3
-names *"validating input after processing rather than before"* as a pitfall and requires
-sanitizing **before storage** with type/format validation and logged failures — which is
-exactly the ordering fix. (Outcome 5's state-consistency material is DynamoDB/Step Functions
-machinery and does not apply to a local JSON store; noted, not stretched.)
+Validating input after processing rather than before is the pitfall: input is sanitized
+**before storage**, with type/format validation and logged failures — which is exactly the
+ordering fix.
 """
 
 from __future__ import annotations

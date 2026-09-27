@@ -1469,8 +1469,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # structural rather than a list someone has to remember to extend: a field this method
         # starts setting later is protected by the assignment itself. `_RESERVED_NOTE_KEYS` covers
         # only what that cannot reach — the fields set further down under a condition, and `acked`,
-        # which `notify` never writes at all. ARCC's input-validation guidance is explicit that this
-        # is the allowlist direction ("only data fitting specific, approved criteria is processed").
+        # which `notify` never writes at all. That is the allowlist direction for input
+        # validation: only data fitting specific, approved criteria is processed.
         supplied = dict(meta or {})
         smuggled = sorted(set(supplied) & self._RESERVED_NOTE_KEYS)
         if smuggled:

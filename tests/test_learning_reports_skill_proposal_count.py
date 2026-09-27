@@ -18,9 +18,6 @@ skill one belongs to the skill ladder with its own review UI (`#/skills?mode=pro
 own accept/reject endpoints and its own inbox routing. Unioning the rows would make Learning a
 THIRD owner of skill-proposal review, behind one list with two record shapes and two accept
 paths. Bridging the stores properly is Learning-Visibility's, and it already owns it.
-
-ARCC was queried (learning.db records are user data) and returned nothing applicable — VPC
-subnets, DKIM, segregation of duties. Noted; standard practice applies.
 """
 
 from __future__ import annotations

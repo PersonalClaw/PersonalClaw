@@ -14,9 +14,9 @@ learn the port. Asserted from the SERVED card over HTTP, not from the helper's r
 value — the issue asked for exactly that, because a helper can be right while the handler
 that assembles the card ignores it.
 
-**An unresolvable address is a refusal, not a guess.** Per ARCC SAX-04 Outcome 5,
-*"failing open for security-critical operations"* is a named pitfall; advertising a guessed
-address to a peer is failing open. This module already had the precedent and the vocabulary
+**An unresolvable address is a refusal, not a guess.** Failing open on a security-critical
+operation is the pitfall to avoid, and advertising a guessed address to a peer is failing
+open. This module already had the precedent and the vocabulary
 for it — a catalog that cannot be read answers 503 rather than serving an empty card, on
 the stated principle that "an EMPTY card and a BROKEN card must not look alike". An
 unresolvable origin now answers 503 the same way, with its own code so an operator can

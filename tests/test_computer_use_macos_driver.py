@@ -459,8 +459,8 @@ def test_a_row_belonging_to_another_process_is_never_borrowed():
 
 def test_the_newest_matching_row_wins_over_an_earlier_one():
     """Two probes in one session: the answer is the one tccd decided most recently."""
-    earlier = _REAL_TCCD_ROW.replace("dev.warp.Warp-Stable", "com.amazon.kiro.crew").replace(
-        "/Applications/Warp.app/Contents/MacOS/stable", "/Applications/KiroCrew.app/x/KiroCrew"
+    earlier = _REAL_TCCD_ROW.replace("dev.warp.Warp-Stable", "com.example.AgentApp").replace(
+        "/Applications/Warp.app/Contents/MacOS/stable", "/Applications/AgentApp.app/x/AgentApp"
     )
     found = macos_tcc._from_lines([earlier, _REAL_TCCD_ROW], 4242)
     assert found.identifier == "dev.warp.Warp-Stable"
@@ -607,7 +607,7 @@ def test_the_permission_fix_says_it_could_not_determine_the_principal(monkeypatc
 @pytest.mark.parametrize(
     "answer",
     [
-        macos_tcc.Responsible(identifier="com.amazon.kiro.crew", path="/Applications/KiroCrew.app"),
+        macos_tcc.Responsible(identifier="com.example.AgentApp", path="/Applications/AgentApp.app"),
         macos_tcc.Responsible(unknown_reason="/usr/bin/log is not present on this system"),
     ],
 )

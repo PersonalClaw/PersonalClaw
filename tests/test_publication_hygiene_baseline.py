@@ -44,6 +44,7 @@ What this suite guards, measured on ``origin/main`` before the publication-hygie
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,35 @@ _RAIL_OWN_FILES = (
     "scripts/check_publication_hygiene.py",
     "publication-hygiene-baseline.json",
 )
+
+#: The plaintext of the CONTROL entry each internal-reference kind carries in the shipped
+#: denylist, as ``hygiene.denylist_entries`` takes it. The real entries are digests of names
+#: this public repo must never contain, so they cannot be planted here; the controls prove the
+#: same digests-and-tokens machinery fires for every kind, against the real policy file.
+#:
+#: ⚠️  ASSEMBLED AT RUNTIME, for the reason ``_UNLISTED_OWNER`` is: this suite is inside the
+#:     rail's own input set, so a literal control would make this file a published match and
+#:     the rail would be right to red on it. Each is split so that no fragment is itself one.
+_CONTROLS = {
+    "word": "zz" + "hygienecontrol" + "zz",
+    "phrase": "zzcontrol" + "head zzcontrol" + "tail",
+    "host": "zzcontrol" + ".invalid",
+    "code": "zzq" + "-42",
+    "id": "zzq" + "_" + "Ab3dE5gH7jK9mN",
+}
+
+
+def _planted(kind: str) -> str:
+    """A line of ordinary prose carrying the *kind* control the way a real reference would.
+    The phrase wraps across a line break, as a wrapped comment carries one."""
+    head, _, tail = _CONTROLS["phrase"].partition(" ")
+    return {
+        "word": f"# Validated per the {_CONTROLS['word'].upper()} guidance.\n",
+        "phrase": f"# Sign in with {head}\n#   {tail} before the first run.\n",
+        "host": f"See https://docs.{_CONTROLS['host']}/page for the rule.\n",
+        "code": f"# ({_CONTROLS['code'].upper()} boundary validation)\n",
+        "id": f"# cited as ``{_CONTROLS['id']}``\n",
+    }[kind]
 
 
 @pytest.fixture(scope="module")
@@ -324,6 +354,151 @@ def test_the_tracked_env_example_carries_no_real_value():
     assert live == [], f".env.example carries uncommented assignments: {live}"
 
 
+# ── internal references: a public repo must not name a non-public system ─────────────────
+
+
+def test_the_tracked_tree_names_no_internal_system(baseline):
+    """The internal-reference rule on its own, so its verdict stays legible while another rule
+    is red. Ships at zero: every reference was rewritten to the principle it stood for in the
+    change that added the rule (measured on the tree before it: 88 references in 43 files)."""
+    found = hygiene.internal_references(hygiene.tracked_files(), baseline)
+    assert found == [], "a PUBLIC repo names a non-public system:\n  " + "\n  ".join(found)
+
+
+def test_the_internal_reference_scan_reads_the_tree_it_claims_to():
+    """Vacuity. A reader that silently decoded nothing would keep the tree test green forever,
+    so the text census must cover most of the tracked tree — and a control appended to a REAL
+    tracked file's own content must still red through the matcher."""
+    texts = dict(hygiene._text_blobs(hygiene.tracked_files(), REPO_ROOT))
+    assert len(texts) > 4000, f"only {len(texts)} tracked text files were read"
+    rule = hygiene.load_baseline()["internal_reference_rule"]
+    matcher = hygiene.InternalReferenceMatcher(rule)
+    assert matcher.located(texts["README.md"]) == []
+    assert matcher.located(texts["README.md"] + "\n" + _planted("word")), "control did not fire"
+
+
+@pytest.mark.parametrize("kind", sorted(_CONTROLS))
+def test_each_internal_reference_kind_reds_on_its_planted_control(tmp_path, kind):
+    """One positive control per kind, through a real seeded repo and the SHIPPED policy — so a
+    green here proves the digests in the policy file fire, not that a test-local copy would.
+    The planted line is line 2, and the wrapped phrase must be placed on its first word's line.
+    """
+    root = _seed_repo(tmp_path / kind, {"docs/notes.md": "An ordinary line.\n" + _planted(kind)})
+    found = [f for f in hygiene.violations(root) if f.startswith("internal-reference:")]
+    expected = f"internal-reference: docs/notes.md:2 names a denied {kind} "
+    assert len(found) == 1 and found[0].startswith(expected), found
+
+
+@pytest.mark.parametrize(
+    "spelled",
+    [
+        lambda w: w.upper(),
+        lambda w: f"search_{w}_helper",
+        lambda w: f"{w}-mcp",
+        lambda w: f"{w.capitalize()}Service",
+    ],
+    ids=["upper-case", "snake_case", "kebab-case", "CamelCase"],
+)
+def test_a_denied_word_is_read_inside_an_identifier(tmp_path, spelled):
+    """A name reaches the tree inside identifiers as often as in prose: a test named after it,
+    a ``Service`` class, an MCP server id. Each spelling folds to the same word."""
+    body = f"value = {spelled(_CONTROLS['word'])}\n"
+    root = _seed_repo(tmp_path / "r", {"src/module.py": body})
+    found = [f for f in hygiene.violations(root) if f.startswith("internal-reference:")]
+    assert found and found[0].startswith("internal-reference: src/module.py:1 names a denied word")
+
+
+def test_a_denied_name_in_a_path_reds(tmp_path):
+    """A file NAME is published exactly as its content is, so paths are checked too."""
+    name = f"docs/{_CONTROLS['word']}-notes.md"
+    root = _seed_repo(tmp_path / "r", {name: "Ordinary content.\n"})
+    found = hygiene.violations(root)
+    assert any(f.startswith(f"internal-reference: {name} — its PATH") for f in found), found
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _CONTROLS["word"] + "ish",
+        "docs." + _CONTROLS["host"] + ".example",
+        "not" + _CONTROLS["host"],
+        _CONTROLS["code"].split("-")[0] + "-1.6.0",
+        _CONTROLS["code"].split("-")[0] + "-1234",
+        _CONTROLS["id"].split("_")[0] + "_processed1",
+        _CONTROLS["phrase"].split(" ")[0] + " unrelated",
+    ],
+    ids=[
+        "a-longer-word",
+        "the-host-as-a-prefix",
+        "a-label-ending-in-the-host",
+        "a-version-string",
+        "four-digits",
+        "a-snake-case-name",
+        "the-phrase-head-alone",
+    ],
+)
+def test_a_near_miss_of_each_control_stays_green(tmp_path, text):
+    """Each kind's boundary, pinned beside its control. The tracked tree is the near-miss
+    corpus at scale — it names public cloud services and their hosts hundreds of times and
+    must stay green — and these pin the shapes one kind could plausibly over-read."""
+    root = _seed_repo(tmp_path / "r", {"docs/notes.md": f"An ordinary {text} line.\n"})
+    found = [f for f in hygiene.violations(root) if f.startswith("internal-reference:")]
+    assert found == [], f"{text!r} is not a reference, but red: {found}"
+
+
+def test_the_denylist_is_digests_and_no_kind_is_only_its_control(baseline):
+    """The policy must never hold plaintext — the digests are what keep the names out of this
+    repository — and no kind may shrink to its control alone: that rule would pass its own
+    positive control while denying nothing real. Lowering the floor is a policy decision."""
+    rule = baseline["internal_reference_rule"]
+    assert set(rule["denied"]) == set(hygiene.INTERNAL_REFERENCE_KINDS)
+    digest = re.compile(r"[0-9a-f]{64}")
+    for kind, entries in rule["denied"].items():
+        assert all(digest.fullmatch(e) for e in entries), f"{kind} holds a non-digest entry"
+        assert len(entries) == len(set(entries)), f"{kind} holds a duplicate entry"
+        assert len(entries) >= 2, f"{kind} denies nothing but its control"
+    assert sum(map(len, rule["denied"].values())) >= 91, "the denylist shrank"
+
+
+@pytest.mark.parametrize("kind", sorted(_CONTROLS))
+def test_every_control_is_a_real_entry_of_the_shipped_policy(baseline, kind):
+    """Each control — and, for a compound kind, its head — is in the policy file. Without this,
+    a control that stopped firing would read as the rule having been FIXED."""
+    rule = baseline["internal_reference_rule"]
+    for entry_kind, candidate in hygiene.denylist_entries(kind, _CONTROLS[kind]):
+        entry = hygiene.internal_reference_digest(entry_kind, candidate, rule["digest_salt"])
+        assert entry in rule["denied"][entry_kind], (kind, entry_kind)
+
+
+def _checker(*args: str) -> subprocess.CompletedProcess:
+    script = str(REPO_ROOT / "scripts" / "check_publication_hygiene.py")
+    return subprocess.run([sys.executable, script, *args], capture_output=True, text=True)
+
+
+def test_the_digest_helper_prints_the_policys_own_lines(baseline):
+    """``--digest`` is how a maintainer denies a new name without writing it into the repo, so
+    its output must be exactly the policy's own entries — the phrase's head line included."""
+    run = _checker("--digest", "phrase", _CONTROLS["phrase"])
+    assert run.returncode == 0, run.stderr
+    lines = [line.split() for line in run.stdout.splitlines()]
+    assert [kind for kind, _ in lines] == ["phrase", "phrase-head"]
+    denied = baseline["internal_reference_rule"]["denied"]
+    assert all(entry in denied[kind] for kind, entry in lines), lines
+
+
+def test_scan_holds_text_outside_the_tree_to_the_same_rule(tmp_path):
+    """``--scan`` is the rule for what is about to be published but is not tracked — an
+    unpacked wheel, a PR body saved to a file. Red on a planted control, green on clean text."""
+    dirty, clean = tmp_path / "dirty", tmp_path / "clean"
+    dirty.mkdir()
+    clean.mkdir()
+    (dirty / "body.md").write_text(_planted("id"), encoding="utf-8")
+    (clean / "body.md").write_text("Never trust an upload's declared type.\n", encoding="utf-8")
+    red, green = _checker("--scan", str(dirty)), _checker("--scan", str(clean))
+    assert red.returncode == 1 and "body.md:1 names a denied id" in red.stdout, red.stdout
+    assert green.returncode == 0, green.stdout
+
+
 # ── the policy file must stay honest ────────────────────────────────────────────────────
 
 
@@ -334,11 +509,13 @@ def test_every_rule_carries_a_rationale(baseline):
         *baseline["path_rules"],
         baseline["binary_size_rule"],
         baseline["real_home_path_rule"],
+        baseline["internal_reference_rule"],
     ]
     assert rules, "no rules loaded"
     for rule in rules:
         assert rule.get("rationale", "").strip(), f"{rule['name']} has no rationale"
         assert len(rule["rationale"]) > 80, f"{rule['name']}'s rationale is a placeholder"
+    assert len(baseline["internal_reference_rule"]["how_to_fix"]) > 80
 
 
 def test_every_allowed_entry_is_still_tracked_and_still_needed(baseline):

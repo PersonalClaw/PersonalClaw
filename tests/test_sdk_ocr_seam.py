@@ -14,7 +14,7 @@ front depends on, and one the facade deliberately withholds:
   stop being a property of the build;
 * the gate an app actually calls before handing bytes to a decoder refuses on the BYTES,
   not on the name — so a ``.png`` holding a PDF is rejected through the facade, which is
-  the only definition of "the app inherited the ARCC allowlist" worth asserting;
+  the only definition of "the app inherited the true-type allowlist" worth asserting;
 * ``recognize`` takes a ``Sequence[str]``, so the gate is promoted in its BATCH form too:
   ``partition_images`` collects the refusals instead of raising on the first one. A
   provider handed forty pages must not discard thirty-nine readable ones because page

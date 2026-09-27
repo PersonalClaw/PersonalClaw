@@ -25,8 +25,8 @@ condition, plus `acked`.
 Measured before the fix: `meta={"kind": "info"}` on a `chat.error` notification produced a persisted
 note whose `kind` was `info`.
 
-ARCC's input-validation guidance is the direction taken here — *"Always use an allowlisting approach
-over a denylisting approach"* and *"only data fitting specific, approved criteria is processed"*.
+The input-validation direction taken here: always an allowlist over a denylist, so only data
+fitting specific, approved criteria is processed.
 """
 
 from __future__ import annotations

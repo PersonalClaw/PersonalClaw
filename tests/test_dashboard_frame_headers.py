@@ -35,9 +35,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-#: Promoted from ad-hoc per-response headers to a global default by #2735. ARCC's
-#: "Secure HTTP Headers" guidance lists all three among the headers to set for ALL
-#: responses; before this change they appeared only on specific artifact/file responses.
+#: Promoted from ad-hoc per-response headers to a global default by #2735. All three are
+#: security headers that belong on EVERY response; before this change they appeared only
+#: on specific artifact/file responses.
 EXPECTED_HEADERS = {
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -117,7 +117,9 @@ async def test_every_door_declares_who_may_frame_it(path, tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", DOORS)
-async def test_every_door_carries_the_arcc_baseline_headers(path, tmp_path, monkeypatch) -> None:
+async def test_every_door_carries_the_baseline_security_headers(
+    path, tmp_path, monkeypatch
+) -> None:
     """``Referrer-Policy`` + ``X-Content-Type-Options`` were per-response, now global."""
     import aiohttp
 

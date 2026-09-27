@@ -16,7 +16,7 @@ empty ingest. ``tests/fixtures/image_only_scan.pdf`` is that document, and the t
    ``meta.ocr == "unavailable"`` with empty extracted text and NO exception — mirroring
    ``_read_pdf``'s "pdfplumber is None" contract, which reports rather than raises.
 4. No double-OCR: with a spy on the engine, a text-layer PDF invokes it ZERO times.
-5. Bomb ceiling (ARCC ``cnt_eMkU5kkpTaEk65``, "enforce file upload size limits"): a PDF
+5. Bomb ceiling (an upload's decode work is size-limited): a PDF
    declaring 120 pages rasterizes a BOUNDED number of them, and a page declaring 20,000 ×
    20,000 points renders under a pixel budget instead of allocating 400 megapixels.
 
@@ -588,8 +588,8 @@ def test_the_vision_llm_backend_refuses_a_non_image_before_the_model(tmp_path, m
     happened to be resolvable.
 
     The assertion that matters is ``called == []``: not merely that the output says
-    "rejected", but that the model was never handed the bytes. ARCC ``cnt_eMkU5kkpTaEk65``
-    requires validating the true type BEFORE a consumer processes the file.
+    "rejected", but that the model was never handed the bytes. An upload's true type is
+    validated BEFORE any consumer processes the file.
     """
     from personalclaw.knowledge.pipeline.nodes import media_nodes
 

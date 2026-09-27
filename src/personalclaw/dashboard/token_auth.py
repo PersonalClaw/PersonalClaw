@@ -2065,10 +2065,10 @@ _SUCCESS_MAX_PATHS = 10
 class _SuccessTally:
     """Successful authentications, recorded as one SEL row per identity per window.
 
-    ARCC's audit-logging guidance for this surface (BSC4 "Log Every Security Event", and the
-    SEL requirement it points to: capture the who, what and when of each TRANSACTION so actions
-    trace to an actor and an incident can be reconstructed) is about security EVENTS. A
-    cookie-authenticated request is the same session presenting the same credential again, not
+    Audit logging for this surface — log every security event to the SEL, capturing the who,
+    what and when of each TRANSACTION so actions trace to an actor and an incident can be
+    reconstructed — is about security EVENTS. A cookie-authenticated request is the same
+    session presenting the same credential again, not
     a new event — and a row for each one was 94% of the log: one idle Home tab made 428 requests
     in 3 minutes and the log grew ~5 MB an hour (measured, day 8).
 

@@ -22,10 +22,10 @@ failure, and it does so after triage, scenario-gen, execute and the evidence act
 run — i.e. after paid model calls. `start_run`'s own comment on the required-input check says
 "Refused BEFORE tokens are spent"; the same reasoning had stopped one line short of types.
 
-ARCC was queried before writing this (an API accepting caller-controlled values that can enable a
-write path). SAX-04/SAX-05 guidance applied: validate at the layer every path crosses rather than
-only at the client, use an allowlist not a blocklist, keep validation separate from business logic,
-and do not echo unbounded input back in an error message.
+The input-validation rules applied here (an API accepting caller-controlled values that can
+enable a write path): validate at the layer every path crosses rather than only at the client,
+use an allowlist not a blocklist, keep validation separate from business logic, and do not echo
+unbounded input back in an error message.
 """
 
 from __future__ import annotations
@@ -227,7 +227,7 @@ class TestErrorMessages:
         ]
 
     def test_a_long_value_is_truncated_rather_than_reflected_whole(self) -> None:
-        """ARCC's input-validation guidance: an error message must not become an echo of an
+        """Input validation: an error message must not become an echo of an
         unbounded caller-controlled payload. Plain inputs are not a secret store — an inline secret
         is refused at save (`WF_DEF_INLINE_SECRET`) — but they are still caller text."""
         _coerced, errors = contracts.coerce_declared_inputs(NUM, {"size": "z" * 5000})

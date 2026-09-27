@@ -17,9 +17,9 @@ These tests pin both halves of the fix:
 
 * the resolution has ONE owner (``gateway_base``) fed by the socket the gateway actually bound,
   and the rail at the bottom reds when a new site learns to resolve the base on its own;
-* an unresolvable base is a loud, fast refusal that names its cause — never ``10000``. Per ARCC
-  SAX-04 Outcome 5, *"failing open for security-critical operations"* is a named pitfall and a
-  system must *"fail fast rather than hanging indefinitely on timeout"*.
+* an unresolvable base is a loud, fast refusal that names its cause — never ``10000``. Failing
+  open on a security-critical operation is the pitfall to avoid, and a system must fail fast
+  rather than hang indefinitely on a timeout.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class TestTheOwnerRefusesRatherThanDefaulting:
         assert "dashboard.url" in message
 
     def test_the_refusal_is_fast(self, home):
-        """ARCC SAX-04 O5: "fail fast rather than hanging indefinitely on timeout"."""
+        """Fail fast rather than hang indefinitely on a timeout."""
         started = time.monotonic()
         with pytest.raises(GatewayBaseUnresolved):
             gateway_base.resolve_api_base()

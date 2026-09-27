@@ -134,7 +134,7 @@ class TestUpdateEndpoints:
         assert "building" in steps_seen
         assert "restarting" in steps_seen
         assert "done" in steps_seen
-        # The Amazon-era 'syncing' step is gone from the public pipeline.
+        # The retired 'syncing' step is gone from the update pipeline.
         assert "syncing" not in steps_seen
 
     @pytest.mark.asyncio
