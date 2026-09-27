@@ -56,7 +56,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "context"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "payload"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "status_url"},
-    {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "answer"}
+    {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "answer"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"}
    ],
    "returns": "None"
   },
@@ -3115,7 +3116,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "parent_run"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "queued"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "cancelled"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "_outcome_noted"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "_outcome_noted"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"}
    ],
    "returns": "None"
   },
@@ -3212,7 +3214,8 @@
      {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "dry_run"},
      {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "parent_run"},
      {"annotation": "str", "default": "'none'", "kind": "positional_or_keyword", "name": "sandbox"},
-     {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"}
+     {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "trigger_id"}
     ],
     "returns": "SubagentInfo | None"
    },

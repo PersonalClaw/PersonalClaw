@@ -377,29 +377,62 @@ class TestPublisher:
         assert await controller.run_to_completion(timeout=20) == RunStatus.COMPLETE
         await wd.stop()
 
-    async def test_a_run_update_also_signals_the_ws(self) -> None:
-        """WS envelopes are refetch SIGNALS, not payloads (the DashboardLive convention)."""
-        signals: list[dict] = []
+    async def test_a_run_update_tells_every_open_page_to_reread_the_runs(self, monkeypatch) -> None:
+        """A run starting or ending reaches the dashboard socket as the run list's refresh hint.
 
-        class _State:
-            def workflow_sse(self):
-                class R:
-                    def publish(self, *a):
-                        pass
+        Asserted at the SOCKET, through the real dashboard translator, because the fake this
+        replaces could not see the defect. The signal was handed to `_broadcast` as
+        `{"type": "workflow_run_update", "run_id": …}`, and `_broadcast` reads `_type`, so it went
+        out as a `notification` frame: the bell, the Notifications page and Home re-read their
+        notifications on every run update, and no page read it as a run changing. Mission
+        Control's Working lane kept a finished run's card until a reload (#3698's "left undone").
+        """
+        import json
 
-                return R()
+        from personalclaw.dashboard.state import DashboardState
 
-            def _broadcast(self, msg):
-                signals.append(msg)
+        class _Socket:
+            closed = False
+
+            def __init__(self) -> None:
+                self.frames: list[dict] = []
+
+            def send_str(self, msg: str):
+                self.frames.append(json.loads(msg))
+
+                async def _sent():
+                    return None
+
+                return _sent()
+
+        class _Registry:
+            def publish(self, *a):
+                pass
+
+        owner = _Socket()
+        state = DashboardState.__new__(DashboardState)
+        state._ws_clients = [owner]
+        state._ws_app = {}
+        state._notification_log = []
+        state._sessions = {}
+        state._pending_approvals = {}
+        state.conversation_log = None
+        state.workflow_sse = lambda: _Registry()  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            DashboardState, "_schedule_ws_send", lambda self, coro: (coro.close(), True)[1]
+        )
 
         run = _run()
-        wd = WorkflowWatchdog(_State(), EngineServices())
+        wd = WorkflowWatchdog(state, EngineServices())
         controller = await wd.launch(run, SPEC)
         await controller.run_to_completion(timeout=20)
-        assert signals
-        assert all(s["type"] == "workflow_run_update" for s in signals)
-        assert all(set(s) == {"type", "run_id"} for s in signals), "payload, not a signal"
         await wd.stop()
+
+        assert owner.frames, "a run started and finished and no open page was told"
+        assert [f["type"] for f in owner.frames if f["type"] == "notification"] == []
+        assert all(
+            f == {"type": "refresh", "data": {"kinds": ["workflow_runs"]}} for f in owner.frames
+        )
 
 
 class TestLoopHubAdoption:

@@ -120,6 +120,9 @@ class InvokeAgentActionProvider(ActionProvider):
                     approval_mode=approval_mode,
                     capability_class=capability_class,
                     silent=False,
+                    # The trigger whose fire this is (`ActionContext.trigger_id`), so an approval
+                    # the agent asks for names it and can be run again from the Inbox.
+                    trigger_id=ctx.trigger_id,
                 )
             except Exception:
                 logger.warning("invoke-agent: spawn failed", exc_info=True)

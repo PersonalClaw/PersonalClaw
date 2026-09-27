@@ -2233,6 +2233,7 @@ async def _dispatch_store_action(
         context="",
         payload=payload,
         status_url=status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+        trigger_id=str(getattr(trigger, "id", "") or ""),
     )
     from personalclaw.triggers.firepath import action_timeout
 

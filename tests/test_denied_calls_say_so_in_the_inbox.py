@@ -103,6 +103,23 @@ async def test_a_background_approval_nobody_answers_leaves_one_too(
 
 
 @pytest.mark.asyncio
+async def test_a_workflow_step_s_approval_nobody_answers_names_the_step(
+    world, monkeypatch  # noqa: F811 - the imported fixture, by name
+):
+    """A step's agent asks under its run's key (`workflow:<run>:<node>`). The note names the step,
+    which is what the run page and the Inbox's "Run this step again" call it — "A subagent" named
+    nothing the owner could find."""
+    _short_window(monkeypatch, world.state)
+    denied = await world.state.request_approval(
+        "subagent:ab12:tc-1", "subagent", "write_file", session="workflow:9e77ee4b:draft"
+    )
+    assert denied is False
+    (note,) = _notes(world.store)
+    assert note.refs["session"] == "workflow:9e77ee4b:draft"
+    assert "The “draft” step of a workflow run asked to run write_file" in note.message
+
+
+@pytest.mark.asyncio
 async def test_the_note_names_the_window_it_waited(world, monkeypatch):  # noqa: F811
     """At the default window the note says two hours — the wait the owner can now change."""
     import types

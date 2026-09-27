@@ -27,6 +27,10 @@ class ActionContext:
     everywhere else. Out of `payload` for the same reason as `status_url`, and one more: a
     trigger's payload is third-party event data, and a fact only the engine may state must not
     be something a webhook body can spell.
+    `trigger_id` is the store id of the trigger whose fire this is, set by the two store-trigger
+    dispatches (its own fire, and Run now). A provider that starts an agent hands it on
+    (`SubagentManager.spawn(trigger_id=…)`), so an approval that agent asks for, and the note it
+    leaves if nobody answers, can name the trigger and offer to run it again.
     """
 
     event: str
@@ -34,6 +38,7 @@ class ActionContext:
     payload: dict[str, Any] = field(default_factory=dict)
     status_url: str = ""
     answer: Any = None
+    trigger_id: str = ""
 
 
 @dataclass

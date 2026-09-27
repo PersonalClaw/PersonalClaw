@@ -139,6 +139,17 @@ logger = logging.getLogger(__name__)
 #: NAMED to the agent but none of its content loaded.
 _SKILL_USED_STATES = (SkillLoadState.ADMITTED.value, SkillLoadState.REDUCED.value)
 
+#: How a tool call that needed approval and did not run is named in its transcript row, by how
+#: its approval ended. The chat's steps summary ("Worked through N steps · …") names each step by
+#: this row, so the words are product copy. `expired` says what the Inbox note for it says
+#: ("Denied, no answer: <tool>", `dashboard/auto_denials.py`): the window closed with nobody
+#: there, which is not a Deny.
+_UNRUN_STEP_WORDS = {
+    "rejected": "rejected",
+    "expired": "denied, no answer",
+    "cancelled": "cancelled",
+}
+
 
 def _skills_sent(decisions: list, headroom: object) -> list[dict]:
     """The skills-used record for a turn: what the prompt that was actually SENT carried.
@@ -3977,8 +3988,10 @@ async def run_chat(
                         },
                     )
                     continue
-                # Auto-reject remaining tools after one rejection in a batch
-                if getattr(session, "_batch_rejected", False):
+                # Auto-reject remaining tools after one rejection in a batch — refused the way the
+                # batch was: a Deny, or no answer in time, or the turn being stopped.
+                refused_as = getattr(session, "_batch_rejected", "")
+                if refused_as:
                     await client.reject_tool(event.request_id)
                     _title, _ = redact_exfiltration_urls(event.title)
                     _title, _ = redact_credentials(_title)
@@ -3987,7 +4000,7 @@ async def run_chat(
                     )[0]
                     session.append(
                         "tool",
-                        f"{_title} (rejected)",
+                        f"{_title} ({_UNRUN_STEP_WORDS[refused_as]})",
                         "msg msg-tool",
                         meta=(
                             {"tool_call_id": event.tool_call_id, "purpose": _purpose}
@@ -3995,11 +4008,11 @@ async def run_chat(
                             else None
                         ),
                     )
-                    # Mark the permission as resolved so UI shows rejection
+                    # Mark the permission as resolved so the card says how it ended
                     perm_meta: dict[str, str] = {
                         "request_id": str(event.request_id),
                         "tool_call_id": event.tool_call_id or "",
-                        "resolved": "rejected",
+                        "resolved": refused_as,
                     }
                     session.append("permission", _title, json.dumps(perm_meta))
                     sel().log_tool_invocation(
@@ -4008,7 +4021,13 @@ async def run_chat(
                         source="dashboard",
                         tool_name=event.title,
                         tool_kind=event.tool_kind,
-                        outcome="rejected",
+                        # Each word spelled out, not `refused_as`, so the outcome census
+                        # (`tests/test_audit_outcome_families.py`) can read what this row writes.
+                        outcome=(
+                            "expired"
+                            if refused_as == "expired"
+                            else ("cancelled" if refused_as == "cancelled" else "rejected")
+                        ),
                         request_id=event.request_id,
                         metadata={"reason": "batch_rejection"},
                     )
@@ -4291,12 +4310,18 @@ async def run_chat(
                 else:
                     await client.reject_tool(event.request_id)
                     # `cancelled` is the turn being stopped while it waited (see
-                    # `DashboardState.cancel_approval`), not a person's Deny — so it is not
-                    # written up as one, in the transcript or in the audit row.
-                    stopped = outcome == "cancelled"
+                    # `DashboardState.cancel_approval`), and `expired` is its window closing with
+                    # nobody there. Neither is a person's Deny, so neither is written up as one:
+                    # not in the transcript row, which the steps summary names the step by, and not
+                    # in the audit row, whose Denied filter would otherwise return it.
+                    ended_as = (
+                        "cancelled"
+                        if outcome == "cancelled"
+                        else ("expired" if timed_out else "rejected")
+                    )
                     session.append(
                         "tool",
-                        f"{event.title} ({'cancelled' if stopped else 'rejected'})",
+                        f"{event.title} ({_UNRUN_STEP_WORDS[ended_as]})",
                         "msg msg-tool",
                     )
                     sel().log_tool_invocation(
@@ -4305,19 +4330,22 @@ async def run_chat(
                         source="dashboard",
                         tool_name=event.title,
                         tool_kind=event.tool_kind,
-                        outcome="cancelled" if stopped else "rejected",
+                        # Spelled out, not `ended_as`, for the outcome census (as above).
+                        outcome=(
+                            "expired"
+                            if ended_as == "expired"
+                            else ("cancelled" if ended_as == "cancelled" else "rejected")
+                        ),
                         request_id=event.request_id,
                         metadata={"reason": "interactive", "risk": effective_risk},
                     )
-
-                if outcome != "approved":
-                    # mark batch_rejected as true and continue loop instead of breaking
-                    # This will allow for marking other batched approval requests as rejected too
-                    session._batch_rejected = True
+                    # Refuse the rest of the batch the same way, and continue the loop instead of
+                    # breaking, so the other batched requests are marked too.
+                    session._batch_rejected = ended_as
                     logger.warning(
                         "PERM REJECTED tool=%r outcome=%r — auto-rejecting remaining batch",
                         event.title,
-                        outcome,
+                        ended_as,
                     )
                     continue
             elif event.kind == EVENT_COMPACTION_STATUS:
@@ -4888,7 +4916,7 @@ async def run_chat(
                 _flush_segment(state, session, _unsettled, broadcast=False)
             except Exception:
                 logger.warning("could not settle the streamed answer for %s", session.key)
-        session._batch_rejected = False
+        session._batch_rejected = ""
         # Clear this turn from the active-job tracker (PLATFORM-RESILIENCE §6.2) — the
         # same turn-exit boundary autonudge re-arms on. Best-effort.
         try:

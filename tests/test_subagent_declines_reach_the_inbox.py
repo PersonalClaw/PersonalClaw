@@ -90,6 +90,8 @@ async def test_the_gateway_records_it_against_the_parent(parent, title, who) -> 
     info = MagicMock()
     info.id = "sub-1"
     info.parent_session_key = parent
+    # A chat's or a workflow step's helper — no trigger started it (`SubagentInfo.trigger_id`).
+    info.trigger_id = ""
 
     with patch("personalclaw.dashboard.auto_denials.note_unattended") as note:
         await on_event("subagent_auto_denied", info, {"tool": "write_file"})

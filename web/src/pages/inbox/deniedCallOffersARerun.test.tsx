@@ -71,4 +71,16 @@ describe('a denied call in the Inbox', () => {
     render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', session: 'cron:nightly' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Ask it to try again' })).toBeNull()
   })
+
+  it.each([
+    ['approved', 'Asked again: you allowed bash.'],
+    ['rejected', 'Asked again: you denied bash.'],
+  ])('🔑 asked again and answered (%s), the note says how it ended and offers nothing more', (retry, said) => {
+    // The gateway marks the note handled with the answer once the same call is asked again there
+    // and answered (`auto_denials.settle_retried`); the retry offer would be a second retry.
+    const handled = { ...note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', chat: 'chat-a', retry }), status: 'handled' } as InboxItem
+    render(<InboxDetail item={handled} onChanged={() => {}} navigate={() => {}} />)
+    expect(screen.getByText(said)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Ask it to try again' })).toBeNull()
+  })
 })

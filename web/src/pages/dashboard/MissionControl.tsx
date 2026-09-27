@@ -3,7 +3,7 @@ import { AlertTriangle, Ban, Check, CheckCircle2, X } from 'lucide-react'
 import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type WorkflowRunSummary } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { Button } from '../../ui/Button'
 import { PageTitle } from '../../ui/PageTitle'
 import { TextLink } from '../../ui/TextLink'
@@ -226,10 +226,15 @@ function endedText(err: unknown): string | null {
 }
 
 /** The frames that change what this view shows. Push, not a poll: the registry broadcasts
- *  `approval`/`approval_resolved`, the Inbox `inbox*`, and a session's run state `sessions`/
- *  `chat_status` — so a card appears, resolves or moves lane while the page is open, without a
- *  timer re-reading three endpoints on an idle tab. */
-function refreshesAttention(type: string): boolean {
+ *  `approval`/`approval_resolved`, the Inbox `inbox*`, a session's run state `sessions`/
+ *  `chat_status`, and the gateway's listing hint `refresh` names `workflow_runs` when a workflow
+ *  run starts, changes status or ends, and `loops` when a loop does — so a card appears,
+ *  resolves or moves lane while the page is open, without a timer re-reading five endpoints on an
+ *  idle tab. The two Working-lane lists had no frame here, so a run that finished or failed kept
+ *  its "running" card until a reload. */
+function refreshesAttention(m: WsMessage): boolean {
+  const type = m.type
+  if (type === 'refresh') return refreshKinds(m).some((k) => k === 'workflow_runs' || k === 'loops')
   return type === 'approval' || type === 'approval_resolved' || type.startsWith('inbox')
     || type === 'sessions' || type === 'chat_status'
 }
@@ -242,7 +247,7 @@ export function MissionControl() {
   // collapses into one re-read shortly after it settles; the same debounce Home applies to them.
   const debounce = useRef<number | undefined>(undefined)
   const onMessage = useCallback((m: WsMessage) => {
-    if (!refreshesAttention(m.type)) return
+    if (!refreshesAttention(m)) return
     if (debounce.current) clearTimeout(debounce.current)
     debounce.current = window.setTimeout(refresh, 300)
   }, [refresh])

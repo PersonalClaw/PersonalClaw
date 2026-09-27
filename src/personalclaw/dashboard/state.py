@@ -421,7 +421,9 @@ class _ChatSession:
         self._prompt_busy_retries: int = 0
         self._acp_pipe_death_retries: int = 0
         self._empty_response_retries: int = 0  # consecutive empty turns (silent-retry guard)
-        self._batch_rejected: bool = False
+        # How this turn's refused batch was refused ("rejected" | "expired" | "cancelled"), or "".
+        # The rest of the batch is refused without asking, and says so in the same words.
+        self._batch_rejected: str = ""
         self.color_index: int | None = None
         self.color_theme: str = ""
         # Natural voice (PT-7), per-conversation scope: a TRI-state
@@ -2279,12 +2281,15 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     def push_refresh(self, *kinds: str) -> None:
         """Push a lightweight refresh hint for specific data types.
 
-        The frontend receives ``event: refresh`` with ``data: kind1,kind2``
+        The frontend receives a ``refresh`` frame whose ``data.kinds`` lists them,
         and fetches fresh data only for those types.  This replaces blind
         polling — the server tells the client *when* to refresh, not the
         client guessing on a timer.
 
-        Supported kinds: ``crons``, ``lessons``, ``agents``, ``history``.
+        Kinds in use: ``crons`` / ``cron_history`` (an automation changed / ran), ``loops``,
+        ``workflow_runs`` (a workflow run started, changed status or ended —
+        ``workflows/watchdog``), ``history`` (the chat list), ``agents``, ``lessons``, and the
+        self-update's ``update_available`` / ``updating`` / ``update_failed``.
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})
 

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { reportingWrite } from '../../app/reportingWrite'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, isSwitchedOff } from '../../lib/api'
 import type {
@@ -141,12 +141,6 @@ export function useDashboardLive(): DashboardLiveData {
 // the tab (`useVisiblePoll`).
 const FAST_POLL = 8000
 const SLOW_POLL = 20000
-
-/** The `refresh` hint's kinds (`DashboardState.push_refresh`), when a frame is one. */
-function refreshKinds(m: WsMessage): string[] {
-  const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
-  return Array.isArray(kinds) ? kinds.map(String) : []
-}
 
 export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [approvals, setApprovals] = useState<PendingApproval[]>([])
@@ -310,7 +304,9 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     // run feed below is not.
     else if (t === 'refresh') {
       const kinds = refreshKinds(m)
-      if (kinds.includes('loops')) soon('loops', loadLoops)
+      // A run-backed loop IS a workflow run, so a run changing status (`workflow_runs`, the
+      // workflow watchdog's hint) moves its loop too.
+      if (kinds.includes('loops') || kinds.includes('workflow_runs')) soon('loops', loadLoops)
       if (kinds.includes('crons') || kinds.includes('cron_history')) soon('schedule', loadSchedule)
     }
     // Loop / run progress + session lifecycle nudges refresh the work + status views

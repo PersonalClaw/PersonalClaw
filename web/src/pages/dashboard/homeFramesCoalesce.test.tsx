@@ -31,7 +31,8 @@ function mockApi() {
       doctor: () => Promise.resolve({ ok: true, core_ok: true, worst: '', capabilities: {} }),
     },
   }))
-  vi.doMock('../../lib/useChatSocket', () => ({
+  vi.doMock('../../lib/useChatSocket', async (orig) => ({
+    ...(await orig<Record<string, unknown>>()),
     useChatSocket: (onMessage: (m: WsMessage) => void) => { frames.push(onMessage) },
   }))
 }

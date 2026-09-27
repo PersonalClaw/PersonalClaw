@@ -16,7 +16,7 @@ import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
@@ -116,8 +116,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // schedules re-read, so the strip said "6 triggers" over a list of 5 (day 8). The gateway says
   // `crons` whenever the trigger store changes, and every source re-reads on it.
   useChatSocket((m: WsMessage) => {
-    const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
-    if (Array.isArray(kinds) && kinds.includes('crons')) {
+    if (refreshKinds(m).includes('crons')) {
       loadSchedules(); loadHooks(); loadStores(); loadReview()
     }
   })

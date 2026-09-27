@@ -174,9 +174,9 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             # fixed by keying the claim per node INSTANCE (#3531) rather than by shortening the
             # window here. Releasing on both outcomes ALSO clears it — measured, the research
             # round loop goes from 1 dispatch to 8 — but it would be a second mechanism for one
-            # symptom, and a re-run of the same SUCCEEDED instance is intercepted before the
-            # claim is consulted anyway (the committed-effects redo gate, then the WF2-A1 resume
-            # cache).
+            # symptom. A re-run of the same SUCCEEDED instance is a rewind, and the rewind gives
+            # the settled attempt's claim back when it resets the instance
+            # (`mid_flight._apply_reentry`).
             release_execution_claim(inst.claim_target, inst.claim_holder)
             inst.claim_target = ""
             inst.claim_holder = ""
