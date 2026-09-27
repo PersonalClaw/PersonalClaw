@@ -613,6 +613,10 @@ async def start_dashboard(
     # `crossorigin="use-credentials"` so the browser sends the cookie.
     app.router.add_get("/manifest.webmanifest", handlers.manifest_webmanifest)
     app.router.add_get("/sw.js", handlers.service_worker)
+    # The licence notices the dashboard ships, at stable root URLs that Settings → Updates links:
+    # the fonts' and the bundled npm packages'. Session-gated like every page here.
+    app.router.add_get("/THIRD_PARTY_NOTICES.txt", handlers.third_party_notices)
+    app.router.add_get("/THIRD_PARTY_NOTICES_NPM.txt", handlers.third_party_notices_npm)
 
     # Owner login (REMOTE-USER-AUTH C3). `/login`, `/api/auth/login` and
     # `/api/auth/status` are token-auth EXEMPT — they are how a remote browser obtains a

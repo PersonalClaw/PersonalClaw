@@ -1424,8 +1424,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'updates', group: 'System', label: 'Updates', icon: DownloadCloud, size: 'sm',
-    description: 'Version, changelog, and update controls.',
-    useSearchText() { const { data: u } = useUpdates(); return `updates version changelog upgrade pin ${u ? `${u.version ?? ''} ${updateVerdictLabel(u)} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
+    description: 'Version, licences, changelog, and update controls.',
+    useSearchText() { const { data: u } = useUpdates(); return `updates version licences licenses notices third-party open-source changelog upgrade pin ${u ? `${u.version ?? ''} ${updateVerdictLabel(u)} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
     render(query, go) {
       const { data: u, refresh, stale: uStale, status: uStatus, error: uErr } = useUpdates()
       return (

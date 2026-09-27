@@ -269,6 +269,68 @@ def test_the_boot_probe_actually_calls_the_assertion() -> None:
     )
 
 
+# ── The licence notices: checked at build time, served by the installed wheel ─
+
+
+def _function(name: str) -> ast.FunctionDef:
+    tree = ast.parse(_VERIFY_WHEEL.read_text(encoding="utf-8"))
+    found = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name]
+    assert len(found) == 1, f"scripts/verify_wheel.py has no single `{name}` function"
+    return found[0]
+
+
+def test_the_boot_probe_asks_the_installed_gateway_for_its_licence_notices() -> None:
+    called = {
+        child.func.id
+        for child in ast.walk(_function("_boot_and_probe"))
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+    }
+    assert "_assert_notices_served" in called, (
+        "_boot_and_probe does not call _assert_notices_served, so assertion 9 is declared and "
+        "never runs"
+    )
+
+
+def test_the_notices_assertion_fails_on_the_dashboard_html_an_unrouted_path_answers(
+    verify_wheel, monkeypatch
+) -> None:
+    """An unrouted path gets the SPA shell with a 200, so a status check alone passes it."""
+    served = {
+        path: (
+            200,
+            "text/plain; charset=utf-8",
+            f"{title}\nPersonalClaw's own code is MIT-licensed",
+        )
+        for path, title in verify_wheel._NOTICE_TITLES.items()
+    }
+    monkeypatch.setattr(
+        verify_wheel, "_http_get", lambda url, *_a, **_k: served[url.removeprefix("http://gw")]
+    )
+    verify_wheel._assert_notices_served("http://gw")
+
+    served["/THIRD_PARTY_NOTICES_NPM.txt"] = (200, "text/html", "<!doctype html><html>…")
+    with pytest.raises(SystemExit):
+        verify_wheel._assert_notices_served("http://gw")
+
+
+def test_the_canonical_build_checks_the_licences_of_what_the_spa_build_emitted() -> None:
+    """``make build`` fails when a bundled npm package, font or binary has no licence notice:
+    the check runs on the SPA it just built, before any artifact is made from it."""
+    commands = [
+        [elt.value for elt in node.args[0].elts if isinstance(elt, ast.Constant)]
+        for node in ast.walk(_function("_canonical_distribution_build"))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run"
+        and isinstance(node.args[0], ast.List)
+    ]
+    spa = next(i for i, cmd in enumerate(commands) if cmd[-2:] == ["run", "build"])
+    check = next(i for i, cmd in enumerate(commands) if "scripts/check_asset_licenses.py" in cmd)
+    wheel = next(i for i, cmd in enumerate(commands) if "--wheel" in cmd)
+    assert "--built-web" in commands[check]
+    assert spa < check < wheel, f"the licence check runs out of order: {commands}"
+
+
 # ── Every staging tree is cleared, judged behaviourally ───────────────────────
 
 

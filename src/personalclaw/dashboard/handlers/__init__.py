@@ -120,6 +120,8 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     index,
     manifest_webmanifest,
     service_worker,
+    third_party_notices,
+    third_party_notices_npm,
 )
 from personalclaw.dashboard.handlers.decisions import (  # noqa: E402, F401
     api_decision_journal,

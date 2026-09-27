@@ -46,6 +46,16 @@ const MAY_WRITE: Record<string, string> = {
     'run skips it, so the tree stays clean.',
 }
 
+/** Test files that write only inside a scratch directory of their own, under the OS temp
+ *  directory, and so never into the repository at all. Each creates it with
+ *  `mkdtempSync(join(tmpdir(), …))` and removes it after every test, which is checked below.
+ *  The same bar as above: a row is a decision with a reason, not a way to make this green. */
+const MAY_WRITE_SCRATCH: Record<string, string> = {
+  'app/thirdPartyNotices.test.ts':
+    'Lays out a throwaway repository (a package-lock.json, installed packages and a web ' +
+    'build) for the third-party notices plugin to read, and to write its notices into.',
+}
+
 function testFiles(dir: string): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir)) {
@@ -84,8 +94,22 @@ describe('no test writes into the repository', () => {
     const offenders = files
       .filter((f) => FS_WRITE.test(readFileSync(f, 'utf8')))
       .map((f) => relative(SRC, f).split(/[\\/]/).join('/'))
-      .filter((rel) => !(rel in MAY_WRITE))
+      .filter((rel) => !(rel in MAY_WRITE) && !(rel in MAY_WRITE_SCRATCH))
     expect(offenders).toEqual([])
+  })
+
+  it('every scratch writer writes under a temp directory of its own and removes it', () => {
+    for (const [rel, reason] of Object.entries(MAY_WRITE_SCRATCH)) {
+      expect(reason.trim().length, `${rel} needs a real reason`).toBeGreaterThan(20)
+      const source = readFileSync(join(SRC, rel), 'utf8')
+      expect(FS_WRITE.test(source), `${rel} no longer writes — delete its row`).toBe(true)
+      expect(source, `${rel} must make its root with mkdtempSync(join(tmpdir(), …))`).toMatch(
+        /mkdtempSync\(\s*join\(\s*tmpdir\(\)/,
+      )
+      expect(source, `${rel} must remove its root after each test`).toMatch(
+        /afterEach\([\s\S]*?rmSync\([^)]*recursive: true/,
+      )
+    }
   })
 
   it('every allowlisted writer is gated so a plain test run cannot fire it', () => {

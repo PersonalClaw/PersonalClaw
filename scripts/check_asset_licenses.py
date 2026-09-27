@@ -22,6 +22,15 @@ or an installed dependency file listed under ``built_web_groups`` (the KaTeX and
 icon fonts Vite hashes out of ``node_modules``). ``--refresh`` rewrites the digests of
 paths already listed; it never adds a path or a group.
 
+``--built-web`` checks the npm packages' notices as well (:func:`npm_notice_errors`). The
+build's minifier strips every licence comment, so ``web/scripts/thirdPartyNotices.mjs``
+writes ``THIRD_PARTY_NOTICES_NPM.txt`` into ``web/dist``, with the census it was written
+from, read off the bundler's own module graph. Every script and stylesheet in ``web/dist``
+must have a census row, every package must be the one ``package-lock.json`` installed at
+that path, version and licence, and the notices must carry each package's section with the
+full text of every licence file it ships, read here from ``node_modules``, or of its reviewed
+record in ``web/npm-license-records.json``.
+
 Run from the repository root:
 
     python3 scripts/check_asset_licenses.py
@@ -46,6 +55,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_NAME = "ASSET_LICENSES.json"
 BUILT_WEB_ROOT = "web/dist"
 DEPENDENCY_ROOT = "node_modules"
+LOCKFILE = "package-lock.json"
+
+#: What web/scripts/thirdPartyNotices.mjs writes into web/dist, and the reviewed records it reads.
+NPM_NOTICES = "THIRD_PARTY_NOTICES_NPM.txt"
+NPM_CENSUS = "THIRD_PARTY_NOTICES_NPM.json"
+NPM_RECORDS = "web/npm-license-records.json"
+
+#: The files a bundled package's code can land in.
+_CODE_SUFFIXES = frozenset({".cjs", ".css", ".js", ".mjs"})
+
+#: A section of the npm notices opens with a 78-character rule, its title, then ``Licence:``.
+#: Keyed on all three, because a licence text can hold a rule of its own.
+_NOTICE_SECTION = re.compile(r"\n={78}\n(?=[^\n]*\nLicence: )")
 
 _ASSET_SUFFIXES = frozenset(
     {
@@ -392,6 +414,205 @@ def _built_web_errors(
     return errors
 
 
+def normalize_licence_text(text: str) -> str:
+    """A licence text in the form the notices carry it (``normalizeText`` in
+    thirdPartyNotices.mjs): no byte-order mark, LF line endings, no trailing blanks on a line,
+    no trailing blank lines."""
+    text = text.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    return re.sub(r"[ \t]+$", "", text, flags=re.M).rstrip("\n")
+
+
+def built_web_code_paths(root: Path | None = None) -> list[str]:
+    """Every script and stylesheet the web build emitted, relative to ``web/dist``."""
+    dist = (root or REPO_ROOT) / BUILT_WEB_ROOT
+    if not dist.is_dir():
+        return []
+    return sorted(
+        path.relative_to(dist).as_posix()
+        for path in dist.rglob("*")
+        if path.is_file() and path.suffix.lower() in _CODE_SUFFIXES
+    )
+
+
+def _notice_sections(text: str) -> tuple[dict[str, str], list[str]]:
+    """Each section of the npm notices keyed by its ``Path:``, and any path given twice."""
+    sections: dict[str, str] = {}
+    twice: list[str] = []
+    for section in _NOTICE_SECTION.split(text)[1:]:
+        match = re.search(r"^Path: +(\S+)$", section, re.M)
+        if match is None:
+            continue
+        if match.group(1) in sections:
+            twice.append(match.group(1))
+        sections[match.group(1)] = section
+    return sections, twice
+
+
+def _read_licence(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return normalize_licence_text(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def _npm_entry_errors(
+    entry: dict[str, Any],
+    section: str | None,
+    lock: dict[str, Any],
+    records: dict[str, Any],
+    root: Path,
+) -> list[str]:
+    """One census package: installed as recorded, and its full licence text in its section."""
+    path = entry.get("path")
+    name, version, licence = entry.get("name"), entry.get("version"), entry.get("license")
+    copied_into = entry.get("copied_into")
+    label = f"{path} ({name} {version or 'copied into ' + str(copied_into)})"
+    errors: list[str] = []
+    if not all(isinstance(v, str) and v for v in (path, name, licence)):
+        return [f"{NPM_CENSUS}: an entry needs a path, a name and a licence: {entry!r}"]
+    licence_dir = entry.get("license_from") if copied_into else path
+    installed = [licence_dir] + ([copied_into] if copied_into else [])
+    for key in installed:
+        if not isinstance(key, str) or not isinstance(lock.get(key), dict):
+            errors.append(f"{label}: {key} is not a package package-lock.json installs")
+    if errors:
+        return errors
+    if not copied_into and lock[path].get("version") != version:
+        errors.append(
+            f"{label}: package-lock.json installed {lock[path].get('version')} at {path}, "
+            f"not {version}"
+        )
+
+    record_key = entry.get("record")
+    record = records.get(record_key) if isinstance(record_key, str) else None
+    if record_key is not None and not isinstance(record, dict):
+        errors.append(f"{label}: its record {record_key!r} is not in {NPM_RECORDS}")
+        record = None
+    locked_licence = lock[licence_dir].get("license")
+    if locked_licence is None:
+        if not record or record.get("license") != licence:
+            errors.append(
+                f"{label}: package-lock.json records no licence for {licence_dir}, and no "
+                f"record in {NPM_RECORDS} supplies {licence!r}"
+            )
+    elif locked_licence != licence:
+        errors.append(
+            f"{label}: package-lock.json records the licence {locked_licence!r}, "
+            f"not {licence!r}"
+        )
+
+    if section is None:
+        return errors + [f"{label}: {NPM_NOTICES} has no section for it"]
+    if f"\nLicence: {licence}\n" not in section:
+        errors.append(f"{label}: its section in {NPM_NOTICES} does not name the licence {licence}")
+    files = entry.get("license_files")
+    if not isinstance(files, list):
+        return errors + [f"{label}: license_files must be a list"]
+    for file_name in files:
+        text = _read_licence(root / licence_dir / file_name)
+        if text is None:
+            errors.append(f"{label}: {licence_dir}/{file_name} is not installed")
+        elif text not in section:
+            errors.append(f"{label}: {NPM_NOTICES} does not carry the full text of {file_name}")
+    if not files:
+        supplied = record.get("license_text") if record else None
+        if not isinstance(supplied, str) or not supplied.strip():
+            errors.append(f"{label}: ships no licence file, and no record supplies its text")
+        elif normalize_licence_text(supplied) not in section:
+            errors.append(f"{label}: {NPM_NOTICES} does not carry its recorded licence text")
+    return errors
+
+
+def npm_notice_errors(root: Path | None = None) -> list[str]:
+    """The npm notices the web build wrote cover every package whose code it emitted.
+
+    The census, ``THIRD_PARTY_NOTICES_NPM.json``, is the bundler's module graph as
+    ``web/scripts/thirdPartyNotices.mjs`` read it. This holds it to what does not come from that
+    script: the scripts and stylesheets actually in ``web/dist`` (one the census does not cover
+    was built without it, so its packages are unknown), ``package-lock.json`` (each package is
+    installed at that path, at that version, under that licence), the licence files in
+    ``node_modules`` (each one's full text is in the package's section of the notices), and the
+    reviewed records (each record is still in use).
+    """
+    root = root or REPO_ROOT
+    dist = root / BUILT_WEB_ROOT
+    emitted = set(built_web_code_paths(root))
+    missing = [name for name in (NPM_CENSUS, NPM_NOTICES) if not (dist / name).is_file()]
+    if not emitted and len(missing) == 2:
+        # No script and no stylesheet: no package's code was built, so there is nothing to notice.
+        return []
+    if missing:
+        return [
+            f"the built web has no {' or '.join(missing)}; `npm run build` writes them "
+            "(web/scripts/thirdPartyNotices.mjs)"
+        ]
+    try:
+        census = json.loads((dist / NPM_CENSUS).read_text(encoding="utf-8"))
+        notices = (dist / NPM_NOTICES).read_text(encoding="utf-8")
+        lock = json.loads((root / LOCKFILE).read_text(encoding="utf-8")).get("packages") or {}
+        records_path = root / NPM_RECORDS
+        records = (
+            json.loads(records_path.read_text(encoding="utf-8")).get("packages") or {}
+            if records_path.is_file()
+            else {}
+        )
+    except (OSError, ValueError) as exc:
+        return [
+            f"npm notices: cannot read the census, the notices, the lockfile or the records ({exc})"
+        ]
+
+    packages, built = census.get("packages"), census.get("files")
+    if census.get("schema_version") != 1 or not isinstance(packages, list):
+        return [f"{NPM_CENSUS}: schema_version must be 1 and packages a list"]
+    if not isinstance(built, dict):
+        return [f"{NPM_CENSUS}: files must map each built file to its packages"]
+    if built and not packages:
+        return [
+            f"{NPM_CENSUS} attributes no package to any of its {len(built)} built files; "
+            "the module graph was not read"
+        ]
+
+    errors: list[str] = []
+    for path in sorted(emitted - set(built)):
+        errors.append(
+            f"built web file {path}: in no row of {NPM_CENSUS}, so the packages in it are unknown"
+        )
+    for path in sorted(set(built) - emitted):
+        errors.append(f"{NPM_CENSUS} lists {path}, which is not in {BUILT_WEB_ROOT}")
+
+    entries: dict[str, dict[str, Any]] = {}
+    for entry in packages:
+        key = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(key, str):
+            errors.append(f"{NPM_CENSUS}: a package entry has no path: {entry!r}")
+        elif key in entries:
+            errors.append(f"{NPM_CENSUS}: {key} is listed twice")
+        else:
+            entries[key] = entry
+    referenced: set[str] = set()
+    for path, listed in sorted(built.items()):
+        for key in listed if isinstance(listed, list) else []:
+            referenced.add(key)
+            if key not in entries:
+                errors.append(
+                    f"built web file {path} bundles {key}, which has no entry in {NPM_CENSUS}"
+                )
+    for key in sorted(set(entries) - referenced):
+        errors.append(f"{NPM_CENSUS} lists {key}, which no built file bundles")
+
+    sections, twice = _notice_sections(notices)
+    for key in twice:
+        errors.append(f"{NPM_NOTICES} has two sections for {key}")
+    for key in sorted(set(sections) - set(entries)):
+        errors.append(f"{NPM_NOTICES} has a section for {key}, which no built file bundles")
+    for key, entry in sorted(entries.items()):
+        errors.extend(_npm_entry_errors(entry, sections.get(key), lock, records, root))
+
+    used = {entry.get("record") for entry in entries.values()}
+    for record_key in sorted(set(records) - used):
+        errors.append(f"{NPM_RECORDS}: {record_key} is a record no bundled package uses")
+    return errors
+
+
 def violations(
     root: Path | None = None,
     manifest: dict[str, Any] | None = None,
@@ -432,6 +653,7 @@ def violations(
 
     if include_built_web:
         errors.extend(_built_web_errors(root, mapped, built_mapped))
+        errors.extend(npm_notice_errors(root))
     return sorted(set(errors))
 
 
@@ -481,16 +703,33 @@ def main(argv: list[str] | None = None) -> int:
 
     count = len(asset_paths())
     if not found:
-        built = f", {len(built_web_asset_paths())} built web assets" if args.built_web else ""
+        built = ""
+        if args.built_web:
+            census = json.loads(
+                (REPO_ROOT / BUILT_WEB_ROOT / NPM_CENSUS).read_text(encoding="utf-8")
+            )
+            built = (
+                f", {len(built_web_asset_paths())} built web assets, and "
+                f"{len(census['packages'])} npm packages in {len(census['files'])} built files "
+                f"with their notices in {NPM_NOTICES}"
+            )
         print(f"asset-licenses: PASS ({count} tracked assets{built}, every one recorded)")
         return 0
     print(f"asset-licenses: FAIL ({len(found)} violation(s), {count} tracked assets)")
     for line in found:
         print(f"  - {line}")
-    print(
-        f"Record a new file in {MANIFEST_NAME}: list its path in a project-owned group, or "
-        "add it with its sha256 to a third-party group (--refresh re-pins listed paths)."
-    )
+    npm_found = set(npm_notice_errors()) & set(found) if args.built_web else set()
+    if set(found) - npm_found:
+        print(
+            f"Record a new file in {MANIFEST_NAME}: list its path in a project-owned group, or "
+            "add it with its sha256 to a third-party group (--refresh re-pins listed paths)."
+        )
+    if npm_found:
+        print(
+            f"{NPM_NOTICES} is written by `npm run build` (web/scripts/thirdPartyNotices.mjs) from "
+            "the bundler's module graph: rebuild rather than edit it. A package whose archive "
+            f"leaves out its licence or its licence text needs a reviewed record in {NPM_RECORDS}."
+        )
     return 1
 
 

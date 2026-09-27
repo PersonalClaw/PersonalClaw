@@ -420,6 +420,12 @@ is outstanding. `restore` refuses to overwrite a file you edited after the mutat
   lines and sha256 if it did not, plus its notice in
   `web/public/THIRD_PARTY_NOTICES.txt`. `make asset-licenses` checks the tree and
   `make asset-licenses-built` checks what the web build emits.
+- **A new npm dependency brings its own notice.** `npm run build` writes
+  `THIRD_PARTY_NOTICES_NPM.txt` into `web/dist` from what it bundled, so there is
+  nothing to add by hand. The build fails when a bundled package declares no licence
+  or ships no licence file. Then add a record for that exact version to
+  [`web/npm-license-records.json`](web/npm-license-records.json), with the fact
+  sourced upstream and a note saying where from.
 - Match the existing style; `make lint` must pass.
 
 ### What CI will and won't tell you on your first PR

@@ -4,9 +4,17 @@ import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { thirdPartyNotices } from './scripts/thirdPartyNotices.mjs'
 
 const BACKEND = `http://127.0.0.1:${process.env.PERSONALCLAW_PORT || 10000}`
 const WEB_DIR = dirname(fileURLToPath(import.meta.url))
+
+// The licence notices of every npm package whose code the build emits: dist/
+// THIRD_PARTY_NOTICES_NPM.txt and .json, read from the bundler's own module graph, so the app
+// build, each web worker's build and sw.js all report into this one collector. The minifier
+// strips every licence comment from the code, so these files are where the notices ship. See
+// scripts/thirdPartyNotices.mjs.
+const notices = thirdPartyNotices(WEB_DIR)
 
 // After Vite writes dist/, generate dist/ui-docs.json — the documentation-as-data
 // artifact for the ui/ kit that the gateway serves and UiDocsToolProvider reads
@@ -35,7 +43,8 @@ function serviceWorkerPlugin(): Plugin {
     apply: 'build',
     async closeBundle() {
       const { buildServiceWorker } = await import('./scripts/buildServiceWorker.mjs')
-      const { version, path, assetCount } = await buildServiceWorker(WEB_DIR)
+      const { version, path, assetCount, inputs } = await buildServiceWorker(WEB_DIR)
+      notices.recordOutput('sw.js', inputs)
       this.info?.(`sw.js: cache personalclaw-shell-${version} (${assetCount} assets) → ${path}`)
     },
   }
@@ -84,7 +93,11 @@ function tokenProxyPlugin(): Plugin {
 // PersonalClaw web app.
 // Proxies API/WS to the existing backend so we reuse PersonalClaw's data layer.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), tokenProxyPlugin(), uiDocsPlugin(), serviceWorkerPlugin()],
+  // `notices.plugin()` writes its files in a `closeBundle` ordered after every other plugin's,
+  // because sw.js is built in one and has to be in the census.
+  plugins: [react(), tailwindcss(), tokenProxyPlugin(), uiDocsPlugin(), serviceWorkerPlugin(), notices.plugin()],
+  // Monaco's editor, json, css, html and ts workers are each a separate Rolldown build.
+  worker: { plugins: () => [notices.workerPlugin()] },
   server: {
     port: 3100,
     proxy: {
