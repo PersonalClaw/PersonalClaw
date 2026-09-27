@@ -214,12 +214,6 @@
   },
   "structural-import-direction": {
     "per_file": {
-      "src/personalclaw/action_providers/services.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
-        ]
-      },
       "src/personalclaw/agent.py": {
         "edges": 1,
         "violations": [
@@ -466,11 +460,11 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 6,
-        "core-must-not-import-the-http-surface": 54,
+        "core-must-not-import-the-http-surface": 53,
         "ledger-is-a-leaf": 0
       },
-      "edges": 60,
-      "files": 30
+      "edges": 59,
+      "files": 29
     }
   },
   "structural-size": {

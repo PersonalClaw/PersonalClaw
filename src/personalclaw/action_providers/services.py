@@ -16,18 +16,36 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from personalclaw.dashboard.state import DashboardState
     from personalclaw.subagent import SubagentManager
+
+
+class DashboardStateProtocol(Protocol):
+    """What native action providers use of the dashboard's state object.
+
+    ``notify`` for push notifications, ``broadcast_ws`` and ``push_refresh`` for live updates,
+    ``channel_delivery`` and ``owner_id`` for routing a message to the owner. Declared here so
+    ``action_providers`` never imports ``dashboard.state``, not even under ``TYPE_CHECKING``:
+    ``DashboardState`` satisfies it structurally, and mypy checks that where the dashboard
+    wires :class:`ActionServices`.
+    """
+
+    owner_id: str
+
+    @property
+    def channel_delivery(self) -> Any: ...
+    def notify(self, kind: str, title: str, body: str, *, meta: dict | None = None) -> None: ...
+    def push_refresh(self, *kinds: str) -> None: ...
+    def broadcast_ws(self, msg_type: str, data: object) -> None: ...
 
 
 @dataclass
 class ActionServices:
     """Handles native action providers need. Wired once at dashboard startup."""
 
-    state: "DashboardState"
+    state: DashboardStateProtocol
     # Schedule a coroutine as a tracked background task (fire-and-forget spawn),
     # mirroring the dashboard's ``_background_tasks`` bookkeeping. Used by
     # invoke-agent (E3-P3) so the lifecycle never blocks on a child agent.
