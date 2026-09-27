@@ -24,6 +24,8 @@ from personalclaw.artifacts.native import NativeArtifactProvider
 
 @pytest.fixture
 def prov(tmp_path, monkeypatch):
+    # The live source below sits in the workspace, a place an artifact may point.
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path))
     provider = NativeArtifactProvider(root=tmp_path / "artifacts")
     monkeypatch.setitem(registry._providers, "native", provider)
     return provider

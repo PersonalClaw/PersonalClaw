@@ -105,12 +105,16 @@ def test_it_reports_the_version(provider):
     assert "v2" in ctx.snapshot
 
 
-def test_a_file_backed_artifact_names_its_live_source(provider, tmp_path):
+def test_a_file_backed_artifact_names_its_live_source(provider, tmp_path, monkeypatch):
     """The agent must edit the workspace file, not the snapshot — otherwise the next
     read reverts its work."""
-    provider.create(name="Doc", content="body", kind="document", source_path="notes/doc.md")
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path))
+    src = tmp_path / "notes" / "doc.md"
+    src.parent.mkdir()
+    src.write_text("body")
+    provider.create(name="Doc", content="body", kind="document", source_path=str(src))
     ctx = inv._resolve_artifact("doc", _State())
-    assert "notes/doc.md" in ctx.snapshot
+    assert str(src.resolve()) in ctx.snapshot
 
 
 def test_a_binary_artifact_never_puts_bytes_in_the_snapshot(provider):

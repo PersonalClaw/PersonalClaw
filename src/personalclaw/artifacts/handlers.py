@@ -15,7 +15,7 @@ from typing import Any, cast
 
 from aiohttp import web
 
-from personalclaw.artifacts import registry
+from personalclaw.artifacts import registry, source_files
 from personalclaw.artifacts.build import (
     ArtifactBuildError,
     BuildResult,
@@ -198,6 +198,9 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     A save whose ``source_path`` names an existing file overwrites that file with ``content``, so
     it names the revision of the copy it was built from in ``If-Match`` — the file-read ETag —
     and a stale one is refused before anything is written (:func:`_source_file_refusal`).
+
+    A ``source_path`` outside the places an artifact may point (``source_files``) is refused
+    with the sentence saying where it may point: ``400`` for the owner, ``403`` for an app.
     """
     state = request.app["state"]
     if _is_restricted_session(state, request):
@@ -225,9 +228,20 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     content = str(body.get("content", ""))
     source_path = str(body.get("source_path", "")).strip()
     session_id = _session_key(request)
-    # Checked with no await between it and the provider write below (create or bump), so nothing
-    # in this process lands on the file in between.
     if source_path:
+        # FIRST, before anything opens the file: a refused pointer is never read, so neither its
+        # existence nor its content shows through the revision check below, and it cannot bump an
+        # artifact that already names it (one recorded before this check existed). The store
+        # refuses it as well.
+        try:
+            source_path = source_files.admit(source_path)
+        except ValueError as exc:
+            from personalclaw.apps.permissions import request_app
+
+            _audit(request, "artifact.create", "denied", "source_path outside the allowed places")
+            return web.json_response({"error": str(exc)}, status=403 if request_app() else 400)
+        # Checked with no await between it and the provider write below (create or bump), so
+        # nothing in this process lands on the file in between.
         stale = _source_file_refusal(request, source_path)
         if stale is not None:
             _audit(request, "artifact.create", "denied", "stale_write")

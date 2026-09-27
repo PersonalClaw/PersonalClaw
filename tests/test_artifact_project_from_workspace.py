@@ -166,19 +166,23 @@ class TestCreateRouteLinksTheSavedFileToItsProject:
         assert unscoped["project_id"] == ""
 
     @pytest.mark.asyncio
-    async def test_a_save_from_outside_every_project_stays_unscoped(self, store, home, artifacts):
+    async def test_a_save_from_outside_every_project_stays_unscoped(
+        self, store, home, artifacts, monkeypatch
+    ):
+        # In the workspace, so an artifact may point at it, and inside no project's folder.
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(home / "downloads"))
         store.create_project("Q4 Launch Plan", workspace_dir=str(_workspace(home, "q4")))
         async with TestClient(TestServer(_app())) as client:
-            created = await (
-                await client.post(
-                    "/api/artifacts",
-                    json={
-                        "name": "Loose",
-                        "content": "x",
-                        "kind": "markdown",
-                        "source_path": str(home / "downloads" / "loose.md"),
-                    },
-                )
-            ).json()
+            r = await client.post(
+                "/api/artifacts",
+                json={
+                    "name": "Loose",
+                    "content": "x",
+                    "kind": "markdown",
+                    "source_path": str(home / "downloads" / "loose.md"),
+                },
+            )
+            assert r.status == 201, await r.text()
+            created = await r.json()
         # Never a default project: a save the path cannot place stays where it always was.
         assert created["project_id"] == ""
