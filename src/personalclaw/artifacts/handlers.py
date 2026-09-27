@@ -52,7 +52,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.security import is_sensitive_path, redact_credentials
+from personalclaw.security import MaskConflict, is_sensitive_path, redact_credentials
 from personalclaw.sel import sel
 from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
@@ -252,13 +252,16 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     if source_path:
         existing = prov.find_by_source_path(source_path)
         if existing is not None:
-            updated = prov.update(
-                existing.slug,
-                content=content,
-                snapshot=False,
-                actor="user",
-                session_id=session_id,
-            )
+            try:
+                updated = prov.update(
+                    existing.slug,
+                    content=content,
+                    snapshot=False,
+                    actor="user",
+                    session_id=session_id,
+                )
+            except MaskConflict as exc:
+                return web.json_response({"error": str(exc)}, status=409)
             _audit(request, "artifact.update", "ok", f"slug={existing.slug}")
             return web.json_response(
                 _serialize(updated, include_content=True) if updated else {}, status=200
@@ -308,6 +311,8 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             project_id=project_id,
             collection=str(body.get("collection", "")).strip(),
         )
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     except (ValueError, PermissionError) as e:
         return web.json_response({"error": str(e)}, status=400)
     _audit(request, "artifact.create", "ok", f"slug={art.slug}")
@@ -420,6 +425,8 @@ async def api_artifact_update(request: web.Request) -> web.Response:
         # The provider found the claimed revision is not `stale.current`'s — the comparison this
         # makes — so it is never None here.
         return cast(web.Response, stale_write_refusal(request, stale.current, what=what))
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     except (ValueError, PermissionError) as e:
         return web.json_response({"error": str(e)}, status=400)
     if art is None:

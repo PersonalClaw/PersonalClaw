@@ -9,7 +9,7 @@ from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
-from personalclaw.security import redact_for_display, restore_masked_spans
+from personalclaw.security import MASK_CONFLICT, redact_for_display, restore_masked_spans
 from personalclaw.skills.loader import (
     DASHBOARD_SKILL_SOURCE_VALUE,
     DIRECT_SKILL_MAX_CONTENT_CHARS,
@@ -250,14 +250,6 @@ async def api_prompt_detail(request: web.Request) -> web.Response:
     )
 
 
-_MASK_CONFLICT = (
-    "The stored copy of this content no longer lines up with the redacted version you edited, "
-    "so the hidden value behind a [REDACTED: …] marker cannot be recovered. Nothing was saved. "
-    "Re-open it to load the current version, or replace the marker with the value you want "
-    "stored."
-)
-
-
 def _restore_masked_content(body: dict[str, Any], stored_content: str) -> dict[str, Any] | None:
     """Return `body` with any echoed-back redaction mask in `content` restored from the store.
 
@@ -386,7 +378,7 @@ async def api_prompt_save(request: web.Request) -> web.Response:
         # history to recover it from. See `restore_masked_spans`.
         merged = _restore_masked_content(body, stored.content)
         if merged is None:
-            return web.json_response({"error": _MASK_CONFLICT}, status=409)
+            return web.json_response({"error": MASK_CONFLICT}, status=409)
         body = merged
     try:
         tpl = _build_prompt_template(body, default_name=bare)
@@ -870,7 +862,7 @@ async def api_snippet_save(request: web.Request) -> web.Response:
         # Same read/write asymmetry as a prompt save — `api_snippet_detail` redacts too.
         merged = _restore_masked_content(body, stored_snip.content)
         if merged is None:
-            return web.json_response({"error": _MASK_CONFLICT}, status=409)
+            return web.json_response({"error": MASK_CONFLICT}, status=409)
         body = merged
     try:
         snip = _build_snippet(body, default_name=bare)

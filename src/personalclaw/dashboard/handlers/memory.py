@@ -16,7 +16,13 @@ from personalclaw.config.transactions import mutate_config_async
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body, require_string
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    MaskConflict,
+    keep_masked_values,
+    redact_credentials,
+    redact_exfiltration_urls,
+    redact_for_display,
+)
 from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
 
@@ -276,9 +282,9 @@ def _redact_memory_field(val: object) -> object:
     if isinstance(val, (bytes, memoryview)):
         return None
     if isinstance(val, str):
-        val, _ = redact_exfiltration_urls(val)
-        val, _ = redact_credentials(val)
-        return val
+        # `redact_for_display`, the mask `api_memory_semantic_write` puts back when a fact read
+        # here is written back.
+        return redact_for_display(val)
     if isinstance(val, list):
         return [_redact_memory_field(item) for item in val]
     if isinstance(val, dict):
@@ -380,6 +386,18 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     source = body.get("source", "user_explicit")
     if not key or value is None:
         return web.json_response({"error": "key and value required"}, status=400)
+    # `api_memory_semantic` lists every fact masked, so a caller writing one back sends our marker
+    # for each hidden value in it. Put each back from the fact as stored.
+    stored = svc.get_semantic(key)
+    if stored is not None:
+        try:
+            previous = json.loads(stored.get("value_json") or "null")
+        except (TypeError, ValueError):
+            previous = None
+        try:
+            value = keep_masked_values(value, previous)
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
     err = svc.set_semantic(key, value, confidence, source)
     if err is not None:
         code, message = err

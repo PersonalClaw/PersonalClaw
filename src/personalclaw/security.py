@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs
 
 from personalclaw.sel import SecurityEvent, SecurityEventLog
@@ -1237,6 +1238,74 @@ def restore_masked_spans(submitted: str, stored: str) -> str | None:
         return queue.pop(0) if queue else m.group(0)
 
     return _MASK_RE.sub(_take, submitted)
+
+
+#: What a save answers when it echoes one of our masks and the stored text that mask stood for can
+#: no longer be found. One sentence for every save path that restores masks.
+MASK_CONFLICT = (
+    "The stored copy of this content no longer lines up with the redacted version you edited, "
+    "so the hidden value behind a [REDACTED: …] marker cannot be recovered. Nothing was saved. "
+    "Re-open it to load the current version, or replace the marker with the value you want "
+    "stored."
+)
+
+
+class MaskConflict(ValueError):
+    """A save echoed a display mask whose stored value can no longer be located."""
+
+    def __init__(self) -> None:
+        super().__init__(MASK_CONFLICT)
+
+
+def keep_masked_spans(submitted: str, stored: str) -> str:
+    """The text a save persists when its editor was seeded from a :func:`redact_for_display` read.
+
+    Every such save path calls this with the value it is about to overwrite, so a mask the client
+    echoes back keeps the stored value it stood for (:func:`restore_masked_spans`). Raises
+    :class:`MaskConflict` rather than persisting a mask it cannot place.
+    """
+    restored = restore_masked_spans(submitted, stored)
+    if restored is None:
+        raise MaskConflict()
+    return restored
+
+
+def keep_masked_values(submitted: Any, stored: Any) -> Any:
+    """:func:`keep_masked_spans` over a JSON-shaped value: a loop's plan, a schedule's action.
+
+    Each string is restored against the string stored at the same place, the same key of a dict
+    or the same index of a list. A list item is first matched to a stored item that showed exactly
+    what the client sent, so moving an item it did not edit keeps its value. A place where the
+    store holds no string is the client's own text and passes through.
+    """
+    if isinstance(submitted, str):
+        return keep_masked_spans(submitted, stored) if isinstance(stored, str) else submitted
+    if isinstance(submitted, dict):
+        base = stored if isinstance(stored, dict) else {}
+        return {key: keep_masked_values(value, base.get(key)) for key, value in submitted.items()}
+    if isinstance(submitted, list):
+        items = stored if isinstance(stored, list) else []
+        used: set[int] = set()
+
+        def _shown_as(index: int, value: str) -> bool:
+            item = items[index]
+            return index not in used and isinstance(item, str) and redact_for_display(item) == value
+
+        kept: list[Any] = []
+        for index, value in enumerate(submitted):
+            if isinstance(value, str) and _MASK_RE.search(value):
+                # The same place first, then any other stored item not yet claimed. Two items
+                # that show alike are one value each, and no stored value is given out twice.
+                order = [index] if index < len(items) else []
+                order += [i for i in range(len(items)) if i != index]
+                match = next((i for i in order if _shown_as(i, value)), None)
+                if match is not None:
+                    used.add(match)
+                    kept.append(items[match])
+                    continue
+            kept.append(keep_masked_values(value, items[index] if index < len(items) else None))
+        return kept
+    return submitted
 
 
 # Suspicious bash patterns to flag during audit

@@ -29,7 +29,12 @@ from personalclaw.dashboard.handlers import trigger_revisions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    MaskConflict,
+    keep_masked_spans,
+    keep_masked_values,
+    redact_for_display,
+)
 
 
 def config_dir():
@@ -58,7 +63,9 @@ def _sel():
 
 
 def _redact(s: str) -> str:
-    return redact_credentials(redact_exfiltration_urls(s or "")[0])[0]
+    # `redact_for_display`: a schedule's edit form is seeded from these rows, and the PUT puts back
+    # exactly this mask (`_keep_masked_schedule`).
+    return redact_for_display(s or "")
 
 
 def _split_id(trigger_id: str) -> tuple[str, str]:
@@ -1208,6 +1215,11 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
+    if kind != _LIFECYCLE:
+        try:
+            body = _keep_masked_schedule(state, kind, raw, body)
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
     # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
     problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
     if problem:
@@ -1257,6 +1269,23 @@ def _row_now(state: DashboardState, kind: str, raw: str) -> dict[str, Any] | Non
         return None if (row := _trigger_store().get(raw)) is None else _schedule_row_for(state, row)
     hook = _hook_store(state).get(raw)
     return None if hook is None else _serialize_lifecycle(hook, _used_by_index().get(raw, []))
+
+
+def _keep_masked_schedule(state: DashboardState, kind: str, raw: str, body: dict) -> dict:
+    """*body* with each hidden value it echoes back restored from the stored schedule.
+
+    The edit form is seeded from :func:`_schedule_row_for`, which masks the name and the prompt,
+    and renaming an agent schedule sends both back, so the prompt would be stored as the marker.
+    Restored BEFORE the consent and action checks, so they judge what is actually saved.
+    """
+    out = dict(body)
+    if isinstance(out.get("name"), str):
+        row = _trigger_store().get(raw)
+        if row is not None:
+            out["name"] = keep_masked_spans(out["name"], row.trigger.name or "")
+    if isinstance(out.get("action"), dict):
+        out["action"] = keep_masked_values(out["action"], _stored_action(state, kind, raw))
+    return out
 
 
 def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:

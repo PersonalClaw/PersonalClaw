@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import redact_for_display
 
 
 def config_dir() -> Path:
@@ -166,9 +166,9 @@ def write_artifact(loop_id: str, node_path: str, output: Any) -> str:
 
 
 def _redact_str(s: str) -> str:
-    cleaned, _ = redact_credentials(s)
-    cleaned, _ = redact_exfiltration_urls(cleaned)
-    return cleaned
+    # `redact_for_display`, the mask `api_loop_update` puts back when an editor shown this view
+    # (plan review, the design pages) sends a field back.
+    return redact_for_display(s)
 
 
 def _redact_value(val: Any) -> Any:

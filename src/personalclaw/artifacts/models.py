@@ -188,17 +188,16 @@ class ArtifactStaleWrite(ValueError):
 
 
 def redacted(text: str | None) -> str:
-    """*text* as every artifact read hands it out: exfiltration URLs and credentials scrubbed.
+    """*text* as every artifact read hands it out: the display mask (`security.redact_for_display`).
 
     One definition for the REST layer, which serves it, and the provider, which checks a body
     save's revision against it — a revision is only comparable when both take it of the same
-    projection, and it must never encode more than its reader could see.
+    projection, and it must never encode more than its reader could see. It is also the mask the
+    provider's save undoes (`security.keep_masked_spans`), which is exact only for this one.
     """
-    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    from personalclaw.security import redact_for_display
 
-    clean, _ = redact_exfiltration_urls(text or "")
-    clean, _ = redact_credentials(clean)
-    return clean
+    return redact_for_display(text or "")
 
 
 @dataclass

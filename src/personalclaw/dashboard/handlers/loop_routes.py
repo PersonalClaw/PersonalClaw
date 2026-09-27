@@ -31,6 +31,7 @@ from personalclaw.loop.loop import (
 )
 from personalclaw.loop.watchdog import registry_key
 from personalclaw.request_validation import json_object_body, require_string
+from personalclaw.security import MaskConflict, keep_masked_values
 from personalclaw.stale_write import stale_write_refusal
 
 logger = logging.getLogger(__name__)
@@ -837,6 +838,14 @@ async def api_loop_update(request: web.Request) -> web.Response:
         stale = stale_write_refusal(request, current, what=f"the loop {current.get('name')!r}")
         if stale is not None:
             return stale
+    # Plan review and the design pages send back fields they were shown through `get_redacted`, so
+    # each hidden value arrives as our marker, on a Launch the user never edited too. Every field is
+    # restored from the stored loop before it is merged, screened or written.
+    stored = existing.to_dict()
+    try:
+        body = {key: keep_masked_values(value, stored.get(key)) for key, value in body.items()}
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     spec = _merge_kind_config(body, existing)
     # Re-screen a spec edit before persisting — mirrors the create gate so an edit
     # can't smuggle in a destructive verify/test command or a sensitive workspace

@@ -289,6 +289,16 @@ Data leaving the running system:
   append-only events (caller, operation, outcome).
 - **Redacted archive reads** (`security.py`: `redact_credentials`,
   `redact_exfiltration_urls`).
+- **A masked value is never saved back over the real one.** Every read that hands text to an
+  editor masks it with `redact_for_display`: a file in Files, an artifact, a loop before launch, a
+  schedule, an inbox draft, a prompt or snippet, a memory fact, and what the agent's `artifact_get`
+  and `knowledge_get` return. Each of those saves restores every marker it gets back from the
+  stored value (`keep_masked_spans`, `keep_masked_values`), so a marker left where it was keeps the
+  value it stood for and the plaintext never crosses the wire. A save whose markers can no longer be
+  placed is refused (`409`) rather than stored. A marker that is already part of the stored text,
+  like a `CLAUDE.md` imported redacted, stays text. A structured secret shown as `••••••••` works
+  the same way: an app, provider or MCP save that sends the mask back keeps the stored value, and
+  the credential store refuses the mask as a value (`secret_refs._move_into_store`).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.
 - **Secret settings held by reference** (`config/secret_refs.py`): a provider key, every

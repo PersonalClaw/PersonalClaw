@@ -379,7 +379,29 @@ def declared_provider_type_fields(ptype: str) -> set[str]:
 _UNSTORABLE_CHAR = "\x00"
 
 
-def _unstorable_message(name: str) -> str:
+def _is_display_mask(value: Any) -> bool:
+    """Whether *value* is the mask a stored value is shown as (``secret_fields.SECRET_MASK``).
+
+    A form round-trips what it was shown, so the mask can arrive where a value belongs. It is never
+    a credential: storing it would replace the real value with eight bullets.
+    """
+    from personalclaw.apps.secret_fields import SECRET_MASK
+
+    return isinstance(value, str) and value.strip() == SECRET_MASK
+
+
+def _unstorable_reason(value: Any) -> str:
+    if _is_display_mask(value):
+        return "it is how PersonalClaw shows a saved value, not a value it can save"
+    return "it contains a NUL character, which no credential can hold"
+
+
+def _unstorable_message(name: str, value: Any = "") -> str:
+    if _is_display_mask(value):
+        return (
+            f"{name}: {value.strip()} is how PersonalClaw shows a saved value, not a value it can "
+            "save. Type the value to store."
+        )
     return f"{name}: the value contains a NUL character, which no credential can hold"
 
 
@@ -425,8 +447,10 @@ def store(
     would otherwise record a pointer to nothing fails instead (:class:`OSError`).
 
     Raises :class:`ValueError` for a value no credential can hold: one with a NUL character,
-    which no environment variable or keychain entry carries. A multi-line value (a PEM key, a
-    service-account JSON) is stored like any other; ``.env`` keeps it on one line, quoted.
+    which no environment variable or keychain entry carries, or the display mask
+    (``SECRET_MASK``) with nothing in ``previous`` to keep. A mask over a stored value keeps that
+    value's reference, so a form saved as it was shown changes nothing. A multi-line value (a PEM
+    key, a service-account JSON) is stored like any other; ``.env`` keeps it on one line, quoted.
     Surrounding whitespace is dropped — it is never part of a key or a token, and a pasted value
     often carries a trailing newline.
     """
@@ -449,6 +473,14 @@ def _move_into_store(
             continue
         value = value.strip()
         if not value:
+            continue
+        if _is_display_mask(value):
+            # A field left as it was shown keeps what it already references. With nothing stored
+            # there is nothing to keep, and the mask itself is never stored as the value.
+            kept = (previous or {}).get(name)
+            if ref_key(kept) is None:
+                raise ValueError(_unstorable_message(name, value))
+            out[name] = kept
             continue
         if _UNSTORABLE_CHAR in value:
             raise ValueError(_unstorable_message(name))
@@ -650,7 +682,11 @@ def plain_env_names(spec: Mapping[str, Any]) -> set[str]:
 
 
 def _unstorable(value: Any) -> bool:
-    return isinstance(value, str) and ref_key(value) is None and _UNSTORABLE_CHAR in value
+    return (
+        isinstance(value, str)
+        and ref_key(value) is None
+        and (_UNSTORABLE_CHAR in value or _is_display_mask(value))
+    )
 
 
 def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dict[str, Any]:
@@ -674,7 +710,7 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
                 continue
             for name, value in values.items():
                 if _unstorable(value):
-                    raise ValueError(_unstorable_message(name))
+                    raise ValueError(_unstorable_message(name, value))
             _refuse_foreign(
                 values, _mcp_owner(server, part), operation="secrets.store", advise=True
             )
@@ -689,11 +725,11 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
         for name in [n for n, v in movable.items() if _unstorable(v)]:
             inline[name] = movable.pop(name)
             logger.warning(
-                "MCP server %r: %s %s holds a NUL character, which no credential can hold; "
-                "it stays in the file",
+                "MCP server %r: %s %s cannot be stored (%s); it stays in the file",
                 server,
                 part,
                 name,
+                _unstorable_reason(inline[name]),
             )
         for name in [n for n, v in movable.items() if (k := ref_key(v)) and not owner.holds(k)]:
             inline[name] = movable.pop(name)
