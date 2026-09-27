@@ -513,10 +513,18 @@ class _Gateway:
     def __init__(self, client: TestClient, orch: Any) -> None:
         self.client, self.orch = client, orch
 
-    async def call(self, method: str, path: str, body: Any = None) -> Any:
-        resp = await self.client.request(method, path, json=body)
+    async def call(self, method: str, path: str, body: Any = None, **kw: Any) -> Any:
+        resp = await self.client.request(method, path, json=body, **kw)
         assert resp.status < 300, f"{method} {path} → {resp.status}: {await resp.text()}"
         return await resp.json()
+
+    async def save_config(self, values: dict[str, Any]) -> Any:
+        """Save the app's settings the way Configure does: over the revision of the copy it read.
+        The PUT replaces the whole file, so it names the copy it replaces (#3690)."""
+        revision = (await self.call("GET", f"/api/apps/{APP}/config"))["revision"]
+        return await self.call(
+            "PUT", f"/api/apps/{APP}/config", values, headers={"If-Match": f'"{revision}"'}
+        )
 
     async def install(self, source: Path) -> dict[str, Any]:
         review = await self.call("POST", "/api/apps/preview", {"source": str(source)})
@@ -866,7 +874,7 @@ async def test_a_reinstall_runs_only_the_new_version(home, rung):
 async def test_an_update_that_leaves_old_code_running_says_a_restart_is_needed(home, wire):
     async with _gateway() as gw:
         await gw.install(_probe(home, "v1", parts=("tool",)))
-        await gw.call("PUT", f"/api/apps/{APP}/config", {"linger": True})
+        await gw.save_config({"linger": True})
         assert await _eventually(
             lambda: any(t.name == "reload-probe-linger" for t in threading.enumerate()), timeout=5
         )
