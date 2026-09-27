@@ -121,6 +121,7 @@ from personalclaw.sdk.channel import trust_mode
 from personalclaw.sdk.model import (
     Capability,
     MediaCatalog,
+    MediaModel,
     ProviderCapability,
     ProviderResolutionError,
     get_default_registry,
@@ -217,7 +218,9 @@ try:
 except ProviderResolutionError:
     pass  # already registered (idempotent against reload)
 
-register_media_catalog("tts", MODEL_TYPE, MediaCatalog(default_model="voice-" + VERSION))
+register_media_catalog(
+    "tts", MODEL_TYPE, MediaCatalog(models=(MediaModel(name="voice-" + VERSION),))
+)
 
 
 def _on_yolo_off(reason):
@@ -805,7 +808,7 @@ async def test_what_the_old_version_registered_is_taken_back(home, wire):
         assert wire.runner_stopped == ["v1"], "the old version's sidecar runner was not stopped"
         assert await _tool_output() == "v2"
         assert get_runner(APP).version == "v2"
-        assert media_catalogs.get_media_catalog("tts", MODEL_TYPE).default_model == "voice-v2"
+        assert media_catalogs.get_media_catalog("tts", MODEL_TYPE).models[0].name == "voice-v2"
         trust_mode._TRUST._fire_disable("manual")
         assert wire.yolo_off == ["v2"], "the old version's callback still runs"
 

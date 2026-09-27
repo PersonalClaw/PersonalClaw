@@ -418,6 +418,20 @@ describe('a provider is connected, but no model is chosen yet', () => {
     expect(panel.textContent).not.toContain('Bind a model')
   })
 
+  it("says why a chosen model cannot serve, in the gateway's words, not that there is none", async () => {
+    // The row's `problem` is the sentence the surface's notice says too. "No model for Chat" was
+    // false about a Chat model that is chosen and cannot serve.
+    setViewport(false)
+    const problem = "Provider 'bedrock' needs credential 'aws', which has no secret in the credential store. Store 'aws' in Settings → Secrets."
+    const surfaces = [{ ...NOT_CHOSEN[0], model_chosen: true, problem }]
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces } as never)
+    render(<DegradedChip />)
+    ;(await screen.findByTitle(/running without a model/i)).click()
+    const panel = await waitFor(() => screen.getByRole('dialog', { name: 'Degraded surfaces' }))
+    expect(panel.textContent).toContain(problem)
+    expect(panel.textContent).not.toContain('No model for Chat')
+  })
+
   it('counts only the surfaces that declined when one did', async () => {
     // Chat is bound and its instance cannot serve: that one IS degraded, and the chip says so —
     // in the words for it, beside a surface that is only waiting on a choice.

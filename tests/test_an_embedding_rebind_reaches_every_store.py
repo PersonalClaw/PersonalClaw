@@ -578,3 +578,200 @@ def test_a_directory_is_read_whatever_characters_its_home_path_holds(tmp_path):
     assert _holds_memory(db) is True
     assert _holds_memory(db.with_name("absent.db")) is False
     assert not db.with_name("absent.db").exists(), "and a read never creates one"
+
+
+# ── every memory is found while the model catches up with it ──────────────────────────────
+
+
+async def _put_embedding(state, model: str) -> None:
+    """Bind Embedding through ``PUT /api/models/active/embedding``, as any caller does (Settings →
+    Models, onboarding, a script), and let what the binding starts in the background finish."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import model_registry as mr
+
+    app = web.Application()
+    app["state"] = state
+    read = await mr.api_models_active(make_mocked_request("GET", "/api/models/active"))
+    revision = json.loads(read.text)["revisions"]["embedding"]
+    req = make_mocked_request(
+        "PUT", "/api/models/active/embedding", headers={"If-Match": f'"{revision}"'}, app=app
+    )
+    req.match_info["use_case"] = "embedding"
+
+    async def _json():
+        return {"models": [f"{ENTRY}:{model}"]}
+
+    req.json = _json  # type: ignore[method-assign]
+    assert (await mr.api_models_active_set(req)).status == 200
+    for task in list(getattr(mr, "_BINDING_REINDEXES", ())):
+        await task
+    for _ in range(500):
+        running = state.embedding_reindex().active()
+        if running is None:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the re-index did not finish")
+
+
+def test_a_memory_written_while_nothing_was_bound_joins_semantic_search_on_the_bind(
+    recorded, tmp_path
+):
+    """🔴 Red on main: binding a model embedded nothing until someone started a re-index, so a
+    memory written while none was bound was never compared by meaning."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+
+    state = _main_state(config_dir())
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")  # nothing bound
+
+    asyncio.run(_put_embedding(state, A))
+    found = _main_service(state).search_episodic(query_text="osprey")
+
+    assert _texts(found) == [OSPREY]
+    assert "cosine_sim" in found[0], "compared by meaning, with the model the binding named"
+    assert (A, OSPREY) in [(model, text) for model, _endpoint, text in recorded]
+
+
+def test_a_memory_no_model_embedded_is_read_by_keyword_beside_the_vector_results(
+    recorded, tmp_path
+):
+    """🔴 Red on main: once one memory held a vector, a search compared vectors, and a memory
+    that had none was in neither arm: it dropped out of every search until something embedded
+    it."""
+    from personalclaw.config.loader import config_dir
+
+    state = _main_state(config_dir())
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")  # nothing bound
+    _bind(A)  # bound without the re-index a binding through the PUT starts
+    _main_service(state).write_episodic("An osprey dives at dawn", source="user_explicit")
+
+    found = {r["text"]: r for r in _main_service(state).search_episodic(query_text="osprey")}
+
+    assert set(found) == {OSPREY, "An osprey dives at dawn"}
+    assert "cosine_sim" in found["An osprey dives at dawn"]
+    assert "cosine_sim" not in found[OSPREY], "read by keyword: nothing compared it by meaning"
+
+
+def test_the_gateway_start_embeds_the_memories_no_model_embedded(recorded, tmp_path):
+    """🔴 Red on main: the start counted the vectors of another model only, so a memory written
+    while nothing was bound stayed unembedded however often the gateway restarted."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+    from personalclaw.dashboard.handlers.embedding_reindex import resume_interrupted_reindex
+
+    state = _main_state(config_dir())
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")  # nothing bound
+    _bind(A)
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+
+    async def _start() -> dict[str, Any]:
+        job = resume_interrupted_reindex({"state": state})
+        assert job is not None, "a re-index starts"
+        for _ in range(500):
+            if job.status != "running":
+                return job.to_dict()
+            await asyncio.sleep(0.01)
+        raise AssertionError("the re-index did not finish")
+
+    done = asyncio.run(_start())
+
+    assert (done["status"], done["memory"]) == ("done", 1)
+    assert state.context_builder.memory.vector_store.memory_stats()["unembedded"] == 0
+
+
+def test_recall_ranks_a_keyword_hit_among_the_semantic_ones_by_score(recorded, tmp_path):
+    """🔴 Red on main: a memory read by keyword carried no score, so Recall's ranking put every
+    keyword hit after every semantic one: mid re-index, the exact match came last."""
+    from personalclaw.config.loader import config_dir
+
+    state = _main_state(config_dir())
+    _bind(A)
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")
+    _bind(B)
+    _main_service(state).write_episodic(
+        KESTREL, source="user_explicit"
+    )  # re-embedded, weakly alike
+
+    ranked = _main_service(state).rank_episodic(query_text="osprey")
+
+    assert _texts(ranked) == [OSPREY, KESTREL], [(r["text"], r.get("score")) for r in ranked]
+    assert "cosine_sim" not in ranked[0] and ranked[0]["keyword_match"] == 1.0
+    assert ranked[0]["score"] > ranked[1]["score"]
+
+
+def test_the_reindex_re_embeds_only_the_knowledge_the_model_has_not(recorded, tmp_path):
+    """🔴 Red on main: the knowledge half of the re-index cleared and re-embedded every item,
+    the ones the bound model had embedded already included."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.knowledge.embedder import create_embedder_from_config
+    from personalclaw.knowledge.pipeline.runner import _embed
+    from personalclaw.knowledge.store import KnowledgeStore
+
+    state = _main_state(config_dir())
+    state.knowledge_store = KnowledgeStore(str(tmp_path / "knowledge.db"))
+    _bind(A)
+    ks = state.knowledge_store
+    embedded = ks.create_typed_item(item_type="note", title="Osprey nesting", content="The osprey")
+    assert _embed(ks, embedded, create_embedder_from_config({})) == "done"  # the ingest path
+    ks.create_typed_item(item_type="note", title="Kestrel hover", content="A kestrel")  # none
+    recorded.clear()
+
+    job = _reindex(state)
+
+    assert (job["status"], job["knowledge"]) == ("done", 1), job
+    assert [text for _m, _e, text in recorded if "Osprey nesting" in text] == []
+
+
+def test_a_rebuild_on_another_thread_never_pairs_its_ids_with_the_index_a_search_read(
+    tmp_path, monkeypatch
+):
+    """🔴 Red on main: a rebuild assigned the width, the ids and the index one after another, and
+    a search read the index and then the ids. A rebuild on the re-index's thread between the two
+    paired the new ids with the old index, so the search named another memory for a row (with
+    the first one's score), or read past the end of the new ids."""
+    import threading
+
+    faiss = pytest.importorskip("faiss")
+    from personalclaw.vector_memory import VectorMemoryStore
+
+    real = faiss.IndexFlatIP
+    armed: list[Any] = []
+
+    class _Index:
+        """A FAISS index that runs what is armed just before it answers a search."""
+
+        def __init__(self, dim: int) -> None:
+            self._inner = real(dim)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+        def search(self, x: Any, k: int) -> Any:
+            while armed:
+                armed.pop()()
+            return self._inner.search(x, k)
+
+    monkeypatch.setattr(faiss, "IndexFlatIP", _Index)
+    store = VectorMemoryStore(db_path=tmp_path / "memory.db")
+    store.embed_fn = lambda text: [1.0, 0.0] if "osprey" in text.lower() else [0.0, 1.0]
+    store.init()
+    assert store.write_episodic(OSPREY, source="user_explicit")
+    assert store.write_episodic(KESTREL, source="user_explicit")
+    osprey = next(r["id"] for r in store.get_episodic_list() if r["text"] == OSPREY)
+
+    def _rebuild_on_the_reindex_thread() -> None:
+        store.delete_episodic(osprey)  # a memory goes, and the index is rebuilt without it
+        worker = threading.Thread(target=store.rebuild_faiss_index)
+        worker.start()
+        worker.join()
+
+    armed.append(_rebuild_on_the_reindex_thread)
+    found = store.search_episodic(query_embedding=[1.0, 0.0], mmr=False)
+
+    assert [(r["text"], r["cosine_sim"]) for r in found] == [(KESTREL, 0.0)], found
+    store.close()

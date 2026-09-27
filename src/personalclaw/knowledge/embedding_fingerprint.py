@@ -68,6 +68,13 @@ FRESH_PREDICATE = (
     "(COALESCE(c.embedding_model_id, '') = ? AND COALESCE(c.embedding_provider, '') = ?)"
 )
 
+#: :data:`STALE_PREDICATE` over an ``items`` row, unaliased: its whole-item vector was written by
+#: another model, or before the model was recorded. An item carries the same two columns, so the
+#: re-index re-embeds only the items the model bound now has not embedded, as it does chunks.
+ITEM_STALE_PREDICATE = (
+    "(COALESCE(embedding_model_id, '') != ? OR COALESCE(embedding_provider, '') != ?)"
+)
+
 
 @dataclass(frozen=True)
 class EmbeddingFingerprint:

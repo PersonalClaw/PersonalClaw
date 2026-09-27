@@ -15,6 +15,7 @@ from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
 from .embedding_fingerprint import (
     FINGERPRINT_COLUMNS,
+    ITEM_STALE_PREDICATE,
     STALE_PREDICATE,
     active_fingerprint,
     count_stale_chunks,
@@ -968,6 +969,11 @@ class KnowledgeStore:
         # collapsing it into unread/read is what makes such lists useless.
         ("read_state", "TEXT DEFAULT 'unread'"),
         ("favorited", "INTEGER DEFAULT 0"),
+        # The model that wrote `embedding` — the fingerprint `chunks` carries (RET-4) — so the
+        # re-index re-embeds only the items the model bound now has not embedded. NULL on a
+        # vector written before it was recorded: unknown provenance reads as stale, as it does
+        # for a chunk.
+        *FINGERPRINT_COLUMNS,
     )
 
     def _migrate(self):
@@ -3313,47 +3319,65 @@ class KnowledgeStore:
         """)
         self._load_graph()
 
-    def clear_embeddings(self) -> int:
-        """Null every item embedding. Used on an embedding-model switch — vectors
-        from different models are incompatible. Item text/title/summary is
-        preserved so they can be re-embedded. Returns the count cleared."""
-        cur = self.db.execute("UPDATE items SET embedding = NULL WHERE embedding IS NOT NULL")
+    @staticmethod
+    def _not_embedded_by(fp: Any, active_dim: int | None) -> tuple[str, tuple[Any, ...]]:
+        """``(where, params)`` over ``items``: an active, text-bearing item whose vector the model
+        *fp* did not write — none at all, another model's or an unrecorded one, or (with
+        ``active_dim``) this model's at a width it no longer produces."""
+        where = (
+            "status = 'active' AND (COALESCE(title,'') != '' OR COALESCE(content,'') != '') "
+            f"AND (embedding IS NULL OR {ITEM_STALE_PREDICATE}"
+        )
+        params: list[Any] = [*fp.params]
+        if active_dim:
+            where += " OR LENGTH(embedding) != ?"
+            params.append(active_dim * 4)
+        return where + ")", tuple(params)
+
+    def count_items_to_reembed(self, active_dim: int | None = None) -> int:
+        """Active text-bearing items the model bound now has not embedded: 0 when none is bound.
+
+        What the re-index re-embeds (:meth:`clear_stale_embeddings` then ``reembed_all(
+        only_missing=True)``). It used to re-embed every item on every run, including the ones
+        the bound model had embedded already, as memory's re-index no longer does.
+        """
+        fp = active_fingerprint()
+        if fp is None:
+            return 0
+        where, params = self._not_embedded_by(fp, active_dim)
+        row = self.db.execute(
+            f"SELECT COUNT(*) AS n FROM items WHERE {where}", params  # noqa: S608 — fixed literal
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def clear_stale_embeddings(self, active_dim: int | None = None) -> int:
+        """Null the vector of every item the model bound now did not write. Returns how many.
+
+        Cleared before the re-index re-embeds them (``reembed_all(only_missing=True)``), so no
+        search or dedup compares one with that model's vectors meanwhile: at one width they would
+        compare and score numbers that mean nothing. The items the model did write keep theirs.
+        """
+        fp = active_fingerprint()
+        if fp is None:
+            return 0
+        where, params = self._not_embedded_by(fp, active_dim)
+        cur = self.db.execute(
+            "UPDATE items SET embedding = NULL, embedding_model_id = NULL, "  # noqa: S608
+            f"embedding_provider = NULL WHERE embedding IS NOT NULL AND {where}",
+            params,
+        )
         self.db.commit()
         return cur.rowcount
 
-    def count_items_to_reembed(self) -> int:
-        """How many active items carry embeddable text (title or content)."""
-        row = self.db.execute("SELECT COUNT(*) AS n FROM items WHERE status = 'active'").fetchone()
-        return int(row["n"]) if row else 0
-
     def count_items_missing_embedding(self) -> int:
-        """Active items that carry embeddable text but have NO embedding — the
-        signature of an INTERRUPTED re-index (``clear_embeddings`` ran, then
-        ``reembed_all`` died before finishing). Used to auto-resume on boot so the
-        store never sits silently unsearchable. Ignores text-less items (nothing to
-        embed) so a genuinely-empty item never triggers a phantom re-index."""
+        """Active items that carry embeddable text but have NO embedding — never embedded, or
+        cleared by an INTERRUPTED re-index (``clear_stale_embeddings`` ran, then ``reembed_all``
+        died before finishing). Ignores text-less items (nothing to embed) so a genuinely-empty
+        item never reads as a backlog."""
         row = self.db.execute(
             "SELECT COUNT(*) AS n FROM items WHERE status = 'active' "
             "AND embedding IS NULL "
             "AND (COALESCE(title,'') != '' OR COALESCE(content,'') != '')"
-        ).fetchone()
-        return int(row["n"]) if row else 0
-
-    def count_items_needing_reembed(self, active_dim: int | None) -> int:
-        """Active text-bearing items whose vector is MISSING **or STALE** (present but a
-        different dimension than the active model's). Broader than
-        ``count_items_missing_embedding``: it also catches the case where the gateway died
-        AFTER an embedding-model SWAP but before/mid re-embed — those items keep an old
-        wrong-dim vector (so ``missing`` is 0), yet are vector-dead against the new model's
-        query dim. Boot auto-resume uses this so a mid-swap crash self-heals too. When
-        ``active_dim`` is unknown (embedder not ready), falls back to missing-only."""
-        if not active_dim:
-            return self.count_items_missing_embedding()
-        row = self.db.execute(
-            "SELECT COUNT(*) AS n FROM items WHERE status = 'active' "
-            "AND (COALESCE(title,'') != '' OR COALESCE(content,'') != '') "
-            "AND (embedding IS NULL OR LENGTH(embedding) != ?)",
-            (active_dim * 4,),
         ).fetchone()
         return int(row["n"]) if row else 0
 
@@ -4146,6 +4170,8 @@ class KnowledgeStore:
         embed_many = active_batch_embed_fn(embedder)
         embed_one = self._item_embed_one(embedder)
         size = batch_size_from_config()
+        fp = active_fingerprint()
+        stamp = fp.params if fp is not None else (None, None)
 
         for start in range(0, total, size):
             group = rows[start : start + size]
@@ -4175,9 +4201,12 @@ class KnowledgeStore:
                     vectors[i] = vec
             for r, vec in zip(group, vectors):
                 if vec:
+                    # With the model that wrote it, in the same statement (RET-4's rule for a
+                    # chunk), so a re-index re-embeds only what the model bound now has not.
                     self.db.execute(
-                        "UPDATE items SET embedding = ? WHERE id = ?",
-                        (floats_to_bytes(vec), r["id"]),
+                        "UPDATE items SET embedding = ?, embedding_model_id = ?, "
+                        "embedding_provider = ? WHERE id = ?",
+                        (floats_to_bytes(vec), *stamp, r["id"]),
                     )
                     reembedded += 1
                 else:
@@ -4193,8 +4222,8 @@ class KnowledgeStore:
     def count_stale_chunk_vectors(self) -> int:
         """Chunk vectors written by a model other than the one bound now. 0 if none bound.
 
-        ``clear_embeddings`` + ``reembed_all`` rewrite the ITEM vectors on a model switch and
-        never touch ``chunks``, and the chunk backfill only visits items with NO chunk rows —
+        ``clear_stale_embeddings`` + ``reembed_all`` rewrite the ITEM vectors on a model switch
+        and never touch ``chunks``, and the chunk backfill only visits items with NO chunk rows —
         so before this method there was no counter, and no code path, that could see a
         library whose whole passage layer came from the previous model.
         """

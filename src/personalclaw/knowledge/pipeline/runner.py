@@ -1112,8 +1112,15 @@ def _embed(store, item_id: str, embedder) -> str:
             # An unavailable/unbound embedding model returns None rather than raising —
             # a graceful degradation, not a fault. No vector was written either way.
             return "skipped"
+        # With the model that wrote it (RET-4's fingerprint, as a chunk carries it), so the
+        # re-index re-embeds only the items the model bound now has not.
+        from personalclaw.knowledge.embedding_fingerprint import active_fingerprint
+
+        fp = active_fingerprint()
         store.db.execute(
-            "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), item_id)
+            "UPDATE items SET embedding = ?, embedding_model_id = ?, embedding_provider = ? "
+            "WHERE id = ?",
+            (floats_to_bytes(vec), *(fp.params if fp is not None else (None, None)), item_id),
         )
         store.db.commit()
         embed_item_chunks(store, item_id, item.get("content") or "", embedder)

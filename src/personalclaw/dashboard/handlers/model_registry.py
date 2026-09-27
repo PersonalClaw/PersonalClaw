@@ -19,13 +19,16 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.llm.catalog import FAILURE_DETAIL_CHARS
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.use_cases import (
     USE_CASES,
     VALID_USE_CASES,
     load_active_models,
+    names_model,
     save_active_models,
+    split_ref,
 )
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
@@ -51,6 +54,45 @@ def _sel_log(
         )
     except Exception:
         pass
+
+
+#: The re-index starts a binding schedules, held until they finish (a bare task can be collected).
+_BINDING_REINDEXES: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+
+def _reindex_after_binding(request: web.Request) -> None:
+    """Embed what a newly bound Embedding model has not, in the background (``reindex_after_
+    binding``): a memory written while no model was bound joins semantic search now, whichever
+    caller bound it. Settings → Models also starts the re-index after its save; the job registry
+    runs one at a time, so both reach the same job."""
+    state = request.app.get("state") if hasattr(request.app, "get") else None
+    if state is None or not callable(getattr(state, "embedding_reindex", None)):
+        return
+    from personalclaw.dashboard.handlers.embedding_reindex import reindex_after_binding
+
+    task = asyncio.ensure_future(reindex_after_binding(request.app))
+    _BINDING_REINDEXES.add(task)
+    task.add_done_callback(_BINDING_REINDEXES.discard)
+
+
+def _names_no_model(entry: object) -> str:
+    """The sentence ``PUT /api/models/active`` refuses a chain entry that names no model with."""
+    if not isinstance(entry, str):
+        return (
+            'Each model in the chain is a "provider:model" string that names a model, and one '
+            f"is {type(entry).__name__}."
+        )
+    parsed = split_ref(entry)
+    if parsed is None or not parsed[0].strip():
+        return (
+            'One of the models in the chain is empty. Name it as "provider:model", or choose '
+            "one in Settings → Models."
+        )
+    provider = parsed[0]
+    return (
+        f"“{entry}” names the provider {provider} and no model. Name one as "
+        f"“{provider}:<model id>”, or choose one of its models in Settings → Models."
+    )
 
 
 # NOTE: model-provider discovery (ollama /api/tags, OpenAI /v1/models, the
@@ -509,6 +551,10 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     The chain is replaced whole, so the request names the revision it was built from in
     ``If-Match`` — ``revisions[use_case]`` from the GET — and a chain that changed since is
     refused with ``409 stale_write`` (`personalclaw/stale_write.py`).
+
+    Every entry names a model (``use_cases.names_model``): one that names none (``""``,
+    ``"Bedrock:"``) is refused with ``400 model_ref_names_no_model``. Binding Embedding to a
+    model starts the re-index of what that model has not embedded, in the background.
     """
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
@@ -562,6 +608,24 @@ async def api_models_active_set(request: web.Request) -> web.Response:
             status=400,
         )
 
+    # Every entry names a model. One that names only a provider (`"Bedrock:"`), or nothing, chose
+    # none, and was stored: a media call on it was then answered by a model of the adapter's own
+    # choosing. Settings → Models offers no such entry, so this is an API caller's mistake.
+    unnamed = [m for m in models if not names_model(m)]
+    if unnamed:
+        _sel_log(
+            "models.active_set",
+            "error",
+            f"{use_case}:{unnamed[0]!r}",
+            request,
+            error="a chain entry names no model",
+        )
+        return json_error(
+            "model_ref_names_no_model",
+            message=_names_no_model(unnamed[0]),
+            status=400,
+        )
+
     # Reject a ref whose PROVIDER prefix names no known provider — fail-fast at
     # set-time rather than silently stranding the use-case on a dead binding (the
     # stale-pin bug class; use-time resolution already blocks with a clear error,
@@ -571,7 +635,7 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     # provider that's installed but slow to enumerate models must NOT be rejected.
     # A bare id (no "provider:" prefix) is left alone (some use-cases store bare ids).
     try:
-        from personalclaw.providers.use_cases import _known_provider_names, split_ref
+        from personalclaw.providers.use_cases import _known_provider_names
 
         known = _known_provider_names()
         if (
@@ -621,6 +685,8 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         f"{use_case}={','.join(active[use_case]) or '(cleared)'}",
         request,
     )
+    if use_case == "embedding" and active[use_case]:
+        _reindex_after_binding(request)
     # The new revision, so a panel that stays open saves its next edit over this one.
     return web.json_response(
         {
@@ -646,6 +712,8 @@ async def api_models_chat(request: web.Request) -> web.Response:
     active = load_active_models()
     chat_active = active.get("chat", [])
 
+    # An entry that names no model is none to offer: a picker binding it would write it back.
+    chat_active = [ref for ref in chat_active if names_model(ref)]
     if chat_active:
         result = []
         for model_ref in chat_active:
@@ -687,6 +755,8 @@ async def api_models_chat(request: web.Request) -> web.Response:
     all_models: list[dict[str, Any]] = []
 
     def _add(pname: str, mid: str) -> None:
+        if not str(mid or "").strip():
+            return  # a listing row with no id is no model to offer
         all_models.append(
             {
                 "name": f"{pname}/{mid}" if pname else mid,
