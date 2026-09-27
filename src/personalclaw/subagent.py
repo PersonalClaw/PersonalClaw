@@ -2396,7 +2396,9 @@ class SubagentManager:
             source="subagent",
             session_key=info.parent_session_key or session_key,
             agent=info.agent or "",
-            provider="acp",  # subagents run through the ACP runtime
+            # An ACP subagent's runtime. A native one's event names the entry that answered, and
+            # the seam records that instead (`usage_ledger.answered_provider`).
+            provider="acp",
             model=info.model or "",
         )
 

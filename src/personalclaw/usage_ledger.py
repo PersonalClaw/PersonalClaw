@@ -44,9 +44,11 @@ class TurnUsage:
 
     ts: str  # ISO-UTC, matching the SEL timestamp convention
     session_key: str
-    source: str  # chat | loop | cron | subagent | channel | cli | background
+    source: str  # chat | room | loop | cron | subagent | channel | cli | background
     agent: str  # "" = the default agent
-    provider: str  # resolved provider entry name (e.g. "anthropic")
+    # The provider entry the answer came from (``FakeUp`` of ``FakeUp:gpt-4o``); for an ACP agent
+    # CLI, which names none, the runtime it ran on (``acp:claude-code``).
+    provider: str
     model: str  # resolved model id — the join key to model_pricing.json
     input_tokens: int = 0
     output_tokens: int = 0
@@ -76,21 +78,39 @@ def record_turn(u: TurnUsage) -> None:
         logger.debug("usage ledger append failed", exc_info=True)
 
 
-def answered_model(event: object, asked: str = "") -> str:
-    """The model id a turn is priced and recorded by: the one that ANSWERED it.
+def _served(event: object) -> tuple[str, str]:
+    """``(provider entry, model id)`` of the model a turn's terminal event says answered it.
 
-    The native loop names that model on its terminal event (``served_model_ref``): a later model
-    of the turn's chain when the turn fell back, or the one serving in place of a model that could
-    not run. The id half of that ``"<entry>:<model>"`` ref is what this ledger's ``model`` and the
-    price table key on; the ref itself is neither. A backend that names none (an ACP agent CLI)
-    leaves ``asked``, the model the caller chose.
+    The native loop names that model on the event (``served_model_ref``, ``"<entry>:<model>"``):
+    a later model of the turn's chain when the turn fell back, or the one serving in place of a
+    model that could not run. ``("", "")`` when the event names none (an ACP agent CLI).
     """
     served = getattr(event, "served_model_ref", "")
     if not isinstance(served, str) or not served:
-        return asked
+        return "", ""
     # The entry name holds no colon and a model id may (``gpt-oss:20b``): split on the first.
-    _entry, colon, model_id = served.partition(":")
-    return (model_id if colon else served) or asked
+    entry, colon, model_id = served.partition(":")
+    return (entry, model_id) if colon else ("", served)
+
+
+def answered_model(event: object, asked: str = "") -> str:
+    """The model id a turn is priced and recorded by: the one that ANSWERED it.
+
+    The id half of the served ref (:func:`_served`) is what this ledger's ``model`` and the price
+    table key on; the ref itself is neither. A backend that names none (an ACP agent CLI) leaves
+    ``asked``, the model the caller chose.
+    """
+    return _served(event)[1] or asked
+
+
+def answered_provider(event: object, asked: str = "") -> str:
+    """The provider entry a turn's answer came from: the entry half of the served ref.
+
+    That entry (the ``FakeUp`` of ``FakeUp:gpt-4o``) is what this ledger's ``provider`` names, and
+    what a ``provider:model`` ref in ``active_models.json`` spells. A backend that names none (an
+    ACP agent CLI) leaves ``asked``, the runtime the caller ran it on (``acp:claude-code``).
+    """
+    return _served(event)[0] or asked
 
 
 def record_from_event(
@@ -111,8 +131,9 @@ def record_from_event(
     the model has no price row AND the provider reported no cost — then ``cost_usd`` is
     an honest 0.0 the UI renders "unpriced". Fail-open through :func:`record_turn`.
 
-    ``model`` is the model the caller chose; the row is written for the model that answered
-    whenever the event names it (:func:`answered_model`).
+    ``model`` is the model the caller chose and ``provider`` the runtime it ran on; the row is
+    written for the model that answered, and the provider entry it came from, whenever the event
+    names them (:func:`answered_model`, :func:`answered_provider`).
 
     ``estimate_if_missing=False`` skips the fallback estimate — for a caller (the chat
     write-site) that ALREADY resolved ``event.cost_usd`` via ``estimate_cost`` itself,
@@ -125,6 +146,7 @@ def record_from_event(
     from personalclaw.pricing import estimate_cost, has_pricing
 
     model = answered_model(event, model)
+    provider = answered_provider(event, provider)
     input_tokens = int(getattr(event, "input_tokens", 0) or 0)
     output_tokens = int(getattr(event, "output_tokens", 0) or 0)
     cache_read = int(getattr(event, "cache_read_tokens", 0) or 0)

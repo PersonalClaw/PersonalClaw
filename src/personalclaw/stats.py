@@ -171,7 +171,7 @@ def cache_hit_pct(
       cache_read_rate + cache_creation * cache_write_rate``. If ``input_tokens``
       already contained the cached tokens, the shipped cost model would double-bill
       every cached turn.
-    * ``usage_ledger.py:218-221`` (``_fold``) sums the three into three SEPARATE
+    * ``usage_ledger.py:240-243`` (``_fold``) sums the three into three SEPARATE
       aggregate keys, side by side. A subset relation would make that fold
       double-count on every cached turn, so the persisted ledger's own arithmetic
       only balances if the buckets are disjoint. Cited over PCS-7's own
