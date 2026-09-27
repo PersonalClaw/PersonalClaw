@@ -927,6 +927,11 @@ def _turn_failover(
     )
 
 
+#: The folder in the home's own workspace that holds a scratch folder per session with no usable
+#: workspace (``_native_session_cwd``).
+_NO_WORKSPACE_SCRATCH = "scratch"
+
+
 def _native_session_cwd(cwd: str | None) -> str:
     """The directory a native session's file and shell tools are rooted in — never an ambient one.
 
@@ -945,7 +950,9 @@ def _native_session_cwd(cwd: str | None) -> str:
     also where a new chat, the Terminal and the Files page open. When no safe workspace resolves,
     a fresh private scratch directory stands in rather than the process cwd, and the reason is
     logged — a session whose tools are rooted in an empty directory is recoverable; files written
-    into an ambient one are not.
+    into an ambient one are not. It is in the home's own workspace (``workspace/scratch``), which
+    the durability inventory claims, so what a session writes there is backed up with the rest of
+    the workspace and goes with the home.
     """
     explicit = str(cwd or "").strip()
     if explicit:
@@ -957,7 +964,13 @@ def _native_session_cwd(cwd: str | None) -> str:
         return default
     import tempfile
 
-    scratch = tempfile.mkdtemp(prefix="personalclaw-no-workspace-")
+    from personalclaw.config.loader import default_workspace_root
+
+    # Inside the home's own workspace, where the durability inventory claims it and the home's
+    # removal takes it: a folder in the system temp folder outlived every session made there.
+    parent = default_workspace_root() / _NO_WORKSPACE_SCRATCH
+    parent.mkdir(parents=True, exist_ok=True)
+    scratch = tempfile.mkdtemp(prefix="no-workspace-", dir=parent)
     logger.warning(
         "native session: no usable workspace root resolved (PERSONALCLAW_WORKSPACE, or the "
         "workspace directory in Settings); its tools are rooted in the scratch directory %s "

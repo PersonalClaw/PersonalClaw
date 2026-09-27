@@ -517,14 +517,12 @@ def install_everything() -> None:
 def _pip_env() -> dict[str, str]:
     """What pip runs with: the child allowlist and pip's own settings (``sandbox.build_child_env``),
     never the gateway's environment, which holds every secret saved in PersonalClaw. pip runs each
-    package's build code, and that code gets whatever pip has. ``HOME_INSTALL_PIP_ENV`` keeps
+    package's build code, and that code gets whatever pip has. ``installer_cache_env`` keeps
     pip's cache out of the user's home."""
-    from personalclaw._installer import HOME_INSTALL_PIP_ENV
+    from personalclaw._installer import installer_cache_env
     from personalclaw.sandbox import build_child_env
 
-    env = build_child_env(
-        site="app-packages-install", installer="pip", extra=dict(HOME_INSTALL_PIP_ENV)
-    )
+    env = build_child_env(site="app-packages-install", installer="pip", extra=installer_cache_env())
     # pip decides what is already installed from its own import path, so it has to see the app
     # packages to reuse, upgrade or keep them; the base environment it sees on its own.
     inherited = env.get("PYTHONPATH", "")

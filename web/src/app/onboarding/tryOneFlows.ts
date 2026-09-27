@@ -24,17 +24,15 @@ import { api, isCreatedLoopRun } from '../../lib/api'
  *     nothing else, so creating the trigger and firing it once produces a real
  *     dashboard notification with no model in the path.
  *   · loop — the card's own outcome ("it is running") is read straight out of the
- *     create response, so showing it still needs no completion call.
+ *     create response, so showing it still needs no completion call. The loop's own
+ *     steps do call a model, and each one waits for the owner's Approve first, so no
+ *     token is spent that the owner did not agree to by name.
  *
- *     🔴 THE BOUND CHANGED AND THE CARD HAD TO STOP PROMISING THE OLD ONE. `general`
- *     is now PORTED onto the workflows engine (PP-16), so `POST /api/loops` STARTS A
- *     RUN rather than writing a `ready` loop row. Two consequences this flow used to
- *     rely on are gone: the run begins its first node at launch instead of arming an
- *     `idle_secs` timer, and its cycle budget is the template's own loop node — the
- *     `max_cycles` this flow used to send has no home on the run path at all, so it
- *     was dropped rather than sent and ignored. The work is still BOUNDED (the
- *     template's loop node caps its iterations), which is what "it stops on its own"
- *     claims; it is no longer bounded at ONE, and the card no longer says it is.
+ *     The budget is ONE cycle, sent as `max_cycles` and read back from the run
+ *     (`GET /api/loops/<run_id>`). `general` is ported onto the workflows engine
+ *     (PP-16), so `POST /api/loops` starts a run, and the run honours `max_cycles`
+ *     (#3613). Without it the run took the template's own cap of six cycles, and a
+ *     first-run demo that promised one kept asking for approvals.
  *
  *  Flows live here, apart from the card chrome, so the executed behaviour is
  *  testable without rendering the step — and so a reader can check what each card
@@ -85,6 +83,8 @@ export const LOOP_SEED = {
    *  verify command, so a fresh home can always start it. Must be >= 12 chars. */
   kind: 'general',
   task: 'Draft a short note describing what I could use an agent for this week.',
+  /** A first run is a demo: one cycle, then the run ends by itself. */
+  max_cycles: 1,
 } as const
 
 /** A thrown api-client error's text. `ApiError.message` is already the gateway's own
@@ -373,7 +373,11 @@ export async function runReminderFlow(): Promise<TryOneOutcome> {
  *  flow ever creates, so the other shape is reported as the disagreement it would be rather
  *  than handled as an alternative. */
 export async function runLoopFlow(): Promise<TryOneOutcome> {
-  const created = await api.createULoop({ kind: LOOP_SEED.kind, task: LOOP_SEED.task })
+  const created = await api.createULoop({
+    kind: LOOP_SEED.kind,
+    task: LOOP_SEED.task,
+    max_cycles: LOOP_SEED.max_cycles,
+  })
   if (!isCreatedLoopRun(created)) {
     // Reachable for one real reason: a dashboard built against a gateway that has not ported
     // this kind (a stale SPA, or a stale gateway behind a fresh one). Worth saying out loud —
@@ -386,15 +390,18 @@ export async function runLoopFlow(): Promise<TryOneOutcome> {
   if (created.status !== 'running') {
     throw new Error(`The loop was created but did not start — it is "${created.status}".`)
   }
+  // The budget is a claim the card makes, so it is read back from the run the server shows.
+  const shown = await api.uLoop(created.run_id)
+  if (shown.max_cycles !== LOOP_SEED.max_cycles) {
+    throw new Error(
+      `The loop started with a budget of ${shown.max_cycles} cycles, not ${LOOP_SEED.max_cycles}.`,
+    )
+  }
   return {
-    // "It stops on its own" moved from a FACT row into the headline, because it is no longer
-    // read back from anything: the old row printed `started.max_cycles` off a loop view, and a
-    // run create reports no budget. It is still true (the template's loop node caps its
-    // iterations) — but a claim this file cannot read out of a response does not get to sit in
-    // a column that promises it did.
-    headline: 'Your first loop is running — and it stops on its own.',
+    headline: 'Your first loop is running. It asks you before each step, and stops after one cycle.',
     facts: [
       { label: 'Status', value: created.status },
+      { label: 'Cycles', value: String(shown.max_cycles) },
       { label: 'Run', value: created.run_id },
     ],
     href: `workflows/runs/${created.run_id}`,

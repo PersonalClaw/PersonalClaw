@@ -35,7 +35,7 @@ import logging
 import os
 import re as _re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -260,38 +260,43 @@ def _ensure_dir(p: Path) -> Path:
 _SYSTEM_DIRS = (("/", "usr"), ("/", "System"), ("/", "etc"))
 
 
-def default_config_dir() -> Path:
+def default_config_dir(env: Mapping[str, str] | None = None) -> Path:
     """``~/.personalclaw`` — the home when ``PERSONALCLAW_HOME`` names none, or names one this
-    module refuses. The rails that protect the owner's real home compare against this."""
-    return Path.home() / CONFIG_DIR_NAME
+    module refuses. The rails that protect the owner's real home compare against this.
+
+    *env* is the environment to answer for, when it is not this process's: the one the installed
+    service starts its gateway in, whose ``HOME`` is the ``~`` here."""
+    user_home = (env or {}).get("HOME", "").strip()
+    return (Path(user_home) if user_home else Path.home()) / CONFIG_DIR_NAME
 
 
-def home_override() -> Path | None:
+def home_override(env: Mapping[str, str] | None = None) -> Path | None:
     """``PERSONALCLAW_HOME`` as it was written — ``~`` expanded, symlinks NOT resolved — or
-    ``None`` when it is unset or empty.
+    ``None`` when it is unset or empty. *env* as in :func:`default_config_dir`.
 
     Not where the home is: an override this module refuses is still returned here. It is for the
     rails that must see what was NAMED — ``seed`` refuses to replace a home reached through a
     symlink, which the resolved path can no longer show. Where the home IS is
     :func:`resolve_config_dir`."""
-    raw = os.environ.get("PERSONALCLAW_HOME")
+    raw = (os.environ if env is None else env).get("PERSONALCLAW_HOME")
     return Path(raw).expanduser() if raw else None
 
 
-def resolve_config_dir() -> Path:
+def resolve_config_dir(env: Mapping[str, str] | None = None) -> Path:
     """Where the home is, WITHOUT creating it — the one resolution rule.
 
     ``PERSONALCLAW_HOME``, expanded and resolved, unless it is the filesystem root or a system
     directory — then :func:`default_config_dir`, with a warning. For callers that must not create
-    the home they ask about: a read-only predicate, or a rail refusing to run against it."""
-    override = home_override()
+    the home they ask about: a read-only predicate, or a rail refusing to run against it. *env*
+    as in :func:`default_config_dir`: the same rule, for a gateway that runs elsewhere."""
+    override = home_override(env)
     if override is not None:
         resolved = override.resolve()
         if resolved == Path("/") or resolved.parts[:2] in _SYSTEM_DIRS:
             logger.warning("PERSONALCLAW_HOME=%s is a system directory, ignoring", override)
         else:
             return resolved
-    return default_config_dir()
+    return default_config_dir(env)
 
 
 def uses_default_home() -> bool:

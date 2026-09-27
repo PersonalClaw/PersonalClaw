@@ -686,6 +686,9 @@ def _build_launcher_script(sandbox_level: str = "strict") -> str:
 import ctypes
 import ctypes.util
 import os
+import shutil
+import signal
+import stat
 import sys
 import tempfile
 
@@ -696,15 +699,6 @@ _MS_REC        = 16384
 _MS_PRIVATE    = 1 << 18
 _MS_RDONLY     = 1
 _MS_REMOUNT    = 32
-
-_libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-_libc.mount.argtypes = [
-    ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
-    ctypes.c_ulong, ctypes.c_void_p,
-]
-_libc.mount.restype = ctypes.c_int
-_libc.unshare.argtypes = [ctypes.c_int]
-_libc.unshare.restype = ctypes.c_int
 
 REAL_UID = {uid}
 REAL_GID = {gid}
@@ -717,11 +711,105 @@ SSH_KNOWN_HOSTS = {ssh_known_hosts}
 HIDE_SSH = {hide_ssh}
 OWNER_ONLY = {owner_only_json}
 
+# The tmpfs the empty bind sources come from, first usable one wins. Same-fs binds (e.g. /tmp
+# on ext4 over ~/.personalclaw/.env on ext4) can corrupt the target's host directory entry via
+# a kernel propagation race when the private NS is torn down — leaving the host file pointing
+# at the empty source inode permanently. Cross-fs binds use distinct inode spaces and cannot
+# leak that way.
+RUNTIME_DIRS = [f"/run/user/{{REAL_UID}}", "/dev/shm"]
+# Each launch keeps its bind sources in one folder of its own, named for the launcher's pid,
+# and removes it when its command exits. A launcher that was killed (a timeout signals the
+# whole group) cannot, so each launch first removes the folders of launchers that are gone.
+SCRATCH_PREFIX = "personalclaw_sb_"
+
+
+def _load_libc():
+    """The two syscalls the child needs. Loaded when a launch runs, not at import: ``unshare``
+    is Linux-only, and the launcher is also loaded to be driven with them stood in for."""
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libc.mount.argtypes = [
+        ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+        ctypes.c_ulong, ctypes.c_void_p,
+    ]
+    libc.mount.restype = ctypes.c_int
+    libc.unshare.argtypes = [ctypes.c_int]
+    libc.unshare.restype = ctypes.c_int
+    return libc
+
+
+def _home_device():
+    try:
+        return os.stat(os.path.expanduser("~")).st_dev
+    except OSError:
+        return None
+
+
+def _remove_stale_scratch(parent):
+    """Remove the scratch folders in *parent* whose launcher is no longer running."""
+    try:
+        names = os.listdir(parent)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(SCRATCH_PREFIX):
+            continue
+        owner = name[len(SCRATCH_PREFIX):].split("_", 1)[0]
+        if not owner.isdigit():
+            continue
+        try:
+            os.kill(int(owner), 0)
+            continue  # its launcher is still running
+        except ProcessLookupError:
+            pass
+        except (OSError, OverflowError):
+            # Cannot tell whose it is, so it stays. /dev/shm is shared, so a name here can be
+            # anyone's, including one no pid could have, and that must not stop a launch.
+            continue
+        path = os.path.join(parent, name)
+        try:
+            info = os.lstat(path)
+        except OSError:
+            continue
+        if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid():
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def _make_scratch():
+    """This launch's folder for the bind sources, on the first usable tmpfs."""
+    home_dev = _home_device()
+    prefix = f"{{SCRATCH_PREFIX}}{{os.getpid()}}_"
+    for candidate in RUNTIME_DIRS:
+        try:
+            if home_dev is not None and os.stat(candidate).st_dev == home_dev:
+                continue  # same fs as HOME — no isolation, race still possible
+            _remove_stale_scratch(candidate)
+            return tempfile.mkdtemp(dir=candidate, prefix=prefix)
+        except (OSError, ValueError):
+            continue
+    # No tmpfs: the system default tempdir (typically /tmp). That accepts the kernel-race risk
+    # because no tmpfs is available — better to function (with the original regression risk)
+    # than to refuse to start.
+    _remove_stale_scratch(tempfile.gettempdir())
+    return tempfile.mkdtemp(prefix=prefix)
+
+
+def _write_id_maps(pid):
+    """Map the child's user namespace onto the real UID/GID, one to one."""
+    with open(f"/proc/{{pid}}/setgroups", "w") as f:
+        f.write("deny")
+    with open(f"/proc/{{pid}}/uid_map", "w") as f:
+        f.write(f"{{REAL_UID}} {{REAL_UID}} 1\\n")
+    with open(f"/proc/{{pid}}/gid_map", "w") as f:
+        f.write(f"{{REAL_GID}} {{REAL_GID}} 1\\n")
+
+
 def main():
     argv = sys.argv[1:]
     if not argv:
         sys.exit("sandbox_launcher: no command given")
 
+    libc = _load_libc()
+    scratch = _make_scratch()
     # Two pipes for parent↔child synchronization
     c2p_r, c2p_w = os.pipe()  # child signals "unshare done"
     p2c_r, p2c_w = os.pipe()  # parent signals "maps written"
@@ -729,21 +817,35 @@ def main():
     pid = os.fork()
 
     if pid > 0:
-        # ── Parent: write identity UID/GID map ──
-        os.close(c2p_w)
-        os.close(p2c_r)
-        os.read(c2p_r, 1)  # wait for child to unshare(NEWUSER)
-        os.close(c2p_r)
-        with open(f"/proc/{{pid}}/setgroups", "w") as f:
-            f.write("deny")
-        with open(f"/proc/{{pid}}/uid_map", "w") as f:
-            f.write(f"{{REAL_UID}} {{REAL_UID}} 1\\n")
-        with open(f"/proc/{{pid}}/gid_map", "w") as f:
-            f.write(f"{{REAL_GID}} {{REAL_GID}} 1\\n")
-        os.write(p2c_w, b"x")  # signal child to proceed
-        os.close(p2c_w)
-        _, status = os.waitpid(pid, 0)
-        code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+        # ── Parent: write identity UID/GID map, wait, then remove the bind sources ──
+        caught = []
+
+        def _forward(signum, _frame):
+            # A stop meant for the command reaches it, and the parent lives to clean up.
+            caught.append(signum)
+            try:
+                os.kill(pid, signum)
+            except OSError:
+                pass
+
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, _forward)
+        try:
+            os.close(c2p_w)
+            os.close(p2c_r)
+            if os.read(c2p_r, 1):  # the child did unshare(NEWUSER); b"" means it is gone
+                _write_id_maps(pid)
+                os.write(p2c_w, b"x")  # signal child to proceed
+            os.close(c2p_r)
+            os.close(p2c_w)
+            _, status = os.waitpid(pid, 0)
+            code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        if caught:
+            # End the way the stop asked, so the caller reads the same exit it always did.
+            signal.signal(caught[0], signal.SIG_DFL)
+            os.kill(os.getpid(), caught[0])
         sys.exit(code)
     else:
         # ── Child: unshare, wait for maps, mount, exec ──
@@ -751,7 +853,7 @@ def main():
         os.close(p2c_w)
 
         # Step 1: enter user namespace
-        if _libc.unshare(_CLONE_NEWUSER) != 0:
+        if libc.unshare(_CLONE_NEWUSER) != 0:
             sys.exit(f"sandbox: unshare(NEWUSER) failed: errno {{ctypes.get_errno()}}")
         os.write(c2p_w, b"x")  # tell parent
         os.close(c2p_w)
@@ -759,39 +861,11 @@ def main():
         os.close(p2c_r)
 
         # Step 2: enter mount namespace (now we have a mapped UID)
-        if _libc.unshare(_CLONE_NEWNS) != 0:
+        if libc.unshare(_CLONE_NEWNS) != 0:
             sys.exit(f"sandbox: unshare(NEWNS) failed: errno {{ctypes.get_errno()}}")
 
         # Private mount propagation
-        _libc.mount(None, b"/", None, _MS_REC | _MS_PRIVATE, None)
-
-        # Pick a tmpfs-backed source dir for bind-mount empty files/dirs. Same-fs
-        # binds (e.g. /tmp on ext4 over ~/.personalclaw/.env on ext4) can corrupt the
-        # target's host directory entry via a kernel propagation race when the
-        # private NS is torn down — leaving the host file pointing at the empty
-        # source inode permanently. Cross-fs binds use distinct inode spaces and
-        # cannot leak that way. Fallback chain: /run/user/$UID → /dev/shm.
-        # Verify each candidate is on a different filesystem from HOME by
-        # comparing st_dev — same-fs candidates provide no isolation benefit.
-        _tmpfs_src = None
-        try:
-            _home_dev = os.stat(os.path.expanduser("~")).st_dev
-        except OSError:
-            _home_dev = None
-        for _candidate in (f"/run/user/{{REAL_UID}}", "/dev/shm"):
-            try:
-                if _home_dev is not None and os.stat(_candidate).st_dev == _home_dev:
-                    continue  # same fs as HOME — no isolation, race still possible
-                _probe = tempfile.mkdtemp(dir=_candidate, prefix="personalclaw_sb_")
-                os.rmdir(_probe)
-                _tmpfs_src = _candidate
-                break
-            except (OSError, ValueError):
-                continue
-        # _tmpfs_src=None falls through to system default tempdir (typically /tmp).
-        # In that case we accept the kernel-race risk because no tmpfs is
-        # available — better to function (with the original regression risk)
-        # than to refuse to start.
+        libc.mount(None, b"/", None, _MS_REC | _MS_PRIVATE, None)
 
         # Pre-read files that must survive dir hiding
         expose_data = {{}}
@@ -805,8 +879,8 @@ def main():
         for d in SENSITIVE_DIRS:
             target = d.encode()
             if os.path.isdir(target):
-                per_dir_empty = tempfile.mkdtemp(dir=_tmpfs_src).encode()
-                _libc.mount(per_dir_empty, target, None, _MS_BIND, None)
+                per_dir_empty = tempfile.mkdtemp(dir=scratch).encode()
+                libc.mount(per_dir_empty, target, None, _MS_BIND, None)
 
         # Restore selectively exposed files into the now-empty mounts
         for src_path, filename in EXPOSE_FILES:
@@ -817,15 +891,15 @@ def main():
                     fh.write(expose_data[src_path])
                 os.chmod(dest, 0o444)
 
-        # Bind-mount empty files over individual sensitive files. Source the
-        # empty tempfile from a tmpfs (cross-fs) when available so the bind
-        # cannot corrupt the target's host directory entry on namespace exit.
+        # Bind-mount empty files over individual sensitive files. The empty file comes from
+        # this launch's scratch, on a tmpfs (cross-fs) when there is one, so the bind cannot
+        # corrupt the target's host directory entry on namespace exit.
         for f in SENSITIVE_FILES:
             target = f.encode()
             if os.path.isfile(target):
-                fd, empty_path = tempfile.mkstemp(dir=_tmpfs_src)
+                fd, empty_path = tempfile.mkstemp(dir=scratch)
                 os.close(fd)
-                _libc.mount(empty_path.encode(), target, None, _MS_BIND, None)
+                libc.mount(empty_path.encode(), target, None, _MS_BIND, None)
 
         # .ssh: hide keys but expose known_hosts content (strict only)
         if HIDE_SSH and os.path.isdir(SSH_DIR):
@@ -833,10 +907,10 @@ def main():
             if os.path.isfile(SSH_KNOWN_HOSTS):
                 with open(SSH_KNOWN_HOSTS, "rb") as fh:
                     kh_data = fh.read()
-            # Cross-fs source for the same kernel-race reason as SENSITIVE_DIRS
-            # (line 371) and SENSITIVE_FILES (line 389).
-            ssh_tmp = tempfile.mkdtemp(dir=_tmpfs_src).encode()
-            _libc.mount(ssh_tmp, SSH_DIR.encode(), None, _MS_BIND, None)
+            # Cross-fs source for the same kernel-race reason as SENSITIVE_DIRS and
+            # SENSITIVE_FILES above.
+            ssh_tmp = tempfile.mkdtemp(dir=scratch).encode()
+            libc.mount(ssh_tmp, SSH_DIR.encode(), None, _MS_BIND, None)
             if kh_data:
                 with open(os.path.join(SSH_DIR, "known_hosts"), "wb") as fh:
                     fh.write(kh_data)
@@ -853,8 +927,8 @@ def main():
                     pass
             if os.path.exists(target):
                 t = target.encode()
-                _libc.mount(t, t, None, _MS_BIND | _MS_REC, None)
-                _libc.mount(None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None)
+                libc.mount(t, t, None, _MS_BIND | _MS_REC, None)
+                libc.mount(None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None)
 
         # Scrub sensitive env vars
         for key in list(os.environ):

@@ -167,6 +167,155 @@ class TestBuildLauncherScript:
             assert prefix in script
 
 
+# The Linux launcher bind-mounts empty folders and files over the credential paths. It makes
+# them on a tmpfs, ``/run/user/$UID`` (else ``/dev/shm``), and on ``main`` it never removed
+# them: every sandboxed command (an agent's shell command, a trigger's bash action, a scheduled
+# script) left one empty folder per hidden credential folder, plus empty files and a copy of
+# ``known_hosts`` in strict mode. The namespace syscalls are Linux's, so the launcher is driven
+# here with them stood in for, against a runtime folder of the test's own; what is under test
+# is where the bind sources go and that they are gone once the command is.
+
+_LAUNCHER_UNDER_TEST = """
+import builtins, ctypes, json, os, sys, types
+
+cfg = json.loads(sys.argv[1])
+
+
+class _Syscall:
+    def __call__(self, *_args):
+        return 0
+
+
+class NoSyscalls:
+    # libc with the two namespace syscalls stood in for, so the launcher runs on any host.
+    def __init__(self, *_args, **_kwargs):
+        self.unshare = _Syscall()
+        self.mount = _Syscall()
+
+
+def _open(path, *args, **kwargs):
+    # The parent writes the child's id maps under /proc, which only Linux has.
+    if str(path).startswith("/proc/"):
+        return builtins.open(os.devnull, "w")
+    return builtins.open(path, *args, **kwargs)
+
+
+ctypes.CDLL = NoSyscalls
+launcher = types.ModuleType("launcher_under_test")
+launcher.open = _open
+exec(compile(open(cfg["script"]).read(), cfg["script"], "exec"), launcher.__dict__)
+launcher.RUNTIME_DIRS = cfg["runtime_dirs"]
+launcher.SENSITIVE_DIRS = [cfg["home"] + "/.gnupg"]
+launcher.SENSITIVE_FILES = [cfg["home"] + "/.netrc"]
+launcher.HIDE_SSH = True
+launcher.SSH_DIR = cfg["home"] + "/.ssh"
+launcher.SSH_KNOWN_HOSTS = cfg["home"] + "/.ssh/known_hosts"
+launcher._home_device = lambda: None
+sys.argv = [cfg["script"], *cfg["argv"]]
+launcher.main()
+"""
+
+
+class TestTheLauncherRemovesWhatItMounted:
+    @staticmethod
+    def _launcher(tmp_path: Path, runtime_dirs: list[str], argv: list[str], **popen):
+        import json
+        import subprocess
+
+        script = tmp_path / "launcher.py"
+        script.write_text(_build_launcher_script("strict"), encoding="utf-8")
+        home = tmp_path / "home"
+        (home / ".gnupg").mkdir(parents=True, exist_ok=True)
+        (home / ".netrc").write_text("machine example.test\n", encoding="utf-8")
+        (home / ".ssh").mkdir(exist_ok=True)
+        (home / ".ssh" / "known_hosts").write_text("example.test ssh-ed25519 AAAA\n")
+        cfg = {"script": str(script), "runtime_dirs": runtime_dirs, "home": str(home), "argv": argv}
+        return subprocess.Popen(
+            [sys.executable, "-c", _LAUNCHER_UNDER_TEST, json.dumps(cfg)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            **popen,
+        )
+
+    @staticmethod
+    def _runtime(tmp_path: Path) -> Path:
+        runtime = tmp_path / "run-user-1000"
+        runtime.mkdir()
+        return runtime
+
+    def test_a_command_leaves_nothing_in_the_runtime_folder(self, tmp_path):
+        runtime = self._runtime(tmp_path)
+        # The command counts what the launch keeps there WHILE it runs, then exits 7.
+        count = f'/usr/bin/find "{runtime}" -mindepth 1 | /usr/bin/wc -l; exit 7'
+        proc = self._launcher(tmp_path, [str(runtime)], ["/bin/sh", "-c", count])
+        out, err = proc.communicate(timeout=60)
+
+        assert proc.returncode == 7, err
+        # The empty folder over .gnupg, the empty file over .netrc and the folder over .ssh:
+        # the bind sources are there while the command runs.
+        assert int(out.strip()) >= 3, (out, err)
+        assert list(runtime.iterdir()) == []
+
+    def test_a_command_that_is_stopped_leaves_nothing_either(self, tmp_path):
+        import signal
+        import time
+
+        runtime = self._runtime(tmp_path)
+        proc = self._launcher(tmp_path, [str(runtime)], ["/bin/sh", "-c", "exec sleep 30"])
+        deadline = time.monotonic() + 30
+        while len(list(runtime.rglob("*"))) < 3 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(list(runtime.rglob("*"))) >= 3, "the command never started"
+
+        proc.terminate()
+        _, err = proc.communicate(timeout=30)
+        assert proc.returncode == -signal.SIGTERM, err
+        assert list(runtime.iterdir()) == []
+
+    def test_what_a_killed_launcher_left_goes_at_the_next_launch(self, tmp_path):
+        """A timeout SIGKILLs the whole group, launcher included, so it cannot clean up; the
+        next launch removes the folders of launchers that are gone, and only those."""
+        import subprocess
+
+        runtime = self._runtime(tmp_path)
+        gone = subprocess.Popen(["/usr/bin/true"])
+        gone.wait()
+        leftover = runtime / f"personalclaw_sb_{gone.pid}_x1y2z3w4"
+        (leftover / "tmpabc").mkdir(parents=True)
+        running = runtime / f"personalclaw_sb_{os.getpid()}_a1b2c3d4"
+        running.mkdir()
+        someone_elses = runtime / "not-ours"
+        someone_elses.mkdir()
+        # /dev/shm is shared, so a name no pid could have must not stop a launch either.
+        impossible = runtime / "personalclaw_sb_99999999999999999999999_zzzz"
+        impossible.mkdir()
+
+        proc = self._launcher(tmp_path, [str(runtime)], ["/usr/bin/true"])
+        _, err = proc.communicate(timeout=60)
+
+        assert proc.returncode == 0, err
+        assert sorted(p.name for p in runtime.iterdir()) == sorted(
+            [running.name, someone_elses.name, impossible.name]
+        )
+
+    def test_with_no_runtime_folder_it_uses_the_temp_folder_and_cleans_that(self, tmp_path):
+        system_temp = tmp_path / "system-temp"
+        system_temp.mkdir()
+        count = f'/usr/bin/find "{system_temp}" -mindepth 1 | /usr/bin/wc -l'
+        proc = self._launcher(
+            tmp_path,
+            [str(tmp_path / "no-such-runtime")],
+            ["/bin/sh", "-c", count],
+            env={**os.environ, "TMPDIR": str(system_temp)},
+        )
+        out, err = proc.communicate(timeout=60)
+
+        assert proc.returncode == 0, err
+        assert int(out.strip()) >= 3, (out, err)
+        assert list(system_temp.iterdir()) == []
+
+
 class TestSandboxExecArgv:
     # `sandbox_exec_argv` is the macOS backend, and it now REFUSES to build an argv whose own
     # enforcement binaries it cannot resolve, so a direct call on a Linux host (where

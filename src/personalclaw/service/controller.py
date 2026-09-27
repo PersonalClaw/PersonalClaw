@@ -9,6 +9,8 @@ directly. This keeps the dispatch logic in one place and makes the
 import sys
 from collections.abc import Iterable
 
+from personalclaw import tmux_substrate
+from personalclaw.config import loader as config_loader
 from personalclaw.service import linux, macos
 from personalclaw.service.common import Platform, current_platform
 from personalclaw.service.environment import Capture, describe, summary
@@ -77,18 +79,24 @@ def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -
 
 
 def uninstall_service() -> int:
-    """Stop and remove the platform service. Idempotent."""
+    """Stop and remove the platform service, and its home's tmux server. Idempotent.
+
+    The server holds the gateway's persistent terminals and durable workers, and outlives the
+    gateway by design, so stopping the service leaves it running. Its home comes from the
+    installed file, read before the file is removed; with no service installed, nothing is
+    stopped.
+    """
     plat = current_platform()
-    if plat == Platform.SYSTEMD:
-        linux.uninstall()
-        print("✅ personalclaw service stopped and removed.")
-        return 0
-    if plat == Platform.LAUNCHD:
-        macos.uninstall()
-        print("✅ personalclaw service stopped and removed.")
-        return 0
-    _unsupported_message()
-    return 2
+    if plat not in (Platform.SYSTEMD, Platform.LAUNCHD):
+        _unsupported_message()
+        return 2
+    platform = linux if plat == Platform.SYSTEMD else macos
+    env = platform.installed_environment()
+    platform.uninstall()
+    if env:
+        tmux_substrate.kill_server(config_loader.resolve_config_dir(env))
+    print("✅ personalclaw service stopped and removed.")
+    return 0
 
 
 def service_status() -> int:

@@ -66,7 +66,7 @@ const CARDS: CardDef[] = [
   },
   {
     id: 'loop', icon: Repeat, title: 'Start a loop',
-    blurb: 'Creates a one-cycle goal loop and starts it for real. It stops on its own.',
+    blurb: 'Starts a real loop for one cycle. It asks you before each step, then stops on its own.',
     action: 'Start it',
   },
 ]

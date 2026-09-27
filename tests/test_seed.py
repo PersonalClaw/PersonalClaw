@@ -517,6 +517,31 @@ def test_seed_non_empty_rail_succeeds_with_replace(
     assert (target / "fixture.yaml").read_text().strip() == ("schema-version: 2026-04-28")
 
 
+def test_seed_replace_stops_the_homes_tmux_server_before_the_wipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A home's tmux server outlives its gateway on purpose, with its socket inside the home.
+    Wiping the home under a live server orphans it: nothing can reach it again, and it keeps
+    the old home's shells running. So the wipe stops it first, while the home is still there."""
+    from personalclaw import tmux_substrate
+
+    target = tmp_path / "dev-home"
+    target.mkdir()
+    (target / "stale.txt").write_text("old content")
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(target))
+    seen: list[tuple[Path, bool]] = []
+
+    def stop(home=None):
+        seen.append((Path(home), (Path(home) / "stale.txt").exists()))
+
+    monkeypatch.setattr(tmux_substrate, "kill_server", stop, raising=False)
+
+    seed_mod.seed("empty", replace=True)
+
+    assert seen == [(target.resolve(), True)]
+    assert (target / "fixture.yaml").is_file()
+
+
 def test_seed_replace_refuses_symlinked_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

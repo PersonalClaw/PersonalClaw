@@ -402,6 +402,22 @@ def test_clean_output_is_not_blocked():
     assert export_preview(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS)["blocked"] == []
 
 
+@pytest.mark.parametrize("refusal", ["a credential", "an unsafe name"])
+def test_a_refused_export_leaves_no_folder_behind(tmp_path, refusal):
+    """The destination is another tool's folder, often one that does not exist yet
+    (``~/.claude/agents``). On ``main`` it was created before the checks ran, so an export the
+    checks then refused left that folder behind, empty, with nothing of ours in it."""
+    dest = tmp_path / "their-home" / ".claude" / "agents"
+    entity = (
+        _agent("leaky-agent", system_prompt=f"key {CANARY_AWS}")
+        if refusal == "a credential"
+        else _agent("../evil", description="escapes")
+    )
+    with pytest.raises((ExportBlocked, ExportPathRefused)):
+        export_entities(CLAUDE_CODE_AGENTS, [entity], dest, confirm_dest=True)
+    assert not (tmp_path / "their-home").exists()
+
+
 # ── Containment: a slug may never escape the destination ───────────────────────
 
 

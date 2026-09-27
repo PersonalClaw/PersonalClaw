@@ -127,12 +127,15 @@ def _npm_global_root(npm: str) -> str:
     cached = _NPM_GLOBAL_ROOTS.get(npm)
     if cached is not None:
         return cached
+    from personalclaw._installer import installer_env
+
     try:
         out = subprocess.run(
             [npm, "root", "-g"],
             capture_output=True,
             text=True,
             timeout=5,
+            env=installer_env(),
         )
     except Exception:
         return ""
@@ -358,16 +361,21 @@ def provision_acp_adapter(
 
     try:
         prefix.mkdir(parents=True, exist_ok=True)
+        from personalclaw._installer import installer_cache_env
         from personalclaw.sandbox import build_child_env
 
         # npm runs the install scripts of the adapter and of every package it depends on, so
         # the install gets the child allowlist and npm's own settings, never the gateway's
-        # environment and the secrets in it. The chosen Node goes first on PATH so npm's engine
-        # check and those scripts run under it, not the (possibly too-old) default node.
+        # environment and the secrets in it, and npm's cache in the home. The chosen Node goes
+        # first on PATH so npm's engine check and those scripts run under it, not the (possibly
+        # too-old) default node.
         env = build_child_env(
             site="acp-adapter-install",
             installer="npm",
-            extra={"PATH": os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")])},
+            extra={
+                **installer_cache_env(),
+                "PATH": os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")]),
+            },
         )
         logger.info("acp adapter %s: provisioning under %s into %s", npm_pkg, node, prefix)
         spec = f"{npm_pkg}@{pin_version}" if pin_version else npm_pkg

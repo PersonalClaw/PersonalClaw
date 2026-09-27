@@ -10,8 +10,11 @@ is asymmetric: a sweep that guesses "dead" tombstones live work.
 
 Three things live here and nowhere else:
 
-* **The socket.** ``-L personalclaw`` is a dedicated tmux server, so nothing we do can see,
-  adopt, or kill a session in the user's own tmux. Every command in this module passes it.
+* **The socket.** Each PersonalClaw home has a tmux server of its own, on ``<home>/tmux.sock``
+  (:func:`server_flags`), so nothing we do can see, adopt or kill a session in the user's own
+  tmux, or another home's. It is resolved from the active home when tmux runs, not at import.
+  One ``-L personalclaw`` server per machine used to serve every home, so a dev gateway and
+  the real one listed, reattached and deleted each other's sessions.
 * **The names.** A durable session's name is derived from IDENTITY, never randomness, so a
   restarted gateway *recomputes* it and reattaches instead of reaping (EXECUTION-ISOLATION
   §5.1). ``terminal_session_name`` keeps P25's original mapping verbatim — it is a wire
@@ -35,16 +38,29 @@ exited is gone from the server, so this cannot report a dead worker as alive.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
 import re
 import shutil
+import socket
+import stat
 import subprocess
+import time
+from pathlib import Path
+
+from personalclaw.config import loader as config_loader
 
 logger = logging.getLogger(__name__)
 
-#: Our own tmux server. Never the user's default socket: adopting or killing a session a
-#: human created by hand would be the worst possible failure of a reaper.
-TMUX_SOCKET = "personalclaw"
+#: The home's own tmux server listens here, inside the home. Never the user's default socket:
+#: adopting or killing a session a human created by hand would be the worst possible failure of
+#: a reaper.
+SOCKET_FILENAME = "tmux.sock"
+
+#: The longest socket path both macOS and Linux can bind: ``sun_path`` holds 104 bytes on macOS
+#: (108 on Linux), the NUL included.
+_SOCKET_PATH_MAX = 103
 
 #: Every tmux call is bounded. A wedged daemon must not stall a boot sweep forever, and the
 #: sweep's fallback ("no session") is the conservative answer, so a timeout is safe to take.
@@ -101,8 +117,48 @@ def durable_session_name(project_id: str, run_id: str, session_slug: str) -> str
     )
 
 
+def _home(home: Path | str | None) -> Path:
+    """*home*, or the active one, with every link resolved: one home is one server however it
+    is reached."""
+    return Path(os.path.realpath(home if home is not None else config_loader.config_dir()))
+
+
+def _fallback_name(home: Path) -> str:
+    return "pclaw-" + hashlib.sha256(os.fsencode(home)).hexdigest()[:16]
+
+
+def server_flags(home: Path | str | None = None) -> list[str]:
+    """The tmux flags that address *home*'s own server (default: the active home).
+
+    ``-S <home>/tmux.sock``. A home whose path leaves no room for the socket name within the
+    limit gets ``-L pclaw-<hash of the home>`` instead: still a server of its own, with its
+    socket in tmux's per-user folder, because a socket path cannot be longer."""
+    root = _home(home)
+    path = root / SOCKET_FILENAME
+    if len(os.fsencode(path)) <= _SOCKET_PATH_MAX:
+        return ["-S", str(path)]
+    return ["-L", _fallback_name(root)]
+
+
+def socket_path(home: Path | str | None = None) -> Path:
+    """Where *home*'s server socket is, for either form :func:`server_flags` chooses."""
+    root = _home(home)
+    flags = server_flags(root)
+    if flags[0] == "-S":
+        return Path(flags[1])
+    # tmux's own rule for ``-L``: ``$TMUX_TMPDIR`` (else /tmp), then ``tmux-<uid>``.
+    base = os.environ.get("TMUX_TMPDIR") or "/tmp"
+    return Path(base) / f"tmux-{os.getuid()}" / flags[1]
+
+
 def _argv(*args: str) -> list[str]:
-    return ["tmux", "-L", TMUX_SOCKET, *args]
+    return ["tmux", *server_flags(), *args]
+
+
+def attach_argv(name: str, shell: str) -> list[str]:
+    """The persistent terminal's client: attach to the session *name* on the active home's
+    server, creating it with a login *shell* when it is not there (``new-session -A``)."""
+    return _argv("new-session", "-A", "-s", name, shell, "-l")
 
 
 async def new_session(
@@ -263,3 +319,55 @@ async def kill_session(name: str) -> None:
         pass
     except Exception:  # pragma: no cover - defensive
         logger.debug("tmux kill-session failed for %s", name, exc_info=True)
+
+
+def _stale(path: Path) -> bool:
+    """Whether *path* is a socket that nothing answers on: what a dead server leaves behind."""
+    try:
+        if not stat.S_ISSOCK(os.lstat(path).st_mode):
+            return False
+    except OSError:
+        return False
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(1.0)
+    try:
+        probe.connect(str(path))
+    except ConnectionRefusedError:
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return False
+
+
+def kill_server(home: Path | str | None = None) -> None:
+    """Stop *home*'s tmux server, and remove its socket once nothing answers on it.
+
+    For uninstalling the service and wiping a home: tmux never removes its own socket, and a
+    server outlives the gateway that started it by design (that is what keeps a terminal and a
+    durable worker alive through a restart). A socket something still answers on is left in
+    place, since removing it would orphan a server that is still running. Never raises.
+    """
+    root = _home(home)
+    try:
+        subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["tmux", *server_flags(root), "kill-server"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=PROBE_TIMEOUT_S,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    path = socket_path(root)
+    deadline = time.monotonic() + 2.0
+    while True:
+        if _stale(path):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            return
+        if not path.exists() or time.monotonic() >= deadline:
+            return
+        time.sleep(0.05)  # the server is still closing its socket
