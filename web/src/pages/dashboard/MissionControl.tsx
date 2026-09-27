@@ -464,12 +464,14 @@ function AttentionCard({
   // ONE subject string feeds every control's accessible name on this card, capped by the shared
   // `rowSubject` rule. "Approve" alone is ambiguous the moment two cards are on screen — and this
   // view guarantees four lanes of them — so each name carries what it acts on.
+  // `raisedBy` rather than the row's channel: an Inbox row's channel is its notification pair's
+  // source, which read "loop" on a workflow's, a trigger's and the control bridge's cards alike.
   const subject = rowSubject([
     card.title,
     approval?.tool,
-    approval?.session,
-    item?.channel_name,
+    card.raisedBy,
     card.subtitle,
+    approval?.session,
   ])
   // Answered, or nothing left to answer: either way the verbs go.
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
@@ -477,6 +479,12 @@ function AttentionCard({
 
   return (
     <div className="flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s">
+      {/* What asked, first: a workflow's step, a trigger, a loop, a chat (ledger 295). */}
+      {card.raisedBy ? (
+        <p data-type="label-s" className="min-w-0 truncate text-on-surface-low">
+          {card.raisedBy}
+        </p>
+      ) : null}
       <p data-type="label-m" className="min-w-0 truncate text-on-surface-var">
         {card.title || subject || card.id}
       </p>

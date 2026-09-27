@@ -557,13 +557,15 @@ class Journal(LedgerWriter):
         score: float,
         resolution: str,
         producer: str = outcomes.PRODUCER_DECISION,
+        answer: str = "",
     ) -> dict[str, Any]:
         """Journal the ground-truth resolution of a `pending_outcome` (LEARN-R18).
 
         `resolution` is "measured" when `metric` was readable after the horizon and
         "inconclusive" when it was not — the latter decays faster, because an outcome we
         could not measure is weaker evidence than one we could. `pending_event_id` links
-        back to the open question so the resolver never re-resolves the same one.
+        back to the open question so the resolver never re-resolves the same one. `answer` is
+        which answer ground truth was, for a question that names one (an escalation's verb).
 
         The workflow-shaped adapter over `resolve_outcome` (PP-9): the resolver hands back the
         `producer` it read off the question, so a resolution never re-labels the bet it closes.
@@ -577,6 +579,7 @@ class Journal(LedgerWriter):
             measured=measured,
             score=score,
             resolution=resolution,
+            answer=answer,
             instance_path=path,
             node_id=node_id,
         )

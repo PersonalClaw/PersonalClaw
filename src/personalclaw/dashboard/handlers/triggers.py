@@ -402,7 +402,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         # not tell the user the automation has STOPPED.
         "state": trigger.state,
         "run_count": trigger.run_count,
-        # When it last RAN, and how: the newest of its success/failure stamps and its newest run
+        # When it last RAN, and how: the newest of its outcome stamps and its newest run
         # record's status, the pair a schedule row already carries. A store row had neither, so the
         # list could only infer "has it run" from `run_count` — the FIRE meter a Run button
         # deliberately does not spend — and a manual trigger read "never" beside the runs its own
@@ -2360,9 +2360,10 @@ async def _dispatch_store_action(
     # `gateway._record_fire_outcome`; the docstring above claims the two "share one dispatch so
     # their behaviour cannot drift", and recording is exactly where it had drifted.
     # `_record_manual_run` reuses the SAME `ScheduleRunStore` ledger and the SAME
-    # `last_success_at`/`last_failure_at` stamp, tagged `manual` — see its docstring for why
-    # `run_count` (the fire budget) is not spent. A `view.rendered` refresh (WF2AUT-6) flows through
-    # this same recorder, so a pull-on-view fire leaves the same run evidence a manual Run does.
+    # `last_success_at`/`last_failure_at`/`last_waiting_at` stamps, tagged `manual` — see its
+    # docstring for why `run_count` (the fire budget) is not spent. A `view.rendered` refresh
+    # (WF2AUT-6) flows through this same recorder, so a pull-on-view fire leaves the same run
+    # evidence a manual Run does.
     from personalclaw.triggers.delivery import status_url
 
     # The same `status_url` the autonomous path hands the provider, so a hand-run notify links back
@@ -2407,9 +2408,10 @@ async def _record_manual_run(
     """Append a MANUAL run record and advance the trigger's last-run stamp (#308).
 
     Reuses the SAME ledger the autonomous fire path appends to — `ScheduleRunStore`, keyed by the
-    trigger id (via this module's `_runs_store()`) — and the SAME
-    `last_success_at`/`last_failure_at` stamp `gateway._record_fire_outcome` writes, so a Run button
-    and an autonomous tick leave the same evidence that a run happened. This is not a parallel
+    trigger id (via this module's `_runs_store()`) — and the SAME outcome stamps
+    `gateway._record_fire_outcome` writes (`last_success_at`, `last_failure_at`, and
+    `last_waiting_at` for a run that stopped for you), so a Run button and an autonomous tick leave
+    the same evidence that a run happened. This is not a parallel
     recorder: it writes the identical `ScheduleRun` shape to the identical store, and stamps the
     identical trigger fields. The read surfaces (`/history`, `_last_run_ts`, the completion watcher)
     already work — they were simply reading a store nothing wrote to on this path.
@@ -2438,7 +2440,11 @@ async def _record_manual_run(
         import time
         from datetime import datetime, timezone
 
-        from personalclaw.schedule_history import ScheduleRun, status_for_result
+        from personalclaw.schedule_history import (
+            ScheduleRun,
+            status_for_result,
+            summary_for_result,
+        )
         from personalclaw.triggers import parks
 
         trigger_id = str(getattr(trigger, "id", "") or "")
@@ -2446,6 +2452,7 @@ async def _record_manual_run(
             return
         finished = time.time()
 
+        trace = ""
         if exc is not None:
             status = "failure"
             error = f"{type(exc).__name__}: {exc}"
@@ -2465,10 +2472,13 @@ async def _record_manual_run(
             if late and status == "success":
                 status = "ran_late"
             error = ""
-            summary = str(getattr(result, "stdout", "") or "") if result is not None else ""
+            # The row says what the action did in the sentence it wrote for a person, and keeps
+            # what it printed as the trace — a browse run's JSON account (ledger 295).
+            summary = summary_for_result(result)
+            trace = str(getattr(result, "stdout", "") or "") if result is not None else ""
             if status == "waiting":
                 # A park's row says it waits on you and on what, not the payload it parked with.
-                summary = parks.waiting_line(result)
+                summary = trace = parks.waiting_line(result)
         if late and status != "failure":
             summary = f"{late[:1].upper()}{late[1:]}." + (f" {summary}" if summary else "")
 
@@ -2485,7 +2495,7 @@ async def _record_manual_run(
                 duration_ms=int(max(0.0, finished - started) * 1000),
                 status=status,
                 summary=summary,
-                trace=summary,
+                trace=trace or summary,
                 error=error,
             )
         )
@@ -2509,6 +2519,10 @@ async def _record_manual_run(
             # Serializers redact this on the way out (`_serialize_store` / `_schedule_row_for`),
             # exactly as `_record_fire_outcome` relies on.
             live.last_error_summary = (error or "manual run failed")[:200]
+        elif status == "waiting":
+            # A run that stopped for you did nothing it was asked yet: not a success (ledger 293).
+            # Its own stamp still moves `last_run_ts`, so the Run button clears all the same.
+            live.last_waiting_at = stamp
         else:
             live.last_success_at = stamp
         store.upsert(live)

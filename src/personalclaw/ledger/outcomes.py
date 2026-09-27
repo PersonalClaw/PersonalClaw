@@ -221,6 +221,15 @@ class OutcomeQuestion:
     ts: str
     match: dict[str, Any] = field(default_factory=dict)
     value_field: str = ""
+    #: For a question whose ground truth is WHICH answer somebody gave, the field on the matched
+    #: event that names it — an escalation's `verb`. The resolution records it as `answer`, so a
+    #: reader counts each answer apart without re-reading the producer's ledger.
+    answer_field: str = ""
+    #: Answers that are ground truth — somebody answered — and yet no point on the bet's scale, so
+    #: they carry no number. An escalation bets on a yes: approve reads 1.0 and reject 0.0, and a
+    #: `revised` (the person sent a step back to be changed) is neither, so it is its own answer
+    #: rather than a no that would score the interruption −1.
+    unscored_answers: frozenset[str] = frozenset()
     record: dict[str, Any] = field(default_factory=dict)
 
 
@@ -245,6 +254,7 @@ def parse(record: dict[str, Any]) -> OutcomeQuestion | None:
     if not event_id:
         return None
     raw_match = record.get("match")
+    raw_unscored = record.get("unscored_answers")
     return OutcomeQuestion(
         event_id=event_id,
         producer=str(record.get("producer") or PRODUCER_DECISION),
@@ -256,6 +266,12 @@ def parse(record: dict[str, Any]) -> OutcomeQuestion | None:
         ts=str(record.get("ts") or ""),
         match=dict(raw_match) if isinstance(raw_match, dict) else {},
         value_field=str(record.get("value_field") or ""),
+        answer_field=str(record.get("answer_field") or ""),
+        unscored_answers=(
+            frozenset(str(a) for a in raw_unscored)
+            if isinstance(raw_unscored, list)
+            else frozenset()
+        ),
         record=record,
     )
 
@@ -288,20 +304,40 @@ def measure_from_events(question: OutcomeQuestion, events: list[dict[str, Any]])
     a second writer built for the same run restarts its sequence at 1 (a live hazard — two writers
     in one process re-mint each other's `event_id`s). Position cannot be fooled by that.
 
-    A boolean `value_field` reads as 1.0/0.0 on purpose: "approved" is a measurement.
+    A boolean `value_field` reads as 1.0/0.0 on purpose: "approved" is a measurement. An answer the
+    question lists as unscored reads as None too — it has no number — and `answer_from_events` is
+    what names it, so the resolver can tell it from nothing having matched.
     """
+    return _last_match(question, events)[0]
+
+
+def answer_from_events(question: OutcomeQuestion, events: list[dict[str, Any]]) -> str:
+    """Which answer the last match gave, for a question that declares an `answer_field` — "" when
+    it declares none, or nothing matched. Read off the same match `measure_from_events` scores."""
+    return _last_match(question, events)[1]
+
+
+def _last_match(
+    question: OutcomeQuestion, events: list[dict[str, Any]]
+) -> tuple[float | None, str]:
+    """The last matching event's number and answer — the one pass both readers above share."""
     if not question.metric:
-        return None
+        return None, ""
     start = 0
     for index, event in enumerate(events):
         if isinstance(event, dict) and str(event.get("event_id") or "") == question.event_id:
             start = index + 1
             break
     found: float | None = None
+    answer = ""
     for event in events[start:]:
         if not isinstance(event, dict) or event.get("kind") != question.metric:
             continue
         if any(str(event.get(k, "")) != str(v) for k, v in question.match.items()):
+            continue
+        answer = str(event.get(question.answer_field) or "") if question.answer_field else ""
+        if answer and answer in question.unscored_answers:
+            found = None
             continue
         if not question.value_field:
             found = 1.0
@@ -311,7 +347,7 @@ def measure_from_events(question: OutcomeQuestion, events: list[dict[str, Any]])
             found = 1.0 if raw else 0.0
         else:
             found = _float(raw, default=1.0)
-    return found
+    return found, answer
 
 
 def is_due(question: OutcomeQuestion, *, opened_epoch: float | None, now: float) -> bool:
@@ -335,11 +371,12 @@ def score(measured: float, baseline: float) -> float:
     return max(-1.0, min(1.0, (measured - baseline) / denom))
 
 
-def resolution_for(measured: float | None) -> str:
-    """`measured` ⇒ :data:`MEASURED`, unreadable ⇒ :data:`INCONCLUSIVE`. One place, so no
+def resolution_for(measured: float | None, *, answer: str = "") -> str:
+    """Ground truth read ⇒ :data:`MEASURED`, unreadable ⇒ :data:`INCONCLUSIVE`. One place, so no
     consumer invents a third state (a fabricated measurement is worse than an honest
-    "could not tell")."""
-    return INCONCLUSIVE if measured is None else MEASURED
+    "could not tell"). An ANSWER with no number — an escalation `revised` — was read: somebody
+    answered, and that is a measurement even though it is no point on the bet's scale."""
+    return MEASURED if measured is not None or answer else INCONCLUSIVE
 
 
 def decay_profile(resolution: str) -> str:
@@ -383,6 +420,8 @@ class OutcomeLedger:
         metric_source: str = SOURCE_MEMORY,
         match: dict[str, Any] | None = None,
         value_field: str = "",
+        answer_field: str = "",
+        unscored_answers: tuple[str, ...] = (),
         **context: Any,
     ) -> dict[str, Any]:
         """Open a question: what this producer bet, and what would later prove it.
@@ -409,6 +448,10 @@ class OutcomeLedger:
             record["match"] = dict(match)
         if value_field:
             record["value_field"] = value_field
+        if answer_field:
+            record["answer_field"] = answer_field
+        if unscored_answers:
+            record["unscored_answers"] = sorted(unscored_answers)
         return self.write(PENDING_OUTCOME, **record)
 
     def resolve_outcome(
@@ -422,14 +465,18 @@ class OutcomeLedger:
         measured: float | None,
         score: float,
         resolution: str,
+        answer: str = "",
         **context: Any,
     ) -> dict[str, Any]:
         """Close a question with ground truth. Cites `pending_event_id`, always.
 
         Carries the resolution's `decay_profile` on the record so a consumer grading the evidence
         later — `PP-10`'s dormancy sweep, the curator — reads the ageing rule off the ledger
-        instead of re-deriving it and picking a different one.
+        instead of re-deriving it and picking a different one. `answer` rides along for a question
+        that declared an `answer_field`: which answer it was, whether or not it carried a number.
         """
+        if answer:
+            context["answer"] = answer
         return self.write(
             OUTCOME_RESOLVED,
             **context,

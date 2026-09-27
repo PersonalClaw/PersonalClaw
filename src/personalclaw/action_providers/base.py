@@ -115,6 +115,12 @@ class ActionResult:
     # Seconds until a retry can run, for a failure a retry clears only after a wait: a model
     # provider's open circuit breaker refuses every call until it lapses. 0 = no wait known.
     retry_after: float = 0.0
+    # What the action did, in a sentence for a person: the line its run's history row shows
+    # ("Browse finished in 3 steps at example.com. Noted: …"). `stdout` stays the output a machine
+    # reads (a workflow step's value, the history row's trace); a provider whose stdout is JSON
+    # writes this so that the row a person reads is not the JSON. Empty = nothing to add, and the
+    # row shows `stdout` (`schedule_history.summary_for_result`).
+    summary: str = ""
 
 
 def provider_failure(provider_name: str, exc: BaseException) -> AgentError:

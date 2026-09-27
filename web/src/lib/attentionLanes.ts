@@ -58,6 +58,7 @@
  *  shown. Neither is a fallthrough — both branches are written out.
  */
 import type { ChatSession, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, WorkflowRunSummary } from './api'
+import { workflowApprovalSession } from '../app/approvalDestination'
 import { loopRoute } from './loopKind'
 import { shownCycle } from './loopStatus'
 
@@ -73,8 +74,10 @@ export type AttentionInput = Pick<
 >
 
 /** `GET /api/approvals` rows. No status field exists on `PendingApproval` — presence in the list is
- *  the pending-ness — so every one of these is a Needs-approval card. */
+ *  the pending-ness — so every one of these is a Needs-approval card. The three names who asked
+ *  (`approvalRaisedBy`) are optional here: a row without them is still an approval to decide. */
 export type ApprovalInput = Pick<PendingApproval, 'id' | 'source' | 'tool' | 'tool_purpose' | 'session' | 'ts'>
+  & Partial<Pick<PendingApproval, 'session_title' | 'trigger' | 'trigger_name'>>
 
 /** The only in-flight evidence on the wire (see fact 3). `running`/`stopping` are observed, not
  *  inferred. Optional: omit it and Working is empty rather than guessed. */
@@ -100,6 +103,9 @@ interface LaneCardBase {
   id: string
   title: string
   subtitle?: string
+  /** What raised an approval or an Inbox card, in words: "Workflow · release", "Trigger · Check my
+   *  balance", "Loop", "Chat · Trip planning" (`approvalRaisedBy`, `inboxRaisedBy`). */
+  raisedBy?: string
   at: number | null
   refs?: Record<string, unknown>
 }
@@ -282,6 +288,66 @@ function firstLine(text: unknown): string {
   return nl === -1 ? trimmed : trimmed.slice(0, nl)
 }
 
+// ── WHO RAISED A CARD ──────────────────────────────────────────────────────────────────────────
+//
+// 🔴 Measured (ledger 295): every card a workflow's gate, a trigger's question, a loop or the
+// control bridge raised read "loop". Those Inbox rows ride the `loop/needs_input` notification
+// pair — the one a user's "always interrupt me for needs_input" rule keys on — and
+// `emit_attention_item` writes the pair's source as the row's `sender_name`, so the one word a
+// card showed about where it came from named a delivery rule. The refs each emitter stamps say
+// which work asked (`workflow`, `trigger_park`, `loop`), so the label is read off those. An
+// approval card said nothing about who wanted the call at all: it has its session key, whose
+// grammar `approvalDestination` and the backend's `approval_owner.py` already read, and the
+// trigger its run belongs to.
+
+function named(what: string, name: unknown): string {
+  const n = firstLine(name)
+  return n ? `${what} · ${n}` : what
+}
+
+function refString(refs: Record<string, unknown> | undefined, key: string): string {
+  const v = refs?.[key]
+  return typeof v === 'string' ? v : ''
+}
+
+/** Which work a pending approval is for: a trigger's run, a workflow's step, a loop, a chat, or an
+ *  MCP server's question — '' when the approval names none of them. */
+export function approvalRaisedBy(
+  a: Partial<Pick<PendingApproval, 'source' | 'session' | 'session_title' | 'trigger' | 'trigger_name'>>,
+): string {
+  if (typeof a.trigger === 'string' && a.trigger !== '') return named('Trigger', a.trigger_name || a.trigger)
+  const session = typeof a.session === 'string' ? a.session : ''
+  const step = workflowApprovalSession(session)
+  if (step) return named('Workflow', `${step.nodeId} step`)
+  // A loop's worker chat is `loop-<id>` (or `loop-<id>-<task>`, or the planner's `loop-plan-<id>`).
+  if (session.startsWith('loop-')) return 'Loop'
+  if (session.startsWith('cron:')) return named('Trigger', session.slice('cron:'.length))
+  const source = typeof a.source === 'string' ? a.source : ''
+  if (source.startsWith('mcp:')) return named('MCP server', source.slice('mcp:'.length))
+  // Any other session is a chat (a subagent's call asks under the chat that started it) — the
+  // same default `approvalDestination` links to.
+  return session !== '' ? named('Chat', a.session_title) : ''
+}
+
+/** What raised an Inbox card: the work its refs name, else its sender, as before. */
+export function inboxRaisedBy(item: Pick<AttentionInput, 'refs' | 'sender_name' | 'channel_name'>): string {
+  const refs = item.refs
+  if (refString(refs, 'trigger_park')) {
+    return named('Trigger', refString(refs, 'trigger_name') || refString(refs, 'trigger_park'))
+  }
+  // A loop that runs as a workflow run (PP-16) stamps both: it is the loop that asked.
+  if (refString(refs, 'loop')) return 'Loop'
+  if (refString(refs, 'workflow')) return named('Workflow', refString(refs, 'workflow_name'))
+  if (refString(refs, 'source') === 'control_bridge') return 'Control bridge'
+  // An approval's own row, carded only once the approval has left the list (fact 2): it names the
+  // approval's session, read the way the approval card reads it.
+  if (mirroredApprovalId(item) !== '') {
+    const from = approvalRaisedBy({ session: refString(refs, 'session') })
+    if (from) return from
+  }
+  return firstLine(item.sender_name) || firstLine(item.channel_name)
+}
+
 /** Sort one lane in place. Nulls last in both directions; `key` breaks ties so the order is a total
  *  one and a test cannot pass on incidental sort stability. */
 function sortLane(lane: Lane, cards: LaneCard[]): LaneCard[] {
@@ -326,13 +392,17 @@ export function toLanes(
     const id = typeof a.id === 'string' ? a.id : ''
     if (id === '') continue
     approvalIds.add(id)
+    const raisedBy = approvalRaisedBy(a)
     out['needs-approval'].push({
       key: `approval:${id}`,
       lane: 'needs-approval',
       origin: 'approval',
       id,
       title: firstLine(a.tool) || 'a tool',
-      subtitle: firstLine(a.tool_purpose) || firstLine(a.session) || undefined,
+      // What the call is for. This fell back to the bare session key (`workflow:df5827ca:sweep`);
+      // `raisedBy` says who asked in words, and every key it reads names someone.
+      subtitle: firstLine(a.tool_purpose) || undefined,
+      raisedBy: raisedBy || undefined,
       at: typeof a.ts === 'number' && Number.isFinite(a.ts) ? a.ts : null,
       approval: a,
     })
@@ -358,7 +428,8 @@ export function toLanes(
       origin: 'inbox',
       id,
       title: firstLine(item.message) || firstLine(item.context_summary) || '(no message)',
-      subtitle: firstLine(item.sender_name) || firstLine(item.channel_name) || undefined,
+      // Its sender was this card's only line about where it came from; `raisedBy` is that line now.
+      raisedBy: inboxRaisedBy(item) || undefined,
       at: timeOf(item),
       item,
     })

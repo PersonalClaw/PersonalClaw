@@ -357,8 +357,12 @@ A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
    run (`pending_mutations.json`, `mid_flight.queue_mutation`) and read back by the
    controller that next drives it, so an edit queued on a paused run survives a
    restart before the resume. It applies at most once: the file goes before the
-   batches apply. A batch that no longer fits the spec the run resumes with is
-   journaled `mutation_rejected`, never dropped silently.
+   batches apply. Edits queued before the drain all apply, in the order they
+   were made: each is checked at submit against the spec the queue will leave
+   (`mid_flight.projected_spec`), so an edit may build on one still queued, and
+   prepared again at the drain against the spec the edit before it left. A batch
+   that no longer fits the spec the run resumes with is journaled
+   `mutation_rejected`, never dropped silently.
 3. **The frozen-region invariant.** A COMPLETED node cannot be edited — its
    output is already downstream, and changing the spec that produced it would
    make the run's own history a lie. The user's order is *rewind, then edit*.
@@ -423,7 +427,13 @@ rewind that does not force), and the second ask is a new question that no earlie
 answer can answer. An ask that closes with nobody answering it — the run ended, a
 rewind withdrew it, its deadline passed — resolves `withdrawn` with the reason and
 `answered: false`, so its pending half is never left open and no escalation bet
-is graded by it (`gate_answers.withdraw_asks`).
+is graded by it (`gate_answers.withdraw_asks`). A revise (`revise{step_ref,
+comment}`: change that step, then ask me again) is a third outcome: its ask
+resolves `revised` with `answered: true`, and once the revised step has run the
+gate asks again under a new id. Scoring counts it apart from a yes and a no: the
+gate's said-no table lists it as `revised` (`introspection.gate_stats`), and the
+escalation bet on the revised ask is graded as the answer `revised`, with no
+number on its yes/no scale.
 
 Answering a gate records the answer as its output. Answering a parked action does
 not: approving runs the step again (`Ask.rerun`), with the answer on the one
@@ -440,10 +450,10 @@ runs the action again with the answer. Where a person signs in is the browser
 the step drives (its `cdp_url` target): core opens no window for them, so no
 card, row or banner points them at one.
 
-**Only an approval lets what follows an approval gate run.** `needs` means after,
-not after-approval, so the frontier alone would run the next step behind a gate
-that said no — and `on_error: null_continue`, the default, walked past one. The
-controller reads `gate_answers.unapproved_gate` on every step, after deadlines
+**A gate is a gate: what follows one runs only once it passed.** `needs` means
+after, not after-it-passed, so the frontier alone would run the next step behind a
+gate that said no — and `on_error: null_continue`, the default, walked past one.
+The controller reads `gate_answers.stopping_gate` on every step, after deadlines
 resolve and before the frontier, and `end_at_gate` ends the run there:
 
 * **Deny** — on a gate, or on a parked step — makes the step `declined`: not a
@@ -455,16 +465,25 @@ resolve and before the frontier, and `end_at_gate` ends the run there:
   30 min while someone is on the other end, or the author's `timeout_secs`) — keeps
   the gate `failed`, because nobody chose it and an unattended run must surface it
   (WF2-R7). The run ends `failed`, saying how long it waited.
+* **A check that did not pass** — a `judge`, `expression`, `verify_command`,
+  `verify_script` or `ladder` gate that fails or escalates — ends what follows it the
+  same way. The run ends `failed` with the check's reason ("“quality-check” failed:
+  the draft cites no source, so nothing after it ran"), or `escalated` for a judge
+  that escalated. A check continues past a failure only when the gate itself
+  declares it: `on_error: null_continue` runs what follows and the run still ends
+  `failed`; `allow_failure: true` records the failure as degraded and the run can
+  complete. Of the bundled templates, `knowledge-lint` declares `allow_failure` on
+  its per-item judge (it records each item's verdict, and nothing after it writes),
+  and `audit-sweep`'s `fix_enabled`, a mode switch that was written as a gate, is a
+  branch.
 
-Either way every step after the gate, in each sequence that holds it, is marked
-skipped with the reason ("not run: “approve” was declined"), and anything still in
-flight elsewhere is stopped. A decline is the one terminal state that ends every
+Every way, each step after the gate, in each sequence that holds it, is marked
+skipped with the reason ("not run: “approve” was declined", "not run: “verify”
+failed"), and anything still in flight elsewhere is stopped. A decline is the one terminal state that ends every
 container holding it (`tick.container_outcome`) and makes even a plain `needs`
 onto it unreachable. The engine has no construct for an author to declare a path
 taken on a decline — a denied gate's answer never entered the binding namespace,
 and `on_error` is a failure policy — so a decline always stops the run.
-Failures are unchanged: a judge, expression or verifier gate that fails is a
-failure, and `on_error` decides what follows it.
 
 A run that ends closes whatever it was still asking, whichever way it ended:
 `gate_answers.close_waits` cancels each waiting step and withdraws its ask, and

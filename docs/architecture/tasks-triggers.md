@@ -164,6 +164,13 @@ no run row, no `last_run_ts` move, so the panel renders it instead of waiting
 for one. `supports_dry_run` (run-prompt, run-workflow) is a provider's own
 observe-mode capability, reported by the Doctor's would-execute simulator.
 
+**A run's history row says what the action did.** Both recorders write the
+row's summary as the sentence the action wrote for a person
+(`ActionResult.summary`, `schedule_history.summary_for_result`), else what it
+printed, which stays the row's trace. A browse run prints its whole account as
+JSON for the workflow engine to bind, and says "Browse finished in 3 steps at
+example.com. Noted: …" for its row.
+
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.
 When the action IS a dashboard notification (`notify`), a successful fire
@@ -236,7 +243,10 @@ the engine parks the step and asks through the run
 (`gateway._record_fire_outcome`) and the Run button (`_record_manual_run`) —
 record the run `waiting` (`schedule_history.status_for_result`; the runs feed
 reads it as `deferred`), with the summary "Waiting for you." and the question,
-then call `parks.settle`:
+and stamp the trigger's `last_waiting_at` rather than `last_success_at`: the
+action did nothing it was asked yet. `last_run_ts` is the newest of the
+success, failure and waiting stamps, so a Run button still clears when its run
+stops for you. Then both call `parks.settle`:
 
 - **A park raises one question.** One park file per trigger
   (`trigger_parks/` in the home) holds a single-use token and the card; its

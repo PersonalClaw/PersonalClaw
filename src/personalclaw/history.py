@@ -1736,9 +1736,10 @@ class HistoryConsolidator:
             from personalclaw.learning import outcome_resolver
 
             rep = outcome_resolver.resolve(self._svc)
-            if rep.get("resolved") or rep.get("inconclusive"):
+            if rep.get("resolved") or rep.get("unscored") or rep.get("inconclusive"):
                 outcomes_note = (
-                    f"outcomes resolved={rep['resolved']} inconclusive={rep['inconclusive']}"
+                    f"outcomes resolved={rep['resolved']} unscored={rep['unscored']} "
+                    f"inconclusive={rep['inconclusive']}"
                 )
         except Exception:
             logger.debug("Outcome resolver failed", exc_info=True)

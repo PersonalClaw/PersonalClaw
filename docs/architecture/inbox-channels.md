@@ -149,6 +149,13 @@ there is no path by which a surface learns of an approval another does not list.
 approval used to broadcast its own frame and register nowhere else, so it reached only its own
 chat.
 
+Mission Control labels each card by the work that asked (`attentionLanes.approvalRaisedBy` and
+`inboxRaisedBy`): an approval by its trigger, else by its session key's owner (a workflow's step,
+a loop's worker, a trigger's session, an MCP server, a chat), and an Inbox row by the refs its
+emitter stamped (`workflow`, `trigger_park`, `loop`, the control bridge). An Inbox row's sender
+is its notification pair's source, which is `loop` for a workflow's gate, a trigger's question
+and the control bridge's confirm alike, so it is shown only when the refs name no work.
+
 **The registry id is not the chat's id.** A chat's `request_id` is unique only inside that chat —
 an ACP agent's permission request carries the agent's JSON-RPC message id, counted from the same
 small integers on every connection — so the registry keys a chat approval

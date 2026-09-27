@@ -681,11 +681,12 @@ class RunController:
 
         self._wake_due_nodes()
 
-        # An approval gate that did not end approved ENDS the run: a person's Deny ends it
-        # `declined`, an approval nobody gave ends it `failed`. Read after the deadlines above
-        # resolve and BEFORE the frontier, so nothing after the gate is ever scheduled — the
-        # frontier alone would run it, since `needs` means after, not after-approval.
-        stopped = gate_answers.unapproved_gate(self)
+        # A gate that did not pass ENDS the run: a person's Deny ends it `declined`, an approval
+        # nobody gave or a check that failed ends it `failed`, a judge that would not rule ends it
+        # `escalated`. Read after the deadlines above resolve and BEFORE the frontier, so nothing
+        # after the gate is ever scheduled — the frontier alone would run it, since `needs` means
+        # after, not after-success.
+        stopped = gate_answers.stopping_gate(self)
         if stopped is not None:
             await gate_answers.end_at_gate(self, stopped)
             return True
@@ -998,7 +999,11 @@ class RunController:
                 "preview": mutations.CascadePreview().to_dict(),
             }
 
-        result = mutations.prepare_batch(raw_ops, self.spec, self.instances, effects=self._effects)
+        # Against the spec the queue will leave, not the one the run has now: an edit made while
+        # others wait (a paused run) applies after them, so it must be valid there (ledger 293).
+        result = mutations.prepare_batch(
+            raw_ops, mid_flight.projected_spec(self), self.instances, effects=self._effects
+        )
         body = result.to_dict()
         if not result.ok:
             return body
