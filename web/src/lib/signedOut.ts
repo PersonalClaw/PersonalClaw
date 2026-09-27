@@ -11,16 +11,21 @@ import { useSyncExternalStore } from 'react'
 export interface SignedOut {
   /** What to show: the gateway's own sentence (why, when, how to sign back in) when it gave one. */
   message: string
-  /** `session_signed_out` / `session_expired`, or '' for a refusal with no known session behind it. */
+  /** `session_signed_out` / `session_expired` / `session_required`, or '' for a refusal the
+   *  gateway did not explain (an older gateway's bare `{"error": …}`). */
   code: string
   /** The `detail.reason` the gateway named (`signed_out_elsewhere`, `limit`, `expired`, …), or ''. */
   reason: string
 }
 
-/** The sentence for a refusal the gateway could not explain: no session it recognises was
- *  presented at all (a cleared cookie, a reset signing key). True in every such case. */
+/** The sentence for a refusal the gateway did not explain — an older gateway, which answered a
+ *  missing or unrecognised sign-in with a bare reason. True in every such case. */
 export const NOT_SIGNED_IN =
   'This browser is no longer signed in to PersonalClaw. Sign in again to continue.'
+
+/** The gateway's sign-in refusal codes, each of which carries its own sentence
+ *  (`http_errors.HTTP_ERROR_CODES`; `token_auth.refusal_notice`). */
+const EXPLAINED = new Set(['session_signed_out', 'session_expired', 'session_required'])
 
 let current: SignedOut | null = null
 const listeners = new Set<() => void>()
@@ -34,12 +39,7 @@ export function isSignedOutRefusal(r: Response): boolean {
  *  less well (a poll that races the first read has no more to add). */
 export function reportSignedOut(next: SignedOut): void {
   if (current) return
-  current = {
-    ...next,
-    message: next.code === 'session_signed_out' || next.code === 'session_expired'
-      ? next.message
-      : NOT_SIGNED_IN,
-  }
+  current = { ...next, message: EXPLAINED.has(next.code) ? next.message : NOT_SIGNED_IN }
   for (const listener of [...listeners]) listener()
 }
 

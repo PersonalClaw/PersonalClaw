@@ -23,7 +23,7 @@ const {
   LOCAL_ENDPOINT_ID,
   HEALTH_REACHABLE,
   HEALTH_UNREACHABLE,
-  HEALTH_NEEDS_PAIRING,
+  HEALTH_REFUSED,
   HEALTH_NOT_A_GATEWAY,
   HEALTH_REDIRECTED,
   HEALTH_HTTP_ERROR,
@@ -632,12 +632,12 @@ describe("probeEndpoint — against real listeners, carrying no credential", () 
     }
   });
 
-  it("reads a 401 and a 403 as NEEDS_PAIRING, which is what a revoked device session looks like", async () => {
+  it("reads a health check answered 401 or 403 as REFUSED — a PersonalClaw gateway never refuses it", async () => {
     for (const code of [401, 403]) {
       const s = await listen((req, res) => res.writeHead(code).end("nope"));
       try {
         const r = await probeEndpoint(s.origin);
-        assert.strictEqual(r.status, HEALTH_NEEDS_PAIRING, String(code));
+        assert.strictEqual(r.status, HEALTH_REFUSED, String(code));
         assert.strictEqual(r.httpStatus, code);
       } finally {
         await kill(s);
@@ -799,7 +799,7 @@ describe("reconnect — driven by killing a real listener", () => {
         action = step.action;
         attempt = step.attempt;
       }
-      assert.strictEqual(action, "needs_pairing");
+      assert.strictEqual(action, "refused");
       assert.strictEqual(probes, 1, "an auth refusal was retried — this is the credential-retry loop");
       assert.strictEqual(attempt, 0, "an auth refusal incremented the retry counter");
     } finally {
@@ -845,7 +845,7 @@ describe("reconnect — driven by killing a real listener", () => {
 
   it("classifies exactly three outcomes as retryable", () => {
     assert.deepStrictEqual(
-      [HEALTH_REACHABLE, HEALTH_UNREACHABLE, HEALTH_NEEDS_PAIRING, HEALTH_NOT_A_GATEWAY, HEALTH_REDIRECTED, HEALTH_HTTP_ERROR, HEALTH_REFUSED_BY_POLICY].filter(isRetryable),
+      [HEALTH_REACHABLE, HEALTH_UNREACHABLE, HEALTH_REFUSED, HEALTH_NOT_A_GATEWAY, HEALTH_REDIRECTED, HEALTH_HTTP_ERROR, HEALTH_REFUSED_BY_POLICY].filter(isRetryable),
       [HEALTH_UNREACHABLE, HEALTH_HTTP_ERROR]
     );
     assert.strictEqual(isRetryable("timeout"), true);
@@ -861,7 +861,7 @@ describe("one gateway's revocation touches only its own row", () => {
   let ids;
 
   before(async () => {
-    // Two REAL gateways. One has had its device session revoked (it answers 401); the other is
+    // Two REAL gateways. One refuses even the health check (it answers 403); the other is
     // healthy. Two live listeners rather than one fake, because the claim under test is that the
     // two rows are independent — and a single stubbed prober cannot be independent of itself.
     work = await listen((req, res) => res.writeHead(403).end());
@@ -879,9 +879,9 @@ describe("one gateway's revocation touches only its own row", () => {
     await kill(home);
   });
 
-  it("marks the revoked row needs_pairing and leaves the other reachable", async () => {
+  it("marks the refusing row refused and leaves the other reachable", async () => {
     const health = await probeAll(loadRegistry(store));
-    assert.strictEqual(health[ids.work].status, HEALTH_NEEDS_PAIRING);
+    assert.strictEqual(health[ids.work].status, HEALTH_REFUSED);
     assert.strictEqual(health[ids.home].status, HEALTH_REACHABLE);
     assert.strictEqual(health[ids.home].version, "2.0.0");
   });

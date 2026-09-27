@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from personalclaw import __version__, self_update
+from personalclaw.auth import lifetimes
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import _DEFAULT_PORT
@@ -22,7 +23,11 @@ from personalclaw.dashboard.origin import (
     dashboard_origin,
     parse_dashboard_url,
 )
-from personalclaw.dashboard.token_auth import duration_words, parse_duration
+from personalclaw.dashboard.token_auth import (
+    MAX_SESSION_TTL_SECS,
+    duration_words,
+    parse_duration,
+)
 from personalclaw.frontend import build_frontend_sync, ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -97,10 +102,15 @@ def resolve_client_port(cli_port: int | None) -> int:
 
 
 def _token(args: argparse.Namespace) -> None:
-    """Print a dashboard URL with a fresh auth token."""
+    """Print a dashboard URL with a fresh auth token.
+
+    A ``--ttl`` that is not a lifetime, or one over the 90-day limit, is refused HERE, with the
+    sentence saying why — before the gateway is asked for anything (ledger 285).
+    """
     ttl = parse_duration(args.ttl)
-    if ttl is None:
-        print(f"❌ Invalid TTL: {args.ttl} (use e.g. 1h, 30m)")
+    if ttl is None or ttl > MAX_SESSION_TTL_SECS:
+        refusal = lifetimes.unreadable(args.ttl) if ttl is None else lifetimes.too_long(ttl)
+        print(f"❌ {refusal}", file=sys.stderr)
         sys.exit(1)
 
     port = resolve_client_port(args.port)

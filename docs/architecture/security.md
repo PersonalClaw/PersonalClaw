@@ -86,13 +86,21 @@ permission model holds in every auth mode.
 - App backends never see the owner's credential: the reverse proxy strips
   cookie + Authorization and injects the app's own 1-hour app-scoped token
   (see [app-platform.md](app-platform.md#the-reverse-proxy--token-model)).
-- Session TTLs are capped (`MAX_SESSION_TTL_SECS`, a year, only when a caller asks for it;
-  browser sign-ins last `auth.session_ttl`, 30 days by default, and a token that names no
-  lifetime 20 hours). How many may be signed in is bounded per kind — 20 browsers, 20 paired
+- No session, link or token lasts longer than 90 days (`MAX_SESSION_TTL_SECS`): a long-lived
+  credential is replaced at least every 90 days, because the longer a link or token keeps
+  working, the longer anyone who copies it can use the dashboard. A request for longer — `personalclaw token --ttl`, `?ttl=` on
+  `/api/token/local`, `auth.session_ttl`, an app's `generate_token` — is refused with a sentence
+  naming the limit and why, never shortened; a config file that already says longer is applied
+  as 90 days and `personalclaw doctor` says so; and a token minted longer before the limit
+  existed stops 90 days after it was issued. Browser sign-ins last `auth.session_ttl`, 30 days by
+  default, and a token that names no lifetime 20 hours. How many may be signed in is bounded per kind — 20 browsers, 20 paired
   devices, 20 tokens, and each app separately — over the durable store, so the limit holds
   across restarts, and the one it signs out is the least recently used of its own kind. Every
   sign-in and sign-out is an SEL row (`session_signed_in` / `session_signed_out`, with the
-  reason), and a signed-out browser is told why on its next request.
+  reason). Every refusal a browser or the desktop app can meet carries a sentence saying why and
+  how to sign in (`session_signed_out`, `session_expired`, `session_required`); a request that
+  presents garbage, or a token another key signed, reads exactly what presenting nothing reads.
+  A script's Bearer keeps the one uniform `auth_bearer_invalid`.
 
 ### Webhook auth
 

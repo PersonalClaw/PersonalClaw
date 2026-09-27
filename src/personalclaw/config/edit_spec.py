@@ -371,6 +371,16 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
         value = value.strip()
         if int(value[:-1]) <= 0:
             raise ConfigValueError("must be greater than zero", f"{path_key}={value}")
+        # A ceiling, when the field declares one (`auth.session_ttl`: 90 days). Refused with the
+        # sentence the field's own limit gives, never stored and applied as something shorter.
+        max_secs = spec.get("max_secs")
+        if max_secs:
+            from personalclaw.auth.lifetimes import config_too_long, lifetime_seconds
+
+            if (lifetime_seconds(value) or 0) > int(max_secs):
+                raise ConfigValueError(
+                    config_too_long(path_key, value), f"{path_key}={value}: over the limit"
+                )
     elif spec["type"] == "str_list":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ConfigValueError("must be a list of strings", f"{path_key}={value}")

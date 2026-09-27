@@ -107,8 +107,10 @@ middleware that consumes them), `dashboard/server.py::_dev_user_middleware`,
   the token validates as an owner token, replay one app's token against another
   app's routes, or find an `/api` handler that authenticates but never consults
   the app claim.
-- Attack the TTL: is `MAX_SESSION_TTL_SECS` actually the ceiling on every mint
-  path? Does a refresh path extend an app token beyond it?
+- Attack the TTL: is `MAX_SESSION_TTL_SECS` (90 days) actually the ceiling on every mint
+  path, and is a longer request refused rather than shortened? Does a token minted longer
+  before the limit stop at 90 days from its `iat`? Does a refresh path extend an app token
+  beyond it?
 - Attack `none` auth mode specifically. The threat model claims the permission
   middleware holds even there. Try to make `_dev_user_middleware` adopt a *wider*
   identity than the presented token.

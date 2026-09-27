@@ -58,14 +58,26 @@ def test_token_url_safe_chars(user_id: str) -> None:
 # -- Valid duration parsing --
 
 
+# Returned as asked, never clamped to MAX_SESSION_TTL_SECS: a longer lifetime is the caller's to
+# refuse (ledger 285). Zero is not a lifetime.
 @pytest.mark.parametrize("n", [0, 1, 5, 24, 100, 9999])
 def test_parse_duration_hours(n: int) -> None:
-    assert parse_duration(f"{n}h") == min(n * 3600, MAX_SESSION_TTL_SECS)
+    assert parse_duration(f"{n}h") == (n * 3600 if n else None)
 
 
 @pytest.mark.parametrize("n", [0, 1, 5, 30, 60, 9999])
 def test_parse_duration_minutes(n: int) -> None:
-    assert parse_duration(f"{n}m") == min(n * 60, MAX_SESSION_TTL_SECS)
+    assert parse_duration(f"{n}m") == (n * 60 if n else None)
+
+
+@pytest.mark.parametrize("n", [1, 30, 90, 365])
+def test_parse_duration_days(n: int) -> None:
+    assert parse_duration(f"{n}d") == n * 86400
+
+
+def test_a_lifetime_over_the_limit_is_not_minted() -> None:
+    with pytest.raises(ValueError, match="at most 90 days"):
+        generate_token("user", ttl_seconds=MAX_SESSION_TTL_SECS + 1)
 
 
 # -- Invalid duration strings rejected --
@@ -79,7 +91,7 @@ def test_parse_duration_minutes(n: int) -> None:
         "m",
         "10",
         "10s",
-        "10d",
+        "10y",
         "abc",
         "-1h",
         "1.5h",

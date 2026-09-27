@@ -79,6 +79,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
+from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS
 from personalclaw.config import loader as config_loader
 
 
@@ -488,9 +489,15 @@ def _parse_record(raw: Any, nonce: str) -> SessionRecord | None:
     if issuer not in ISSUERS:
         issuer = ISSUER_UNKNOWN
     app = str(raw.get("app") or "") if issuer == ISSUER_APP else ""
-    return SessionRecord(
-        expiry=expiry, issuer=issuer, device=_parse_device(raw.get("device"), nonce), app=app
-    )
+    device = _parse_device(raw.get("device"), nonce)
+    # No row outlives the 90-day limit (ledger 285), however long it was minted for before the
+    # limit existed: 90 days from when it signed in — or, for a row from before that was
+    # recorded, from now at the latest. The gateway refuses such a token 90 days after its own
+    # signed issue time (`token_auth._session_deadline`); this keeps the LIST from promising
+    # longer, and `note_client` replaces "now" with the real issue time the first time the
+    # session is used.
+    expiry = min(expiry, (device.minted_at or time.time()) + MAX_LIFETIME_SECS)
+    return SessionRecord(expiry=expiry, issuer=issuer, device=device, app=app)
 
 
 def _parse_ended(raw: Any) -> EndedSession | None:
@@ -716,7 +723,13 @@ class ClientNote:
 
 
 def note_client(
-    nonce: str, *, ip: str, user_agent: str, browser_carrier: bool, now: float | None = None
+    nonce: str,
+    *,
+    ip: str,
+    user_agent: str,
+    browser_carrier: bool,
+    issued_at: float = 0.0,
+    now: float | None = None,
 ) -> ClientNote:
     """Record where *nonce*'s client was seen from, and what it is. Writes only on a change.
 
@@ -726,6 +739,8 @@ def note_client(
     browser opens (``browser_carrier``: the ``?token=`` exchange or the cookie) becomes that
     browser's sign-in — which moves it from the token limit to the browser limit, so that
     limit is enforced here too. A paired or enrolled device keeps the name it was given.
+    A row from before sign-in times were recorded adopts *issued_at* (the token's signed
+    ``iat``) as its sign-in time, which also moves its listed end to 90 days after it.
 
     **Never raises**, for the reason :func:`touch_device_last_seen` never does: the request
     is already authorized, and a failed note must not become a refusal.
@@ -739,6 +754,10 @@ def note_client(
         device = record.device
         before_pool = pool_of(record)
         wrote = False
+        if not device.minted_at and issued_at > 0:
+            device.minted_at = float(issued_at)
+            record.expiry = min(record.expiry, device.minted_at + MAX_LIFETIME_SECS)
+            wrote = True
         clean_ip = _sanitize_ip(ip)
         if clean_ip and device.ip != clean_ip:
             device.ip = clean_ip

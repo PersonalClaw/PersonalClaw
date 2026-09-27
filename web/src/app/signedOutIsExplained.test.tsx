@@ -69,6 +69,22 @@ describe('a signed-out tab shows why, in place of the app', () => {
     expect(reload, 'reloading lands on the gateway’s own sign-in door').toHaveBeenCalledTimes(1)
   })
 
+  it('a tab whose sign-in vanished reads the gateway’s sentence for that too (ledger 286)', async () => {
+    // A cleared cookie, a cookie dropped at its Max-Age: the gateway now explains "not signed in"
+    // in the same envelope as "signed out", and the tab shows ITS words, not a guess of its own.
+    const NOT_SIGNED_IN =
+      'This device isn’t signed in to PersonalClaw. To sign in, run `personalclaw token` on the ' +
+      'computer running PersonalClaw and open the link it prints here, or pair this device from ' +
+      'Settings → Devices on a device that is signed in.'
+    vi.stubGlobal('fetch', refusing({
+      error: { code: 'session_required', message: NOT_SIGNED_IN, detail: { reason: 'not_signed_in', at: 1 } },
+    }))
+    render(<App />)
+
+    const page = await screen.findByRole('main', { name: 'You’re signed out' })
+    expect(page).toHaveAccessibleDescription(NOT_SIGNED_IN.replaceAll('`', ''))
+  })
+
   it('a refusal the gateway could not explain still gets a true sentence, never its raw reason', async () => {
     vi.stubGlobal('fetch', refusing({ error: 'no active sessions' }))
     render(<App />)

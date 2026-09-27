@@ -1208,7 +1208,8 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     token_parser.add_argument(
         "--ttl",
         default="20h",
-        help="How long it lasts, e.g. 1h, 30m, 720h (default: 20h; at most 8760h, a year)",
+        help="How long it lasts: 30m, 20h, 7d (default: 20h; at most 90d, the limit for a "
+        "long-lived credential — longer is refused)",
     )
 
     # pair — mint an 8-digit pairing code so a new sender on a channel (Telegram,

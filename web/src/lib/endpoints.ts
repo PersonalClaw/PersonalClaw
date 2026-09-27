@@ -8,12 +8,12 @@
  * 🔑 WHY THIS LIVES IN THE SHELL'S STORAGE SCOPE, NOT THE SPA'S. The served SPA cannot hold this
  * registry, for two independently sufficient reasons, both measured rather than assumed:
  *
- *   1. The SPA is re-downloaded from whichever gateway is active. `desktop/main.js:1260` does
+ *   1. The SPA is re-downloaded from whichever gateway is active. `desktop/main.js:1327` does
  *      `wc.loadURL(localGatewayUrl)` and `connectMode`'s `navigateToEndpoint` does the same for a
  *      paired gateway's origin — either way the shell loads the dashboard *from that gateway's own
  *      origin*. A registry of N gateways has nowhere to live in a bundle that is itself one of the N.
  *      (Since `CA-8` the shell holds TWO url variables, not one: `localGatewayUrl`
- *      (`desktop/main.js:201`, resolved from the spawned gateway's READY line) and `activeUrl`, what
+ *      (`desktop/main.js:204`, resolved from the spawned gateway's READY line) and `activeUrl`, what
  *      the WebView is actually pointed at. Every credential-bearing call is bound to the first;
  *      only the second ever becomes a gateway this shell did not spawn.)
  *   2. The SPA's storage is ALREADY partitioned, for free, by browser origin. `grep -n partition`
@@ -51,10 +51,11 @@ export interface CompanionEndpoint {
   base_url: string
   kind: EndpointKind
   /** Reserved; always `''` on a row any shell creates, because no route hands this out. The nonce
-   *  naming a REMOTE-USER-AUTH `sessions.json` device row IS the session credential: `revoke_nonce`
-   *  (`dashboard/token_auth.py:294`, `:801`) and `forget_session` (`dashboard/session_store.py:429`)
-   *  both take it, and live session state is keyed on it (`token_auth.py:142`). Do not go hunting
-   *  for a value to put here — the device session travels as an httponly cookie instead. */
+   *  naming a REMOTE-USER-AUTH `sessions.json` device row IS the session credential: `sign_out`
+   *  and `revoke_nonce` (`dashboard/token_auth.py`) and `end_sessions`
+   *  (`dashboard/session_store.py`) all take it, and live session state is keyed on it
+   *  (`TokenStateManager`). Do not go hunting for a value to put here — the device session travels
+   *  as an httponly cookie instead. */
   device_session_ref: string
 }
 

@@ -306,6 +306,12 @@ days and ended…" — and how to sign back in, on the page it opens and in the 
 open. Each kind of sign-in has a limit of 20 (browsers, paired devices, and tokens separately),
 so the CLI or a script minting tokens never signs a browser or a phone out.
 
+A sign-in lasts `auth.session_ttl` (30 days by default) and never more than 90 days, the limit
+for a long-lived credential: the longer a sign-in lasts, the longer a copied link or a stolen
+cookie keeps working. Setting `auth.session_ttl` longer is refused with a sentence saying so; a
+config file that already says longer is applied as 90 days, and `personalclaw doctor` (and the
+Doctor page, under Security) says so until you fix it.
+
 ### Failed attempts
 
 After `auth.lockout_threshold` failures (default 5) from one address, sign-in is refused for

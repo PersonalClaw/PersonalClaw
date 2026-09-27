@@ -1067,6 +1067,11 @@
     "params": [],
     "returns": "list[dict]"
    },
+   "list_sessions_with_metadata": {
+    "kind": "method",
+    "params": [],
+    "returns": "list[tuple[dict, Mapping[str, Any]]]"
+   },
    "load_transcript": {
     "kind": "method",
     "params": [
@@ -1121,7 +1126,8 @@
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "query"},
-     {"annotation": "int", "default": "50", "kind": "positional_or_keyword", "name": "limit"}
+     {"annotation": "int", "default": "50", "kind": "positional_or_keyword", "name": "limit"},
+     {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "keys"}
     ],
     "returns": "list[dict]"
    },
@@ -1286,7 +1292,7 @@
   },
   "kind": "dataclass"
  },
- "personalclaw.sdk.channel.MAX_SESSION_TTL_SECS": {"kind": "value", "type": "int", "value": "31536000"},
+ "personalclaw.sdk.channel.MAX_SESSION_TTL_SECS": {"kind": "value", "type": "int", "value": "7776000"},
  "personalclaw.sdk.channel.McpServerInfo": {
   "bases": ["object"],
   "init": {

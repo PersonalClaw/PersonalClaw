@@ -332,6 +332,25 @@ def _doctor_timezone() -> list[str]:
     return [f"timezone: unresolved — schedules fall back to {facts['resolved']}"]
 
 
+def _doctor_session_lifetime(cfg: AppConfig) -> list[str]:
+    """Print how long a sign-in lasts; return an issue when ``auth.session_ttl`` is over the
+    90-day limit (ledger 285).
+
+    Such a value is APPLIED as 90 days — a hand-edited file must never brick the box — so until
+    it is fixed the file says one lifetime and every sign-in lasts another. The same report the
+    Doctor page's ``security.session_lifetime`` row reads (``lifetimes.session_lifetime_report``).
+    """
+    from personalclaw.auth.lifetimes import exact_words, session_lifetime_report
+
+    report = session_lifetime_report(str(getattr(cfg.auth, "session_ttl", "") or ""))
+    shown = report.configured or "30d, the default"
+    print(f"  sign-ins:    🔑 last {exact_words(report.applied_secs)} (auth.session_ttl = {shown})")
+    if not report.over_limit:
+        return []
+    print(f"               ⚠️  {report.warning} {report.remedy}")
+    return ["sign-in lifetime: auth.session_ttl is over the 90-day limit"]
+
+
 def _doctor_external_vector_store() -> list[str]:
     """Print the bound external chunk-vector index's own report, or nothing (#3139).
 
@@ -612,6 +631,7 @@ def _doctor() -> None:
 
     issues.extend(_doctor_timezone())
     issues.extend(_doctor_credentials())
+    issues.extend(_doctor_session_lifetime(cfg))
 
     _host: str = ""
     _port: int | None = None
@@ -637,8 +657,8 @@ def _doctor() -> None:
     if _local:
         print("  bind:        127.0.0.1 (local-only, SSH tunnel for remote)")
         # A local BIND is not a token-free loopback: the default `local_token`
-        # gateway still returns 403 {"error": "Token required"} to a tokenless
-        # loopback request. Only claim "no token required" when the token gate is
+        # gateway still refuses a tokenless loopback request (403 `session_required`,
+        # saying how to sign in). Only claim "no token required" when the token gate is
         # actually bypassed (AuthMode.NONE / PERSONALCLAW_DEV_NO_AUTH=1, or
         # PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1) — mirror the middleware, don't
         # infer from the bind alone (#2860).

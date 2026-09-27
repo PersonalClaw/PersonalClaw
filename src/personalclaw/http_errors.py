@@ -164,6 +164,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # that device reads: why its sign-in ended, when, and how to sign back in ──
     "session_signed_out": "This device was signed out; the message says why and how to sign in.",
     "session_expired": "This device's sign-in ended; the message says when and how to sign in.",
+    "session_required": "No usable sign-in came with the request; the message says how to sign in.",
+    # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
+    # 90 days, and the message is the sentence that says so ──
+    "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",
+    "token_ttl_too_long": (
+        "The requested lifetime is longer than the 90-day limit; the message says why."
+    ),
     # ── device pairing (handlers/devices.py) — fixed message per code ──
     "device_pair_code_invalid": "The pairing code did not verify.",
     "device_pair_expired": "The pairing code has expired.",

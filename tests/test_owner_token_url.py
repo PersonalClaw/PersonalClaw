@@ -77,7 +77,9 @@ class TestTheConnectGate:
         resp = await token_auth_middleware()(_request(path="/"), _never)
         assert resp.status == 403
         html = resp.text
-        assert "403 — Token required" in html
+        # The gate says what is wrong and how to sign in, under its own heading (ledger 286).
+        assert "Sign in to PersonalClaw" in html
+        assert "isn’t signed in to PersonalClaw" in html
         # The target is built by the shared helper (origin + token + validated route)...
         assert "PersonalClawOwnerToken.connectUrl(v)" in html
         assert f"<script {owner_token_url.SCRUB_ATTR}>" in html

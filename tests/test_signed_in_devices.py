@@ -219,6 +219,30 @@ async def _refusal(device: Device, path: str = "/api/status") -> dict[str, Any]:
     return body["error"]
 
 
+def _without_time(error: dict[str, Any]) -> dict[str, Any]:
+    """A refusal minus its clock: two refusals of the same kind differ only in ``detail.at``."""
+    detail = {k: v for k, v in (error.get("detail") or {}).items() if k != "at"}
+    return {**error, "detail": detail}
+
+
+def _signed(**claims: Any) -> tuple[str, str]:
+    """A token this gateway's key really signed, with exactly *claims* — for the states only time
+    produces (a link past its window) — and its session recorded as live."""
+    now = time.time()
+    payload = {
+        "sub": "local-app",
+        "exp": now + 3600,
+        "session_exp": now + 7 * 86400,
+        "iat": now,
+        "nonce": f"n{time.monotonic_ns()}",
+        **claims,
+    }
+    raw = json.dumps(payload).encode()
+    token = f"{token_auth._b64url_encode(raw)}.{token_auth._sign(raw)}"
+    ss.remember_session(payload["nonce"], payload["session_exp"], issuer=ss.ISSUER_TOKEN)
+    return token, payload["nonce"]
+
+
 # ── Nobody normal is signed out ─────────────────────────────────────────
 
 
@@ -391,19 +415,22 @@ async def test_with_password_sign_in_the_sign_in_page_says_why(_isolated) -> Non
 
 @pytest.mark.asyncio
 async def test_a_forged_token_learns_nothing() -> None:
-    """The sentence is for a device that really held the session. A token signed by another key
-    gets the same bare refusal it always did — no reason, no timestamp."""
+    """The why-and-when sentence is for a device that really held the session. A token signed by
+    another key — or garbage in the cookie — reads exactly what presenting NOTHING reads: that
+    this device is not signed in, and how to sign in. No reason, no timestamp, nothing to tell
+    a forgery that almost worked from one that did not."""
     async with Gateway() as gw:
-        stranger = gw.device(CHROME)
+        nobody = gw.device(CHROME)
+        expected = _without_time(await _refusal(nobody))
+        assert expected["code"] == "session_required"
         token_auth.use_ephemeral_secret(b"k" * 32)
         forged = token_auth.generate_token("owner", ttl_seconds=3600)
         token_auth.use_persistent_secret()
-        stranger.http.cookie_jar.update_cookies({COOKIE: forged}, gw.server.make_url("/"))
-        resp = await stranger.get("/api/status")
-        body = await resp.json()
-        assert resp.status == 403
-        assert not isinstance(body.get("error"), dict), body
-        assert "signed out" not in json.dumps(body)
+        for cookie in (forged, "garbage", forged.split(".")[0] + ".AAAA"):
+            stranger = gw.device(CHROME)
+            stranger.http.cookie_jar.update_cookies({COOKIE: cookie}, gw.server.make_url("/"))
+            assert _without_time(await _refusal(stranger)) == expected, cookie[:12]
+        assert "signed out" not in expected["message"]
 
 
 @pytest.mark.asyncio
@@ -416,6 +443,151 @@ async def test_the_session_cookie_outlives_its_session_so_the_end_can_be_explain
         max_age = int(resp.cookies[COOKIE]["max-age"])
         assert max_age == pytest.approx(3600 + 7 * 86400, abs=5), "no grace to explain the end"
     assert token_auth.SIGNED_OUT_NOTICE_GRACE_SECS == 7 * 86400
+
+
+# ── Every refusal a device reads says why, and how to sign in (ledger 286) ─
+#
+# Measured on main after #3727: only a session known to have ENDED got a sentence. Every other
+# refusal a browser or the desktop app could meet still read as a bare reason — `{"error":
+# "Token required"}` and a page headed "403 — Token required" for no sign-in at all, "IP
+# mismatch" for a link opened on a second device, "token expired" for a link past its 24 hours,
+# "session not found" for a sign-in whose ending nobody remembers, and "Forbidden" on an
+# internal route. A script's Bearer keeps its one uniform code.
+
+DESKTOP = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "PersonalClaw/0.2.0 Chrome/140.0.0.0 Electron/38.2.0 Safari/537.36"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_device_with_no_sign_in_is_told_how_to_sign_in() -> None:
+    async with Gateway() as gw:
+        nobody = gw.device(CHROME)
+        error = await _refusal(nobody)
+        assert error["code"] == "session_required"
+        assert error["detail"]["reason"] == "not_signed_in"
+        message = error["message"]
+        assert "isn’t signed in" in message, message
+        assert "`personalclaw token`" in message and "pair this device" in message, message
+
+        page = await nobody.get("/")
+        html = await page.text()
+        assert page.status == 403
+        assert "<h1>Sign in to PersonalClaw</h1>" in html, html[-900:]
+        assert "isn’t signed in" in html and "<code>personalclaw token</code>" in html
+        assert "403 —" not in html
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_link_past_its_window_says_it_expired() -> None:
+    """The link could sign a browser in for 24 hours; its session had days left."""
+    async with Gateway() as gw:
+        token, _ = _signed(exp=time.time() - 60)
+        browser = gw.device(CHROME)
+        error = await _refusal(browser, f"/api/status?token={token}")
+        assert error["code"] == "session_expired"
+        assert error["detail"]["reason"] == "link_expired"
+        assert "could be opened until" in error["message"], error["message"]
+        assert "`personalclaw token`" in error["message"]
+
+        page = await browser.get(f"/?token={token}")
+        html = await page.text()
+        assert page.status == 403 and "<h1>This link has expired</h1>" in html, html[-900:]
+
+
+@pytest.mark.asyncio
+async def test_a_link_already_opened_elsewhere_says_so_without_saying_where() -> None:
+    async with Gateway() as gw:
+        token = await gw.mint_token()
+        claims = json.loads(token_auth._b64url_decode(token.split(".")[0]))
+        token_auth.bind_token_ip(token, "192.0.2.10", claims["session_exp"])
+        second = gw.device(FIREFOX)
+        error = await _refusal(second, f"/api/status?token={token}")
+        assert error["code"] == "session_required"
+        assert error["detail"]["reason"] == "link_used"
+        assert "another device" in error["message"], error["message"]
+        assert "192.0.2.10" not in json.dumps(error), "the other device's address is not ours"
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_whose_ending_nobody_remembers_says_it_ended() -> None:
+    """A genuine session with neither a row nor a recorded ending: it ended more than a week ago,
+    or the store was cleared. Main answered "session not found"."""
+    async with Gateway() as gw:
+        browser = gw.device(CHROME)
+        token = await gw.sign_in_with_link(browser)
+        nonce = token_auth.token_nonce(token)
+        stored = json.loads(ss.sessions_path().read_text())
+        stored["sessions"].pop(nonce)
+        ss.sessions_path().write_text(json.dumps(stored))
+        token_auth.revoke_nonce(nonce)  # and out of this process's memory
+        error = await _refusal(browser)
+        assert error["code"] == "session_signed_out"
+        assert error["detail"]["reason"] == "ended"
+        assert "has ended" in error["message"], error["message"]
+
+
+@pytest.mark.asyncio
+async def test_an_internal_route_refuses_a_browser_in_the_same_words() -> None:
+    async def _probe(request: web.Request) -> web.Response:
+        return web.json_response({"ok": True})
+
+    middleware = token_auth.token_auth_middleware(
+        port=PORT,
+        mixed_internal_paths=frozenset({"/api/internal/probe"}),
+        internal_secret="an-internal-secret",
+    )
+    app = web.Application(middlewares=[middleware])
+    app.router.add_get("/api/internal/probe", _probe)
+    app.router.add_get("/api/status", _status)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        browser = Device(server, CHROME)
+        internal = _without_time(await _refusal(browser, "/api/internal/probe"))
+        assert internal == _without_time(await _refusal(browser, "/api/status"))
+        assert internal["code"] == "session_required"
+        await browser.http.close()
+    finally:
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_a_script_still_reads_the_one_uniform_code() -> None:
+    async with Gateway() as gw:
+        async with aiohttp.ClientSession() as http:
+            resp = await http.get(
+                gw.server.make_url("/api/status"), headers={"Authorization": "Bearer nope"}
+            )
+            body = await resp.json()
+        assert resp.status == 403 and body["error"]["code"] == "auth_bearer_invalid"
+        assert "personalclaw token" not in json.dumps(body)
+
+
+@pytest.mark.asyncio
+async def test_a_paired_desktop_app_is_told_where_it_pairs_again() -> None:
+    """The desktop app redeems a pairing link in its own Gateways window, not in a browser, so
+    "choose Pair a device" alone left it holding a code with nowhere to put it."""
+    async with Gateway() as gw:
+        browser = gw.device(CHROME)
+        await gw.sign_in_with_link(browser)
+        desktop = gw.device(DESKTOP)
+        device_id = await gw.pair(desktop, using=browser)
+        assert (await browser.post(f"/api/devices/{device_id}/revoke")).status == 200
+        message = (await _refusal(desktop))["message"]
+        assert "Pair a device" in message and "Gateway → Gateways…" in message, message
+
+
+@pytest.mark.asyncio
+async def test_the_password_page_greets_a_first_visit_without_a_refusal(_isolated) -> None:
+    creds.set_password("jordan", PASSWORD)
+    (_isolated / "config.json").write_text(
+        json.dumps({"auth": {"login_enabled": True}}), encoding="utf-8"
+    )
+    async with Gateway() as gw:
+        html = await (await gw.device(CHROME).get("/login")).text()
+        assert "isn’t signed in" not in html and "signed out" not in html
 
 
 # ── Settings → Devices lists every sign-in, truthfully ──────────────────
@@ -596,8 +768,8 @@ async def test_every_sign_in_and_sign_out_is_in_the_security_log(sel_events) -> 
 
 @pytest.mark.asyncio
 async def test_a_token_asked_for_without_a_lifetime_lasts_twenty_hours_not_a_year() -> None:
-    """The owner ruling keeps a year reachable only when a caller ASKS for it; the route handed
-    one out to any caller that did not say."""
+    """A token asked for without a lifetime lasts 20 hours, `personalclaw token`'s default. The
+    route used to hand a YEAR to any caller that did not say."""
     async with Gateway() as gw:
         body = await gw.token_response()
     assert body["expires_in"] == 20 * 3600

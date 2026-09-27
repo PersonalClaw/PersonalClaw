@@ -19,7 +19,7 @@ const {
   HEALTH_UNKNOWN,
   HEALTH_REACHABLE,
   HEALTH_UNREACHABLE,
-  HEALTH_NEEDS_PAIRING,
+  HEALTH_SIGNED_OUT,
 } = require("../connectMode");
 
 const row = (over = {}) => ({ id: "ep_a", label: "Work brain", base_url: "http://10.0.0.4:10000", kind: "remote", device_session_ref: "", ...over });
@@ -40,9 +40,9 @@ describe("healthCopy", () => {
     assert.strictEqual(healthCopy(HEALTH_UNKNOWN).tone, "idle");
   });
 
-  it("marks needs_pairing as the ONE state that asks the user to do something", () => {
-    const actionable = HEALTH_STATES.filter((s) => healthCopy(s).action === "pair");
-    assert.deepStrictEqual(actionable, [HEALTH_NEEDS_PAIRING]);
+  it("marks signed_out as the ONE state that asks the user to do something", () => {
+    const actionable = HEALTH_STATES.filter((s) => healthCopy(s).tone === "act");
+    assert.deepStrictEqual(actionable, [HEALTH_SIGNED_OUT]);
   });
 
   it("falls back to the idle copy for a status it has never heard of", () => {

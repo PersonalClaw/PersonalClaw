@@ -3,8 +3,8 @@
 `personalclaw doctor` printed **`auth: loopback trusted (no token required)`** for
 any local-bound gateway. But a default `personalclaw gateway` on a loopback bind
 runs `AuthMode.local_token`, which STILL requires a token on loopback — a tokenless
-loopback request gets `403 {"error": "Token required"}` from the `token_auth`
-middleware. The diagnostic told the user they could reach the API without a token
+loopback request is refused by the `token_auth` middleware (`403 session_required`,
+saying how to sign in). The diagnostic told the user they could reach the API without a token
 when they could not.
 
 A token is genuinely NOT required on loopback only in the three cases the middleware

@@ -1681,7 +1681,7 @@ def app_request_denial(app_name: str, path: str, *, method: str = "", route: str
     allowlist. Two ordinary situations produce it:
 
     * **The owner uninstalls the app.** The directory goes, so ``_manifest_of`` returns
-      ``None``. App tokens live an hour (``_APP_TOKEN_TTL_SECS``) and carry the claim in
+      ``None``. App tokens live an hour (``token_auth.APP_TOKEN_TTL_SECS``) and carry the claim in
       the token itself, so there is nothing to revoke — meaning the owner's remediation
       handed a misbehaving app MORE access than it had before, for up to an hour.
     * **The manifest stops parsing.** An app that can write its own install directory

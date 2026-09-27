@@ -449,8 +449,9 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
         _record_failure(ip)
         return json_error(ERR_ENROLL_INVALID, status=401)
 
-    # A device session, deliberately at the same TTL as a browser login rather than the
-    # 1-year cap: a phone in a drawer should not hold a live session for a year.
+    # A device session, deliberately at the same TTL as a browser login (`auth.session_ttl`,
+    # 30 days by default) rather than the 90-day limit: a phone in a drawer should not hold a
+    # live session for the longest a credential may last.
     ttl = browser_session_ttl(cfg)
     token = mint_session(
         "enrolled-device", ttl, issuer=ISSUER_ENROLL, device=client_of(request)

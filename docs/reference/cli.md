@@ -174,7 +174,7 @@ directories). No flags.
 | `personalclaw stop [--port]` | Stop a running gateway. |
 | `personalclaw restart [--port]` | Restart the gateway (service if installed, else foreground). |
 | `personalclaw logs [-f] [-n LINES]` | Show gateway logs (`-f` live tail; `-n` line count, default 100). Reads the systemd journal (Linux service), launchd stdout file (macOS), or the foreground log file. |
-| `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`1h`, `30m`, `720h`; at most `8760h`, a year), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
+| `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`30m`, `20h`, `7d`; at most `90d`, the limit for a long-lived credential — longer is refused, with a sentence saying why), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
 | `personalclaw logout [--port]` | Sign every device and token out, everywhere. Each one's next request is told when and from where, and how to sign back in. |
 | `personalclaw update` | Update PersonalClaw to the latest version (git fetch + rebuild). |
 
