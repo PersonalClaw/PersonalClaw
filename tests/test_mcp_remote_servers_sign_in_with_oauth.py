@@ -339,8 +339,9 @@ def _add(home: Path, remote: OAuthRemote) -> None:
 
 def _gateway_app() -> web.Application:
     from personalclaw.dashboard.handlers import mcp as h
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
-    app = web.Application()
+    app = web.Application(middlewares=[request_boundary_middleware()])
     app["state"] = type("State", (), {"_background_tasks": set()})()
     app.router.add_get("/api/mcp", h.api_mcp_servers)
     app.router.add_get("/api/mcp/servers/{name}", h.api_mcp_server_detail)
@@ -585,6 +586,40 @@ def test_an_authorization_server_without_registration_takes_a_typed_client_id(
         assert await _say_hello() == (True, "hello claw")
 
     _drive(scenario)
+
+
+@pytest.mark.parametrize(
+    ("raw", "code"), [(b'{"clientId": "x"', "invalid_json"), (b"[]", "invalid_body")]
+)
+def test_a_sign_in_body_that_is_not_a_json_object_is_refused_and_starts_nothing(
+    home, monkeypatch, raw, code
+) -> None:
+    """The route used to read the body itself and answer its own ``invalid_sign_in``. It reads
+    it through ``json_object_body`` now, so the refusal is the one every other route gives."""
+    from personalclaw import mcp_oauth
+
+    write_mcp_document(
+        home / "mcp.json", {"mcpServers": {NAME: {"type": "http", "url": "https://mcp.invalid/"}}}
+    )
+    started: list[str] = []
+
+    async def _start(name, *args, **kwargs):
+        started.append(name)
+        raise AssertionError("a refused body must not start a sign-in")
+
+    monkeypatch.setattr(mcp_oauth, "start_sign_in", _start)
+
+    async def scenario(gw: Gateway) -> None:
+        resp = await gw.client.post(
+            f"/api/mcp/servers/{NAME}/sign-in",
+            data=raw,
+            headers={"Origin": gw.origin, "Content-Type": "application/json"},
+        )
+        body = await resp.json()
+        assert resp.status == 400 and body["error"]["code"] == code, body
+
+    _drive(scenario)
+    assert started == []
 
 
 def test_the_callback_refuses_what_no_sign_in_it_started_can_account_for(home, http_remote) -> None:

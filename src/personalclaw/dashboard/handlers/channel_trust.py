@@ -36,6 +36,8 @@ from aiohttp import web
 
 from personalclaw import channel_trust
 from personalclaw.http_errors import consent_required, json_error
+from personalclaw.request_validation import json_object_body
+from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +76,6 @@ def _unknown() -> web.Response:
     return json_error("channel_trust_provider_unknown", status=404)
 
 
-async def _body(request: web.Request) -> dict[str, Any] | None:
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001 - any unreadable body is the same 400
-        return None
-    return body if isinstance(body, dict) else None
-
-
 async def api_channel_trust(request: web.Request) -> web.Response:
     """GET /api/channels/trust — the whole sender-trust posture, per chat channel."""
     channels = _chat_channels()
@@ -103,9 +97,7 @@ async def api_channel_trust_policies(request: web.Request) -> web.Response:
     provider = _provider(request)
     if not provider:
         return _unknown()
-    body = await _body(request)
-    if body is None:
-        return json_error("invalid_request", message="The body must be a JSON object.", status=400)
+    body = await json_object_body(request)
     dm, group = body.get("dm"), body.get("group")
     if dm is None and group is None:
         return json_error("invalid_request", message="Send dm, group, or both.", status=400)
@@ -120,7 +112,7 @@ async def api_channel_trust_policies(request: web.Request) -> web.Response:
                 status=400,
             )
     before = channel_trust.trust_policies(provider)
-    if dm == "open" and before.get("dm") != "open" and body.get("confirm") is not True:
+    if dm == "open" and before.get("dm") != "open" and not confirm_granted(body):
         where = channel_trust.channel_display_name(provider)
         return consent_required(
             "dm",
@@ -138,9 +130,9 @@ async def api_channel_trust_track(request: web.Request) -> web.Response:
     provider = _provider(request)
     if not provider:
         return _unknown()
-    body = await _body(request)
-    channel_id = str((body or {}).get("channel_id", "") or "").strip()
-    name = str((body or {}).get("name", "") or "").strip()
+    body = await json_object_body(request)
+    channel_id = str(body.get("channel_id", "") or "").strip()
+    name = str(body.get("name", "") or "").strip()
     if not channel_id or len(channel_id) > _CHANNEL_ID_MAX or any(c.isspace() for c in channel_id):
         return json_error(
             "invalid_request", message="channel_id must be the group's id.", status=400

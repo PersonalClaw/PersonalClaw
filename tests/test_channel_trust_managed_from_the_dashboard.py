@@ -58,8 +58,11 @@ class _Channel(ChannelTransportProvider):
 
 
 def _app() -> web.Application:
-    """The trust routes, registered as `dashboard/server.py` registers them."""
-    app = web.Application()
+    """The trust routes, registered as `dashboard/server.py` registers them, behind the request
+    boundary that serves a refused body."""
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    app = web.Application(middlewares=[request_boundary_middleware()])
     app.router.add_get("/api/channels/trust", h.api_channel_trust)
     app.router.add_put("/api/channels/trust/{provider}/policies", h.api_channel_trust_policies)
     app.router.add_post("/api/channels/trust/{provider}/channels", h.api_channel_trust_track)
@@ -73,12 +76,25 @@ def _app() -> web.Application:
     return app
 
 
-def _run(handler, method: str, path: str, *, match: dict | None = None, body: Any = None):
-    """One request through the real routes. ``handler`` and ``match`` name what the path hits."""
+def _run(
+    handler,
+    method: str,
+    path: str,
+    *,
+    match: dict | None = None,
+    body: Any = None,
+    raw: bytes | None = None,
+):
+    """One request through the real routes. ``handler`` and ``match`` name what the path hits.
+    ``raw`` sends those bytes as the JSON body instead of encoding ``body``."""
 
     async def _go():
         async with TestClient(TestServer(_app())) as client:
-            resp = await client.request(method, path, json=body)
+            if raw is None:
+                resp = await client.request(method, path, json=body)
+            else:
+                headers = {"Content-Type": "application/json"}
+                resp = await client.request(method, path, data=raw, headers=headers)
             return resp.status, await resp.json(), dict(resp.headers)
 
     return asyncio.run(_go())
@@ -163,6 +179,31 @@ def test_a_policy_outside_the_vocabulary_is_refused_and_changes_nothing(body):
     status, reply, _ = _policies(body)
     assert status == 400 and reply["error"]["code"] == "invalid_request"
     assert ct.trust_policies(PROVIDER) == {"dm": "pairing", "group": "tracked_only"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "code"), [(b'{"dm": "open"', "invalid_json"), (b'["open"]', "invalid_body")]
+)
+def test_a_policy_body_that_is_not_a_json_object_is_refused_and_changes_nothing(raw, code):
+    status, reply, _ = _run(
+        h.api_channel_trust_policies,
+        "PUT",
+        f"/api/channels/trust/{PROVIDER}/policies",
+        match={"provider": PROVIDER},
+        raw=raw,
+    )
+    assert status == 400 and reply["error"]["code"] == code, reply
+    assert ct.trust_policies(PROVIDER) == {"dm": "pairing", "group": "tracked_only"}
+
+
+@pytest.mark.parametrize("confirm", ["true", 1, "yes"])
+def test_only_a_json_true_is_consent_to_open_dms(confirm):
+    """``confirm`` is read the way every destructive door reads it: the literal ``true`` and
+    nothing that merely looks like one."""
+    status, body, _ = _policies({"dm": "open", "confirm": confirm})
+    assert status == 400 and body["error"]["code"] == "confirmation_required", body
+    assert ct.trust_policies(PROVIDER)["dm"] == "pairing"
+    assert _policies({"dm": "open", "confirm": True})[0] == 200, "the floor: a real yes opens them"
 
 
 def test_a_channel_that_is_not_set_up_is_a_404():

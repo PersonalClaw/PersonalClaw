@@ -393,6 +393,7 @@ async def app_permission_middleware(
         app_request_denial,
         scoped_to_app,
     )
+    from personalclaw.request_validation import RequestValidationError
 
     app_name = request.get("app", "")
     if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
@@ -422,7 +423,13 @@ async def app_permission_middleware(
         route = resource.canonical if resource is not None else ""
         reason = app_request_denial(app_name, request.path, method=request.method, route=route)
         if not reason:
-            reason = await _ownership_denial(request, app_name, route)
+            try:
+                reason = await _ownership_denial(request, app_name, route)
+            except RequestValidationError as exc:
+                # A body the ownership check cannot read names nothing it could admit. This
+                # middleware sits outside `request_boundary`, so it answers the refusal itself,
+                # in the same envelope, before the handler runs.
+                return exc.response
         if reason:
             return _deny(reason)
     if app_name:
@@ -443,22 +450,20 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
     and so that a refused request loads nothing: the creator is read without rehydrating the
     conversation, and another app's settings are never opened.
 
-    A body target reads the JSON body, which aiohttp keeps, so the handler reads the same bytes
-    after. A body that is not a JSON object names nothing, so an optional target passes and the
-    handler refuses the body itself.
+    A body target reads the JSON body through ``json_object_body``, and aiohttp keeps the bytes,
+    so the handler reads the same body after. An empty body names nothing, so an optional target
+    passes. A body that is not a JSON object raises ``RequestValidationError``, which
+    :func:`app_permission_middleware` answers: it runs outside ``request_boundary``.
     """
     from personalclaw.apps.permissions import AppMay, route_authz
+    from personalclaw.request_validation import json_object_body
 
     authz = route_authz(request.method, route)
     if not isinstance(authz, AppMay) or not authz.owns:
         return ""
     body: dict = {}
     if any(target.in_body for target in authz.owns):
-        try:
-            parsed = await request.json()
-        except Exception:  # noqa: BLE001 — unparseable names nothing; the handler refuses it
-            parsed = None
-        body = parsed if isinstance(parsed, dict) else {}
+        body = await json_object_body(request)
     state = request.app.get("state")
     for target in authz.owns:
         named = body.get(target.field) if target.in_body else request.match_info.get(target.field)

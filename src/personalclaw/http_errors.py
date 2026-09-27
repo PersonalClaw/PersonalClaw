@@ -839,8 +839,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # ── signing in to an MCP server at a URL (mcp_oauth.py; dashboard/handlers/mcp.py —
     #    POST /api/mcp/servers/{name}/sign-in, and the callback's own page) ──
-    # `invalid_sign_in` (400) — the request is not one: not a server's name, a body that is not an
-    # object, a client id or secret that is not a string, or a secret without an id.
+    # `invalid_sign_in` (400) — the request is not one: not a server's name, a client id or secret
+    # that is not a string, or a secret without an id. A body that is not a JSON object is
+    # `invalid_json` / `invalid_body`, from `request_validation.json_object_body`.
     # `mcp_sign_in_unsupported` (409) — the server is started with a command; only one at a URL
     # signs in. `mcp_sign_in_not_offered` (409) — the server answered without asking for sign-in,
     # asks for a kind PersonalClaw does not do, or publishes no OAuth metadata.
