@@ -38,6 +38,9 @@ def _hook(**over) -> ScriptHook:
         enabled=True,
     )
     base.update(over)
+    # The owner's yes to what it runs (`triggers.grants`): an ungranted hook is refused before its
+    # provider is asked — Test included — and these tests are about what a rehearsal records.
+    base.setdefault("capabilities", {"providers": [base["provider"]]})
     return ScriptHook(**base)
 
 

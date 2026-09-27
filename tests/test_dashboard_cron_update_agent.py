@@ -57,6 +57,8 @@ def _make_request(body: dict, raw_id: str = "abc123", *, base: str = "") -> Magi
     request = MagicMock()
     request.app = {"state": mock_state}
     request.method = "PUT"
+    # What aiohttp hands a handler for the signed-in owner: the security audit reads the caller.
+    request.get = lambda key, default=None: {"user": "owner"}.get(key, default)
     request.match_info = {"id": f"schedule:{raw_id}"}
     request.headers = {"If-Match": f'"{base}"'} if base else {}
     request.json = AsyncMock(return_value=body)
@@ -70,10 +72,12 @@ def _listed_revision(home, raw_id: str = "abc123") -> str:
 
 
 def _agent_action(agent: str, task: str = "m", approval_mode: str = "") -> dict:
+    """A save that points the schedule at another agent — a change to what its action runs, so the
+    editor asks the owner first (`triggers.grants`) and resends it with their yes, as here."""
     config = {"task_template": task, "agent": agent}
     if approval_mode:
         config["approval_mode"] = approval_mode
-    return {"action": {"provider": "invoke-agent", "config": config}}
+    return {"action": {"provider": "invoke-agent", "config": config}, "confirm": True}
 
 
 def _stored_config(home, raw_id="abc123") -> dict:

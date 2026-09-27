@@ -282,6 +282,36 @@ def unregistered_action_provider_refusal(workflow: Any) -> AutomationToolResult 
     return None
 
 
+def posture_refusal(
+    workflow: Any, *, stored: dict[str, Any], creating: bool
+) -> AutomationToolResult | None:
+    """Refuse a step posture a caller without the owner's yes would loosen (`automation_posture`).
+
+    ``approval_mode: "auto"`` lets the action's agent approve its own tool calls, and ``capability:
+    "mutating"`` gives it write access; the owner's surfaces ask before saving either (the Triggers
+    page's dialog, the CLI's ``--yes``) and pass their yes as `owner_consented`. Every other caller
+    — the chat's ``automation_update`` is the one that can send a whole action — is refused here,
+    with nothing saved, because the grant the owner can give from the Triggers page covers what the
+    action runs, not whether its agent stops asking. Tightening one asks nobody.
+    """
+    from personalclaw.automation_posture import unconsented_step_loosening
+
+    config = _inline_action_of(workflow).get("config")
+    loosened = unconsented_step_loosening(
+        "action", current=stored, new=config if isinstance(config, dict) else {}, body={}
+    )
+    if loosened is None:
+        return None
+    _field, sentence = loosened
+    where = "create it" if creating else "make that change"
+    return AutomationToolResult(
+        False,
+        f"Error: nothing was saved, because this needs the owner's yes: “{sentence}” The owner can "
+        f"{where} on the Triggers page, which asks them first.",
+        {"needs_consent": sentence},
+    )
+
+
 def spec_error_refusal(kind: str, spec: Any) -> AutomationToolResult | None:
     """Refuse a spec that cannot do what it says — structure AND semantics (#483/#687/#612/#270).
 
@@ -381,6 +411,7 @@ def create(
     resume: dict[str, Any] | None = None,
     ttl_secs: float = 0,
     gates: dict[str, Any] | None = None,
+    owner_consented: bool = False,
 ) -> AutomationToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
@@ -391,7 +422,14 @@ def create(
     `cadence_to_cron` is injected (defaulting to the shipped `nl_to_cron`) so every branch of this
     function is testable without a model — the same seam `ScheduleService` uses for `_on_job` and
     the executor uses for its runner.
+
+    🔴 A NEW TRIGGER IS GRANTED ONLY BY THE OWNER'S YES (`triggers.grants`). `owner_consented` is
+    that yes: the Triggers page's create dialog passes it after asking, and the CLI after `--yes`.
+    Without it the row is created as asked but not allowed to run its action, and the Triggers page
+    offers Allow. Measured on `main`: `automation_create` froze the grant for whatever it made, so
+    an agent's automation came with its own permission to run.
     """
+    from personalclaw.triggers import grants
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.nl_kind import route
@@ -482,6 +520,7 @@ def create(
         # doctor said healthy.
         spec_error_refusal(resolved_kind, resolved_spec),
         unregistered_action_provider_refusal(workflow),
+        None if owner_consented else posture_refusal(workflow, stored={}, creating=True),
     ):
         if refusal is not None:
             return refusal
@@ -513,16 +552,12 @@ def create(
         spec=resolved_spec,
         gates=resolved_gates,
         workflow=dict(workflow),
-        # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3 — S116). Authoring a trigger IS the
-        # opt-in: the user picked this action. Without it, every trigger this function creates
-        # (`run-prompt` from chat, `invoke-agent` from the CLI) carries an EMPTY block, and the
-        # now-wired fence denies on empty — so 100% of real automations would refuse on their next
-        # fire. A read-only action still gets an empty block: the fence permits those without one,
-        # and a written-out grant would imply an opt-in the user never had to make.
-        capabilities=_screen.capabilities_for_action(
-            Trigger(id="", name="", kind=resolved_kind, workflow=dict(workflow))
-        ),
     )
+    # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3 — S116), when the owner said yes to
+    # this action. A read-only action gets an empty block either way: the fence permits those
+    # without one, and a written-out grant would imply an opt-in nobody had to make.
+    if owner_consented:
+        trigger.capabilities = _screen.capabilities_for_action(trigger)
     # 🔴 ARM A CLOCK TRIGGER ON CREATION (S101). Measured: `create` persisted `next_fire_at=""`, and
     # `service.due_ids` only surfaces rows that HAVE one — so every cron created through this
     # function (the chat tools since S92, and the API from this session) would never fire. Arming at
@@ -557,16 +592,27 @@ def create(
         lines.append(f"  cron: {resolved_spec['expr']}")
     if resolved_spec.get("paths"):
         lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
+    needs = grants.labels(saved)
     if created_by == "agent":
-        # "active now" is a claim about state, so it tracks state. A disabled trigger announced as
-        # active is the same class of lie the rest of this module hunts — and this string is UI: it
-        # is what the user reads in chat after the agent creates an automation for them.
-        _state = "active now" if saved.enabled else "switched off until you enable it"
+        # "active now" is a claim about state, so it tracks state — the switch, and whether the
+        # action is allowed to run. This string is UI: it is what the user reads in chat after the
+        # agent creates an automation for them.
+        if not saved.enabled:
+            _state = "it is switched off until you enable it, and visible on the Triggers page"
+        elif needs:
+            _state = (
+                "it is on the Triggers page, and it does not run until you allow it there: open "
+                "it and choose Allow, and PersonalClaw asks you first"
+            )
+        else:
+            _state = "it is active now and visible on the Triggers page"
         lines.append(
-            f"  I created this for you — it is {_state} and visible on the Automations page "
+            f"  I created this for you — {_state} "
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
         )
-    return AutomationToolResult(True, "\n".join(lines), {"trigger": saved.to_dict()})
+    return AutomationToolResult(
+        True, "\n".join(lines), {"trigger": saved.to_dict(), "needs_grant": needs}
+    )
 
 
 def _default_cadence_to_cron(cadence: str) -> tuple[str, str]:
@@ -644,13 +690,17 @@ def update(
     `health_status` and got no error would keep believing a stale model of the automation.
 
     🔴 AN EDIT GRANTS AT EDIT TIME, OR SAVES THE TRIGGER SWITCHED OFF (`triggers.grants`). A patch
-    that re-points the action at something the trigger is not allowed to run needs the owner's yes.
-    `owner_consented` is that yes, and only the schedule editor passes it, after its consent dialog
-    (`dashboard.handlers.triggers._grant_for_save`): the save then grants what the action runs,
-    so Run now works straight away. Every other caller — the chat's `automation_update`, the CLI —
-    cannot give it, so the edit is kept and the trigger switched off until the owner switches it on
-    from the Triggers page, which asks first. Measured on `main`: an agent re-pointing an owner's
-    `notify` schedule at `bash` left it switched on, and the next boot granted it.
+    that re-points the action at something the trigger is not allowed to run needs the owner's yes,
+    and so does one that changes what a granted action runs — the grant was for the action as the
+    owner allowed it (`grants.narrow`), so another command, URL, prompt or agent is a new question.
+    `owner_consented` is that yes, passed by the editor after its consent dialog
+    (`dashboard.handlers.triggers._grant_for_save`) and by the CLI after `--yes`: the save then
+    grants what the action runs, so Run now works straight away. Every other caller — the chat's
+    `automation_update` — cannot give it, so the edit is kept and the trigger switched off until
+    the owner switches it on from the Triggers page, which asks first; and a posture only the owner
+    can loosen is refused outright (`posture_refusal`). Measured on `main`: an agent re-pointing an
+    owner's `notify` schedule at `bash` left it switched on, and an agent rewriting a granted `bash`
+    command left it switched on and running the new command on the old grant.
     """
     row = store.get(trigger_id)
     if row is None:
@@ -669,9 +719,19 @@ def update(
     # create with `bash` + `0 9 * * *`, then PATCH the provider to a name nothing can dispatch or
     # the expr to one nothing can parse, and the row is right back to armed-and-inert.
     if "workflow" in applied:
+        stored = _inline_action_of(row.trigger.workflow).get("config")
         for refusal in (
             unattended_action_refusal(applied["workflow"]),
             unregistered_action_provider_refusal(applied["workflow"]),
+            (
+                None
+                if owner_consented
+                else posture_refusal(
+                    applied["workflow"],
+                    stored=stored if isinstance(stored, dict) else {},
+                    creating=False,
+                )
+            ),
         ):
             if refusal is not None:
                 return refusal
@@ -696,11 +756,17 @@ def update(
         refusal = spec_error_refusal(row.trigger.kind, applied["spec"])
         if refusal is not None:
             return refusal
+    import copy
+
     from personalclaw.triggers import grants
 
     trigger = row.trigger
+    before = copy.deepcopy(trigger)
     for key, value in applied.items():
         setattr(trigger, key, value)
+    # What the edit changed keeps no grant (`grants.narrow`), so `missing` below asks about it the
+    # way it asks about a provider the trigger was never allowed.
+    changed = grants.narrow(trigger, before) if "workflow" in applied else []
     missing = grants.missing(trigger)
     granted: list[str] = []
     note = ""
@@ -711,7 +777,7 @@ def update(
     elif missing and "workflow" in applied:
         trigger.enabled = False
         trigger.next_fire_at = ""
-        note = grants.switched_off(trigger, missing)
+        note = grants.switched_off(trigger, missing, changed=changed)
     elif missing and applied.get("enabled"):
         return AutomationToolResult(
             False,

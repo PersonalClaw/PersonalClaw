@@ -450,10 +450,13 @@ def test_a_yes_to_a_save_without_its_action_grants_nothing(home):
 
 
 def test_an_edit_that_keeps_a_granted_action_asks_nothing(home):
-    """The floor: re-saving the action a trigger is already allowed to run is not a new grant."""
+    """The floor: re-saving the action a trigger is already allowed to run is not a new grant. A
+    new command is (`test_a_grant_is_for_the_action_the_owner_allowed`)."""
     _schedule(home, capabilities={"providers": ["bash"]})
 
-    saved = _edit("schedule:nightly", action={"provider": "bash", "config": {"command": "date"}})
+    saved = _edit(
+        "schedule:nightly", action={"provider": "bash", "config": {"command": "touch /tmp/ran"}}
+    )
 
     assert saved.status == 200, _body(saved)
 

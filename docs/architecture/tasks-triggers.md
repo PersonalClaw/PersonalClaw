@@ -102,16 +102,32 @@ relative to `PersonalClaw/src/personalclaw/`.
   unattended one (`gateway._fire_store_trigger`: clock, event, file,
   web_watch, chained) — and a refusal names the missing action and how the
   owner allows it; an unattended refusal is a `skipped_gate` row in the
-  trigger's Runs history. Only the owner grants, by saying yes: switching a
-  trigger on (or Allow on one that is on, the same toggle sent on again), or
-  saving a schedule edit that re-points its action, which asks in the same
-  question as a loosened approval posture. `tools.create` freezes the grant
-  when a trigger is authored. An edit from the chat's `automation_update` or
-  the CLI that needs a new grant is saved switched off, and the chat cannot
-  switch such a trigger on or run it. Nothing unattended grants: there is no
-  boot backfill, a pack's triggers are deployed with no grant, and a legacy
-  import grants nothing. The wire carries `needs_grant` (display names) so the
-  page can badge the row and offer Allow.
+  trigger's Runs history. A grant is for the action as the owner allowed it:
+  an edit that changes what a granted action runs (another command, URL,
+  prompt, agent or workflow) keeps no grant for the change, and neither does a
+  provider the edited action stopped using (`grants.narrow`); the step keys
+  that decide whether its agent asks you are asked about on their own, when
+  they loosen. Only the owner grants, by saying yes: creating a trigger whose
+  action needs one (the create dialog asks), saving an edit that needs one (the
+  editor asks, in the same question as a loosened approval posture), switching
+  a trigger on (or Allow on one that is on, the same toggle sent on again), and
+  `personalclaw cron add|update --yes`, which asks the same questions in the
+  terminal and changes nothing without it. A trigger the chat makes
+  (`automation_create`, `set_onetime_task`, `set_recurring_task`) is not
+  allowed to run until the owner allows it; a chat edit that needs a grant is
+  saved switched off; a chat edit that loosens the posture is refused; and the
+  chat cannot switch such a trigger on or run it. PersonalClaw's own triggers
+  are granted by the code that makes them, since each runs an action it fixes
+  behind a switch the owner holds (an app's crons, the `system:*` singletons, a
+  research report's schedule, the triage digest, the Self-QA watch, a logged
+  decision's review card). Nothing unattended grants: there is no boot
+  backfill, a pack's triggers are deployed with no grant, and a legacy import
+  grants nothing. A lifecycle trigger carries the same grant and meets the same
+  rule when it fires (`hooks.run_script_hook`); on the gating seam an ungranted
+  one blocks the tool call it was asked about rather than letting it through.
+  The wire carries `needs_grant` (display names) so the page can badge the row
+  and offer Allow. A `webhook` trigger that is switched off or paused answers
+  `/fire` with the 404 an unknown one gets.
 - **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
   one-shot LLM call, **validated with croniter before use** (a hallucinated
   expression never reaches the store).

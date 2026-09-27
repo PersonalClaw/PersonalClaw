@@ -381,6 +381,9 @@ def _cli(action: str, channel: str, **extra: Any) -> None:
         "message": "check" if action == "add" else None,
         "channel": channel,
         "approval_mode": "" if action == "add" else None,
+        # The owner's `--yes` to the agent job `cron add` creates; a channel it cannot take is
+        # refused before that question is asked.
+        "yes": True,
     }
     if action == "add":
         fields.update(every=300, cron_expr=None)

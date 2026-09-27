@@ -382,6 +382,7 @@ export function hookToTrigger(h: HookItem): Trigger {
     hasRun: h.last_run != null || (h.run_count ?? 0) > 0,
     runCount: h.run_count, usedBy: h.used_by,
     blocking: h.blocking, enforcement: h.enforcement,
+    needsGrant: h.needs_grant ?? [],
     schedule: undefined, hook: h,
   }
 }

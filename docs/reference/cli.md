@@ -228,8 +228,8 @@ Manage scheduled jobs.
 | Subcommand | What it does |
 |---|---|
 | `cron list` | List cron jobs. |
-| `cron add NAME MESSAGE [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto]` | Add a job — interval (`--every`) or cron expression (`--cron "0 9 * * MON-FRI"`); optionally send results on a chat channel: `--channel telegram` for your DMs there, `--channel telegram:-100123` for a chat. The channel checks the id; `--approval-mode auto` auto-approves the job's tools. |
-| `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto\|default]` | Update a job (`default` resets approval mode). |
+| `cron add NAME MESSAGE [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto] [--yes]` | Add a job — interval (`--every`) or cron expression (`--cron "0 9 * * MON-FRI"`); optionally send results on a chat channel: `--channel telegram` for your DMs there, `--channel telegram:-100123` for a chat. The channel checks the id; `--approval-mode auto` auto-approves the job's tools. A job runs an agent with its tools while you are away, so the command asks what the Triggers page's create dialog asks: without `--yes` it prints the question and creates nothing (exit 1). |
+| `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto\|default] [--yes]` | Update a job (`default` resets approval mode). A new `--message` changes what the job's agent is told to do, and `--approval-mode auto` lets it approve its own tool calls, so each asks what the Triggers page's editor asks: without `--yes` the command prints the question and changes nothing (exit 1). |
 | `cron remove JOB_ID` | Remove a job. |
 | `cron pause JOB_ID` / `cron resume JOB_ID` | Pause / resume a job. |
 | `cron trigger JOB_ID` | Fire a job immediately. |

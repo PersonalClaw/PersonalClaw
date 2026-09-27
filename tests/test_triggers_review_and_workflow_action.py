@@ -138,11 +138,15 @@ def _store(home) -> TriggerStore:
 
 
 def _schedule(provider: str, config: dict[str, Any]) -> dict[str, Any]:
+    # `confirm: true` is the owner's yes to the dialog a `run-workflow` action is created behind.
+    # An action that could not run is refused before that question is asked, so the refusals below
+    # are the same with or without it.
     return {
         "trigger_type": "schedule",
         "name": "Morning brief",
         "every": 3600,
         "action": {"provider": provider, "config": config},
+        "confirm": True,
     }
 
 

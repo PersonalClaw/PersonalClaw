@@ -629,10 +629,11 @@ def capabilities_for_action(trigger: Any) -> dict[str, Any]:
     right set without asking the user to restate a choice they made by picking the action.
 
     Decision 7: "Every non-manual trigger carries a `capabilities` block frozen at save time …
-    write-capable actions require explicit opt-in." Authoring a trigger IS the opt-in — the user
-    chose that action — so this records the choice rather than asking twice. The badge on the
-    Automations row is what makes it visible afterwards, and `provider_is_read_only` is what decides
-    whether the row needs one.
+    write-capable actions require explicit opt-in." The opt-in is the owner's yes to the action,
+    asked where they author it (the create dialog, the editor, `cron add --yes`) or given by the
+    code that makes one of PersonalClaw's own triggers — so this records that yes rather than asking
+    twice. Authoring alone is not it: a trigger the chat makes waits for the owner's Allow
+    (`triggers.grants`). `provider_is_read_only` is what decides whether a row needs one.
 
     🔴 WHY THIS EXISTS (S116). Measured: NO writer set `capabilities` — not `tools.create`, not the
     app-cron reconciler, not the digest reconciler, not the CLI, not the API. And every one of them
@@ -742,10 +743,11 @@ def grant_action(trigger: Any) -> list[str]:
     """Freeze the providers `trigger`'s action runs into its block. Returns what was granted.
 
     This is the owner saying yes, so only a caller holding that yes may call it, through
-    `triggers.grants.give`: the Triggers page's switch and the schedule editor, after their consent
-    dialog. Nothing that runs unattended grants — a boot, a chat tool or an import writing this
-    block would be authority nobody gave. A `providers` value that is not a list is replaced rather
-    than extended, because the fence refuses a non-list and extending one would grant nothing.
+    `triggers.grants.give`: the Triggers page's switch, the create dialog and the editor, after
+    their consent question, and the CLI after `--yes`. Nothing that runs unattended grants — a
+    boot, a chat tool or an import writing this block would be authority nobody gave. A
+    `providers` value that is not a list is replaced rather than extended, because the fence
+    refuses a non-list and extending one would grant nothing.
     """
     granted = ungranted_providers(trigger)
     if not granted:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from aiohttp import web
@@ -503,6 +504,9 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "enforcement": hook_enforcement(
             hook.event, enabled=bool(hook.enabled), bound=bool(used_by)
         ),
+        # What it is not allowed to use — the same verdict a store trigger carries: the page badges
+        # the row and offers Allow, and its fires are refused (`hooks.run_script_hook`).
+        "needs_grant": _needs_grant(hook),
     }
     return trigger_revisions.with_revision(row, schedule=False)
 
@@ -782,22 +786,37 @@ def _unconsented_loosening(
     return loosened
 
 
-def _grant_for_save(body: dict, *, kind: str, raw: str) -> tuple[Any, list[str]] | None:
-    """``(candidate, providers)`` when saving *body*'s action needs a grant the trigger does not
-    hold — *candidate* being the row the save would store — else ``None`` (`triggers.grants`).
+def _grant_for_save(
+    state: DashboardState, body: dict, *, kind: str, raw: str
+) -> tuple[list[str], str] | None:
+    """``(providers, sentence)`` when saving *body*'s action needs the owner to allow it, else
+    ``None`` (`triggers.grants.question`).
 
-    The schedule editor is where the owner re-points an action, so it is where they are asked: an
-    edit that saved `bash` into a trigger allowed only `notify` used to save it with nothing asked
-    and nothing granted, and the next boot's backfill granted it. With the owner's yes the save
-    grants it (`tools.update`), so Run now works straight away. A lifecycle hook has no capability
-    block, and a new trigger is granted at creation by `tools.create`.
+    The editor is where the owner re-points an action or rewrites what it runs, so it is where they
+    are asked: an edit that saved `bash` into a trigger allowed only `notify`, or a new command into
+    a trigger allowed to run the old one, used to save with nothing asked. With the owner's yes the
+    save grants it (`tools.update`), so Run now works straight away.
     """
     import copy
 
     from personalclaw.triggers import grants
 
     action = body.get("action")
-    if kind == _LIFECYCLE or not isinstance(action, dict):
+    if kind == _LIFECYCLE:
+        # A lifecycle save may also send `enabled: true`, which is the toggle's switch-on — or its
+        # Allow, when the trigger is on already — and is asked the toggle's question. Not asking it
+        # of a trigger that is on would leave `_update_lifecycle` to switch it off, the opposite of
+        # what the save asked for.
+        hook = _hook_store(state).get(raw)
+        if hook is None:
+            return None
+        candidate = copy.copy(hook)
+        if isinstance(action, dict):
+            _apply_hook_action(candidate, action)
+            return grants.question(candidate, before=hook)
+        need = grants.missing(candidate) if body.get("enabled") is True else []
+        return (need, grants.consent(candidate, need)) if need else None
+    if not isinstance(action, dict):
         return None
     row = _trigger_store().get(raw)
     if row is None:
@@ -805,8 +824,38 @@ def _grant_for_save(body: dict, *, kind: str, raw: str) -> tuple[Any, list[str]]
     # The shape `_update_schedule` writes, so the question is about the row the save would store.
     candidate = copy.copy(row.trigger)
     candidate.workflow = {"inline": action}
-    missing = grants.missing(candidate)
-    return (candidate, missing) if missing else None
+    return grants.question(candidate, before=row.trigger)
+
+
+def _grant_for_create(body: dict, *, trigger_type: str) -> tuple[list[str], str] | None:
+    """``(providers, sentence)`` when creating *body*'s trigger needs the owner to allow its action,
+    else ``None``. The create dialog asks it with the rest, so creating one stays a single step."""
+    from personalclaw.hooks import ScriptHook
+    from personalclaw.triggers import grants
+    from personalclaw.triggers.models import Trigger
+
+    action = body.get("action")
+    if not isinstance(action, dict):
+        return None
+    name = str(body.get("name") or "").strip()
+    if trigger_type == _LIFECYCLE:
+        candidate: Any = ScriptHook(name=name)
+        _apply_hook_action(candidate, action)
+    elif trigger_type in (_SCHEDULE, _EVENT):
+        kind = "clock" if trigger_type == _SCHEDULE else "event"
+        candidate = Trigger(id="", name=name, kind=kind, workflow={"inline": action})
+    else:
+        return None
+    return grants.question(candidate)
+
+
+def _apply_hook_action(hook: Any, action: dict) -> None:
+    """Put *action* on *hook* the way `_update_lifecycle` does: the provider when one is named, the
+    config when one is sent."""
+    if action.get("provider"):
+        hook.provider = str(action["provider"])
+    if "config" in action:
+        hook.provider_config = dict(action.get("config") or {})
 
 
 async def api_trigger_create(request: web.Request) -> web.Response:
@@ -817,6 +866,12 @@ async def api_trigger_create(request: web.Request) -> web.Response:
     delivery); lifecycle triggers take ``event`` + ``matcher``; data-event triggers take
     ``pattern`` + that pattern's one matcher field (and optionally ``max_fires`` /
     ``debounce_secs``).
+
+    Creating one is a single step with the owner's yes in it: once the body is valid, an action
+    that needs a grant and a posture that loosens whether its agent asks are asked about in one
+    ``confirmation_required`` before anything is written (:func:`_creation_consent`), and the
+    resend with ``confirm: true`` creates it allowed to run (`triggers.grants`). A read-only action
+    asks nothing.
     """
     state: DashboardState = request.app["state"]
     try:
@@ -826,32 +881,59 @@ async def api_trigger_create(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
-    # The consent names the trigger it is about. A name that is not a string only labels it
-    # "new" here; refusing that is the create path's job, not this check's.
-    name = body.get("name")
-    loosened = _unconsented_loosening(
-        request,
-        body,
-        where=f"triggers.{name if isinstance(name, str) and name else 'new'}.action",
-        stored={},
-    )
-    if loosened is not None:
-        return consent_required(*loosened)
-
+    trigger_type = str(body.get("trigger_type") or "").strip().lower()
+    if trigger_type not in (_LIFECYCLE, _SCHEDULE, _EVENT):
+        return web.json_response(
+            {"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400
+        )
     problem = await _action_problem(body.get("action"))
     if problem:
         return json_error("invalid_request", message=problem, status=400)
-
-    trigger_type = str(body.get("trigger_type") or "").strip().lower()
     if trigger_type == _LIFECYCLE:
         return await _create_lifecycle(state, body, request)
     if trigger_type == _SCHEDULE:
         return await _create_schedule(state, body, request)
-    if trigger_type == _EVENT:
-        return _create_event(state, body, request)
-    return web.json_response(
-        {"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400
-    )
+    return _create_event(state, body, request)
+
+
+def _creation_consent(
+    request: web.Request, body: dict, *, trigger_type: str
+) -> web.Response | None:
+    """The one question creating *body*'s trigger asks the owner, or None when it needs no yes.
+
+    Asked by each create path after its own validation and before it writes, so the owner is never
+    asked about a trigger the next line would refuse: the grant its action needs
+    (`_grant_for_create`) and a loosened posture for its agent, in one ``confirmation_required``.
+    The consent names the trigger it is about; a name that is not a string only labels it "new"
+    here, and refusing that is the create path's job.
+    """
+    from personalclaw.safety_flags import confirm_granted
+
+    name = body.get("name")
+    label = name if isinstance(name, str) and name else "new"
+    grant = _grant_for_create(body, trigger_type=trigger_type)
+    field = f"triggers.{label}.capabilities"
+    asks: list[tuple[str, str]] = []
+    if grant is not None and not confirm_granted(body):
+        caller = request.get("user", "dashboard")
+        _audit_grant(caller, "denied", f"{field}: creating without confirm")
+        asks.append((field, grant[1]))
+    loosened = _unconsented_loosening(request, body, where=f"triggers.{label}.action", stored={})
+    if loosened is not None:
+        asks.append(loosened)
+    if not asks:
+        return None
+    return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
+
+
+def _audit_created_grant(request: web.Request, trigger_id: str, granted: Any) -> None:
+    """The security-audit row for the grant a create gave with the owner's yes, if it gave one."""
+    if isinstance(granted, (list, tuple)) and granted:
+        _audit_grant(
+            request.get("user", "dashboard"),
+            "success",
+            f"trigger:{trigger_id}: {', '.join(str(p) for p in granted)}",
+        )
 
 
 def _create_event(state: DashboardState, body: dict, request: web.Request) -> web.Response:
@@ -908,6 +990,11 @@ def _create_event(state: DashboardState, body: dict, request: web.Request) -> we
         )
     field = PATTERN_MATCHER[pattern]
     spec = event_spec(pattern, str(body.get(field) or "").strip() if field else "")
+    asked = _creation_consent(request, body, trigger_type=_EVENT)
+    if asked is not None:
+        return asked
+
+    from personalclaw.safety_flags import confirm_granted
 
     store = _trigger_store()
     result = _tools.create(
@@ -918,12 +1005,16 @@ def _create_event(state: DashboardState, body: dict, request: web.Request) -> we
         gates=gates,
         workflow={"inline": action},
         created_by="user",
+        # `_creation_consent` asked the owner first, so `confirm: true` is their yes to it.
+        owner_consented=confirm_granted(body),
     )
     if not result.ok:
         return json_error(
             "invalid_request", message=result.text.removeprefix("Error: "), status=400
         )
-    raw_id = str((result.data.get("trigger") or {}).get("id") or "")
+    made = result.data.get("trigger") or {}
+    raw_id = str(made.get("id") or "")
+    _audit_created_grant(request, raw_id, (made.get("capabilities") or {}).get("providers"))
     state.push_refresh("crons")
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
@@ -962,7 +1053,19 @@ async def _create_lifecycle(
         validated = validate_tool_args(payload, HOOK_CREATE_SCHEMA)
     except ValidationError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    hook = _hook_store(state).create(validated)
+    asked = _creation_consent(request, body, trigger_type=_LIFECYCLE)
+    if asked is not None:
+        return asked
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers import grants
+
+    store = _hook_store(state)
+    hook = store.create(validated)
+    # `_creation_consent` asked the owner first, so `confirm: true` is their yes to what it runs.
+    granted = grants.give(hook) if confirm_granted(body) else []
+    if granted:
+        store.update(hook.id, {"capabilities": hook.capabilities})
+        _audit_created_grant(request, f"{_LIFECYCLE}:{hook.id}", granted)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="trigger.create",
@@ -1088,6 +1191,11 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     enabled_raw = body.get("enabled", True)
     if not isinstance(enabled_raw, bool):
         return json_error("invalid_request", message="'enabled' must be a boolean", status=400)
+    asked = _creation_consent(request, body, trigger_type=_SCHEDULE)
+    if asked is not None:
+        return asked
+
+    from personalclaw.safety_flags import confirm_granted
 
     store = _trigger_store()
     result = _tools.create(
@@ -1103,11 +1211,15 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         # `channel`/`silent` are DELIVERY on the entity, not action config (LEGACY_FIELD_MAP:
         # `channel → delivery`, `silent → delivery == none`).
         created_by="user",
+        # `_creation_consent` asked the owner first, so `confirm: true` is their yes to it.
+        owner_consented=confirm_granted(body),
     )
     if not result.ok:
         return web.json_response({"error": result.text}, status=400)
 
-    raw_id = str((result.data.get("trigger") or {}).get("id") or "")
+    made = result.data.get("trigger") or {}
+    raw_id = str(made.get("id") or "")
+    _audit_created_grant(request, raw_id, (made.get("capabilities") or {}).get("providers"))
     row = store.get(raw_id)
     if row is not None:
         trigger = row.trigger
@@ -1230,18 +1342,17 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if stale is not None:
         return stale
     # One question for everything this save needs the owner's yes for, so a single "Allow" is never
-    # consent to a sentence the dialog did not show: a new grant for the action, and a loosened
-    # approval posture for its agent.
+    # consent to a sentence the dialog did not show: a grant for the action as it is saved — a new
+    # provider, or what a granted one runs changed — and a loosened approval posture for its agent.
     from personalclaw.safety_flags import confirm_granted
-    from personalclaw.triggers import grants
 
     caller = request.get("user", "dashboard")
-    grant = _grant_for_save(body, kind=kind, raw=raw)
+    grant = _grant_for_save(state, body, kind=kind, raw=raw)
     grant_field = f"triggers.{request.match_info['id']}.capabilities"
     asks: list[tuple[str, str]] = []
     if grant is not None and not confirm_granted(body):
         _audit_grant(caller, "denied", f"{grant_field}: saving without confirm")
-        asks.append((grant_field, grants.consent(grant[0], grant[1], saving=True)))
+        asks.append((grant_field, grant[1]))
     loosened = _unconsented_loosening(
         request,
         body,
@@ -1254,12 +1365,13 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
 
     if kind == _LIFECYCLE:
-        return _update_lifecycle(state, raw, body)
-    saved = _update_schedule(state, raw, body)
+        saved = _update_lifecycle(state, raw, body)
+    else:
+        saved = _update_schedule(state, raw, body)
     if grant is not None and saved.status == 200:
-        # The save carried the owner's yes and the action it was asked about, so `tools.update`
-        # granted exactly what the question named.
-        _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant[1])}")
+        # The save carried the owner's yes and the action it was asked about, so the save granted
+        # exactly what the question named.
+        _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant[0])}")
     return saved
 
 
@@ -1289,6 +1401,14 @@ def _keep_masked_schedule(state: DashboardState, kind: str, raw: str, body: dict
 
 
 def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
+    """Save a lifecycle trigger's edit, and settle its grant the way `tools.update` settles a store
+    trigger's: what the edit changed keeps no grant (`grants.narrow`), and `api_trigger_detail`
+    asked the owner about it first, so `confirm: true` gives it. A save that would leave the trigger
+    on without the grant it needs is switched off rather than left running unallowed."""
+    import copy
+
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers import grants
     from personalclaw.validation import HOOK_UPDATE_SCHEMA, ValidationError, validate_tool_args
 
     patch: dict[str, Any] = {}
@@ -1304,12 +1424,25 @@ def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Respon
         validated = validate_tool_args(patch, HOOK_UPDATE_SCHEMA)
     except ValidationError as exc:
         return web.json_response({"error": str(exc)}, status=400)
+    store = _hook_store(state)
+    stored = store.get(raw)
+    before = copy.deepcopy(stored) if stored is not None else None
     try:
-        hook = _hook_store(state).update(raw, validated)
+        hook = store.update(raw, validated)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     if not hook:
         return web.json_response({"error": "not found"}, status=404)
+    reshaped = "provider" in validated or "provider_config" in validated
+    if reshaped or validated.get("enabled") is True:
+        if reshaped:
+            grants.narrow(hook, before)
+        if grants.missing(hook):
+            if confirm_granted(body):
+                grants.give(hook)
+            else:
+                hook.enabled = False
+        hook = store.update(raw, {"capabilities": hook.capabilities, "enabled": hook.enabled})
     return web.json_response(
         {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
     )
@@ -1514,26 +1647,33 @@ def _carried(spec: dict[str, Any]) -> dict[str, Any]:
 # ── toggle / run / test ──
 
 
-def _switch_on_grant(request: web.Request, body: Any, store: Any, row: Any) -> web.Response | None:
+def _switch_on_grant(
+    request: web.Request,
+    body: Any,
+    trigger: Any,
+    *,
+    persist: Callable[[], Any],
+    broken: bool = False,
+) -> web.Response | None:
     """Give a trigger what switching it on needs, asking the owner first. None when it may go on.
 
     A trigger whose action runs a write-capable provider its frozen block does not permit — a row a
     legacy import brought over (`triggers.legacy_import`), an edit saved without the owner's yes, a
-    row whose block was never frozen — is refused by both dispatches (`triggers.grants`). Switching
-    it on is the moment to ask, and so is Allow on a trigger that is already on, which the panel
-    sends here as ``enabled: true``: without ``confirm: true`` this answers
-    ``400 confirmation_required`` in the gateway's own words, which the page's
+    row the chat made, a lifecycle trigger made before hooks carried a grant — is refused by every
+    dispatch (`triggers.grants`). Switching it on is the moment to ask, and so is Allow on a trigger
+    that is already on, which the panel sends here as ``enabled: true``: without ``confirm: true``
+    this answers ``400 confirmation_required`` in the gateway's own words, which the page's
     ``withSecurityConsent`` turns into the consent dialog; with it, the providers are granted and an
-    imported row becomes the owner's (`grants.give`), and both the refusal and the grant are written
-    to the security audit. An imported nudge needs no grant, only the owner's switch, so it is
-    adopted without a question. A row with parse errors is left to `set_paused`, which refuses it
-    with the reason rather than asking about a trigger that cannot run anyway.
+    imported row becomes the owner's (`grants.give`), *persist* stores that, and both the refusal
+    and the grant are written to the security audit. An imported nudge needs no grant, only the
+    owner's switch, so it is adopted without a question. A *broken* row (parse errors) is left to
+    `set_paused`, which refuses it with the reason rather than asking about a trigger that cannot
+    run anyway.
     """
     from personalclaw.safety_flags import confirm_granted
     from personalclaw.triggers import grants, legacy_import
 
-    trigger = row.trigger
-    if row.errors:
+    if broken:
         return None
     missing = grants.missing(trigger)
     if not missing and not legacy_import.needs_review(trigger):
@@ -1544,7 +1684,7 @@ def _switch_on_grant(request: web.Request, body: Any, store: Any, row: Any) -> w
         _audit_grant(caller, "denied", f"{field}: switching on without confirm")
         return consent_required(field, grants.consent(trigger, missing))
     granted = grants.give(trigger)
-    store.upsert(trigger)
+    persist()
     if granted:
         _audit_grant(caller, "success", f"trigger:{trigger.id}: {', '.join(granted)}")
     return None
@@ -1582,7 +1722,13 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         want = body.get("enabled") if isinstance(body, dict) else None
         paused = row.trigger.enabled if want is None else (not bool(want))
         if not paused:
-            asked = _switch_on_grant(request, body, store, row)
+            asked = _switch_on_grant(
+                request,
+                body,
+                row.trigger,
+                persist=lambda: store.upsert(row.trigger),
+                broken=bool(row.errors),
+            )
             if asked is not None:
                 return asked
         result = T.set_paused(store, trigger_id=raw, paused=paused)
@@ -1590,9 +1736,26 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
             return web.json_response({"error": result.text}, status=400)
         return web.json_response({"ok": True, "trigger": _serialize_store(store.get(raw))})
     if kind == _LIFECYCLE:
-        hook = _hook_store(state).toggle(raw)
+        # A lifecycle trigger is switched on the way a store trigger is: asked first when its action
+        # needs a grant, and Allow is the switch sent on again (`enabled: true` on one that is on).
+        hooks = _hook_store(state)
+        hook = hooks.get(raw)
         if not hook:
             return web.json_response({"error": "not found"}, status=404)
+        body = await json_object_body(request)
+        want = body.get("enabled") if isinstance(body, dict) else None
+        on = (not hook.enabled) if want is None else bool(want)
+        if on:
+            asked = _switch_on_grant(
+                request,
+                body,
+                hook,
+                persist=lambda: hooks.update(hook.id, {"capabilities": hook.capabilities}),
+            )
+            if asked is not None:
+                return asked
+        if hook.enabled != on:
+            hook = hooks.toggle(raw)
         return web.json_response(
             {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
         )
@@ -1609,7 +1772,13 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
 
         want = (not row.trigger.enabled) if enabled is None else bool(enabled)
         if want:
-            asked = _switch_on_grant(request, body, store, row)
+            asked = _switch_on_grant(
+                request,
+                body,
+                row.trigger,
+                persist=lambda: store.upsert(row.trigger),
+                broken=bool(row.errors),
+            )
             if asked is not None:
                 return asked
         result = _tools.set_paused(store, trigger_id=raw, paused=not want)
@@ -1715,9 +1884,11 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
        (fail-closed). A violation is a security event — logged and audited, never a silent
        substitution.
     4. **rate cap** (→ 429): per client, so one noisy integration cannot starve another.
-    5. **resolve** (→ 404): only a `webhook`-kind store trigger is fireable here; an unknown id or a
-       non-webhook kind answers 404 rather than confirming a non-webhook trigger's existence. Done
-       AFTER auth+scope, so a misscoped caller learns nothing about which triggers exist.
+    5. **resolve** (→ 404): only a `webhook`-kind store trigger that is switched on is fireable
+       here; an unknown id, a non-webhook kind or a paused trigger answers 404 rather than
+       confirming a non-webhook trigger's existence or saying why it will not fire — the answer the
+       inbound gate gives a surface that is switched off. Done AFTER auth+scope, so a misscoped
+       caller learns nothing about which triggers exist. Then the trigger's own grant (→ 403).
     6. **fence + fire**: the raw body is capped and fenced (`framing.fence_payload`) so it reaches
        the agent as data and never instructions, then the action is dispatched fire-and-forget (202)
        — a webhook sender must not block on an LLM turn (the `view`-render idiom).
@@ -1803,16 +1974,23 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
         )
     clients_mod.touch_last_seen(client_id)
 
-    # 5) Resolve the trigger. Only a `webhook`-kind store trigger is fireable here.
+    # 5) Resolve the trigger. Only a `webhook`-kind store trigger that is switched on is fireable
+    #    here. A paused one answers exactly as an unknown one does: 404 is what the inbound gate
+    #    answers for a surface that is switched off (`inbound.gate.admission_problem`), so the
+    #    caller learns no more than that there is nothing to fire. The audit row says which.
     kind, raw = _split_id(trigger_id)
     store = _trigger_store()
     row = store.get(raw) if kind == _STORE else None
-    if row is None or row.trigger.kind != "webhook":
+    if row is None or row.trigger.kind != "webhook" or not row.trigger.fires_automatically:
         audit_mod.audit(
             _WEBHOOK_SURFACE,
             route=route,
             status=404,
-            refused="unknown or non-webhook trigger",
+            refused=(
+                "unknown or non-webhook trigger"
+                if row is None or row.trigger.kind != "webhook"
+                else "the trigger is switched off or paused"
+            ),
             client_id=client_id,
         )
         return json_error("not_found", status=404, headers=_NO_STORE)

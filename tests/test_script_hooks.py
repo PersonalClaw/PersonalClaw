@@ -17,6 +17,10 @@ from personalclaw.hooks import (
 
 _IS_MACOS = platform.system() == "Darwin"
 
+#: The owner's yes to a `bash` action (`triggers.grants`). These tests are about how a hook runs;
+#: that an ungranted one does not is `test_a_grant_is_for_the_action_the_owner_allowed`'s.
+_GRANTED = {"providers": ["bash"]}
+
 
 @pytest.fixture
 def hook_store(tmp_path: Path) -> ScriptHookStore:
@@ -202,6 +206,7 @@ class TestRunScriptHook:
             provider_config={"command": "echo success"},
             timeout=30,
             enabled=True,
+            capabilities=_GRANTED,
         )
         result = await run_script_hook(hook, "test-context")
         assert result.hook_id == "test-1"
@@ -220,6 +225,7 @@ class TestRunScriptHook:
             provider_config={"command": "exit 1"},
             timeout=30,
             enabled=True,
+            capabilities=_GRANTED,
         )
         result = await run_script_hook(hook, "test-context")
         assert result.exit_code == 1
@@ -235,6 +241,7 @@ class TestRunScriptHook:
             provider_config={"command": "sleep 10"},
             timeout=1,
             enabled=True,
+            capabilities=_GRANTED,
         )
         result = await run_script_hook(hook, "test-context")
         assert "Timed out" in result.error
@@ -251,6 +258,7 @@ class TestRunScriptHook:
             provider_config={"command": "exit 2"},
             timeout=30,
             enabled=True,
+            capabilities=_GRANTED,
         )
         result = await run_script_hook(hook, "test-context")
         assert result.exit_code == 2
@@ -269,6 +277,7 @@ class TestRunScriptHook:
             },
             timeout=30,
             enabled=True,
+            capabilities=_GRANTED,
         )
         result = await run_script_hook(hook, "test-context")
         assert result.exit_code == 0
@@ -285,6 +294,7 @@ class TestRunScriptHook:
             provider_config={"command": "echo $PERSONALCLAW_HOOK_EVENT"},
             timeout=30,
             enabled=True,
+            capabilities=_GRANTED,
         )
         result = await run_script_hook(hook, "test-context")
         assert HOOK_EVENT_USER_PROMPT_SUBMIT in result.stdout
@@ -300,6 +310,7 @@ class TestRunScriptHook:
             provider_config={"command": "echo test"},
             timeout=30,
             enabled=True,
+            capabilities=_GRANTED,
             last_run=0,
             last_status="",
             run_count=0,
@@ -321,6 +332,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_USER_PROMPT_SUBMIT,
                 "provider_config": {"command": "echo enabled"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
                 "enabled": True,
             }
         )
@@ -330,6 +342,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_USER_PROMPT_SUBMIT,
                 "provider_config": {"command": "echo disabled"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
                 "enabled": False,
             }
         )
@@ -345,6 +358,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_USER_PROMPT_SUBMIT,
                 "provider_config": {"command": "echo prompt"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
             }
         )
         hook_store.create(
@@ -353,6 +367,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_PRE_TOOL_USE,
                 "provider_config": {"command": "echo tool"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
             }
         )
         results = await hook_store.fire(HOOK_EVENT_USER_PROMPT_SUBMIT, "test-context")
@@ -367,6 +382,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_PRE_TOOL_USE,
                 "provider_config": {"command": "echo matched"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
                 "matcher": "fs_*",
             }
         )
@@ -388,6 +404,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_PRE_TOOL_USE,
                 "provider_config": {"command": "exit 2"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
             }
         )
         results = await hook_store.fire(HOOK_EVENT_PRE_TOOL_USE, "test")
@@ -403,6 +420,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_USER_PROMPT_SUBMIT,
                 "provider_config": {"command": "echo first"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
             }
         )
         hook_store.create(
@@ -411,6 +429,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_USER_PROMPT_SUBMIT,
                 "provider_config": {"command": "echo second"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
             }
         )
         results = await hook_store.fire(HOOK_EVENT_USER_PROMPT_SUBMIT, "test")
@@ -431,6 +450,7 @@ class TestScriptHookStoreFire:
                     "command": f'{sys.executable} -c \'import sys, json; print(json.load(sys.stdin).get("tool_input", {{}}).get("test_key"))\''  # noqa: E501
                 },
                 "timeout": 30,
+                "capabilities": _GRANTED,
             }
         )
         results = await hook_store.fire(
@@ -457,6 +477,7 @@ class TestScriptHookStoreFire:
                 "event": HOOK_EVENT_AGENT_SPAWN,
                 "provider_config": {"command": "echo 'Enable caveman mode'"},
                 "timeout": 30,
+                "capabilities": _GRANTED,
             }
         )
         results = await hook_store.fire(HOOK_EVENT_AGENT_SPAWN, "session-key")

@@ -29,6 +29,9 @@ def _hook() -> ScriptHook:
         provider="run-prompt",
         provider_config={"prompt_id": "x"},
         enabled=True,
+        # The owner's yes to what it runs (`triggers.grants`): an ungranted hook is refused before
+        # its provider is asked, and these tests are about what a run that happens records.
+        capabilities={"providers": ["run-prompt"]},
     )
 
 

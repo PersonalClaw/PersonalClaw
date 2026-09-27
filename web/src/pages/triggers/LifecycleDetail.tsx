@@ -8,6 +8,7 @@ import { Field, TextInput, FieldError } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
+import { GrantNote } from './ReviewNote'
 import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
 import { accentChip } from '../../design/accent'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -94,6 +95,9 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
   // backend) → no claim either way, which is the only safe default for a security control.
   const enforcement = hook.enforcement
   const inert = enforcement === 'not_enforcing'
+  // The server's verdict: what its action is not allowed to use. Nothing runs it until the owner
+  // allows it — the note says so and offers the control that does (`GrantNote`).
+  const needsGrant = hook.needs_grant ?? []
   const eventOptions = (catalog?.lifecycle ?? []).map((e) => ({ value: e.event, label: e.dormant ? `${e.label} · never fires` : e.label, description: e.desc }))
 
   async function save() {
@@ -113,7 +117,22 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
     if (!(await confirmDelete('trigger', hook.name))) return
     try { await api.deleteHook(hook.id); onDeleted() } catch { setErr('Delete failed') }
   }
-  async function toggle() { setBusy(true); try { await api.toggleHook(hook.id); onSaved() } finally { setBusy(false) } }
+  // Switching ON may be asked about first — the gateway refuses a hook its action is not allowed to
+  // run until the owner allows it — so a refusal or a declined question is shown, not swallowed.
+  async function toggle() {
+    setBusy(true); setErr('')
+    try { await api.toggleHook(hook.id, !hook.enabled); onSaved() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not change this trigger') }
+    finally { setBusy(false) }
+  }
+  // Allow on a hook that is already on: the switch sent ON again, which is where the gateway asks
+  // for the grant its action needs (`needs_grant`).
+  async function allow() {
+    setBusy(true); setErr('')
+    try { await api.toggleHook(hook.id, true); onSaved() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not allow this trigger') }
+    finally { setBusy(false) }
+  }
   async function test() {
     setBusy(true); setTestOut(null)
     try {
@@ -166,6 +185,9 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
       </div>
       {err && <FieldError>{err}</FieldError>}
       {testOut && <p className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] break-words">{testOut}</p>}
+      {needsGrant.length > 0 && (
+        <GrantNote labels={needsGrant} enabled={hook.enabled} busy={busy} onAllow={allow} />
+      )}
 
       <div className="flex flex-wrap items-center gap-s">
         <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={accentChip}>{em.label}</span>

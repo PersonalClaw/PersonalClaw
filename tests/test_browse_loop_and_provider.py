@@ -290,6 +290,8 @@ class TestTheProviderContract:
             event="SessionStart",
             provider="browse",
             provider_config={"goal": "read the changelog", "start_url": INDEX_URL},
+            # The owner's yes (`triggers.grants`), so the denylist is what refuses it here.
+            capabilities={"providers": ["browse"]},
         )
         result = _run(run_script_hook(hook, "", {"event": "SessionStart"}))
 

@@ -112,8 +112,11 @@ async def _schedule_row(c: TestClient) -> dict:
 
 def _form_save(*, name: str, message: str, skip_dates: list[str]) -> dict:
     """Exactly the body the schedule edit form sends (`draftToPayload` → `_scheduleBodyToWire`):
-    every field, the action rebuilt from the form's four agent fields."""
+    every field, the action rebuilt from the form's four agent fields — as it is resent after the
+    owner says yes to the new prompt, which the editor asks about (`triggers.grants.narrow`), with
+    the same base."""
     return {
+        "confirm": True,
         "name": name,
         "timezone": "",
         "silent": False,

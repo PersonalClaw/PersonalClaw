@@ -2622,6 +2622,9 @@ export interface HookItem {
   blocking?: boolean; enforcement?: HookEnforcement
   // The revision the edit form's save names — see `Trigger.revision`.
   revision?: string
+  // What it is not allowed to use — see `Trigger`. A lifecycle trigger's fires are refused until
+  // the owner allows it, like a store trigger's.
+  needs_grant?: string[]
 }
 // The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
 // source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
@@ -2731,6 +2734,7 @@ function _triggerToHook(t: Trigger): HookItem {
     // confident "enforcing" chip over a hook nothing binds.
     blocking: t.blocking, enforcement: t.enforcement,
     revision: t.revision,
+    needs_grant: t.needs_grant,
   }
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
@@ -8178,7 +8182,11 @@ export const api = {
       ...(c ? { confirm: true } : {}),
     }, basedOn(base))).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   deleteHook: (id: string) => del(`/api/triggers/lifecycle:${encodeURIComponent(id)}`),
-  toggleHook: (id: string) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`, {}),
+  // Asks first when switching ON grants what the action runs — see `enableSchedule`. Allow on a hook
+  // that is on is the switch sent on again.
+  toggleHook: (id: string, enabled: boolean) =>
+    withSecurityConsent((c) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`,
+      c ? { enabled, confirm: true } : { enabled })),
   testHook: (id: string, context?: string) => post<{ ok: boolean; result: { stdout: string; stderr: string; exit_code: number; error: string; duration_ms: number } }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}/test`, { context: context ?? 'test' }),
 
   // store triggers — the unified TriggerStore kinds with no legacy backend

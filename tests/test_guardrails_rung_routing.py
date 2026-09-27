@@ -491,6 +491,8 @@ def test_draft_only_files_a_PROPOSAL_row_through_a_real_hook_run(_isolated_home)
         event="Stop",
         provider="acme-do-thing",
         provider_config={"note": "x"},
+        # The owner's yes (`triggers.grants`): the rung decides what an allowed action does next.
+        capabilities={"providers": ["acme-do-thing"]},
     )
     result = asyncio.run(run_script_hook(hook))
 
