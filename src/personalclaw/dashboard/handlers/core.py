@@ -203,6 +203,29 @@ async def service_worker(request: web.Request) -> web.StreamResponse:
     return _dist_root_file("sw.js", "text/javascript")
 
 
+# The licence notices are third-party text (licences, copyright lines), so they are served as
+# plain text with the charset stated, never as a type a browser might render: with the
+# ``nosniff`` every response carries (``server.SECURITY_HEADERS``), the browser shows them as
+# text and nothing else.
+_NOTICE_CONTENT_TYPE = "text/plain; charset=utf-8"
+
+
+async def third_party_notices(request: web.Request) -> web.StreamResponse:
+    """Serve /THIRD_PARTY_NOTICES.txt — the notices of the fonts the dashboard ships.
+
+    Tracked in ``web/public``, so the build copies it to the dist root. Settings → Updates
+    links it beside :func:`third_party_notices_npm`.
+    """
+    return _dist_root_file("THIRD_PARTY_NOTICES.txt", _NOTICE_CONTENT_TYPE)
+
+
+async def third_party_notices_npm(request: web.Request) -> web.StreamResponse:
+    """Serve /THIRD_PARTY_NOTICES_NPM.txt — the licences of the npm packages the dashboard's code
+    bundles, which the web build writes from its own module graph because the minifier strips
+    every licence comment from the code (``web/scripts/thirdPartyNotices.mjs``)."""
+    return _dist_root_file("THIRD_PARTY_NOTICES_NPM.txt", _NOTICE_CONTENT_TYPE)
+
+
 # Web-font content types, stated explicitly (issue #2916). aiohttp's ``FileResponse``
 # resolves the type from its OWN private ``mimetypes`` table
 # (``web_fileresponse.CONTENT_TYPES``), which lacks the woff/woff2 entries and does not

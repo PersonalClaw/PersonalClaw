@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, CircleOff, DownloadCloud, CheckCircle2, RefreshCw, Undo2, X } from 'lucide-react'
+import { AlertTriangle, CircleOff, DownloadCloud, CheckCircle2, ExternalLink, RefreshCw, Undo2, X } from 'lucide-react'
 import { api, type UpdateCheck } from '../../lib/api'
 import { updateVerdict, updateVerdictLabel } from './updateVerdict'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { TextInput, NumberField } from '../../ui/forms'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
@@ -305,6 +306,23 @@ export function UpdatesPanel() {
             </div>
           )}
         </div>
+      </Section>
+
+      {/* The licences, beside the version they are the licences of. Both notices are plain text at
+          the dist root: the fonts' is tracked in web/public, and the packages' is written by the
+          web build from its own module graph (web/scripts/thirdPartyNotices.mjs), because the
+          minifier strips every licence comment from the code. */}
+      <Section title="Licences" hint="PersonalClaw is MIT-licensed. The dashboard also ships third-party open-source code and fonts, each under its own licence.">
+        <RowGroup>
+          <Row label="Open-source packages" hint="Every package in the dashboard's code, with its version, its licence and the licence's full text.">
+            <TextLink href="/THIRD_PARTY_NOTICES_NPM.txt" external size="sm" ink="emphasis" icon={ExternalLink} iconPosition="trailing"
+              aria-label="Open the open-source packages' licence notices">Open</TextLink>
+          </Row>
+          <Row label="Fonts" hint="The dashboard's typefaces, its math fonts and the code editor's icon font.">
+            <TextLink href="/THIRD_PARTY_NOTICES.txt" external size="sm" ink="emphasis" icon={ExternalLink} iconPosition="trailing"
+              aria-label="Open the fonts' licence notices">Open</TextLink>
+          </Row>
+        </RowGroup>
       </Section>
 
       <Section title="Release line" hint="Which releases this install follows. A version pin overrides the channel.">

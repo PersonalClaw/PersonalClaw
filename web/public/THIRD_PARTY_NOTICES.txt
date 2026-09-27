@@ -4,7 +4,9 @@ PersonalClaw's own code and artwork are MIT-licensed (see LICENSE in the Persona
 repository). The dashboard also ships the third-party fonts below, each under its own
 licence. The SIL Open Font License 1.1 and Creative Commons Attribution 4.0 texts are
 reproduced in full at the end of this file. ASSET_LICENSES.json, at the root of the
-repository, records where each file came from and pins its exact bytes.
+repository, records where each file came from and pins its exact bytes. The open-source
+packages bundled into the dashboard's code have their notices in THIRD_PARTY_NOTICES_NPM.txt,
+beside this file.
 
 File paths are relative to this file in the built dashboard.
 
