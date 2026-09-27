@@ -953,7 +953,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // counts a structured literal, and this is the shape it is deliberately wrong about. "We could not
   // reach the capability check" and "the capability is not available" are the same fact to a user who
   // cannot use it either way, so `available: false` IS the answer, not a stand-in for one.
-  'pages/tools/ToolsPage.tsx': 5,
+  // 5 → 6: the read of whose read-only labels the owner trusts substitutes `null`, as the elicitation
+  // grant's read beside it does, and `null` is a state its row shows: the switch is disabled and says
+  // the list could not be read (`mcpReadOnlyTrust.test.tsx`), because which way to flip it is unknown.
+  'pages/tools/ToolsPage.tsx': 6,
   'pages/triggers/TriggersListPage.tsx': 1,
   // TWO swallows fixed here, and the second is the reason a line citation is a poor spec: the ledger
   // read (`:150`, the line #532 and #2940 both name) said "No runs recorded yet", and the VERSION read

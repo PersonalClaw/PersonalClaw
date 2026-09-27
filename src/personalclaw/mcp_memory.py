@@ -20,6 +20,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "memory_remember",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Save a learned correction or preference that persists across all "
                 "future sessions. MUST be called when the user corrects you, says "
@@ -54,11 +55,13 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "memory_list",
+            "annotations": {"readOnlyHint": True},
             "description": "List all saved lessons and corrections",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "memory_forget",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             "description": "Remove lessons whose rule contains the given substring",
             "inputSchema": {
                 "type": "object",
@@ -70,6 +73,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "memory_recall",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Look up your persistent memory on demand — query-relevant facts "
                 "and past conversation fragments. Your always-on context only "
@@ -95,6 +99,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "triage_rules",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "List, add, or revoke the triage approval rules — what the proactive "
                 "digest may do without asking again. action='list' shows every rule "

@@ -67,6 +67,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "automation_create",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Create an automation from ONE natural-language message. Use for 'when a file "
                 "in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The "
@@ -110,6 +111,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_list",
+            "annotations": {"readOnlyHint": True},
             "description": "List automations with health rollups. Optional `kind` and `state` "
             "('active'/'paused') filters. Broken rows are shown, not hidden.",
             "inputSchema": {
@@ -122,6 +124,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_update",
+            "annotations": {"readOnlyHint": False},
             "description": "Patch an automation. Only settable fields apply (name, spec, gates, "
             "workflow, enabled, delivery, …); health/run fields are rejected and reported. An "
             "edit that changes what its action runs switches it off until the owner allows the "
@@ -141,6 +144,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_pause",
+            "annotations": {"readOnlyHint": False},
             "description": "Pause an automation — it stops firing on its own but is not deleted.",
             "inputSchema": {
                 "type": "object",
@@ -150,6 +154,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_resume",
+            "annotations": {"readOnlyHint": False},
             "description": "Resume a paused automation. Refuses (with the reason) if the row has "
             "a parse error that must be fixed first.",
             "inputSchema": {
@@ -160,6 +165,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_run",
+            "annotations": {"readOnlyHint": False},
             "description": "Fire an automation now. `dry_run: true` walks the gates and reports "
             "what WOULD run without executing. A manual run bypasses quiet-hours and duty limits "
             "but never the injection screen, capability allowlist, or budget.",
@@ -174,6 +180,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_history",
+            "annotations": {"readOnlyHint": True},
             "description": "Recent run/fire rows for an automation, with typed outcomes — to "
             "self-debug why an automation did or did not do something.",
             "inputSchema": {
@@ -187,6 +194,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_delete",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             "description": "Delete an automation permanently. Requires confirm: true — pause it "
             "instead if you might want it back.",
             "inputSchema": {
@@ -200,6 +208,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "automation_delete_all",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             # Scoped in the DESCRIPTION as well as the code: a bulk-delete tool whose blast radius
             # is only discoverable by reading the implementation is one an agent will misuse.
             "description": "Delete every automation YOU created (created_by=agent), in one call. "
@@ -218,6 +227,7 @@ def _list_tools() -> list[dict[str, Any]]:
             # the outstanding-task bound, the command screening and the announcement rather than
             # re-implementing any of it.
             "name": "set_onetime_task",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you "
                 "need to wait for something outside this turn — 'check the build in 20 minutes', "
@@ -259,6 +269,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "set_recurring_task",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at "
                 "9', 'hourly', 'every Monday'. Use for ongoing monitoring you should keep doing "

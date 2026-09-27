@@ -30,7 +30,6 @@ from personalclaw.approval_brief import (
     DESTRUCTIVE_HINTS,
     FACET_COPY,
     NETWORK_HINTS,
-    READ_VERB_HINTS,
     SHELL_HINTS,
     WRITE_HINTS,
     attach_approval_brief,
@@ -209,7 +208,7 @@ class TestCallSiteCarriesTheBrief:
         gateway.dashboard_state.request_approval.assert_awaited_once()
         kwargs = gateway.dashboard_state.request_approval.call_args.kwargs
         assert APPROVAL_BRIEF_META_KEY not in kwargs
-        assert set(kwargs) == {"tool_input", "tool_purpose", "session", "trigger"}
+        assert set(kwargs) == {"tool_input", "tool_purpose", "session", "trigger", "risk_level"}
 
 
 # ── 2. Additive, with vacuity proofs ────────────────────────────────────────────
@@ -381,7 +380,6 @@ class TestOneVocabularyAcrossLanguages:
             ("SHELL_HINTS", SHELL_HINTS),
             ("NETWORK_HINTS", NETWORK_HINTS),
             ("DESTRUCTIVE_HINTS", DESTRUCTIVE_HINTS),
-            ("READ_VERB_HINTS", READ_VERB_HINTS),
             ("WRITE_HINTS", WRITE_HINTS),
         ],
     )
@@ -400,14 +398,15 @@ class TestOneVocabularyAcrossLanguages:
         """A fifth facet cannot be silently dropped from the brief."""
         assert set(BLAST_RADIUS_FACET_ORDER) == set(FACET_COPY)
 
-    def test_the_write_hints_are_derived_from_the_gates_own_tuple(self) -> None:
-        """Not a hand-copied list: adding a hint to task_modes flows into the brief."""
-        from personalclaw.task_modes import _MUTATING_NAME_HINTS
+    def test_no_list_names_a_read(self) -> None:
+        """The hints DESCRIBE a change; neither language keeps a list of read-shaped words,
+        because a name is never evidence that a call only reads."""
+        assert "READ_VERB_HINTS" not in _TS_SOURCE.read_text(encoding="utf-8")
+        import personalclaw.approval_brief as brief
 
-        assert "schedule" in _MUTATING_NAME_HINTS and "schedule" in WRITE_HINTS
+        assert not hasattr(brief, "READ_VERB_HINTS")
         # Re-homed to another facet, so they must NOT also mean "writes".
         for rehomed in ("exec", "spawn", "delete", "remove", "run"):
-            assert rehomed in _MUTATING_NAME_HINTS or rehomed in DESTRUCTIVE_HINTS
             assert rehomed not in WRITE_HINTS
 
 
@@ -419,7 +418,13 @@ class TestHonestyContract:
         assert derive_blast_radius("frobnicate_xyzzy") is None
 
     def test_an_established_write_never_claims_read_only(self) -> None:
+        """A name can describe a change, never establish a read: a tool labelled read-only
+        whose name says it writes is shown as the write it may be."""
         radius = derive_blast_radius("file_write", risk="safe")
+        assert radius == {"writes": True, "network": False, "shell": False, "readOnly": False}
+
+    def test_a_change_never_claims_read_only(self) -> None:
+        radius = derive_blast_radius("file_write", risk="caution")
         assert radius == {"writes": True, "network": False, "shell": False, "readOnly": False}
 
     def test_a_negative_screening_verdict_rules_the_read_claim_out(self) -> None:
@@ -429,14 +434,21 @@ class TestHonestyContract:
     def test_an_unknown_risk_level_is_no_evidence(self) -> None:
         assert derive_blast_radius("do_thing", risk="apocalyptic") is None
 
-    def test_a_read_verb_beats_a_broad_write_hint(self) -> None:
-        """`schedule_list` matches the write fragment "schedule" but is plainly a read."""
-        radius = derive_blast_radius("schedule_list")
-        assert radius == {"writes": False, "network": False, "shell": False, "readOnly": True}
+    def test_a_name_never_establishes_a_read(self) -> None:
+        """`calendar_list` sounds like a read. Only a declaration makes one: without it the
+        brief establishes nothing; with it, it is a read."""
+        assert derive_blast_radius("calendar_list") is None
+        assert derive_blast_radius("calendar_list", risk="safe") == {
+            "writes": False,
+            "network": False,
+            "shell": False,
+            "readOnly": True,
+        }
 
-    def test_a_destructive_verb_wins_outright(self) -> None:
-        radius = derive_blast_radius("memory_forget", risk="safe")
+    def test_a_destructive_verb_describes_a_write(self) -> None:
+        radius = derive_blast_radius("memory_forget", risk="destructive")
         assert radius is not None and radius["writes"] is True
+        assert radius["readOnly"] is False
 
     def test_an_mcp_prefix_is_stripped_before_matching(self) -> None:
         radius = derive_blast_radius("mcp/some-server/web_fetch")
@@ -476,28 +488,18 @@ class TestHonestyContract:
             assert "blastRadius" not in brief, unknown
             assert "blastRadiusLine" not in brief, unknown
 
-    def test_known_limitation_hint_matching_is_substring_not_word(self) -> None:
-        """DOCUMENTED DEFECT, inherited from OU-7's module — not introduced here.
-
-        The hint tuples match by SUBSTRING (``task_modes``' own scheme, mirrored by
-        ``approvalMeta.ts``), so ``widget`` contains the read verb ``get`` and the read
-        verb short-circuits BEFORE the write hints. ``artifact_widget_create`` therefore
-        reads as "reads only" on every surface that renders this derivation — the chat
-        chips and the toast today, and now the channel brief.
-
-        Pinned rather than fixed: the fix is word-boundary matching in BOTH languages,
-        which changes a shipped frontend surface OU-7 owns, so it is a follow-up atom.
-        This test is where that atom will find the case; it should be inverted then.
-        """
+    def test_a_read_word_inside_a_name_claims_no_read(self) -> None:
+        """The documented defect this module carried, inverted as its note asked: ``widget``
+        contains ``get``, and a read-verb list checked first made ``artifact_widget_create``
+        read "reads only" on every surface. With no read-shaped list at all, a change is
+        described as the change its name suggests, and nothing claims a read."""
         assert derive_blast_radius("artifact_widget_create", risk="caution") == {
-            "writes": False,
+            "writes": True,
             "network": False,
             "shell": False,
-            "readOnly": True,
+            "readOnly": False,
         }
-        # The frontend agrees, which is why this is drift-free but still wrong.
-        assert "get" in "widget"
-        assert "get" in _ts_string_array("READ_VERB_HINTS")
+        assert derive_blast_radius("task_list_create", risk="caution")["readOnly"] is False
 
     def test_the_composer_never_inspects_a_command_string(self) -> None:
         """Screening stays owned by task_modes — this module re-implements none of it.

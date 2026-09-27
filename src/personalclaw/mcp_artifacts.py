@@ -13,7 +13,7 @@ from typing import Any
 
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.mcp_core import _resolve_session_key
-from personalclaw.tool_providers.base import tool_failure
+from personalclaw.tool_providers.base import BUILDS_META_KEY, tool_failure
 from personalclaw.validation import decode_json_text
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,8 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "artifact_save",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Save content as a named, versioned artifact so it persists beyond "
                 "chat scrollback and can be iterated on by name in a later session. "
@@ -149,6 +151,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "artifact_get",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Fetch a saved artifact's content by slug. Pass version=N for a "
                 "historical snapshot; omit for the live version."
@@ -167,6 +170,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "artifact_update",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Update a saved artifact by slug, creating a new version snapshot "
                 "(each agent update is a checkpoint, like a commit). Pass new content "
@@ -193,6 +198,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "artifact_list",
+            "annotations": {"readOnlyHint": True},
             "description": "List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, collection, or a text query q.",  # noqa: E501
             "inputSchema": {
                 "type": "object",
@@ -219,6 +225,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "artifact_versions",
+            "annotations": {"readOnlyHint": True},
             "description": "List the numbered snapshot versions of an artifact by slug.",
             "inputSchema": {
                 "type": "object",
@@ -228,6 +235,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "artifact_delete",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             "description": "Delete a saved artifact (and its version history) by slug. The source file/widget is not touched.",  # noqa: E501
             "inputSchema": {
                 "type": "object",
@@ -237,6 +245,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "image_generate",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Generate an image from a text prompt (or edit an existing one), using "
                 "the model bound to the 'image_gen' use-case in Settings → Models. The "
@@ -268,6 +278,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "video_generate",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Generate a video from a text prompt, using the model bound to the "
                 "'video_gen' use-case in Settings → Models. The result is saved as a "
@@ -301,6 +313,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "document_create",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Generate a real Word document (.docx) from MARKDOWN and save it as a "
                 "versioned artifact the user can download. Write ordinary markdown — "
@@ -349,6 +363,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "sheet_create",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. "
                 "Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` "
@@ -389,6 +405,8 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "deck_create",
+            "annotations": {"readOnlyHint": False},
+            "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save "
                 "it as a versioned artifact. Each `##` heading starts a slide, the lines "
@@ -446,6 +464,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "document_formats",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "List the document formats this instance can actually generate right now. "
                 "Check before promising the user a format."
@@ -454,6 +473,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "visualize",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Turn structured DATA into a generative-UI widget (charts, stat tiles, "
                 "tables, callouts) rendered inline — the agency-free two-step pattern: you "

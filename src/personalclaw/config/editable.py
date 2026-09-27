@@ -352,6 +352,18 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             "questions.",
         ),
     },
+    # Per server, like the elicitation grant: believing one server's read-only labels never
+    # believes another's.
+    "security.mcp_read_only_servers": {
+        "type": "str_list",
+        "max_items": 100,
+        "security": SecurityControl(
+            loosens_when_added(),
+            "Tools the added MCP server labels read-only will run in Ask and Plan mode and "
+            "without asking you under Trust reads. If it labels a tool that changes something "
+            "as read-only, that change happens without anyone being asked.",
+        ),
+    },
     # Per place, like the elicitation grant: each id is one folder or sign-in outside the
     # home (`outside_home.places()`), so allowing one never allows the others.
     "security.outside_home": {

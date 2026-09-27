@@ -395,7 +395,14 @@ class NativeAgentRuntime(AgentProvider):
         self._task_mode = "agent"
         # The host's own tool grants (`set_tool_grants`): which tools this run may use at all,
         # asked in the same place and for the same reason as the task mode.
-        self._tool_grants: Callable[[str], str] | None = None
+        self._tool_grants: Callable[..., str] | None = None
+        # tool name → what the tool DECLARES a call does (its RiskLevel; SAFE is the read-only
+        # declaration), and the tools that declare they build a Build-mode deliverable or only
+        # file a proposal. Built in start(); a name missing from the map declares nothing, which
+        # is CAUTION (`_declared`).
+        self._tool_risk: dict[str, RiskLevel] = {}
+        self._tool_builds: frozenset[str] = frozenset()
+        self._tool_proposes: frozenset[str] = frozenset()
         # The turn's ONE stop signal (PR2-12). Not a bool: cancellation has to carry a
         # cause (user vs internal), a live child-process registry a stop can reap, and
         # idempotence — so it is an object, and `self._cancelled` below is a read-only
@@ -544,7 +551,9 @@ class NativeAgentRuntime(AgentProvider):
         # Risk-level map: dry-run observe-mode intercepts non-SAFE tools (T9), and
         # the permission-request event carries a tool's declared risk to the gate.
         # Built once here so the hot path is a dict lookup.
-        self._tool_risk = {t.name: getattr(t, "risk_level", RiskLevel.SAFE) for t in defs}
+        self._tool_risk = {t.name: getattr(t, "risk_level", RiskLevel.CAUTION) for t in defs}
+        self._tool_builds = frozenset(t.name for t in defs if getattr(t, "builds", False))
+        self._tool_proposes = frozenset(t.name for t in defs if getattr(t, "proposes", False))
         # Per-turn tool retrieval (TR2): a selector over the full catalog. K
         # defaults above the builtin count → behavioral no-op until MCP catalogs
         # grow; selection only changes the schema the model SEES (dispatch via
@@ -560,6 +569,7 @@ class NativeAgentRuntime(AgentProvider):
             name="tool_search",
             provider="native",
             requires_approval=False,
+            risk_level=RiskLevel.SAFE,
             description=(
                 "Find tools by capability. Searches the FULL catalog (incl. tools shown "
                 "this turn only as a name in the catalog). Args: query (str), optional "
@@ -580,6 +590,7 @@ class NativeAgentRuntime(AgentProvider):
             name="tool_schema",
             provider="native",
             requires_approval=False,
+            risk_level=RiskLevel.SAFE,
             description=(
                 "Get the full input schema for a tool by name — use when the catalog lists "
                 "a tool you want but you need its exact arguments. Args: tool_name (str). "
@@ -598,6 +609,7 @@ class NativeAgentRuntime(AgentProvider):
             name="reset_tools",
             provider="native",
             requires_approval=False,
+            risk_level=RiskLevel.SAFE,
             description=(
                 "Set which tool GROUPS are active, so unused groups don't spend context "
                 "on their schemas. FINAL STATE, not a delta: pass every group you want "
@@ -630,6 +642,10 @@ class NativeAgentRuntime(AgentProvider):
                 "required": ["groups"],
             },
         )
+        # The meta-tools are answered by this runtime and declare they only read: discovery, and
+        # which groups' schemas the model is shown — nothing a call can change.
+        for meta in (self._tool_search_def, self._tool_schema_def, self._reset_tools_def):
+            self._tool_risk[meta.name] = meta.risk_level
         logger.info(
             "native: discovered %d tools across %d providers", len(defs), len(self._tool_providers)
         )
@@ -1461,7 +1477,7 @@ class NativeAgentRuntime(AgentProvider):
             tool_call_id=call.tool_call_id,
             title=tool_name,
             tool_input=args,
-            risk_level=self._tool_risk.get(tool_name, RiskLevel.SAFE).value,
+            risk_level=self._declared(tool_name).value,
         )
         if self._requires_approval(tool_name):
             reservations: tuple[dispatch_plan.Reservation, ...] = (dispatch_plan.EVERYTHING,)
@@ -1750,8 +1766,11 @@ class NativeAgentRuntime(AgentProvider):
                     tool_call_id=call.tool_call_id,
                     title=tool_name,
                     tool_input=args,
-                    # Declared risk of this tool (the gate resolves effective risk).
-                    risk_level=self._tool_risk.get(tool_name, RiskLevel.SAFE).value,
+                    # What this tool declares (the gate resolves effective risk from it, and
+                    # the dashboard's task-mode gate re-checks the call against it).
+                    risk_level=self._declared(tool_name).value,
+                    builds=tool_name in self._tool_builds,
+                    proposes=tool_name in self._tool_proposes,
                 )
                 decision = await self._approval.wait(request_id, fut)
                 if self._cancelled:
@@ -1833,11 +1852,11 @@ class NativeAgentRuntime(AgentProvider):
         :meth:`_prefetch` on why it is threaded rather than parked on the instance."""
         from personalclaw import security
 
-        # Dry-run observe-mode (T9): a write-capable (non-SAFE) tool is NOT
+        # Dry-run observe-mode (T9): a tool that does not declare it only reads is NOT
         # executed — return a synthetic observation so the replay previews what
-        # WOULD happen with no side effects. Read-only SAFE tools fall through and
+        # WOULD happen with no side effects. Declared-SAFE tools fall through and
         # run for real, so the agent reasons over actual state.
-        if self._dry_run and self._tool_risk.get(tool_name, RiskLevel.SAFE) != RiskLevel.SAFE:
+        if self._dry_run and self._declared(tool_name) != RiskLevel.SAFE:
             meta[TOOL_META_REFUSED_BY] = "dry_run"
             return (
                 f"[DRY RUN — observe mode] `{tool_name}` is a write-capable tool; "
@@ -1860,7 +1879,14 @@ class NativeAgentRuntime(AgentProvider):
         # so it stops retrying and surfaces the SWITCH_TO_AGENT affordance instead.
         from personalclaw.task_modes import task_mode_denies
 
-        tm_deny = task_mode_denies(self._task_mode, tool_name, "", call.tool_input)
+        tm_deny = task_mode_denies(
+            self._task_mode,
+            self._declared(tool_name),
+            tool_name,
+            "",
+            call.tool_input,
+            builds=tool_name in self._tool_builds,
+        )
         if tm_deny:
             _, observation = security.classify_denial(security.DENY_KIND_POLICY, tm_deny, tool_name)
             meta.update(_FAILED)
@@ -1871,7 +1897,13 @@ class NativeAgentRuntime(AgentProvider):
         # answers here must not admit a tool the run was never granted.
         if self._tool_grants is not None and tool_name not in self._META_TOOLS:
             try:
-                grant_deny = self._tool_grants(tool_name)
+                grant_deny = self._tool_grants(
+                    tool_name,
+                    self._declared(tool_name),
+                    "",
+                    call.tool_input,
+                    proposes=tool_name in self._tool_proposes,
+                )
             except Exception:  # noqa: BLE001 - a grant that cannot be read admits nothing
                 logger.warning("native: tool grants could not be read; refusing", exc_info=True)
                 grant_deny = "this run's tool grants could not be read"
@@ -2061,6 +2093,11 @@ class NativeAgentRuntime(AgentProvider):
     # provider. Without this they fall through to the `return True` default and the
     # loop parks on the approval gate forever.
     _META_TOOLS = frozenset({"tool_search", "tool_schema", "reset_tools"})
+
+    def _declared(self, tool_name: str) -> RiskLevel:
+        """What *tool_name* declares a call does. A tool this runtime has no definition for
+        declares nothing, which is CAUTION — never a read."""
+        return self._tool_risk.get(tool_name, RiskLevel.CAUTION)
 
     def _requires_approval(self, tool_name: str) -> bool:
         if not self._asks_first(tool_name):
@@ -2584,8 +2621,11 @@ class NativeAgentRuntime(AgentProvider):
         """Set the task mode (agent/ask/plan/build) enforced in _guard_and_invoke."""
         self._task_mode = mode or "agent"
 
-    def set_tool_grants(self, denial: Callable[[str], str] | None) -> None:
-        """Set which tools this run may use at all: ``denial(tool)`` is why not, ``""`` if it may.
+    def set_tool_grants(self, denial: Callable[..., str] | None) -> None:
+        """Set which tools this run may use at all: ``denial(tool, declared, tool_kind,
+        tool_input, proposes=...)`` is why not, ``""`` if it may. It is given what the tool
+        declares (:meth:`_declared`, and whether it only files a proposal), because a ``read``
+        grant admits a call by its declaration, never by its name.
 
         Asked in :meth:`_guard_and_invoke` before approval, like the task mode, because an approval
         this runtime answers itself (its policy says ``auto``) never reaches the host that holds

@@ -207,9 +207,9 @@
     "src/personalclaw/sdk/mcp.py": {
       "inert": 3,
       "surfaces": [
+        "sdk_export:declared_risk",
         "sdk_export:get_current_session_key",
-        "sdk_export:get_mcp_client_registry",
-        "sdk_export:infer_risk_from_name"
+        "sdk_export:get_mcp_client_registry"
       ]
     },
     "src/personalclaw/sdk/memory.py": {

@@ -253,98 +253,82 @@ class TestApprovalYoloSafetyRail:
         assert result["approval_mode"] == "interactive"
 
 
-# ─── _is_read_only_tool helper ───────────────────────────────────────────
+# ─── --approval reads: a call that only reads, by its tool's declaration ──
 
 
-class TestIsReadOnlyTool:
-    """Tool-name classification used by --approval reads."""
+class TestApprovalReads:
+    """`--approval reads` auto-approves a call whose EFFECTIVE risk is safe — a tool that
+    declares it only reads, or a read-only shell command — and asks about everything else,
+    whatever the tool is called. It used to read the tool's NAME: a leading read verb and no
+    write-shaped word passed, so `list_and_archive` and `get_and_move` ran unasked."""
 
+    @staticmethod
+    def _orch():
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.gateway import GatewayOrchestrator
+
+        cfg = AppConfig()
+        with patch.object(cfg, "load_credentials", return_value={}):
+            orch = GatewayOrchestrator(cfg, approval_mode="reads")
+        state = MagicMock()
+        state._sessions = {}
+        state.is_yolo_active.return_value = False
+        # The human's answer when the gate asks: no. So an ASK reads False and an auto-approve
+        # reads True, and `request_approval` being awaited at all is the evidence it asked.
+        state.request_approval = AsyncMock(return_value=False)
+        orch.dashboard_state = state
+        return orch, state
+
+    @staticmethod
+    def _event(title, *, risk_level="", tool_input=None, tool_kind=""):
+        from personalclaw.llm.events import EVENT_PERMISSION_REQUEST, AgentEvent
+
+        return AgentEvent(
+            kind=EVENT_PERMISSION_REQUEST,
+            request_id="r1",
+            title=title,
+            tool_kind=tool_kind,
+            risk_level=risk_level,
+            tool_input=tool_input if tool_input is not None else {},
+        )
+
+    async def _decide(self, event):
+        from unittest.mock import patch
+
+        orch, state = self._orch()
+        with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
+            decision = await orch._interactive_approval("cron")(event, "")
+        # A `ToolDecision`, truthy exactly when the call may run.
+        return bool(decision), state.request_approval.await_count
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("title", ["read_file", "memory_recall", "knowledge_search"])
+    async def test_a_declared_read_runs_unasked(self, title):
+        approved, asked = await self._decide(self._event(title, risk_level="safe"))
+        assert (approved, asked) == (True, 0)
+
+    @pytest.mark.asyncio
+    async def test_a_read_only_command_runs_unasked(self):
+        event = self._event("bash", risk_level="destructive", tool_input={"command": "ls -la"})
+        assert await self._decide(event) == (True, 0)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "title",
-        [
-            "read_file",
-            "Read foo.txt",
-            "list_directory",
-            "ls /tmp",
-            "get_status",
-            "search foo",
-            "find x",
-            "describe table",
-            "show config",
-            "view file",
-            "fetch url",
-            "query db",
-            "grep -r foo",
-            "cat file",
-            "head -n 5",
-            "tail -f log",
-        ],
+        "title", ["list_and_archive", "get_and_move", "find_and_move_files", "memory_remember"]
     )
-    def test_known_read_verbs_match(self, title):
-        from personalclaw.gateway import _is_read_only_tool
+    async def test_a_declared_change_asks_whatever_its_name(self, title):
+        approved, asked = await self._decide(self._event(title, risk_level="caution"))
+        assert (approved, asked) == (False, 1)
 
-        assert _is_read_only_tool(title) is True
+    @pytest.mark.asyncio
+    async def test_a_call_that_declares_nothing_asks(self):
+        # An ACP CLI's own read-labelled tool: its kind is not a declaration.
+        event = self._event("Read foo.txt", tool_kind="read")
+        assert await self._decide(event) == (False, 1)
 
-    @pytest.mark.parametrize(
-        "title",
-        [
-            "write_file",
-            "delete record",
-            "create table",
-            "rm -rf /",
-            "shell: rm",
-            "execute_command",
-            "post_message",
-            "update record",
-        ],
-    )
-    def test_write_verbs_do_not_match(self, title):
-        from personalclaw.gateway import _is_read_only_tool
-
-        assert _is_read_only_tool(title) is False
-
-    @pytest.mark.parametrize(
-        "title",
-        [
-            "read_or_write",  # read prefix masking write
-            "read_and_delete",  # read prefix masking delete
-            "find_and_replace",  # find prefix masking replace
-            "search_replace",  # search prefix masking replace
-            "get_or_create",  # get prefix masking create
-            "list_and_remove",  # list prefix masking remove
-            "fetch_and_update",  # fetch prefix masking update
-            "query_and_modify",  # query prefix masking modify
-        ],
-    )
-    def test_compound_read_write_verbs_rejected(self, title):
-        """Denylist catches tools whose read-verb prefix masks a write capability."""
-        from personalclaw.gateway import _is_read_only_tool
-
-        assert _is_read_only_tool(title) is False
-
-    def test_empty_string_not_match(self):
-        from personalclaw.gateway import _is_read_only_tool
-
-        assert _is_read_only_tool("") is False
-
-    def test_whitespace_only_not_match(self):
-        from personalclaw.gateway import _is_read_only_tool
-
-        assert _is_read_only_tool("   ") is False
-        assert _is_read_only_tool("\t\n") is False
-
-    def test_handles_punctuation_separators(self):
-        from personalclaw.gateway import _is_read_only_tool
-
-        # First token before space/colon/underscore/dash/paren counts.
-        assert _is_read_only_tool("read(file.txt)") is True
-        assert _is_read_only_tool("LIST: stuff") is True
-
-    def test_substring_inside_token_does_not_match(self):
-        """`set` token-equality check must not match the longer token `setter`."""
-        from personalclaw.gateway import _is_read_only_tool
-
-        # `read_setter_field` has read prefix; tokens are
-        # ["read", "setter", "field"]. None equal an entry in
-        # _WRITE_INDICATORS (which lists "set", not "setter").
-        assert _is_read_only_tool("read_setter_field") is True
+    @pytest.mark.asyncio
+    async def test_a_mutating_command_asks(self):
+        event = self._event("bash", risk_level="destructive", tool_input={"command": "rm -rf x"})
+        assert await self._decide(event) == (False, 1)

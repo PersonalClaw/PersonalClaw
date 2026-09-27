@@ -8970,6 +8970,16 @@ export const api = {
     api.patchConfigItem('security.mcp_elicitation_servers', 'add', server, confirmed),
   revokeMcpElicitation: (server: string) =>
     api.patchConfigItem('security.mcp_elicitation_servers', 'remove', server),
+  // Which MCP servers' READ-ONLY labels you trust (`readOnlyHint`). Per server, like the
+  // elicitation grant: an absent server's tools are all treated as changes, so they ask. Read
+  // from the config blob for the same reason; `confirmed` is the Tools page's own dialog.
+  mcpReadOnlyServers: () =>
+    get<Record<string, any>>('/api/config/personalclaw').then(
+      (c) => (c?.security?.mcp_read_only_servers ?? []) as string[]),
+  trustMcpReadOnly: (server: string, confirmed = false) =>
+    api.patchConfigItem('security.mcp_read_only_servers', 'add', server, confirmed),
+  distrustMcpReadOnly: (server: string) =>
+    api.patchConfigItem('security.mcp_read_only_servers', 'remove', server),
   // EI-10 — the secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",

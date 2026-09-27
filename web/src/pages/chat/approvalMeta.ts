@@ -22,20 +22,23 @@
  *     object would render as four negatives ("no writes, no network, no shell, not
  *     read-only") — a confident claim from zero evidence. Absence is C2's own
  *     unknown channel (`blastRadius?`), so the renderer simply shows no chips.
- *  2. `readOnly` is only ever claimed on positive evidence, and never alongside an
- *     established write. Under-claiming safety is the correct direction to err.
+ *  2. `readOnly` is only ever claimed on positive evidence — a read-only EFFECTIVE risk
+ *     or a screened read-only command — and never alongside a write. Under-claiming
+ *     safety is the correct direction to err.
+ *
+ *  ── What the name is, and is not, evidence of ─────────────────────────────────
+ *  `readOnly` comes from the backend's classification alone: `risk` is `safe` only when
+ *  the tool DECLARES it only reads or the command it runs is a read-only one. A tool's
+ *  NAME never establishes a read — `task_list_create` carries "list", and a name is only
+ *  ever a guess about what a tool might do. The name hints below DESCRIBE a call that is
+ *  not a read (`writes`, `shell`, `network`); they claim nothing about a read.
  *
  *  ── Why `risk` is optional ───────────────────────────────────────────────────
- *  The two surfaces that ask for permission carry DIFFERENT data:
- *    - chat: the `approval` WS event carries `risk` (`chat_runner.py`, broadcast as
- *      the resolved EFFECTIVE risk) → read into `ApprovalSegment['risk']` at
- *      `web/src/pages/ChatPage.tsx:911`.
- *    - the approvals queue behind `#/companion`: `GET /api/approvals` returns
- *      `PendingApproval` (`web/src/lib/api.ts:1661`) = {id, source, tool,
- *      tool_input?, tool_purpose?, session, ts} — there is NO `risk` field.
- *  So `risk` must be absent-able, and its absence must not silently imply a read.
- *  With no risk we fall back to tool-name evidence alone, which can still establish
- *  writes/network/shell positively and can still leave everything unknown
+ *  The chat's `approval` WS event carries the EFFECTIVE risk (`chat_runner.py`), and so
+ *  does `GET /api/approvals` (`PendingApproval.risk`) for a call whose tool declares one.
+ *  A call that declares nothing — an ACP agent's own tool — carries `""`, so `risk` must
+ *  be absent-able, and its absence must not imply a read: with no risk the name hints can
+ *  still establish writes/network/shell and can still leave everything unknown
  *  (→ `undefined`).
  *
  *  ── Where `readOnlyCommand` comes from (#2821) ───────────────────────────────
@@ -111,12 +114,10 @@ export function readOnlyCommandOf(raw: unknown): boolean | undefined {
 
 /** Does a risk level positively establish that the call is a read?
  *
- *  Consumed, not invented: `resolve_effective_risk` (`task_modes.py:245`) reaches
- *  'safe' through exactly three branches — (1) a read-only bash invocation, (2) a
- *  declared-SAFE native tool (all reads: read_file/list_dir/glob/grep/…), (3) a
- *  positive read-only ACP `tool_kind` — so in this codebase EFFECTIVE-safe is
- *  already derived FROM read-only-ness. 'caution' and 'destructive' say a call has
- *  side effects but not WHICH facet, so they establish nothing here.
+ *  Consumed, not invented: `resolve_effective_risk` (`task_modes.py`) reaches 'safe'
+ *  only through a read-only shell command or a tool that DECLARES it only reads, so
+ *  EFFECTIVE-safe is already derived FROM read-only-ness. 'caution' and 'destructive'
+ *  say a call has side effects but not WHICH facet, so they establish nothing here.
  *
  *  Typed as a total `Record` on purpose: adding a member to the risk union makes
  *  this object a type error, so a new level cannot arrive silently unmapped. There
@@ -138,47 +139,41 @@ function riskEstablishesReadOnly(risk: ApprovalRisk | undefined): boolean {
     : false
 }
 
-// ── Tool-name evidence ───────────────────────────────────────────────────────
-// Name fragments mirroring the backend's own name vocabulary in
-// `src/personalclaw/task_modes.py` so the two agree on what a name means.
+/** The ONE decoder for a risk string off the wire (`PendingApproval.risk`, an `approval`
+ *  frame's `risk`): a level this build knows, or `undefined` — `""` (the call declared
+ *  nothing) and a level another build wrote are both no evidence. */
+export function approvalRiskOf(raw: unknown): ApprovalRisk | undefined {
+  return typeof raw === 'string' && Object.prototype.hasOwnProperty.call(RISK_ESTABLISHES_READ_ONLY, raw)
+    ? (raw as ApprovalRisk)
+    : undefined
+}
+
+// ── Tool-name description ────────────────────────────────────────────────────
+// What kind of change a call that is not a read can make, from words in its name —
+// the lists `src/personalclaw/approval_brief.py` carries, verbatim (a test pins them).
 // Only POSITIVE matches set a facet; an unmatched name leaves it unknown.
 
-/** Runs a command / spawns a process. `_MUTATING_NAME_HINTS`' exec family, split
- *  out because "can run anything" is its own facet. `terminal`/`shell` cover the
- *  ACP display names ACP agents send as the title. Deliberately NOT `run`: the
- *  `project_run_*` tools drive a workflow run, not a shell. */
+/** Runs a command / spawns a process. `terminal`/`shell` cover the ACP display names
+ *  ACP agents send as the title. Deliberately NOT `run`: the `project_run_*` tools
+ *  drive a workflow run, not a shell. */
 const SHELL_HINTS = ['bash', 'shell', 'terminal', 'zsh', 'exec', 'spawn', 'command'] as const
 
 /** Leaves the machine. `web_fetch`/`web_search` are the app-provided web tools;
  *  the rest cover MCP tools named by convention. */
 const NETWORK_HINTS = ['web_', 'http', 'fetch', 'browse', 'download', 'upload', 'crawl', 'scrape', 'url'] as const
 
-/** Destructive verbs — `_DESTRUCTIVE_NAME_HINTS` verbatim. Checked FIRST and, like
- *  the backend, they win outright: a delete is a write to the world. */
+/** Removes something. A delete is a write to the world, so these describe `writes` too. */
 const DESTRUCTIVE_HINTS = ['delete', 'remove', 'destroy', 'drop_', 'purge', 'forget'] as const
 
-/** Query/inspection verbs — `_READ_VERB_HINTS` verbatim. Checked BEFORE the broad
- *  mutating hints for the same reason the backend does it: `schedule_list` matches
- *  the mutating fragment "schedule" but is plainly a read. */
-const READ_VERB_HINTS = ['list', 'get', 'search', 'read', 'status', 'info', 'find', 'inspect', 'show', 'view'] as const
-
-/** Other mutating verbs — `_MUTATING_NAME_HINTS` minus the exec family (now under
- *  SHELL_HINTS), plus `remember`. `remember` is the one deliberate divergence:
- *  `memory_remember` durably persists a lesson, so it writes, but the backend's
- *  `_MUTATING_NAME_HINTS` has no `remember` token. Adding it there is a change to
- *  live risk inference and is NOT this atom's to make (C2: E4 if a gap tempts one),
- *  so the divergence is recorded here and in the plan's execution log instead. The
- *  conservative `readOnly` guard below keeps the two consistent in the only place
- *  it matters: an established write never claims read-only, whatever `risk` says. */
+/** Creates or changes something. */
 const WRITE_HINTS = [
   'write', 'edit', 'create', 'save', 'update', 'move', 'rename', 'append', 'remember',
   'set_', 'put_', 'install', 'deploy', 'subagent', 'schedule', 'notify', 'post_',
   'send', 'commit', 'push', 'generate',
 ] as const
 
-/** Normalize a wire tool name for fragment matching. Mirrors
- *  `infer_risk_from_name`'s `mcp/<server>/` strip so the verb match sees the bare
- *  name, and lowercases so ACP display titles ("Terminal", "Read") match too. */
+/** Normalize a wire tool name for fragment matching: an `mcp/<server>/<tool>` name is
+ *  described by its tool, and lowercasing lets ACP display titles ("Terminal") match. */
 function normalizeToolName(tool: string): string {
   const lowered = (tool || '').toLowerCase().trim()
   return lowered.includes('/') ? lowered.slice(lowered.lastIndexOf('/') + 1) : lowered
@@ -199,22 +194,16 @@ export function deriveBlastRadius(input: BlastRadiusInput): BlastRadius | undefi
   const shell = hasAny(name, SHELL_HINTS)
   const network = hasAny(name, NETWORK_HINTS)
 
-  // Name-verb precedence, mirroring `infer_risk_from_name`: destructive wins
-  // outright, then a read verb short-circuits, then the broad mutating hints.
-  let writes = false
-  let readVerb = false
-  if (hasAny(name, DESTRUCTIVE_HINTS)) writes = true
-  else if (hasAny(name, READ_VERB_HINTS)) readVerb = true
-  else if (hasAny(name, WRITE_HINTS)) writes = true
-
-  // `readOnly` needs positive evidence, and never rides over an established write.
-  // The screening verdict is the strongest signal (it inspected the actual command),
-  // then EFFECTIVE-safe risk, then a read-verb name. An explicit `false` from the
-  // screening verdict positively rules the claim out.
-  let readOnly = false
-  if (input.readOnlyCommand === true) readOnly = true
-  else if (input.readOnlyCommand !== false) readOnly = riskEstablishesReadOnly(input.risk) || readVerb
-  if (writes) readOnly = false
+  // What kind of change the call can make, from words in its name — a description, never a
+  // read: no word establishes that a call changes nothing.
+  const writes = hasAny(name, DESTRUCTIVE_HINTS) || hasAny(name, WRITE_HINTS)
+  // `readOnly` needs positive evidence: the screening verdict (it inspected the actual
+  // command) or an EFFECTIVE-safe risk (the tool declares it only reads). An explicit
+  // `false` from the screening verdict rules the claim out, and so does an established
+  // write — a tool labelled read-only whose name says it writes is shown as the write it
+  // may be.
+  const readOnly = !writes && (input.readOnlyCommand === true
+    || (input.readOnlyCommand !== false && riskEstablishesReadOnly(input.risk)))
 
   // Nothing established → say nothing. See the honesty contract in the header.
   if (!writes && !network && !shell && !readOnly) return undefined

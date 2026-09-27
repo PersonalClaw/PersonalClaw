@@ -675,8 +675,10 @@ def _build_launcher_script(sandbox_level: str = "strict") -> str:
     env_prefixes_json = json.dumps(env_prefixes)
     ssh_dir = json.dumps(os.path.join(home, ".ssh"))
     ssh_known_hosts = json.dumps(os.path.join(home, ".ssh", "known_hosts"))
-    # `repr`, not JSON: the pairs carry booleans, and the launcher is Python source.
-    owner_only_json = repr(sorted(set(_owner_only_targets())))
+    owner_home, owner_only_names = _owner_only_home()
+    owner_home_json = json.dumps(owner_home)
+    owner_only_names_json = json.dumps(owner_only_names)
+    pinned_json = json.dumps(_pinned_dirs(realpath_only=True, include_home=False))
     strict_host_key_opt = (
         " -o StrictHostKeyChecking=accept-new" if _ssh_supports_accept_new() else ""
     )
@@ -709,7 +711,9 @@ ENV_PREFIXES = {env_prefixes_json}
 SSH_DIR = {ssh_dir}
 SSH_KNOWN_HOSTS = {ssh_known_hosts}
 HIDE_SSH = {hide_ssh}
-OWNER_ONLY = {owner_only_json}
+OWNER_HOME = {owner_home_json}
+OWNER_ONLY_NAMES = {owner_only_names_json}
+PINNED = {pinned_json}
 
 # The tmpfs the empty bind sources come from, first usable one wins. Same-fs binds (e.g. /tmp
 # on ext4 over ~/.personalclaw/.env on ext4) can corrupt the target's host directory entry via
@@ -915,20 +919,57 @@ def main():
                 with open(os.path.join(SSH_DIR, "known_hosts"), "wb") as fh:
                     fh.write(kh_data)
 
-        # What runs as the owner, and what they allowed: bound onto itself read-only, so the
-        # kernel refuses a write whatever the command says (`owner_only`). A directory is made
-        # first when missing — a bind needs its target, and a `grants/` the command made itself
-        # would hold whatever yes it wrote there.
-        for target, is_dir in OWNER_ONLY:
-            if is_dir:
-                try:
-                    os.makedirs(target, mode=0o700, exist_ok=True)
-                except OSError:
-                    pass
-            if os.path.exists(target):
+        # What runs as the owner, and what they allowed (`owner_only`), fenced by the home's own
+        # entries rather than by whichever files are there when the shell starts. A bind on one
+        # file holds that inode: it cannot hold a name that does not exist yet, and the kernel
+        # dissolves it the moment the owner's side replaces the file (every config save writes
+        # a new file and renames it over the old one). So the home is bound onto itself and made
+        # read-only, and every entry already in it is bound back writable first — except the
+        # owner-only ones. An owner-only file or folder is then refused whether it exists or
+        # not, and however often it is replaced; what the shell cannot do is add, remove or
+        # rename an entry at the top of the home, which is PersonalClaw's own to lay out.
+        #
+        # A bind is also what pins a folder: a mount point cannot be renamed or removed. The
+        # home is one once it is bound, and PINNED — every folder above it the owner could
+        # rename — is bound onto itself, so the home cannot be moved aside and made again with
+        # other contents under the same path.
+        for target in PINNED:
+            if os.path.isdir(target) and not os.path.islink(target):
                 t = target.encode()
                 libc.mount(t, t, None, _MS_BIND | _MS_REC, None)
-                libc.mount(None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None)
+        try:
+            os.makedirs(OWNER_HOME, mode=0o700, exist_ok=True)
+        except OSError:
+            pass
+        if os.path.isdir(OWNER_HOME) and not os.path.islink(OWNER_HOME):
+            fenced = set()
+            for name in OWNER_ONLY_NAMES:
+                try:
+                    st = os.lstat(os.path.join(OWNER_HOME, name))
+                    fenced.add((st.st_dev, st.st_ino))
+                except OSError:
+                    pass
+            h = OWNER_HOME.encode()
+            if libc.mount(h, h, None, _MS_BIND | _MS_REC, None) != 0:
+                sys.exit(f"sandbox: could not fence the home: errno {{ctypes.get_errno()}}")
+            for name in sorted(os.listdir(OWNER_HOME)):
+                if name in OWNER_ONLY_NAMES:
+                    continue
+                path = os.path.join(OWNER_HOME, name)
+                try:
+                    st = os.lstat(path)
+                except OSError:
+                    continue
+                # A link is left as it is: a bind follows it, so binding a link to an owner-only
+                # path would open that path. A hard link to an owner-only file is the same file.
+                if not (stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode)):
+                    continue
+                if (st.st_dev, st.st_ino) in fenced:
+                    continue
+                p = path.encode()
+                libc.mount(p, p, None, _MS_BIND | _MS_REC, None)
+            if libc.mount(None, h, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None) != 0:
+                sys.exit(f"sandbox: could not fence the home: errno {{ctypes.get_errno()}}")
 
         # Scrub sensitive env vars
         for key in list(os.environ):
@@ -1058,8 +1099,59 @@ def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
     for target, is_dir in _owner_only_targets():
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* ({"subpath" if is_dir else "literal"} "{escaped}"))')
+    # The home, and every folder above it the owner could rename, cannot itself be renamed,
+    # removed or re-moded from in here: the rules above name paths, and moving the home aside,
+    # editing it there and moving it back would otherwise walk every one of them. Entries inside
+    # the folders are unaffected — a literal names the folder alone.
+    for target in _pinned_dirs(realpath_only=False, include_home=True):
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* (literal "{escaped}"))')
 
     return _SEATBELT_PROFILE.format(deny_rules="\n".join(rules))
+
+
+def _owner_only_home() -> tuple[str, list[str]]:
+    """The home's real path and the names of its owner-only entries (`owner_only`)."""
+    from personalclaw.owner_only import OWNER_ONLY_DIRS, OWNER_ONLY_FILES, owner_only_paths
+
+    paths = owner_only_paths()
+    home = os.path.realpath(str(paths[0].parent)) if paths else ""
+    return home, sorted({*OWNER_ONLY_FILES, *OWNER_ONLY_DIRS})
+
+
+def _pinned_dirs(*, realpath_only: bool, include_home: bool) -> list[str]:
+    """The folders whose own entry must not change from inside the sandbox: the home (when
+    *include_home*) and each folder above it that the owner could rename — one whose parent
+    they own or may write. Both spellings of each unless *realpath_only*, for a home behind a
+    symlink (`/tmp` → `/private/tmp`)."""
+    home, _names = _owner_only_home()
+    if not home:
+        return []
+    from personalclaw.owner_only import owner_only_paths
+
+    spellings = {home}
+    if not realpath_only:
+        spellings.add(os.path.abspath(str(owner_only_paths()[0].parent)))
+    uid = os.getuid()
+    out: list[str] = []
+    for spelling in sorted(spellings):
+        current = spelling
+        if include_home:
+            out.append(current)
+        while True:
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            try:
+                renameable = os.stat(parent).st_uid == uid or os.access(parent, os.W_OK)
+            except OSError:
+                renameable = False
+            if renameable:
+                out.append(current)
+            current = parent
+    ordered = list(dict.fromkeys(p for p in out if include_home or p not in spellings))
+    # Outermost first, so a folder is bound before anything inside it.
+    return sorted(ordered, key=lambda p: p.count(os.sep))
 
 
 def _owner_only_targets() -> list[tuple[str, bool]]:

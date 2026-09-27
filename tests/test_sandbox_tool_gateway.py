@@ -55,6 +55,7 @@ from personalclaw.sandbox_providers.tool_gateway import (
     ToolGateway,
     ToolSpec,
 )
+from personalclaw.tool_providers.base import RiskLevel
 
 #: Tokens that would mean a network hop exists somewhere in the transport.
 _NETWORK_TOKENS = (
@@ -370,9 +371,9 @@ def test_the_shim_default_fds_start_after_the_agents_own_stdio() -> None:
 def test_the_default_surface_declares_both_read_and_write_class_tools() -> None:
     """A read-only default surface would make the write refusal unreachable in production — a
     control present but inert. Pinned so a later trim cannot quietly create that state."""
-    kinds = {spec.name: spec.kind for spec in DEFAULT_SURFACE}
-    assert "memory_remember" in kinds and kinds["memory_remember"] == "edit"
-    assert any(k in ("read", "search") for k in kinds.values())
+    declared = {spec.name: spec.risk_level for spec in DEFAULT_SURFACE}
+    assert declared.get("memory_remember") is RiskLevel.CAUTION
+    assert RiskLevel.SAFE in declared.values()
 
 
 def test_a_tool_handler_failure_is_data_not_a_gateway_crash(home: Path, tmp_path: Path) -> None:
@@ -382,7 +383,7 @@ def test_a_tool_handler_failure_is_data_not_a_gateway_crash(home: Path, tmp_path
     def _boom(args: dict, ctx: ToolContext) -> str:
         raise RuntimeError("kaboom")
 
-    surface = (ToolSpec(name="explode", kind="read", handler=_boom),)
+    surface = (ToolSpec(name="explode", risk_level=RiskLevel.SAFE, handler=_boom),)
     gateway = ToolGateway(profile=INTERACTIVE, context=_ctx(ws), surface=surface)
     got = gateway.handle_request({"protocol": 1, "id": "1", "tool": "explode", "args": {}})
     assert not got["ok"] and "kaboom" in got["error"]

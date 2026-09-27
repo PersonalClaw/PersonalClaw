@@ -22,7 +22,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
-from personalclaw.task_modes import read_only_command, tool_input_to_str
+from personalclaw.task_modes import read_only_command, resolve_effective_risk, tool_input_to_str
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import _ChatSession
@@ -196,8 +196,14 @@ class DashboardApprovalState:
         session: str = "",
         trigger: str = "",
         asked_on_channel: bool = False,
+        risk_level: str = "",
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
+
+        ``risk_level`` is what the tool behind the call DECLARES (``AgentEvent.risk_level``;
+        ``""`` when nothing does). The pending row carries the call's effective risk from it,
+        so the queue, its nudge and the phone describe the call from the declaration and the
+        screened command, never from the tool's name.
 
         ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
         gateway's race for a background origin), so the ``channel_dm`` target must not ask a
@@ -259,7 +265,10 @@ class DashboardApprovalState:
             # more precise input — `read_only_command` is typed `object` precisely so it can
             # read a native dict's `command` key instead of re-parsing a serialized copy.
             # `None` when this is not a shell call.
-            is_read_only=read_only_command(tool, "", tool_input),
+            is_read_only=read_only_command(tool, "", tool_input, risk_level),
+            # Only from a declaration: a call that carries none (an ACP agent's own tool, an MCP
+            # server's question) has no risk anybody established, and "" says exactly that.
+            risk=resolve_effective_risk(risk_level, tool, "", tool_input) if risk_level else "",
         )
         if asked_on_channel:
             self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
@@ -364,10 +373,11 @@ class DashboardApprovalState:
         card, the out-of-context nudge, the phone queue) and the source of the Inbox row — so a
         field supplied here reaches every door, and no door can describe the call differently.
 
-        Every LLM-sourced string is redacted here, once, for both origins. ``agent``/``risk``/
+        Every LLM-sourced string is redacted here, once, for both origins. ``agent`` and
         ``grant_agent`` are known only to a chat and stay empty for a background origin: empty
-        is "not known", never "none". ``trigger`` is known only to a trigger's run, and its name is
-        read once, here, so the ask and its note name it the same way.
+        is "not known", never "none". ``risk`` is the call's effective risk, from what its tool
+        declares, when it declares one. ``trigger`` is known only to a trigger's run, and its name
+        is read once, here, so the ask and its note name it the same way.
         """
         from personalclaw.triggers.store import trigger_name
 

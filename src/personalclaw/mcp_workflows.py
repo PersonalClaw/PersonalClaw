@@ -58,6 +58,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "workflow_author",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Save a workflow definition from an explicit DAG spec — the low-level "
                 "authoring tool. Use when you already know the node structure; use "
@@ -103,6 +104,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_plan",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Turn a natural-language goal into a workflow spec for review BEFORE "
                 "anything runs. Returns a draft spec plus its validation issues; nothing is "
@@ -157,6 +159,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_list_defs",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "List the available workflow definitions — the user's own plus any bundled "
                 "template packs. Read-only. Start here when the user asks what workflows "
@@ -175,6 +178,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_get_def",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Retrieve one workflow definition in full, including its node tree and "
                 "declared inputs. Read-only. Credential values are replaced by _has_* "
@@ -188,6 +192,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_start",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Start a workflow run from a saved definition. mode='background' (default) "
                 "returns immediately with a run id — poll with workflow_status or watch with "
@@ -219,6 +224,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_status",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Current status of a run plus per-node progress and any failure detail. "
                 "Read-only. For watching a run that is actively moving, workflow_observe is "
@@ -232,6 +238,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_observe",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Watch a run for a short bounded window and return what changed, with the "
                 "events from that window. Read-only. Prefer this over repeated "
@@ -252,6 +259,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_edit",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, "
                 "delete, move, set_input, skip. Returns a cascade preview naming every node "
@@ -286,6 +294,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_skip",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Skip one or more pending nodes in a running workflow. A skipped node "
                 "produces no output and its subtree is skipped with it, so anything binding "
@@ -302,6 +311,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_rewind",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Reset a node AND everything that consumes its output, so they re-run — the "
                 "in-place fix for 'redo this stage with a better prompt'. Consumers are "
@@ -331,6 +341,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_run_from",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Re-run only what comes AFTER a node, keeping that node's output as-is — "
                 "'redo the synthesis with the same gathered data'. Cheaper than rewind when "
@@ -352,6 +363,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_fork",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Branch a NEW run from this one, leaving the original untouched — for "
                 "exploring an alternative when the first result must be preserved. Works on "
@@ -379,6 +391,7 @@ def _list_tools() -> list[dict[str, Any]]:
             # run verbs all address a run that has already started, and `workflow_start` takes a
             # def NAME, so pointing an agent at it would mint a second run and strand the fork.
             "name": "workflow_start_draft",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Start a run that already exists as a DRAFT — the launch step after "
                 "workflow_fork (optionally with workflow_edit in between). Use workflow_start "
@@ -394,6 +407,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_pause",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Pause a running workflow: in-flight nodes finish, nothing new launches. "
                 "Resume with workflow_resume."
@@ -406,6 +420,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_resume",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Answer a workflow that is waiting on a human, or clear a pause. `answer` is "
                 "JSON text: for an approval gate pass true or false; for a choice or form pass "
@@ -447,6 +462,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_cancel",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Cancel a run. The intent is persisted, so it is honoured even if the "
                 "gateway restarts mid-cancel; in-flight nodes are stopped and the run "
@@ -460,6 +476,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_output",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Retrieve one node's structured output from a run. Read-only. Use after "
                 "workflow_status shows the node is done, to read what it actually produced."
@@ -472,6 +489,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_audit",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Diagnose workflow runs that drifted — nodes stuck running, gates nobody "
                 "can answer, expired waits, runs whose status was never written. Defaults "
@@ -490,6 +508,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_manifest",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "The authoring reference, generated from the engine itself: node kinds and "
                 "their lanes, gate kinds, join and loop modes, binding pipes, mutation ops "
@@ -500,6 +519,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_delete_def",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
             "description": (
                 "Delete a workflow definition. Existing runs of it are unaffected — they "
                 "carry their own copy of the spec. Bundled templates cannot be deleted."

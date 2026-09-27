@@ -387,6 +387,10 @@ class RouteEntry:
     params: dict[str, Any] = field(default_factory=dict)  # query/path param hints
     body: dict[str, Any] = field(default_factory=dict)  # request-body shape hint
     agentCallable: bool = True  # expose as agent tool + call-app-route  # noqa: N815
+    # The route only reads: a call changes nothing (``RiskLevel.SAFE``). The app's declaration,
+    # and the only thing that makes the route's tool a read — its HTTP method does not, and a
+    # route that says nothing is a change, so it asks.
+    readOnly: bool = False  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"op": self.op, "method": self.method, "path": self.path}
@@ -398,6 +402,8 @@ class RouteEntry:
             d["body"] = self.body
         if not self.agentCallable:
             d["agentCallable"] = False
+        if self.readOnly:
+            d["readOnly"] = True
         return d
 
     @classmethod
@@ -410,6 +416,8 @@ class RouteEntry:
             params=dict(data.get("params", {})) if isinstance(data.get("params"), dict) else {},
             body=dict(data.get("body", {})) if isinstance(data.get("body"), dict) else {},
             agentCallable=bool(data.get("agentCallable", True)),  # noqa: N815
+            # Only a literal true declares a read.
+            readOnly=data.get("readOnly") is True,  # noqa: N815
         )
 
 

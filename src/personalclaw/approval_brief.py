@@ -12,26 +12,27 @@ line that matters.
 ── This module DECIDES nothing ──────────────────────────────────────────────────
 It is descriptive, exactly like its frontend twin. The approval gate, trust-reads
 and the task-mode gate live in :mod:`personalclaw.task_modes` +
-:mod:`personalclaw.gateway` and are unchanged. Every classification here is
-CONSUMED from ``task_modes`` — the one invocation vocabulary — never re-derived. In
-particular this module never inspects a command string: deciding whether a command
-is read-only is security logic and it already has an owner
-(:func:`~personalclaw.task_modes.is_read_only_bash`, reached only via
-:func:`~personalclaw.task_modes.classify_invocation`). C2 says E4 if a gap tempts a
-change; nothing here tempted one.
+:mod:`personalclaw.gateway` and are unchanged. The one classification here —
+whether a call only reads — is CONSUMED from ``task_modes``, never re-derived: it
+is the call's effective risk, which is ``safe`` only when the tool DECLARES it only
+reads or the command it runs is a read-only one. In particular this module never
+inspects a command string: deciding whether a command is read-only is security
+logic and it already has an owner (:func:`~personalclaw.task_modes.is_read_only_bash`,
+reached only via :func:`~personalclaw.task_modes.resolve_effective_risk`).
 
 ── One vocabulary, two languages ────────────────────────────────────────────────
 ``web/src/pages/chat/approvalMeta.ts`` (OU-7/OU-8) is the same derivation for the
 dashboard's chips and the out-of-context toast. Three surfaces must not invent three
-words for one claim, so:
+words for one claim, so the facet labels and the hint lists below are the
+TypeScript's verbatim, and ``tests/test_approval_brief.py`` parses that file and
+asserts every label and hint list still agrees. A drift becomes a red test, not a
+third vocabulary.
 
-* the name evidence is not copied at all — :data:`WRITE_HINTS`,
-  :data:`DESTRUCTIVE_HINTS` and :data:`READ_VERB_HINTS` are DERIVED from
-  ``task_modes``' own tuples, the same tuples the TypeScript mirrors. Adding a hint
-  to ``task_modes`` flows into the brief automatically;
-* the four facet labels are the TypeScript's ``FACET_COPY`` verbatim, and
-  ``tests/test_approval_brief.py`` parses that file and asserts every label and
-  hint list still agrees. A drift becomes a red test, not a third vocabulary.
+The hint lists DESCRIBE a change; they never establish a read. ``writes``, ``shell``
+and ``network`` name what kind of thing a call that is not a read can touch, from
+words in the tool's name, and a name is only ever evidence of what a tool might do.
+``readOnly`` comes from the declaration alone, and a call it holds for claims no
+``writes``.
 
 ── Honesty contract (identical to the frontend's) ───────────────────────────────
 Every boolean is a POSITIVE claim: ``False`` means "not established", never
@@ -39,8 +40,8 @@ Every boolean is a POSITIVE claim: ``False`` means "not established", never
 established, rather than an all-false object — rendered as a line, all-false reads
 "no writes, no network, no shell, not read-only", a confident all-clear derived from
 zero evidence, and it is worst on the surface least able to check (the phone).
-``read_only`` is claimed only on positive evidence and never survives an established
-write, so this module can only ever UNDER-claim safety.
+``read_only`` is claimed only on positive evidence — a declaration or a screened
+command — so this module can only ever UNDER-claim safety.
 """
 
 from __future__ import annotations
@@ -48,12 +49,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from personalclaw.task_modes import (
-    _DESTRUCTIVE_NAME_HINTS,
-    _MUTATING_NAME_HINTS,
-    _READ_VERB_HINTS,
-    resolve_effective_risk,
-)
+from personalclaw.task_modes import resolve_effective_risk
 
 logger = logging.getLogger(__name__)
 
@@ -63,15 +59,13 @@ logger = logging.getLogger(__name__)
 #: :meth:`personalclaw.channel_delivery.ChannelDelivery.request_approval`.
 APPROVAL_BRIEF_META_KEY = "approval_brief"
 
-# ── Tool-name evidence ───────────────────────────────────────────────────────────
-# Derived from `task_modes`' own tuples so the gate and the brief cannot disagree
-# about what a name means. The three deltas below are OU-7's, mirrored here with its
-# reasons; `tests/test_approval_brief.py` pins each against `approvalMeta.ts`.
+# ── Tool-name description ────────────────────────────────────────────────────────
+# What kind of change a call that is not a read can make, from words in its name. The
+# TypeScript mirrors each list verbatim; `tests/test_approval_brief.py` pins them.
 
-#: Runs a command / spawns a process. ``_MUTATING_NAME_HINTS``' exec family, split out
-#: because "can run anything" is its own facet. ``terminal``/``shell``/``zsh`` cover the
-#: display names ACP agents send as the title. Deliberately NOT ``run``: the
-#: ``project_run_*`` tools drive a workflow run, not a shell.
+#: Runs a command / spawns a process. ``terminal``/``shell``/``zsh`` cover the display
+#: names ACP agents send as the title. Deliberately NOT ``run``: the ``project_run_*``
+#: tools drive a workflow run, not a shell.
 SHELL_HINTS: tuple[str, ...] = (
     "bash",
     "shell",
@@ -83,9 +77,7 @@ SHELL_HINTS: tuple[str, ...] = (
 )
 
 #: Leaves the machine. ``web_fetch``/``web_search`` are the app-provided web tools; the
-#: rest cover MCP tools named by convention. This facet has no ``task_modes``
-#: counterpart — the gate never needed to ask "does this leave the host?" — so it is
-#: OU-7's list, pinned against the TypeScript by test.
+#: rest cover MCP tools named by convention.
 NETWORK_HINTS: tuple[str, ...] = (
     "web_",
     "http",
@@ -98,44 +90,42 @@ NETWORK_HINTS: tuple[str, ...] = (
     "url",
 )
 
-#: Destructive verbs, ``task_modes``' tuple itself. Checked FIRST and, like
-#: ``infer_risk_from_name``, they win outright: a delete is a write to the world.
-DESTRUCTIVE_HINTS: tuple[str, ...] = _DESTRUCTIVE_NAME_HINTS
+#: Removes something. A delete is a write to the world, so these describe ``writes`` too.
+DESTRUCTIVE_HINTS: tuple[str, ...] = ("delete", "remove", "destroy", "drop_", "purge", "forget")
 
-#: Query/inspection verbs, ``task_modes``' tuple itself. Checked BEFORE the broad write
-#: hints for the same reason the backend does it: ``schedule_list`` matches the write
-#: fragment "schedule" but is plainly a read.
-READ_VERB_HINTS: tuple[str, ...] = _READ_VERB_HINTS
-
-#: Hints that belong to another facet (or to none) and so must not also mean "writes".
-#: Every destructive verb is excluded by DERIVATION from :data:`DESTRUCTIVE_HINTS` rather
-#: than by name: this used to hand-list ``delete``/``remove`` with the reason "already in
-#: DESTRUCTIVE_HINTS", which was true of all six and spelled for two. When #2118 widened the
-#: gate's tuple, the four it added (``destroy``, ``drop_``, ``purge``, ``forget``) flowed
-#: into :data:`WRITE_HINTS` and drifted from the TypeScript mirror — a hand-listed subset of
-#: a derived set is the same defect one layer up. ``exec``/``spawn`` moved to
-#: :data:`SHELL_HINTS`; ``run`` is dropped outright per :data:`SHELL_HINTS`' note.
-_NOT_A_WRITE_HINT = frozenset(DESTRUCTIVE_HINTS) | {"run", "exec", "spawn"}
-
-#: Other writing verbs — ``_MUTATING_NAME_HINTS`` minus the hints re-homed above, plus
-#: ``remember``. ``remember`` is the one deliberate divergence from ``task_modes``:
-#: ``memory_remember`` durably persists a lesson, so it writes, but the gate's tuple
-#: carries no ``remember`` token. Adding it THERE is a change to live risk inference and
-#: is not this atom's to make (C2: E4), so the divergence lives here — and the
-#: conservative ``read_only`` guard keeps the two consistent where it matters: an
-#: established write never claims read-only, whatever the risk says.
-WRITE_HINTS: tuple[str, ...] = tuple(
-    h for h in _MUTATING_NAME_HINTS if h not in _NOT_A_WRITE_HINT
-) + ("remember",)
+#: Creates or changes something.
+WRITE_HINTS: tuple[str, ...] = (
+    "write",
+    "edit",
+    "create",
+    "save",
+    "update",
+    "move",
+    "rename",
+    "append",
+    "set_",
+    "put_",
+    "install",
+    "deploy",
+    "subagent",
+    "schedule",
+    "notify",
+    "post_",
+    "send",
+    "commit",
+    "push",
+    "generate",
+    "remember",
+)
 
 #: Does a risk level positively establish that the call is a read?
 #:
 #: Consumed, not invented: :func:`~personalclaw.task_modes.resolve_effective_risk`
-#: reaches ``'safe'`` only through a read-only bash invocation, a declared-SAFE native
-#: tool, or a positive read-only ACP ``tool_kind`` — so EFFECTIVE-safe is already derived
-#: FROM read-only-ness. ``'caution'``/``'destructive'`` say a call has side effects but
-#: not WHICH facet, so they establish nothing here. A level this build has never heard of
-#: is no evidence, not a read.
+#: reaches ``'safe'`` only through a read-only shell command or a tool that DECLARES it
+#: only reads — so EFFECTIVE-safe is already derived FROM read-only-ness.
+#: ``'caution'``/``'destructive'`` say a call has side effects but not WHICH facet, so
+#: they establish nothing here. A level this build has never heard of is no evidence, not
+#: a read.
 RISK_ESTABLISHES_READ_ONLY: dict[str, bool] = {
     "safe": True,
     "caution": False,
@@ -172,9 +162,9 @@ BLAST_RADIUS_FACET_ORDER: tuple[str, ...] = ("writes", "shell", "network", "read
 def _normalize_tool_name(tool: str) -> str:
     """Lowercase + strip any ``<prefix>/`` so the verb match sees the bare name.
 
-    Mirrors ``approvalMeta.ts``' ``normalizeToolName`` and, behind it,
-    ``infer_risk_from_name``'s ``mcp/<server>/`` strip. Lowercasing also lets ACP
-    display titles ("Terminal", "Read") match.
+    Mirrors ``approvalMeta.ts``' ``normalizeToolName``, so an ``mcp/<server>/<tool>``
+    name is described by its tool. Lowercasing also lets ACP display titles ("Terminal")
+    match.
     """
     lowered = (tool or "").lower().strip()
     return lowered.rsplit("/", 1)[-1] if "/" in lowered else lowered
@@ -214,27 +204,17 @@ def derive_blast_radius(
     shell = _has_any(name, SHELL_HINTS)
     network = _has_any(name, NETWORK_HINTS)
 
-    # Name-verb precedence, mirroring `infer_risk_from_name`: destructive wins outright,
-    # then a read verb short-circuits, then the broad write hints.
-    writes = False
-    read_verb = False
-    if _has_any(name, DESTRUCTIVE_HINTS):
-        writes = True
-    elif _has_any(name, READ_VERB_HINTS):
-        read_verb = True
-    elif _has_any(name, WRITE_HINTS):
-        writes = True
-
-    # `read_only` needs positive evidence and never rides over an established write. The
-    # screening verdict is the strongest signal (it inspected the actual command), then
-    # EFFECTIVE-safe risk, then a read-verb name.
-    read_only = False
-    if read_only_command is True:
-        read_only = True
-    elif read_only_command is not False:
-        read_only = _risk_establishes_read_only(risk) or read_verb
-    if writes:
-        read_only = False
+    # What kind of change the call can make, from words in its name — a description, never a
+    # read: no word establishes that a call changes nothing.
+    writes = _has_any(name, DESTRUCTIVE_HINTS) or _has_any(name, WRITE_HINTS)
+    # `read_only` needs positive evidence: the screening verdict (it inspected the actual
+    # command) or an EFFECTIVE-safe risk (the tool declares it only reads). An explicit `False`
+    # from the screen rules it out whatever the risk says, and so does an established write —
+    # a tool labelled read-only whose name says it writes is shown as the write it may be.
+    read_only = not writes and (
+        read_only_command is True
+        or (read_only_command is not False and _risk_establishes_read_only(risk))
+    )
 
     # Nothing established → say nothing. See the honesty contract in the header.
     if not writes and not network and not shell and not read_only:
@@ -281,13 +261,9 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
     **Why the screening verdict is not passed separately.** OU-8 measured the
     ``read_only_command`` pass-through as redundant, and it is: ``resolve_effective_risk``
     already routes a readable command through ``is_read_only_bash`` and only ever reports
-    ``'safe'`` on positive read evidence — an unknown name floors at ``'caution'``, never
-    ``'safe'``. Feeding :func:`~personalclaw.task_modes.classify_invocation` in as a second
-    input is worse than redundant: its *name-fallback* branch answers ``READ_ONLY`` for
-    ANY name carrying no mutating hint, so every unrecognized tool would arrive on the
-    phone claiming "reads only" — a positive claim minted from no evidence, which is the
-    one thing the honesty contract forbids. Deny-by-default holds for the GATE that
-    consumes that verdict; it does not make the verdict evidence for a brief.
+    ``'safe'`` on positive read evidence — a tool that declares nothing floors at
+    ``'caution'``, never ``'safe'``, so nothing arrives on the phone claiming "reads only"
+    without a declaration or a screened command behind it.
 
     ``purpose`` is deliberately NOT duplicated into the brief: it already reaches the
     channel as ``event.tool_purpose``, and copying it would mean redacting the same string

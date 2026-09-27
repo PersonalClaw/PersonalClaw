@@ -7,7 +7,7 @@ import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps 
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
-import { deriveBlastRadius, establishedFacets, readOnlyCommandOf } from '../chat/approvalMeta'
+import { approvalRiskOf, deriveBlastRadius, establishedFacets, readOnlyCommandOf } from '../chat/approvalMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -380,7 +380,11 @@ function ApprovalMeta({ ap }: { ap: PendingApproval }) {
   // `establishedFacets` returns ONLY what is positively established, so an empty list
   // means "nothing could be established" and must not render as a reassurance.
   const facets = establishedFacets(
-    deriveBlastRadius({ tool: ap.tool, readOnlyCommand: readOnlyCommandOf(ap.is_read_only) }),
+    deriveBlastRadius({
+      tool: ap.tool,
+      risk: approvalRiskOf(ap.risk),
+      readOnlyCommand: readOnlyCommandOf(ap.is_read_only),
+    }),
   )
   if (facets.length) rows.push(['Can touch', facets.map((f) => f.label).join(' · ')])
   if (!rows.length) return null

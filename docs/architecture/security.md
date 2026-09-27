@@ -172,7 +172,7 @@ it does not stop an agent from doing anything else.
 | It **does** | It does **not** |
 |---|---|
 | Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`, and the owner-only paths) |
-| Refuse writes to the owner-only paths at every level (macOS deny-writes; Linux read-only binds) | |
+| Refuse writes to the owner-only paths at every level (macOS deny-writes; Linux holds the home's entries — below) | |
 | Scrub credential env vars from the child, every mode | Restrict **network / egress** from the child |
 | Deny `~/.ssh` writes (macOS `strict` only) | Limit processes, CPU, or memory (no rlimits) |
 | Path-allowlist a subagent's cwd (advisory — the prompt tells the agent its scope) | Provide a filesystem **jail** or a real execution boundary |
@@ -192,10 +192,18 @@ starts, each a command it runs as the owner), `hooks/` (the scripts those hooks 
 wrote, `owner_grants.py`). An agent writes none of them, at three layers that each read
 `owner_only`:
 
-- **The fence**: the sandbox around the agent's shell denies the write — a Seatbelt
-  `deny file-write*` at every level; on Linux each is bind-mounted onto itself read-only (a missing
-  directory is made first; `config.json` only when it exists). This is the kernel refusing, so it
-  holds however the command spells the path.
+- **The fence**: the sandbox around the agent's shell denies the write. On macOS a Seatbelt
+  `deny file-write*` names each path at every level. On Linux the fence is the home's own entries,
+  not whichever files are there when the shell starts: the home is bound onto itself read-only, and
+  every entry already in it except these is bound back writable. A bind on one file holds that
+  inode — it cannot hold a name that does not exist yet, and the kernel dissolves it when the file
+  is replaced, which every config save does — so an owner-only name is refused whether it exists or
+  not, and however often it is replaced. The price, on Linux only: the shell cannot add, remove or
+  rename an entry at the top of the home, and a top-level file PersonalClaw replaces while the shell
+  runs is read-only in that shell until it restarts. On both, the home and every folder above it
+  the owner could rename are pinned (a Seatbelt literal on the folder's own entry; a mount point on
+  Linux), so the home cannot be moved aside, edited there and moved back. This is the kernel
+  refusing, so it holds however the command spells the path.
 - **The screen**: `HookManager.on_tool_call`, which every approval path consults before a card,
   an auto-approve pattern or an unattended default, and the native `bash` tool refuse a call that
   names one, with the reason. Defence in depth — a command can build the path out of pieces no
@@ -221,6 +229,39 @@ listed on the Tools page with Allow, which asks the same question first. The pro
 (`mcp_discovery.probe_server`) and the agents' connections (`mcp_client._personalclaw_mcp_specs`)
 both ask before they start anything. PersonalClaw's own server is defined by its code
 (`agent._MANAGED_MCP_SERVERS`), never read from `mcp.json`.
+
+### A tool reads only when it declares so (`task_modes.py`)
+
+Every posture that runs a read without asking — Ask and Plan mode (and `personalclaw run` without
+`--allow`, which is Ask mode), Trust reads, `--approval reads`, a dry run (which executes reads for
+real) and the `read` tool grant of a research step, subagent or room critic — asks one question:
+does this call only read? The answer comes from what the tool DECLARES, never from its name, and
+from nothing else except a shell command's own text:
+
+- **The declaration is `RiskLevel.SAFE`** (`tool_providers/base.py`): "a call changes nothing but
+  the record that it was read". An in-process tool states it in its MCP-shaped dict
+  (`annotations.readOnlyHint`, true or false — `tests/test_research_class_tool_census.py` requires
+  every shipped tool to say one or the other); a `ToolDefinition` that states nothing is
+  `CAUTION`; an app's route reads only with `"readOnly": true` in its manifest (a `DELETE` is
+  destructive whatever it says).
+- **A tool that declares nothing is a change**, so it asks: an ACP CLI's own tools, and an
+  external MCP server's tools unless the owner trusts that server's labels. An MCP server may label
+  anything read-only, so `readOnlyHint` counts only for a server listed in
+  `security.mcp_read_only_servers` — per server, set on the Tools page, which asks first, and
+  refused to an app. Its `destructiveHint` counts from anyone, because it only adds a question.
+- **A shell call's command decides** (`is_read_only_bash`, an allowlist): for a declared call only
+  the platform's `bash` — a name the registry reserves — is a shell; for an ACP CLI's call, one it
+  reports as `execute`, a shell tool's name, or a `Running: ` title.
+- **Two more declarations ride beside the level**: `builds` (a Build-mode deliverable's producer,
+  which Build mode runs as long as it is not destructive) and `proposes` (its only effect is a
+  proposal the owner reviews: not a read — Ask mode and Trust reads treat it as the change it is —
+  but a research step's `read` grant admits it, because filing for review is what those steps do).
+- **Over ACP**, a call to PersonalClaw's own `personalclaw-core` tools carries that tool's
+  declaration (`acp.mcp_servers.core_tool_declaration`), matched by the exact name in the shape
+  each CLI sends it and only where the call cannot be something else wearing the name: its
+  arguments must be ones the tool takes, and on kiro-cli, whose shell calls share the title shape,
+  only a destructive declaration is taken. An ACP kind never admits a call; it only decides whether
+  an ungated one stops the turn (`REPORTED_READ_KINDS`).
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 

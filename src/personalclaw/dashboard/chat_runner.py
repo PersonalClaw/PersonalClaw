@@ -117,6 +117,7 @@ from personalclaw.security import is_sensitive_path, redact_credentials, redact_
 from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
+from personalclaw.task_modes import REPORTED_READ_KINDS
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
 if TYPE_CHECKING:
@@ -1721,6 +1722,7 @@ def _report_ungated_tool_call(
     tool_kind: str,
     tool_input: str,
     request_id: str,
+    declared: str = "",
 ) -> str:
     """Surface an ACP tool call the host was never asked about; return an abort reason.
 
@@ -1740,17 +1742,25 @@ def _report_ungated_tool_call(
       chain further ungated mutations behind a gate that was never consulted.
       Writing a hole down is never a way to silence it.
 
+    ``declared`` is the declaration the call carried, which only a call to PersonalClaw's own
+    ``personalclaw-core`` tools has (``acp.mcp_servers.core_tool_declaration``).
+
     Returns the abort reason, or ``""`` to continue the turn.
     """
     entry = acp_permission_authority.not_gateable_entry(acp_cli, title)
     # Declared is not excused: only an ACCEPTED residual may quiet the signal.
     excused = entry is not None and entry.accepted
-    risk = resolve_effective_risk("", title, tool_kind, tool_input)
+    risk = resolve_effective_risk(declared, title, tool_kind, tool_input)
+    # The call already ran, so the only question left is whether it CHANGED something under
+    # a read-only posture. The evidence is what the tool declares (one of our own), a
+    # read-only shell command, or a call the CLI reported with a read kind. The kind decides
+    # only whether the turn stops, never whether anything runs (`REPORTED_READ_KINDS`).
+    reported_read = risk == "safe" or (tool_kind or "").lower() in REPORTED_READ_KINDS
     task_mode = getattr(session, "_task_mode", "agent")
     _title, _ = redact_exfiltration_urls(title or "?")
     _title, _ = redact_credentials(_title)
     abort = ""
-    if not excused and risk != "safe" and task_mode in ("ask", "plan"):
+    if not excused and not reported_read and task_mode in ("ask", "plan"):
         abort = (
             f"{_title} ran without a host approval request under {task_mode} mode "
             f"({acp_cli} never asked) — turn stopped"
@@ -2182,7 +2192,7 @@ async def run_chat(
     # "nothing dangerous happened".
     _gated_tool_calls: set[str] = set()  # tool_call_ids that reached the host gate
     # tool_call_id -> (title, declared kind, input) for calls not yet gated
-    _ungated_candidates: dict[str, tuple[str, str, str]] = {}
+    _ungated_candidates: dict[str, tuple[str, str, str, str]] = {}
     # Loop-breaker bookkeeping for ACP turns (§2.3 gap 5). The native runtime counts
     # its own tool failures inside its dispatch loop; an ACP CLI runs its tools out of
     # process, so the host has to do the counting from the neutral event stream — the
@@ -3444,6 +3454,7 @@ async def run_chat(
                         event.title or "",
                         event.tool_kind or "",
                         tool_input_to_str(event.tool_input)[:2000],
+                        event.risk_level or "",
                     )
                 await fire_tool_hooks(
                     state._hook_store, event.title, tool_input_to_str(event.tool_input)
@@ -3660,7 +3671,9 @@ async def run_chat(
                 # happened", and we abort the turn when the ungated tool is BOTH
                 # undeclared and mutating under a read-only posture.
                 if _acp_cli and event.tool_call_id in _ungated_candidates:
-                    _ung_title, _ung_kind, _ung_input = _ungated_candidates.pop(event.tool_call_id)
+                    _ung_title, _ung_kind, _ung_input, _ung_declared = _ungated_candidates.pop(
+                        event.tool_call_id
+                    )
                     _abort = _report_ungated_tool_call(
                         state,
                         session,
@@ -3670,6 +3683,7 @@ async def run_chat(
                         tool_kind=_ung_kind,
                         tool_input=_ung_input,
                         request_id=event.tool_call_id,
+                        declared=_ung_declared,
                     )
                     if _abort:
                         await _abort_acp_turn(client, "ungated tool call")
@@ -3792,12 +3806,21 @@ async def run_chat(
                 # only reach here when they request approval. plan/ask/build all flow
                 # through the shared gate (plan now allows read-only inspection).
                 _task_mode = getattr(session, "_task_mode", "agent")
-                # tool_kind is deliberately passed EMPTY here even though the frame now
-                # carries the adapter's declared kind (§2.2): task_mode_denies is
-                # deny-by-default, and a CLI that labels a mutation "read" would
-                # otherwise turn its own denial into an allow. The declared kind is used
-                # for legibility (card/SEL/residue) — never to widen this gate.
-                _tm_deny = task_mode_denies(session, event.title, "", event.tool_input)
+                # What the tool DECLARES is the gate's evidence: a native permission request
+                # carries its tool's `risk_level` and `builds`, and an ACP CLI's frame carries
+                # neither, so only its read-only shell commands pass a restricted mode.
+                # tool_kind is deliberately passed EMPTY even though the frame now carries the
+                # adapter's kind (§2.2): a CLI that labels a mutation "read" must not turn its
+                # own denial into an allow. The kind is used for legibility (card/SEL/residue)
+                # — never to widen this gate.
+                _tm_deny = task_mode_denies(
+                    session,
+                    getattr(event, "risk_level", "") or "",
+                    event.title,
+                    "",
+                    event.tool_input,
+                    builds=bool(getattr(event, "builds", False)),
+                )
                 if _tm_deny:
                     await client.reject_tool(event.request_id)
                     _title, _ = redact_exfiltration_urls(event.title)
@@ -4004,9 +4027,10 @@ async def run_chat(
                     event.tool_kind,
                     event.tool_input,
                 )
-                # Trust-reads: auto-approve any EFFECTIVE-SAFE tool (read_file, grep,
-                # knowledge_search, web_search, AND read-only bash — subsumed as safe
-                # by invocation). CAUTION/DESTRUCTIVE still prompt.
+                # Trust-reads: auto-approve an EFFECTIVE-SAFE call — a tool that declares it
+                # only reads (read_file, knowledge_search, web_search) or a read-only shell
+                # command. A tool that declares nothing (an ACP CLI's own, an untrusted MCP
+                # server's) is CAUTION, so it prompts like every other change.
                 if (
                     session._trust_reads
                     and not session._trust
@@ -4285,7 +4309,12 @@ async def run_chat(
                 # None means "not a shell call", which must stay distinguishable from
                 # "screened and it mutates" — the consumer treats absence as
                 # not-established, never as verified-absent.
-                read_only = read_only_command(event.title, event.tool_kind, event.tool_input)
+                read_only = read_only_command(
+                    event.title,
+                    event.tool_kind,
+                    event.tool_input,
+                    getattr(event, "risk_level", "") or "",
+                )
                 if read_only is not None:
                     # Persisted spelling stays "1"/"" — this string is already in every
                     # session transcript's `cls` column and rehydrating history must keep

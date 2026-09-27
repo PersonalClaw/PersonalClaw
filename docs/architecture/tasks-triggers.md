@@ -304,10 +304,8 @@ never for an app's write), and any other is listed on the Heartbeat tasks
 trigger's panel with **Allow** (`GET /api/heartbeat/tasks`,
 `POST /api/heartbeat/tasks/allow`, which asks first and is owner-only). An edit
 to a task is a new task, and a finished task takes its yes with it. Not
-"read-only until allowed": the read-only posture an unattended run gets is the
-task-mode classifier, which reads a tool it has no declaration for by its name,
-and 75 of the agent's 115 tools pass it — `computer_click`, `workflow_start`
-and `memory_remember` among them.
+"read-only until allowed": a waiting task does not run at all, so what it would
+do is never the question — only the owner's yes is.
 
 ### App-manifest crons
 

@@ -9,23 +9,56 @@ from personalclaw.errors import AgentError
 
 
 class RiskLevel(str, Enum):
-    """How risky a tool call is — a gradient over the old binary approval flag.
+    """What a tool DECLARES a call to it does. ``SAFE`` is the one read-only declaration.
 
-    - ``SAFE``: read-only, no exec/network/host side-effects (read_file, grep,
-      list_dir, knowledge_search, *_list/*_get).
-    - ``CAUTION``: bounded writes or invokes other agents within capabilities
-      (write_file, edit_file, task_create, memory_remember, subagent_run).
-    - ``DESTRUCTIVE``: arbitrary shell exec or outward host side-effects (bash,
-      *_delete, notify to an external channel).
+    - ``SAFE``: the tool only reads. A call changes nothing but PersonalClaw's own record of it
+      — a usage counter, the audit log, a retained copy of its result, an index or cache
+      derived from what it read, a one-time upgrade of its own store's layout: it creates,
+      edits and deletes nothing the owner keeps, sends nothing anywhere, starts, stops and
+      steers no run, and does not act on the desktop. Every "reads run without asking"
+      decision admits exactly these: Ask and
+      Plan mode, Trust reads, ``personalclaw run`` without ``--allow``, ``--approval reads``, a
+      research-class leaf or subagent, a read-only room member, a dry run.
+    - ``CAUTION``: it changes something (write_file, task_create, memory_remember,
+      workflow_start, computer_click). It asks, unless the owner's posture answers for it.
+    - ``DESTRUCTIVE``: arbitrary shell exec or a delete (bash, *_delete, memory_forget).
 
-    Metadata only for now — approval behavior stays binary (``requires_approval``);
-    the HITL-modes redesign (deferred) will key its gradient off this. Shipping
-    the classification now means it's ready when that lands.
+    A tool that declares nothing is ``CAUTION`` (:class:`ToolDefinition`'s default): read-only
+    is an allowlist a tool opts into, never a conclusion drawn from its name.
     """
 
     SAFE = "safe"
     CAUTION = "caution"
     DESTRUCTIVE = "destructive"
+
+
+#: The ``_meta`` key an MCP-shaped tool dict sets to declare it a Build-mode producer
+#: (:attr:`ToolDefinition.builds`). MCP has no annotation for it, and ``_meta`` is the spec's
+#: place for an implementation's own keys.
+BUILDS_META_KEY = "personalclaw/builds"
+
+#: The ``_meta`` key an MCP-shaped tool dict sets to declare that its only effect is a proposal
+#: the owner accepts or dismisses (:attr:`ToolDefinition.proposes`).
+PROPOSES_META_KEY = "personalclaw/proposes"
+
+
+def risk_from_annotations(annotations: Any, *, trusted: bool) -> RiskLevel:
+    """What an MCP tool's ``annotations`` declare, as a :class:`RiskLevel`.
+
+    ``readOnlyHint: true`` is the read-only declaration, and it counts only when *trusted*:
+    PersonalClaw's own tool modules always are, an external server only when the owner said so
+    (``security.mcp_read_only_servers``). The MCP spec says the same thing — annotations from a
+    server you do not trust are hints, not facts. ``destructiveHint: true`` counts from anyone,
+    because believing it can only add a question. Anything else, including no annotations at
+    all, is CAUTION.
+    """
+    hints = annotations if isinstance(annotations, dict) else {}
+    read_only = hints.get("readOnlyHint") is True
+    if read_only and trusted:
+        return RiskLevel.SAFE
+    if hints.get("destructiveHint") is True and not read_only:
+        return RiskLevel.DESTRUCTIVE
+    return RiskLevel.CAUTION
 
 
 @dataclass
@@ -37,8 +70,9 @@ class ToolDefinition:
     provider: str = ""
     parameters: dict[str, Any] = field(default_factory=dict)
     requires_approval: bool = True
-    # Risk gradient (metadata; approval stays binary until HITL-modes lands).
-    risk_level: RiskLevel = RiskLevel.SAFE
+    # What a call does (see RiskLevel). Undeclared is CAUTION: only a tool that says it only
+    # reads is treated as a read.
+    risk_level: RiskLevel = RiskLevel.CAUTION
     # Option-prompt-shaped tool that stalls without a human (AskUserQuestion and
     # kin). Stripped from the toolset for unattended runs (scheduled run-prompt/
     # run-workflow, Goal/Code loop cycles) so a background turn can't wedge
@@ -48,6 +82,15 @@ class ToolDefinition:
     interactive: bool = False
     # Per-tool output cap (chars) for the shared truncation helper; None = no cap.
     max_output: int | None = None
+    # A Build-mode producer: it creates or edits the deliverable a Build session is making (an
+    # artifact, a document, a deck, a sheet, an image, a video, a skill). Build mode runs reads
+    # and these, and never a DESTRUCTIVE one.
+    builds: bool = False
+    # Its only effect is a proposal the owner accepts or dismisses before anything changes (a
+    # skill promotion, a template diff, a tile). Not a read — it writes the proposal, so Ask
+    # mode, Trust reads and a dry run treat it as the change it is — but a research-class run's
+    # `read` tool grant admits it, because filing for the owner's review is what those runs do.
+    proposes: bool = False
 
 
 # Name fragments that mark a tool as option-prompt-shaped even when its provider

@@ -447,7 +447,7 @@ Pause an automation — it stops firing on its own but is not deleted.
 
 **Response type:** `automation.pause.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `id` (string, required) — The automation id (e.g. 'file:my-notes').
@@ -466,7 +466,7 @@ Resume a paused automation. Refuses (with the reason) if the row has a parse err
 
 **Response type:** `automation.resume.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `id` (string, required) — The automation id (e.g. 'file:my-notes').
@@ -600,7 +600,7 @@ Activate an element by index. The default performs an accessibility press, which
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `app` (string, optional) — Coordinate methods only: target app.
@@ -646,7 +646,7 @@ Perform a named accessibility action the element advertises (for controls a pres
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `action` (string, required) — An action name from the element's own 'actions' list.
@@ -671,7 +671,7 @@ Scroll the element at this index.
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `amount` (integer, optional) — Lines to scroll (default 3).
@@ -743,7 +743,7 @@ Type text into the element at this index. Refuses secure/password destinations, 
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `element_index` (integer, required) — Zero-based index of the element within that snapshot.
@@ -768,7 +768,7 @@ PROPOSE a saved artifact as a dashboard tile on the user's composable home. The 
 
 **Response type:** `dashboard.tile.propose.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `size` (string, optional) — Flow-layout size hint (default m). No coordinates.
@@ -817,7 +817,7 @@ Register a webhook listener so an external system can inject a message into a de
 
 **Response type:** `hook.register.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `context_summary` (string, required) — Summary of current work context for session resume
@@ -838,7 +838,7 @@ Stop the auto-nudge loop driving your current session. Call this when you determ
 
 **Response type:** `loop.nudge_stop.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `reason` (string, optional) — Why the loop is being stopped (logged for audit)
@@ -919,7 +919,7 @@ Review THIS conversation and propose updates to the current project's context �
 
 **Response type:** `project.context.review.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `items` (array, required) — The proposed changes.
@@ -945,7 +945,7 @@ Propose (never apply) a typed diff to a workflow template. The diff is a list of
 
 **Response type:** `refiner.proposal.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `ops` (string, required) — Typed engine ops, as JSON text: an array of objects, each {op, node_id?, fields?, ...}.
@@ -1013,7 +1013,7 @@ PROPOSE a finished piece of work as a reusable skill — the retroactive compani
 
 **Response type:** `skill.promote.proposal.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `description` (string, required) — One line on when this skill applies.
@@ -1040,7 +1040,7 @@ Capture a skill the USER just taught you ("from now on…", "always do X", "reme
 
 **Response type:** `skill.remember.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `body` (string, required) — The procedure/rule to remember (markdown).
@@ -1103,7 +1103,7 @@ Offer to save a recurring task shape as a reusable workflow template. LOCAL-ONLY
 
 **Response type:** `template.nudge.decision`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `decision` (string, optional) — 'observe' (default) counts one more occurrence and asks whether to offer. Report the user's answer to a previous offer with 'accepted' or 'declined' — a decline is permanent for this shape.
@@ -1474,7 +1474,7 @@ Save a learned correction or preference that persists across all future sessions
 
 **Response type:** `memory.remember.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `category` (string, required) — Category: tool, preference, or knowledge
@@ -1498,7 +1498,7 @@ List, add, or revoke the triage approval rules — what the proactive digest may
 
 **Response type:** `memory.triage_rules`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `action` (string, required) — list | add | revoke
@@ -1661,7 +1661,7 @@ Sample N candidate answers to the SAME prompt in parallel (each at a different t
 
 **Response type:** `sampling.best_of_n`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `criteria` (string, optional) — What 'best' means here — the judge scores each candidate against this. Confirm it with the user.
@@ -2028,7 +2028,7 @@ Diagnose workflow runs that drifted — nodes stuck running, gates nobody can an
 
 **Response type:** `workflow.audit.report`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `dry_run` (boolean, optional) — true (default) = report only; false = repair.
@@ -2045,7 +2045,7 @@ Save a workflow definition from an explicit DAG spec — the low-level authoring
 
 **Response type:** `workflow.def.saved`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `description` (string, optional)
@@ -2071,7 +2071,7 @@ Cancel a run. The intent is persisted, so it is honoured even if the gateway res
 
 **Response type:** `workflow.run.cancelled`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `run_id` (string, required) — The run id (from workflow_start).
@@ -2134,7 +2134,7 @@ Branch a NEW run from this one, leaving the original untouched — for exploring
 
 **Response type:** `workflow.fork.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `checkpoint_id` (string, optional) — Fork from this checkpoint instead of current state.
@@ -2252,7 +2252,7 @@ Pause a running workflow: in-flight nodes finish, nothing new launches. Resume w
 
 **Response type:** `workflow.run.paused`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `run_id` (string, required) — The run id (from workflow_start).
@@ -2295,7 +2295,7 @@ Answer a workflow that is waiting on a human, or clear a pause. `answer` is JSON
 
 **Response type:** `workflow.gate.resolved`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `always_allow` (boolean, optional) — Auto-approve this same operation for the rest of THIS run (cleared if the run is rewound).
@@ -2318,7 +2318,7 @@ Reset a node AND everything that consumes its output, so they re-run — the in-
 
 **Response type:** `workflow.mutation.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `confirm_cascade` (boolean, optional) — Accept re-running completed nodes.
@@ -2364,7 +2364,7 @@ Skip one or more pending nodes in a running workflow. A skipped node produces no
 
 **Response type:** `workflow.mutation.result`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `node_ids` (array, required)
@@ -2387,7 +2387,7 @@ Start a workflow run from a saved definition. mode='background' (default) return
 
 **Response type:** `workflow.run.started`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `idempotency_key` (string, optional) — Caller-chosen key; a retry with the same key is deduped.
@@ -2411,7 +2411,7 @@ Start a run that already exists as a DRAFT — the launch step after workflow_fo
 
 **Response type:** `workflow.run.started`
 
-**Safety:** requires approval
+**Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `run_id` (string, required) — The run id (from workflow_start).

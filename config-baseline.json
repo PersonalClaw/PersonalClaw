@@ -1536,6 +1536,12 @@
   },
   {
     "default": [],
+    "path": "security.mcp_read_only_servers",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": [],
     "path": "security.outside_home",
     "sensitive": false,
     "type": "list[str]"

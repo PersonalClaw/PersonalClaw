@@ -25,14 +25,16 @@ describe('approvalToastMessage', () => {
   })
 
   it('works without a risk (the field is absent on some paths) and claims nothing extra', () => {
-    // A read VERB in the name establishes the read on its own, so the clause survives a
-    // missing risk...
-    const named = approvalToastMessage({ who: 'A subagent', tool: 'read_file', session: 's1' })
-    expect(named).toContain('reads only')
-    expect(named).not.toContain('writes files')
-    // ...but a verbless read (`grep`) establishes nothing without the risk field, and the
-    // toast then says nothing rather than guessing. Guessing is what OU-7 refused to do.
+    // A name establishes no read — `task_list_create` carries "list" — so without the risk the
+    // toast says nothing about one, whatever the tool is called. Guessing is what OU-7 refused
+    // to do.
+    for (const tool of ['read_file', 'grep', 'task_list_create']) {
+      expect(approvalToastMessage({ who: 'A subagent', tool, session: 's1' })).not.toContain('reads only')
+    }
     expect(approvalToastMessage({ who: 'A subagent', tool: 'grep', session: 's1' })).not.toMatch(/\(/)
+    // The declaration is what says it: the same tool with its risk.
+    expect(approvalToastMessage({ who: 'A subagent', tool: 'read_file', session: 's1', risk: 'safe' }))
+      .toContain('reads only')
   })
 
   it('never advocates and never gives an instruction beyond where to answer', () => {

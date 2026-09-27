@@ -310,19 +310,22 @@ def leaf_tool_denial(name: str) -> str:
       for a research-class leaf, `read_write` for a mutating one — and
       `guardrails.policy.tool_grant_posture` intersects it with the operator CEILING, so an
       operator's `{"scopes": {"tools": {"allow": [...]}}}` narrows this call rather than being a
-      composed value nothing reads. The write/read classification stays
-      `batch_compile.is_write_tool`, the classifier a research LEAF and a research SUBAGENT deny
-      alike; only the tier algebra is shared.
+      composed value nothing reads. Whether the call is within a `read` grant is what the TOOL
+      declares (`mcp_core.own_tool`: its `annotations`, and `_meta` for a proposal), answered by
+      `guardrails.policy.declared_tool_grant_denial` — the question a research SUBAGENT and a
+      read-only room member are asked too.
 
     Depth 0 is the parent: it is not a leaf and is not restricted, so the parent's own
     `subagent_run` still works.
     """
+    from personalclaw import mcp_core
     from personalclaw.guardrails.policy import (
         TOOL_READ,
         TOOL_READ_WRITE,
-        tool_grant_denial,
+        declared_tool_grant_denial,
         tool_grant_posture,
     )
+    from personalclaw.tool_providers.base import PROPOSES_META_KEY, risk_from_annotations
     from personalclaw.workflows import batch_compile
 
     depth = _leaf_depth()
@@ -349,10 +352,16 @@ def leaf_tool_denial(name: str) -> str:
     # tier is the compiled posture's, the operator ceiling when the ceiling narrowed it. Telling an
     # author to re-declare a leaf that a ceiling refused would send them to fix the wrong file.
     ceiling_narrowed = profile.tool_grants != (TOOL_READ if read_only else TOOL_READ_WRITE)
-    return tool_grant_denial(
+    # What the tool declares. A name this surface does not serve declares nothing, so it is a
+    # change as far as a `read` grant is concerned.
+    declared = mcp_core.own_tool(name) or {}
+    raw_meta = declared.get("_meta")
+    meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
+    return declared_tool_grant_denial(
         profile,
         name,
-        write_class=batch_compile.is_write_tool(name),
+        risk_from_annotations(declared.get("annotations"), trusted=True),
+        proposes=meta.get(PROPOSES_META_KEY) is True,
         detail=(
             "widen the governance ceiling's tools scope if this leaf must call it"
             if ceiling_narrowed

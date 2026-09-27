@@ -91,9 +91,9 @@ from personalclaw.guardrails.policy import (
     TOOL_READ,
     TOOL_TIERS,
     SafetyProfile,
+    declared_tool_grant_denial,
     is_unattended_session,
     profile_for_session,
-    tool_grant_denial,
 )
 from personalclaw.rooms.store import Room, RoomError, RoomMember
 from personalclaw.rooms.turn import SESSION_KEY_PREFIX, session_key
@@ -476,11 +476,11 @@ def approval_channel(
 
     The gate asks the two questions a solo session asks, in that order:
 
-    1. **May this member use this tool at all?** ``tool_grant_denial`` against the member's
-       own tier — the shipped grant ALGEBRA, asked exactly as every other live tool seam asks
-       it. A read-only critic's write tool is refused HERE without troubling the human: the
-       grant question precedes the approval question, as ``chat_runner``'s task-mode gate runs
-       before its approval card.
+    1. **May this member use this tool at all?** ``declared_tool_grant_denial`` against the
+       member's own tier — the shipped grant ALGEBRA over what the tool declares, asked exactly
+       as every other live tool seam asks it. A read-only critic's write tool is refused HERE
+       without troubling the human: the grant question precedes the approval question, as
+       ``chat_runner``'s task-mode gate runs before its approval card.
     2. **Does the human approve?** Only they can, and only through *approver*. With none bound
        there is nobody to ask, so the call is refused — the same answer a solo session gives
        when the prompt is never answered. `AR-8` binds the channel; that is a missing CALLER,
@@ -490,11 +490,19 @@ def approval_channel(
     legible instead of a member that mysteriously never acts.
     """
     from personalclaw.llm_helpers import ToolApprovalPolicy
-    from personalclaw.workflows.batch_compile import is_write_tool
 
     async def gate(event: "LLMEvent") -> bool:
         title = getattr(event, "title", "") or ""
-        denial = tool_grant_denial(profile, title, write_class=is_write_tool(title))
+        # What the member's tool DECLARES decides whether a `read` grant covers it — the same
+        # question a research leaf and a research subagent are asked.
+        denial = declared_tool_grant_denial(
+            profile,
+            title,
+            getattr(event, "risk_level", ""),
+            getattr(event, "tool_kind", ""),
+            getattr(event, "tool_input", ""),
+            proposes=bool(getattr(event, "proposes", False)),
+        )
         if denial:
             record(ToolRefusal(member.name, title, denial))
             return False

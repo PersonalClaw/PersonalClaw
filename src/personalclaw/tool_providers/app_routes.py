@@ -45,18 +45,19 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_NAME = "app-routes"
 
-# Methods with no host side effects are SAFE; a mutating verb is CAUTION; a
-# delete is DESTRUCTIVE. Advisory metadata (the native loop's approval gate keys
-# off it); matches the InProcessMcpToolProvider risk-by-name discipline.
-_METHOD_RISK: dict[str, RiskLevel] = {
-    "GET": RiskLevel.SAFE,
-    "HEAD": RiskLevel.SAFE,
-    "OPTIONS": RiskLevel.SAFE,
-    "POST": RiskLevel.CAUTION,
-    "PUT": RiskLevel.CAUTION,
-    "PATCH": RiskLevel.CAUTION,
-    "DELETE": RiskLevel.DESTRUCTIVE,
-}
+
+def route_risk(route: RouteEntry) -> RiskLevel:
+    """What a declared route's tool does: SAFE only when the app declares the route
+    ``readOnly``; a DELETE is DESTRUCTIVE whatever it says; anything else is a change.
+
+    Not the HTTP method: a GET is only as read-only as the app's handler makes it, and a
+    route that declares no method is read as a GET. The app's ``readOnly`` is its explicit
+    word, the same declaration an SDK-registered tool makes with ``RiskLevel.SAFE``.
+    """
+    method = (route.method or "GET").upper()
+    if method == "DELETE":
+        return RiskLevel.DESTRUCTIVE
+    return RiskLevel.SAFE if route.readOnly else RiskLevel.CAUTION
 
 
 def tool_name_for(app_name: str, op: str) -> str:
@@ -390,7 +391,7 @@ class AppRoutesToolProvider(ToolProvider):
                     provider=self.name,
                     parameters=parameters_schema(route),
                     requires_approval=True,
-                    risk_level=_METHOD_RISK.get(method, RiskLevel.CAUTION),
+                    risk_level=route_risk(route),
                 )
             )
         return defs

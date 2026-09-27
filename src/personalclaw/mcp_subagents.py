@@ -180,6 +180,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "subagent_run",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Spawn subagent(s) to run tasks in the background. "
                 "Returns immediately — results arrive as [Subagent completion event] "
@@ -227,6 +228,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "best_of_n",
+            "annotations": {"readOnlyHint": False},
             "description": (
                 "Sample N candidate answers to the SAME prompt in parallel (each at a "
                 "different temperature), have a judge score them against your criteria, "
@@ -259,11 +261,13 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "subagent_list",
+            "annotations": {"readOnlyHint": True},
             "description": "List all running and completed subagents (read-only, no commands executed)",  # noqa: E501
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "subagent_status",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Call with the agent ID from a subagent completion event "
                 "to retrieve the full output in the event of truncation."

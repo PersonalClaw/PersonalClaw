@@ -28,9 +28,12 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw import trace_recorder as _trace
+
+if TYPE_CHECKING:
+    from personalclaw.tool_providers.base import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,43 @@ class McpToolSpec:
     name: str
     description: str
     input_schema: dict[str, Any] = field(default_factory=dict)
+    #: The server's own ``annotations`` for the tool (``readOnlyHint``, ``destructiveHint``, …),
+    #: as it sent them. A claim, not a fact: :func:`declared_risk` is what reads it.
+    annotations: dict[str, Any] = field(default_factory=dict)
+
+
+def read_only_labels_trusted(server: str) -> bool:
+    """Whether the owner trusts *server*'s read-only labels (``security.mcp_read_only_servers``).
+
+    Default no, per server, and set only on the Tools page. A config that cannot be read trusts
+    nobody.
+    """
+    try:
+        from personalclaw.config import AppConfig
+
+        return server in set(AppConfig.load().security.mcp_read_only_servers)
+    except Exception:  # noqa: BLE001 - an unreadable grant grants nothing
+        logger.warning("MCP read-only trust unreadable; trusting no server's labels", exc_info=True)
+        return False
+
+
+def declared_risk(server: str, tool: McpToolSpec, *, trusted: bool | None = None) -> "RiskLevel":
+    """What an external server's tool is taken to do, as a ``RiskLevel``.
+
+    The server's ``readOnlyHint`` counts only when the owner trusts that server's labels
+    (:func:`read_only_labels_trusted`): a server can call anything read-only, and believing it
+    would let its tool run in Ask mode and without a card under Trust reads. So an untrusted
+    server's tools are CAUTION — they ask — whatever they say; an explicit ``destructiveHint``
+    is believed from anyone, since it only adds a question.
+
+    *trusted* is that answer when the caller already has it — one read of the config for a
+    whole server's listing rather than one per tool.
+    """
+    from personalclaw.tool_providers.base import risk_from_annotations
+
+    if trusted is None:
+        trusted = read_only_labels_trusted(server)
+    return risk_from_annotations(getattr(tool, "annotations", None), trusted=trusted)
 
 
 # Strict numeric-literal guards for schema-driven arg coercion. A model (notably
@@ -374,6 +414,7 @@ class McpServerConn:
                     description=getattr(t, "description", "") or "",
                     input_schema=getattr(t, "inputSchema", None)
                     or {"type": "object", "properties": {}},
+                    annotations=_annotations_of(t),
                 )
             )
         self._tools = tools
@@ -393,6 +434,23 @@ class McpServerConn:
             except Exception as exc:  # noqa: BLE001
                 if not fut.done():
                     fut.set_result((False, str(exc)[:500]))
+
+
+def _annotations_of(tool: Any) -> dict[str, Any]:
+    """A listed tool's ``annotations`` as a plain dict (the SDK hands a model object), or ``{}``."""
+    raw = getattr(tool, "annotations", None)
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    dump = getattr(raw, "model_dump", None)
+    if callable(dump):
+        try:
+            out = dump(exclude_none=True)
+        except Exception:  # noqa: BLE001 - an unreadable annotation declares nothing
+            return {}
+        return out if isinstance(out, dict) else {}
+    return {}
 
 
 def _leaf(exc: BaseException) -> BaseException:

@@ -1067,6 +1067,23 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             except Exception:
                 logger.warning("SEL audit failed for YOLO disable via config patch", exc_info=True)
 
+    # Which MCP servers' read-only labels are believed is read when a session lists its tools,
+    # so a running session keeps the answer it started with. The revoking direction is the one
+    # that matters, as with YOLO above: a server the owner stopped trusting because it lied must
+    # not keep running its "reads" unasked in every open chat until a restart. So every session
+    # is reset, the step an MCP server change already takes, and the next message lists the
+    # tools with the new answer.
+    if path_key == "security.mcp_read_only_servers":
+        try:
+            from personalclaw.dashboard.handlers.sessions import _reset_all_sessions  # noqa: F811
+
+            await _reset_all_sessions(request)
+        except Exception:
+            logger.warning(
+                "MCP read-only trust changed; resetting the running sessions failed",
+                exc_info=True,
+            )
+
     # Orchestrator skill toggle: generate the always-loaded routing skill when
     # enabled, or remove it (incl. the pre-rename conductor/ dir) when disabled —
     # so the single-field toggle actually takes effect (the FE patches via this
