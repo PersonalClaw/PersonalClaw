@@ -35,8 +35,10 @@ from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
 from personalclaw.security import (
+    MaskConflict,
     is_sensitive_path,
     is_system_path,
+    keep_masked_spans,
     redact_credentials,
     redact_exfiltration_urls,
 )
@@ -1511,18 +1513,24 @@ async def api_file_write(request: web.Request) -> web.Response:
             session_key="dashboard", tool_name="file_write", outcome="not_found", resources=path
         )
         return web.json_response({"error": "not found"}, status=404)
-    content = body.get("content", "")
     try:
         # 🔴 A PAGE'S COPY IS SAVED ONLY OVER THE FILE IT WAS BUILT FROM. Read, compared and
         # replaced with no await in between, so nothing in this process lands between the check
         # and the write. A file that no longer reads back whole — it grew past the read cap, or is
         # binary now — was no page's copy: `whole_text` is None and no base matches it.
-        stale = stale_write_refusal(request, whole_text(read_head(path)), what=f"the file {path!r}")
+        head = read_head(path)
+        stale = stale_write_refusal(request, whole_text(head), what=f"the file {path!r}")
         if stale is not None:
             _sel().log_tool_invocation(
                 session_key="dashboard", tool_name="file_write", outcome="denied", resources=path
             )
             return stale
+        # That copy is the file as `file_as_read` shows it, with a marker for every value it masks.
+        # Each marker is put back from the file itself, so saving an edit never writes one over
+        # the key it hides.
+        content = keep_masked_spans(
+            str(body.get("content", "")), head.decode("utf-8", errors="replace")
+        )
         tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
         try:
             try:
@@ -1545,6 +1553,11 @@ async def api_file_write(request: web.Request) -> web.Response:
         return web.json_response(
             {"ok": True, "revision": None if written is None else revision_of(written)}
         )
+    except MaskConflict as exc:
+        _sel().log_tool_invocation(
+            session_key="dashboard", tool_name="file_write", outcome="denied", resources=path
+        )
+        return web.json_response({"error": str(exc)}, status=409)
     except Exception:
         logging.getLogger(__name__).exception("file_write failed for %s", path)
         _sel().log_tool_invocation(

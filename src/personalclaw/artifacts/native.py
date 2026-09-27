@@ -53,7 +53,7 @@ from personalclaw.artifacts.models import (
 from personalclaw.artifacts.provider import ArtifactProvider
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.config import loader as config_loader
-from personalclaw.security import is_sensitive_path
+from personalclaw.security import is_sensitive_path, keep_masked_spans
 from personalclaw.stale_write import revision_of
 
 
@@ -765,6 +765,13 @@ class NativeArtifactProvider(ArtifactProvider):
         readonly: bool = False,
     ) -> Artifact:
         name = (name or "").strip()[:MAX_NAME_LEN] or "Untitled"
+        # Files → Save as artifact sends the editor's draft, which is the masked read of the very
+        # file this artifact points at, and the content is written into that file below. Each
+        # marker is put back from the file first, so saving a file never masks its own keys.
+        if source_path:
+            on_disk = self._try_read_source_path(source_path)
+            if on_disk is not None:
+                content = keep_masked_spans(content or "", on_disk)
         # Binary kinds (image) must go through create_binary — their body is bytes,
         # not text. Refuse here so a text body can't masquerade as an image.
         if is_binary_kind(kind):
@@ -862,13 +869,28 @@ class NativeArtifactProvider(ArtifactProvider):
             if art is None:
                 return None
             _refuse_if_readonly(art)
+            # Read once: the precondition and the restore below are both taken of this one copy.
+            live: str | None = None
+            if content is not None or expect_revision is not None:
+                live = self._live_body(art)
             # 🔴 A BODY BUILT FROM A STALE COPY IS REFUSED BEFORE ANYTHING IS WRITTEN — under the
             # lock the agent's `artifact_update` (an executor thread) and every other writer take,
             # so nothing can land between this comparison and the write below.
             if expect_revision is not None:
-                current = redacted(self._live_body(art))
+                current = redacted(live)
                 if revision_of(current) != expect_revision:
                     raise ArtifactStaleWrite(slug, current)
+            # Every read shows these fields through `redacted`, so a save built from one carries a
+            # marker for each hidden value. Each marker is put back from what is stored before
+            # anything is written, so no save writes one over the value it hides.
+            if content is not None:
+                content = keep_masked_spans(content, live or "")
+            if name is not None:
+                name = keep_masked_spans(name, art.name)
+            if description is not None:
+                description = keep_masked_spans(description, art.description)
+            if collection is not None:
+                collection = keep_masked_spans(collection, art.collection or "")
 
             # Metadata-only updates never bump a version or snapshot.
             meta_changed = False

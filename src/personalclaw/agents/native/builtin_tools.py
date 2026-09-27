@@ -27,6 +27,7 @@ from personalclaw.agents.native.decision_tool_defs import decision_tool_definiti
 from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
+from personalclaw.security import MASK_CONFLICT, MaskConflict, keep_masked_spans
 from personalclaw.tool_providers import result_store
 from personalclaw.tool_providers.base import (
     RiskLevel,
@@ -231,11 +232,11 @@ def _kn_redact(text: str | None) -> str:
     must not see what the chat-injection card would have redacted."""
     if not text:
         return text or ""
-    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    # `redact_for_display`, the mask `knowledge_update` puts back, so an item the agent read here
+    # and edits keeps every value it was shown as a marker.
+    from personalclaw.security import redact_for_display
 
-    cleaned, _ = redact_exfiltration_urls(text)
-    cleaned, _ = redact_credentials(cleaned)
-    return cleaned
+    return redact_for_display(text)
 
 
 def _kn_title(item: dict) -> str:
@@ -1719,6 +1720,14 @@ class NativeBuiltinToolProvider(ToolProvider):
                 applied["gist_language"] = want_lang
             if not applied:
                 return "noop"  # nothing to change (e.g. gist_language given for a non-gist)
+            # knowledge_get showed the agent this item through `_kn_redact`, so an edit it sends
+            # back carries a marker for every hidden value. Put each back from the stored item.
+            try:
+                for key in ("title", "content"):
+                    if key in applied:
+                        applied[key] = keep_masked_spans(applied[key], str(item.get(key) or ""))
+            except MaskConflict:
+                return "mask_conflict"
             store.update_item(item_id, **applied)
             store.db.commit()
             return "ok"
@@ -1730,6 +1739,8 @@ class NativeBuiltinToolProvider(ToolProvider):
                 error=f"knowledge item {item_id!r} not found",
                 recovery_hints=["Use knowledge_search to find the correct item id."],
             )
+        if result == "mask_conflict":
+            return ToolResult(success=False, error=f"knowledge_update: {MASK_CONFLICT}")
         if result == "journal_locked":
             return ToolResult(
                 success=False,

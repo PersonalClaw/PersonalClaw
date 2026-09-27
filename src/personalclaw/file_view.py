@@ -4,8 +4,9 @@
 revision of it (`personalclaw/stale_write.py`) — from the file viewer (``POST /api/file-write``)
 or from **Save as artifact** over the same file (``POST /api/artifacts``). A revision is only
 comparable when every side takes it of the same text, so all of them read through here: the
-first :data:`FILE_READ_CAP` bytes, binary detected the way git does, credentials and
-exfiltration URLs redacted.
+first :data:`FILE_READ_CAP` bytes, binary detected the way git does, masked for display
+(`security.redact_for_display`). That mask is also the one a save puts back
+(`security.keep_masked_spans`), so a page's copy never saves a marker over the key it hides.
 
 It lives below the HTTP surface because two surfaces need it — the file handlers and the
 artifact handlers — and a core module may not import a dashboard one.
@@ -13,7 +14,7 @@ artifact handlers — and a core module may not import a dashboard one.
 
 from __future__ import annotations
 
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import redact_for_display
 
 __all__ = ["FILE_READ_CAP", "file_as_read", "read_head", "whole_text"]
 
@@ -33,7 +34,7 @@ def file_as_read(raw: bytes) -> tuple[str, bool, bool]:
 
     A NUL byte in the head is git's own binary heuristic, and a binary file's text is ``""``:
     decoded it would be a wall of replacement characters, not something a user reads or edits.
-    Text is redacted (credentials, exfiltration URLs) before it leaves the gateway.
+    Text is masked for display (credentials, exfiltration URLs) before it leaves the gateway.
 
     ONE projection for ``file-read``, ``file-watch`` and ``file-write``'s precondition, because a
     revision is only comparable when every side takes it of the same text. The watch used to read
@@ -44,10 +45,7 @@ def file_as_read(raw: bytes) -> tuple[str, bool, bool]:
     raw = raw[:FILE_READ_CAP]
     if b"\x00" in raw[:8192]:
         return "", truncated, True
-    text = raw.decode("utf-8", errors="replace")
-    text, _ = redact_exfiltration_urls(text)
-    text, _ = redact_credentials(text)
-    return text, truncated, False
+    return redact_for_display(raw.decode("utf-8", errors="replace")), truncated, False
 
 
 def whole_text(raw: bytes) -> str | None:

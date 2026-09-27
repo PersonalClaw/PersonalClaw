@@ -998,6 +998,20 @@ def _remote_request(body: dict[str, Any]) -> dict[str, Any] | web.Response:
     return {"url": url.strip(), "headers": headers, "keepHeaders": keep}
 
 
+def _typed_and_kept(values: dict[str, Any], keep: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """The values a save typed, and the names it keeps: a value that is only the display mask is a
+    line left as the form showed it, so it keeps the saved value exactly as a ``keep`` name does.
+
+    The Tools form already turns such a line into ``keepEnv``/``keepHeaders`` (``mcpServerEnv.ts``);
+    doing it here as well is what holds for every other client of this route.
+    """
+    from personalclaw.apps.secret_fields import SECRET_MASK
+
+    typed = {n: v for n, v in values.items() if v != SECRET_MASK}
+    kept = list(keep) + [n for n, v in values.items() if v == SECRET_MASK and n not in keep]
+    return typed, kept
+
+
 def _stdio_definition(
     name: str, existing: dict[str, Any], requested: dict[str, Any]
 ) -> dict[str, Any] | web.Response:
@@ -1011,7 +1025,7 @@ def _stdio_definition(
 
     env = existing.get("env")
     current: dict[str, Any] = env if isinstance(env, dict) else {}
-    keep = requested["keepEnv"]
+    typed, keep = _typed_and_kept(requested["env"], requested["keepEnv"])
     unkept = [n for n in keep if not _has_saved_value(current.get(n))]
     if unkept:
         return json_error(
@@ -1033,7 +1047,7 @@ def _stdio_definition(
             except ForeignSecretReference as exc:
                 return json_error("secret_owned_elsewhere", message=str(exc), status=400)
         new_env[var] = value
-    new_env.update(requested["env"])  # a value typed now replaces a kept one
+    new_env.update(typed)  # a value typed now replaces a kept one
     definition: dict[str, Any] = {"command": requested["command"]}
     if requested["args"]:
         definition["args"] = requested["args"]
@@ -1052,7 +1066,7 @@ def _remote_definition(
     ``keepHeaders`` one's saved value. Every header value goes to the credential store."""
     saved = existing.get("headers")
     current: dict[str, Any] = saved if isinstance(saved, dict) else {}
-    keep = requested["keepHeaders"]
+    typed, keep = _typed_and_kept(requested["headers"], requested["keepHeaders"])
     unkept = [n for n in keep if not _has_saved_value(current.get(n))]
     if unkept:
         return json_error(
@@ -1062,7 +1076,7 @@ def _remote_definition(
             status=400,
         )
     headers: dict[str, Any] = {n: current[n] for n in keep}
-    headers.update(requested["headers"])  # a value typed now replaces a kept one
+    headers.update(typed)  # a value typed now replaces a kept one
     definition: dict[str, Any] = {"type": transport, "url": requested["url"]}
     if headers:
         definition["headers"] = headers
