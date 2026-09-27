@@ -18,6 +18,7 @@ What the sha256 buys and what it does not:
   anti-LLM-tamper, not anti-owner — exactly the plan's threat model.
 """
 
+import ast
 import json
 import random
 import re
@@ -422,6 +423,28 @@ class TestStrictlyAdditiveUserConfig:
         assert security.denied_command_reason("rm -rf /") is not None
 
 
+def _code_strings(source: str) -> list[str]:
+    """Every string constant a module's CODE holds: docstrings excluded, f-string parts included.
+
+    What a second loader of the packaged file would have to contain. A docstring that mentions
+    the file opens nothing, so counting it would red on documentation instead of on a copy.
+    """
+    tree = ast.parse(source)
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+
+
 class TestSharedSource:
     def test_guardrails_denylist_reads_the_same_verified_source(self, tmp_path):
         """The action-provider path used to concatenate its own copy of the constant. It
@@ -439,14 +462,28 @@ class TestSharedSource:
 
     def test_no_module_keeps_a_second_in_code_copy_of_the_baseline(self):
         """Two copies is how the two paths drift. Only ``security.py`` may name the
-        packaged file, and nothing may re-declare the patterns."""
+        packaged file, and nothing may re-declare the patterns.
+
+        Read from each module's code strings, not its text: ``dashboard/owner_token_url.py``'s
+        docstring explains its own asset by analogy to this file, and that sentence loads
+        nothing. ``test_the_code_string_reader_tells_a_loader_from_a_mention`` pins the reader.
+        """
         src = REPO_ROOT / "src" / "personalclaw"
         namers = sorted(
             p.relative_to(src).as_posix()
             for p in src.rglob("*.py")
-            if "baseline_denylist.json" in p.read_text(encoding="utf-8")
+            if any("baseline_denylist.json" in s for s in _code_strings(p.read_text("utf-8")))
         )
         assert namers == ["security.py"]
+
+    def test_the_code_string_reader_tells_a_loader_from_a_mention(self):
+        """Both directions, so the rail above can neither red on prose nor go blind to code."""
+        loader = 'FILE = "baseline_denylist.json"\n'
+        joined = 'path = f"{root}/baseline_denylist.json"\n'
+        mention = '"""Read once at import, like ``baseline_denylist.json``."""\n\nX = 1\n'
+        assert any("baseline_denylist.json" in s for s in _code_strings(loader))
+        assert any("baseline_denylist.json" in s for s in _code_strings(joined))
+        assert not any("baseline_denylist.json" in s for s in _code_strings(mention))
 
     def test_the_security_panel_payload_reads_the_shared_accessor(self, tmp_path):
         core = (
