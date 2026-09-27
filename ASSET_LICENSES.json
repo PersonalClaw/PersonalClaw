@@ -1,0 +1,640 @@
+{
+  "schema_version": 1,
+  "about": "Where every font, image, binary and fixture this repository ships comes from, and under which licence. scripts/check_asset_licenses.py enforces it (its docstring has the rules), and web/public/THIRD_PARTY_NOTICES.txt carries the third-party notices that ship with the dashboard.",
+  "groups": [
+    {
+      "id": "font-dm-sans",
+      "source": "https://github.com/googlefonts/dm-fonts/tree/d0520ba03bd780f5dccb3024854463d44f699b78",
+      "version": "4.004",
+      "license": "OFL-1.1",
+      "ownership": "third-party",
+      "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
+      "copyright": [
+        "Copyright 2014 The DM Sans Project Authors (https://github.com/googlefonts/dm-fonts)"
+      ],
+      "note": "A variable woff2 (opsz 9 to 40, wght 100 to 1000) of the 4.004 build at that commit (name table: Version 4.004;gftools[0.9.30]). It holds all 403 of that build's code points with identical outlines; the exact file it was downloaded as was not found. No Reserved Font Name.",
+      "files": {
+        "web/public/fonts/dm-sans.woff2": "eab55c872ca9157c896f57d06b136b3ed93db0dd74c774860fe297f0c499723d"
+      }
+    },
+    {
+      "id": "font-inter",
+      "source": "https://github.com/rsms/inter/tree/66647c0bbbe41a850d79d9c76fb13add3378940f",
+      "version": "4.001",
+      "license": "OFL-1.1",
+      "ownership": "third-party",
+      "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
+      "copyright": [
+        "Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)"
+      ],
+      "note": "A static Regular (weight 400) woff2 of the 4.001 build at that commit (name table: Version 4.001;git-66647c0bb). It holds 231 code points with identical outlines; the exact file it was downloaded as was not found. No Reserved Font Name.",
+      "files": {
+        "web/public/fonts/inter.woff2": "dd05e326cf8eac3b55acecf29c842ed73e6e6dd06491cf47f7e8800680ab3e33"
+      }
+    },
+    {
+      "id": "font-jetbrains-mono",
+      "source": "https://github.com/google/fonts/tree/2e05c1cf00a6e4f40a4b931600a90881c26e15cd/ofl/jetbrainsmono",
+      "version": "2.211",
+      "license": "OFL-1.1",
+      "ownership": "third-party",
+      "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
+      "copyright": [
+        "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
+      ],
+      "note": "The 2.211 build exists only in google/fonts: upstream (https://github.com/JetBrains/JetBrainsMono) has tags v2.210 and v2.221 and nothing between. A variable woff2 (wght 100 to 800) holding all 976 of that build's code points with identical outlines; the exact file it was downloaded as was not found. No Reserved Font Name.",
+      "files": {
+        "web/public/fonts/jetbrains-mono.woff2": "076045c8922c6280c0c2ab36a3dc2601c044ee7a477579942d28dddd24f3a75e"
+      }
+    },
+    {
+      "id": "font-google-sans-flex",
+      "source": "https://github.com/googlefonts/googlesans-flex/tree/v4.005",
+      "version": "4.005",
+      "license": "OFL-1.1",
+      "ownership": "third-party",
+      "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
+      "copyright": [
+        "Copyright 2022 The Google Sans Flex Project Authors (github.com/googlefonts/googlesans-flex)",
+        "Copyright 2015 Google LLC. All Rights Reserved."
+      ],
+      "note": "OFL.txt at v4.005 grants OFL 1.1, and the README there says it is without Reserved Font Names. The file's own copyright field still reads the second line above, which google/fonts corrected on 2026-09-10, so both are kept. A woff2 with only the opsz and wght axes and 535 code points, outlines identical to 4.005; the exact file it was downloaded as was not found. Google, Google Sans and Google Sans Flex are trademarks of Google LLC.",
+      "files": {
+        "web/public/fonts/google-sans-flex.woff2": "dae2e728eb8fd5198bdc057c49dd959870027bcd00f61b7a1223dd5e3737bc16"
+      }
+    },
+    {
+      "id": "font-google-sans-code",
+      "source": "https://fonts.gstatic.com/s/googlesanscode/v20/pxihyogzv91QhV44Z_GQBHsGf5PuckJMZfIVTPZaiXEp_ht12EVEHsN1sCQNcmTl1gki9OLRSxQiDdE.woff2",
+      "version": "7.000",
+      "license": "OFL-1.1",
+      "ownership": "third-party",
+      "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
+      "copyright": [
+        "Copyright 2025 The Google Sans Code Project Authors (github.com/googlefonts/googlesans-code)"
+      ],
+      "note": "Byte-identical to that URL, the adlam slice of Google Fonts' css2?family=Google+Sans+Code: 50 code points (space and punctuation) and no letters or digits. Upstream is https://github.com/googlefonts/googlesans-code (tag v7.000, OFL 1.1, no Reserved Font Name). Google and Google Sans Code are trademarks of Google LLC.",
+      "files": {
+        "web/public/fonts/google-sans-code.woff2": "5dd4b3772ede212e3f1cdc33aa5e588c23cb929c19ee92056e0b7e04a73d880e"
+      }
+    },
+    {
+      "id": "brand-artwork",
+      "source": "Project-authored brand artwork, each file described in docs/brand/README.md: the claw mark (personalclaw-mark.svg and its rasters), the organization avatar, the website card, the web app's claw.svg, and desktop/icon.png, the alpha mask the rasters are regenerated from",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "desktop/icon.png",
+        "docs/brand/avatar.png",
+        "docs/brand/personalclaw-mark.png",
+        "docs/brand/personalclaw-mark.svg",
+        "docs/brand/social-preview.png",
+        "web/public/claw.svg"
+      ]
+    },
+    {
+      "id": "repository-social-cards",
+      "source": "Rendered by docs/brand/social_preview.mjs from the project palette, the claw mark and the bundled DM Sans and JetBrains Mono faces",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "docs/brand/social-preview-apps.png",
+        "docs/brand/social-preview-core.png"
+      ]
+    },
+    {
+      "id": "web-app-icons",
+      "source": "Project-authored: icon.svg is the PWA icon source and icon-192.png and icon-512.png are its rsvg-convert rasters; the two personality-*.svg files are hand-written tab icons",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "web/public/icons/icon-192.png",
+        "web/public/icons/icon-512.png",
+        "web/public/icons/icon.svg",
+        "web/public/icons/personality-claw-arcade.svg",
+        "web/public/icons/personality-retro-terminal.svg"
+      ]
+    },
+    {
+      "id": "pwa-manifest",
+      "source": "Project-authored PWA install manifest",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "web/public/manifest.webmanifest"
+      ]
+    },
+    {
+      "id": "documentation-screenshots",
+      "source": "Captured from a running gateway by docs/screenshots/capture.mjs (docs/screenshots/CAPTURE.md)",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "docs/screenshots/dark/01-dashboard.png",
+        "docs/screenshots/dark/01-onboarding.png",
+        "docs/screenshots/dark/02-chat.png",
+        "docs/screenshots/dark/03-knowledge.png",
+        "docs/screenshots/dark/04-tasks.png",
+        "docs/screenshots/dark/05-loops.png",
+        "docs/screenshots/dark/06-triggers.png",
+        "docs/screenshots/dark/07-workflows.png",
+        "docs/screenshots/dark/08-memory.png",
+        "docs/screenshots/dark/09-apps.png",
+        "docs/screenshots/dark/10-skills.png",
+        "docs/screenshots/dark/11-settings.png",
+        "docs/screenshots/dark/12-settings-models.png",
+        "docs/screenshots/dark/13-agents.png",
+        "docs/screenshots/light/01-dashboard.png",
+        "docs/screenshots/light/01-onboarding.png",
+        "docs/screenshots/light/02-chat.png",
+        "docs/screenshots/light/03-knowledge.png",
+        "docs/screenshots/light/04-tasks.png",
+        "docs/screenshots/light/05-loops.png",
+        "docs/screenshots/light/06-triggers.png",
+        "docs/screenshots/light/07-workflows.png",
+        "docs/screenshots/light/08-memory.png",
+        "docs/screenshots/light/09-apps.png",
+        "docs/screenshots/light/10-skills.png",
+        "docs/screenshots/light/11-settings.png",
+        "docs/screenshots/light/12-settings-models.png",
+        "docs/screenshots/light/13-agents.png"
+      ]
+    },
+    {
+      "id": "visual-regression-baselines",
+      "source": "Playwright baselines captured by web/e2e/visual.spec.ts",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "web/e2e/__screenshots__/visual.spec.ts/agents-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/agents-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/apps-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/apps-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/artifacts-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/artifacts-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/chat-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/chat-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/dashboard-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/dashboard-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/files-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/files-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/inbox-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/inbox-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/knowledge-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/knowledge-graph-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/knowledge-graph-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/knowledge-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/knowledge-reading-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/knowledge-reading-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/learning-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/learning-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/projects-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/projects-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/prompts-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/prompts-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/settings-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/settings-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/skills-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/skills-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/tasks-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/tasks-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/terminal-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/terminal-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/tools-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/tools-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/triggers-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/triggers-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/workflows-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/workflows-light-darwin.png"
+      ]
+    },
+    {
+      "id": "mobile-store-artwork",
+      "source": "Generated by mobile/scripts/generate_store_assets.py from desktop/icon.png and the brand gradient",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "mobile/assets/icon-background.png",
+        "mobile/assets/icon-foreground.png",
+        "mobile/assets/icon-only.png",
+        "mobile/assets/splash-dark.png",
+        "mobile/assets/splash.png"
+      ]
+    },
+    {
+      "id": "mobile-shell-and-store-disclosures",
+      "source": "Project-authored mobile web shell (mobile/www) and app-store privacy disclosures (mobile/store)",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "mobile/store/PrivacyInfo.xcprivacy",
+        "mobile/store/play-data-safety.md",
+        "mobile/www/index.html",
+        "mobile/www/shell/boot.mjs",
+        "mobile/www/shell/network.mjs",
+        "mobile/www/shell/registry.mjs",
+        "mobile/www/shell/safeArea.mjs",
+        "mobile/www/shell/shell.css"
+      ]
+    },
+    {
+      "id": "desktop-static-pages",
+      "source": "Project-authored desktop connect dialog and loading page",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "desktop/connectDialog.html",
+        "desktop/loading.html"
+      ]
+    },
+    {
+      "id": "demo-home-fixture",
+      "source": "Project-authored demo seed home; scripts/generate_demo_home_fixture.py regenerates its SQLite files",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "src/personalclaw/tests_fixtures/demo-home/config.json",
+        "src/personalclaw/tests_fixtures/demo-home/fixture.yaml",
+        "src/personalclaw/tests_fixtures/demo-home/loop/a17c3f92/events.jsonl",
+        "src/personalclaw/tests_fixtures/demo-home/loop/a17c3f92/journal.jsonl",
+        "src/personalclaw/tests_fixtures/demo-home/loop/a17c3f92/status.json",
+        "src/personalclaw/tests_fixtures/demo-home/loop/loops.db",
+        "src/personalclaw/tests_fixtures/demo-home/projects/p-2d6f5c83/project.json",
+        "src/personalclaw/tests_fixtures/demo-home/projects/p-4f8c1d20/project.json",
+        "src/personalclaw/tests_fixtures/demo-home/projects/p-7a1b4e92/project.json",
+        "src/personalclaw/tests_fixtures/demo-home/projects/p-9b3e7a41/project.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-1a4c7e02.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-2b5d8f13.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-3c6e9024.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-4d7f0135.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-5e801246.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-6f912357.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-70a23468.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-81b34579.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-92c4568a.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/t-a3d5679b.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/task_lists/tl-3c9d20a7.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/task_lists/tl-5e1a83b4.json",
+        "src/personalclaw/tests_fixtures/demo-home/tasks/task_lists/tl-8f4b1e6d.json",
+        "src/personalclaw/tests_fixtures/demo-home/workspace/knowledge/knowledge.db",
+        "src/personalclaw/tests_fixtures/demo-home/workspace/memory/history/2026-08-12.md",
+        "src/personalclaw/tests_fixtures/demo-home/workspace/memory/history/2026-08-14.md",
+        "src/personalclaw/tests_fixtures/demo-home/workspace/memory/preferences.md",
+        "src/personalclaw/tests_fixtures/demo-home/workspace/memory/projects.md"
+      ]
+    },
+    {
+      "id": "empty-home-fixture",
+      "source": "Project-authored empty seed home",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "src/personalclaw/tests_fixtures/empty/fixture.yaml"
+      ]
+    },
+    {
+      "id": "six-month-home-fixture",
+      "source": "Written by PersonalClaw v0.1.3's own writers through scripts/generate_six_month_home_fixture.py, with the manifest tests/test_state_survival.py asserts against",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "src/personalclaw/tests_fixtures/six-month-home.manifest.json",
+        "src/personalclaw/tests_fixtures/six-month-home/config.json",
+        "src/personalclaw/tests_fixtures/six-month-home/cron-history/_index.jsonl",
+        "src/personalclaw/tests_fixtures/six-month-home/cron-history/monthly-offsite-verify.jsonl",
+        "src/personalclaw/tests_fixtures/six-month-home/cron-history/weekly-reading-digest.jsonl",
+        "src/personalclaw/tests_fixtures/six-month-home/entity_settings/inbox.json",
+        "src/personalclaw/tests_fixtures/six-month-home/entity_settings/notifications.json",
+        "src/personalclaw/tests_fixtures/six-month-home/fixture.yaml",
+        "src/personalclaw/tests_fixtures/six-month-home/loop/3f8a1c07/status.json",
+        "src/personalclaw/tests_fixtures/six-month-home/loop/loops.db",
+        "src/personalclaw/tests_fixtures/six-month-home/memory.db",
+        "src/personalclaw/tests_fixtures/six-month-home/workspace/knowledge/knowledge.db",
+        "src/personalclaw/tests_fixtures/six-month-home/workspace/memory/history/2026-03-02.md",
+        "src/personalclaw/tests_fixtures/six-month-home/workspace/memory/history/2026-07-11.md",
+        "src/personalclaw/tests_fixtures/six-month-home/workspace/memory/preferences.md",
+        "src/personalclaw/tests_fixtures/six-month-home/workspace/memory/projects.md"
+      ]
+    },
+    {
+      "id": "registry-validation-fixtures",
+      "source": "Project-authored registry entries and apps exercised by tests/test_registry_validation.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "staged-repos/registry/fixtures/README.md",
+        "staged-repos/registry/fixtures/apps/clean-app/LICENSE",
+        "staged-repos/registry/fixtures/apps/clean-app/README.md",
+        "staged-repos/registry/fixtures/apps/clean-app/app.json",
+        "staged-repos/registry/fixtures/apps/clean-app/provider.py",
+        "staged-repos/registry/fixtures/apps/dangerous-app/LICENSE",
+        "staged-repos/registry/fixtures/apps/dangerous-app/README.md",
+        "staged-repos/registry/fixtures/apps/dangerous-app/app.json",
+        "staged-repos/registry/fixtures/apps/dangerous-app/provider.py",
+        "staged-repos/registry/fixtures/apps/dangerous-app/scripts/install.sh",
+        "staged-repos/registry/fixtures/apps/warning-app/LICENSE",
+        "staged-repos/registry/fixtures/apps/warning-app/README.md",
+        "staged-repos/registry/fixtures/apps/warning-app/app.json",
+        "staged-repos/registry/fixtures/apps/warning-app/provider.py",
+        "staged-repos/registry/fixtures/apps/warning-app/scripts/setup.sh",
+        "staged-repos/registry/fixtures/registries/dangerous.json",
+        "staged-repos/registry/fixtures/registries/malformed-row.json",
+        "staged-repos/registry/fixtures/registries/valid.json",
+        "staged-repos/registry/fixtures/registries/warning.json"
+      ]
+    },
+    {
+      "id": "agent-tool-home-fixture",
+      "source": "Project-authored: a persona's Claude Code and Codex homes (noor), laid out as those tools write them, for tests/test_claude_code_import_reads_what_claude_code_writes.py, tests/test_codex_import_reads_what_codex_writes.py and tests/test_imports_share_one_secret_policy.py; the tools named are test targets only",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/agent_tool_homes/noor/.claude/.claude.json",
+        "tests/fixtures/agent_tool_homes/noor/.claude/CLAUDE.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/agents/code-reviewer.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/agents/oncall-triage.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/commands/handoff.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/commands/standup.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/history.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/6277d318-971a-44e8-b375-0e64f38466e9.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/MEMORY.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/issue-412-cause.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/maintainers.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-src-feedsmith/memory/release-checklist.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/MEMORY.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/dedupe-is-postgres-not-lru.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/never-quote-consignee-pii.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor-work-carrier-webhooks/memory/oncall-rotation.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor/80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.claude/projects/-Users-noor/9616f743-040c-4515-8bdf-701612aa21ba.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.claude/rules/privacy.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/rules/python.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/settings.json",
+        "tests/fixtures/agent_tool_homes/noor/.claude/skills/postgres-migration-review/SKILL.md",
+        "tests/fixtures/agent_tool_homes/noor/.claude/skills/postgres-migration-review/checklist.md",
+        "tests/fixtures/agent_tool_homes/noor/.codex/AGENTS.md",
+        "tests/fixtures/agent_tool_homes/noor/.codex/agents/reviewer.toml",
+        "tests/fixtures/agent_tool_homes/noor/.codex/agents/sql-checker.toml",
+        "tests/fixtures/agent_tool_homes/noor/.codex/auth.json",
+        "tests/fixtures/agent_tool_homes/noor/.codex/config.toml",
+        "tests/fixtures/agent_tool_homes/noor/.codex/history.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.codex/memories/MEMORY.md",
+        "tests/fixtures/agent_tool_homes/noor/.codex/memories/memory_summary.md",
+        "tests/fixtures/agent_tool_homes/noor/.codex/prompts/changelog.md",
+        "tests/fixtures/agent_tool_homes/noor/.codex/prompts/triage-issue.md",
+        "tests/fixtures/agent_tool_homes/noor/.codex/rules/default.rules",
+        "tests/fixtures/agent_tool_homes/noor/.codex/session_index.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.codex/sessions/2026/07/22/rollout-2026-07-22T08-52-11-019f89e2-360a-74b5-a65d-4df5c169496e.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.codex/sessions/2026/08/20/rollout-2026-08-20T15-10-44-01a02095-36b6-7772-881c-abd3d127359e.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.codex/sessions/2026/08/28/rollout-2026-08-28T11-03-30-01a048e5-bab3-7cb6-83c7-67ca73b19fb6.jsonl",
+        "tests/fixtures/agent_tool_homes/noor/.codex/skills/feedsmith-bench/SKILL.md",
+        "tests/fixtures/agent_tool_homes/noor/src/feedsmith/.claude/settings.json",
+        "tests/fixtures/agent_tool_homes/noor/src/feedsmith/.mcp.json",
+        "tests/fixtures/agent_tool_homes/noor/src/feedsmith/CLAUDE.md"
+      ]
+    },
+    {
+      "id": "agent-tool-skill-fixtures",
+      "source": "Project-authored: the persona's three skills that the skill scanner flags, planted into the noor home by tests/test_skill_import_warnings_are_a_choice.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/agent_tool_skills/feedsmith-release/SKILL.md",
+        "tests/fixtures/agent_tool_skills/feedsmith-release/scripts/bump_version.py.txt",
+        "tests/fixtures/agent_tool_skills/incident-writeup/SKILL.md",
+        "tests/fixtures/agent_tool_skills/incident-writeup/template.md",
+        "tests/fixtures/agent_tool_skills/yt-transcript/SKILL.md",
+        "tests/fixtures/agent_tool_skills/yt-transcript/install.sh",
+        "tests/fixtures/agent_tool_skills/yt-transcript/transcript.sh"
+      ]
+    },
+    {
+      "id": "external-format-goldens",
+      "source": "Project-authored goldens for tests/test_packs_external_formats.py; the formats named are test targets only",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/external_formats_golden/claude-code-agents/budget-coach.md",
+        "tests/fixtures/external_formats_golden/claude-code-agents/tax-analyst.md",
+        "tests/fixtures/external_formats_golden/cursor-rules/personalclaw-roster.mdc",
+        "tests/fixtures/external_formats_golden/skill-md/skills/budget-coach/SKILL.md",
+        "tests/fixtures/external_formats_golden/skill-md/skills/ledger-read/SKILL.md"
+      ]
+    },
+    {
+      "id": "workflow-frontier-goldens",
+      "source": "Project-authored goldens for tests/test_workflows_frontier_golden.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/frontier_golden/bundled.jsonl",
+        "tests/fixtures/frontier_golden/policies.jsonl"
+      ]
+    },
+    {
+      "id": "ledger-goldens",
+      "source": "Project-authored goldens for tests/test_ledger_golden.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/ledger_golden/emitters_events.jsonl",
+        "tests/fixtures/ledger_golden/emitters_journal.jsonl",
+        "tests/fixtures/ledger_golden/emitters_spill.jsonl",
+        "tests/fixtures/ledger_golden/run_events.jsonl",
+        "tests/fixtures/ledger_golden/run_journal.jsonl"
+      ]
+    },
+    {
+      "id": "workflow-ready-goldens",
+      "source": "Project-authored goldens for tests/test_workflows_ready_projection.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/pool_frontier_golden/ready.jsonl",
+        "tests/fixtures/pool_frontier_golden/seed.json"
+      ]
+    },
+    {
+      "id": "knowledge-ingest-fixtures",
+      "source": "Project-authored documents for tests/test_knowledge_searchability.py and tests/test_knowledge_ocr_fallback.py; the PDFs were generated with ReportLab",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/image_only_scan.pdf",
+        "tests/fixtures/ocr_bomb_gigapixel.pdf",
+        "tests/fixtures/ocr_bomb_pages.pdf",
+        "tests/fixtures/ocr_probe.png",
+        "tests/fixtures/text_layer.pdf",
+        "tests/fixtures/unindexed_document.md"
+      ]
+    },
+    {
+      "id": "word-authored-fixture",
+      "source": "Project-authored document saved by Word for Mac 16.111, by the steps tests/test_docx_word_authored.py records",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/word_authored.docx"
+      ]
+    },
+    {
+      "id": "planner-routing-fixture",
+      "source": "Project-authored routing cases for tests/test_workflows_planning_match.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/planner_routing.json"
+      ]
+    },
+    {
+      "id": "web-e2e-fixtures",
+      "source": "Project-authored fixtures for the web end-to-end suite",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "web/e2e/fixtures/app-ui/app.json",
+        "web/e2e/fixtures/app-ui/installed.json",
+        "web/e2e/fixtures/app-ui/ui/index.mjs",
+        "web/e2e/fixtures/scripted-chat.json"
+      ]
+    }
+  ],
+  "built_web_groups": [
+    {
+      "id": "katex-fonts",
+      "source": "https://github.com/KaTeX/KaTeX/tree/v0.18.7/fonts",
+      "version": "0.18.7",
+      "license": "OFL-1.1",
+      "ownership": "third-party",
+      "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
+      "copyright": [
+        "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)",
+        "Copyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>)"
+      ],
+      "note": "The katex package's MIT LICENSE covers KaTeX's code, not these fonts: each one carries its own OFL 1.1 notice and reserves its face's name (KaTeX_AMS, KaTeX_Caligraphic, KaTeX_Fraktur, KaTeX_Main, KaTeX_Math, KaTeX_SansSerif, KaTeX_Script, KaTeX_Size1 to KaTeX_Size4, KaTeX_Typewriter), so they ship unmodified. Vite inlines files under 4 KB into the CSS bundle, so KaTeX_Size3-Regular.woff2 ships base64 inside it rather than as a file.",
+      "files": {
+        "node_modules/katex/dist/fonts/KaTeX_AMS-Regular.ttf": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13",
+        "node_modules/katex/dist/fonts/KaTeX_AMS-Regular.woff": "30da91e84c893f875e252689faebdc590b2871145e8adc7f9a9d4dbd8ce0b251",
+        "node_modules/katex/dist/fonts/KaTeX_AMS-Regular.woff2": "0cdd387c9590a1a9f9794560022dbb59654a7d86f187aa0c81495ad42d3a7308",
+        "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Bold.ttf": "07d8e303ce4fc12b4bb54f1004170dd190a1f3db45d400fe68060df3e0897268",
+        "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Bold.woff": "1ae6bd7475590e97e7f145a89e09ccde322f7a6bc0b91607b1c8b8ee28290fed",
+        "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Bold.woff2": "de7701e42cf1f4cf0b766c03fb27977207eee2f4fd5d76fa82188406da43ea4c",
+        "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Regular.ttf": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7",
+        "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Regular.woff": "3398dd02302557a793f2863f88e02d96ce10df2abffa07c8e9fa90775116e65c",
+        "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Regular.woff2": "5d53e70ad607c2352162dec9e0923fb54ecdafaccbf604cd8dcf7d00facb989b",
+        "node_modules/katex/dist/fonts/KaTeX_Fraktur-Bold.ttf": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1",
+        "node_modules/katex/dist/fonts/KaTeX_Fraktur-Bold.woff": "9be7ceb88004ab8ad124082246fbfcca4091e36385d4ec6ed1df67375dad50fb",
+        "node_modules/katex/dist/fonts/KaTeX_Fraktur-Bold.woff2": "74444efd593c005e3f4573b44524704c0af0a937fe911cca9e94068d0d140d3f",
+        "node_modules/katex/dist/fonts/KaTeX_Fraktur-Regular.ttf": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3",
+        "node_modules/katex/dist/fonts/KaTeX_Fraktur-Regular.woff": "5e28753be717dac97f559f49bc10be9cf3c124ddcabda6659d11cb68febc6463",
+        "node_modules/katex/dist/fonts/KaTeX_Fraktur-Regular.woff2": "51814d270d06ff0255dba0799994fa4d8c84d11f09951d47595f4abb1f3602dc",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Bold.ttf": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Bold.woff": "c76c5d696297d51b9cb1639c7da4334f0e7dec81b42b11213b5e25ef671bb822",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Bold.woff2": "0f60d1b897938ec918c8ce073092411baf9438f6739465693ff18b0f9d20b021",
+        "node_modules/katex/dist/fonts/KaTeX_Main-BoldItalic.ttf": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f",
+        "node_modules/katex/dist/fonts/KaTeX_Main-BoldItalic.woff": "a6f7ec0d846ac7ad975adb8959c37ed49b94acbc4ae436db9ce9e20287e4a64c",
+        "node_modules/katex/dist/fonts/KaTeX_Main-BoldItalic.woff2": "99cd42a3c072d918f2f44984a807cf7aa16e13545fd0875fc07c6c65f99e715b",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Italic.ttf": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Italic.woff": "f1d6ef86f3b11a528bd5185199bd2443ecb2b0dead96d88674b5a2c12be24bdf",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Italic.woff2": "97479ca6cce906abc961ecac96faa5f9ca2e61b8e7670d475826bcdee9a7c267",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Regular.ttf": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Regular.woff": "c6368d87e8a1a3a5d337623d83d8dc4b868f242a9ad476237d6f8d1e0f168cdc",
+        "node_modules/katex/dist/fonts/KaTeX_Main-Regular.woff2": "c2342cd8b869e01752a9321dc17213fc40d4d04c79688c1d43f2cf316abd7866",
+        "node_modules/katex/dist/fonts/KaTeX_Math-BoldItalic.ttf": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5",
+        "node_modules/katex/dist/fonts/KaTeX_Math-BoldItalic.woff": "850c0af5c2238497febaf5e461d880bf458c341f42f4f330f1b1ab5698b1998e",
+        "node_modules/katex/dist/fonts/KaTeX_Math-BoldItalic.woff2": "dc47344dbb6cb5b655c8460d561f4df5f501b90c804ad3c6cec65fe322351ab1",
+        "node_modules/katex/dist/fonts/KaTeX_Math-Italic.ttf": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a",
+        "node_modules/katex/dist/fonts/KaTeX_Math-Italic.woff": "8a8d244581371912b8f3f5a23e2437cb2a59cd9bcaebb0346e722c05737a2571",
+        "node_modules/katex/dist/fonts/KaTeX_Math-Italic.woff2": "7af58c5ec8f132a2ddde9027c6d7814decce4d3b822a11192a42a20e2e973264",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Bold.ttf": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Bold.woff": "ece03cfd83e22c212cdef66feb8442d25a083beb988db3f1883f3f9738d750ba",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Bold.woff2": "e99ae51144bf1232efcc1bfe5add36262c6866b0faab24fa75740e1b98577a62",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Italic.ttf": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Italic.woff": "91ee67500cc0129aa0ace3ac5c61ff1692102f0f31d02b69347fba35dcb75bf2",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Italic.woff2": "00b26ac825e2095056396e0553b8ac26d3f8ad158c3826e28b4c45b385c4714a",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Regular.ttf": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Regular.woff": "11e4dc8a6471ff6d6ee561d53d10fde8f7489e798257ff449c5d37c197435605",
+        "node_modules/katex/dist/fonts/KaTeX_SansSerif-Regular.woff2": "68e8c73ef42afd3ccec58bf0fba302cce448938e7fc020a5e31f8a952eee1342",
+        "node_modules/katex/dist/fonts/KaTeX_Script-Regular.ttf": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67",
+        "node_modules/katex/dist/fonts/KaTeX_Script-Regular.woff": "d96cdf2b3bdd4d64a8fd5f74a4c467f123a8a73931cd435889f08ffaf9bf947a",
+        "node_modules/katex/dist/fonts/KaTeX_Script-Regular.woff2": "036d4e95149b69ff9bcc0cd55771efeb25ffa3947293e69acd78d5ac328c684b",
+        "node_modules/katex/dist/fonts/KaTeX_Size1-Regular.ttf": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b",
+        "node_modules/katex/dist/fonts/KaTeX_Size1-Regular.woff": "c943cc986384f59e86bea5fd7dc50a9c4dfe567a7c05eb40d6790720dead97c9",
+        "node_modules/katex/dist/fonts/KaTeX_Size1-Regular.woff2": "6b47c40166b6dbe21a5dfca7718413f2147fd2399be1ba605d8ad39cedf25dfe",
+        "node_modules/katex/dist/fonts/KaTeX_Size2-Regular.ttf": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b",
+        "node_modules/katex/dist/fonts/KaTeX_Size2-Regular.woff": "2014c523c3210bcc166648c4d4cc57f05b747df07a24277bf71c51e67dc79e3d",
+        "node_modules/katex/dist/fonts/KaTeX_Size2-Regular.woff2": "d04c54219f9eaec6d4d4fd42dfb28785975a4794d6b2fc71e566b9cd6db842dd",
+        "node_modules/katex/dist/fonts/KaTeX_Size3-Regular.ttf": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082",
+        "node_modules/katex/dist/fonts/KaTeX_Size3-Regular.woff": "6ab6b62e9b62dae2c00dd90f791bd10950be0ecc3490d7d6045f51c2e8fe0949",
+        "node_modules/katex/dist/fonts/KaTeX_Size3-Regular.woff2": "73d591271b1604960cb10bb90fee021670af7297017e0e98480b332d11f51995",
+        "node_modules/katex/dist/fonts/KaTeX_Size4-Regular.ttf": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877",
+        "node_modules/katex/dist/fonts/KaTeX_Size4-Regular.woff": "99f9c6750b489c9462bf04900bd3f939df9b829339daaaaa99ef5495cdddea58",
+        "node_modules/katex/dist/fonts/KaTeX_Size4-Regular.woff2": "a4af7d414440a1c1790825cfb700cf9cf43b0f2c4b04f0ebc523011ad9853ec0",
+        "node_modules/katex/dist/fonts/KaTeX_Typewriter-Regular.ttf": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa",
+        "node_modules/katex/dist/fonts/KaTeX_Typewriter-Regular.woff": "e14fed02b1aba7ce9f5afd5844b5d0321b22351febc720e0de8b8723527609f7",
+        "node_modules/katex/dist/fonts/KaTeX_Typewriter-Regular.woff2": "71d517d67827787cfabdf186914cc3358eda539e37931941f2b2fd4a21f68c0b"
+      }
+    },
+    {
+      "id": "editor-icon-font",
+      "source": "https://github.com/microsoft/vscode-codicons",
+      "version": "0.0.46-21",
+      "license": "CC-BY-4.0",
+      "ownership": "third-party",
+      "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
+      "copyright": [
+        "Copyright (c) Microsoft Corporation."
+      ],
+      "note": "monaco-editor 0.56.0 ships this font, byte-identical to dist/codicon.ttf in @vscode/codicons 0.0.46-21. The icons' own repository and npm package license them under CC BY 4.0 (the repository's code is MIT, under LICENSE-CODE), so this record follows that licence rather than monaco-editor's package-level MIT. The font carries no copyright or licence metadata of its own, so the attribution lives in the notice.",
+      "files": {
+        "node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.ttf": "cc2472e239e17062e7760af87f8f5997720cc0d94aa014a615c418baaf6333a8"
+      }
+    }
+  ]
+}
