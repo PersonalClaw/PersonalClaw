@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Download } from 'lucide-react'
-import { isLiveDownload, type AvailableModel, type BundledModelOffer } from '../../lib/api'
+import { isLiveDownload, type AvailableModel, type BundledModelOffer, type DownloadJob } from '../../lib/api'
 import { Button } from '../../ui/Button'
 import { BundledDownloadProgress, mib } from '../chat/bundledModelDownload'
 import { useModelDownloads } from './useModelDownloads'
@@ -18,25 +18,16 @@ export function isDownloadable(m: AvailableModel, localProviders: ReadonlySet<st
   return m.downloaded === false && localProviders.has(m.provider)
 }
 
-/** 🔑 A CHOSEN MODEL THAT IS NOT ON THIS MACHINE IS DOWNLOADED WHERE IT WAS CHOSEN. The owner:
- *  "if user selects a model from settings/models page it shows 'not downloaded' if the model isn't
- *  yet downloaded. But it should just give the user download option right there". It used to be a
- *  chip reading "not downloaded" whose tooltip sent the user to another page to find the download.
- *
- *  The row it sits under is already BOUND — choosing a model writes the binding, which is what
- *  makes the choice survive a reload — so a finished download is the binding taking effect, with
- *  nothing to choose again. `onDownloaded` is the page re-reading that.
+/** One Models-page row's download of its model: a chosen model's Download (`InlineModelDownload`)
+ *  and a truncated model's Repair (`ModelsPanel`'s row) both run through it, so the two draw the
+ *  same progress row and say the same things.
  *
  *  It is the one download machine, not a second: `useModelDownloads` owns the job, its progress
- *  stream, cancel and re-attaching to a running download after a reload, and the progress is drawn
- *  by the same `BundledDownloadProgress` row the onboarding offer and the chat notice draw. Nothing
- *  downloads on its own: the size and licence are stated, and the click is the consent. */
-export function InlineModelDownload({ model, onDownloaded }: {
-  model: AvailableModel
-  /** The download finished — started here, or re-attached to after a reload. Once per job. */
-  onDownloaded: () => void
-}) {
-  const { jobs, start, cancel } = useModelDownloads(model.provider, () => {})
+ *  stream and cancel. This adds what a row needs on top: the refusal in the server's words, and the
+ *  download reported ONCE when it lands. `reattach: false` tracks only the download this row starts
+ *  (see `useModelDownloads`). */
+export function useRowDownload(model: AvailableModel, onDownloaded: () => void, { reattach = true }: { reattach?: boolean } = {}) {
+  const { jobs, start, cancel } = useModelDownloads(model.provider, () => {}, { reattach })
   const job = jobs[model.id]
   const [error, setError] = useState('')
   const [starting, setStarting] = useState(false)
@@ -45,7 +36,7 @@ export function InlineModelDownload({ model, onDownloaded }: {
   const bytes = Math.round((model.size_mb ?? 0) * 1024 * 1024)
   // The shape the shared progress row draws. `bytes` is the catalog's size — the one the Download
   // button quoted — and the row prefers the job's own total once the runner reports one.
-  const shown: BundledModelOffer = {
+  const offer: BundledModelOffer = {
     provider: model.provider, model: model.id, label, bytes,
     licence: model.license ?? '', description: model.description ?? '',
   }
@@ -79,32 +70,63 @@ export function InlineModelDownload({ model, onDownloaded }: {
     try { await cancel(model.id) } catch (e) { setError(`Couldn't cancel this download: ${refusal(e, 'the request failed')}`) }
   }
 
-  const needsToken = model.gated === true && model.token_ready === false
+  /** The job while it is live, for the progress row. */
+  const running: DownloadJob | null = job && isLiveDownload(job) ? job : null
   const failed = error || (job?.state === 'error' ? job.error || 'The download failed.' : '')
+  return { offer, bytes, running, starting, failed, begin, stop }
+}
+
+/** Why a row's download did not start or finish, under it: the server's sentence. */
+export function DownloadFailure({ text }: { text: string }) {
+  return (
+    <p role="alert" data-type="caption" className="inline-flex items-start gap-xs" style={{ color: 'var(--color-danger)' }}>
+      <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden="true" /> <span>{text}</span>
+    </p>
+  )
+}
+
+/** 🔑 A CHOSEN MODEL THAT IS NOT ON THIS MACHINE IS DOWNLOADED WHERE IT WAS CHOSEN. The owner:
+ *  "if user selects a model from settings/models page it shows 'not downloaded' if the model isn't
+ *  yet downloaded. But it should just give the user download option right there". It used to be a
+ *  chip reading "not downloaded" whose tooltip sent the user to another page to find the download.
+ *
+ *  The row it sits under is already BOUND — choosing a model writes the binding, which is what
+ *  makes the choice survive a reload — so a finished download is the binding taking effect, with
+ *  nothing to choose again. `onDownloaded` is the page re-reading that.
+ *
+ *  The job, its progress stream, cancel and re-attaching to a running download after a reload are
+ *  `useRowDownload`'s, and the progress is drawn by the same `BundledDownloadProgress` row the
+ *  onboarding offer and the chat notice draw. Nothing downloads on its own: the size and licence
+ *  are stated, and the click is the consent. */
+export function InlineModelDownload({ model, onDownloaded }: {
+  model: AvailableModel
+  /** The download finished — started here, or re-attached to after a reload. Once per job. */
+  onDownloaded: () => void
+}) {
+  const download = useRowDownload(model, onDownloaded)
+  const { offer, bytes, running, failed } = download
+
+  const needsToken = model.gated === true && model.token_ready === false
   const facts = [bytes ? mib(bytes) : '', model.license ?? ''].filter(Boolean).join(' · ')
 
   return (
     <div data-testid="inline-model-download" className="flex flex-col gap-xs px-m pb-s">
-      {job && isLiveDownload(job) ? (
-        <BundledDownloadProgress offer={shown} job={job} onCancel={stop} />
+      {running ? (
+        <BundledDownloadProgress offer={offer} job={running} onCancel={download.stop} />
       ) : (
         <div className="flex flex-wrap items-center gap-s">
           <span data-type="caption" className="text-on-surface-var">
-            {label} is not on this machine yet{facts ? ` — ${facts}` : ''}.
+            {offer.label} is not on this machine yet{facts ? ` — ${facts}` : ''}.
           </span>
-          <Button variant="tonal" size="xs" loading={starting} loadingLabel="Starting the download"
+          <Button variant="tonal" size="xs" loading={download.starting} loadingLabel="Starting the download"
             disabled={needsToken}
             disabledReason="This gated model needs a HuggingFace token — add one under “HuggingFace token” below"
-            onClick={begin}>
+            onClick={download.begin}>
             <Download size={12} aria-hidden="true" /> {failed ? 'Try again' : `Download${bytes ? ` ${mib(bytes)}` : ''}`}
           </Button>
         </div>
       )}
-      {failed && (
-        <p role="alert" data-type="caption" className="inline-flex items-start gap-xs" style={{ color: 'var(--color-danger)' }}>
-          <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden="true" /> <span>{failed}</span>
-        </p>
-      )}
+      {failed && <DownloadFailure text={failed} />}
     </div>
   )
 }

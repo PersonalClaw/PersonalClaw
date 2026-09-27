@@ -1767,6 +1767,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _learn,
     _memory_cmd,
     _pair,
+    _refuse,
     _retrieval_eval,
     _run_eval,
     _security,
@@ -1867,7 +1868,12 @@ _SKILL_FINDINGS_SHOWN = 8
 
 
 def _handle_skills(args) -> None:  # noqa: ANN001
-    """Dispatch personalclaw skills subcommands."""
+    """Dispatch personalclaw skills subcommands.
+
+    A refusal is said on stderr and exits 1 (`_refuse`), and so does a `verify` that finds a
+    tampered skill: an install the scanner refused used to exit 0, which a setup script reads as
+    the skill being there.
+    """
     import shutil
     from pathlib import Path
 
@@ -1897,8 +1903,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         try:
             mp = get_default_skills_registry().get(marketplace_name)
         except KeyError:
-            print(f"❌ Marketplace '{marketplace_name}' not registered")
-            return
+            _refuse(f"❌ Marketplace '{marketplace_name}' not registered")
         results = mp.search(query)
         if not results:
             print(f"No results for '{query}' on {marketplace_name}")
@@ -1919,21 +1924,19 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         try:
             registry.get(marketplace_name)
         except KeyError:
-            print(f"❌ Marketplace '{marketplace_name}' not registered")
-            return
+            _refuse(f"❌ Marketplace '{marketplace_name}' not registered")
         try:
             result = registry.install_guarded(marketplace_name, skill_id, target, force=force)
-            n = len(result.report.findings)
-            note = f" (scanned, tier={result.tier.value}" + (f", {n} finding(s))" if n else ")")
-            print(f"✅ Installed: {result.path}{note}")
         except SkillInstallRefused as exc:
-            print(f"❌ Install refused: {exc}")
+            lines = [f"❌ Install refused: {exc}"]
             if not exc.dangerous:
-                print("   This is an overridable warning — re-run with --force to install anyway.")
+                lines.append(
+                    "   This is an overridable warning — re-run with --force to install anyway."
+                )
             else:
-                print("   This is a dangerous verdict — it cannot be force-installed.")
+                lines.append("   This is a dangerous verdict — it cannot be force-installed.")
             for f in exc.report.findings[:_SKILL_FINDINGS_SHOWN]:
-                print(
+                lines.append(
                     f"     - [{f.severity.value}] {f.rule} in {f.path or '(content)'}: {f.evidence[:80]}"  # noqa: E501
                 )
                 # The row above is the scanner's vocabulary and the real snippet; neither
@@ -1942,22 +1945,25 @@ def _handle_skills(args) -> None:  # noqa: ANN001
                 # than echoing the rule name when this build has no sentence for it.
                 gloss = rule_gloss(f.rule)
                 if gloss:
-                    print(f"       {gloss}")
+                    lines.append(f"       {gloss}")
             hidden = len(exc.report.findings) - _SKILL_FINDINGS_SHOWN
             if hidden > 0:
                 # Without this the capped list reads as ALL the findings, on the one output
                 # whose entire job is to justify the refusal. Same sentence the consent
                 # surfaces render (`hiddenFindingsNote` in web/src/lib/scanFindings.ts).
-                print(f"     +{hidden} more finding{'' if hidden == 1 else 's'} not shown")
+                lines.append(f"     +{hidden} more finding{'' if hidden == 1 else 's'} not shown")
+            _refuse("\n".join(lines))
         except Exception as exc:
-            print(f"❌ Install failed: {exc}")
+            _refuse(f"❌ Install failed: {exc}")
+        n = len(result.report.findings)
+        note = f" (scanned, tier={result.tier.value}" + (f", {n} finding(s))" if n else ")")
+        print(f"✅ Installed: {result.path}{note}")
         return
 
     if cmd == "remove":
         name = args.name
         if not name or Path(name).name != name or name in (".", ".."):
-            print(f"❌ '{name}' is not a skill name")
-            return
+            _refuse(f"❌ '{name}' is not a skill name")
         # Only the home's own skills are PersonalClaw's to delete; one found in another root
         # (the folder AI tools share, a project's skills) is left exactly where it is.
         skill_dir = skills_dir() / name
@@ -1969,13 +1975,11 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             (Path(b) / name for b in _all_skill_paths() if (Path(b) / name).is_dir()), None
         )
         if elsewhere is not None:
-            print(
+            _refuse(
                 f"❌ Skill '{name}' is in {elsewhere.parent}, outside PersonalClaw's home, so "
                 "PersonalClaw does not delete it. Remove it there if you no longer want it."
             )
-        else:
-            print(f"❌ Skill '{name}' not found")
-        return
+        _refuse(f"❌ Skill '{name}' not found")
 
     if cmd == "curate":
         from personalclaw.skills.curator import run_aging
@@ -2015,6 +2019,8 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             if not rep.ok and not rep.unlocked:
                 tampered += 1
         print(f"\n{len(dirs)} skill(s) checked, {tampered} tampered.")
+        if tampered:
+            sys.exit(1)
         return
 
     print("Usage: personalclaw skills [list|search|install|remove|curate|verify]")

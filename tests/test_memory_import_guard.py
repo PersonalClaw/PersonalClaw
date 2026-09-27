@@ -139,9 +139,11 @@ def test_cli_import_rejects_a_non_object_file(_home, capsys, raw):
     path = _home / "export.json"
     path.write_text(raw, encoding="utf-8")
 
-    _memory_cmd(argparse.Namespace(mem_action="import", file=str(path)))
+    with pytest.raises(SystemExit) as exited:
+        _memory_cmd(argparse.Namespace(mem_action="import", file=str(path)))
 
     out = capsys.readouterr()
+    assert exited.value.code == 1
     assert "must contain a JSON object" in out.err
     assert "Import complete" not in out.out
 

@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from personalclaw.cli_run import RunError, mint_local_token, owner_headers, probe_gateway
 from personalclaw.config import config_dir
@@ -27,6 +27,18 @@ from personalclaw.security import (
 )
 from personalclaw.sel import sel
 from personalclaw.vector_memory import VectorMemoryStore
+
+
+def _refuse(sentence: str) -> NoReturn:
+    """Say on stderr why the command did nothing, and exit 1.
+
+    A command that refuses and exits 0 reads as success to every script that runs it:
+    `personalclaw cron resume <id>` printed "…so it was not switched on" and exited 0, so
+    `cron resume <id> && …` carried on as if the trigger were on. `NoReturn`, so a caller cannot
+    read the line after it as reachable.
+    """
+    print(sentence, file=sys.stderr)
+    sys.exit(1)
 
 
 def _spawn(args: argparse.Namespace) -> None:
@@ -348,18 +360,19 @@ def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
     return sentences
 
 
-def _cron_refuse(questions: list[str], *, operation: str, resources: str, nothing: str) -> None:
-    """Say what a `cron` write would need the owner's yes for, change nothing, and exit 1.
+def _cron_refuse(questions: list[str], *, operation: str, resources: str, nothing: str) -> NoReturn:
+    """Say on stderr what a `cron` write would need the owner's yes for, change nothing, and
+    exit 1.
 
     The CLI's form of the Triggers page's consent dialog: the same sentences, and ``--yes`` for the
     Allow. The CLI's other confirmations work the same way (``skills install`` refuses a warning
     and says "re-run with --force"): the command says what it needs and changes nothing, never
     doing the write quietly.
     """
-    print("This needs your yes:")
+    print("This needs your yes:", file=sys.stderr)
     for sentence in questions:
-        print(f"  {sentence}")
-    print(f"{nothing} Re-run with --yes to allow it.")
+        print(f"  {sentence}", file=sys.stderr)
+    print(f"{nothing} Re-run with --yes to allow it.", file=sys.stderr)
     sel().log_api_access(
         caller="cli",
         operation=operation,
@@ -384,6 +397,9 @@ def _cron(args: argparse.Namespace) -> None:
     CLI inherits their contracts rather than re-deriving them: the id-collision guard, arming on
     creation, the patch allowlist, the refusal to resume a row that failed to parse, and the
     confirm-before-delete gate.
+
+    Every refusal is said on stderr and exits 1 (`_refuse`): a script can only tell "done" from
+    "not done" by the exit status.
     """
     from personalclaw.security import redact_for_display
     from personalclaw.triggers import schedule_view as _sv
@@ -426,15 +442,13 @@ def _cron(args: argparse.Namespace) -> None:
         approval_mode = getattr(args, "approval_mode", "") or ""
         problem = _cron_channel_problem(channel)
         if problem:
-            print(f"Error: {problem}")
-            return
+            _refuse(f"Error: {problem}")
         if cron_expr:
             spec = {"kind": "cron", "expr": cron_expr}
         elif every:
             spec = {"kind": "interval", "interval_secs": int(every)}
         else:
-            print("Provide --every or --cron")
-            return
+            _refuse("Provide --every or --cron")
 
         workflow = {
             "inline": {
@@ -475,7 +489,6 @@ def _cron(args: argparse.Namespace) -> None:
             owner_consented=yes,
         )
         if not result.ok:
-            print(result.text)
             sel().log_api_access(
                 caller="cli",
                 operation="cron.add",
@@ -484,7 +497,7 @@ def _cron(args: argparse.Namespace) -> None:
                 resources=f"name={args.name}",
                 error=result.text,
             )
-            return
+            _refuse(result.text)
         trigger_id = str((result.data.get("trigger") or {}).get("id") or "")
         granted = ((result.data.get("trigger") or {}).get("capabilities") or {}).get("providers")
         if granted:
@@ -523,8 +536,7 @@ def _cron(args: argparse.Namespace) -> None:
                     continue
                 problem = _cron_channel_problem(val)
                 if problem:
-                    print(f"Error: {problem}")
-                    return
+                    _refuse(f"Error: {problem}")
                 patch["delivery"] = f"channel:{val}"
             elif field == "name":
                 patch["name"] = val
@@ -536,13 +548,11 @@ def _cron(args: argparse.Namespace) -> None:
                 spec_update = {"kind": "cron", "expr": val}
         approval = getattr(args, "approval_mode", None)
         if not patch and not spec_update and approval is None:
-            print("Provide at least one field to update")
-            return
+            _refuse("Provide at least one field to update")
         if getattr(args, "every_secs", None) is not None and (
             getattr(args, "cron_expr", None) is not None
         ):
-            print("Provide --every or --cron, not both")
-            return
+            _refuse("Provide --every or --cron, not both")
 
         existing = store.get(args.job_id)
         if existing is None:
@@ -553,8 +563,7 @@ def _cron(args: argparse.Namespace) -> None:
                 source="cli",
                 resources=f"job_id={args.job_id} reason=not_found",
             )
-            print(f"Job not found: {args.job_id}")
-            return
+            _refuse(f"Job not found: {args.job_id}")
 
         if spec_update:
             # Carry the quietly-losable spec keys (`timezone`/`skip_dates`/`strict`) rather than
@@ -640,6 +649,8 @@ def _cron(args: argparse.Namespace) -> None:
             resources=f"job_id={args.job_id} fields={','.join(sorted(patch))}",
             error="" if result.ok else result.text,
         )
+        if not result.ok:
+            _refuse(result.text)
         print(result.text)
 
     elif action == "remove":
@@ -647,17 +658,24 @@ def _cron(args: argparse.Namespace) -> None:
         # typed `cron remove <id>` has already expressed the intent, and prompting again for what
         # the command literally says would be theatre.
         result = _tools.delete(store, trigger_id=args.job_id, confirm=True)
-        print(result.text if result.ok else f"Job not found: {args.job_id}")
+        if not result.ok:
+            _refuse(f"Job not found: {args.job_id}")
+        print(result.text)
 
     elif action == "pause":
         result = _tools.set_paused(store, trigger_id=args.job_id, paused=True)
-        print(result.text if result.ok else f"Job not found: {args.job_id}")
+        if not result.ok:
+            _refuse(f"Job not found: {args.job_id}")
+        print(result.text)
 
     elif action == "resume":
         result = _tools.set_paused(store, trigger_id=args.job_id, paused=False)
-        # The text is printed on failure too: `set_paused` REFUSES to resume a row with a parse
-        # error and names the error, which is strictly more useful than "Job not found" — and the
-        # row does exist, so the old message would have been wrong as well as unhelpful.
+        # A refusal is said in `set_paused`'s own words: a trigger not allowed to run its action
+        # says which action and where it is allowed, one with a parse error names the error. Either
+        # is strictly more useful than "Job not found", and the row does exist, so that message
+        # would be wrong as well as unhelpful.
+        if not result.ok:
+            _refuse(result.text)
         print(result.text)
 
     elif action == "trigger":
@@ -673,7 +691,9 @@ def _cron(args: argparse.Namespace) -> None:
             resources=f"job_id={args.job_id}",
             error="" if ok else message,
         )
-        print(message if ok else f"Error: {message}")
+        if not ok:
+            _refuse(f"Error: {message}")
+        print(message)
 
     else:
         print("Usage: personalclaw cron {list|add|update|remove|pause|resume|trigger}")
@@ -742,7 +762,9 @@ def _security(args: argparse.Namespace) -> None:
                 print(f"    downstream: {e['downstream_service']}")
     elif action == "verify":
 
-        # CLI verify is an explicit offline audit — check the entire chain.
+        # CLI verify is an explicit offline audit — check the entire chain. A broken chain exits 1,
+        # as `backup validate` does over a corrupt export: a scheduled check that exits 0 over
+        # tampered rows reports them as intact to whatever runs it.
         total, valid = sel().verify_integrity(max_entries=None)
         if total == 0:
             print("No security events to verify.")
@@ -752,6 +774,7 @@ def _security(args: argparse.Namespace) -> None:
             print(
                 f"⚠️  HMAC chain COMPROMISED: {valid}/{total} entries valid, {total - valid} tampered."  # noqa: E501
             )
+            sys.exit(1)
     else:
         print("Usage: personalclaw security {audit|deny-list|events|verify}")
 
@@ -785,9 +808,10 @@ async def _run_eval(args: argparse.Namespace) -> None:
                     for f in scenarios_dir.iterdir()
                     if f.suffix in (".json", ".yaml", ".yml")
                 )
-                print(f"Error: scenario '{name}' not found.")
-                print(f"Available scenarios: {', '.join(available)}")
-                return
+                _refuse(
+                    f"Error: scenario '{name}' not found.\n"
+                    f"Available scenarios: {', '.join(available)}"
+                )
             scenarios.append(load_scenario(resolved))
     else:
         scenarios = [load_scenario(scenarios_dir / "smoke_test.json")]
@@ -1562,10 +1586,9 @@ def _learn(args: argparse.Namespace) -> None:
                 print(f"  [knowledge] {val}")
 
         elif action == "remove":
-            if svc.delete_lesson(args.query):
-                print(f"Removed lessons matching: {args.query}")
-            else:
-                print(f"No lessons match: {args.query}")
+            if not svc.delete_lesson(args.query):
+                _refuse(f"No lessons match: {args.query}")
+            print(f"Removed lessons matching: {args.query}")
 
         else:
             print("Usage: personalclaw learn {add|list|remove}")
@@ -1655,16 +1678,13 @@ def _memory_cmd(args: argparse.Namespace) -> None:
         elif action == "import":
             import_file = getattr(args, "file", None)
             if not import_file:
-                print("Usage: personalclaw memory import <file>")
-                return
+                _refuse("Usage: personalclaw memory import <file>")
             path = Path(import_file)
             if not path.is_file():
-                print(f"File not found: {import_file}")
-                return
+                _refuse(f"File not found: {import_file}")
             data = json.loads(safe_read_file(str(path)))
             if not isinstance(data, dict):
-                print(f"Error: {import_file} must contain a JSON object", file=sys.stderr)
-                return
+                _refuse(f"Error: {import_file} must contain a JSON object")
             counts = store.import_memory(data)
             print("Import complete:")
             print(f"  Semantic: {counts['semantic']}")

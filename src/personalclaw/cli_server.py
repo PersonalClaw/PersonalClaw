@@ -531,9 +531,13 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
         logging.getLogger(__name__).debug("resolve_target failed", exc_info=True)
         target = ""
     if not target:
-        print("\n⚠️  No matching release found for this channel/pin (offline?).")
-        print("   Nothing to update to — try again when a release is reachable.")
-        return
+        # Exit 1: the update did not happen, and "already current" is a different answer.
+        print(
+            "\n⚠️  No matching release found for this channel/pin (offline?).\n"
+            "   Nothing to update to — try again when a release is reachable.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     target_v = self_update.normalize_version(target)
     if pin:
         if target_v == self_update.normalize_version(__version__):
@@ -605,10 +609,13 @@ def _update_pip() -> None:
 
     if pin and not target:
         # A pin naming no release must NEVER silently upgrade to the latest wheel —
-        # that would defeat the whole point of pinning.
-        print("\n⚠️  No release matches the pinned version (offline?).")
-        print(f"   Nothing to install for pin {pin!r} — check `updates.pin` or retry online.")
-        return
+        # that would defeat the whole point of pinning. A refusal, so it exits 1.
+        print(
+            "\n⚠️  No release matches the pinned version (offline?).\n"
+            f"   Nothing to install for pin {pin!r} — check `updates.pin` or retry online.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     target_v = self_update.normalize_version(target)
     if pin:
@@ -636,10 +643,10 @@ def _update_container() -> None:
     Rides the ``updates`` channel/pin (RUM-7): the printed
     ``docker compose pull``+``up -d`` carry the resolved image tag —
     ``stable`` -> the moving minor ``:X.Y``, ``beta`` -> ``:beta``, a pin -> the
-    exact ``:X.Y.Z``. A pin naming no release REFUSES (mirrors ``_update_pip``'s
-    pin-miss) rather than pulling ``latest`` behind the user's back.
+    exact ``:X.Y.Z``. A pin naming no release REFUSES and exits 1 (mirrors
+    ``_update_pip``'s pin-miss) rather than pulling ``latest`` behind the user's back.
 
-    Exit code is 0 (see `_update`): the install is healthy and correctly
+    Otherwise the exit code is 0 (see `_update`): the install is healthy and correctly
     configured, and the command did the only thing it can do here — say exactly
     how to become current.
     """
@@ -655,9 +662,12 @@ def _update_container() -> None:
 
     if pin and not image_tag:
         # A pin naming no release must NEVER silently pull the latest image.
-        print("\n⚠️  No release matches the pinned version (offline?).")
-        print(f"   Nothing to pull for pin {pin!r} — check `updates.pin` or retry online.")
-        return
+        print(
+            "\n⚠️  No release matches the pinned version (offline?).\n"
+            f"   Nothing to pull for pin {pin!r} — check `updates.pin` or retry online.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     print("  📦 This is a container install — the image is replaced, not patched.")
     print("  Run these on the host:\n")
@@ -752,11 +762,13 @@ def _update(to: str = "") -> None:
 
     | kind | what happens | exit |
     |---|---|---|
-    | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure or a |
-    |  | fast-forward) + SPA build + editable install | dirty tree blocking it |
+    | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure, no |
+    |  | fast-forward) + SPA build + editable install | release found, or a |
+    |  |  | dirty tree blocking it |
     | pip | resolved installer `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
-    |  | then "restart the gateway" (pip / pipx / uv tool) |  |
-    | container | prints `docker compose pull` + `up -d` | 0 |
+    |  | then "restart the gateway" (pip / pipx / uv tool) | or a pin naming no release |
+    | container | prints `docker compose pull` + `up -d` | 0; 1 on a pin naming no |
+    |  |  | release |
     | desktop | defers to the app's own updater | 0 |
     | *unmapped* | names what it detected and refuses to guess | 1 |
 
