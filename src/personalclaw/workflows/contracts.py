@@ -311,7 +311,7 @@ def coerce_declared_inputs(
       no declaration has no declared type to check;
     * a declared type outside :data:`DECLARED_TYPES` — see its note;
     * ``None`` and ``""`` — this system's own "declared but unset" marker, written by
-      `service._with_declared_defaults` for every optional input with no default. Whether a blank
+      `service.with_declared_defaults` for every optional input with no default. Whether a blank
       value is acceptable is `apply_extraction`'s question, not this one; asking it twice is how
       two checks come to disagree.
     """
@@ -335,6 +335,29 @@ def coerce_declared_inputs(
         else:
             errors.append(f"{key}: expected {declared_type}, got {_describe(value)}")
     return coerced, sorted(errors)
+
+
+def start_problem(spec: dict[str, Any], provided: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """`provided` coerced to its declared types, and why a run of `spec` cannot start with it.
+
+    Returns ``(coerced, problem)``, ``problem`` empty when the run can start. The two checks
+    `service.start_run` makes before it spends anything — every required input given (derived from
+    the tree, not only the declaration) and every input its declared type — as ONE question, so a
+    trigger that starts a workflow asks it when it is SAVED and again when it fires, and hears the
+    same answer the Run button would.
+    """
+    extraction = apply_extraction(
+        resolve_unfilled_inputs(
+            {"inputs": spec.get("inputs") or {}, "root": spec.get("root") or {}}
+        ),
+        {"extracted": dict(provided)},
+    )
+    if not extraction.all_filled:
+        return dict(provided), f"missing required input(s): {', '.join(extraction.missing)}"
+    coerced, errors = coerce_declared_inputs(spec, dict(provided))
+    if errors:
+        return coerced, "input(s) do not match their declared type: " + "; ".join(errors)
+    return coerced, ""
 
 
 # ── the extraction contract (UP-R8) ──

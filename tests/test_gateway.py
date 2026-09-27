@@ -1744,7 +1744,8 @@ class TestInteractiveApprovalSlack:
 
 
 class TestHeartbeatCallback:
-    """Heartbeat task execution callback."""
+    """One HEARTBEAT.md task as the gateway's background turn (`_run_heartbeat_task`), which the
+    `system:heartbeat-tasks` trigger runs the queue through."""
 
     @pytest.mark.asyncio
     async def test_heartbeat_task_success(self):
@@ -1759,14 +1760,7 @@ class TestHeartbeatCallback:
         orch._channel_delivery = _mock_channel_delivery()
         orch._deliver_result = AsyncMock()
 
-        with patch("personalclaw.gateway.HeartbeatService") as mock_hs:
-            mock_hs_inst = MagicMock()
-            mock_hs_inst.start = AsyncMock()
-            mock_hs.return_value = mock_hs_inst
-            await orch._init_heartbeat()
-
-        # Get the on_task callback
-        callback = mock_hs.call_args[1]["on_task"]
+        callback = orch._run_heartbeat_task
 
         with patch(
             "personalclaw.gateway.stream_and_collect",
@@ -1791,13 +1785,7 @@ class TestHeartbeatCallback:
         orch.dashboard_state = None
         orch._deliver_result = AsyncMock()
 
-        with patch("personalclaw.gateway.HeartbeatService") as mock_hs:
-            mock_hs_inst = MagicMock()
-            mock_hs_inst.start = AsyncMock()
-            mock_hs.return_value = mock_hs_inst
-            await orch._init_heartbeat()
-
-        callback = mock_hs.call_args[1]["on_task"]
+        callback = orch._run_heartbeat_task
 
         with patch(
             "personalclaw.gateway.stream_and_collect",
@@ -1828,12 +1816,7 @@ class TestHeartbeatCallback:
         orch.dashboard_state = None
         orch._deliver_result = AsyncMock()
 
-        with patch("personalclaw.gateway.HeartbeatService") as mock_hs:
-            mock_hs_inst = MagicMock()
-            mock_hs_inst.start = AsyncMock()
-            mock_hs.return_value = mock_hs_inst
-            await orch._init_heartbeat()
-        callback = mock_hs.call_args[1]["on_task"]
+        callback = orch._run_heartbeat_task
 
         sent = AsyncMock(return_value="ok")
         with patch("personalclaw.gateway.stream_and_collect", new=sent):
@@ -1855,13 +1838,7 @@ class TestHeartbeatCallback:
         orch.consolidator = MagicMock()
         orch.dashboard_state = None
 
-        with patch("personalclaw.gateway.HeartbeatService") as mock_hs:
-            mock_hs_inst = MagicMock()
-            mock_hs_inst.start = AsyncMock()
-            mock_hs.return_value = mock_hs_inst
-            await orch._init_heartbeat()
-
-        callback = mock_hs.call_args[1]["on_task"]
+        callback = orch._run_heartbeat_task
 
         with patch(
             "personalclaw.gateway.stream_and_collect",

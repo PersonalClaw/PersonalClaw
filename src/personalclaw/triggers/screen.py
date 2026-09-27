@@ -464,6 +464,9 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # whose failure mode is silent (an absent prune is invisible by nature). The frozen grant is
         # decision 7's requirement, and this is the only honest side of the table for it.
         "self-remediation",
+        # The HEARTBEAT.md task queue: every task is an unattended agent turn with its tools, on a
+        # 60-second clock, forever — the strictest side of this table, like `run-prompt`.
+        "heartbeat-tasks",
         # WS-7's morning digest: writes a knowledge item AND notifies, on a cron, forever. It
         # also spends a model call over SCRAPED text, which is the untrusted-input boundary §8
         # fences — the strictest side of this table is the only honest one for it.

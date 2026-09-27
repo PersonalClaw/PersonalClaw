@@ -170,6 +170,75 @@ def enumerate_missed(
     return rows, summary, shown
 
 
+#: Slots one cron trigger's walk visits before its count stops being exact. A cron has no fixed
+#: interval, so its slots are counted by stepping the schedule rather than by one division; a
+#: minutely cron down for a week is 10,080 steps, and past that the review says the count is a
+#: floor (`MissedReview.truncated`) rather than spend the boot walking a year of minutes.
+CRON_WALK_CAP = 10_080
+
+
+def cron_slots(
+    entry: dict[str, Any], *, now: float, cap: int = CRON_WALK_CAP
+) -> tuple[list[float], bool]:
+    """Every slot a cron trigger's schedule owned from its armed fire through `now`, oldest first.
+
+    Returns `(slots, capped)`. The armed fire (`next_fire_at`) is the first slot that did not run,
+    and each next one is `arm.next_fire` from the slot before it — the same computation that armed
+    the trigger, so the trigger's time zone, skip dates and jitter all hold. A cron trigger has no
+    `interval_secs`, which is why `enumerate_missed` saw nothing to walk and a cron schedule's
+    missed runs were never reported.
+
+    Stepped with the row enabled: the question is which slots the schedule owned, and
+    `review_at_boot` has already decided whether this trigger is one whose misses count.
+    """
+    from types import SimpleNamespace
+
+    from personalclaw.triggers.arm import next_fire
+    from personalclaw.triggers.service import to_epoch
+
+    armed = to_epoch(str(entry.get("next_fire_at", "") or ""))
+    if armed <= 0 or armed > now:
+        return [], False
+    view = SimpleNamespace(**{**entry, "enabled": True})
+    slots: list[float] = []
+    slot = armed
+    while slot <= now:
+        if len(slots) >= max(0, cap):
+            return slots, True
+        slots.append(slot)
+        following = next_fire(view, now=slot)
+        if following <= slot:
+            break
+        slot = following
+    return slots, False
+
+
+def enumerate_slots(
+    *,
+    trigger_id: str,
+    slots: list[float],
+    budget: int = ENUMERATION_CAP,
+    review_rows: int = REVIEW_ROWS_PER_TRIGGER,
+) -> tuple[list[MissedSlot], MissedSummary | None, int]:
+    """`enumerate_missed`'s answer for slots already listed (a cron's). Same shape, same rules.
+
+    The newest slots become the review rows and the rest collapse into one summary, and the budget
+    bounds the rows built, never the count.
+    """
+    total = len(slots)
+    if total <= 0:
+        return [], None, 0
+    shown = min(total, max(0, review_rows), max(0, budget))
+    rows = [MissedSlot(trigger_id=trigger_id, scheduled_for=s) for s in slots[total - shown :]]
+    older = total - shown
+    summary = (
+        MissedSummary(trigger_id=trigger_id, count=older, oldest=slots[0], newest=slots[older - 1])
+        if older > 0
+        else None
+    )
+    return rows, summary, shown
+
+
 def missed_inputs(entry: dict[str, Any], *, now: float = 0.0) -> dict[str, Any]:
     """Derive this module's four inputs from a row `Trigger.to_dict()` actually emits (S142).
 
@@ -271,21 +340,41 @@ def review_at_boot(
 
     Inputs come through `missed_inputs`, which is what makes this read the keys the store actually
     writes — see that function for the measured mismatch it closes.
+
+    An interval walks its grid by division; a cron walks its own schedule (`cron_slots`), because a
+    cron has no interval and used to be reported as missing nothing however long the lid was shut.
+    A trigger that is switched off or paused missed nothing: it would not have run. Nor did one
+    whose next fire does the missed one's work (`models.missed_fire_superseded`).
     """
+    from personalclaw.triggers.models import missed_fire_superseded
+
     review = MissedReview()
     remaining = max(0, budget)
     for entry in sorted(triggers, key=lambda t: str(t.get("id", ""))):
         if remaining <= 0:
             review.truncated = True
             break
-        derived = missed_inputs(entry, now=now)
-        rows, summary, spent = enumerate_missed(
-            trigger_id=str(entry.get("id", "") or ""),
-            last_fire_at=derived["last_fire_at"],
-            interval_secs=derived["interval_secs"],
-            now=now,
-            budget=remaining,
-        )
+        if entry.get("enabled") is False or str(entry.get("state") or "active") != "active":
+            continue
+        if missed_fire_superseded(entry.get("workflow")):
+            continue
+        trigger_id = str(entry.get("id", "") or "")
+        spec = entry.get("spec") or {}
+        if str(spec.get("kind") or "").strip().lower() == "cron":
+            slots, capped = cron_slots(entry, now=now)
+            review.truncated = review.truncated or capped
+            rows, summary, spent = enumerate_slots(
+                trigger_id=trigger_id, slots=slots, budget=remaining
+            )
+        else:
+            derived = missed_inputs(entry, now=now)
+            rows, summary, spent = enumerate_missed(
+                trigger_id=trigger_id,
+                last_fire_at=derived["last_fire_at"],
+                interval_secs=derived["interval_secs"],
+                now=now,
+                budget=remaining,
+            )
         review.rows.extend(rows)
         if summary is not None:
             review.summaries.append(summary)
@@ -340,20 +429,33 @@ def late_outcome(outcome: str, *, scheduled_for: float, started_at: float) -> tu
     )
 
 
-def resolve_missed(action: str) -> tuple[str, str]:
+def resolve_missed(action: str, *, kind: str = "missed") -> tuple[str, str]:
     """What a user's decision on a review card records. Returns `(outcome, reason)`.
 
     Both branches write a ledger row. A dismissed card that left no trace
     would be a silent drop with a
     UI on it — §1.3's rule is not about the mechanism, it is about whether the history is honest.
+
+    `kind` is what the card is about: a slot that never ran (`missed`), or a run a restart cut off
+    (`interrupted`, which is reviewed the same way rather than retried on its own — it may already
+    have done part of its work, and running it again is the user's call).
     """
+    interrupted = kind == "interrupted"
     if action == "run_now":
         return (
             Outcome.RAN_LATE.value,
-            "ran from a missed-fire review card, after its scheduled slot",
+            (
+                "ran again from the review card after a restart interrupted it"
+                if interrupted
+                else "ran from a missed-fire review card, after its scheduled slot"
+            ),
         )
     if action == "dismiss":
-        return Outcome.SKIPPED_MISSED.value, "the user dismissed the missed-fire card"
+        return Outcome.SKIPPED_MISSED.value, (
+            "the user dismissed the interrupted-run card"
+            if interrupted
+            else "the user dismissed the missed-fire card"
+        )
     return (
         Outcome.REFUSED.value,
         f"unknown review action {action!r}; expected run_now or dismiss",

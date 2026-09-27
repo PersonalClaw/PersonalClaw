@@ -20,6 +20,14 @@ returns; its real outcome lands in the run's own ledger. Reporting it as plain s
 would make an unverified run look verified — the honesty contract `ActionResult.outcome`
 exists for.
 
+**Its inputs are checked where the trigger is SAVED, and again when it fires.** `config_problem`
+asks the question `service.start_run` asks before it spends anything — the workflow exists, every
+required input is given and every input is its declared type (`contracts.start_problem`) — so a
+trigger that could never start its workflow is refused in the form that authored it rather than
+failing at every fire. A fire checks again, because the workflow can change after the trigger was
+saved, and starts the run with the inputs coerced and the declared defaults applied, as the Run
+button does.
+
 **`on_overlap` is honoured here**, not left to the caller. A per-minute trigger against
 a ten-minute workflow must not stack runs, and the def's declared policy (`skip` by
 default) is the single place that decision belongs. The decision itself lives in
@@ -124,6 +132,23 @@ class RunWorkflowActionProvider(ActionProvider):
                 error=f"workflow {name!r} has no usable spec",
                 stderr="the definition carries no root node",
             )
+        from personalclaw.workflows.contracts import start_problem
+        from personalclaw.workflows.service import with_declared_defaults
+
+        provided = (action_config or {}).get("inputs") or {}
+        if not isinstance(provided, dict):
+            provided = {}
+        coerced, problem = start_problem(spec, provided)
+        if problem:
+            # The workflow changed after this trigger was saved: the same sentence the form gave,
+            # at the fire, and a USER failure — a retry sends the same inputs.
+            return ActionResult(
+                success=False,
+                error=f"workflow {name!r}: {problem}",
+                stderr="the trigger's inputs no longer start this workflow; edit the trigger",
+                failure_class="user",
+            )
+        run_inputs = with_declared_defaults(spec, coerced)
 
         # on_overlap — the def's declared policy, applied before a second run exists. The
         # branch lives in `overlap.decide`, exhaustive over the enum with a raising tail.
@@ -157,7 +182,7 @@ class RunWorkflowActionProvider(ActionProvider):
                         "dry_run": True,
                         "would": action.value,
                         "would_start": name,
-                        "inputs": dict((action_config or {}).get("inputs") or {}),
+                        "inputs": run_inputs,
                     }
                 ),
                 duration_ms=int((time.monotonic() - started) * 1000),
@@ -204,7 +229,7 @@ class RunWorkflowActionProvider(ActionProvider):
                 # not, so a hook-launched run always recorded spec_version=1 regardless of the
                 # def's real version — a refiner run could not be traced to the spec it read.
                 spec_version=int(spec.get("version", 1) or 1),
-                inputs=dict((action_config or {}).get("inputs") or {}),
+                inputs=run_inputs,
                 mode=str((action_config or {}).get("mode", "background") or "background"),
                 project_id=str((action_config or {}).get("project_id", "") or ""),
                 origin=RunOrigin(
@@ -263,6 +288,33 @@ class RunWorkflowActionProvider(ActionProvider):
             stdout=json.dumps({"run_id": run.id, "workflow": name, "started": True}),
             duration_ms=int((time.monotonic() - started) * 1000),
         )
+
+
+async def config_problem(action_config: dict[str, Any] | None) -> str:
+    """Why this action config could not start its workflow, or "" when it could.
+
+    Asked when a trigger is saved (`dashboard/handlers/triggers`). The form's own comment said the
+    run-workflow provider was gone while the registry still registered it, so the action saved
+    with an empty form and failed at fire time with "run-workflow requires a `workflow` name".
+    """
+    config = action_config or {}
+    name = str(config.get("workflow", "") or "").strip()
+    if not name:
+        return "choose the workflow this trigger runs"
+    provided = config.get("inputs") or {}
+    if not isinstance(provided, dict):
+        return "the workflow's inputs must be an object of input names to values"
+    from personalclaw.workflows import defs as defs_mod
+    from personalclaw.workflows.contracts import start_problem
+
+    definition = await _load_def(defs_mod, name)
+    if definition is None:
+        return f"there is no workflow named {name!r}"
+    spec = _spec_of(definition)
+    if not isinstance(spec, dict) or not spec.get("root"):
+        return f"workflow {name!r} has no usable spec"
+    _coerced, problem = start_problem(spec, provided)
+    return f"workflow {name!r}: {problem}" if problem else ""
 
 
 async def _load_def(defs_mod: Any, name: str) -> Any | None:
@@ -327,3 +379,8 @@ async def _launch(run: Any, spec: dict[str, Any]) -> bool:
         logger.exception("run-workflow: supervisor refused to launch run %s", run.id)
         return False
     return True
+
+
+def create_provider(config: dict[str, Any] | None = None) -> "RunWorkflowActionProvider":
+    """The factory the bundled `run-workflow-action` manifest names, like every native action's."""
+    return RunWorkflowActionProvider()

@@ -1701,6 +1701,11 @@ IGNORED: tuple[str, ...] = (
     # honour the decision the code made.
     "trigger-spool.jsonl",
     "trigger-spool-hold.json",
+    # The restart review (`triggers/review.py`): the runs THIS home missed or had interrupted,
+    # waiting for a decision. Restored anywhere else it would offer to run, late, slots the
+    # pre-restore home already decided about — the storm §3.4's "review, don't auto-run" exists to
+    # prevent, arriving by backup. Nothing is lost: the history rows record what happened.
+    "trigger-review.json",
     # The poll cursors of the file, web and view triggers (`file_poll`, `web_poll`,
     # `pull_on_view`). Each module treats a MISSING state as a quiet re-seed — a watch's first
     # look records what it sees and fires nothing, a view binding refreshes on its next render —

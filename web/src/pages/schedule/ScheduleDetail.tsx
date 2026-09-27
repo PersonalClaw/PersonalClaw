@@ -10,7 +10,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type TriggerRunResult } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import {
@@ -326,7 +326,9 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           <ss.icon size={15} style={{ color: ss.tone }} />
           <span className="text-on-surface-var">{job.last_run_ts ? `${ss.label} · ${relPast(job.last_run_ts)}` : 'never run'}</span>
         </div>
-        {job.last_error && <div className="mt-2 rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}><AlertTriangle size={13} className="inline mr-1" />{job.last_error}</div>}
+        {/* Gated like the list row's reason: `last_error` is never cleared by a later success, so
+            an ungated box put last week's failure under "ok · just now". */}
+        {job.last_error && explainsCause(ss) && <div className="mt-2 rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}><AlertTriangle size={13} className="inline mr-1" />{job.last_error}</div>}
         {job.last_result && <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{job.last_result}</Markdown></div>}
       </Section>
 
@@ -436,16 +438,22 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
           )
         })}
       </div>
-      {suppressed.length > 0 && (
-        <TextLink onClick={() => setShowSuppressed((s) => !s)} size="sm" className="mt-1.5"
-          aria-expanded={showSuppressed}>
-          {showSuppressed
-            ? `Hide ${suppressed.length} suppressed`
-            : `Show ${suppressed.length} suppressed`}
-        </TextLink>
-      )}
-      {runs.length < total && (
-        <TextLink onClick={() => setLimit((l) => l + 10)} size="sm" className="mt-1.5">Show more ({total - runs.length} more)</TextLink>
+      {(suppressed.length > 0 || runs.length < total) && (
+        // One row, spaced: side by side the two links read as one ("Show 4 suppressedShow more"),
+        // which a queue passing every minute puts on screen at once.
+        <div className="mt-1.5 flex flex-wrap items-center gap-m">
+          {suppressed.length > 0 && (
+            <TextLink onClick={() => setShowSuppressed((s) => !s)} size="sm"
+              aria-expanded={showSuppressed}>
+              {showSuppressed
+                ? `Hide ${suppressed.length} suppressed`
+                : `Show ${suppressed.length} suppressed`}
+            </TextLink>
+          )}
+          {runs.length < total && (
+            <TextLink onClick={() => setLimit((l) => l + 10)} size="sm">Show more ({total - runs.length} more)</TextLink>
+          )}
+        </div>
       )}
     </Section>
   )

@@ -235,7 +235,7 @@ def _drive(spec: dict[str, Any] | None = None) -> tuple[RunStatus, str, _FakeSub
     """Drive a spec through a REAL `RunController`. Defaults to the REAL bundled template.
 
     Every declared input is supplied. `start_run` fills declared defaults via
-    `_with_declared_defaults` and constructing the run directly skips that, so an omitted
+    `with_declared_defaults` and constructing the run directly skips that, so an omitted
     `exit_condition` would fail every stage on `unresolved reference at 'exit_condition'` — a
     test-construction artifact standing in front of the product behaviour under test.
     """

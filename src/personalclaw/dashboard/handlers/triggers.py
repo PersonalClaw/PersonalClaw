@@ -676,16 +676,47 @@ async def api_triggers(request: web.Request) -> web.Response:
 # ── create ──
 
 
+def _stored_action(state: DashboardState, kind: str, raw: str) -> dict[str, Any]:
+    """The action trigger *raw* runs now as ``{provider, config}``, or empty values."""
+    if kind == _LIFECYCLE:
+        hook = _hook_store(state).get(raw)
+        if hook is None:
+            return {"provider": "", "config": {}}
+        return {"provider": hook.provider, "config": dict(hook.provider_config or {})}
+    row = _trigger_store().get(raw)
+    inline = (row.trigger.workflow or {}).get("inline") if row is not None else None
+    inline = inline if isinstance(inline, dict) else {}
+    config = inline.get("config")
+    return {
+        "provider": str(inline.get("provider") or ""),
+        "config": dict(config) if isinstance(config, dict) else {},
+    }
+
+
 def _stored_action_config(state: DashboardState, kind: str, raw: str) -> dict[str, Any]:
     """The config of the action trigger *raw* runs now, or ``{}`` — what a write is compared to
     when deciding whether it loosens the trigger's approval posture."""
-    if kind == _LIFECYCLE:
-        hook = _hook_store(state).get(raw)
-        return dict(hook.provider_config or {}) if hook is not None else {}
-    row = _trigger_store().get(raw)
-    inline = (row.trigger.workflow or {}).get("inline") if row is not None else None
-    config = inline.get("config") if isinstance(inline, dict) else None
-    return dict(config) if isinstance(config, dict) else {}
+    return dict(_stored_action(state, kind, raw)["config"])
+
+
+async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) -> str:
+    """Why a trigger's action could not run as written, asked when it is SAVED; "" when it could.
+
+    One question for every trigger kind's create and edit, because the form that writes the
+    action is one form. A `run-workflow` action saved with no workflow, or with one its inputs
+    cannot start, failed at every fire instead (`run_workflow_provider.config_problem`). An edit
+    that sends only the config is checked against the provider the trigger already runs.
+    """
+    if not isinstance(action, dict):
+        return ""
+    stored = stored or {}
+    provider = str(action.get("provider") or stored.get("provider") or "")
+    config = action.get("config") if "config" in action else stored.get("config")
+    if provider == "run-workflow":
+        from personalclaw.action_providers.run_workflow_provider import config_problem
+
+        return await config_problem(config if isinstance(config, dict) else {})
+    return ""
 
 
 def _unconsented_action(
@@ -749,6 +780,10 @@ async def api_trigger_create(request: web.Request) -> web.Response:
     )
     if unconsented is not None:
         return unconsented
+
+    problem = await _action_problem(body.get("action"))
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
 
     trigger_type = str(body.get("trigger_type") or "").strip().lower()
     if trigger_type == _LIFECYCLE:
@@ -1049,6 +1084,9 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             if store.get(raw) is None:
                 return web.json_response({"error": "not found"}, status=404)
             store.delete(raw)
+            from personalclaw.triggers import review as _review
+
+            _review.forget(raw, base_dir=store.base_dir)
             _sel().log_api_access(
                 caller=request.get("user", "dashboard"),
                 operation="trigger.delete",
@@ -1081,6 +1119,9 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             await _runs_store().delete_for_job(raw)
         except Exception:
             logger.debug("Failed to delete run history for %s", raw, exc_info=True)
+        from personalclaw.triggers import review as _review
+
+        _review.forget(raw, base_dir=store.base_dir)
         state.push_refresh("crons")
         _sel().log_api_access(
             caller=request.get("user", "dashboard"),
@@ -1107,6 +1148,9 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     )
     if unconsented is not None:
         return unconsented
+    problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
 
     if kind == _LIFECYCLE:
         return await _update_lifecycle(state, raw, body)
@@ -1697,7 +1741,11 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
 
 
 async def _dispatch_store_action(
-    trigger: Any, payload: dict[str, Any], *, event: str = "manual.run"
+    trigger: Any,
+    payload: dict[str, Any],
+    *,
+    event: str = "manual.run",
+    late: str = "",
 ) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry.
 
@@ -1725,6 +1773,9 @@ async def _dispatch_store_action(
     `ran` is returned rather than folded into the note because the caller answers HTTP `ok` with it:
     a run that resolved no provider is not a success, and reporting `ok: true` for it is what let
     this bug hide behind a 200 for a whole release.
+
+    `late` is the review's reason when this run stands in for a slot that did not run (a missed
+    fire, or a run a restart interrupted): the recorded row then says the run was late, and why.
     """
     import time
 
@@ -1762,13 +1813,19 @@ async def _dispatch_store_action(
         payload=payload,
         status_url=status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
     )
+    from personalclaw.triggers.firepath import action_timeout
+
     started = time.time()
     try:
-        result = await provider.execute(action.get("config") or {}, ctx)
+        # The same floor a scheduled fire gets (`firepath.action_timeout`): this passed none, so a
+        # `bash` Run now was cut off at 30s where its scheduled fire had 300s.
+        result = await provider.execute(
+            action.get("config") or {}, ctx, timeout=action_timeout(provider_name)
+        )
     except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
         await _record_manual_run(trigger, started=started, exc=exc)
         return False, f"failed: {type(exc).__name__}: {exc}"
-    await _record_manual_run(trigger, started=started, result=result)
+    await _record_manual_run(trigger, started=started, result=result, late=late)
     if result is not None and not bool(getattr(result, "success", True)):
         note = str(getattr(result, "error", "") or "") or "the action reported failure"
         return False, f"failed: {note}"
@@ -1776,7 +1833,12 @@ async def _dispatch_store_action(
 
 
 async def _record_manual_run(
-    trigger: Any, *, started: float, result: Any = None, exc: BaseException | None = None
+    trigger: Any,
+    *,
+    started: float,
+    result: Any = None,
+    exc: BaseException | None = None,
+    late: str = "",
 ) -> None:
     """Append a MANUAL run record and advance the trigger's last-run stamp (#308).
 
@@ -1812,7 +1874,7 @@ async def _record_manual_run(
         import time
         from datetime import datetime, timezone
 
-        from personalclaw.schedule_history import ScheduleRun
+        from personalclaw.schedule_history import ScheduleRun, status_for_result
 
         trigger_id = str(getattr(trigger, "id", "") or "")
         if not trigger_id:
@@ -1827,21 +1889,20 @@ async def _record_manual_run(
             status = "failure"
             error = str(getattr(result, "error", "") or "") or "the action reported failure"
             summary = error
-        elif result is not None and str(getattr(result, "outcome", "") or "") in (
-            "launched",
-            "queued",
-        ):
-            # T7: the action only STARTED background work; its real outcome is its OWN run's, so the
-            # honest status is "launched", not "success" — matching `_record_fire_outcome`.
-            # `queued` is the weaker sibling (WV-14): a durable run record exists but nothing has
-            # begun, and both map to `Outcome.DEFERRED` with distinct reasons.
-            status = str(getattr(result, "outcome", "") or "")
-            error = ""
-            summary = str(getattr(result, "stdout", "") or "")
         else:
-            status = "success"
+            # What the action reported, the same answer `_record_fire_outcome` records for a fire
+            # (`status_for_result`): T7's `launched` when it only STARTED background work whose
+            # real outcome is its OWN run's, `queued` (WV-14) when it is held behind a run in
+            # flight, and the inert `skipped_noop` when it had nothing to do.
+            status = status_for_result(result)
+            # A run standing in for a slot that did not run (the review's Run now) finished late,
+            # and the row says so: `missed.resolve_missed` names the outcome and the reason.
+            if late and status == "success":
+                status = "ran_late"
             error = ""
             summary = str(getattr(result, "stdout", "") or "") if result is not None else ""
+        if late and status != "failure":
+            summary = f"{late[:1].upper()}{late[1:]}." + (f" {summary}" if summary else "")
 
         run_id = f"manual-{int(finished * 1000)}"
         # The same store the autonomous recorder appends to; `append_sync` credential-redacts
@@ -2380,6 +2441,95 @@ async def api_trigger_history_all(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def api_trigger_review(request: web.Request) -> web.Response:
+    """GET / POST /api/triggers/review — what a restart left for you to decide (§3.4).
+
+    GET lists the cards `triggers/review.py` keeps: each automation's missed runs, and each run a
+    restart interrupted. POST ``{trigger_id, kind, action}`` decides one: ``run_now`` runs the
+    trigger's action now through the same dispatch as its Run button and records the run as late;
+    ``dismiss`` records ``skipped_missed``. Both go through `missed.resolve_missed`, which names the
+    outcome and the reason, so the decision is a row in the trigger's history either way.
+    """
+    from personalclaw.triggers import review as _review
+    from personalclaw.triggers import service as _service
+    from personalclaw.triggers import tools as T
+    from personalclaw.triggers.missed import resolve_missed
+
+    state: DashboardState = request.app["state"]
+    store = _trigger_store()
+    if request.method == "GET":
+        cards = []
+        for card in _review.pending(base_dir=store.base_dir):
+            row = store.get(card.trigger_id)
+            if row is None:
+                # The automation was deleted after the boot that found this; nothing to decide.
+                _review.forget(card.trigger_id, base_dir=store.base_dir)
+                continue
+            prefix = _SCHEDULE if row.trigger.kind == "clock" else _STORE
+            cards.append(
+                {
+                    **card.to_dict(),
+                    "name": _redact(row.trigger.name or card.trigger_id),
+                    "open_id": f"{prefix}:{card.trigger_id}",
+                }
+            )
+        return web.json_response({"cards": cards})
+
+    body = await json_object_body(request)
+    trigger_id = str(body.get("trigger_id") or "").strip()
+    kind = str(body.get("kind") or "").strip()
+    action = str(body.get("action") or "").strip()
+    if not trigger_id or kind not in _review.KINDS or action not in ("run_now", "dismiss"):
+        return json_error(
+            "invalid_request",
+            message=(
+                "send {trigger_id, kind, action}: kind is 'missed' or 'interrupted', and action is "
+                "'run_now' or 'dismiss'"
+            ),
+            status=400,
+        )
+    row = store.get(trigger_id)
+    if row is None:
+        _review.forget(trigger_id, base_dir=store.base_dir)
+        return json_error("not_found", message=f"no automation {trigger_id!r}", status=404)
+    if action == "run_now":
+        # The kill switch holds a Run now exactly as it holds the Run button — and before the card
+        # is taken, so a refused run leaves the decision still waiting for you.
+        refusal = T.manual_refusal()
+        if refusal:
+            return web.json_response({"ok": False, "refused": refusal})
+        from personalclaw.triggers import claims as _claims
+
+        # And so does a run already in flight, the Run button's 409: a second run beside it is the
+        # overlap the trigger's own policy refuses.
+        if _claims.is_running(trigger_id, base_dir=store.base_dir):
+            return web.json_response(
+                {"ok": False, "refused": "it is running now; decide once this run finishes"}
+            )
+    taken = _review.take(trigger_id, kind, base_dir=store.base_dir)
+    if taken is None:
+        return json_error(
+            "not_found",
+            message=f"nothing is waiting for a decision on {trigger_id!r} ({kind})",
+            status=404,
+        )
+    outcome, reason = resolve_missed(action, kind=kind)
+    if action == "dismiss":
+        await _service.record_dismissal(trigger_id, outcome, reason, base_dir=store.base_dir)
+        state.push_refresh("crons")
+        return web.json_response({"ok": True, "outcome": outcome, "reason": reason})
+    ran, note = await _dispatch_store_action(
+        row.trigger,
+        {"trigger_id": trigger_id, "manual": True, "review": kind, "scheduled_for": taken.latest},
+        event="review.run_now",
+        late=reason,
+    )
+    state.push_refresh("crons")
+    return web.json_response(
+        {"ok": ran, "outcome": outcome if ran else "failed", "reason": reason, "result": note}
+    )
+
+
 def register_trigger_routes(app: web.Application) -> None:
     """Register /api/triggers/* — the unified Trigger surface."""
     app.router.add_get("/api/triggers", api_triggers)
@@ -2393,6 +2543,9 @@ def register_trigger_routes(app: web.Application) -> None:
     # The `view` kind's render caller (WF2AUT-6). Literal path, registered BEFORE `/{id}` for the
     # same S67 reason as `/week` and `/doctor` — otherwise aiohttp captures `view` as a trigger id.
     app.router.add_post("/api/triggers/view/render", api_trigger_view_render)
+    # The restart review (§3.4). Literal path, registered BEFORE `/{id}` for the same reason.
+    app.router.add_get("/api/triggers/review", api_trigger_review)
+    app.router.add_post("/api/triggers/review", api_trigger_review)
     app.router.add_put("/api/triggers/{id}", api_trigger_detail)
     app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
     app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)

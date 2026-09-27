@@ -100,18 +100,32 @@ Each terminalized run gets three writes, and all three are surfaces you read: th
 (so the next fire is not suppressed by an overlap gate that thinks the old run is still going), a
 **terminal run row** is written (so the history shows an ending), and the trigger's health is marked.
 
+This covers the runs the schedule starts. A run you start by hand with **Run now** holds no claim,
+so a restart that cuts one off leaves no row and no card.
+
+An interrupted run is **not run again on its own**, because it may already have done part of its
+work. It waits for you instead, with the slots a stopped PersonalClaw missed: the Triggers page
+lists both under **Waiting for you after a restart**, and each card offers **Run now** (once,
+however many slots it covers, recorded as late) and **Dismiss** (recorded as your decision). An
+automation with catch-up enabled gets no card: it fires once, staggered, on its own.
+
 | | |
 |---|---|
-| **Checked on** | the **run history** (the run has a terminal `timeout` status, with a reason naming the restart) and the Schedule row (it stops rendering as in flight) |
-| **The status** | `timeout` — deliberately inside the existing four-member status vocabulary |
+| **Checked on** | the **run history** (the run has a terminal `interrupted` status, labelled "interrupted by a restart", with a reason naming the restart), the Schedule row (it stops rendering as in flight), and the review card at the top of the **Triggers** page |
+| **The status** | `interrupted` — its own word, because the run did not blow a deadline |
 
-- `src/personalclaw/triggers/reaper.py:231` — `terminalize_orphans_sync`, the boot pass.
-- `src/personalclaw/triggers/reaper.py:256` — the three writes, and why a terminalized run reuses
-  `timeout` rather than adding a fifth status: the frontend switches on that closed vocabulary, and
-  an unknown value would render as "never run" grey. The interrupted-by-restart distinction rides in
-  the run's `error` text, which both the Last-run block and the history already render.
-- `src/personalclaw/triggers/reaper.py:83` — `RESTART_INTERRUPTED_STATUS = "timeout"`, that choice as
-  one named constant.
+- `src/personalclaw/triggers/reaper.py:231` — `terminalize_orphans_sync`, the boot pass, and its
+  three writes.
+- `src/personalclaw/triggers/reaper.py:83` — `RESTART_INTERRUPTED_STATUS = "interrupted"`. The
+  frontend renders it (`web/src/pages/schedule/scheduleMeta.ts:138`), and
+  `web/src/pages/triggers/triggerStatusVocabulary.test.ts` fails if a run status the backend can
+  record has no rendering there.
+- `src/personalclaw/triggers/review.py:191` — `cards_from_orphans`, the interrupted run's card, and
+  `review.py:151` — `cards_from_boot`, the missed slots' card (`missed.review_at_boot` walks a cron's
+  schedule as well as an interval's grid).
+- `src/personalclaw/dashboard/handlers/triggers.py:2639` — `api_trigger_review`, the cards and the
+  decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:427`,
+  `resolve_missed`.
 
 ---
 
@@ -155,19 +169,22 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
    - The grey comes from `web/src/pages/schedule/scheduleMeta.ts:93`; green is reserved to
      `scheduleMeta.ts:67`.
 
-4. **Kill the gateway mid-run and restart it — guarantee 3.** Remove the quiet-hours window and point
-   the action at something slow (`sleep 300`). Press **Run now**, confirm the row is in flight, then
-   kill the gateway **without** letting it shut down cleanly:
+4. **Kill the gateway mid-run and restart it — guarantee 3.** Remove the quiet-hours window, point
+   the action at something slow (`sleep 300`), and set it to run every minute. Wait for the schedule
+   to start it (not **Run now**: a run you start by hand is not covered, see guarantee 3), confirm
+   the row is in flight, then kill the gateway **without** letting it shut down cleanly:
 
    ```bash
    kill -9 "$(pgrep -f 'personalclaw gateway' | head -1)"
    ```
 
    Start it again.
-   - **Expected:** at boot the run is terminalized — the history shows a terminal `timeout` row whose
-     reason says it was interrupted by a gateway restart and how long it ran, and the automation is
-     no longer rendered as running. It does **not** wait out a 30-minute deadline first, because the
-     owning pid is provably gone.
+   - **Expected:** at boot the run is terminalized — the history shows a terminal row labelled
+     *interrupted by a restart* whose reason says it was interrupted by a gateway restart and how
+     long it ran, and the automation is no longer rendered as running. It does **not** wait out a
+     30-minute deadline first, because the owning pid is provably gone. It is not run again: the top
+     of the **Triggers** page shows it under *Waiting for you after a restart*, with **Run now** and
+     **Dismiss**.
    - **The guarantee broken would look like:** a row stuck at *running* indefinitely, with the next
      scheduled fire silently suppressed by an overlap gate waiting on a run that ended when you
      killed the process.

@@ -781,6 +781,21 @@ async def persist_suppression(row: dict[str, Any], *, now: float, base_dir: Any 
         logger.debug("could not persist the suppression row for %s", row.get("trigger_id"))
 
 
+async def record_dismissal(
+    trigger_id: str, outcome: str, reason: str, *, now: float = 0.0, base_dir: Any = None
+) -> None:
+    """Persist a dismissed review card as the typed row `missed.resolve_missed` names (§3.4).
+
+    `skipped_missed` is a suppression — nothing ran — so it takes the suppression row's shape and
+    store: a dismissed card that left no trace would be a silent drop with a UI on it.
+    """
+    await persist_suppression(
+        {"outcome": outcome, "trigger_id": trigger_id, "reason": reason},
+        now=now or time.time(),
+        base_dir=base_dir,
+    )
+
+
 async def _fires_in_window(trigger: Any, *, now: float, base_dir: Any = None) -> int | None:
     """Fires recorded in the last hour, or None when the ledger could not be read (S152).
 
