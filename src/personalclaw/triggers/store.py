@@ -488,14 +488,21 @@ RUNTIME_FIELDS: tuple[str, ...] = (
 
 
 def trigger_name(trigger_id: str) -> str:
-    """What a stored trigger is called, for a sentence that names it — ``""`` when it is not there.
+    """What a trigger is called, for a sentence that names it — ``""`` when it is not there.
 
-    Best-effort by design: the callers name a trigger in prose that is true without the name too
-    ("A trigger asked to run …"), so an unreadable store costs the name and nothing else.
+    A stored trigger, or a lifecycle hook, which an action it runs names as ``lifecycle:<id>``
+    (``hooks.LIFECYCLE_TRIGGER_PREFIX``). Best-effort by design: the callers name a trigger in
+    prose that is true without the name too ("A trigger asked to run …"), so an unreadable store
+    costs the name and nothing else.
     """
     if not trigger_id:
         return ""
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX, ScriptHookStore
+
     try:
+        if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
+            hook = ScriptHookStore().get(trigger_id.removeprefix(LIFECYCLE_TRIGGER_PREFIX))
+            return str(hook.name or "") if hook is not None else ""
         row = TriggerStore().get(trigger_id)
     except Exception:  # noqa: BLE001 - see the docstring
         logger.debug("could not read the name of trigger %s", trigger_id, exc_info=True)

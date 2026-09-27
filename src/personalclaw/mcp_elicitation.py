@@ -101,6 +101,15 @@ URL_MODE_UNSUPPORTED_MESSAGE = (
     "client does not do."
 )
 
+#: Refusal for a server whose grant was taken back after it connected. The grant is advertised
+#: at the connection's handshake, but it is the owner's setting as it is NOW that decides each
+#: question: a connection outlives a Settings change (until it idles out or the gateway restarts),
+#: so a revoked server kept asking (`approval_grants`, rule 1).
+NOT_GRANTED_MESSAGE = (
+    "This server is no longer allowed to ask the PersonalClaw user questions: its grant was "
+    "turned off on PersonalClaw's Tools page."
+)
+
 
 def elicitation_granted(server: str) -> bool:
     """Whether the user has granted ``server`` the right to ask them questions.
@@ -185,6 +194,10 @@ async def _handle_elicitation(server: str, params: Any) -> Any:
     from mcp import types as mcp_types
 
     try:
+        # The grant as it is now, before anything else: the connection's handshake read it once.
+        if not elicitation_granted(server):
+            logger.info("MCP server %r asked a question after its grant was revoked", server)
+            return mcp_types.ErrorData(code=mcp_types.INVALID_REQUEST, message=NOT_GRANTED_MESSAGE)
         message = str(getattr(params, "message", "") or "")
         # `url` mode is refused before anything else, and before the user is troubled.
         if str(getattr(params, "mode", "form") or "form") != "form":

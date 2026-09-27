@@ -7,9 +7,12 @@ reports the countdown, and (c) config-driven YOLO is permanent.
 
 from __future__ import annotations
 
+import json
 import time
 
 from chat_test_helpers import _make_state
+
+import personalclaw.config.loader as loader
 
 
 def test_yolo_active_then_expires(tmp_path, monkeypatch):
@@ -32,6 +35,9 @@ def test_yolo_active_then_expires(tmp_path, monkeypatch):
 
 
 def test_config_yolo_is_permanent(tmp_path, monkeypatch):
+    # Config YOLO stands while the config says it (`trust_mode.is_active` reads it back).
+    path = loader.config_dir() / "config.json"
+    path.write_text(json.dumps({"agent": {"yolo": True}}))
     state = _make_state(tmp_path)
     base = 1000.0
     monkeypatch.setattr(time, "monotonic", lambda: base)

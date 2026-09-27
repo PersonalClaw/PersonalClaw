@@ -47,6 +47,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **A check gate that fails ends what follows it, a revise closes the question it answered, every queued edit applies, and four surfaces say what happened.**
+- **A workflow's approval gate waits your approval window, a retry a grant ran settles its note, and a lifecycle hook's agent knows its trigger.**
 - **An Embedding rebind or clear reaches every memory store at its next use, and memory never compares one embedding model's vectors with another's.**
 - **The status chip says "Choose a model" when no model is chosen, not "12 degraded".**
 - **The chat list answers at once on a 12,005-chat history, the search index catches up in two minutes instead of five hours, and a search says when it has not looked in every chat.**
@@ -222,6 +223,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **The operator ceiling bounds every approval grant: under `"approval": "ask"` nothing runs without a person, whatever an automation, an agent or a switch says.**
+- **A read-only run's write tools stay refused while a grant approves its calls.**
+- **An approval follows your setting as it is now: a change in Settings reaches the next call, even in a run already going, with no restart.**
+- **A tool call's audit row says what was decided, and by whom, in every runtime.**
 - **The hourly backup exports your prompt override alone, not every file in your home with it.**
 - **What an agent writes no longer runs as you until you allow it: its webhook callbacks, its heartbeat tasks and the agent CLI's hooks.**
 

@@ -10,7 +10,8 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
@@ -366,14 +367,43 @@ class HooksConfig:
 
 
 class HookManager:
-    """Process messages and tool calls through config-driven rules."""
+    """Process messages and tool calls through config-driven rules.
 
-    def __init__(self, config: HooksConfig | None = None):
-        self._config = config or HooksConfig()
+    Built with a fixed ``config``, it keeps that one (a test's, a room's). Built with a ``source``
+    (:func:`live_hook_manager`, which the gateway uses), it reads the hook settings as they are at
+    each decision, so an auto-approve pattern the owner removed stops approving and a deny they
+    added applies to the next call. It was built once at startup and its ``reload`` had no caller,
+    so neither did, until a restart (`approval_grants`, rule 1).
+    """
 
-    def reload(self, config: HooksConfig) -> None:
-        """Hot-reload hooks config."""
-        self._config = config
+    def __init__(
+        self,
+        config: HooksConfig | None = None,
+        *,
+        source: Callable[[], HooksConfig] | None = None,
+    ):
+        self._fixed = config or HooksConfig()
+        self._source = source
+        self._last_read = self._fixed
+
+    @property
+    def _config(self) -> HooksConfig:
+        if self._source is None:
+            return self._fixed
+        try:
+            self._last_read = self._source()
+        except Exception:  # noqa: BLE001 - see below
+            # A hook value that does not parse. The denies the settings last held still deny;
+            # nothing they granted is granted, so every call a grant would have approved asks.
+            logger.warning("hook settings did not parse; auto-approving nothing", exc_info=True)
+            return replace(
+                self._last_read,
+                auto_approve_tools=[],
+                auto_approve_sources=[],
+                auto_approve_subagent_spawn=False,
+                auto_approve_subagent_tools=False,
+            )
+        return self._last_read
 
     @property
     def auto_approve_subagent_spawn(self) -> bool:
@@ -496,6 +526,13 @@ class HookManager:
             return ToolHookResult.auto_approve()
 
         return ToolHookResult.allow()
+
+
+def live_hook_manager() -> HookManager:
+    """The hook manager the gateway runs on: it reads ``config.hooks`` at every decision."""
+    from personalclaw.approval_grants import hooks_now
+
+    return HookManager(source=hooks_now)
 
 
 # Display prefixes that the ACP agent adds to tool titles
@@ -832,7 +869,16 @@ async def run_script_hook(
             error=refusal,
         )
 
-    ctx = ActionContext(event=hook.event, context=context, payload=hook_event)
+    # The hook is the trigger that ran this action, as a stored trigger's dispatch says it is
+    # (#3716): an agent it starts lists its approvals under the hook, and a call nobody answered
+    # leaves a note that opens it. Addressed the way the Triggers page lists it, so it cannot be
+    # mistaken for a stored trigger's id.
+    ctx = ActionContext(
+        event=hook.event,
+        context=context,
+        payload=hook_event,
+        trigger_id=f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}",
+    )
     # Incident kill switch: a script hook's ACTION is an automated
     # side-effect (bash/webhook/spawn), so it is suspended during an incident even
     # if its triggering event occurred in an interactive turn — the chat STREAM
@@ -979,6 +1025,11 @@ async def run_script_hook(
 # ── Script Hook Store (persistence) ──
 
 _HOOKS_FILE = "hooks.json"
+
+
+#: How a lifecycle hook is named as a trigger: the Triggers page lists one as ``lifecycle:<id>``,
+#: and an action a hook runs carries that id (``ActionContext.trigger_id``).
+LIFECYCLE_TRIGGER_PREFIX = "lifecycle:"
 
 
 class ScriptHookStore:

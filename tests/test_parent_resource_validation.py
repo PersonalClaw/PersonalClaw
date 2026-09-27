@@ -75,6 +75,7 @@ def _json_payload(obj: dict[str, Any]):
             "api_def_version_diff",
             "/api/workflows/qa-parent-does-not-exist-2940/versions/diff?a=1&b=2",
         ),
+        ("api_def_version_detail", "/api/workflows/qa-parent-does-not-exist-2940/versions/1"),
     ],
 )
 async def test_workflow_subresource_reads_404_for_unknown_definition(handler_name, path):
@@ -84,7 +85,7 @@ async def test_workflow_subresource_reads_404_for_unknown_definition(handler_nam
         _request(
             "GET",
             path,
-            match_info={"name": "qa-parent-does-not-exist-2940"},
+            match_info={"name": "qa-parent-does-not-exist-2940", "version": "1"},
         )
     )
 

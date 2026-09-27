@@ -18,10 +18,11 @@ from personalclaw.llm.base import (
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
     EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
     LLMEvent,
     ModelProvider,
 )
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, unasked_outcome, unasked_reason
 from personalclaw.sel import sel as _sel
 
 _PROMPT_BUSY_RETRIES = 2
@@ -102,6 +103,9 @@ async def stream_and_collect(
 
     for attempt in range(_PROMPT_BUSY_RETRIES + 1):
         result_text = ""
+        # The calls that were ASKED about: each is audited where it is answered
+        # (`_resolve_permission`), every other call once, at its result.
+        asked: set[str] = set()
         if on_substitution is not None:
             announce_failover = getattr(provider, "announce_failover", None)
             if callable(announce_failover):
@@ -116,24 +120,35 @@ async def stream_and_collect(
                     if on_substitution is not None:
                         on_substitution(event.text)
                 elif event.kind == EVENT_PERMISSION_REQUEST:
+                    asked.add(str(event.tool_call_id or ""))
                     approved = await _resolve_permission(
                         provider, event, approval_policy, hooks, on_tool_approval
                     )
                     if not approved:
                         continue
                 elif event.kind == EVENT_TOOL_CALL:
-                    # Fire PreToolUse hooks for auto-approved tools (informational only)
+                    # The card of a call being made, before any gate has run (the native loop
+                    # checks its deny-list, task mode and approval only after yielding it), so it
+                    # is not audited here: this row said `auto_approved` for every call, a refused
+                    # one included. PreToolUse hooks fire, informational only.
+                    await fire_tool_hooks(
+                        get_global_hook_store(),
+                        event.title,
+                        event.tool_input,
+                    )
+                elif event.kind == EVENT_TOOL_RESULT and str(event.tool_call_id or "") not in asked:
+                    # A call nobody was asked about: its one audit row, from what the runtime
+                    # stamped on its result (`llm.events.unasked_outcome`).
+                    meta = event.tool_meta or {}
+                    decided_by = unasked_reason(meta)
                     _sel().log_tool_invocation(
                         session_key="",
                         source="llm_helpers",
                         tool_name=event.title,
                         tool_kind=event.tool_kind,
-                        outcome="auto_approved",
-                    )
-                    await fire_tool_hooks(
-                        get_global_hook_store(),
-                        event.title,
-                        event.tool_input,
+                        outcome=unasked_outcome(meta),
+                        request_id=str(event.tool_call_id or ""),
+                        metadata={"reason": decided_by, "decided_by": decided_by},
                     )
                 elif event.kind == EVENT_COMPLETE:
                     if on_complete is not None:
@@ -196,7 +211,14 @@ async def _resolve_permission(
     session_key: str = "",
     agent: str = "",
 ) -> bool:
-    """Resolve a tool permission request. Returns True if approved."""
+    """Resolve a tool permission request. Returns True if approved.
+
+    Each decision is audited once, here, saying who decided it (``decided_by``). Both ways this
+    approves without asking — a hook's auto-approve verdict and the run's own policy — are grants,
+    so the operator ceiling bounds them (`approval_grants`, rule 2): under ``approval: ask`` a
+    call with nobody to ask is declined, whatever policy the caller passed.
+    """
+    from personalclaw import approval_grants
     from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY
     from personalclaw.sel import sel
 
@@ -211,33 +233,69 @@ async def _resolve_permission(
             **extra,
         )
 
+    title = str(event.title or "")[:80]
+    caller = session_key or "background"
     if policy == ToolApprovalPolicy.REJECT_ALL:
         await provider.reject_tool(event.request_id)
-        _log("rejected", metadata={"reason": "reject_all_policy"})
+        _log(
+            "rejected", metadata={"reason": "reject_all_policy", "decided_by": "reject_all_policy"}
+        )
         return False
 
     if policy == ToolApprovalPolicy.HOOK_BASED and hooks:
         tool_result = hooks.on_tool_call(event.title)
         if tool_result.action == TOOL_DENY:
             await provider.reject_tool(event.request_id)
-            _log("denied", error=tool_result.reason)
+            _log("denied", error=tool_result.reason, metadata={"decided_by": "hook_deny"})
             return False
-        if tool_result.action == TOOL_AUTO_APPROVE:
+        if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands(
+            approval_grants.HOOK_PATTERN,
+            caller=caller,
+            subject=title,
+            level=approval_grants.LEVEL_HOOK,
+        ):
             await provider.approve_tool(event.request_id)
-            _log("auto_approved", metadata={"reason": "hook_auto_approve"})
+            _log(
+                "auto_approved",
+                metadata={
+                    "reason": "hook_auto_approve",
+                    "decided_by": approval_grants.HOOK_PATTERN,
+                },
+            )
             return True
 
     # Interactive approval if callback provided
     if on_tool_approval:
         approved = await on_tool_approval(event)
+        # A callback that says who decided (the gateway relay's `ToolDecision`) is recorded as
+        # saying so. A plain bool does not: a room's gate answers for the member's own tier as
+        # well as for the person it asks, so the row does not guess which.
+        by = str(getattr(approved, "decided_by", "") or "")
+        decided = {"decided_by": by} if by else {}
         if not approved:
             await provider.reject_tool(event.request_id)
-            _log("rejected", metadata={"reason": "interactive_rejected"})
+            _log("rejected", metadata={"reason": "interactive_rejected", **decided})
             return False
+        await provider.approve_tool(event.request_id)
+        _log("approved", metadata={"reason": "interactive", **decided})
+        return True
 
-    # Default: auto-approve
+    # Nobody to ask: the run's own policy approves (AUTO_APPROVE, or HOOK_BASED for a call no hook
+    # named). A grant like any other, so an `ask` ceiling declines the call instead.
+    if not approval_grants.stands(
+        approval_grants.SESSION_POLICY, caller=caller, subject=f"policy={policy.value},{title}"
+    ):
+        await provider.reject_tool(event.request_id)
+        _log(
+            "rejected",
+            metadata={"reason": "refused_by_ceiling", "decided_by": approval_grants.NOBODY},
+        )
+        return False
     await provider.approve_tool(event.request_id)
-    _log("auto_approved")
+    _log(
+        "auto_approved",
+        metadata={"reason": policy.value, "decided_by": approval_grants.SESSION_POLICY},
+    )
     return True
 
 

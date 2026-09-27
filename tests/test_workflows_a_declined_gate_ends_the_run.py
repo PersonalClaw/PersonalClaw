@@ -221,20 +221,21 @@ async def test_a_decline_stops_what_needs_it_in_a_parallel() -> None:
 
 
 async def test_an_approval_nobody_gave_runs_nothing_after_it_and_fails_the_run() -> None:
-    """Silence is not consent. A background gate waits 45 s; past that, what follows it must not
-    run, and the run says how long it waited — loud (`failed`), because nobody chose this."""
+    """Silence is not consent. A gate waits the owner's approval window (two hours unless they
+    chose otherwise); past that, what follows it must not run, and the run says how long it
+    waited — loud (`failed`), because nobody chose this."""
     clock = _Clock()
     c = await _parked(_spec(_transform("draft"), _gate(), _transform("publish")), clock=clock)
-    clock.t += 46
+    clock.t += 2 * 3600 + 1
     c.wake()
     await _ended(c)
     assert "publish" not in _started(c.run.id), "a step after an unanswered approval ran"
     assert c.run.status == RunStatus.FAILED
     assert c.run.error_message == (
-        "“approve” was not approved: no answer within 45 seconds, so nothing after it ran."
+        "“approve” was not approved: no answer within 2 hours, so nothing after it ran."
     )
     gate = c.instances["root.children[1]"]
-    assert gate.failure is not None and gate.failure.cause_plain == "no answer within 45 seconds"
+    assert gate.failure is not None and gate.failure.cause_plain == "no answer within 2 hours"
     assert c.instances["root.children[2]"].degraded_reason == "not run: “approve” was not approved"
 
 

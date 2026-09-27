@@ -972,6 +972,11 @@ def test_the_rail_reds_on_a_test_phone_home_host(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(egress, "_CORE", fake_core)
     monkeypatch.setattr(egress, "_WEB", fake_web)
     monkeypatch.setattr(egress, "_ROOT", tmp_path)
+    # The fake core ships no DATA records (no bundled-chat sign-off, no source recipes), so the
+    # rail's record half reads none. That half, and its own "the sign-off must parse" floor, are
+    # exercised against the real tree by `test_network_egress_hosts` itself; reading the real
+    # records here would judge a tree this test did not build.
+    monkeypatch.setattr(egress, "_record_fetches", dict)
     egress.test_every_egress_host_is_a_declared_destination()
 
     (fake_core / "phone_home.py").write_text(

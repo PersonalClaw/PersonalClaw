@@ -63,11 +63,21 @@ EXTRA_DATAS: tuple[tuple[str, str], ...] = (("web/dist", f"{PACKAGE}/static/dist
 #: `tests/test_backend_bundle_manifest.py`.
 FORWARD_DECLARED_GLOBS: frozenset[str] = frozenset({"trusted_keys/*.pub"})
 
-#: Files under the package tree that are documentation for a forward-declared glob rather
-#: than a runtime asset, so they are deliberately not shipped. Kept as narrow as the
-#: exemption above: this is authoring prose for the empty trust store, read by a
-#: contributor adding a key, never by the product.
-UNSHIPPED_DOCS: frozenset[str] = frozenset({"trusted_keys/README.md"})
+#: Files under the package tree that are deliberately NOT shipped, each with the reason. Kept as
+#: narrow as the exemption above: every entry is read by a contributor or by dev tooling and never
+#: by the product, and `tests/test_backend_bundle_manifest.py` pins the set by value, so adding one
+#: is a visible edit there.
+UNSHIPPED_FILES: dict[str, str] = {
+    "trusted_keys/README.md": (
+        "authoring prose for the empty trust store, read by a contributor adding a key"
+    ),
+    "sdk/signatures.json": (
+        "the reviewed snapshot of the published SDK surface: scripts/sdk_signature_snapshot.py "
+        "writes it, and tests/test_sdk_signature_snapshot.py and scripts/apps_sdk_contract.py "
+        "compare against it. It sits beside the SDK because scripts/ci_touches_sdk.py runs the "
+        "apps' contract check on any change under sdk/, and nothing in the product reads it"
+    ),
+}
 
 
 def repo_root() -> Path:
@@ -168,7 +178,7 @@ def undeclared_package_files(root: Path | None = None) -> list[str]:
     finding in the 2026-09-23 set took: the file was in the checkout, the suite read it
     from the checkout, and the artefact did not have it. Python sources are excluded because
     PyInstaller carries them as MODULES and setuptools carries them implicitly;
-    :data:`UNSHIPPED_DOCS` is excluded by name.
+    :data:`UNSHIPPED_FILES` is excluded by name.
     """
     root = root or repo_root()
     declared = {src for src, _ in package_data_datas(root)}
@@ -181,7 +191,7 @@ def undeclared_package_files(root: Path | None = None) -> list[str]:
             rel = path.relative_to(root).as_posix()
             if rel in declared or name.endswith((".py", ".pyc", ".pyi")):
                 continue
-            if path.relative_to(tree).as_posix() in UNSHIPPED_DOCS:
+            if path.relative_to(tree).as_posix() in UNSHIPPED_FILES:
                 continue
             out.append(rel)
     return sorted(out)

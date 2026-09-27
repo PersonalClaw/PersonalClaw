@@ -31,9 +31,10 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from personalclaw import gateway_base, notification_kinds, shutdown_event
+from personalclaw import approval_grants, gateway_base, notification_kinds, shutdown_event
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
+from personalclaw.approval_grants import ToolDecision
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
@@ -71,7 +72,7 @@ from personalclaw.heartbeat import (
     strip_keep_sentinel,
 )
 from personalclaw.history import ConversationLog, HistoryConsolidator
-from personalclaw.hooks import HookManager, HooksConfig
+from personalclaw.hooks import live_hook_manager
 from personalclaw.llm.base import LLMEvent
 from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
@@ -87,6 +88,7 @@ from personalclaw.skills import SkillsLoader
 from personalclaw.subagent import (
     INJECTION_TIMEOUT,
     SubagentInfo,
+    SubagentLimits,
     SubagentManager,
     ToolApprovalCallback,
     approval_subagent_id,
@@ -337,13 +339,30 @@ def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
     Behaviour-preserving where it matters: an announce that calls no tool is unaffected, and under
     HOOK_BASED the security hooks still auto-approve hook-neutral tools; only the dangerous tools
     those hooks already deny elsewhere are now gated on an unattended announce turn.
+
+    The interactive parent's AUTO_APPROVE is a grant like any other (`approval_grants`), which the
+    operator ceiling bounds: refused, the announce takes what the ceiling does allow a turn nobody
+    is asked in (``guardrails.policy.no_one_to_ask``) — the hooks' say under ``hook_based``,
+    nothing under ``ask``.
     """
-    from personalclaw.guardrails.policy import approval_policy_for_session, is_unattended_session
+    from personalclaw.guardrails.policy import (
+        approval_policy_for_session,
+        is_unattended_session,
+        no_one_to_ask,
+    )
     from personalclaw.llm_helpers import ToolApprovalPolicy
 
     if is_unattended_session(parent_key):
         return approval_policy_for_session(parent_key)
-    return ToolApprovalPolicy.AUTO_APPROVE
+    if approval_grants.stands(approval_grants.INJECTION, caller=parent_key):
+        return ToolApprovalPolicy.AUTO_APPROVE
+    hooks_may = approval_grants.stands(
+        approval_grants.INJECTION,
+        caller=parent_key,
+        level=approval_grants.LEVEL_HOOK,
+        audit=False,
+    )
+    return no_one_to_ask(approval_grants.LEVEL_HOOK if hooks_may else "ask")
 
 
 def _background_write_surface(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -386,6 +405,26 @@ def _background_write_surface(fn: Callable[..., Any]) -> Callable[..., Any]:
             return await fn(*args, **kwargs)
 
     return _wrapped
+
+
+def _live_subagent_limits() -> SubagentLimits:
+    """Settings → Agent defaults → Subagents as they read now (`SubagentManager(limits=...)`).
+
+    The concurrency cap's "auto" (``0``) sizes from host facts, which do not change while the
+    process runs, so that one resolution is remembered per setting pair rather than re-probing the
+    host at every capacity check.
+    """
+    agent = AppConfig.load().agent
+    return SubagentLimits(
+        max_concurrent=_auto_sized(int(agent.max_subagents), float(agent.spawn_min_memory_gb)),
+        turn_limit=int(agent.subagent_max_turns),
+        timeout=int(agent.subagent_timeout_secs),
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _auto_sized(max_subagents: int, per_agent_gb: float) -> int:
+    return resolve_max_subagents(max_subagents, per_agent_gb=per_agent_gb)
 
 
 class GatewayOrchestrator:
@@ -565,9 +604,7 @@ class GatewayOrchestrator:
         approval is listed under it and a note it leaves unanswered can run it again.
         """
 
-        async def _approve(event: LLMEvent, parent_session_key: str = "") -> bool:
-            from personalclaw.trust_mode import is_yolo_active as is_yolo_mode
-
+        async def _approve(event: LLMEvent, parent_session_key: str = "") -> ToolDecision:
             # Resolve session: use explicit session, or try to find from active dashboard session
             # Heuristic fallback: picks first running session (dict insertion order). Not guaranteed
             # to be the correct session for subagents, but explicit session param
@@ -579,153 +616,36 @@ class GatewayOrchestrator:
                     if self.dashboard_state._sessions[k].running:
                         resolved_session = k.removeprefix("dashboard:")
                         break
-
-            # Per-source auto-approve (e.g. cron, subagent)
-            if source in self._cfg.hooks.get("auto_approve_sources", []):
-                logger.info("Auto-approving tool %s from source %s", event.title, source)
-                return True
-
-            # CLI --approval flag override (composable test mode).
-            # 'yolo' auto-approves all; 'reads' auto-approves read-only tools;
-            # 'interactive' falls through to the standard flow.
-            if self._approval_mode in ("yolo", "reads"):
-                approve = self._approval_mode == "yolo" or (
-                    self._approval_mode == "reads" and _is_read_only_tool(event.title or "")
-                )
-                if approve:
-                    # Emit a SEL audit event so the audit trail records WHICH
-                    # mode auto-approved the tool. Downstream sites already
-                    # log the invocation itself; this captures the decision.
-                    try:
-                        _safe = redact_exfiltration_urls(redact_credentials(event.title or "")[0])[
-                            0
-                        ]
-                        sel().log_api_access(
-                            caller=f"cli:approval={self._approval_mode}",
-                            operation=f"{source}.cli_approval_auto_approve",
-                            outcome="ok",
-                            resources=_safe,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "SEL audit failed for cli --approval auto-approve", exc_info=True
-                        )
-                    return True
-
-            # Check both YOLO sources: channel handler (!yolo on) and dashboard UI.
-            # Both must honor their TTL — use is_yolo_active() (which expires on
-            # read), NOT the raw _yolo field, or an expired dashboard YOLO would
-            # keep auto-approving channel tool calls past its 6h ceiling.
-            if is_yolo_mode():
-                return True
-
-            if self.dashboard_state:
-                if self.dashboard_state.is_yolo_active():
-                    return True
-                # Check if the parent session is trusted (not all sessions).
-                # Use session_resolver or resolved_session to find the parent;
-                # only fall back to all-sessions check when neither exists.
-                # When session_resolver exists but returns falsy, we do NOT
-                # fall back to the heuristic -- if the explicit resolver
-                # can't find the parent, guessing would widen trust scope.
-
-                def _sel_log(**kw: Any) -> None:
-                    # `Any`, not `str`: every call site here only ever passes the string
-                    # fields, but `log_api_access` also accepts a `metadata: dict | None`
-                    # keyword (#2948) and mypy checks a `**kwargs` forward against every
-                    # parameter of the callee, not just the ones actually supplied.
-                    try:
-                        from personalclaw.sel import sel
-
-                        sel().log_api_access(**kw)
-                    except Exception:
-                        logger.warning("SEL audit failed for trust check", exc_info=True)
-
-                _safe_title = redact_exfiltration_urls(redact_credentials(event.title)[0])[0]
-
-                if session_resolver:
-                    try:
-                        _parent_session_name = session_resolver(str(event.request_id))
-                    except Exception:
-                        logger.warning(
-                            "session_resolver failed for %s", event.request_id, exc_info=True
-                        )
-                        _parent_session_name = None
-                elif resolved_session:
-                    _parent_session_name = resolved_session
-                else:
-                    _parent_session_name = None
-
-                from personalclaw.workflows import ownership as _ownership
-
-                if _parent_session_name and _parent_session_name.startswith(
-                    _ownership.OWNED_PREFIX
-                ):
-                    # A workflow STAGE: its parent is the run-owned key `workflow:<run>:<node>`,
-                    # which is never a dashboard session, so there is no chat Trust toggle to
-                    # consult and a session lookup can only ever miss. An UNATTENDED run never
-                    # reaches here — its stages spawn `approval_mode="auto"`
-                    # (`engine.dispatch_stage`) — so this is an attended run asking, and the audit
-                    # says that instead of `scoped_trust_session_not_found`, which read as a
-                    # broken lookup on every stage of every run.
-                    _sel_log(
-                        caller=f"run:{_parent_session_name}",
-                        operation=f"{source}.run_stage_attended",
-                        outcome="not_auto_approved",
-                        resources=_safe_title,
-                    )
-                elif _parent_session_name:
-                    _ps = (self.dashboard_state._sessions or {}).get(_parent_session_name)
-                    if _ps and _ps._trust:
-                        _sel_log(
-                            caller=f"session:{_parent_session_name}",
-                            operation=f"{source}.scoped_trust_auto_approve",
-                            outcome="ok",
-                            resources=_safe_title,
-                        )
-                        return True
-                    elif _ps:
-                        _sel_log(
-                            caller=f"session:{_parent_session_name}",
-                            operation=f"{source}.scoped_trust_not_trusted",
-                            outcome="not_auto_approved",
-                            resources=_safe_title,
-                        )
-                    else:
-                        _sel_log(
-                            caller=f"session:{_parent_session_name}",
-                            operation=f"{source}.scoped_trust_session_not_found",
-                            outcome="not_auto_approved",
-                            resources=_safe_title,
-                        )
-                elif not session_resolver and not resolved_session:
-                    # No resolver available at all -- fall back to all-sessions
-                    sessions = self.dashboard_state._sessions
-                    if sessions and all(s._trust for s in sessions.values()):
-                        _sel_log(
-                            caller=f"source:{source}",
-                            operation=f"{source}.all_sessions_trust_auto_approve",
-                            outcome="ok",
-                            resources=_safe_title,
-                        )
-                        return True
-                    else:
-                        _sel_log(
-                            caller=f"source:{source}",
-                            operation=f"{source}.all_sessions_trust_not_trusted",
-                            outcome="not_auto_approved",
-                            resources=_safe_title,
-                        )
-                else:
-                    # Resolver existed but failed -- fall through to interactive approval
-                    _sel_log(
-                        caller=f"source:{source}",
-                        operation=f"{source}.scoped_trust_fallthrough",
-                        outcome="not_auto_approved",
-                        resources=_safe_title,
-                    )
-
             request_id = str(event.request_id)
+            asked_in = session_resolver(request_id) if session_resolver else resolved_session
+            asked_by = trigger_resolver(request_id) if trigger_resolver else ""
+
+            # A standing grant approves without asking — read NOW, not from the config the gateway
+            # started with (`approval_grants`, rule 1), and only if the operator ceiling lets it
+            # stand (rule 2). What approved it is what the caller's audit row says (rule 3), and
+            # the Inbox note a previous unanswered ask of the same call left is settled.
+            grant, grant_row = self._relay_grant(
+                source, event, session_resolver=session_resolver, resolved_session=resolved_session
+            )
+            if grant and approval_grants.stands(
+                grant,
+                caller=f"source:{source}",
+                subject=redact_exfiltration_urls(redact_credentials(event.title or "")[0])[0][:80],
+            ):
+                if grant_row is not None:
+                    try:
+                        sel().log_api_access(**grant_row)
+                    except Exception:
+                        logger.warning("SEL audit failed for a %s approval", grant, exc_info=True)
+                if self.dashboard_state:
+                    self.dashboard_state.settle_granted(
+                        tool=event.title or "",
+                        tool_input=event.tool_input,
+                        session=asked_in,
+                        trigger=asked_by,
+                        by=grant,
+                    )
+                return ToolDecision(True, "auto_approved", grant)
 
             # Prompt on the channel that asks the owner approvals: the channel the parent chat
             # started on first, since the person asking is there, then their "Send approvals
@@ -759,12 +679,8 @@ class GatewayOrchestrator:
                                 event.title,
                                 tool_input=event.tool_input,
                                 tool_purpose=event.tool_purpose,
-                                session=(
-                                    session_resolver(request_id)
-                                    if session_resolver
-                                    else resolved_session
-                                ),
-                                trigger=trigger_resolver(request_id) if trigger_resolver else "",
+                                session=asked_in,
+                                trigger=asked_by,
                                 # This channel is already asking: the `channel_dm` target
                                 # must not ask a second time.
                                 asked_on_channel=True,
@@ -807,7 +723,7 @@ class GatewayOrchestrator:
                             dashboard_future.cancel()
 
                     if approved is not None:
-                        return approved
+                        return self._asked_decision(request_id, approved)
                 except Exception:
                     logger.debug(
                         "Channel approval failed, falling back to dashboard", exc_info=True
@@ -815,18 +731,180 @@ class GatewayOrchestrator:
 
             # Fallback: dashboard only
             if self.dashboard_state:
-                return await self.dashboard_state.request_approval(
+                answered = await self.dashboard_state.request_approval(
                     request_id,
                     source,
                     event.title,
                     tool_input=event.tool_input,
                     tool_purpose=event.tool_purpose,
-                    session=session_resolver(request_id) if session_resolver else resolved_session,
-                    trigger=trigger_resolver(request_id) if trigger_resolver else "",
+                    session=asked_in,
+                    trigger=asked_by,
                 )
-            return True  # no UI → auto-approve
+                return self._asked_decision(request_id, answered)
+            # Nowhere to ask (no dashboard, no channel). Approving was always the answer here, and
+            # it is a grant like any other: an `ask` ceiling says nothing runs unasked, so it
+            # does not run.
+            if approval_grants.stands(approval_grants.NO_SURFACE, caller=f"source:{source}"):
+                return ToolDecision(True, "auto_approved", approval_grants.NO_SURFACE)
+            return ToolDecision(False, "rejected", approval_grants.NO_SURFACE)
 
         return _approve
+
+    def _relay_grant(
+        self,
+        source: str,
+        event: LLMEvent,
+        *,
+        session_resolver: Callable[[str], str] | None,
+        resolved_session: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """The standing grant that approves this background call without asking, read NOW.
+
+        Returns the grant's name (`approval_grants`) and the audit row that records it, which the
+        caller writes only once the operator ceiling has let the grant stand — an "ok, approved"
+        row for a grant the ceiling then refused would record an approval that never happened.
+        ``("", None)`` when nothing stands and the call is asked.
+
+        Every read here is of the setting as it is now: ``hooks.auto_approve_sources`` came from
+        the config the gateway started with, so a source the owner took off the list kept
+        approving until a restart.
+        """
+        from personalclaw.trust_mode import is_yolo_active as is_yolo_mode
+
+        safe_title = redact_exfiltration_urls(redact_credentials(event.title or "")[0])[0]
+        try:
+            sources = approval_grants.hooks_now().auto_approve_sources
+        except Exception:  # noqa: BLE001 - a hook value that does not parse grants nothing
+            logger.warning("could not read hooks.auto_approve_sources; asking", exc_info=True)
+            sources = []
+        if source in sources:
+            logger.info("Auto-approving tool %s from source %s", safe_title, source)
+            return approval_grants.SOURCE, None
+
+        # CLI --approval flag override (composable test mode).
+        # 'yolo' auto-approves all; 'reads' auto-approves read-only tools;
+        # 'interactive' falls through to the standard flow.
+        if self._approval_mode == "yolo" or (
+            self._approval_mode == "reads" and _is_read_only_tool(event.title or "")
+        ):
+            return approval_grants.CLI, {
+                "caller": f"cli:approval={self._approval_mode}",
+                "operation": f"{source}.cli_approval_auto_approve",
+                "outcome": "ok",
+                "resources": safe_title,
+            }
+
+        # Check both YOLO sources: channel handler (!yolo on) and dashboard UI.
+        # Both must honor their TTL — use is_yolo_active() (which expires on
+        # read), NOT the raw _yolo field, or an expired dashboard YOLO would
+        # keep auto-approving channel tool calls past its 6h ceiling.
+        if is_yolo_mode() or (self.dashboard_state and self.dashboard_state.is_yolo_active()):
+            return approval_grants.YOLO, None
+        if not self.dashboard_state:
+            return "", None
+
+        # Check if the parent session is trusted (not all sessions).
+        # Use session_resolver or resolved_session to find the parent;
+        # only fall back to all-sessions check when neither exists.
+        # When session_resolver exists but returns falsy, we do NOT
+        # fall back to the heuristic -- if the explicit resolver
+        # can't find the parent, guessing would widen trust scope.
+        def _sel_log(**kw: Any) -> None:
+            # `Any`, not `str`: `log_api_access` also accepts a `metadata: dict | None` keyword
+            # (#2948) and mypy checks a `**kwargs` forward against every parameter of the callee.
+            try:
+                sel().log_api_access(**kw)
+            except Exception:
+                logger.warning("SEL audit failed for trust check", exc_info=True)
+
+        parent_name: str | None
+        if session_resolver:
+            try:
+                parent_name = session_resolver(str(event.request_id))
+            except Exception:
+                logger.warning("session_resolver failed for %s", event.request_id, exc_info=True)
+                parent_name = None
+        elif resolved_session:
+            parent_name = resolved_session
+        else:
+            parent_name = None
+
+        from personalclaw.workflows import ownership as _ownership
+
+        if parent_name and parent_name.startswith(_ownership.OWNED_PREFIX):
+            # A workflow STAGE: its parent is the run-owned key `workflow:<run>:<node>`,
+            # which is never a dashboard session, so there is no chat Trust toggle to
+            # consult and a session lookup can only ever miss. An UNATTENDED run never
+            # reaches here — its stages spawn `approval_mode="auto"`
+            # (`engine.dispatch_stage`) — so this is an attended run asking, and the audit
+            # says that instead of `scoped_trust_session_not_found`, which read as a
+            # broken lookup on every stage of every run.
+            _sel_log(
+                caller=f"run:{parent_name}",
+                operation=f"{source}.run_stage_attended",
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        elif parent_name:
+            parent = (self.dashboard_state._sessions or {}).get(parent_name)
+            if parent and parent._trust:
+                return approval_grants.PARENT_TRUST, {
+                    "caller": f"session:{parent_name}",
+                    "operation": f"{source}.scoped_trust_auto_approve",
+                    "outcome": "ok",
+                    "resources": safe_title,
+                }
+            _sel_log(
+                caller=f"session:{parent_name}",
+                operation=(
+                    f"{source}.scoped_trust_not_trusted"
+                    if parent
+                    else f"{source}.scoped_trust_session_not_found"
+                ),
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        elif not session_resolver and not resolved_session:
+            # No resolver available at all -- fall back to all-sessions
+            sessions = self.dashboard_state._sessions
+            if sessions and all(s._trust for s in sessions.values()):
+                return approval_grants.TRUST, {
+                    "caller": f"source:{source}",
+                    "operation": f"{source}.all_sessions_trust_auto_approve",
+                    "outcome": "ok",
+                    "resources": safe_title,
+                }
+            _sel_log(
+                caller=f"source:{source}",
+                operation=f"{source}.all_sessions_trust_not_trusted",
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        else:
+            # Resolver existed but failed -- fall through to interactive approval
+            _sel_log(
+                caller=f"source:{source}",
+                operation=f"{source}.scoped_trust_fallthrough",
+                outcome="not_auto_approved",
+                resources=safe_title,
+            )
+        return "", None
+
+    def _asked_decision(self, request_id: str, approved: bool) -> ToolDecision:
+        """An ASKED approval's answer as a decision: how it ended, from the registry that held it.
+
+        The waiter's ``bool`` cannot tell a Deny from nobody answering in time, which is what the
+        subagent's audit row must say (`approval_grants.ToolDecision`). An approval the registry
+        never held (a channel's own answer) is a person's.
+        """
+        ended = self.dashboard_state.ended_as(request_id) if self.dashboard_state else ""
+        if ended in ("expired", "cancelled"):
+            return ToolDecision(False, ended, approval_grants.NOBODY)
+        if ended in ("approved", "rejected"):
+            return ToolDecision(ended == "approved", ended, approval_grants.YOU)
+        return ToolDecision(
+            bool(approved), "approved" if approved else "rejected", approval_grants.YOU
+        )
 
     # Required packages that must be importable (import_name, pip_spec).
     # pip_spec may include version constraints matching setup.cfg.
@@ -944,7 +1022,9 @@ class GatewayOrchestrator:
         self.vector_memory.serve_recall()
 
         skills = SkillsLoader()
-        hooks = HookManager(HooksConfig.from_dict(self._cfg.hooks))
+        # Read at every decision, not copied at startup: a pattern or grant the owner changes
+        # applies to the next call (`approval_grants`, rule 1).
+        hooks = live_hook_manager()
         # bot_name deliberately NOT pinned here — ContextBuilder resolves it
         # live from config per turn, so a Settings → Account rename takes
         # effect on the next message without a gateway restart.
@@ -4235,7 +4315,7 @@ class GatewayOrchestrator:
 
         async def _spawn_approve(
             request_id: str, description: str, parent_session_key: str = ""
-        ) -> bool:
+        ) -> "bool | ToolDecision":
             event = LLMEvent(kind="permission_request", request_id=request_id, title=description)
             return await _approve_subagent(event, parent_session_key)
 
@@ -4244,6 +4324,18 @@ class GatewayOrchestrator:
                 return
             session_name = info.parent_session_key.removeprefix("dashboard:")
             base = {"id": info.id, "session": session_name}
+            if etype == "subagent_tool_granted":
+                # A grant approved one of the agent's calls without asking (its chat's Trust, the
+                # spawn's own approval mode, a hook pattern…): the note a previous unanswered ask
+                # of the same call left is settled, as an answer would (`settle_granted`).
+                self.dashboard_state.settle_granted(
+                    tool=str(extra.get("tool") or ""),
+                    tool_input=extra.get("tool_input"),
+                    session=_spawn_session_resolver(f"subagent:{info.id}:call"),
+                    trigger=str(getattr(info, "trigger_id", "") or ""),
+                    by=str(extra.get("decided_by") or ""),
+                )
+                return
             if etype == "subagent_auto_denied":
                 # A call the subagent's runtime declined because nobody could approve it.
                 # Recorded against the PARENT, which is where a person can see it and act: the
@@ -4327,6 +4419,9 @@ class GatewayOrchestrator:
             on_spawn_approval=_spawn_approve,
             is_yolo=_is_yolo,
             on_event=_subagent_event,
+            # Settings → Agent defaults → Subagents, read at each decision: the values above are
+            # only what an unreadable config falls back to (`approval_grants`, rule 1).
+            limits=_live_subagent_limits,
         )
         self.subagent_mgr.start_reaper()
 

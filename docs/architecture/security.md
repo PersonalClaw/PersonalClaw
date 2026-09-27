@@ -236,6 +236,26 @@ the ceiling did not bound.
   unreadable file, or a scope naming an unknown archetype **aborts governance
   boot** with WHAT/WHY/FIX. Fail-closed: "governance could not be established"
   is a stop, not a degraded mode.
+- **Every standing grant asks it** (`approval_grants.stands`). A grant approves a call or a spawn
+  without asking anyone: the chat's Trust, YOLO and Trust reads, an agent's "Always allow", a
+  spawn's own `approval_mode: "auto"`, the global Auto-approve setting, the hook settings and
+  patterns, a listed source, the `--approval` flag, a remembered or policy-approved workflow gate,
+  the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
+  unattended ACP CLI approving its own calls, and a session policy that never asks. Under
+  `{"approval": {"value": "ask"}}` none of them stands, and each refusal is audited
+  (`approval.grant_refused`, naming the grant). A switch the owner presses (the chat's mode
+  pill, a card's wider scope) is refused with `409 approval_grant_refused`, whose message names
+  the file and says a restart applies a change to it. An operator's hook pattern is checked at
+  the `hook_based` level, which a `hook_based` ceiling still permits. A grant also no longer makes
+  a run headless: an agent whose grant the ceiling refused asks you for each call, through the
+  same relay as any other.
+- **The `tools` scope and a spawn's capability class hold under a grant.** Both are enforced where
+  the host is asked about a call, and a runtime that answers its own asks (the native one, while
+  a grant stands) asked about none: a read-only research run's write tools ran. The native
+  runtime now asks the spawn's tool grants before its own approval
+  (`NativeAgentRuntime.set_tool_grants`), and an unattended ACP CLI may approve its own calls only
+  when the ceiling leaves the tools unrestricted. What that leaves for an ACP CLI is in
+  [limitations §1](../security/limitations.md#1-acp-agents-under-auto-approve-yolo-rely-on-system-prompt-framing-not-rails).
 - **Path matching** normalizes only the queried item (`~`/`$VAR`, then
   `abspath`) and **never** runs a pattern through `normpath`, which would
   collapse `/a/**/../b` to `/a/b` and silently drop the `**`
@@ -391,6 +411,19 @@ summary row counting the requests and the paths they reached (`token_auth._Succe
 at shutdown), so every success is accounted for at a row per session per quarter hour. An
 internal-secret grant is one tallied `internal_auth` family (it used to write two rows). On day 8
 one idle Home tab grew the log ~5 MB an hour, 94% of it `dashboard.token_auth ok`.
+
+**A tool call is one row, written when it is decided.** The card of a call arrives before any gate
+has run (the native loop yields it and only then checks its deny-list, task mode, tool grants
+and approval), so no runtime audits there. An asked call is audited where the answer lands:
+`approved` or `rejected` by `you`, `expired` or `cancelled` by `nobody`, or `auto_approved` by the
+grant that answered. A call nobody was asked about is audited at its result, from what the
+runtime stamped on it (`llm.events.unasked_outcome`): `denied` by the gate that refused it,
+`auto_approved` by the policy that waived its ask, `failed` or `cancelled` for one that never ran,
+or `invoked` for a tool that asks nobody. `metadata.decided_by` says who decided, in every runtime
+that hosts a turn: the chat (which a channel's turn also runs), the subagent manager (trigger
+agents and every workflow stage) and the background helper. Before this, the subagent manager and
+the background helper wrote `auto_approved` for every call and the chat wrote `invoked`, so a call
+the deny-list refused read as approved.
 
 **Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
 archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts

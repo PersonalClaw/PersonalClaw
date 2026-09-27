@@ -140,11 +140,25 @@ def sanitize_mode(requested: str | None, *, unattended: bool = False) -> ModeDec
     if canon in PASSTHROUGH_MODES:
         return ModeDecision(mode=raw, requested=raw)
     if canon in AUTO_APPROVE_MODES:
-        if unattended:
+        if unattended and _ceiling_permits_self_approval():
             return ModeDecision(
                 mode=raw,
                 requested=raw,
                 reason="unattended session — auto-approve mode allowed by §2.3",
+            )
+        if unattended:
+            # The one exception above is a grant (`approval_grants`): the CLI approving its own
+            # calls. The operator ceiling bounds it like every other, so under `approval: ask`, or
+            # a `tools` scope the host can only enforce on a call it is asked about, an unattended
+            # session gets the host-authority mode too, and each call reaches the host gate.
+            return ModeDecision(
+                mode=HOST_AUTHORITY_MODE,
+                requested=raw,
+                downgraded=True,
+                reason=(
+                    f"{raw!r} would let the CLI approve its own calls, which the operator "
+                    f"ceiling does not allow; the host forwards {HOST_AUTHORITY_MODE!r}"
+                ),
             )
         return ModeDecision(
             mode=HOST_AUTHORITY_MODE,
@@ -164,6 +178,33 @@ def sanitize_mode(requested: str | None, *, unattended: bool = False) -> ModeDec
             f"{HOST_AUTHORITY_MODE!r} rather than assumed safe"
         ),
     )
+
+
+def _ceiling_permits_self_approval() -> bool:
+    """Whether the operator ceiling lets an unattended CLI approve its own calls.
+
+    Two of its scopes decide. ``approval`` bounds every grant, this one included. ``tools`` is
+    enforced by the host on each call it is asked about (``guardrails.policy.tool_grant_denial``),
+    and a CLI approving its own calls asks about none, so a ceiling that narrows the tools refuses
+    this grant too: under it the CLI's calls reach the host gate, which holds the narrowing.
+
+    Unaudited here: a refusal comes back as a downgraded :class:`ModeDecision`, which each caller
+    audits as the clamp it is (``mode_change:clamped_to_host_authority``).
+    """
+    from personalclaw import approval_grants
+    from personalclaw.guardrails.policy import TOOL_READ_WRITE, tool_grant_posture
+
+    if not approval_grants.stands(
+        approval_grants.ACP_MODE, caller="acp:permission_authority", audit=False
+    ):
+        return False
+    try:
+        return tool_grant_posture("acp_self_approval", TOOL_READ_WRITE).tool_grants == (
+            TOOL_READ_WRITE
+        )
+    except Exception:  # noqa: BLE001 - a ceiling that cannot be read grants nothing
+        logger.warning("could not read the operator ceiling's tools scope; clamping")
+        return False
 
 
 def command_probe(title: str, command: str) -> str:

@@ -380,7 +380,10 @@ def test_rung_router_narrows_under_the_ceiling(home):
     assert route_provider_action("ceiling-probe", session_key=key).rung == "auto_with_undo"
     _write_ceiling(home, {"approval": {"value": "ask"}})
     route = route_provider_action("ceiling-probe", session_key=key)
-    assert route.rung == "autonomous", "an 'ask' ceiling leaves the type's own ceiling"
+    # Nobody watches an unattended run, so under `ask` the action raises a request for a person
+    # instead of running. This asserted `autonomous` — the ceiling LOOSENING the run from
+    # `auto_with_undo` to silent, no-undo execution — under a docstring promising the opposite.
+    assert route.rung == "one_tap", "an 'ask' ceiling keeps a person in the loop"
 
 
 def test_approval_pick_reads_the_ceiling(home):
@@ -388,7 +391,9 @@ def test_approval_pick_reads_the_ceiling(home):
     from personalclaw.llm_helpers import ToolApprovalPolicy
 
     _write_ceiling(home, {"approval": {"value": "ask"}})
-    assert approval_policy_for_session("cron:x") is ToolApprovalPolicy.HOOK_BASED
+    # A person answers every call, and a cron run has nobody to ask: nothing runs. HOOK_BASED, which
+    # this was, approves every call no hook names — the ceiling had no effect at all.
+    assert approval_policy_for_session("cron:x") is ToolApprovalPolicy.REJECT_ALL
 
 
 def test_spawn_grant_is_refused_by_the_ceiling(home):
@@ -401,22 +406,38 @@ def test_spawn_grant_is_refused_by_the_ceiling(home):
     assert ceiling_permits_approval("auto") is False
 
 
-def test_spawn_call_site_consults_the_ceiling():
-    """Assert the CALL SITE, not just the helper: a helper with no caller is the inert
-    control this change exists to remove."""
+def _calls(fn) -> set[str]:
+    """Every name *fn* calls: ``f(...)`` as ``f``, ``x.f(...)`` as ``f``."""
     import ast
     import inspect
     import textwrap
 
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.add(node.func.attr)
+    return names
+
+
+def test_spawn_call_site_consults_the_ceiling():
+    """Assert the CALL SITE, not just the helper: a helper with no caller is the inert
+    control this change exists to remove.
+
+    Every grant is held to the ceiling in one place (``approval_grants.stands``), so the chain
+    is asserted link by link: the agent's start and each of its tool calls ask ``_grant_now``,
+    the spawn gate asks ``stands`` itself, and ``stands`` is what reads the ceiling."""
+    import personalclaw.approval_grants as approval_grants
     import personalclaw.subagent as subagent
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(subagent.SubagentManager._run_inner)))
-    called = {
-        node.func.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
-    assert "ceiling_permits_approval" in called
+    manager = subagent.SubagentManager
+    assert "_grant_now" in _calls(manager._run_inner)
+    assert "stands" in _calls(manager._grant_now)
+    assert "stands" in _calls(manager._dispatch_run)
+    assert "ceiling_permits_approval" in _calls(approval_grants.stands)
 
 
 # ── acceptance criteria 4/5: drive a REAL unattended trigger, not a constructed object ──

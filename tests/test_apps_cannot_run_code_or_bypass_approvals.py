@@ -761,13 +761,16 @@ class TestTheFileExplorerKeepsAnAppOutOfTheHome:
         monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
         target = tmp_path / "mcp.json"
         target.write_text("{}", encoding="utf-8")
-        assert _validate_dashboard_path(str(target)) == str(target.resolve())
         (tmp_path / "uploads").mkdir()
         uploaded = tmp_path / "uploads" / "photo.txt"
         uploaded.write_text("x", encoding="utf-8")
+        # The home is no root for anyone (#3675, `file_roots.dashboard_roots`), so the owner's own
+        # explorer refuses its config as well. A root INSIDE the home stays open to both: what you
+        # uploaded is not your config.
+        assert _validate_dashboard_path(str(target)) is None
+        assert _validate_dashboard_path(str(uploaded)) == str(uploaded.resolve())
         with scoped_to_app(APP):
             assert _validate_dashboard_path(str(target)) is None
-            # A root INSIDE the home stays: what you uploaded is not your config.
             assert _validate_dashboard_path(str(uploaded)) == str(uploaded.resolve())
 
     @pytest.mark.asyncio

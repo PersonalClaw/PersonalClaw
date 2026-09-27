@@ -109,6 +109,11 @@ _CALL_SITE_SURFACES = {
     # floor is BUILT IN — any failure degrades to the deterministic log projector,
     # so callers always get a bounded result (guard-the-guard).
     "tool_providers/prose_compress.py": "assistant_reasoning",
+    # The room context cursor (`rooms/turn._summarize_slice`): folds the part of a room a
+    # member has not seen into a summary on the member's OWN pinned model. Its no-model floor is
+    # BUILT IN like the compressor's above: a raise or an empty answer returns "", and `compact`
+    # then folds the same region with its deterministic digest, so the member's turn still runs.
+    "rooms/turn.py": "assistant_reasoning",
     # The Doctor per-provider selftest fires a tiny one-token completion to
     # ground-truth the chat capability — user-click only, covered by the chat contract.
     "dashboard/handlers/doctor.py": "chat",

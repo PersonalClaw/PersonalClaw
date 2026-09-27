@@ -152,9 +152,6 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
         completion=ctl.services.completion,
         get_provider=ctl.services.get_provider,
         verify=ctl.services.verify,
-        # The run's mode decides a gate's deadline: background times out fast and
-        # surfaces, blocking waits because a human is right there.
-        mode=ctl.run.mode,
         # The node's OWN budget for a bounded internal wait, minus the reserve above (#381).
         # Read by the two dispatchers that wait on something: `subworkflow`'s child-run wait and
         # `action`'s provider call. Both previously got the signature default of 60s — a ceiling
@@ -190,7 +187,8 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
         compaction_saves=ctl._compaction_saves.setdefault(node.id, []),
         # The user's explicit unattended grant, read off the run's overlay at EVERY dispatch
         # rather than cached: the overlay is the run row's, and the row is what a restart
-        # re-reads. Only a stage consults it (`dispatch_stage`).
+        # re-reads. A stage consults it (`dispatch_stage`), and a gate: it waits the owner's
+        # approval window unless nobody is there to answer (`human_input.gate_timeout_secs`).
         unattended=supervisor_policy.unattended_grant(ctl.run.policy_overrides),
         # A person's answer to this step's last park (`gate_answers.settle_parked_step`), POPPED:
         # it belongs to the one dispatch the answer started, so a later retry of the same step

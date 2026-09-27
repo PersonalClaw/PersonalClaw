@@ -250,15 +250,44 @@ class TestHooksConfigFromDict:
         assert mgr.auto_approve_subagent_tools is False
 
 
-class TestHookReload:
-    def test_reload(self):
-        mgr = HookManager()
+class TestHookSource:
+    """A manager built on a source reads it at every decision (`approval_grants`, rule 1)."""
+
+    def test_each_decision_reads_the_source(self):
+        current = [HooksConfig()]
+        mgr = HookManager(source=lambda: current[0])
         assert mgr.on_message("ping").action == HOOK_PASSTHROUGH
 
-        mgr.reload(
-            HooksConfig(auto_replies=[AutoReplyHook(pattern="ping", reply="pong", exact=True)])
+        current[0] = HooksConfig(
+            auto_replies=[AutoReplyHook(pattern="ping", reply="pong", exact=True)]
         )
         assert mgr.on_message("ping").action == HOOK_REPLY
+
+    def test_a_source_that_fails_grants_nothing_and_keeps_its_denies(self):
+        """A hook value that does not parse: what the settings last denied still denies, and
+        nothing they granted is granted, so the call asks instead."""
+        current: list = [
+            HooksConfig(
+                auto_approve_tools=["git status"],
+                auto_deny_tools=["rm *"],
+                auto_approve_subagent_spawn=True,
+                auto_approve_subagent_tools=True,
+            )
+        ]
+
+        def source() -> HooksConfig:
+            if isinstance(current[0], Exception):
+                raise current[0]
+            return current[0]
+
+        mgr = HookManager(source=source)
+        assert mgr.on_tool_call("Running: git status").action == TOOL_AUTO_APPROVE, "premise"
+
+        current[0] = ValueError("auto_approve_tools: not a list")
+        assert mgr.on_tool_call("Running: git status").action == TOOL_ALLOW
+        assert mgr.on_tool_call("Running: rm -rf build").action == TOOL_DENY
+        assert not mgr.auto_approve_subagent_spawn
+        assert not mgr.auto_approve_subagent_tools
 
 
 class TestSafeReadFile:

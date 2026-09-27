@@ -60,13 +60,11 @@ CONTINUATION_DIR = "continuations"
 #: every listing to a sibling's naming; moving the record decouples them by construction.
 CLAIMED_DIR = "claimed"
 
-#: Background gates time out FAST and surface. A background run parked forever on an
-#: approval nobody is watching is wedged, not waiting.
-DEFAULT_BACKGROUND_GATE_TIMEOUT_SECS = 45
-
-#: Blocking/chat mode waits long — a human is right there, and timing out under them
-#: would discard an answer they were about to give.
-DEFAULT_BLOCKING_GATE_TIMEOUT_SECS = 1800
+#: A gate in a run started UNATTENDED (``attended: false``: a schedule's or an event's run that
+#: nobody watches) times out FAST and says so. Nobody is there to answer it, and a run parked
+#: forever on an approval nobody is watching is wedged, not waiting. Every other gate waits the
+#: owner's approval window (:func:`gate_timeout_secs`).
+UNATTENDED_GATE_TIMEOUT_SECS = 45
 
 #: How long a resume token stays valid. Long enough to answer tomorrow morning; short
 #: enough that a year-old token cannot resurrect a run whose world has moved on.
@@ -230,23 +228,29 @@ def _check_field(spec: AskField, value: Any) -> str:
 # ── gate timeouts ────────────────────────────────────────────────────────────
 
 
-def gate_timeout_secs(
-    node_config: dict[str, Any],
-    *,
-    mode: str = "background",
-    background_default: int = DEFAULT_BACKGROUND_GATE_TIMEOUT_SECS,
-    blocking_default: int = DEFAULT_BLOCKING_GATE_TIMEOUT_SECS,
-) -> int:
-    """The gate's deadline, mode-dependent (WF2-R7).
+def gate_timeout_secs(node_config: dict[str, Any], *, unattended: bool = False) -> int:
+    """The gate's deadline (WF2-R7).
 
-    An explicit `timeout_secs` always wins — the author knows their gate. Otherwise
-    background gates get the short default and blocking gates the long one. `0` means "wait
-    indefinitely", which is only ever legitimate in blocking mode.
+    An explicit `timeout_secs` always wins — the author knows their gate. `0` means "wait
+    indefinitely". Otherwise a gate waits what every other approval waits: the owner's approval
+    window (``agent.approval_timeout_minutes``, read now, so a change in Settings reaches the
+    next gate) — except in a run started unattended, whose gate gives up after
+    :data:`UNATTENDED_GATE_TIMEOUT_SECS` because nobody is there to answer it.
+
+    A background gate used to get those 45 seconds whoever started the run, and a blocking one
+    half an hour. Background is how a run from the Workflows page, a trigger or a project runs,
+    so an owner who started one and looked away failed it before they could answer, while a tool
+    approval in the same run waited the window. Who is watching is what decides the wait, not
+    the run's mode.
     """
     declared = (node_config or {}).get("timeout_secs")
     if isinstance(declared, (int, float)) and declared >= 0:
         return int(declared)
-    return int(blocking_default if str(mode) == "blocking" else background_default)
+    if unattended:
+        return UNATTENDED_GATE_TIMEOUT_SECS
+    from personalclaw.approval_grants import approval_window_secs
+
+    return int(approval_window_secs())
 
 
 def timeout_phrase(secs: float) -> str:

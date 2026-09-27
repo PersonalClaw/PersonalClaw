@@ -151,9 +151,23 @@ def decide(
     Order matters. A remembered allow wins first (the user already decided). Then the
     unattended auto-approve, risk-scoped. Everything else asks — the safe fallback, because
     asking costs a delay while wrongly proceeding costs an action.
+
+    Both approvals are grants (`approval_grants`), and the operator ceiling bounds every grant:
+    under ``{"approval": {"value": "ask"}}`` a person answers every gate on this machine, so
+    neither stands and the gate asks. The node's ``risk`` is the template author's word and an
+    "always allow" can come from the agent's own ``workflow_resume``; neither may loosen it.
     """
+    from personalclaw import approval_grants
+
     risk = gate_risk(node_config)
-    if memory is not None and memory.allows(node_config, node_id):
+    caller = f"workflow_gate:{node_id}"
+    if (
+        memory is not None
+        and memory.allows(node_config, node_id)
+        and approval_grants.stands(
+            approval_grants.REMEMBERED, caller=caller, subject=f"risk={risk.value}"
+        )
+    ):
         return PolicyVerdict(
             decision=Decision.REMEMBERED,
             reason="the user chose 'always allow' for this operation in this run",
@@ -161,9 +175,17 @@ def decide(
         )
     if is_unattended(origin_kind, mode=mode):
         if risk in AUTO_APPROVABLE_RISKS:
+            if approval_grants.stands(
+                approval_grants.GATE_POLICY, caller=caller, subject=f"risk={risk.value}"
+            ):
+                return PolicyVerdict(
+                    decision=Decision.AUTO_APPROVED,
+                    reason=f"unattended run auto-approves {risk.value} gates",
+                    risk=risk.value,
+                )
             return PolicyVerdict(
-                decision=Decision.AUTO_APPROVED,
-                reason=f"unattended run auto-approves {risk.value} gates",
+                decision=Decision.ASK,
+                reason="the operator ceiling says a person answers every gate on this machine",
                 risk=risk.value,
             )
         return PolicyVerdict(

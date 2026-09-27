@@ -1745,18 +1745,16 @@ def app_conversation_auto_approves(app_name: str) -> bool:
     agent runs do (``handlers/apps.py::api_app_agent_run``) — and one whose app no longer holds it,
     or is disabled or gone, asks.
 
-    The operator CEILING still bounds it, exactly as it bounds a spawned agent's auto-approval
-    (``subagent._run_inner``): a ceiling that says every run asks makes this answer False.
+    The operator CEILING still bounds it, as it bounds every grant (`approval_grants.stands`): a
+    ceiling that says every run asks makes this answer False, and the refusal is audited.
     """
     if not app_name or app_lifecycle_denial(app_name):
         return False
     checker = checker_for(app_name)
     if checker is None or not checker.can_use_agent():
         return False
-    from personalclaw.guardrails.policy import ceiling_permits_approval
+    from personalclaw import approval_grants
 
-    try:
-        return ceiling_permits_approval("auto")
-    except Exception:  # noqa: BLE001 — a ceiling that will not resolve grants nothing
-        logger.warning("ceiling unresolvable; %s's conversation asks", app_name, exc_info=True)
-        return False
+    return approval_grants.stands(
+        approval_grants.APP, caller=f"app:{app_name}", subject="conversation"
+    )

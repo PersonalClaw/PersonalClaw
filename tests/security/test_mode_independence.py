@@ -389,6 +389,10 @@ class TestTrustSimulatorMatrix:
     ):
         """``from_config=True`` YOLO has no TTL at all — the most permissive trust state
         the product can be in. Still refused."""
+        from personalclaw.config import loader
+
+        # Config-driven YOLO lasts while the config sets it (`trust_mode.is_active`).
+        (loader.config_dir() / "config.json").write_text(json.dumps({"agent": {"yolo": True}}))
         trust_mode.enable_yolo(from_config=True)
         assert trust_mode.is_yolo_active() is True
         assert trust_mode.yolo_from_config() is True

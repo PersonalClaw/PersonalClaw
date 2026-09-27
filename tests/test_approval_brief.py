@@ -92,8 +92,6 @@ def _make_gateway():
     gateway.dashboard_state.resolve_approval = MagicMock()
     gateway._owner_id = "U000"
     gateway._cfg = MagicMock()
-    gateway._cfg.hooks = MagicMock()
-    gateway._cfg.hooks.get = MagicMock(return_value=[])
     gateway._cfg.agent.max_subagents = 4
     gateway.sessions.get_channel = MagicMock(return_value=None)
     gateway.sessions.get_thread = MagicMock(return_value=None)
@@ -106,10 +104,13 @@ def _event(title: str, **kw) -> LLMEvent:
 
 
 async def _drive(gateway, event) -> bool:
-    """Run the real approval callback once, through the channel branch."""
+    """Run the real approval callback once, through the channel branch: whether it approved.
+
+    The callback answers with a decision (`approval_grants.ToolDecision`: what was decided, and
+    by whom); these rails are about what the channel was handed, so they read only its yes or no."""
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
         approve_fn = gateway._interactive_approval("subagent")
-        return await approve_fn(event, "1775113012.860459")
+        return (await approve_fn(event, "1775113012.860459")).approved
 
 
 # ── 1. The call site ─────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { Button } from '../../ui/Button'
 import { FieldError } from '../../ui/forms'
 import { InlineLoadError } from '../../ui/ListScaffold'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { humanizeEvent } from '../triggers/triggerMeta'
 import { isPrelaunch, isTerminal } from '../workflows/workflowMeta'
 import { rewindNode } from '../workflows/reentry'
 import { isOpen } from './inboxMeta'
@@ -19,6 +20,37 @@ function retryText(tool: string): string {
 }
 
 const LABEL = 'Run it again'
+
+/** Who answered a retry that settled this note (`refs.retry_by`, `approval_grants`): a person
+ *  (`you`), or the standing grant that ran it without asking. A closed map from the backend's
+ *  closed vocabulary; a name it does not know reads as a permission, never as a person. */
+const RAN_WITHOUT_ASKING: Record<string, string> = {
+  trust: 'this chat’s Trust',
+  yolo: 'YOLO',
+  trust_reads: 'Trust reads',
+  agent_floor: 'the agent’s “Always allow”',
+  parent_trust: 'the Trust of the chat that started it',
+  approval_mode: 'its own approval mode',
+  setting: 'the Auto-approve setting',
+  hook_setting: 'the hook settings',
+  hook_pattern: 'an auto-approve pattern in the hook settings',
+  source: 'the hook settings’ auto-approved sources',
+  cli: 'the gateway’s --approval flag',
+  app_grant: 'the app’s grant',
+  session_policy: 'the session’s approval policy',
+  no_approval_surface: 'the gateway, which had nowhere to ask',
+}
+
+/** How a retry that settled this note ended: asked and answered, or run by a standing grant. */
+export function settledSentence(retry: 'approved' | 'rejected', by: unknown, tool: string): string {
+  const who = typeof by === 'string' ? by : ''
+  if (who === '' || who === 'you') {
+    return retry === 'approved' ? `Asked again: you allowed ${tool}.` : `Asked again: you denied ${tool}.`
+  }
+  return `Ran again without asking: ${RAN_WITHOUT_ASKING[who] ?? 'a standing permission'} allowed ${tool}.`
+}
+
+const LIFECYCLE = 'lifecycle:'
 
 /** A call denied without an answer (`system/auto_denied`, `dashboard/auto_denials.py`), and the
  *  one next step it really has, by where it was asked:
@@ -34,8 +66,12 @@ const LABEL = 'Run it again'
  *  it can be answered. A call an unattended run declined without asking would be declined the
  *  same way, so that note says so rather than offer a button that cannot help.
  *
- *  The note is handled once the same call is asked there again and answered, whichever way
- *  (`auto_denials.settle_retried`), and then this says how it ended. */
+ *  A lifecycle hook's run (`refs.trigger` is `lifecycle:<id>`) has no Run now; the note says when
+ *  it runs again and opens it.
+ *
+ *  The note is handled once the same call is asked there again and answered, whichever way, or
+ *  runs there again because a standing grant approved it (`auto_denials.settle_retried`), and then
+ *  this says how it ended and who decided (`refs.retry_by`). */
 export function DeniedCallRerun({ item, navigate, onChanged }: {
   item: InboxItem
   navigate: (path: string) => void
@@ -50,7 +86,7 @@ export function DeniedCallRerun({ item, navigate, onChanged }: {
       <Section label={LABEL}>
         <p data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var">
           <Check size={14} aria-hidden style={{ color: 'var(--color-ok)' }} />
-          {refs.retry === 'approved' ? `Asked again: you allowed ${tool}.` : `Asked again: you denied ${tool}.`}
+          {settledSentence(refs.retry, refs.retry_by, tool)}
         </p>
       </Section>
     )
@@ -72,6 +108,7 @@ export function DeniedCallRerun({ item, navigate, onChanged }: {
   if (typeof refs.chat === 'string' && refs.chat) {
     return <AskChatAgain chat={refs.chat} tool={tool} navigate={navigate} />
   }
+  if (trigger.startsWith(LIFECYCLE)) return <HookRunsAgain triggerId={trigger} tool={tool} />
   if (trigger) return <RunTriggerAgain triggerId={trigger} tool={tool} navigate={navigate} onChanged={onChanged} />
   if (step) return <RunStepAgain runId={step.runId} nodeId={step.nodeId} tool={tool} onChanged={onChanged} />
   return null
@@ -100,6 +137,41 @@ function AskChatAgain({ chat, tool, navigate }: { chat: string; tool: string; na
         </Button>
       </div>
       {err && <FieldError>{err}</FieldError>}
+    </Section>
+  )
+}
+
+/** A lifecycle hook (`lifecycle:<id>`) fires on the agent's own events and has no Run now: its
+ *  Test is a rehearsal, not the fire that asked. So the note names the hook and says when it runs
+ *  again, rather than offer a button that would not ask for the call again; the note's own link
+ *  opens the hook (`inboxMeta.refRoute`). */
+function HookRunsAgain({ triggerId, tool }: { triggerId: string; tool: string }) {
+  const { data, error, refresh } = useQuery('triggers:all', () => api.triggers().then((d) => d.triggers))
+  if (data === undefined) {
+    return (
+      <Section label={LABEL}>
+        {error
+          ? <InlineLoadError what="the trigger" error={error} onRetry={refresh} />
+          : <p data-type="body-s" className="text-on-surface-low">Checking the trigger…</p>}
+      </Section>
+    )
+  }
+  const row = data.find((t) => t.kind === 'lifecycle' && t.id === triggerId) ?? null
+  if (row === null) {
+    return (
+      <Section label={LABEL}>
+        <p data-type="body-s" className="text-on-surface-var">The trigger that ran it no longer exists, so it will not run again.</p>
+      </Section>
+    )
+  }
+  const name = row.name || row.raw_id
+  const when = row.event ? `on its next ${humanizeEvent(row.event).toLowerCase()} event` : 'the next time it fires'
+  return (
+    <Section label={LABEL}>
+      <p data-type="body-s" className="text-on-surface-var">
+        “{name}” runs again {when}{row.enabled ? '' : ' once it is switched on'}, and then it asks you
+        for {tool} while you are here.
+      </p>
     </Section>
   )
 }

@@ -286,7 +286,7 @@ def test_the_three_origins_are_distinct_and_closed():
 
 # ── The change's "zero new WS/SSE channels" clause ────────────────────────────────
 
-#: Every WS event name ``chat_runner`` broadcasts, pinned. Verified to cover 49/49
+#: Every WS event name ``chat_runner`` broadcasts, pinned. Verified to cover 51/51
 #: ``broadcast_ws(`` call sites in the module, so a miss here is a real new channel and
 #: not a regex that stopped matching. Both contracts above are additive payload on names
 #: ALREADY in this set (``meta`` on ``chat_segment``'s message; a key on
@@ -296,10 +296,11 @@ def test_the_three_origins_are_distinct_and_closed():
 #: to do — and a rebaseline is only honest when the new name is provably not
 #: ours. ``queue_push`` arrived from ``57194f48`` (the ACP mid-turn steer echo) and
 #: appears **zero** times in the diff; that provenance, not the fact that the
-#: assertion was red, is what licensed adding it.
+#: assertion was red, is what licensed adding it. ``approval`` LEFT with #3594, which moved a
+#: chat's pending approval onto the one approval registry (``request_approval``), so the chat
+#: runner stopped broadcasting a frame of its own for it. A removal, not a new channel.
 _BASELINE_WS_EVENTS = {
     "activity_event",
-    "approval",
     "chat_chunk",
     "chat_done",
     "chat_message",

@@ -79,6 +79,8 @@ from personalclaw.llm.events import (
     STOP_MAX_TOKENS,
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
+    TOOL_META_NOT_RUN,
+    TOOL_META_REFUSED_BY,
     AgentEvent,
     is_length_stop,
 )
@@ -383,12 +385,17 @@ class NativeAgentRuntime(AgentProvider):
         # every call in its own wave; it is what the dispatch benchmark's baseline arm uses.
         self._max_tool_concurrency = max(1, int(max_tool_concurrency or 1))
         self._approval = ApprovalGate()
-        # Approval policy: "" / "default" prompt; "auto"/"yolo" auto-approve.
+        # Approval policy: "" / "default" prompt; "auto"/"yolo" auto-approve. A live SOURCE, when
+        # set, is read at each decision instead (`set_approval_source`).
         self._approval_policy = ""
+        self._approval_source: Callable[[], str] | None = None
         # Task mode (agent/ask/plan/build) — ORTHOGONAL to approval. Gates WHICH
         # tools may run, enforced in _guard_and_invoke before approval is consulted
         # so a Trust/YOLO auto-approve can never bypass an ask/plan/build restriction.
         self._task_mode = "agent"
+        # The host's own tool grants (`set_tool_grants`): which tools this run may use at all,
+        # asked in the same place and for the same reason as the task mode.
+        self._tool_grants: Callable[[str], str] | None = None
         # The turn's ONE stop signal. Not a bool: cancellation has to carry a
         # cause (user vs internal), a live child-process registry a stop can reap, and
         # idempotence — so it is an object, and `self._cancelled` below is a read-only
@@ -1614,7 +1621,7 @@ class NativeAgentRuntime(AgentProvider):
             tool_call_id=prep.call.tool_call_id,
             title=prep.tool_name,
             tool_output=CANCELLED_BEFORE_RUN,
-            tool_meta=dict(_FAILED),
+            tool_meta={**_FAILED, TOOL_META_NOT_RUN: "stopped"},
         )
         self._messages.append(self._tool_result_msg(prep.call, CANCELLED_BEFORE_RUN))
 
@@ -1638,14 +1645,17 @@ class NativeAgentRuntime(AgentProvider):
         (Bedrock Converse rejects an unanswered `toolUse` outright).
         """
         if prep.arg_error:
-            return (f"Error: {prep.tool_name} was not run. {prep.arg_error}", dict(_FAILED))
+            return (
+                f"Error: {prep.tool_name} was not run. {prep.arg_error}",
+                {**_FAILED, TOOL_META_NOT_RUN: "unreadable_arguments"},
+            )
         if not any(dispatch_plan.conflicts(prep.reservations, p) for p in poisoned):
             return None
         return (
             f"Error: {prep.tool_name} was not run — an earlier call in this turn that "
             "touches the same resource failed, so the resource's state is unknown. "
             "Re-check that state before retrying.",
-            dict(_FAILED),
+            {**_FAILED, TOOL_META_NOT_RUN: "failed_predecessor"},
         )
 
     async def _prefetch(self, prep: "_PreparedCall") -> tuple[Any, dict]:
@@ -1699,7 +1709,7 @@ class NativeAgentRuntime(AgentProvider):
                 tool_call_id=call.tool_call_id,
                 title=tool_name,
                 tool_output=blocked_str,
-                tool_meta=dict(_FAILED),
+                tool_meta={**_FAILED, TOOL_META_REFUSED_BY: "loop_breaker"},
             )
             self._messages.append(self._tool_result_msg(call, blocked_str))
             return
@@ -1828,6 +1838,7 @@ class NativeAgentRuntime(AgentProvider):
         # WOULD happen with no side effects. Read-only SAFE tools fall through and
         # run for real, so the agent reasons over actual state.
         if self._dry_run and self._tool_risk.get(tool_name, RiskLevel.SAFE) != RiskLevel.SAFE:
+            meta[TOOL_META_REFUSED_BY] = "dry_run"
             return (
                 f"[DRY RUN — observe mode] `{tool_name}` is a write-capable tool; "
                 f"it was NOT executed. With args {_short_json(args)} it would have "
@@ -1840,6 +1851,7 @@ class NativeAgentRuntime(AgentProvider):
         if deny:
             _, observation = security.classify_denial(security.DENY_KIND_POLICY, deny, tool_name)
             meta.update(_FAILED)
+            meta[TOOL_META_REFUSED_BY] = "deny_list"
             return observation
 
         # Task-mode gate (ask/plan/build) — runs HERE, before approval, so a
@@ -1852,7 +1864,24 @@ class NativeAgentRuntime(AgentProvider):
         if tm_deny:
             _, observation = security.classify_denial(security.DENY_KIND_POLICY, tm_deny, tool_name)
             meta.update(_FAILED)
+            meta[TOOL_META_REFUSED_BY] = "task_mode"
             return observation
+
+        # The host's tool grants (`set_tool_grants`), for the same reason: an approval the policy
+        # answers here must not admit a tool the run was never granted.
+        if self._tool_grants is not None and tool_name not in self._META_TOOLS:
+            try:
+                grant_deny = self._tool_grants(tool_name)
+            except Exception:  # noqa: BLE001 - a grant that cannot be read admits nothing
+                logger.warning("native: tool grants could not be read; refusing", exc_info=True)
+                grant_deny = "this run's tool grants could not be read"
+            if grant_deny:
+                _, observation = security.classify_denial(
+                    security.DENY_KIND_POLICY, grant_deny, tool_name
+                )
+                meta.update(_FAILED)
+                meta[TOOL_META_REFUSED_BY] = "tool_grants"
+                return observation
 
         # PreToolUse hooks (blocking) — recoverable: adapt, don't repeat.
         if self._hook_fire is not None:
@@ -1867,6 +1896,7 @@ class NativeAgentRuntime(AgentProvider):
                     security.DENY_KIND_HOOK, _reason, tool_name
                 )
                 meta.update(_FAILED)
+                meta[TOOL_META_REFUSED_BY] = "hook"
                 return observation
 
         # A tool this agent does not have (it was never offered, or it is switched off) is refused
@@ -1886,6 +1916,7 @@ class NativeAgentRuntime(AgentProvider):
     def _unknown_tool(tool_name: str, meta: dict) -> str:
         """The answer to a call naming a tool this agent does not have, marked failed in *meta*."""
         meta.update(_FAILED)
+        meta[TOOL_META_REFUSED_BY] = "unknown_tool"
         return f"Error: unknown tool {tool_name!r}"
 
     def _resolve_name(self, name: str) -> str:
@@ -2034,7 +2065,23 @@ class NativeAgentRuntime(AgentProvider):
     def _requires_approval(self, tool_name: str) -> bool:
         if not self._asks_first(tool_name):
             return False
-        return self._approval_policy not in ("auto", "yolo", "acceptEdits")
+        return self._policy_now() not in ("auto", "yolo", "acceptEdits")
+
+    def _policy_now(self) -> str:
+        """The approval policy for THIS decision: the live source's answer when one is set.
+
+        A subagent's grants (its chat's Trust, YOLO, the Auto-approve setting, the hook setting)
+        are read when each call is decided, so one revoked while the agent runs stops waiving its
+        next call. A source that fails reads as asking.
+        """
+        source = self._approval_source
+        if source is None:
+            return self._approval_policy
+        try:
+            return str(source() or "")
+        except Exception:  # noqa: BLE001 - fail toward asking
+            logger.warning("native: approval source failed; asking", exc_info=True)
+            return ""
 
     def _asks_first(self, tool_name: str) -> bool:
         """Whether the tool asks before it runs by its own definition, before the session's
@@ -2527,10 +2574,26 @@ class NativeAgentRuntime(AgentProvider):
 
     def set_approval_policy(self, policy: str) -> None:
         self._approval_policy = policy or ""
+        self._approval_source = None
+
+    def set_approval_source(self, source: Callable[[], str]) -> None:
+        """Read the approval policy from *source* at every decision (`_policy_now`)."""
+        self._approval_source = source
 
     def set_task_mode(self, mode: str) -> None:
         """Set the task mode (agent/ask/plan/build) enforced in _guard_and_invoke."""
         self._task_mode = mode or "agent"
+
+    def set_tool_grants(self, denial: Callable[[str], str] | None) -> None:
+        """Set which tools this run may use at all: ``denial(tool)`` is why not, ``""`` if it may.
+
+        Asked in :meth:`_guard_and_invoke` before approval, like the task mode, because an approval
+        this runtime answers itself (its policy says ``auto``) never reaches the host that holds
+        the grants. A subagent's capability class and the operator ceiling's ``tools`` scope were
+        enforced only where the host answers an ask, so a read-only research run with a standing
+        approval grant ran its write tools.
+        """
+        self._tool_grants = denial
 
     @property
     def agent_model(self) -> str:

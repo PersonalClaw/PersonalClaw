@@ -1,10 +1,21 @@
 """Tests that ``agent.yolo=true`` enables dashboard YOLO at gateway startup."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import personalclaw.config.loader as loader
 from personalclaw.dashboard.server import _apply_startup_yolo
 from personalclaw.dashboard.state import DashboardState
+
+
+def _config_says_yolo() -> None:
+    """Config YOLO stands only while the config says it (`trust_mode.is_active` reads it back), so
+    a test of config YOLO writes it there, as the owner's Settings switch does."""
+    path = loader.config_dir() / "config.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    data.setdefault("agent", {})["yolo"] = True
+    path.write_text(json.dumps(data))
 
 
 def _make_state() -> DashboardState:
@@ -20,6 +31,7 @@ def _cfg(yolo: bool) -> SimpleNamespace:
 
 def test_apply_startup_yolo_enables_when_config_true() -> None:
     """``agent.yolo=true`` activates dashboard YOLO and emits an SEL audit event."""
+    _config_says_yolo()
     state = _make_state()
     assert state.is_yolo_active() is False
 
@@ -79,6 +91,7 @@ class TestDashboardYoloFromConfig:
     def test_from_config_sets_flag_and_no_ttl(self) -> None:
         import personalclaw.trust_mode as tm
 
+        _config_says_yolo()
         state = _make_state()
         state.enable_yolo(from_config=True)
         assert state.is_yolo_active() is True
@@ -93,6 +106,7 @@ class TestDashboardYoloFromConfig:
         assert state.yolo_remaining_secs() is None, "Config yolo should remain permanent"
 
     def test_config_yolo_never_expires(self) -> None:
+        _config_says_yolo()
         state = _make_state()
         state.enable_yolo(from_config=True)
         with patch("time.monotonic", return_value=9999999999.0):

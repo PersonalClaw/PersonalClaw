@@ -24,7 +24,9 @@ case, so a run that retries a declined call is one item and not twenty.
 
 **When a note is done.** An expired note stands for one call, ``refs.call``, asked in one place
 (its session, or its trigger's run). :func:`settle_retried` moves it to HANDLED, with the answer on
-``refs.retry``, when that call is asked there again and answered, allowed or denied. That is the
+``refs.retry`` and who gave it on ``refs.retry_by``, when that call is asked there again and
+answered, allowed or denied — or runs there again because a standing grant approved it without
+asking (a chat's Trust, YOLO, an automation's own approval mode). That is the
 Inbox's own rule (``inbox.resolve_attention_items``): a row raised for a standing request closes
 when the request stops standing. Sending the retry does not close it, because nothing has been
 decided yet. An unattended note has no answer to wait for, and stays until the owner handles it.
@@ -210,15 +212,17 @@ def note_unattended(
 RETRY_ANSWERS = frozenset({"approved", "rejected"})
 
 
-def settle_retried(state: Any, entry: dict[str, Any], *, answer: str) -> int:
+def settle_retried(state: Any, entry: dict[str, Any], *, answer: str, by: str) -> int:
     """Mark HANDLED each open expired note for the call *entry* was, recording *answer*.
 
     Called with every answered approval (``approval_state.withdraw_approval``, where every door's
-    answer arrives). A note settles only for the same call (``refs.call``) asked in the same place,
-    every pair of :func:`_asked_in` matching — the Inbox's ref-subset rule — so a different call of
-    the same tool, or the same call in another chat, leaves it open. The answer goes on the row
-    first and the row then moves through the Inbox's one status transition, which tells every open
-    surface and reads the note's notification in the bell. Returns how many notes moved.
+    answer arrives), and with every call a standing grant approved without asking
+    (``approval_state.settle_granted``). A note settles only for the same call (``refs.call``) asked
+    in the same place, every pair of :func:`_asked_in` matching — the Inbox's ref-subset rule — so a
+    different call of the same tool, or the same call in another chat, leaves it open. The answer
+    and who gave it (``by``: ``approval_grants.YOU``, or the grant's name) go on the row first, and
+    the row then moves through the Inbox's one status transition, which tells every open surface
+    and reads the note's notification in the bell. Returns how many notes moved.
     """
     if answer not in RETRY_ANSWERS:
         return 0
@@ -249,6 +253,7 @@ def settle_retried(state: Any, entry: dict[str, Any], *, answer: str) -> int:
         ]
         for item in notes:
             item.refs["retry"] = answer
+            item.refs["retry_by"] = by
         return len(set_item_status(state, store, notes, ItemStatus.HANDLED))
     except Exception:  # noqa: BLE001 - see the module docstring: best-effort
         logger.debug("could not settle the notes for %s", entry.get("id"), exc_info=True)

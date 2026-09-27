@@ -2108,12 +2108,23 @@ def _resolve_from_config_registry(
             breaker=breaker,
             routed=guard_routed,
             routed_fallback=guard_routed_fallback,
+            # Read again at each call: the values above are only where the guard starts.
+            budget_source=budget_from_config,
+            run_budget_source=run_budget_from_config,
+            scan_mode_source=_scan_mode_now,
             **_timeout_kw,
         )
         _stamp_served_ref(guarded, served_ref)
         return guarded
     _stamp_served_ref(built, served_ref)
     return built
+
+
+def _scan_mode_now() -> str:
+    """``guardrails.scan_mode`` as it reads now, for a guard that outlives a Settings change."""
+    from personalclaw.config.loader import AppConfig
+
+    return str(AppConfig.load().guardrails.scan_mode or "")
 
 
 def _stamp_served_ref(provider: object, ref: str) -> None:

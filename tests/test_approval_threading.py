@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personalclaw.approval_grants import ToolDecision
 from personalclaw.llm_helpers import LLMEvent
 
 
@@ -52,8 +53,6 @@ def _make_gateway():
     gateway.dashboard_state.resolve_approval = MagicMock()
     gateway._owner_id = "U000"
     gateway._cfg = MagicMock()
-    gateway._cfg.hooks = MagicMock()
-    gateway._cfg.hooks.get = MagicMock(return_value=[])
     gateway._cfg.agent.max_subagents = 4
     gateway.sessions.get_channel = MagicMock(return_value=None)
     gateway.sessions.get_thread = MagicMock(return_value=None)
@@ -81,7 +80,7 @@ class TestChannelDelegation:
             approve_fn = gateway._interactive_approval("subagent")
             result = await approve_fn(_make_event(), "1775113012.860459")
 
-        assert result is True
+        assert result == ToolDecision(True, "approved", "you")
         gateway._channel_delivery.request_approval.assert_awaited_once()
         call = gateway._channel_delivery.request_approval.call_args
         # event is the first positional; source + routing context ride kwargs.
@@ -100,7 +99,7 @@ class TestChannelDelegation:
             approve_fn = gateway._interactive_approval("subagent")
             result = await approve_fn(_make_event(), "cron:j1")
 
-        assert result is False
+        assert result == ToolDecision(False, "rejected", "you")
 
     @pytest.mark.asyncio
     async def test_falls_back_to_dashboard_when_no_channel(self) -> None:
@@ -113,7 +112,7 @@ class TestChannelDelegation:
             approve_fn = gateway._interactive_approval("subagent")
             result = await approve_fn(_make_event(), "")
 
-        assert result is True
+        assert result == ToolDecision(True, "approved", "you")
         gateway.dashboard_state.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -129,7 +128,7 @@ class TestChannelDelegation:
             approve_fn = gateway._interactive_approval("subagent")
             result = await approve_fn(_make_event(), "")
 
-        assert result is False
+        assert result == ToolDecision(False, "rejected", "you")
         gateway.dashboard_state.request_approval.assert_awaited_once()
 
 
@@ -251,7 +250,7 @@ class TestApprovalModeSelAudit:
             approve_fn = gateway._interactive_approval("cron")
             result = await approve_fn(_make_event(title="shell: rm -rf /"), "")
 
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "cli")
         mock_sel.log_api_access.assert_called_once()
         kwargs = mock_sel.log_api_access.call_args.kwargs
         assert kwargs["caller"] == "cli:approval=yolo"
@@ -277,7 +276,7 @@ class TestApprovalModeSelAudit:
             approve_fn = gateway._interactive_approval("subagent")
             result = await approve_fn(_make_event(title="read /tmp/foo.txt"), "")
 
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "cli")
         mock_sel.log_api_access.assert_called_once()
         kwargs = mock_sel.log_api_access.call_args.kwargs
         assert kwargs["caller"] == "cli:approval=reads"
@@ -321,4 +320,4 @@ class TestApprovalModeSelAudit:
             approve_fn = gateway._interactive_approval("cron")
             result = await approve_fn(_make_event(), "")
 
-        assert result is True  # approval still proceeds
+        assert result == ToolDecision(True, "auto_approved", "cli")  # approval still proceeds

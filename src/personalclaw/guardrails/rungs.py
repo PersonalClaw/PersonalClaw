@@ -551,11 +551,15 @@ def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
     ceiling, clamped again to ``one_tap`` during an incident). The profile then NARROWS it
     and can never widen it — the lower of the two wins.
     """
-    from personalclaw.guardrails.policy import profile_for_session, rung_ceiling_for_profile
+    from personalclaw.guardrails.policy import (
+        is_unattended_session,
+        profile_for_session,
+        rung_ceiling_for_profile,
+    )
 
     rung = resolve_rung(key)
     profile = profile_for_session(session_key)
-    ceiling = rung_ceiling_for_profile(profile)
+    ceiling = rung_ceiling_for_profile(profile, unattended=is_unattended_session(session_key))
     effective = RUNGS[min(max(rung_rank(rung), 0), max(rung_rank(ceiling), 0))]
     # 🪤 THIS SENTENCE IS USER COPY, AND IT IS ALWAYS EMBEDDED. `announce_withheld` puts it in the
     # body of the inbox row a held action raises, the seams put it in a hook/trigger error, and

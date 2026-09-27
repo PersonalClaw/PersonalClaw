@@ -367,7 +367,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
 /** Humanize an event name for a list label without needing the fetched catalog
  *  (PreToolUse → "Pre tool use"). The full label/desc come from the catalog in
  *  the detail/create views. */
-function humanizeEvent(event: string): string {
+export function humanizeEvent(event: string): string {
   if (!event) return ''
   const spaced = event.replace(/([a-z])([A-Z])/g, '$1 $2')
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()

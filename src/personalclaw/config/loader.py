@@ -611,6 +611,8 @@ class AgentConfig:
             "Approval Wait (minutes)",
             "How long a tool approval waits for your answer before it is denied. An approval a "
             "subagent or workflow step asks for also ends when that work's own time limit does. "
+            "A workflow's approval gates wait this long too, except in a run started "
+            "unattended, where a gate gives up after 45 seconds and the run says so. "
             "Unattended runs never wait: no one is there to ask, so they are denied at once.",
         ),
     )

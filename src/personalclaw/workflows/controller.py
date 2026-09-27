@@ -1521,6 +1521,10 @@ class RunController:
                 else None
             )
             if verdict is not None and verdict.approved:
+                # What decided is written down where every other approval is (`approval_grants`,
+                # rule 3), not only in the run's own journal: a gate the policy approved is an
+                # approval nobody was asked for.
+                _audit_policy_approval(self.run.id, item.node.id, verdict)
                 inst.state = InstanceState.DONE
                 inst.completed_at = now_stamp()
                 ref, preview = self.journal.store_output(
@@ -1928,14 +1932,21 @@ class RunController:
             # sentence names how long it waited: it is what the run's own ending will say.
             if gate_answers.is_approval_gate(node):
                 from personalclaw.workflows.human_input import gate_timeout_secs, timeout_phrase
+                from personalclaw.workflows.supervisor_policy import unattended_grant
 
+                unattended = unattended_grant(self.run.policy_overrides)
                 waited = gate_timeout_secs(
-                    (node.config if node else None) or {}, mode=self.run.mode
+                    (node.config if node else None) or {}, unattended=unattended
                 )
                 failure = Failure(
                     failure_class=FailureClass.TIMEOUT,
                     cause_plain=f"no answer within {timeout_phrase(waited)}",
-                    remediation="fork the run to ask again, or raise the gate's timeout_secs",
+                    remediation=(
+                        "fork the run to ask again, or raise the gate's timeout_secs"
+                        if unattended
+                        else "fork the run to ask again, or raise Settings → Agent defaults → "
+                        "Approval wait (or the gate's timeout_secs)"
+                    ),
                     terminal_reason="timed_out_unattended",
                 )
             else:
@@ -2354,6 +2365,32 @@ def _item_label(item: Any) -> str:
     if item is None:
         return ""
     return _clip(str(item))
+
+
+def _audit_policy_approval(run_id: str, node_id: str, verdict: Any) -> None:
+    """Write the SEL row of a gate the policy approved without asking (best-effort).
+
+    ``decided_by`` is the grant (`approval_grants`): a remembered "always allow", or an unattended
+    run's policy for a gate of its risk.
+    """
+    from personalclaw import approval_grants
+
+    decided_by = (
+        approval_grants.REMEMBERED
+        if verdict.decision == gate_policy.Decision.REMEMBERED
+        else approval_grants.GATE_POLICY
+    )
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller=f"workflow:{run_id}",
+            operation="workflow_gate.approved_without_asking",
+            outcome="auto_approved",
+            resources=f"node={node_id},decided_by={decided_by},risk={verdict.risk}",
+        )
+    except Exception:  # noqa: BLE001 - an audit write never decides a gate
+        logger.warning("SEL audit failed for a policy-approved gate %s", node_id, exc_info=True)
 
 
 def _clip(text: str) -> str:

@@ -224,7 +224,42 @@ def _resolve_acp_spawn_cwd(cwd: str | None) -> Path:
     )
 
 
-def _push_approval_policy(provider: Any, policy: str) -> None:
+#: Policies under which a runtime that gates its own tools (the native one) never asks at all
+#: (`agents/native/runtime.py` `_requires_approval`). Each is a grant, so each is bounded by the
+#: operator ceiling before a session is given one (`approval_grants`, rule 2).
+_WAIVING_POLICIES = frozenset({"auto", "yolo", "acceptEdits"})
+
+
+def _bounded_policy(policy: str, *, key: str) -> str:
+    """*policy*, unless it waives asking and the operator ceiling does not permit that: then ``""``.
+
+    Every session's policy is set here or in :meth:`SessionManager.set_approval_policy`, whoever
+    grants it — a chat's Trust or YOLO, a loop, the planner, a subagent's spawn — so this is the
+    one place a runtime's own "never ask" is bounded. The refusal is audited by the check.
+    """
+    if policy not in _WAIVING_POLICIES:
+        return policy
+    from personalclaw import approval_grants
+
+    if approval_grants.stands(
+        approval_grants.SESSION_POLICY, caller=key, subject=f"policy={policy}"
+    ):
+        return policy
+    return ""
+
+
+def _policy_of(source: Callable[[], str]) -> str:
+    """What a live approval source says now; ``""`` (asking) when it cannot say."""
+    try:
+        return str(source() or "")
+    except Exception:  # noqa: BLE001 - fail toward asking
+        logger.warning("approval source failed; asking", exc_info=True)
+        return ""
+
+
+def _push_approval_policy(
+    provider: Any, policy: str, source: Callable[[], str] | None = None
+) -> None:
     """Hand a session's approval policy to a provider that gates tools ITSELF (the native runtime).
 
     🔴 ``get_or_create(approval_policy=...)`` used to record the policy on the session RECORD only.
@@ -237,9 +272,19 @@ def _push_approval_policy(provider: Any, policy: str) -> None:
     enforces approval through its own protocol path and has no setter, so it is untouched by this.
 
     Only the approval PROMPT is affected: the runtime's deny-list, sensitive-path, read-only and
-    task-mode gates run before it regardless, and the policy itself has already been bounded by
-    the operator's governance ceiling at the one place that grants it (``subagent._run_inner``).
+    task-mode gates run before it regardless, and the policy has already been bounded by the
+    operator's governance ceiling (:func:`_bounded_policy`).
+
+    A ``source`` is read at every decision instead (``approval_grants``, rule 1): a runtime that
+    takes one (``set_approval_source``) asks it per call, so a grant revoked mid-run stops waiving
+    the next call; one that takes only a fixed policy gets what the source says now.
     """
+    if source is not None:
+        source_setter = getattr(provider, "set_approval_source", None)
+        if callable(source_setter):
+            source_setter(source)
+            return
+        policy = _policy_of(source)
     if not policy:
         return
     setter = getattr(provider, "set_approval_policy", None)
@@ -269,6 +314,9 @@ class _Session:
     consecutive_failures: int = 0
     semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1))
     approval_policy: str = ""  # "" (interactive) | "auto" (auto-approve all tools)
+    #: Read at each decision in place of ``approval_policy`` when set (a subagent's grants,
+    #: `SubagentManager._policy_source`), so what this session may approve follows the settings.
+    approval_source: Callable[[], str] | None = None
     agent: str = ""  # ACP agent name used for this session
     # Channel message queue: FIFO of (msg_ts, text, kwargs) waiting for the semaphore
     queue: deque[tuple[str, str, dict]] = field(default_factory=deque)
@@ -1019,6 +1067,22 @@ class SessionManager:
         # Create fresh replacement
         await self._ensure_background()
 
+    @staticmethod
+    def _guard_unattended_runner(
+        key: str, agent: str | None, extra_factory_kwargs: dict[str, Any]
+    ) -> None:
+        """Refuse an unattended run on an external ACP runner whose adapter is not verified,
+        when ``agents.unattended_requires_verified_adapter`` says so (read now). Raises
+        :class:`~personalclaw.agents.runners.UnverifiedAdapterError`."""
+        from personalclaw.agents.runners import guard_unattended_spawn, runtime_id_for_agent
+        from personalclaw.guardrails.policy import is_unattended_session
+
+        runtime_id = str(extra_factory_kwargs.get("provider_kind") or "")
+        if not runtime_id.startswith("acp"):
+            runtime_id = runtime_id_for_agent(agent)
+        unattended = bool(extra_factory_kwargs.get("unattended")) or is_unattended_session(key)
+        guard_unattended_spawn(runtime_id, unattended=unattended)
+
     async def get_or_create(
         self,
         key: str,
@@ -1028,6 +1092,8 @@ class SessionManager:
         model: str | None = None,
         cwd: str | None = None,
         extra_env: dict[str, str] | None = None,
+        *,
+        approval_source: Callable[[], str] | None = None,
         **extra_factory_kwargs: Any,
     ) -> tuple[ModelProvider, bool, bool]:
         """Return ``(ModelProvider, is_new, resumed)`` for *key*, creating if needed.
@@ -1044,7 +1110,10 @@ class SessionManager:
             agent: Optional agent name for ``session/set_mode``.  Non-default
                 agents skip the warm pool (cold start only).
             model: Optional model override for the session.
+            approval_source: Read at each approval decision instead of ``approval_policy``
+                (:func:`_push_approval_policy`), for a session whose grants follow the settings.
         """
+        approval_policy = _bounded_policy(approval_policy, key=key)
         # A cold-started background session (its _ensure_background creation died,
         # or a consumer touched it first) must resolve the background axis too —
         # same governance as the normal creation path.
@@ -1110,6 +1179,15 @@ class SessionManager:
         if reuse is not None:
             provider, was_new, sess = reuse
             await sess.semaphore.acquire()
+            # The adapter-verification gate below guards the runners this call CREATES; a
+            # runner already running is reused past it, so turning the flag on did not reach an
+            # unattended run on a runner launched before (`approval_grants`, rule 1). The same
+            # gate, read now, for the reuse too.
+            try:
+                self._guard_unattended_runner(key, agent, extra_factory_kwargs)
+            except BaseException:
+                sess.semaphore.release()
+                raise
             stale = (
                 "its agent was edited"
                 if sess.definition_stale
@@ -1139,6 +1217,7 @@ class SessionManager:
                 model=model,
                 cwd=cwd,
                 extra_env=extra_env,
+                approval_source=approval_source,
                 **extra_factory_kwargs,
             )
 
@@ -1160,14 +1239,7 @@ class SessionManager:
         # kwarg-only gate silently let through. One vocabulary, no per-caller opt-in: the
         # kwarg is still honoured (it names a spawn the key cannot describe), but it is
         # no longer the only way to be seen as unattended.
-        from personalclaw.agents.runners import guard_unattended_spawn, runtime_id_for_agent
-        from personalclaw.guardrails.policy import is_unattended_session
-
-        _runtime_id = str(extra_factory_kwargs.get("provider_kind") or "")
-        if not _runtime_id.startswith("acp"):
-            _runtime_id = runtime_id_for_agent(agent)
-        _unattended = bool(extra_factory_kwargs.get("unattended")) or is_unattended_session(key)
-        guard_unattended_spawn(_runtime_id, unattended=_unattended)
+        self._guard_unattended_runner(key, agent, extra_factory_kwargs)
 
         # Check session map for resume — only for long-lived sessions
         resume_sid: str | None = None
@@ -1307,9 +1379,10 @@ class SessionManager:
                     await provider.shutdown()
                     sess = self._sessions[key]
                     sess.last_used = time.monotonic()
-                    if approval_policy:
+                    if approval_policy or approval_source is not None:
                         sess.approval_policy = approval_policy
-                        _push_approval_policy(sess.provider, approval_policy)
+                        sess.approval_source = approval_source
+                        _push_approval_policy(sess.provider, approval_policy, approval_source)
                     if agent:
                         sess.agent = agent
                     # Defer the (possibly blocking) semaphore acquire until after
@@ -1320,9 +1393,10 @@ class SessionManager:
                         provider=provider,
                         is_new=False,
                         approval_policy=approval_policy,
+                        approval_source=approval_source,
                         agent=agent or "",
                     )
-                    _push_approval_policy(provider, approval_policy)
+                    _push_approval_policy(provider, approval_policy, approval_source)
                     self._sessions[key] = sess
                     logger.info(
                         "New session: %s agent=%s resumed=%s (total=%d)",
@@ -1853,9 +1927,13 @@ class SessionManager:
         return sess.provider.is_alive()
 
     def get_approval_policy(self, key: str) -> str:
-        """Return the approval policy for a session, or empty string."""
+        """Return the approval policy for a session as it stands now, or empty string."""
         session = self._sessions.get(key)
-        return session.approval_policy if session else ""
+        if session is None:
+            return ""
+        if session.approval_source is not None:
+            return _policy_of(session.approval_source)
+        return session.approval_policy
 
     def get_agent(self, key: str) -> str:
         """Return the agent name for a session, or empty string."""
@@ -1863,11 +1941,16 @@ class SessionManager:
         return session.agent if session else ""
 
     def set_approval_policy(self, key: str, policy: str) -> None:
-        """Set the approval policy for an existing session."""
+        """Set the approval policy for an existing session, bounded by the operator ceiling.
+
+        An explicit policy replaces a live source the session had (:func:`_push_approval_policy`).
+        """
         session = self._sessions.get(key)
         if session:
+            policy = _bounded_policy(policy, key=key)
             old = session.approval_policy
             session.approval_policy = policy
+            session.approval_source = None
             # Push to the provider if it gates tools itself (native runtime);
             # ACP enforces approval via its own protocol path and has no setter.
             prov_set = getattr(session.provider, "set_approval_policy", None)

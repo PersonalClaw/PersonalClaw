@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
-from personalclaw.guardrails.autonomy import RUNG_AUTO_WITH_UNDO, RUNG_AUTONOMOUS
+from personalclaw.guardrails.autonomy import RUNG_AUTO_WITH_UNDO, RUNG_AUTONOMOUS, RUNG_ONE_TAP
 from personalclaw.guardrails.budgets import Budget
 
 if TYPE_CHECKING:
@@ -314,7 +314,7 @@ def ceiling_permits_approval(value: str) -> bool:
     return resolve(active_ceiling(), probe).approval == value
 
 
-def rung_ceiling_for_profile(profile: SafetyProfile) -> str:
+def rung_ceiling_for_profile(profile: SafetyProfile, *, unattended: bool = False) -> str:
     """The highest autonomy rung a run under ``profile`` may reach (AUTONOMY-GUARDRAILS
     §5.2, layered per PLATFORM-HARDENING-FLOORS §5).
 
@@ -324,20 +324,31 @@ def rung_ceiling_for_profile(profile: SafetyProfile) -> str:
     two, so a profile can never hand a type a rung its declaration refused.
 
     The ordinal is read off ``profile.approval``, the one profile field that describes how
-    much the run may decide alone:
+    much the run may decide alone, and whether anybody is watching (``unattended``):
 
     * ``auto`` — the operator pre-approved this posture, so nothing here narrows it.
-    * ``ask`` — a human is watching the run and sees the result as it lands, so the
+    * ``ask`` on a run someone is watching — they see the result as it lands, so the
       type's own ceiling is the only bound that matters.
     * ``hook_based`` — the UNATTENDED posture: there is no human to ask and no one
       watching. ``autonomous`` (silent, no undo handle) would mean an action ran and left
       no trace a user would notice, so it narrows to ``auto_with_undo`` — execute, but
       keep the reversal handle and the passive notification that let the user find it.
+    * ``ask`` on an unattended run — only the operator ceiling puts it there
+      (``{"approval": {"value": "ask"}}``: a person decides every action on this machine),
+      and nobody is watching to decide. It narrows to ``one_tap``: the action does not run,
+      it raises a request for a person. Reading it as "a human is watching" made the ceiling
+      LOOSEN an unattended run from ``auto_with_undo`` to ``autonomous``, the direction a
+      ceiling must never move: each step down the approval scale is at most as permissive
+      as the one above it.
 
     The INCIDENT posture is not expressed here: ``resolve_rung`` clamps every resolution
     to ``one_tap`` while an incident is active, which outranks both levels.
     """
-    return RUNG_AUTONOMOUS if profile.approval in ("auto", "ask") else RUNG_AUTO_WITH_UNDO
+    if profile.approval == "auto":
+        return RUNG_AUTONOMOUS
+    if profile.approval == "ask":
+        return RUNG_ONE_TAP if unattended else RUNG_AUTONOMOUS
+    return RUNG_AUTO_WITH_UNDO
 
 
 def approval_policy_for_session(session_key: str) -> "ToolApprovalPolicy":
@@ -349,21 +360,31 @@ def approval_policy_for_session(session_key: str) -> "ToolApprovalPolicy":
     ``ToolApprovalPolicy`` is imported lazily to keep this module importable without
     dragging in ``llm_helpers`` (and to keep the guardrails↔llm layering one-way).
 
-    Mapping from ``profile.approval``:
-      * ``auto``       → AUTO_APPROVE
-      * ``hook_based`` → HOOK_BASED
-      * ``ask``        → HOOK_BASED  — an unattended run has no human to ask, so
-        HOOK_BASED keeps the security-hook deny gate rather than auto-approving.
-        Interactive paths keep their own interactive-callback flow and never call
-        this helper, so ``ask`` reaching here only means a run with no interactive
-        callback, where HOOK_BASED is the safe resolution.
+    Interactive paths keep their own interactive-callback flow and never call this helper,
+    so it answers for a run with NO callback: nobody can be asked (:func:`no_one_to_ask`).
+    """
+    return no_one_to_ask(profile_for_session(session_key).approval)
+
+
+def no_one_to_ask(approval: str) -> "ToolApprovalPolicy":
+    """The tool-approval policy for a run nobody can be asked in, at approval posture *approval*.
+
+    * ``auto``       → AUTO_APPROVE.
+    * ``hook_based`` → HOOK_BASED: the operator's hooks deny what they deny and approve what
+      they approve, and a call no hook names runs.
+    * ``ask``        → REJECT_ALL. A person decides each call, and there is no person to ask,
+      so nothing runs. Only the operator ceiling puts ``ask`` on such a run
+      (``{"approval": {"value": "ask"}}``); this mapped it to HOOK_BASED, whose default
+      approves every call no hook names, so the ceiling had no effect on a heartbeat or an
+      unattended announce at all.
     """
     from personalclaw.llm_helpers import ToolApprovalPolicy
 
-    approval = profile_for_session(session_key).approval
     if approval == "auto":
         return ToolApprovalPolicy.AUTO_APPROVE
-    return ToolApprovalPolicy.HOOK_BASED
+    if approval == "hook_based":
+        return ToolApprovalPolicy.HOOK_BASED
+    return ToolApprovalPolicy.REJECT_ALL
 
 
 # ── tool grants (§3 ``tool_grants``) ──────────────────────────────────────────────

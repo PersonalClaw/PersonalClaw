@@ -768,6 +768,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_owner_ended": (
         "The work that asked for this approval has ended, so it was cancelled and nothing ran."
     ),
+    # A 409 refusal of a standing grant (a chat's Trust, Trust reads, YOLO, "Always allow for
+    # this agent"): the operator ceiling (`governance/ceiling.json`, `approval`) says every call
+    # on this machine asks, so no switch may approve one without a person
+    # (`approval_grants.refusal_sentence`). A pending approval it was aimed at stays pending.
+    "approval_grant_refused": (
+        "The operator ceiling says every tool call asks, so this can't approve calls on its own."
+    ),
     # ── saving an MCP server (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
     # `invalid_env` (400) — the environment cannot be saved as sent: `env` is not a map of names
     # to strings, `plainEnv`/`keepEnv` is not a list of names, a variable asked to keep its saved

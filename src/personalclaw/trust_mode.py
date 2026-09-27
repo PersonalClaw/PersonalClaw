@@ -47,7 +47,8 @@ class _TrustMode:
     def register_on_disable(self, cb: Callable[[str], None]) -> None:
         """Register a callback fired when YOLO turns off (manually or by expiry).
 
-        The callback receives the reason: ``"manual"`` or ``"expired"``. Used by
+        The callback receives the reason: ``"manual"``, ``"expired"`` or ``"config"`` (config-driven
+        YOLO whose ``agent.yolo`` was taken out of the config). Used by
         surfaces to clear their derived trust state (approval policies, trusted
         threads). Idempotent registration is the caller's responsibility. A callback an app
         registered (a channel's trusted threads) is dropped when the app is unloaded.
@@ -102,7 +103,20 @@ class _TrustMode:
             self._fire_disable("manual")
 
     def is_active(self) -> bool:
-        """Whether YOLO is on right now, auto-expiring a lapsed TTL on read."""
+        """Whether YOLO is on right now, auto-expiring a lapsed TTL on read.
+
+        Config-driven YOLO is read back from the config while it is on, so taking it out of the
+        config ends it whichever way that happened: Settings (which also ends it at once), a
+        Durability rollback, ``personalclaw config set``, a hand edit. It used to be applied once
+        at startup and then only by Settings, so any other change left YOLO approving every call
+        until a restart (`approval_grants`, rule 1). Only in that direction: turning it ON still
+        takes Settings or a restart, the two paths that audit it.
+        """
+        if self._active and self._from_config and not _config_turns_yolo_on():
+            self._active = False
+            self._from_config = False
+            logger.info("YOLO mode OFF (agent.yolo is no longer set in the config)")
+            self._fire_disable("config")
         if (
             self._active
             and not self._from_config
@@ -124,6 +138,17 @@ class _TrustMode:
         if not self.is_active() or self._from_config or not self._expires_at:
             return None
         return max(0.0, self._expires_at - time.monotonic())
+
+
+def _config_turns_yolo_on() -> bool:
+    """Whether ``agent.yolo`` is set in the config as it reads now. Unreadable reads as off."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().agent.yolo)
+    except Exception:  # noqa: BLE001 - fail toward asking
+        logger.warning("could not read agent.yolo; config-driven YOLO ends", exc_info=True)
+        return False
 
 
 # The one shared instance + thin function API bound to it.

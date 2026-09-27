@@ -14,6 +14,7 @@ from typing import Any
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
+from personalclaw import approval_grants
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
@@ -2467,6 +2468,30 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
 
 VALID_APPROVAL_MODES = ("normal", "trust", "trust_reads", "yolo")
 
+#: The standing grant each approval mode is (`approval_grants`); ``normal`` grants nothing.
+_MODE_GRANTS = {
+    "trust": approval_grants.TRUST,
+    "trust_reads": approval_grants.TRUST_READS,
+    "yolo": approval_grants.YOLO,
+}
+#: The standing grant each approval card scope makes besides answering its own call.
+_CARD_GRANTS = {**_MODE_GRANTS, "trust_agent": approval_grants.AGENT_FLOOR}
+
+
+def _set_posture(
+    session: _ChatSession, *, trust: bool | None = None, trust_reads: bool | None = None
+) -> None:
+    """Set a chat's approval posture as YOU chose it.
+
+    A posture an agent's floor seeded is withdrawn when the floor is
+    (`chat_runner._apply_approval_floor`); one you set is yours, so the mark is cleared.
+    """
+    if trust is not None:
+        session._trust = trust
+    if trust_reads is not None:
+        session._trust_reads = trust_reads
+    session._trust_from_floor = ""
+
 
 async def api_chat_mode(request: web.Request) -> web.Response:
     """POST /api/chat/mode — set the tool APPROVAL mode (whether tools auto-approve).
@@ -2497,6 +2522,18 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         )
     session_name = body.get("session") or None
 
+    # A posture that approves calls on its own is a standing grant, and the operator ceiling
+    # bounds every grant (`approval_grants`, rule 2): under `approval: ask` no switch approves a
+    # call without a person. Refused here, saying why, so the pill never shows a posture that
+    # does not hold — and nothing below runs, so no pending approval is approved by it either.
+    grant = _MODE_GRANTS.get(mode, "")
+    if grant and not approval_grants.stands(
+        grant, caller="dashboard:mode", subject=f"mode={mode},session={session_name or '*'}"
+    ):
+        return json_error(
+            "approval_grant_refused", message=approval_grants.refusal_sentence(), status=409
+        )
+
     if mode == "yolo":
         state.enable_yolo()  # TTL enforced internally (state._YOLO_TTL)
         try:
@@ -2513,12 +2550,10 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         if session_name is not None:
             if session_name not in state._sessions:
                 return web.json_response({"ok": False, "error": "unknown session"}, status=400)
-            state._sessions[session_name]._trust = False
-            state._sessions[session_name]._trust_reads = True
+            _set_posture(state._sessions[session_name], trust=False, trust_reads=True)
         else:
             for session in state._sessions.values():
-                session._trust = False
-                session._trust_reads = True
+                _set_posture(session, trust=False, trust_reads=True)
         try:
             sel().log_api_access(
                 caller="dashboard:mode",
@@ -2533,10 +2568,10 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         if session_name is not None:
             if session_name not in state._sessions:
                 return web.json_response({"ok": False, "error": "unknown session"}, status=400)
-            state._sessions[session_name]._trust = True
+            _set_posture(state._sessions[session_name], trust=True)
         else:
             for session in state._sessions.values():
-                session._trust = True
+                _set_posture(session, trust=True)
         try:
             sel().log_api_access(
                 caller="dashboard:mode",
@@ -2551,12 +2586,10 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         if session_name is not None:
             if session_name not in state._sessions:
                 return web.json_response({"ok": False, "error": "unknown session"}, status=400)
-            state._sessions[session_name]._trust = False
-            state._sessions[session_name]._trust_reads = False
+            _set_posture(state._sessions[session_name], trust=False, trust_reads=False)
         else:
             for session in state._sessions.values():
-                session._trust = False
-                session._trust_reads = False
+                _set_posture(session, trust=False, trust_reads=False)
         try:
             sel().log_api_access(
                 caller="dashboard:mode",
@@ -2757,6 +2790,16 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
     ended = state.refuse_ended_owner(chat_approval_id(session.key, request_id))
     if ended:
         return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
+    # A scope wider than this one call is a standing grant, which the operator ceiling bounds
+    # (`approval_grants`, rule 2). Refused before anything is decided, so the call is still asking
+    # and "Allow once" still answers it.
+    standing = _CARD_GRANTS.get(action, "")
+    if standing and not approval_grants.stands(
+        standing, caller=f"dashboard:{session.key}", subject=f"scope={action}"
+    ):
+        return json_error(
+            "approval_grant_refused", message=approval_grants.refusal_sentence(), status=409
+        )
     grant = state.decide_session_approval(session, request_id, action)
     # Report what the grant DID. The route answered a flat `{"ok": true}`, so a client that
     # had just rendered "Saved on this agent: … in this chat and future ones" had no way to
