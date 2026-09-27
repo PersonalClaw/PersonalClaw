@@ -332,10 +332,26 @@ so the gate asks "is this some OTHER language?" instead. And one mutation found 
 literal set of root spellings POSIX normalisation already reached — which was deleted rather
 than tested.
 
+## A warning rule reads the language it names
+
+The same gate applies to the two `WARNING` rules that name one language's API
+(`supply_chain.py::_RULE_LANGUAGE`). `python_exec` reads Python and `node_exec` reads
+JavaScript, the `child_process` module every Node spawn comes from. A file with no suffix, or
+a bare blob, names no language, so both read it. Before this, `python_exec` read every script,
+and a UI bundle's `RegExp.prototype.exec(` reached the install consent as "This code runs an
+external program on your machine." Rules that describe the same thing in every language
+(`eval_exec`, `curl_network`, `sudo_use`, `pipe_to_shell`, `crontab_write`) keep reading all of
+them. `tests/test_a_scanner_rule_reads_the_language_it_names.py` pins both directions.
+
 ## Residual risks
 
 The corpus pins what holds. These are the gaps it also pins, honestly, so they are
 auditable rather than invisible. They are accepted, not unnoticed.
+
+- **A Ruby, Perl or PowerShell script that starts a program earns no warning of its own.**
+  Only Python and JavaScript have a "runs an external program" rule. `python_exec` used to
+  read Ruby's and Perl's `exec(` by accident, and never their `system(` or backticks. The
+  shell band and `curl_network` still read those files, and a shipped bundle has none.
 
 - **A destructive target the analysis cannot resolve is not flagged.** The native family
   classifies a target it can name — a literal, a path wrapper around one, `Path.home()`,

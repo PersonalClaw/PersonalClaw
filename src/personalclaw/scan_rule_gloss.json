@@ -39,6 +39,7 @@
   "curl_network": "This code downloads from the internet while it runs.",
   "sudo_use": "This code asks for administrator rights to act as root on this machine.",
   "python_exec": "This code runs an external program on your machine.",
+  "node_exec": "This code runs an external program on your machine.",
   "crontab_write": "This code edits this machine's scheduled-job table, so it can keep running later.",
   "reads_sensitive_path": "This code reads a file where credentials and keys are kept.",
   "unscanned_file": "PersonalClaw could not read this file, so nothing in it was checked and it could hold anything.",

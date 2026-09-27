@@ -10,8 +10,9 @@ Proves the bundle wiring matches how ACP agents are actually selected today:
   ``AcpAgentProvider`` (dialect is NOT inferred from the command basename);
 * readiness probes cleanly: a faked-present binary is detected (state != not_found),
   an absent binary → not_found, and an absent codex never raises;
-* the Claude config-isolation seed strips the auto-approve permission surface,
-  writes 0600, and fails closed against the operator's real ~/.claude.
+* Claude runs with a config of its own unless the ``isolated_config`` setting turns it
+  off: ``<PersonalClaw home>/cc-config``, which starts as ``{}`` (0600) and takes nothing
+  from ``~/.claude`` or from a ``CLAUDE_CONFIG_DIR`` the operator set (apps #137).
 """
 
 from __future__ import annotations
@@ -140,7 +141,6 @@ def test_manifests_are_agent_type_with_acp_capability():
 
 def test_claude_registers_entry_with_explicit_dialect(monkeypatch, tmp_path):
     _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp")
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "0")  # don't touch ~/.claude
     monkeypatch.delenv("CLAUDE_CODE_ACP_BIN", raising=False)
 
     claude_code.create_provider({"model": "claude-opus-4-8"})
@@ -165,7 +165,6 @@ def test_claude_dialect_explicit_even_when_command_is_npx(monkeypatch, tmp_path)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(empty / ".personalclaw"))
     monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("CLAUDE_CODE_ACP_BIN", raising=False)
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "0")
 
     claude_code.create_provider({})
 
@@ -194,7 +193,6 @@ def test_claude_readiness_present_is_not_not_found(monkeypatch, tmp_path):
     engine before the handshake is ever attempted."""
     bindir = _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp").parent
     _make_exec(bindir / "claude")  # the delegate engine the adapter needs
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "0")
     monkeypatch.delenv("CLAUDE_CODE_ACP_BIN", raising=False)
     claude_code.create_provider({})
     entry = get_default_registry().get_entry("acp:claude-code")
@@ -599,7 +597,6 @@ async def test_discover_agents_not_ready_returns_empty(monkeypatch, tmp_path):
 def test_bundle_factories_return_none(monkeypatch, tmp_path):
     """Like native-agents, the factory returns None (config/registry-based)."""
     _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp")
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "0")
     assert claude_code.create_provider({}) is None
     assert codex.create_provider({}) is None
 
@@ -607,59 +604,100 @@ def test_bundle_factories_return_none(monkeypatch, tmp_path):
 def test_enable_is_idempotent(monkeypatch, tmp_path):
     """Re-running create_provider must not raise the duplicate-name guard."""
     _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp")
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "0")
     claude_code.create_provider({})
     claude_code.create_provider({})  # second enable — should replace, not raise
     assert get_default_registry().get_entry("acp:claude-code") is not None
 
 
 # ── claude config isolation (the E12 §6 security control) ────────────────────
+#
+# Since apps #137 the spawned Claude runs with a config of its own unless the
+# ``isolated_config`` setting turns it off. It starts as ``{}``: nothing comes from the
+# operator's ``~/.claude`` or from a ``CLAUDE_CONFIG_DIR`` they set, so none of their
+# auto-approve rules come along and every Claude tool asks the host first.
 
 
-def test_isolation_strips_auto_approve_and_writes_0600(monkeypatch, tmp_path):
-    # Fake operator ~/.claude with permissive settings.
+def _permissive_claude(root: Path) -> dict:
+    """An operator Claude config that auto-approves every tool, written to ``root``."""
+    settings = {
+        "awsCredentialExport": "aws configure export-credentials",
+        "permissions": {
+            "allow": ["Bash(*)"],
+            "ask": ["Read"],
+            "defaultMode": "acceptEdits",
+            "deny": ["Bash(rm:*)"],
+        },
+        "enabledPlugins": {"x": True},
+        "model": "claude-opus-4-8",
+    }
+    root.mkdir(parents=True)
+    (root / "settings.json").write_text(json.dumps(settings))
+    return settings
+
+
+def _home(monkeypatch, tmp_path) -> Path:
     home = tmp_path / "home"
-    real_claude = home / ".claude"
-    real_claude.mkdir(parents=True)
-    (real_claude / "settings.json").write_text(
-        json.dumps(
-            {
-                "awsCredentialExport": "aws configure export-credentials",
-                "permissions": {
-                    "allow": ["Bash(*)"],
-                    "ask": ["Read"],
-                    "defaultMode": "acceptEdits",
-                    "deny": ["Bash(rm:*)"],
-                },
-                "enabledPlugins": {"x": True},
-                "model": "claude-opus-4-8",
-            }
-        )
-    )
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home / ".personalclaw"))
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "1")
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_EXECUTABLE", raising=False)
+    return home
+
+
+def test_claude_runs_with_its_own_empty_config_by_default(monkeypatch, tmp_path):
+    home = _home(monkeypatch, tmp_path)
+    operator = _permissive_claude(home / ".claude")
 
     env = claude_code._build_env()
-    cc_root = Path(env["CLAUDE_CONFIG_DIR"])
-    seeded = cc_root / "settings.json"
-    assert seeded.is_file()
-    data = json.loads(seeded.read_text())
 
-    # auto-approve surface stripped …
-    assert "allow" not in data.get("permissions", {})
-    assert "ask" not in data.get("permissions", {})
-    assert "defaultMode" not in data.get("permissions", {})
-    assert "enabledPlugins" not in data
-    # … deny + creds + model kept.
-    assert data["permissions"].get("deny") == ["Bash(rm:*)"]
-    assert data.get("awsCredentialExport")
-    assert data.get("model") == "claude-opus-4-8"
+    root = home / ".personalclaw" / "cc-config"
+    assert env["CLAUDE_CONFIG_DIR"] == str(root)
+    seeded = root / "settings.json"
+    assert json.loads(seeded.read_text()) == {}, "nothing is copied from ~/.claude"
+    assert stat.S_IMODE(seeded.stat().st_mode) == 0o600
+    assert json.loads((home / ".claude" / "settings.json").read_text()) == operator
 
-    # 0600 perms.
-    mode = stat.S_IMODE(seeded.stat().st_mode)
-    assert mode == 0o600, oct(mode)
+
+def test_a_claude_config_dir_the_operator_set_is_never_the_isolated_one(monkeypatch, tmp_path):
+    """It used to become the "isolated" root and be rewritten. It is the operator's own."""
+    home = _home(monkeypatch, tmp_path)
+    theirs = home / "my-claude"
+    operator = _permissive_claude(theirs)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(theirs))
+
+    env = claude_code._build_env()
+
+    root = home / ".personalclaw" / "cc-config"
+    assert env["CLAUDE_CONFIG_DIR"] == str(root)
+    assert json.loads((root / "settings.json").read_text()) == {}
+    assert json.loads((theirs / "settings.json").read_text()) == operator
+
+
+def test_what_the_operator_adds_to_the_isolated_config_is_kept(monkeypatch, tmp_path):
+    home = _home(monkeypatch, tmp_path)
+    root = home / ".personalclaw" / "cc-config"
+    root.mkdir(parents=True)
+    (root / "settings.json").write_text(json.dumps({"model": "claude-sonnet-4-5"}))
+
+    claude_code._build_env()
+
+    assert json.loads((root / "settings.json").read_text()) == {"model": "claude-sonnet-4-5"}
+
+
+def test_the_setting_turns_isolation_off_and_sign_in_follows_it(monkeypatch, tmp_path):
+    home = _home(monkeypatch, tmp_path)
+    _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp")
+    root = home / ".personalclaw" / "cc-config"
+
+    claude_code.create_provider({})
+    isolated = get_default_registry().get_entry("acp:claude-code").options
+    assert isolated["env"]["CLAUDE_CONFIG_DIR"] == str(root)
+    assert isolated["login_command"] == ["env", f"CLAUDE_CONFIG_DIR={root}", "claude", "/login"]
+
+    claude_code.create_provider({"isolated_config": False})
+    shared = get_default_registry().get_entry("acp:claude-code").options
+    assert "CLAUDE_CONFIG_DIR" not in shared.get("env", {})
+    assert shared["login_command"] == ["claude", "/login"]
 
 
 def test_bundle_options_flow_into_client_dialect(monkeypatch, tmp_path):
@@ -672,7 +710,6 @@ def test_bundle_options_flow_into_client_dialect(monkeypatch, tmp_path):
     from personalclaw.llm.registry import ProviderEntry
 
     _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp")
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "0")
     claude_code.create_provider({})
     entry: ProviderEntry = get_default_registry().get_entry("acp:claude-code")
 
@@ -704,19 +741,3 @@ def test_codex_options_flow_into_client_dialect(monkeypatch, tmp_path):
     provider = _factory(entry=entry)
     assert isinstance(provider.client._dialect, CodexDialect)
     assert provider.client._dialect.protocol_version() == 1
-
-
-def test_isolation_fails_closed_when_root_is_real_claude(monkeypatch, tmp_path):
-    """If CLAUDE_CONFIG_DIR resolves to ~/.claude, never strip/overwrite it."""
-    home = tmp_path / "home"
-    real_claude = home / ".claude"
-    real_claude.mkdir(parents=True)
-    original = {"permissions": {"allow": ["Bash(*)"]}}
-    (real_claude / "settings.json").write_text(json.dumps(original))
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real_claude))  # point isolation AT real config
-    monkeypatch.setenv("PERSONALCLAW_CC_ISOLATE", "1")
-
-    claude_code._build_env()
-    # Untouched — the allow list is preserved (seed skipped).
-    assert json.loads((real_claude / "settings.json").read_text()) == original
