@@ -235,6 +235,19 @@ def test_pips_output_shows_while_it_is_still_running(tmp_path):
     assert install.log_tail[-1] == "Successfully installed omnivoice-0.2.0 torch-2.5.1"
 
 
+def test_the_engines_pip_keeps_no_cache_in_the_users_home(tmp_path):
+    """An engine installs into the app's own folder, so pip must not keep a copy in the user's
+    home either: pip's cache is ``~/Library/Caches/pip`` (``~/.cache/pip``), and an app package
+    install was measured filling it. pip is told through its environment, which the
+    pip it runs to build an sdist's build requirements inherits too, where a flag would not."""
+    venv = tmp_path / "venv"
+    _stub_python(venv, 'echo "PIP_NO_CACHE_DIR=${PIP_NO_CACHE_DIR:-unset}"\n')
+    install = sidecar.SidecarInstall(APP, requirements=["omnivoice>=0.2"], venv=venv)
+
+    assert install.run_one("deps"), install.status()
+    assert "PIP_NO_CACHE_DIR=1" in install.log_tail, install.log_tail
+
+
 @pytest.fixture
 def one_install(monkeypatch, tmp_path):
     """A registry whose install for the app is this one object, so a test drives the job

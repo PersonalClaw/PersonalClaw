@@ -1,6 +1,7 @@
 """Tests for voice_reply — provider-agnostic TTS orchestration (strip/split/
 synthesize-speech/upload/stream). Piper-specific synthesis moved to the piper-tts app."""
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -266,3 +267,83 @@ class TestStreamingVoiceReply:
 
         # Only the odd-numbered calls succeed (1, 3).
         assert collected == [0, 2]
+
+
+# ── stitch_wavs(): a stitch that fails leaves nothing behind ─────────────────
+
+
+class TestStitchWavs:
+    """Speaking a reply of several sentences stitches their clips with ``ffmpeg``. With no path
+    to write to, the stitch makes its own temporary file, and on ``main`` a stitch that failed
+    kept it: one empty ``tmp*.wav`` in the system temp folder per reply, when ``ffmpeg`` is missing
+    (it is not a dependency) or fails. The caller is handed ``None`` and cannot remove it."""
+
+    @pytest.fixture
+    def temp_folder(self, tmp_path, monkeypatch):
+        import tempfile
+
+        folder = tmp_path / "system-temp"
+        folder.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(folder))
+        return folder
+
+    @staticmethod
+    def _clips(tmp_path) -> list[str]:
+        clips = []
+        for n in (1, 2):
+            clip = tmp_path / f"clip{n}.wav"
+            clip.write_bytes(b"RIFF" + b"\0" * 40)
+            clips.append(str(clip))
+        return clips
+
+    @staticmethod
+    def _ffmpeg(tmp_path, monkeypatch, body: str | None) -> None:
+        """PATH holds only a stand-in ``ffmpeg`` running *body*, or no ``ffmpeg`` at all."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        if body is not None:
+            tool = bin_dir / "ffmpeg"
+            tool.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+            tool.chmod(0o755)
+        monkeypatch.setenv("PATH", str(bin_dir))
+
+    @pytest.mark.asyncio
+    async def test_no_ffmpeg_leaves_no_temp_file(self, tmp_path, monkeypatch, temp_folder):
+        from personalclaw.voice_reply import stitch_wavs
+
+        self._ffmpeg(tmp_path, monkeypatch, None)
+        assert await stitch_wavs(self._clips(tmp_path)) is None
+        assert list(temp_folder.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_a_failed_ffmpeg_leaves_no_temp_file(self, tmp_path, monkeypatch, temp_folder):
+        from personalclaw.voice_reply import stitch_wavs
+
+        self._ffmpeg(tmp_path, monkeypatch, "exit 1\n")
+        assert await stitch_wavs(self._clips(tmp_path)) is None
+        assert list(temp_folder.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_a_stitch_that_works_hands_its_file_to_the_caller(
+        self, tmp_path, monkeypatch, temp_folder
+    ):
+        """The control: success still returns the stitched file, for the caller to remove."""
+        from personalclaw.voice_reply import stitch_wavs
+
+        self._ffmpeg(tmp_path, monkeypatch, 'for out; do :; done\nprintf RIFF > "$out"\n')
+        stitched = await stitch_wavs(self._clips(tmp_path))
+        assert stitched is not None and os.path.dirname(stitched) == str(temp_folder)
+        assert open(stitched, "rb").read() == b"RIFF"
+
+    @pytest.mark.asyncio
+    async def test_a_path_the_caller_named_is_the_callers_to_keep(
+        self, tmp_path, monkeypatch, temp_folder
+    ):
+        """Only the stitch's OWN temporary file is removed; a path the caller chose is theirs."""
+        from personalclaw.voice_reply import stitch_wavs
+
+        self._ffmpeg(tmp_path, monkeypatch, "exit 1\n")
+        mine = tmp_path / "mine.wav"
+        mine.write_bytes(b"keep")
+        assert await stitch_wavs(self._clips(tmp_path), output=str(mine)) is None
+        assert mine.read_bytes() == b"keep"

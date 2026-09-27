@@ -279,6 +279,51 @@ class TestOpenAITtsProvider:
         with patch.dict("os.environ", {}, clear=True):
             assert await prov.can_synthesize("tts-1") is False
 
+    # With no output path the provider makes its own temporary file, the caller's to remove only
+    # once it is handed back. On `main` two outcomes never handed it back and kept it: one empty
+    # `tmp*.mp3` in the system temp folder each time.
+
+    @staticmethod
+    def _speaking(tmp_path, monkeypatch, create: AsyncMock):
+        import tempfile
+
+        folder = tmp_path / "system-temp"
+        folder.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(folder))
+        client = MagicMock()
+        client.audio.speech.create = create
+        client.close = AsyncMock()
+        sdk = MagicMock()
+        sdk.AsyncOpenAI = MagicMock(return_value=client)
+        return folder, sdk
+
+    @pytest.mark.asyncio
+    async def test_an_answer_with_no_audio_leaves_no_temp_file(self, tmp_path, monkeypatch):
+        from personalclaw.tts.openai_provider import OpenAITtsProvider
+
+        empty = MagicMock()
+        empty.read = MagicMock(return_value=b"")
+        folder, sdk = self._speaking(tmp_path, monkeypatch, AsyncMock(return_value=empty))
+        prov = OpenAITtsProvider(provider_name="X", endpoint="", api_key="sk-x")
+        with patch.dict("sys.modules", {"openai": sdk}):
+            assert await prov.synthesize("hello", voice="tts-1") is None
+        assert list(folder.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_synthesis_leaves_no_temp_file(self, tmp_path, monkeypatch):
+        """A caller's own timeout (the Doctor's probe waits 60 s) cancels the synthesis."""
+        import asyncio
+
+        from personalclaw.tts.openai_provider import OpenAITtsProvider
+
+        folder, sdk = self._speaking(
+            tmp_path, monkeypatch, AsyncMock(side_effect=asyncio.CancelledError)
+        )
+        prov = OpenAITtsProvider(provider_name="X", endpoint="", api_key="sk-x")
+        with patch.dict("sys.modules", {"openai": sdk}), pytest.raises(asyncio.CancelledError):
+            await prov.synthesize("hello", voice="tts-1")
+        assert list(folder.iterdir()) == []
+
 
 class TestRemoteAudioEndpointGating:
     """Regression for the #38 class extended to STT/TTS: the registries build one

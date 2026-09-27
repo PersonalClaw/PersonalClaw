@@ -516,7 +516,10 @@ def install_everything() -> None:
 
 
 def _pip_env() -> dict[str, str]:
+    from personalclaw._installer import HOME_INSTALL_PIP_ENV
+
     env = {key: value for key, value in os.environ.items() if key not in _PIP_LOCATION_VARS}
+    env.update(HOME_INSTALL_PIP_ENV)
     # pip decides what is already installed from its own import path, so it has to see the app
     # packages to reuse, upgrade or keep them; the base environment it sees on its own.
     inherited = env.get("PYTHONPATH", "")

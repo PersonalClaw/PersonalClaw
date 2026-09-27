@@ -38,8 +38,19 @@ import logging
 import shutil
 import sys
 from pathlib import Path
+from types import MappingProxyType
 
 logger = logging.getLogger(__name__)
+
+#: The environment every pip that installs INTO the PersonalClaw home runs with (app packages in
+#: ``<home>/app-python``, a sidecar app's engine in its own folder). pip keeps what it downloads
+#: in the user's own cache (``~/Library/Caches/pip``, ``~/.cache/pip``), and an install whose
+#: target is the home must leave nothing outside it: installing one app that declares a Python
+#: package was measured filling that cache. The variable, not ``--no-cache-dir``:
+#: pip hands its environment, and not its flags, to the pip it runs for an sdist's build
+#: requirements. What the cache would have held is installed in the home; a reinstall downloads
+#: it again.
+HOME_INSTALL_PIP_ENV = MappingProxyType({"PIP_NO_CACHE_DIR": "1"})
 
 
 class NoInstallerError(RuntimeError):

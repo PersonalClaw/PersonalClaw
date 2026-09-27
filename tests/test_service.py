@@ -757,6 +757,7 @@ class TestMacOSControlPaths:
         plist_dir.mkdir(parents=True)
         plist_path.write_text("<plist/>")
         monkeypatch.setattr(svc_macos, "PLIST_PATH", plist_path)
+        self._logs_in(tmp_path, monkeypatch)
 
         ok = MagicMock(returncode=0, stdout="", stderr="")
         with patch("personalclaw.service.macos.subprocess.run", return_value=ok) as run:
@@ -769,9 +770,66 @@ class TestMacOSControlPaths:
         from personalclaw.service import macos as svc_macos
 
         monkeypatch.setattr(svc_macos, "PLIST_PATH", tmp_path / "missing.plist")
+        self._logs_in(tmp_path, monkeypatch)
         with patch("personalclaw.service.macos.subprocess.run") as run:
             svc_macos.uninstall()
         run.assert_not_called()
+
+    @staticmethod
+    def _logs_in(tmp_path, monkeypatch):
+        """The agent's log folder, in the test's own Library: ``uninstall`` removes the logs."""
+        from personalclaw.service import macos as svc_macos
+
+        log_dir = tmp_path / "Library" / "Logs" / "PersonalClaw"
+        monkeypatch.setattr(svc_macos, "LOG_DIR", log_dir)
+        monkeypatch.setattr(svc_macos, "STDOUT_LOG", log_dir / "gateway.log")
+        monkeypatch.setattr(svc_macos, "STDERR_LOG", log_dir / "gateway.err")
+
+    def _service_paths(self, tmp_path, monkeypatch):
+        from personalclaw.service import macos as svc_macos
+
+        library = tmp_path / "Library"
+        monkeypatch.setattr(svc_macos, "PLIST_DIR", library / "LaunchAgents")
+        monkeypatch.setattr(svc_macos, "PLIST_PATH", library / "LaunchAgents" / "agent.plist")
+        self._logs_in(tmp_path, monkeypatch)
+        return library
+
+    def test_uninstall_takes_the_logs_the_service_wrote(self, tmp_path, monkeypatch):
+        """Install writes where launchd looks for an agent (the plist) and where it sends the
+        agent's output (``~/Library/Logs/PersonalClaw``). On ``main`` uninstall removed the plist
+        and kept the logs: a folder in the user's Library that outlived the service."""
+        from personalclaw.service import macos as svc_macos
+
+        library = self._service_paths(tmp_path, monkeypatch)
+        ok = MagicMock(returncode=0, stdout="", stderr="")
+        with (
+            patch("personalclaw.service.common.shutil.which", return_value="/usr/local/bin/pc"),
+            patch("personalclaw.service.macos.subprocess.run", return_value=ok),
+        ):
+            svc_macos.install()
+            svc_macos.STDOUT_LOG.write_text("gateway started\n", encoding="utf-8")  # launchd's
+            svc_macos.STDERR_LOG.write_text("", encoding="utf-8")
+            svc_macos.uninstall()
+
+        assert sorted(p.relative_to(library).as_posix() for p in library.rglob("*")) == [
+            "LaunchAgents",
+            "Logs",
+        ], "the OS's own folders stay; nothing of PersonalClaw's is left in them"
+
+    def test_uninstall_keeps_a_file_in_the_log_folder_it_did_not_write(self, tmp_path, monkeypatch):
+        from personalclaw.service import macos as svc_macos
+
+        self._service_paths(tmp_path, monkeypatch)
+        svc_macos.LOG_DIR.mkdir(parents=True)
+        svc_macos.STDOUT_LOG.write_text("gateway started\n", encoding="utf-8")
+        notes = svc_macos.LOG_DIR / "my-notes.txt"
+        notes.write_text("mine\n", encoding="utf-8")
+
+        with patch("personalclaw.service.macos.subprocess.run"):
+            svc_macos.uninstall()
+
+        assert not svc_macos.STDOUT_LOG.exists()
+        assert notes.read_text(encoding="utf-8") == "mine\n"
 
     def test_is_active_returns_false_when_launchctl_errors(self):
         from personalclaw.service import macos as svc_macos
