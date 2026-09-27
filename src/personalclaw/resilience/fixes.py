@@ -268,9 +268,10 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
     Doctor page repairs the running gateway's recall, not a copy of it; with no live store in this
     process (the CLI) it opens the home's database, whose open rebuilds and saves the file.
 
-    ``reembed`` (the Doctor's Fix, which the user confirms) first re-embeds the memories another
-    model wrote, which a rebuild alone can never index; the maintenance job passes False, so an
-    unattended pass never spends an embedding call and only rebuilds the derived index.
+    ``reembed`` (the Doctor's Fix, which the user confirms) first re-embeds, with the model bound
+    now, the memories it has not embedded — another model's, or at another width — which a
+    rebuild alone can never index; the maintenance job passes False, so an unattended pass never
+    spends an embedding call and only rebuilds the derived index.
     """
     from personalclaw.config.loader import config_dir
     from personalclaw.vector_memory import VectorMemoryStore, faiss_available, recall_store
@@ -284,7 +285,7 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
         store = VectorMemoryStore(db_path=db)
         store.init()
     try:
-        redone = store.reembed_other_model() if reembed else None
+        redone = store.reembed_stale() if reembed else None
         res = store.rebuild_faiss_index()
     finally:
         if opened:
@@ -294,7 +295,7 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
         "memories indexed."
     )
     if redone and redone["reembedded"]:
-        msg = f"Re-embedded {redone['reembedded']} memories another embedding model wrote. " + msg
+        msg = f"Re-embedded {redone['reembedded']} memories with the model bound now. " + msg
     if res["other_model"]:
         why = (
             "no embedding model answered, so they could not be re-embedded — bind one in "

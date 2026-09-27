@@ -105,6 +105,12 @@ export function DegradedChip() {
   }, 20000)
 
   const down = (surfaces ?? []).filter((s) => !s.available)
+  // The surfaces whose model IS chosen and cannot serve — the ones that declined. A surface on
+  // its floor because no model is chosen for it yet (`model_chosen: false`: an instance saved
+  // without a Default Model, nothing bound in Settings → Models) is waiting on a choice; calling
+  // it degraded read "12 degraded" to a user who had just connected a provider. A payload
+  // without the field keeps the degraded reading.
+  const declined = down.filter((s) => s.model_chosen !== false)
   // Never answered AND the read is failing → say so; `SystemWidget` sets `disconnected` from exactly
   // this signal, so the shell already has the vocabulary for "we asked and could not tell".
   const unknown = surfaces === null && unread
@@ -112,22 +118,26 @@ export function DegradedChip() {
   const providerDown = !unknown && chatProvider?.state === 'failed' ? chatProvider : null
   if (down.length === 0 && !unknown && !providerDown) return null
 
-  const worst = down[0]
   // Setup-land: nothing in config.json has ever been bound, so nothing "degraded" —
   // that word claims a decline that never happened. The face invites setup instead
   // (info tone, not warn); the popover already reads perfectly for this state (every
   // row names the missing binding and links to Models). `unknown` outranks it: a
   // failing check must never render as a calm invitation.
   const setupLand = !unknown && hasProvider === false && down.length > 0
+  // The same truth one step later: a provider IS connected, and every surface on its floor is
+  // waiting for a model to be chosen. Nothing declined here either, so the face says what to do.
+  const choose = !unknown && !setupLand && !providerDown && down.length > 0 && declined.length === 0
+  const worst = declined[0]
   const summary = unknown
     ? 'Status unknown'
     : setupLand ? 'Set up a model'
     // Chat not answering outranks a surface on its floor: it is the failure a user hits next.
     : providerDown ? 'Chat provider not answering'
+    : choose ? 'Choose a model'
     // The surface's own name, from the contract that declares it — the same words its degraded and
     // recovered notifications use. A prettified slug ("Assistant reasoning", "Search ranking") is
-    // the engineer's name for it, not the user's.
-    : down.length === 1 ? `${worst.label} degraded` : `${down.length} degraded`
+    // the engineer's name for it, not the user's. Only a surface that declined is counted.
+    : declined.length === 1 ? `${worst.label} degraded` : `${declined.length} degraded`
   const detail = unknown
     ? 'Status unknown — the degraded-surfaces check could not be read, so this may be hiding a surface running without a model'
     // 🔑 ONE EXPRESSION GAVE TWO ANSWERS TO THE SAME QUESTION. `summary` on the line above already
@@ -143,10 +153,14 @@ export function DegradedChip() {
     // user reads. (`title` can still reach AT as a *description*, which is a weaker claim.)
     : setupLand
       ? 'No model provider is configured yet — click to see what unlocks once you bind one'
+      : choose
+        ? `No model is chosen ${down.length === 1 ? `for ${down[0].label}` : `yet for ${down.length} surfaces`} — click to see what unlocks once you choose one`
       : providerDown
         ? `Your chat model's provider (${providerDown.provider}) isn't answering${down.length ? ` and ${down.length} surface${down.length === 1 ? ' is' : 's are'} running without a model` : ''} — click for detail`
         : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
-  const FaceIcon = setupLand ? Sparkles : CloudOff
+  // Both setup states wear the calm face: nothing declined, there is only something to set up.
+  const calm = setupLand || choose
+  const FaceIcon = calm ? Sparkles : CloudOff
   return (
     <div className="relative">
       <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
@@ -165,7 +179,7 @@ export function DegradedChip() {
         //
         // Setup-land trades the warn pair for the info pair at the SAME 16% budget — the
         // tone changes, the tint math doesn't.
-        style={setupLand
+        style={calm
           ? { background: 'color-mix(in srgb, var(--color-info) 16%, transparent)', color: 'var(--color-info)' }
           : { background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
         aria-expanded={open}
@@ -241,7 +255,7 @@ export function DegradedChip() {
               <div className="mb-2 border-b border-outline-variant/30 pb-2">
                 <TextLink href="#/settings/models" icon={ArrowRight} iconPosition="trailing" size="xs"
                   onClick={() => { setOpen(false); triggerRef.current?.focus() }}>
-                  Bind a model in Settings → Models
+                  {choose ? 'Choose a model in Settings → Models' : 'Bind a model in Settings → Models'}
                 </TextLink>
               </div>
             )}
@@ -271,7 +285,7 @@ export function DegradedChip() {
                       than the one being fixed. */}
                   {(s.use_cases ?? []).length > 0 && (
                     <div data-type="caption" className="mt-0.5 text-on-surface-var">
-                      No model for {(s.use_cases ?? []).map(useCaseLabel).join(', ')}
+                      {s.model_chosen === false ? 'No model chosen for' : 'No model for'} {(s.use_cases ?? []).map(useCaseLabel).join(', ')}
                     </div>
                   )}
                   <div data-type="caption" className="mt-0.5 text-on-surface-low">{s.floor}</div>

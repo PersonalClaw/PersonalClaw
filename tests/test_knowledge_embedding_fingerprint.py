@@ -331,9 +331,8 @@ def test_a_reindex_that_cannot_embed_everything_refuses_to_report_done(tmp_path,
         job, error = registry.start(
             model="native:bge-small-en",
             knowledge_store=store,
-            vector_store=None,
+            memory_store=None,
             embedder=embedder_b,
-            embed_fn=lambda _t: list(VEC_B),
         )
         assert error is None
         while registry.active() is not None:
@@ -364,9 +363,8 @@ def test_a_clean_reindex_job_reports_done_with_its_chunk_count(tmp_path, monkeyp
         job, _ = registry.start(
             model="native:bge-small-en",
             knowledge_store=store,
-            vector_store=None,
+            memory_store=None,
             embedder=_Embedder(VEC_B),
-            embed_fn=lambda _t: list(VEC_B),
         )
         while registry.active() is not None:
             await asyncio.sleep(0.01)

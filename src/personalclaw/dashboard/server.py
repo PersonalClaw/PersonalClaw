@@ -2053,59 +2053,20 @@ async def start_dashboard(
     async def _resume_interrupted_reindex_startup(app_: web.Application) -> None:
         """Auto-resume an INTERRUPTED or model-swap-orphaned embedding re-index.
 
-        Switching the embedding model nulls the old (incompatible) vectors, then
-        re-embeds every item. If the gateway died mid-re-index (crash/kill/OOM), items
-        are left with text but no embedding OR — if it died after a model SWAP but
-        before re-embed — with an old WRONG-DIMENSION vector. Either way the store sits
-        silently unsearchable against the active model (retrieval skips dim mismatches)
-        with no recovery. On boot, once the active embedding model is resolvable, detect
-        BOTH states (missing OR stale-dim vectors) and finish the re-index automatically.
-        Runs AFTER _model_providers_startup so the embedder is wired; fully best-effort —
-        never blocks or crashes startup."""
+        A gateway that died mid-re-index (crash/kill/OOM) leaves knowledge items with text but no
+        embedding, or an old wrong-width vector, and memory vectors of the previous model; an
+        update that started recording each memory vector's model leaves every memory vector naming
+        none. Either way the store is read by keyword against the model bound now, with no
+        recovery short of a rebind. On boot, once that model is resolvable,
+        ``resume_interrupted_reindex`` detects both and finishes the re-index. Runs AFTER
+        _model_providers_startup so the embedder is wired; fully best-effort — never blocks or
+        crashes startup."""
         try:
-            state = app_["state"]
-            ks = getattr(state, "knowledge_store", None)
-            if ks is None:
-                return
-            # Need the active model's dim to detect STALE (wrong-dim) vectors, not just
-            # missing ones — so resolve the embedder first, then count.
-            from personalclaw.dashboard.handlers.embedding_reindex import _resolve_embed
-
-            embedder, embed_fn, model = _resolve_embed(app_)
-            _dim = getattr(embedder, "dim", None) if embedder is not None else None
-            active_dim = _dim() if callable(_dim) else None
-            needing = ks.count_items_needing_reembed(active_dim)
-            if needing <= 0:
-                return  # store is whole (or empty) — nothing to resume
-            if embed_fn is None:
-                logger.warning(
-                    "Embedding re-index needed: %d knowledge item(s) missing/stale "
-                    "vectors, but the active embedding model (%s) isn't ready — the "
-                    "store stays keyword-searchable; re-run once the model is available.",
-                    needing,
-                    model or "none",
-                )
-                return
-            from personalclaw.dashboard.handlers.memory import _get_provider
-
-            vector_store = _get_provider(state)
-            job, error = state.embedding_reindex().start(
-                model=model,
-                knowledge_store=ks,
-                vector_store=vector_store,
-                embedder=embedder,
-                embed_fn=embed_fn,
+            from personalclaw.dashboard.handlers.embedding_reindex import (
+                resume_interrupted_reindex,
             )
-            if error:
-                logger.warning("Auto-resume re-index refused: %s", error)
-            else:
-                logger.info(
-                    "Auto-resuming embedding re-index (%d item(s) missing/stale "
-                    "vectors) with model %s [job %s]",
-                    needing,
-                    model,
-                    getattr(job, "id", "?"),
-                )
+
+            resume_interrupted_reindex(app_)
         except Exception:
             logger.exception("Failed to check/resume interrupted embedding re-index")
 

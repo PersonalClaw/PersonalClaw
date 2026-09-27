@@ -12,6 +12,8 @@ active embedding model is chosen in Settings > Models (``active_models.json`` as
 """
 
 import logging
+import threading
+import time
 from collections.abc import Callable
 
 from personalclaw.embedding_providers.base import (
@@ -241,13 +243,18 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
 def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
     """Return an embedding fn for the Settings > Models active selection.
 
-    Returns None if no embedding model is active.
+    Returns None if no embedding model is active. The fn is built for the selection as it reads
+    NOW and keeps it: a caller that holds one past a rebind holds the old model, which is why
+    every long-lived store holds :func:`bound_embedding` instead.
     """
     spec = _active_embedding_spec()
     if not spec:
         return None
-    provider_name, model_id = spec
+    return embed_fn_for(*spec)
 
+
+def embed_fn_for(provider_name: str, model_id: str) -> Callable[[str], list[float] | None] | None:
+    """A sync embed fn for ``provider_name``'s ``model_id``, or None when it cannot be built."""
     if provider_name in _NATIVE_NAMES:
         ensure_registered()
         provider = _providers.get("native")
@@ -269,6 +276,125 @@ def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
         return _direct_embed
 
     return _llm_embed_fn(provider_name, model_id)
+
+
+# ── The embedding a long-lived holder keeps: the model bound NOW ──
+
+#: How long a binding whose provider could not be built waits before the next build attempt. A
+#: provider an app registers after boot is found on the next call past this; a genuinely missing
+#: one is not rebuilt, and warned about, on every embedding call.
+_RETRY_UNBUILT_SECS = 30.0
+
+
+def _embedding_sources(provider_name: str) -> tuple[object | None, ...]:
+    """What an embed fn for ``provider_name`` embeds THROUGH, as it stands now.
+
+    The in-process native provider, an app's directly registered adapter, or the configured
+    instance's registry entry together with its type's registration. An edit in Settings →
+    Providers re-registers the entry (a new endpoint, key or Default Model), and an app that
+    loads after boot registers the type, so either reads as a different source; ``None`` where
+    there is none yet.
+    """
+    if provider_name in _NATIVE_NAMES:
+        return (_providers.get("native"),)
+    direct = _providers.get(provider_name)
+    if direct is not None:
+        return (direct,)
+    from personalclaw.llm.registry import ProviderResolutionError, get_default_registry
+
+    registry = get_default_registry()
+    try:
+        entry = registry.get_entry(provider_name)
+    except ProviderResolutionError:
+        return (None, None)
+    try:
+        registered = registry.capability_of(entry.type)
+    except ProviderResolutionError:
+        registered = None
+    return (entry, registered)
+
+
+def embedding_basis() -> tuple[object, ...] | None:
+    """What embedding with the bound model is built from: its ``provider:model`` ref, then its
+    sources (:func:`_embedding_sources`), or ``None`` when no embedding model is bound.
+
+    #3719's rule for a runtime, applied to embedding: a holder rebuilds what it embeds with when
+    this no longer reads the same (:func:`same_basis`) — a rebind, a clear, an edit of the
+    instance, or its app registering its type.
+    """
+    spec = _active_embedding_spec()
+    if not spec or not spec[1]:
+        return None
+    return (f"{spec[0]}:{spec[1]}", *_embedding_sources(spec[0]))
+
+
+def same_basis(a: object, b: object) -> bool:
+    """Whether two :func:`embedding_basis` reads are the same basis: one ref, and the SAME source
+    objects. By identity, not equality: an entry re-registered with equal fields is still a new
+    registration (its app may have been reloaded), and a provider built from the old one is not
+    what the binding builds now."""
+    if not isinstance(a, tuple) or not isinstance(b, tuple):
+        return a is None and b is None
+    return len(a) == len(b) and a[0] == b[0] and all(x is y for x, y in zip(a[1:], b[1:]))
+
+
+class BoundEmbedding:
+    """The embedding function every long-lived store holds: the model bound NOW, at each call.
+
+    A store is built once and kept (the gateway's main memory for the process's life, a
+    directory's memory from the first time the directory is opened), so a function built when
+    the store was built is the model bound THEN: a rebind reached new stores only, and clearing
+    Embedding reached none. This reads the binding at each call instead and rebuilds when its
+    :func:`embedding_basis` moved, so a rebind, a clear or an instance edit reaches every holder
+    at its next use.
+
+    :meth:`current` also names the model it embeds with, because a vector is only comparable
+    with vectors of the same model, and two models can share a width.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._basis: tuple[object, ...] | None = None
+        self._fn: Callable[[str], list[float] | None] | None = None
+        self._failed_at = 0.0
+
+    @staticmethod
+    def ref() -> str | None:
+        """The ``provider:model`` ref bound now, or ``None``. Reads the binding; builds nothing."""
+        spec = _active_embedding_spec()
+        if not spec or not spec[1]:
+            return None
+        return f"{spec[0]}:{spec[1]}"
+
+    def current(self) -> tuple[Callable[[str], list[float] | None] | None, str | None]:
+        """``(embed fn, ref)`` for the model bound now.
+
+        ``(None, None)`` when nothing is bound; ``(None, ref)`` when the bound model's provider
+        cannot be built yet, which embeds nothing and is tried again after a short wait.
+        """
+        basis = embedding_basis()
+        if basis is None:
+            return None, None
+        ref = str(basis[0])
+        provider_name, _, model_id = ref.partition(":")
+        with self._lock:
+            due = self._fn is None and time.monotonic() - self._failed_at >= _RETRY_UNBUILT_SECS
+            if not same_basis(basis, self._basis) or due:
+                self._fn = embed_fn_for(provider_name, model_id)
+                # Read the sources AFTER the build: building can register the entry it was
+                # missing (`_llm_embed_fn` replays config.json), and recording the pre-build
+                # "no source" would rebuild on the very next call.
+                self._basis = (ref, *_embedding_sources(provider_name))
+                self._failed_at = 0.0 if self._fn is not None else time.monotonic()
+            return self._fn, ref
+
+
+_bound_embedding = BoundEmbedding()
+
+
+def bound_embedding() -> BoundEmbedding:
+    """The process-wide :class:`BoundEmbedding` every memory store embeds through."""
+    return _bound_embedding
 
 
 def get_active_embed_many_fn() -> Callable[[list[str]], list[list[float] | None]] | None:

@@ -142,11 +142,10 @@ def _memory(memory: Any = None) -> Any:
     """
     if memory is not None:
         return memory
-    from personalclaw.embedding_providers.registry import get_active_embedding_dim
     from personalclaw.memory_service import MemoryService
     from personalclaw.vector_memory import VectorMemoryStore
 
-    vs = VectorMemoryStore(embedding_dim=get_active_embedding_dim() or 384)
+    vs = VectorMemoryStore()
     vs.init()
     return MemoryService.over_vector_store(vs)
 

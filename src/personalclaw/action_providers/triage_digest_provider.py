@@ -192,11 +192,10 @@ def _approval_rules(memory: Any = None) -> list[Any]:
 
     try:
         if memory is None:
-            from personalclaw.embedding_providers.registry import get_active_embedding_dim
             from personalclaw.memory_service import MemoryService
             from personalclaw.vector_memory import VectorMemoryStore
 
-            store = VectorMemoryStore(embedding_dim=get_active_embedding_dim() or 384)
+            store = VectorMemoryStore()
             store.init()
             memory = MemoryService.over_vector_store(store)
         rows = [

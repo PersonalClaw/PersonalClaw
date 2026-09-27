@@ -1,10 +1,13 @@
 """Context builder — assembles memory, skills, and hooks into prompt context."""
 
+import contextlib
 import json
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from personalclaw.agent import _shipped_prompt
@@ -30,6 +33,7 @@ if TYPE_CHECKING:
     from personalclaw.history import ConversationLog
     from personalclaw.session import SessionManager
     from personalclaw.skills.allocation import SkillDecision
+    from personalclaw.vector_memory import VectorMemoryStore
 
 
 logger = logging.getLogger(__name__)
@@ -39,32 +43,89 @@ _memory_stores: dict[str, MemoryStore] = {}
 
 
 def _attach_vector_store(store: MemoryStore, ws_path) -> None:
-    """Give a cwd-scoped MemoryStore its own semantic/episodic vector index.
+    """Give a cwd-scoped MemoryStore its own semantic/episodic vector index, once an embedding
+    model is bound in Settings → Models or the directory already holds memories one wrote; until
+    then the store stays text-only.
 
-    The index lives inside the partition dir so each working directory has
-    isolated semantic memory. Wired to the active embedding model (Settings >
-    Models); if no embedding model is active, the store stays text-only.
+    The index lives inside the partition dir so each working directory has isolated semantic
+    memory, and it embeds with the model bound at each use (``VectorMemoryStore.embed_fn``). It
+    used to be handed the model bound when the directory was first opened, and only then: one
+    opened before any binding stayed text-only for the process's life, and one opened after kept
+    that model through every rebind and clear. :meth:`ContextBuilder.get_memory_for` asks again
+    on every use, so the first binding reaches a directory already open. A directory whose
+    memories were written under a model since cleared keeps them searchable, by keyword: opened
+    text-only, it could not reach them at all.
     """
     try:
-        from personalclaw.embedding_providers.registry import (
-            get_active_embed_fn,
-            get_active_embedding_dim,
-        )
+        from personalclaw.embedding_providers.registry import bound_embedding
         from personalclaw.vector_memory import VectorMemoryStore
 
-        embed_fn = get_active_embed_fn()
-        if embed_fn is None:
-            return  # no active embedding model — semantic memory stays off
-        vs = VectorMemoryStore(
-            db_path=ws_path / "memory_index.db",
-            embedding_dim=get_active_embedding_dim() or 384,
-        )
+        db = ws_path / "memory_index.db"
+        if bound_embedding().ref() is None and not (db.exists() and _holds_memory(db)):
+            return  # no embedding model bound and none ever wrote here — text-only
+        vs = VectorMemoryStore(db_path=db)
         vs.init()
-        vs.embed_fn = embed_fn
         vs.contradiction_judge = _make_contradiction_judge()
         store.vector_store = vs
     except Exception:
         logger.debug("Could not attach vector store for %s", ws_path, exc_info=True)
+
+
+def _holds_memory(db: Path) -> bool:
+    """Whether the partition database ``db`` holds any memory a vector store wrote."""
+    import sqlite3
+
+    try:
+        # as_uri() percent-encodes the path: a raw "file:" URI reads a "%", "?" or "#" in the
+        # home's path as URI syntax, and opens (or fails to open) some other file.
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM episodic_memories) "
+                "OR EXISTS (SELECT 1 FROM semantic_memory)"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return bool(row and row[0])
+
+
+@contextlib.contextmanager
+def every_memory_vector_store(
+    main: "VectorMemoryStore | None",
+) -> "Iterator[list[VectorMemoryStore]]":
+    """Every memory vector store in this home, for a pass over all of them (the re-index).
+
+    ``main`` (the gateway's ``memory.db``), each directory's store this process has open, and
+    each other directory's on disk — opened for the pass and closed after it. One per database:
+    the gateway aliases its own workspace onto the main store. A directory that never had a
+    vector store is not given one here.
+    """
+    from personalclaw.vector_memory import VectorMemoryStore
+
+    stores: dict[str, VectorMemoryStore] = {}
+
+    def _add(vs: "VectorMemoryStore | None") -> None:
+        if vs is not None:
+            stores.setdefault(str(vs.db_path.resolve()), vs)
+
+    _add(main)
+    for memory in list(_memory_stores.values()):
+        _add(memory.vector_store)
+    opened: list[VectorMemoryStore] = []
+    try:
+        for db in sorted(memory_dir_for_cwd(None).parent.glob("*/memory_index.db")):
+            if str(db.resolve()) in stores or not _holds_memory(db):
+                continue
+            vs = VectorMemoryStore(db_path=db)
+            vs.init()
+            opened.append(vs)
+            _add(vs)
+        yield list(stores.values())
+    finally:
+        for vs in opened:
+            vs.close()
 
 
 def _make_contradiction_judge():
@@ -1000,9 +1061,11 @@ class ContextBuilder:
         if key not in _memory_stores:
             store = MemoryStore(workspace=ws_path)
             store.init()
-            _attach_vector_store(store, ws_path)
             _memory_stores[key] = store
-        return _memory_stores[key]
+        store = _memory_stores[key]
+        if store.vector_store is None:
+            _attach_vector_store(store, ws_path)
+        return store
 
     def __init__(
         self,

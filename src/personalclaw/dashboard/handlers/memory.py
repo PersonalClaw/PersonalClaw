@@ -47,16 +47,28 @@ def _sel():
 def _ranking_payload(capable: Any) -> dict[str, Any]:
     """The recall-ranking disclosure for a service/store, from the ONE owner.
 
-    ``capable`` is anything with ``capabilities()`` (a ``MemoryService`` or a
-    ``VectorMemoryStore``). Fail-OPEN on a provider that cannot answer: a broken
-    capability probe must not take the whole recall down, and the disclosure that
-    comes back then says nothing ranked — which is the safe direction to be wrong
-    in, because it under-claims rather than over-claims.
+    ``capable`` is anything with ``capabilities()`` and ``memory_stats()`` (a
+    ``MemoryService`` or a ``VectorMemoryStore``); the stats say how much of the store a
+    semantic recall can compare (``embedded_count``) and how much it reads by keyword
+    because another embedding model wrote it (``embedded_stale``). Fail-OPEN on a
+    provider that cannot answer: a broken capability probe must not take the whole
+    recall down, and the disclosure that comes back then says nothing ranked — which is
+    the safe direction to be wrong in, because it under-claims rather than over-claims.
     """
     from personalclaw.memory_ranking import RecallRanking, ranking_payload
 
     try:
-        return ranking_payload(capable.capabilities())
+        stats = capable.memory_stats()
+
+        def _count(key: str) -> int:
+            value = stats.get(key) if isinstance(stats, dict) else None
+            return value if isinstance(value, int) else 0
+
+        return ranking_payload(
+            capable.capabilities(),
+            stale=_count("embedded_stale"),
+            comparable=_count("embedded_count"),
+        )
     except Exception:
         logger.debug("recall ranking disclosure unavailable", exc_info=True)
         return RecallRanking(vector=False, full_text_search=False, entity_graph=False).to_dict()
@@ -295,12 +307,10 @@ def _redact_memory_field(val: object) -> object:
 
 def _get_provider(state: DashboardState):
     """Get the record/vector memory PROVIDER for embedding-admin operations
-    (reindex / clear / wire embed_fn / FAISS) — the one surface that legitimately
-    reaches provider internals. Content operations go through _get_service."""
+    (reindex / stats / FAISS) — the one surface that legitimately reaches provider
+    internals. Content operations go through _get_service."""
     mem = _get_memory(state)
     if mem.vector_store:
-        if not mem.vector_store.embed_fn:
-            _auto_wire_embed_fn(mem.vector_store)
         return mem.vector_store
     # Fallback: create standalone
     if not hasattr(state, "_standalone_vector"):
@@ -308,7 +318,6 @@ def _get_provider(state: DashboardState):
 
         store = VectorMemoryStore()
         store.init()
-        _auto_wire_embed_fn(store)
         state._standalone_vector = store  # type: ignore[attr-defined]
         mem.vector_store = store
     return state._standalone_vector  # type: ignore[attr-defined]
@@ -321,19 +330,6 @@ def _get_service(state: DashboardState):
     from personalclaw.memory_service import MemoryService
 
     return MemoryService.over_vector_store(_get_provider(state))
-
-
-def _auto_wire_embed_fn(store) -> None:
-    """Wire embed_fn from the Settings > Models active embedding selection."""
-    try:
-        from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-        embed_fn = get_active_embed_fn()
-        if embed_fn:
-            store.embed_fn = embed_fn
-            logger.info("Auto-wired embed_fn from active_models.json")
-    except Exception:
-        logger.debug("Could not auto-wire embed_fn", exc_info=True)
 
 
 async def api_memory_semantic(request: web.Request) -> web.Response:
@@ -968,14 +964,8 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
     if _migrate_lock is None:
         _migrate_lock = asyncio.Lock()
     async with _migrate_lock:
-        # Ensure an embed fn is wired so migration generates vectors when an
-        # embedding model is active.
-        if not store.embed_fn:
-            from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-            store.embed_fn = get_active_embed_fn()
-
-        # Run in executor to avoid blocking event loop (can take 30+ seconds)
+        # Run in executor to avoid blocking event loop (can take 30+ seconds). The store embeds
+        # with the model bound now, so the migration generates vectors when one is bound.
         loop = asyncio.get_running_loop()
         counts = await loop.run_in_executor(None, store.migrate_from_markdown)
     # Auto-set migrated=true if migration produced entries

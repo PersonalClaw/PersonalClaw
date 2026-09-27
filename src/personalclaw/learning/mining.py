@@ -337,9 +337,11 @@ def similar_run_matches(
         scored += 1
         matches.append((other, float(cosine), _age_days(row.get("created_at"), now)))
 
-    if not rows:
-        # Nothing spec-tagged came back at all — the index has no run specs in it, which is a
-        # capability gap (nothing indexed yet), not the observation "your plans do not repeat".
+    if not any(row.get("cosine_sim") is not None for row in rows or []):
+        # Nothing spec-tagged came back with a vector — the index has no run specs in it, which
+        # is a capability gap (nothing indexed yet), not the observation "your plans do not
+        # repeat". Keyword rows count as nothing here: the store reads by keyword when none of
+        # its vectors is comparable, as right after an embedding rebind before the re-index.
         record_miss(Miss.NOT_INDEXED, detail=run_id)
         return MatchSet(miss=Miss.NOT_INDEXED)
     return MatchSet(matches=matches, examined=scored)

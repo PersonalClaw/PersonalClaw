@@ -990,23 +990,15 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
     memory = MemoryStore()
     memory.init()
 
-    from personalclaw.embedding_providers.registry import (
-        get_active_embed_fn,
-        get_active_embedding_dim,
-    )
-
-    # confidence_threshold is read live by the store (`memory.semantic_confidence_threshold`).
+    # confidence_threshold is read live by the store (`memory.semantic_confidence_threshold`),
+    # and it embeds with the model bound in Settings → Models at each use, as the gateway's does.
     vector_memory = VectorMemoryStore(
         extra_prefixes=cfg.memory.semantic_keys or None,
         dedup_threshold=cfg.memory.episodic_dedup_threshold,
         episodic_max=cfg.memory.episodic_max_count,
         episodic_limit=cfg.memory.episodic_max_results,
-        embedding_dim=get_active_embedding_dim() or 384,
     )
     vector_memory.init()
-    embed_fn = get_active_embed_fn()
-    if embed_fn:
-        vector_memory.embed_fn = embed_fn
     memory.vector_store = vector_memory
     vector_memory.serve_recall()
 

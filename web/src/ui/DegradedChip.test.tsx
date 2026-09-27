@@ -371,3 +371,63 @@ describe('setup-land: no provider has ever been configured', () => {
     expect(chip.textContent).not.toContain('Set up a model')
   })
 })
+
+describe('a provider is connected, but no model is chosen yet', () => {
+  // An instance saved from the Add-instance form without a Default Model, nothing bound in
+  // Settings → Models: every surface is on its floor, and nothing declined. The report says so per
+  // surface (`model_chosen: false`, `resilience/degraded.py`), so the chip stops calling it
+  // "degraded" — the word that claims a decline.
+  const NOT_CHOSEN = [
+    { surface: 'chat', label: 'Chat', available: false, floor: 'Nothing answers', backlog: 0, use_cases: ['chat'], model_chosen: false },
+    { surface: 'search_ranking', label: 'Semantic search', available: false, floor: 'Keyword ranking', backlog: 0, use_cases: ['embedding'], model_chosen: false },
+  ]
+  const TWELVE = Array.from({ length: 12 }, (_, i) => ({ ...NOT_CHOSEN[i % 2], surface: `s${i}` }))
+
+  it('says to choose a model, calm-toned, where it read "12 degraded"', async () => {
+    // 🔴 Red on main: the face read "12 degraded" in the warn tone.
+    setViewport(false)
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: TWELVE } as never)
+    render(<DegradedChip />)
+    const chip = await screen.findByRole('button', { name: /choose a model/i })
+    expect(chip.textContent).toContain('Choose a model')
+    expect(chip.textContent).not.toMatch(/degraded/)
+    expect(chip.getAttribute('title')).toBe(
+      'No model is chosen yet for 12 surfaces — click to see what unlocks once you choose one')
+    expect(chip.getAttribute('style')).toContain('--color-info')
+    expect(chip.getAttribute('style')).not.toContain('--color-warn')
+  })
+
+  it('names the one surface when only one waits on a model', async () => {
+    setViewport(false)
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: [NOT_CHOSEN[1]] } as never)
+    render(<DegradedChip />)
+    const chip = await screen.findByRole('button', { name: /choose a model/i })
+    expect(chip.getAttribute('title')).toBe(
+      'No model is chosen for Semantic search — click to see what unlocks once you choose one')
+  })
+
+  it('its popover points at the choice and says each surface waits on one', async () => {
+    setViewport(false)
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: NOT_CHOSEN } as never)
+    render(<DegradedChip />)
+    ;(await screen.findByRole('button', { name: /choose a model/i })).click()
+    const panel = await waitFor(() => screen.getByRole('dialog', { name: 'Degraded surfaces' }))
+    expect(panel.textContent).toContain('Choose a model in Settings → Models')
+    expect(panel.textContent).toContain('No model chosen for Chat')
+    expect(panel.textContent).toContain('No model chosen for Embedding')
+    expect(panel.textContent).not.toContain('Bind a model')
+  })
+
+  it('counts only the surfaces that declined when one did', async () => {
+    // Chat is bound and its instance cannot serve: that one IS degraded, and the chip says so —
+    // in the words for it, beside a surface that is only waiting on a choice.
+    setViewport(false)
+    const surfaces = [{ ...NOT_CHOSEN[0], model_chosen: true }, NOT_CHOSEN[1]]
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces } as never)
+    render(<DegradedChip />)
+    const chip = await screen.findByTitle(/running without a model/i)
+    expect(chip.textContent).toContain('Chat degraded')
+    expect(chip.getAttribute('title')).toMatch(/2 surfaces running without a model/)
+    expect(chip.getAttribute('style')).toContain('--color-warn')
+  })
+})

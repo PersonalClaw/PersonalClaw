@@ -7,6 +7,7 @@ import {
   Brain, History, CalendarDays, Users, Inbox, Check, X, Download, SlidersHorizontal, Sparkles, type LucideIcon,
 } from 'lucide-react'
 import { MemoryGraph } from './MemoryGraph'
+import { memoryEmbeddedStat } from './memoryEmbeddedStat'
 import {
   api, type MemorySettings, type SemanticEntry,
   type EpisodicEntry, type MemoryEvent, type MemoryVaultStatus, type MemoryVaultMode,
@@ -94,7 +95,7 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
           <Stat label="Semantic" value={stats.semantic_active} />
           <Stat label="Episodic" value={stats.episodic_active} />
           <Stat label="Events" value={stats.events_count} />
-          <Stat label="Embedded" value={stats.embedded_count} sub={stats.embedding_provider} />
+          <Stat label="Embedded" {...memoryEmbeddedStat(stats)} />
         </div>
       )}
 
@@ -162,9 +163,9 @@ function ToolTabBody({ children }: { children: React.ReactNode }) {
   return <div ref={ref} className="overflow-y-auto pr-1" style={{ height: bodyH }}>{children}</div>
 }
 
-function Stat({ label, value, sub }: { label: string; value: number; sub?: string }) {
+function Stat({ label, value, sub, title }: { label: string; value: number; sub?: string; title?: string }) {
   return (
-    <div className="rounded-lg bg-surface-container px-3 py-2.5">
+    <div className="rounded-lg bg-surface-container px-3 py-2.5" title={title}>
       <div className="text-on-surface text-[1.25rem] tabular-nums" style={fvs(600)}>{value}</div>
       <div data-type="caption" className="text-on-surface-low">{label}{sub ? ` · ${sub}` : ''}</div>
     </div>
