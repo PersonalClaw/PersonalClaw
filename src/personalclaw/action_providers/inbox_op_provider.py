@@ -81,20 +81,6 @@ _DONE_WORDS: dict[str, tuple[str, str]] = {
 _NAME_MAX = 40
 
 
-def _thread_key(item: Any) -> str:
-    """The mute key for `item`'s thread — the same derivation the inbox API uses.
-
-    ``PUT /api/inbox/{id}`` computes ``item.thread_ts or item.id.split("_", 1)[1]``, and this
-    has to agree with it exactly: a mute written under a different key is a mute the UI's
-    unmute cannot find, and the thread would stay silent with nothing to click.
-    """
-    thread = getattr(item, "thread_ts", None)
-    if thread:
-        return str(thread)
-    raw = str(getattr(item, "id", "") or "")
-    return raw.split("_", 1)[1] if "_" in raw else raw
-
-
 def _clip(name: Any) -> str:
     """A channel's name for someone, on one line: every control character — a line break, a form
     feed, an escape — becomes a space, so the name cannot break the row or smuggle a sequence
@@ -233,7 +219,7 @@ class InboxOpActionProvider(ActionProvider):
                     success=False,
                     error="inbox-op: no running inbox service, so the mute set is unreachable",
                 )
-            key = _thread_key(item)
+            key = item.thread_key  # the inbox API's own derivation
             already = key in inbox_state.muted_threads
             if already:
                 return ActionResult(

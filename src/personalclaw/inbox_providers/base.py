@@ -47,6 +47,12 @@ class MessageSourceProvider(ABC):
     the inbox's sentences call it.
     """
 
+    #: Whether this source reads the channels the owner lists in ``inbox.watched_channels`` (the
+    #: ``watched_channels`` its :meth:`poll` is handed). Settings → Inbox shows that list, naming
+    #: the sources that read it, only while a polled source says so: a list no source reads would
+    #: be a control that changes nothing.
+    watches_channels: bool = False
+
     @property
     @abstractmethod
     def source_name(self) -> str: ...

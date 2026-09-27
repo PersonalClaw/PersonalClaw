@@ -281,8 +281,12 @@ describe('two more bodies: one corrected, one confirmed', () => {
     expect(ui, 'the whole sentence').toContain(
       'There is no undo — but they stay readable under Handled.',
     )
+    // The Handled filter reads the one settled set, which the detail panel's settled state reads too.
     expect(ui, "and the filter that makes the second half true").toMatch(
-      /filter === 'handled' \? \(it\.status === 'handled' \|\| it\.status === 'sent' \|\| it\.status === 'dismissed'\)/,
+      /filter === 'handled' \? isSettled\(it\.status\)/,
+    )
+    expect(web('pages/inbox/inboxMeta.ts'), 'whose set holds the dismissed').toMatch(
+      /SETTLED_STATUSES: readonly InboxItemStatus\[\] = \['handled', 'sent', 'dismissed'\]/,
     )
     // 🪤 A THIRD half arrived with issue 409: dismissing a proposal row also REJECTS the proposal,
     // which deletes its record — so for those rows "they stay readable under Handled" is not the

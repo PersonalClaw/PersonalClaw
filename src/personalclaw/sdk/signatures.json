@@ -861,6 +861,11 @@
     "returns": "dict[str, Any]"
    },
    "name": {"kind": "property", "returns": "str", "settable": false},
+   "owner_pairing_hint": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
+   },
    "receive": {
     "kind": "method",
     "params": [],
@@ -2078,6 +2083,7 @@
    }
   }
  },
+ "personalclaw.sdk.channel.NOT_THE_OWNER_SENTENCE": {"kind": "value", "type": "str", "value": "\"Only this channel's owner can get a dashboard link: the link signs in as the owner, so nobody else is sent one.\""},
  "personalclaw.sdk.channel.OutboundMessage": {
   "bases": ["object"],
   "init": {
@@ -3487,6 +3493,13 @@
   ],
   "returns": "bool"
  },
+ "personalclaw.sdk.channel.approval_brief_for": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Any", "kind": "positional_or_keyword", "name": "event"}
+  ],
+  "returns": "dict[str, Any] | None"
+ },
  "personalclaw.sdk.channel.assert_channel_contract": {
   "kind": "function",
   "params": [
@@ -3747,6 +3760,15 @@
   ],
   "returns": "str"
  },
+ "personalclaw.sdk.channel.owner_sign_in_token": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "user_id"},
+   {"annotation": "int", "default": "3600", "kind": "positional_or_keyword", "name": "ttl_seconds"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.channel.parse_dashboard_url": {
   "kind": "function",
   "params": [
@@ -3796,6 +3818,16 @@
    {"annotation": "str", "kind": "positional_or_keyword", "name": "text"}
   ],
   "returns": "tuple[str, list[str]]"
+ },
+ "personalclaw.sdk.channel.redeem_owner_pairing_code": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "sender_id"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "code"},
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "name"}
+  ],
+  "returns": "bool"
  },
  "personalclaw.sdk.channel.redeem_pairing_code": {
   "kind": "function",

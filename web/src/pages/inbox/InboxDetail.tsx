@@ -10,7 +10,7 @@ import { InlineLoadError } from '../../ui/ListScaffold'
 import { TextArea, Segmented, FieldError } from '../../ui/forms'
 import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel, verifyNote } from './inboxMeta'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel, verifyNote } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { DeniedCallRerun } from './DeniedCallRerun'
@@ -73,6 +73,12 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
 
   const dirtyDraft = draft !== (item.draft ?? '')
   const canReply = item.can_reply ?? false
+  // Handled, replied or dismissed: the row is done, so the panel shows what became of it, not the
+  // controls that would do it again. Send stayed offered after a reply went out (the row read
+  // Handled while the panel still asked for one), and Mark handled on a handled row did nothing.
+  // Reopen is the way back to both.
+  const settled = isSettled(item.status)
+  const repliedAt = item.replied_at && item.replied_at > 0 ? item.replied_at : 0
   // A non-channel item (needs_input, proposal, …) was never triaged by the AI layer and has
   // no channel to reply into. Showing it a classification verdict, a Reclassify control, a
   // thumbs pair, a draft box or Mute thread would all be controls over something that does
@@ -229,13 +235,25 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
               permanently disabled. Same doctrine as the needs_input comment
               above: hidden rather than shown inert. A legacy draft saved before
               the gate still displays (it exists), with why it cannot be sent. */}
-          {canReply ? (
+          {settled && repliedAt ? (
+            <Section label="Your reply">
+              <div data-type="body-s" className="rounded-md bg-surface-container px-m py-s text-on-surface whitespace-pre-wrap">{item.draft}</div>
+              <p data-type="caption" className="mt-1.5 inline-flex items-center gap-xs text-on-surface-low"><Send size={12} aria-hidden /> Sent {relPast(repliedAt)}.</p>
+            </Section>
+          ) : settled ? (
+            item.draft ? (
+              <Section label="Drafted reply">
+                <div data-type="body-s" className="rounded-md bg-surface-container px-m py-s text-on-surface-var whitespace-pre-wrap">{item.draft}</div>
+              </Section>
+            ) : null
+          ) : canReply ? (
             <Section label="Drafted reply"
               right={item.draft ? (
                 <FeedbackThumbs targetKind="inbox_draft" targetId={item.id}
                   producer={item.feedback_producers?.draft}
                   snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
               ) : undefined}>
+              {repliedAt > 0 && <p data-type="caption" className="mb-1.5 text-on-surface-low">You replied {relPast(repliedAt)}. A reply sent now goes out as another one.</p>}
               <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
               <div className="mt-2 flex flex-wrap items-center gap-s">
                 <Button size="sm" variant="secondary" onClick={generate} loading={busy === 'draft'}><Sparkles size={14} /> {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
@@ -273,8 +291,12 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
 
       {/* triage actions */}
       <div className="flex flex-wrap items-center gap-s border-t border-outline-variant/40 pt-l">
-        <Button size="sm" variant="secondary" onClick={() => patch({ status: 'handled' }, 'handled')} disabled={!!busy} disabledReason={BUSY_REASON}><Check size={14} /> Mark handled</Button>
-        <Button size="sm" variant="ghost" onClick={() => patch({ status: 'dismissed' }, 'dismiss')} disabled={!!busy} disabledReason={BUSY_REASON}><XCircle size={14} /> Dismiss</Button>
+        {settled ? (
+          <Button size="sm" variant="secondary" onClick={() => patch({ status: 'seen' }, 'reopen')} loading={busy === 'reopen'} disabled={!!busy} disabledReason={BUSY_REASON}><RotateCcw size={14} /> Reopen</Button>
+        ) : (
+          <Button size="sm" variant="secondary" onClick={() => patch({ status: 'handled' }, 'handled')} disabled={!!busy} disabledReason={BUSY_REASON}><Check size={14} /> Mark handled</Button>
+        )}
+        {item.status !== 'dismissed' && <Button size="sm" variant="ghost" onClick={() => patch({ status: 'dismissed' }, 'dismiss')} disabled={!!busy} disabledReason={BUSY_REASON}><XCircle size={14} /> Dismiss</Button>}
         {/* Mute thread writes to the muted-THREADS set, keyed off a channel thread id. A
             non-channel item has no thread, so the button would silently do nothing. */}
         {channelBacked && <Button size="sm" variant="ghost" onClick={() => patch({ mute_thread: true }, 'mute')} disabled={!!busy} disabledReason={BUSY_REASON}><BellOff size={14} /> Mute thread</Button>}

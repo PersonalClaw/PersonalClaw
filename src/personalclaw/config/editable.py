@@ -117,6 +117,37 @@ def _approval_channel_validator(value: str) -> str:
     return name
 
 
+#: Longer than any chat service's channel id, short enough that a pasted paragraph is refused.
+WATCHED_CHANNEL_ID_MAX_LEN = 64
+
+
+def _watched_channels_validator(ids: list[str]) -> list[str]:
+    """Refuse an entry that is not one channel id; trim and de-duplicate the rest.
+
+    A channel id is one word (``C0123456789``). A name with a space, a pasted link or an empty
+    entry names no channel the inbox could read, and a list that quietly kept it would read as
+    watched while nothing was, so the refusal names the entry. Surrounding whitespace changes no
+    id, so that is trimmed, as a repeat is dropped.
+    """
+    kept: list[str] = []
+    for raw in ids:
+        channel = raw.strip()
+        if (
+            not channel
+            or any(ch.isspace() for ch in channel)
+            or "/" in channel
+            or len(channel) > WATCHED_CHANNEL_ID_MAX_LEN
+        ):
+            raise ConfigValueError(
+                f"{raw!r} is not a channel id: add each channel by its id alone, one word "
+                "(for example C0123456789)",
+                f"inbox.watched_channels={raw!r}",
+            )
+        if channel not in kept:
+            kept.append(channel)
+    return kept
+
+
 def _version_pin_sanitizer(value: str) -> str:
     """Refuse a version pin that could never name a release; store the resolvers' spelling.
 
@@ -907,6 +938,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # "Poll the drop folder": the built-in drop folder's switch alone (an installed inbox
     # app is polled while it is enabled). Read at every poll, so no restart is needed.
     "inbox.enabled": {"type": "bool"},
+    # The channels a channel app's inbox source reads (Settings → Inbox shows the list while a
+    # polled source says it reads one). Read at every poll, so no restart is needed.
+    "inbox.watched_channels": {
+        "type": "str_list",
+        "max_items": 50,
+        "sanitize": _watched_channels_validator,
+    },
     # AGENT-ROOMS. Runtime-editable because all three are knobs the human reaches for
     # while a room is running: killing the feature, or capping a deliberation that is
     # spending more than it is worth. The budget floor is 1, not 0 — a room reads 0 as

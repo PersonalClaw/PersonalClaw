@@ -44,6 +44,16 @@ against core protocols). Paths are relative to
   were not there. A reply to a polled row goes to the source it came from
   (`api_inbox_send` → `send_reply`); only a reply the source sent closes the row, and
   one it did not send comes back as a 409 with its reason, the text kept as the draft.
+  A sent reply stamps the row's `replied_at`, which is how the open item says "Sent".
+  **A polled row's id** is `inbox_service.polled_item_id`: `{source}_{key}_{ts}`, the key
+  the message's own id at its source (`IncomingMessage.id`: a Message-ID, a Slack ts)
+  hashed with the source and channel, or its content when it has none. It was
+  `{channel}_{ts}`, and two mails to one address in the same second shared it. Muting a
+  row's thread writes `InboxItem.thread_key`: its thread id, or for the first message of
+  a thread its own id at the source, which is what the replies name as their thread.
+  **Watched channels.** Every source's `poll` is handed `inbox.watched_channels`; a source
+  that reads it sets `watches_channels = True` (Slack's), and Settings → Inbox shows the
+  list ("Channels to read"), named by those sources, while one is polled.
 - **Settings** live solely in
   `~/.personalclaw/entity_settings/inbox.json` (`auto_cleanup_enabled`,
   `retention_days`) with type- and range-guarded PUTs in

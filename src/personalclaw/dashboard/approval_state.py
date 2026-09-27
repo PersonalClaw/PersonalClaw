@@ -860,20 +860,25 @@ class DashboardApprovalState:
         channel can prompt, the owner gets a message with the link to answer it instead.
 
         The channel is handed a short token, not the approval id: a chat's id carries its session
-        key, and a button's data has a size cap on some channels."""
+        key, and a button's data has a size cap on some channels. It is handed the entry's brief
+        too (``approval_brief.entry_approval_brief``), which is what its prompt shows: the tool,
+        its arguments and purpose as this entry holds them for the dashboard's card, and what the
+        call can touch."""
         import secrets
         from types import SimpleNamespace
 
         from personalclaw import channel_delivery
+        from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY, entry_approval_brief
         from personalclaw.config.credentials import owner_id_for
 
+        brief = entry_approval_brief(entry)
         event = SimpleNamespace(
             request_id=secrets.token_hex(6),
             title=str(entry.get("tool") or ""),
             tool_input=str(entry.get("tool_input") or ""),
             tool_purpose=str(entry.get("tool_purpose") or ""),
             risk_level=str(entry.get("risk") or ""),
-            tool_meta={},
+            tool_meta={APPROVAL_BRIEF_META_KEY: brief} if brief else {},
         )
         prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
         session = str(entry.get("session") or "")
