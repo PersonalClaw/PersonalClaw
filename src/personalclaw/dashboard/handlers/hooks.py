@@ -405,7 +405,7 @@ async def _run_hook_agent(
     if deliver:
         name_safe, _ = redact_exfiltration_urls(name)
         name_safe, _ = redact_credentials(name_safe)
-        title = f"🪝 {name_safe}"
+        title = f"Hook: {name_safe}"
         state.notify(
             notification_kinds.HOOK, title, result_text[:2000], meta={"session_key": session_key}
         )

@@ -700,7 +700,7 @@ async def api_send_message(request: web.Request) -> web.Response:
             if target_session and job_name:
                 safe_name, _ = redact_exfiltration_urls(job_name)
                 safe_name, _ = redact_credentials(safe_name)
-                title = f"⏰ {safe_name}"
+                title = f"Trigger: {safe_name}"
                 text += "\n\n_(session closed — delivered as notification)_"
             state.notify(notification_kinds.AGENT, title, text)
 

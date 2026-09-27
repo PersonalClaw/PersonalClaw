@@ -386,11 +386,17 @@ def build_turn_telemetry(
     events: int,
     tool_calls: int,
     model: str,
+    line: str,
 ) -> dict[str, Any] | None:
     """The structured per-turn telemetry record, or ``None`` when the turn reported none.
 
     The shape is fixed and every key is always present, so a consumer never has to
     guess whether a missing key means zero:
+
+    * ``line`` is the "Turn complete" sentence the live activity line showed for this
+      turn, composed once by the runner from these same numbers. The chat's turn details
+      read it back after a reload (``hydrateTurns``), so the sentence a user saw live is
+      the sentence they see again, rather than one rebuilt later by a second formatter.
 
     * ``priced`` is the honesty flag the live "Turn complete" line already carries —
       ``cost_usd: 0.0`` with ``priced: false`` means "no price row for this model",
@@ -417,6 +423,7 @@ def build_turn_telemetry(
         "events": int(events),
         "tool_calls": int(tool_calls),
         "model": str(model or ""),
+        "line": str(line),
     }
 
 
