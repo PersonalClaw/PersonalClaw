@@ -318,12 +318,18 @@ def _http_runner(payload: dict[str, Any]) -> Any:
     Mirrors `schedule_trigger`: an MCP process cannot own the LLM turn, so an immediate run posts
     to the in-process gateway rather than spawning a subagent here. Returns the response dict, or a
     string describing why it could not — never raises into the tool result.
+
+    The id goes into the path percent-encoded, under the `schedule:` namespace, as the dashboard's
+    Run button and `personalclaw cron trigger` send it. An app's job name can hold any character,
+    and a space in one made the request unsendable.
     """
+    from urllib.parse import quote
+
     from personalclaw.mcp_core import _post
 
     trigger_id = str(payload.get("trigger_id") or "")
     try:
-        return _post(f"/api/triggers/{trigger_id}/run", {})
+        return _post(f"/api/triggers/schedule:{quote(trigger_id, safe='')}/run", {})
     except Exception as exc:  # noqa: BLE001 - a failed dispatch is a reported outcome, not a crash
         logger.debug("automation_run HTTP dispatch failed for %s", trigger_id, exc_info=True)
         return f"could not dispatch: {exc}"

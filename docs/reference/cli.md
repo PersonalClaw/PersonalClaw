@@ -232,7 +232,7 @@ Manage scheduled jobs.
 | `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto\|default] [--yes]` | Update a job (`default` resets approval mode). A new `--message` changes what the job's agent is told to do, and `--approval-mode auto` lets it approve its own tool calls, so each asks what the Triggers page's editor asks: without `--yes` the command prints the question and changes nothing (exit 1). |
 | `cron remove JOB_ID` | Remove a job. |
 | `cron pause JOB_ID` / `cron resume JOB_ID` | Pause / resume a job. |
-| `cron trigger JOB_ID` | Fire a job immediately. |
+| `cron trigger JOB_ID` | Fire a job immediately, through the running gateway. `JOB_ID` is an id `cron list` shows, such as `clock:nightly-report` for a job `cron add` made; one that is not there is refused with `Job not found` (exit 1) and nothing is sent. |
 
 ## `personalclaw spawn`
 

@@ -78,9 +78,6 @@ USER_MAX_LEN = 20
 # addressing format used across channel tool schemas)
 _MESSAGE_TS_RE = re.compile(r"^\d+\.\d+$")
 
-# Valid cron job ID pattern (hex)
-_JOB_ID_RE = re.compile(r"^[a-f0-9]{1,16}$")
-
 # Hidden Unicode categories to strip (control chars, format chars, etc.)
 # Keeps: letters, numbers, punctuation, symbols, separators (space/newline)
 _HIDDEN_CATEGORIES = frozenset(

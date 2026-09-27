@@ -678,7 +678,19 @@ def _cron(args: argparse.Namespace) -> None:
         print(result.text)
 
     elif action == "trigger":
-        # Fire via the RUNNING gateway (a CLI process has no clock loop).
+        # Fire via the RUNNING gateway (a CLI process has no clock loop). The id is looked up in
+        # the store `list` reads, as `update`, `remove`, `pause` and `resume` do: every id a writer
+        # minted is there, and anything else is refused before a request is sent. This was a
+        # pattern for the old 6-16 hex ids, which refused every id `add` makes (`clock:<name>`).
+        if store.get(args.job_id) is None:
+            sel().log_api_access(
+                caller="cli",
+                operation="cron.trigger",
+                outcome="not_found",
+                source="cli",
+                resources=f"job_id={args.job_id} reason=not_found",
+            )
+            _refuse(f"Job not found: {args.job_id}")
         from personalclaw.schedule_trigger import trigger_schedule_job
 
         ok, message = trigger_schedule_job(args.job_id)
