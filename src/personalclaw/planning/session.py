@@ -269,9 +269,16 @@ def submit_artifact(session: PlanSession, step_id: str, artifact: dict) -> bool:
 
 
 def step_markdown(step: PlanStep) -> str:
-    """The step's markdown body as a read shows it — the one thing :func:`edit_artifact`
-    replaces, and so the document an edit's revision describes."""
+    """The step's stored markdown body: the one thing :func:`edit_artifact` replaces."""
     return str((step.artifact or {}).get("markdown") or "")
+
+
+def shown_markdown(step: PlanStep) -> str:
+    """The step's markdown as a read shows it, masked (`security.redact_for_display`), and so the
+    document an edit's revision describes."""
+    from personalclaw.security import redact_for_display
+
+    return redact_for_display(step_markdown(step))
 
 
 def step_revision(step: PlanStep) -> str:
@@ -281,20 +288,43 @@ def step_revision(step: PlanStep) -> str:
     Of the markdown alone, because that is all an edit writes: the structured fields stay as
     the planner authored them. A redraft replaces the markdown, so an edit of the draft it
     replaced no longer matches and is refused instead of putting the old draft's text back.
+    Taken of the markdown the read showed (:func:`shown_markdown`), the copy the editor holds.
     """
     from personalclaw.stale_write import revision_of
 
-    return revision_of(step_markdown(step))
+    return revision_of(shown_markdown(step))
+
+
+#: The fields of a step that hold text the planner or the user wrote.
+_STEP_TEXT = ("title", "objective", "artifact", "comments")
 
 
 def wire(session: PlanSession) -> dict[str, Any]:
     """``session`` as a read hands it out: :meth:`PlanSession.to_dict` with each step carrying
     the ``revision`` an edit of it must name. Not persisted — a revision is derived, never
-    stored, so no writer can forget to bump one."""
+    stored, so no writer can forget to bump one.
+
+    Masked for display. A step is drafted from the task, which can carry a key the loop's own read
+    masks, and its comments are the user's words. An edit puts back each marker it sends
+    (:func:`keep_masked_markdown`).
+    """
+    from personalclaw.security import redact_for_display, redact_values_for_display
+
     out = session.to_dict()
+    out["design_error"] = redact_for_display(str(out.get("design_error") or ""))
     for step, row in zip(session.steps, out["steps"]):
+        for key in _STEP_TEXT:
+            row[key] = redact_values_for_display(row[key])
         row["revision"] = step_revision(step)
     return out
+
+
+def keep_masked_markdown(step: PlanStep, markdown: str) -> str:
+    """The markdown an edit of ``step`` saves: each marker the editor sends back keeps the stored
+    text it stood for. Raises `security.MaskConflict` rather than save a marker it cannot place."""
+    from personalclaw.security import keep_masked_spans
+
+    return keep_masked_spans(markdown, step_markdown(step))
 
 
 def edit_artifact(session: PlanSession, step_id: str, markdown: str) -> bool:

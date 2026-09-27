@@ -22,6 +22,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
     redact_for_display,
+    stored_name,
 )
 from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
@@ -386,8 +387,16 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     source = body.get("source", "user_explicit")
     if not key or value is None:
         return web.json_response({"error": "key and value required"}, status=400)
-    # `api_memory_semantic` lists every fact masked, so a caller writing one back sends our marker
-    # for each hidden value in it. Put each back from the fact as stored.
+    # `api_memory_semantic` lists every fact masked, its key included, so a caller writing one back
+    # names it by the key it was shown and sends our marker for each hidden value in it. The key
+    # names the fact that shows as it; each marker is put back from that fact as stored.
+    try:
+        known = _stored_key(svc, str(key))
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    if known is None:
+        return web.json_response({"error": str(MaskConflict())}, status=409)
+    key = known
     stored = svc.get_semantic(key)
     if stored is not None:
         try:
@@ -439,11 +448,27 @@ async def api_memory_semantic_delete(request: web.Request) -> web.Response:
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
     svc = _get_service(request.app["state"])
-    key = request.match_info["key"]
-    ok = svc.delete_semantic(key, source="user_explicit")
+    # Named by the key the list showed, which is masked like the rest of the fact.
+    try:
+        key = _stored_key(svc, request.match_info["key"])
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    ok = key is not None and svc.delete_semantic(key, source="user_explicit")
     if not ok:
         return web.json_response({"error": "not found"}, status=404)
     return web.json_response({"ok": True})
+
+
+def _stored_key(svc: Any, shown: str) -> str | None:
+    """The key of the fact a caller means by *shown*, a key `api_memory_semantic` may have masked.
+
+    A key names a fact, so a masked one is not a new key: it names the stored fact whose key shows
+    as it (`security.stored_name`). *shown* itself when a fact has it exactly or it holds no
+    marker; ``None`` when a marker names no fact.
+    """
+    if svc.get_semantic(shown) is not None:
+        return shown
+    return stored_name(shown, (str(dict(e).get("key") or "") for e in svc.get_all_semantic()))
 
 
 async def api_memory_approval_rules(request: web.Request) -> web.Response:
@@ -591,14 +616,20 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
 
 
 async def api_memory_events(request: web.Request) -> web.Response:
-    """GET /api/memory/events — paginated audit trail."""
+    """GET /api/memory/events — paginated audit trail.
+
+    Each event carries the fact's key and its old and new values, masked the way the facts list
+    masks the same fact (`_redact_memory_field`). An undo names the event by id, so nothing here
+    is sent back.
+    """
     svc = _get_service(request.app["state"])
     try:
         limit = min(int(request.query.get("limit", "50")), 200)
         offset = int(request.query.get("offset", "0"))
     except (ValueError, TypeError):
         return web.json_response({"error": "limit/offset must be integers"}, status=400)
-    return web.json_response({"events": svc.get_events(limit=limit, offset=offset)})
+    events = svc.get_events(limit=limit, offset=offset)
+    return web.json_response({"events": [_redact_memory_field(dict(e)) for e in events]})
 
 
 async def api_memory_lint(request: web.Request) -> web.Response:
@@ -1170,8 +1201,15 @@ def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
                     except Exception:
                         pass
                 val_str = str(val) if not isinstance(val, str) else val
-                # ref = the fact's key (the Studio list keys semantic entries by `key`).
-                _add("sem", key, "semantic", f"{key} = {val_str[:120]}", ref=f"sem:{key}")
+                # ref = the fact's key as the Studio list shows it (`api_memory_semantic` masks
+                # it), so the list finds its node. `api_memory_record_links` reads it back.
+                _add(
+                    "sem",
+                    key,
+                    "semantic",
+                    f"{key} = {val_str[:120]}",
+                    ref=f"sem:{redact_for_display(key)}",
+                )
         except Exception:
             pass
 
@@ -1185,7 +1223,9 @@ def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
                     rule = json.loads(rule)
                 except Exception:
                     pass
-            _add("lesson", str(rule)[:80], "lesson", str(rule))
+            # ref = `MemoryPanel.lessonRef` of the rule the lessons list shows, which is masked.
+            shown = redact_for_display(str(rule))
+            _add("lesson", str(rule)[:80], "lesson", str(rule), ref=f"lesson:{shown[:80]}")
     except Exception:
         pass
 
@@ -1235,6 +1275,8 @@ async def api_memory_graph(request: web.Request) -> web.Response:
         for n in nodes:
             n["label"] = _redact_memory_field(n["label"])
             n["title"] = _redact_memory_field(n["title"])
+            # A node's handle quotes its label, so it is masked as the label is.
+            n["ref"] = _redact_memory_field(n["ref"])
 
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="memory_graph", outcome="success"
@@ -1425,8 +1467,16 @@ async def api_memory_record_links(request: web.Request) -> web.Response:
     ref = request.query.get("ref", "")
     if not ref:
         return web.json_response({"error": "ref is required"}, status=400)
+    # A fact is named by the key the list showed, which is masked (`_stored_key`).
+    stored = ref
+    if ref.startswith("sem:"):
+        try:
+            key = _stored_key(svc, ref[len("sem:") :])
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        stored = f"sem:{key}" if key is not None else ref
     loop = asyncio.get_event_loop()
-    links = await loop.run_in_executor(None, lambda: svc.graph_record_links(ref))
+    links = await loop.run_in_executor(None, lambda: svc.graph_record_links(stored))
     for link in links:
         if link.get("context"):
             link["context"] = _redact_memory_field(link["context"])

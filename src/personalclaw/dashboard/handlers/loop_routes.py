@@ -787,10 +787,8 @@ def _merge_kind_config(body: dict, existing: Loop) -> dict:
     consumer (all of them ``cfg.get(...)``), so delete mints no new state.
 
     Merging on the SERVER rather than in the browser is not a preference. ``get_redacted``
-    passes ``kind_config`` through ``files._redact_value``, so the config a client holds is
-    a REDACTED view; a client that spread its own copy back into the write would persist
-    redaction placeholders over the user's real values, turning a dropped field into a
-    corrupted one. Only the server has the unredacted config to merge against.
+    masks ``kind_config`` (``security.redact_values_for_display``), so the config a client holds
+    is a masked view of it, and only the server has the config itself to merge against.
 
     This is the route's contract, not the store's: ``store.update_spec`` still replaces the
     column, and its in-process callers (``plan_walkthrough``, ``kinds/sdlc``) already merge
@@ -1408,10 +1406,14 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
     step = next((s for s in session.steps if s.id == step_id), None)
     if step is not None and step.status == PS.StepStatus.AWAITING_REVIEW.value:
         stale = stale_write_refusal(
-            request, PS.step_markdown(step), what=f"the plan step {step.title!r}"
+            request, PS.shown_markdown(step), what=f"the plan step {step.title!r}"
         )
         if stale is not None:
             return stale
+        try:
+            markdown = PS.keep_masked_markdown(step, markdown)
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
     if not PS.edit_artifact(session, step_id, markdown):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
     loop_files.write_plan_session(session)

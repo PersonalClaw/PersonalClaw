@@ -39,6 +39,7 @@ from personalclaw.loop.loop import (
     LoopStatus,
     LoopStopReason,
 )
+from personalclaw.security import redact_for_display, redact_values_for_display
 from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -92,16 +93,16 @@ def _redact_loop(row: dict) -> dict:
     out = dict(row)
     for k in ("task", "summary", "success_criteria", "error_message", "name"):
         if isinstance(out.get(k), str):
-            out[k] = files._redact_str(out[k])
+            out[k] = redact_for_display(out[k])
     if isinstance(out.get("kind_config"), dict):
-        out["kind_config"] = files._redact_value(out["kind_config"])
+        out["kind_config"] = redact_values_for_display(out["kind_config"])
     if isinstance(out.get("plan"), list):
-        out["plan"] = files._redact_value(out["plan"])
+        out["plan"] = redact_values_for_display(out["plan"])
     return out
 
 
 def _db_path() -> Path:
-    return files._loops_root() / "loops.db"
+    return files.loops_root() / "loops.db"
 
 
 # ── connection + schema ──
@@ -811,7 +812,7 @@ def read_deliverable(loop_id: str) -> str:
         p = d / name
         try:
             if p.exists():
-                return files._redact_str(p.read_text())
+                return redact_for_display(p.read_text())
         except OSError:
             continue
     return ""
@@ -824,7 +825,7 @@ def read_log(loop_id: str) -> str:
         return ""
     p = d / LOG_NAME
     try:
-        return files._redact_str(p.read_text()) if p.exists() else ""
+        return redact_for_display(p.read_text()) if p.exists() else ""
     except OSError:
         return ""
 

@@ -855,7 +855,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/ledger-rails` — GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
 - `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one terminal node (WF2-A2).
 - `GET /api/workflows/runs/{run_id}/outbox` — GET the run's published-artifact listing — the §2.5 outbox half of R17.
-- `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — GET one node's output, masked the way the inspect drawer masks it.
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
 - `PUT /api/workflows/runs/{run_id}/policy-overrides` — PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only.
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.

@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from personalclaw.loop import files as loop_files
+from personalclaw.security import redact_for_display
 
 logger = logging.getLogger(__name__)
 
@@ -401,9 +402,11 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
         return None
     _row = TriggerStore(base_dir=config_dir()).get(job_id)
     job = _row.trigger if _row is not None else None
+    # Masked like every read of the schedule (`schedule_view.MASKED_FIELDS`), prompt included below.
+    job_name = redact_for_display(job.name or "") if job else ""
     lines = [
         f"Schedule run {run.get('run_id') or '?'} of job {job_id}",
-        f"Job: {job.name if job else '(deleted)'}",
+        f"Job: {job_name if job else '(deleted)'}",
         f"Trigger: {run.get('trigger') or '?'}",
         f"Status: {run.get('status') or '?'}",
         f"Duration: {run.get('duration_ms', 0)} ms",
@@ -432,7 +435,7 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
     return InvestigateContext(
         kind="schedule_run",
         id=entity_id,
-        title=f"Run · {job.name if job else job_id}",
+        title=f"Run · {job_name if job else job_id}",
         snapshot="\n".join(lines),
         back_link=f"#/triggers?open=schedule:{job_id}",
         opening_prompt=(
@@ -475,10 +478,13 @@ async def _resolve_trigger_run(entity_id: str, state) -> InvestigateContext | No
             if hook.last_run
             else "never"
         )
+        # Masked like the lifecycle row the Automations page shows
+        # (`triggers._serialize_lifecycle`).
+        hook_name = redact_for_display(hook.name or "")
         lines = [
-            f"Lifecycle trigger {hook.id}: {hook.name}",
+            f"Lifecycle trigger {hook.id}: {hook_name}",
             f"Event: {hook.event}",
-            f"Matcher: {hook.matcher or '(any)'}",
+            f"Matcher: {redact_for_display(hook.matcher or '') or '(any)'}",
             f"Action: {hook.provider}",
             f"Enabled: {hook.enabled}",
             f"Runs: {hook.run_count}",
@@ -492,7 +498,7 @@ async def _resolve_trigger_run(entity_id: str, state) -> InvestigateContext | No
         return InvestigateContext(
             kind="trigger_run",
             id=entity_id,
-            title=f"Trigger: {hook.name}",
+            title=f"Trigger: {hook_name}",
             snapshot="\n".join(lines),
             back_link=f"#/triggers?open=lifecycle:{raw}",
             opening_prompt=(
@@ -524,7 +530,13 @@ async def _resolve_event_trigger(trigger_id: str) -> InvestigateContext | None:
     spec = dict(trig.spec or {})
     pattern = str(spec.get("pattern") or "?")
     field = PATTERN_MATCHER.get(pattern)
-    matcher = f"{field} = {spec.get(field)!r}" if field and spec.get(field) else "(every event)"
+    matcher = (
+        redact_for_display(f"{field} = {spec.get(field)!r}")
+        if field and spec.get(field)
+        else "(every event)"
+    )
+    # Masked like the store row the Automations page shows (`triggers._serialize_store`).
+    trig_name = redact_for_display(trig.name or "")
     max_fires = int((trig.gates or {}).get("max_fires") or 0)
     try:
         runs, total = await ScheduleRunStore(config_dir()).list_for_job(trig.id, offset=0, limit=1)
@@ -533,7 +545,7 @@ async def _resolve_event_trigger(trigger_id: str) -> InvestigateContext | None:
         runs, total = [], 0
     last = runs[0] if runs else None
     lines = [
-        f"Event trigger {trig.id}: {trig.name}",
+        f"Event trigger {trig.id}: {trig_name}",
         f"Listens to: {spec.get('source') or '?'} events, pattern {pattern}, matching {matcher}",
         f"Action: {_sv._inline_action(trig).get('provider') or '(none)'}",
         f"Enabled: {trig.enabled} (state: {trig.state})",
@@ -551,7 +563,7 @@ async def _resolve_event_trigger(trigger_id: str) -> InvestigateContext | None:
     return InvestigateContext(
         kind="trigger_run",
         id=trig.id,
-        title=f"Event trigger: {trig.name}",
+        title=f"Event trigger: {trig_name}",
         snapshot="\n".join(lines),
         back_link=f"#/triggers?open={trig.id}",
         opening_prompt=(

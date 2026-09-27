@@ -36,6 +36,7 @@ from personalclaw.security import (
     keep_masked_spans,
     keep_masked_values,
     redact_for_display,
+    redact_values_for_display,
 )
 
 
@@ -67,8 +68,8 @@ def _sel():
 
 
 def _redact(s: str) -> str:
-    # `redact_for_display`: a schedule's edit form is seeded from these rows, and the PUT puts back
-    # exactly this mask (`_keep_masked_schedule`).
+    # `redact_for_display`: a trigger's edit form is seeded from these rows, and the PUT puts back
+    # exactly this mask (`_keep_masked_trigger`).
     return redact_for_display(s or "")
 
 
@@ -247,7 +248,8 @@ def _project_one(
     interval = float(spec.get("interval_secs") or 0)
     common = {
         "trigger_id": f"{_SCHEDULE}:{trigger.id}",
-        "trigger_name": trigger.name,
+        # Masked like the list's name, for the week grid shows the same trigger.
+        "trigger_name": _redact(trigger.name),
         "start": start,
         "days": days,
         "until": until,
@@ -376,16 +378,20 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "store_kind": trigger.kind,
         "id": f"{_STORE}:{trigger.id}",
         "raw_id": trigger.id,
-        "name": trigger.name,
+        # Masked like a schedule row (`schedule_view.MASKED_FIELDS`): the name, what the trigger
+        # watches, and the action with its prompt or command.
+        "name": _redact(trigger.name),
         "enabled": trigger.enabled,
         "created_by": trigger.created_by,
-        "spec": dict(trigger.spec or {}),
+        "spec": redact_values_for_display(dict(trigger.spec or {})),
         # The action as `{provider, config}` — the shape the page reads — whichever of the two
         # stored shapes the row uses. The raw `workflow` was sent, so a row whose action nests under
         # `inline` (every row the API, the CLI and the app reconcilers write, a data-event trigger
         # included) read "What it runs: Action" on the page. A workflow ref or resume target, which
         # has no action shape, is still sent as stored.
-        "action": _inline_action(trigger) or dict(trigger.workflow or {}),
+        "action": redact_values_for_display(
+            _inline_action(trigger) or dict(trigger.workflow or {})
+        ),
         "health": trigger.health_status,
         # 🔴 THE LIFECYCLE STATE, which this projection omitted (S164). `Trigger.state` carries
         # `active | paused | autopaused | parked | quarantined | retired` and reached NO surface:
@@ -428,7 +434,7 @@ def _last_run_status(state: DashboardState, job_id: str) -> str | None:
 
 
 def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
-    """ONE schedule row, projected and redacted (S101).
+    """ONE schedule row, projected and masked (S101; the masking is the projection's own).
 
     Shared by the list (`api_triggers`) and the single-row write responses (create, update), so
     they answer in exactly the same shape. Two projections would drift, and a create that
@@ -452,10 +458,6 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
         base_dir=store.base_dir,
         last_run_status=_last_run_status(state, trigger.id) or "",
     )
-    projected["name"] = _redact(projected.get("name") or "")
-    for key in ("message", "last_error", "schedule"):
-        if projected.get(key):
-            projected[key] = _redact(str(projected[key]))
     projected["broken"] = errors
     projected["warnings"] = warnings
     projected["needs_review"] = _needs_review(trigger)
@@ -487,12 +489,17 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "kind": _LIFECYCLE,
         "id": f"{_LIFECYCLE}:{hook.id}",
         "raw_id": hook.id,
-        "name": hook.name,
+        # Masked like a schedule row: the name, the matcher, and the action's config with its
+        # prompt or command. The editor sends them back, and `_keep_masked_trigger` restores them.
+        "name": _redact(hook.name),
         "enabled": hook.enabled,
-        "action": {"provider": hook.provider, "config": hook.provider_config},
+        "action": {
+            "provider": hook.provider,
+            "config": redact_values_for_display(hook.provider_config),
+        },
         # lifecycle mechanism
         "event": hook.event,
-        "matcher": hook.matcher,
+        "matcher": _redact(hook.matcher),
         "timeout": hook.timeout,
         "last_run": hook.last_run,
         "last_status": hook.last_status,
@@ -1368,11 +1375,11 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             status=400,
         )
 
-    if kind != _LIFECYCLE:
-        try:
-            body = _keep_masked_schedule(state, kind, raw, body)
-        except MaskConflict as exc:
-            return web.json_response({"error": str(exc)}, status=409)
+    submitted = body
+    try:
+        body = _keep_masked_trigger(state, kind, raw, submitted)
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
     problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
     if problem:
@@ -1382,6 +1389,13 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     )
     if stale is not None:
         return stale
+    # Restored again from the trigger as stored now, with nothing awaited before the write. The
+    # check compares masked rows, so a save since that changed only a hidden value passes it, and
+    # the copy restored before the await would put the old value back.
+    try:
+        body = _keep_masked_trigger(state, kind, raw, submitted)
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     # One question for everything this save needs the owner's yes for, so a single "Allow" is never
     # consent to a sentence the dialog did not show: a grant for the action as it is saved — a new
     # provider, or what a granted one runs changed — and a loosened approval posture for its agent.
@@ -1425,18 +1439,25 @@ def _row_now(state: DashboardState, kind: str, raw: str) -> dict[str, Any] | Non
     return None if hook is None else _serialize_lifecycle(hook, _used_by_index().get(raw, []))
 
 
-def _keep_masked_schedule(state: DashboardState, kind: str, raw: str, body: dict) -> dict:
-    """*body* with each hidden value it echoes back restored from the stored schedule.
+def _keep_masked_trigger(state: DashboardState, kind: str, raw: str, body: dict) -> dict:
+    """*body* with each hidden value it echoes back restored from the stored trigger.
 
-    The edit form is seeded from :func:`_schedule_row_for`, which masks the name and the prompt,
-    and renaming an agent schedule sends both back, so the prompt would be stored as the marker.
-    Restored BEFORE the consent and action checks, so they judge what is actually saved.
+    Every kind's edit form is seeded from a masked row (:func:`_schedule_row_for`,
+    :func:`_serialize_store`, :func:`_serialize_lifecycle`) and sends its name and action back, and
+    a lifecycle form its matcher too, so each would be stored as the marker. Restored BEFORE the
+    consent and action checks, so they judge what is actually saved.
     """
     out = dict(body)
-    if isinstance(out.get("name"), str):
+    if kind == _LIFECYCLE:
+        hook = _hook_store(state).get(raw)
+        name, matcher = (hook.name, hook.matcher) if hook is not None else ("", "")
+    else:
         row = _trigger_store().get(raw)
-        if row is not None:
-            out["name"] = keep_masked_spans(out["name"], row.trigger.name or "")
+        name, matcher = (row.trigger.name if row is not None else ""), ""
+    if isinstance(out.get("name"), str):
+        out["name"] = keep_masked_spans(out["name"], name or "")
+    if kind == _LIFECYCLE and isinstance(out.get("matcher"), str):
+        out["matcher"] = keep_masked_spans(out["matcher"], matcher or "")
     if isinstance(out.get("action"), dict):
         out["action"] = keep_masked_values(out["action"], _stored_action(state, kind, raw))
     return out
@@ -2146,13 +2167,15 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
         # do without re-deriving the two stored action shapes itself.
         from personalclaw.triggers.schedule_view import _inline_action
 
+        # Masked like the list row: this answer shows the same action, so its prompt reaches the
+        # page masked here too (`tools.run` masks `result` and `text` the same way).
         return web.json_response(
             {
                 "ok": result.ok,
-                "name": row.trigger.name,
+                "name": _redact(row.trigger.name),
                 "result": result.data,
                 "text": result.text,
-                "would_run": _inline_action(row.trigger),
+                "would_run": redact_values_for_display(_inline_action(row.trigger)),
             }
         )
 

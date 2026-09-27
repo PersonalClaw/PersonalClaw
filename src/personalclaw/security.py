@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs
 
 from personalclaw.sel import SecurityEvent, SecurityEventLog
@@ -1161,6 +1161,22 @@ def redact_for_display(text: str) -> str:
     return masked
 
 
+def redact_values_for_display(value: Any) -> Any:
+    """:func:`redact_for_display` over every string in a JSON-shaped value.
+
+    For a read that hands out a structured blob, a trigger's action or a loop's plan, whose strings
+    are text a user or an agent wrote. Dict keys and non-string leaves pass through unchanged. The
+    inverse a save uses is :func:`keep_masked_values`.
+    """
+    if isinstance(value, str):
+        return redact_for_display(value)
+    if isinstance(value, dict):
+        return {key: redact_values_for_display(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_values_for_display(item) for item in value]
+    return value
+
+
 def redact_field(text: str) -> str:
     """Both redaction passes over one EXPORTED field: exfiltration URLs then credentials.
 
@@ -1328,6 +1344,26 @@ def keep_masked_values(submitted: Any, stored: Any) -> Any:
             kept.append(keep_masked_values(value, items[index] if index < len(items) else None))
         return kept
     return submitted
+
+
+def stored_name(shown: str, stored: Iterable[str]) -> str | None:
+    """The stored name a client means by *shown*, a name it may have been shown masked.
+
+    For a name that identifies a stored thing, a tag or a memory fact's key, rather than text that
+    is kept: removing a masked tag has to remove the real one. *shown* itself when a stored name is
+    written exactly so or it carries no mask; the one stored name that shows as it otherwise;
+    ``None`` when none does. Raises :class:`MaskConflict` when two do, because the client cannot
+    have told them apart.
+    """
+    if not _MASK_RE.search(shown):
+        return shown
+    names = list(stored)
+    if shown in names:
+        return shown
+    matches = [name for name in names if redact_for_display(name) == shown]
+    if len(matches) > 1:
+        raise MaskConflict()
+    return matches[0] if matches else None
 
 
 # Suspicious bash patterns to flag during audit

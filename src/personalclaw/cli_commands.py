@@ -385,6 +385,7 @@ def _cron(args: argparse.Namespace) -> None:
     creation, the patch allowlist, the refusal to resume a row that failed to parse, and the
     confirm-before-delete gate.
     """
+    from personalclaw.security import redact_for_display
     from personalclaw.triggers import schedule_view as _sv
     from personalclaw.triggers import tools as _tools
     from personalclaw.triggers.store import TriggerStore
@@ -409,8 +410,14 @@ def _cron(args: argparse.Namespace) -> None:
             # that provider's key is `task_template` — and `run-prompt`/`notify` differ again.
             # `to_schedule_row` already resolves all of them (schedule_view.py:171), which is the
             # whole reason it exists.
-            detail = str(_sv.to_schedule_row(trigger).get("message") or "") if row.ok else ""
-            print(f"  {status} {trigger.id}  {trigger.name}  ({sched})  {detail[:60]}")
+            # Masked like every read of a schedule (`schedule_view.MASKED_FIELDS`): a terminal is a
+            # screen too, and a scrollback keeps what it showed.
+            if row.ok:
+                shown = _sv.to_schedule_row(trigger)
+            else:
+                shown = {"name": redact_for_display(trigger.name or "")}
+            detail = str(shown.get("message") or "")
+            print(f"  {status} {trigger.id}  {shown.get('name') or ''}  ({sched})  {detail[:60]}")
 
     elif action == "add":
         every = getattr(args, "every", None)

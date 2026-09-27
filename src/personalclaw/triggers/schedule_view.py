@@ -40,7 +40,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from personalclaw.security import redact_values_for_display
+
 logger = logging.getLogger(__name__)
+
+#: The fields of a schedule row that hold text someone wrote: its name, its prompt and command,
+#: the action carrying both, its script, what its cadence reads as, and its last error.
+MASKED_FIELDS: frozenset[str] = frozenset(
+    {"name", "message", "action", "command", "script", "schedule", "last_error"}
+)
 
 #: The delivery string prefix a channel route uses (`channel:<name>` or `channel:<name>:<id>`).
 #: Matched rather than split blind: `delivery` also carries `none` (a silent job) and `inbox`, and
@@ -168,6 +176,12 @@ def to_schedule_row(
     frontend's `ScheduleJob` type and every consumer keep working while the backend becomes
     the store.
 
+    Masked for display (:data:`MASKED_FIELDS`), because every reader shows it: the Automations page,
+    an app allowed to read automations, a channel app's `/cron list`, the CLI and the investigate
+    chat. The prompt reached them twice, as ``message`` and inside ``action``, and masking one copy
+    showed the other. A save that sends the row back gets each marker restored from the stored
+    trigger (`dashboard/handlers/triggers._keep_masked_trigger`).
+
     `is_running` / `running_since` come from the CLAIM store (S97), not a process-local dict — which
     is why they are answerable at all from an API process that does not own the scheduler loop.
     """
@@ -178,7 +192,7 @@ def to_schedule_row(
     config = _action_config(trigger)
     kind = cadence_kind(trigger)
 
-    return {
+    row = {
         "kind": "schedule",
         "id": f"schedule:{trigger.id}",
         "raw_id": trigger.id,
@@ -251,6 +265,10 @@ def to_schedule_row(
         # The store's own armed timestamp, so a caller can see what the tick will act on without
         # re-deriving it. `next_run_ts` is the same instant as an epoch for the existing UI.
         "next_fire_at": str(getattr(trigger, "next_fire_at", "") or ""),
+    }
+    return {
+        key: redact_values_for_display(value) if key in MASKED_FIELDS else value
+        for key, value in row.items()
     }
 
 

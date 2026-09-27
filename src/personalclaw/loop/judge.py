@@ -33,6 +33,7 @@ import json
 import logging
 import re
 
+from personalclaw.loop.files import file_inside
 from personalclaw.workflows.judge_contract import (
     JudgeVerdict,
     clamp_marginal,
@@ -118,16 +119,15 @@ async def _observe_ground_truth(
             names = re.findall(r"[\w./-]+\.[A-Za-z0-9]+", label or "")
             for n in names:
                 # Resolve the file across every search dir (workspace, then fallbacks like
-                # the loop dir); first hit wins.
+                # the loop dir); first hit wins. Only a file INSIDE the dir counts: the name is
+                # the loop's deliverable, which the owner can type, and one that climbs out of
+                # the dir is not what the worker wrote, so it is never read into the judge's
+                # prompt (`loop.files.file_inside`, the watchdog's own containment).
                 p = ""
                 for d in search_dirs:
-                    cand = os.path.join(d, n.lstrip("./"))
-                    if os.path.isfile(cand):
-                        p = cand
-                        break
-                    base = os.path.join(d, os.path.basename(n))
-                    if os.path.isfile(base):
-                        p = base
+                    found = file_inside(d, n.lstrip("./")) or file_inside(d, os.path.basename(n))
+                    if found is not None:
+                        p = str(found)
                         break
                 if not p:
                     continue

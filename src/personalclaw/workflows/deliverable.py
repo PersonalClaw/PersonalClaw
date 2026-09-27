@@ -337,7 +337,8 @@ def read_document(roots: Roots, name: str, *, reason: str = "") -> Document:
     is returned verbatim rather than re-derived — the resolver knows *why* better than a stat does.
 
     Redacted through ``ledger.redaction.redact``, the same recursive redactor the run journal
-    writer uses and the same screens ``loop/files._redact_str`` applies to the loop side's copy.
+    writer uses and the same screens ``security.redact_for_display`` applies to the loop side's
+    copy.
     Reused rather than re-derived: a worker-authored document is prose about whatever it was working
     on, and a pasted token in a REPORT.md is exactly how a credential reaches a screenshot.
 

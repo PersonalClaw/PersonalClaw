@@ -53,7 +53,12 @@ from personalclaw.artifacts.models import (
 from personalclaw.artifacts.provider import ArtifactProvider
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.config import loader as config_loader
-from personalclaw.security import is_sensitive_path, keep_masked_spans
+from personalclaw.security import (
+    MaskConflict,
+    is_sensitive_path,
+    keep_masked_spans,
+    stored_name,
+)
 from personalclaw.stale_write import revision_of
 
 
@@ -904,9 +909,19 @@ class NativeArtifactProvider(ArtifactProvider):
                 art.tags = clean_tags(tags)
                 meta_changed = True
             if add_tags or remove_tags:
-                dropped = set(clean_tags(remove_tags))
+                # Every read shows a tag through `redacted`, so a chip the page removes, or sends
+                # back, is the name it was shown: it names the stored tag that shows as it
+                # (`security.stored_name`). A marker that names no stored tag is not a tag to add.
+                dropped = {
+                    name
+                    for name in (stored_name(t, art.tags) for t in clean_tags(remove_tags))
+                    if name is not None
+                }
+                added = [stored_name(t, art.tags) for t in clean_tags(add_tags)]
+                if None in added:
+                    raise MaskConflict()
                 kept = [t for t in art.tags if t not in dropped]
-                edited = clean_tags(kept + clean_tags(add_tags))
+                edited = clean_tags(kept + added)
                 if edited != art.tags:
                     art.tags = edited
                     meta_changed = True

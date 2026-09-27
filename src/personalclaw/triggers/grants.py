@@ -107,7 +107,12 @@ def _uses(providers: list[str]) -> str:
 
 
 def _name(trigger: Any) -> str:
-    return str(getattr(trigger, "name", "") or getattr(trigger, "id", "") or "this trigger")
+    """The trigger as these sentences name it: its name masked the way the Automations page shows
+    it (`security.redact_for_display`), since a consent dialog or a refusal is a read of it too."""
+    from personalclaw.security import redact_for_display
+
+    name = str(getattr(trigger, "name", "") or getattr(trigger, "id", "") or "this trigger")
+    return redact_for_display(name)
 
 
 def _runs(trigger: Any, provider: str) -> dict[str, Any] | None:
