@@ -85,8 +85,9 @@ class CodeMapToolProvider(ToolProvider):
                         "workspace": {
                             "type": "string",
                             "description": (
-                                "Directory to query. Defaults to the active "
-                                "workspace; you rarely need to set this."
+                                "Directory to query, inside the session's workspace. "
+                                "Defaults to the workspace itself; you rarely need to "
+                                "set this."
                             ),
                         },
                         "refresh": {
@@ -115,7 +116,10 @@ class CodeMapToolProvider(ToolProvider):
                     "properties": {
                         "workspace": {
                             "type": "string",
-                            "description": "Directory to summarize (defaults to the active one).",
+                            "description": (
+                                "Directory to summarize, inside the session's workspace "
+                                "(defaults to the workspace itself)."
+                            ),
                         },
                     },
                 },
@@ -139,28 +143,51 @@ class CodeMapToolProvider(ToolProvider):
 
 
 async def _run(fn, arguments: dict) -> ToolResult:
-    """Run a blocking index query off the event loop."""
+    """Run a blocking index query off the event loop, in this call's context: the turn's
+    workspace is a contextvar the runtime binds (`builtin_tools.bind_tool_context`), and a bare
+    executor hop would lose it."""
     import asyncio
 
-    return await asyncio.get_event_loop().run_in_executor(None, fn, arguments)
+    return await asyncio.to_thread(fn, arguments)
 
 
 def resolve_workspace(arguments: dict) -> str:
-    """Which directory to query: the explicit argument, else the active workspace."""
-    explicit = str(arguments.get("workspace") or "").strip()
-    if explicit:
-        return explicit
-    try:
-        from personalclaw.config.loader import default_workspace_dir
+    """Which directory to query: this turn's workspace, or a folder inside the places its file
+    tools reach, checked as they check a path (`file_roots.admit`: symlinks and ``..`` resolved,
+    the PersonalClaw home reached only through a root inside it, no credential location).
 
-        return default_workspace_dir() or ""
-    except Exception:  # noqa: BLE001
-        return ""
+    Raises ``ValueError`` for a ``workspace`` outside them: this tool reads every source file
+    under the folder it indexes, so an unchecked folder would let it map what ``grep`` and
+    ``read_file`` cannot open."""
+    import os
+
+    from personalclaw.agents.native.builtin_tools import current_tool_roots
+    from personalclaw.file_roots import admit
+
+    roots = current_tool_roots()
+    explicit = str(arguments.get("workspace") or "").strip()
+    if not explicit:
+        return roots[0] if roots else ""
+    raw = explicit if os.path.isabs(explicit) or not roots else os.path.join(roots[0], explicit)
+    canonical = admit(raw, roots) if roots else None
+    if canonical is None or not os.path.isdir(canonical):
+        raise ValueError(
+            f"workspace {explicit!r} is not a folder this session's file tools reach: code_map "
+            "indexes the session's workspace or a folder inside it"
+        )
+    return canonical
 
 
 def _open_index(arguments: dict):
     """``(index, error_result)`` — exactly one is non-None."""
-    workspace = resolve_workspace(arguments)
+    try:
+        workspace = resolve_workspace(arguments)
+    except ValueError as exc:
+        return None, ToolResult(
+            success=False,
+            error=str(exc),
+            recovery_hints=["Leave `workspace` unset to query this session's workspace."],
+        )
     if not workspace:
         return None, ToolResult(
             success=False,

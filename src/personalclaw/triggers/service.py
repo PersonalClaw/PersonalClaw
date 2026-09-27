@@ -666,6 +666,7 @@ async def admit_fire(
         # enforcement point — had never run on a single real fire. Exactly the `existing_claim`
         # defect one line up, in the gate directly below it.
         requested=screen.requested_capabilities(trigger),
+        action_config=screen.action_config(trigger),
         # 🔴 THE BUDGET, actually supplied (§7 crit 8 / §3.6 — S133). Measured: `tick` never set
         # either budget field, so `if ctx.budget_remaining is not None` was always False and the
         # budget gate had NEVER refused a real fire — the third instance of this exact shape

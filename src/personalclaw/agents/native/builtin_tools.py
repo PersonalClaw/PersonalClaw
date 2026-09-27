@@ -9,8 +9,11 @@ tools — read, write, edit, ls, glob, grep, and bash — scoped to the session'
 sensitive-path) plus :func:`personalclaw.sandbox.wrap_argv` for shell.
 
 All paths are resolved relative to ``cwd`` and confined to it (no escaping the
-workspace via ``..`` or absolute paths outside it). Tool execution itself is
-also gated by the runtime's approval gate (``requires_approval`` per tool).
+workspace via ``..`` or absolute paths outside it), through the check the Files
+view makes (``file_roots.admit``: symlinks resolved, no credential or secret
+file); a listing or a search leaves out what that check refuses. Tool execution
+itself is also gated by the runtime's approval gate (``requires_approval`` per
+tool).
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import asyncio
 import contextvars
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from personalclaw import cancellation
 from personalclaw.agents.native import read_gate
@@ -36,6 +39,9 @@ from personalclaw.tool_providers.base import (
     ToolResult,
 )
 from personalclaw.tool_providers.projection import project_and_retain, project_output
+
+if TYPE_CHECKING:
+    from personalclaw.file_roots import Admission
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +109,21 @@ def bind_tool_context(
         _projection.bind_project_dir(cwd),
     ]
     return tokens
+
+
+def current_tool_roots() -> list[str]:
+    """Where this turn's file tools reach, for a tool served outside the platform provider
+    (``code_map``): the session's folder and the extra roots the runtime bound, else the default
+    workspace. Real paths; the first is the one a relative path starts from."""
+    import os
+
+    cwd = _CURRENT_CWD.get()
+    if cwd:
+        return [os.path.realpath(cwd), *(os.path.realpath(r) for r in _CURRENT_EXTRA_ROOTS.get())]
+    from personalclaw.config.loader import default_workspace_dir
+
+    workspace = default_workspace_dir() or ""
+    return [os.path.realpath(workspace)] if workspace else []
 
 
 def reset_tool_context(tokens) -> None:
@@ -294,6 +315,28 @@ def _enrich_in_background(item_id: str) -> None:
     task.add_done_callback(_bg_ingest_tasks.discard)
 
 
+def _pattern_leaves_workspace(pattern: str) -> bool:
+    """Whether a ``glob``/``grep`` pattern names a place outside the workspace by itself: an
+    absolute or ``~`` path, or a ``..`` segment. Matches are checked one by one as well; this is
+    the refusal that says why, instead of an empty result."""
+    parts = pattern.replace("\\", "/").split("/")
+    return pattern.startswith(("/", "~", "\\")) or Path(pattern).is_absolute() or ".." in parts
+
+
+def _pattern_refusal(arg: str, pattern: str) -> ToolResult:
+    return ToolResult(
+        success=False,
+        error=(
+            f"{arg} {pattern!r} leaves the workspace: patterns are relative to it and cannot "
+            "climb out of it (no absolute path, `~` or `..`)"
+        ),
+        recovery_hints=[
+            f"Write {arg} relative to the workspace, e.g. 'src/**/*.py'. Files outside it are "
+            "not reachable from these tools."
+        ],
+    )
+
+
 def _ok_capped(
     text: str,
     limit: int = _MAX_OUTPUT_CHARS,
@@ -445,18 +488,35 @@ class NativeBuiltinToolProvider(ToolProvider):
         return self._display
 
     # ── path confinement ──
-    def _resolve(self, rel: str) -> Path:
+    def _roots(self) -> list[Path]:
+        """Where this turn's file tools reach: the session's folder, then its extra roots."""
+        return [self._cwd.resolve(), *self._extra_roots]
+
+    def _admission(self) -> "Admission":
+        """The Files view's containment (`file_roots.admit`) over :meth:`_roots`, made once for a
+        call that asks about many paths (a listing, a search, a map)."""
+        from personalclaw.file_roots import Admission
+
+        return Admission([str(root) for root in self._roots()])
+
+    def _resolve(self, rel: str, admission: "Admission | None" = None) -> Path:
         """Resolve ``rel`` under cwd (or an extra allowed root); raise on escape.
 
         A relative path resolves under cwd. An absolute path is accepted only if it
         lands inside cwd OR one of ``extra_roots`` (the project files dir for a
         brownfield worker). This keeps the default workspace-only confinement for
-        chat sessions while letting a worker reach its engine files."""
+        chat sessions while letting a worker reach its engine files.
+
+        Then the check the Files view and ``/api/file-read`` make (`file_roots.admit`): with
+        symlinks and ``..`` resolved, no credential or secret file — a protected home location
+        (``~/.ssh``, ``~/.aws``, the keychain, the home's own ``.env``, ``auth/``,
+        ``governance/``), PersonalClaw's own keys wherever they sit, a ``.env``, ``*.key``,
+        ``*.pem`` or ``*.secret`` — and nothing an alias of one reaches."""
         from personalclaw.file_roots import within
 
-        base = self._cwd.resolve()
+        allowed = self._roots()
+        base = allowed[0]
         p = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
-        allowed = [base, *self._extra_roots]
         if not any(root == p or root in p.parents for root in allowed):
             raise ValueError(f"path {rel!r} escapes the workspace root")
         # A worker whose folder CONTAINS the home (a brownfield loop bound to `~`) reaches into it
@@ -465,6 +525,10 @@ class NativeBuiltinToolProvider(ToolProvider):
         if not within(str(p), [str(root) for root in allowed]):
             raise ValueError(
                 f"path {rel!r} is inside PersonalClaw's own home, which this tool does not reach"
+            )
+        if (admission or self._admission())(str(p)) is None:
+            raise ValueError(
+                f"path {rel!r} is a credential or secret file, which this tool does not reach"
             )
         return p
 
@@ -1056,12 +1120,19 @@ class NativeBuiltinToolProvider(ToolProvider):
         return ToolResult(success=False, error=msg, recovery_hints=[hint])
 
     async def _t_list_dir(self, a: dict) -> ToolResult:
-        path = self._resolve(str(a.get("path") or "."))
+        admission = self._admission()
+        path = self._resolve(str(a.get("path") or "."), admission)
 
         def _ls() -> str | None:
             if not path.is_dir():
                 return None
-            entries = sorted(p.name + ("/" if p.is_dir() else "") for p in path.iterdir())
+            # An entry the tools could not open is not named either: a secret file, and a link
+            # that leads out of the workspace, as the Files view leaves them out of its listing.
+            entries = sorted(
+                p.name + ("/" if p.is_dir() else "")
+                for p in path.iterdir()
+                if admission(str(p)) is not None
+            )
             return "\n".join(entries) or "(empty)"
 
         listing = await asyncio.get_event_loop().run_in_executor(None, _ls)
@@ -1078,9 +1149,18 @@ class NativeBuiltinToolProvider(ToolProvider):
     async def _t_glob(self, a: dict) -> ToolResult:
         base = self._cwd.resolve()
         pattern = str(a["pattern"])
+        if _pattern_leaves_workspace(pattern):
+            return _pattern_refusal("pattern", pattern)
+        admission = self._admission()
 
         def _glob() -> str:
-            matches = sorted(str(p.relative_to(base)) for p in base.glob(pattern) if p.is_file())
+            # A match the tools could not open is not listed: a secret file, or one a link
+            # inside the workspace leads to outside it.
+            matches = sorted(
+                str(p.relative_to(base))
+                for p in base.glob(pattern)
+                if p.is_file() and admission(str(p)) is not None
+            )
             if len(matches) > 500:
                 # Signal the cap rather than silently showing 500 of N (no-silent-truncation).
                 shown = matches[:500]
@@ -1101,6 +1181,9 @@ class NativeBuiltinToolProvider(ToolProvider):
         base = self._cwd.resolve()
         query = str(a["query"])
         glob_pat = str(a.get("glob") or "**/*")
+        if _pattern_leaves_workspace(glob_pat):
+            return _pattern_refusal("glob", glob_pat)
+        admission = self._admission()
         max_results = int(a.get("max_results") or 200)
         use_regex = bool(a.get("regex"))
         # Compile once when in regex mode; a bad pattern is a usable error, not a crash.
@@ -1124,6 +1207,10 @@ class NativeBuiltinToolProvider(ToolProvider):
                     continue
                 # Skip VCS/vendored/build dirs — searching them is slow + noisy.
                 if any(part in self._SKIP_DIRS for part in p.relative_to(base).parts):
+                    continue
+                # Never read a file the tools could not open: a secret file, or one a link
+                # inside the workspace leads to outside it.
+                if admission(str(p)) is None:
                     continue
                 try:
                     for i, line in enumerate(
@@ -1153,7 +1240,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         top-level definitions, so the agent orients without reading everything.
         Dependency-free: Python via the stdlib ``ast``, other languages via a
         couple of cheap top-level regexes (def/class/func/export/type)."""
-        base = (self._resolve(str(a["path"])) if a.get("path") else self._cwd).resolve()
+        admission = self._admission()
+        base = (self._resolve(str(a["path"]), admission) if a.get("path") else self._cwd).resolve()
         max_files = int(a.get("max_files") or 200)
 
         def _build() -> str:
@@ -1199,7 +1287,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             for root_path, dirnames, filenames in base.walk():
                 dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs)
                 for fn in sorted(filenames):
-                    if Path(fn).suffix in exts:
+                    # Mapped only when the tools could open it: never a secret file, or one a
+                    # link inside the workspace leads to outside it.
+                    if Path(fn).suffix in exts and admission(str(root_path / fn)) is not None:
                         files.append(root_path / fn)
                         if len(files) >= max_files:
                             truncated = True

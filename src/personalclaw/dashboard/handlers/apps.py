@@ -1385,9 +1385,9 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     # string. Build the upstream URL from the same target so the two never drift.
     from yarl import URL
 
-    from personalclaw.apps.app_secret import read_app_secret
+    from personalclaw.apps.app_secret import proxy_signature
     from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
-    from personalclaw.sdk.security import PROXY_SIGNATURE_HEADER, sign_proxy_request
+    from personalclaw.proxy_signature import PROXY_SIGNATURE_HEADER
 
     # The query loses its credentials for the same reason the headers below lose the cookie
     # and Authorization: `?token=` is the owner's token and `?app_token=` an app's, and the
@@ -1402,9 +1402,11 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     # Fail closed: without the per-app secret we cannot prove this request came from the
     # gateway proxy, so we must NOT forward it unsigned (that would defeat the whole
     # inbound-auth boundary). The supervisor minted it at start(); a missing secret means
-    # the backend was never started protected.
-    proxy_secret = read_app_secret(name)
-    if not proxy_secret:
+    # the backend was never started protected. The body is read here, before the signature
+    # that covers it.
+    body = await request.read()
+    signature = proxy_signature(name, request.method, path_qs, body)
+    if signature is None:
         logger.warning("app %s proxy: secret missing; refusing to forward unsigned", name)
         return web.json_response({"error": "app backend not available"}, status=502)
 
@@ -1418,13 +1420,10 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     user_id = request.get("user", "dashboard")
     fwd_headers["Authorization"] = f"Bearer {app_session_token(user_id, name)[0]}"
     fwd_headers["X-PersonalClaw-App"] = name
-    body = await request.read()
-    # Sign the request so the backend's fail-closed middleware can prove it came from the
-    # gateway proxy. The signature covers ts + method + the exact wire path + a hash of
-    # the body, within a ±60s window (replay protection).
-    fwd_headers[PROXY_SIGNATURE_HEADER] = sign_proxy_request(
-        proxy_secret, request.method, path_qs, body
-    )
+    # Signed so the backend's fail-closed middleware can prove it came from the gateway proxy.
+    # The signature covers ts + method + the exact wire path + a hash of the body, within a
+    # ±60s window (replay protection).
+    fwd_headers[PROXY_SIGNATURE_HEADER] = signature
     timeout = aiohttp.ClientTimeout(total=_PROXY_TIMEOUT)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:

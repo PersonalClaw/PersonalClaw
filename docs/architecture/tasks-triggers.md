@@ -96,7 +96,10 @@ relative to `PersonalClaw/src/personalclaw/`.
   it, `tools.legacy_mcp_settings`).
 - **Grants** (`triggers/grants.py`) — a trigger runs only what its frozen
   `capabilities` block allows: a read-only action needs nothing, and every
-  other one needs its provider listed (`screen.ungranted_providers`). Both
+  other one needs its provider listed (`screen.ungranted_providers`). An
+  action is read-only by what it declares (`ActionProvider.effect`), never
+  by its name: `call-app-route` reads only when the app declares the route
+  `readOnly`, and an action that declares nothing is a change. Both
   dispatches check it — the attended one (`_dispatch_store_action`: Run now,
   the restart review's Run now, a view refresh, a webhook fire) and the
   unattended one (`gateway._fire_store_trigger`: clock, event, file,
@@ -308,7 +311,10 @@ so it is listed with the other automations, with its runs, and switched off
 or slowed there. The boot reconcile converges only its action, never its
 switch or its cadence. Each task still runs as the gateway's heartbeat turn
 (`heartbeat.set_task_runner`), and `HEARTBEAT_KEEP` keeps an unfinished task
-for the next pass. A pass over an empty queue reports `skip`, which the run
+for the next pass. A task runs in a session of its own
+(`cron:system:heartbeat-tasks:<run>`), as the owner's agent with its tools, and
+that session ends with the task; it never shares the background chores'
+session, whose lite agent has no tools. A pass over an empty queue reports `skip`, which the run
 history records as the inert `skipped_noop` (`schedule_history
 .status_for_result`, the one status rule the fire path and the Run button
 share), so it folds out of the default history. The heartbeat loop itself no

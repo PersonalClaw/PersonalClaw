@@ -34,7 +34,8 @@
    {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "extension"},
    {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "login_command"},
    {"annotation": "dict[str, str] | None", "default": "None", "kind": "keyword_only", "name": "requires_executable"},
-   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "self_sandboxing"}
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "self_sandboxing"},
+   {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "env_passthrough"}
   ],
   "returns": "ProviderEntry | None"
  },
@@ -71,6 +72,13 @@
   "kind": "class",
   "members": {
    "display_name": {"kind": "property", "returns": "str", "settable": false},
+   "effect": {
+    "kind": "method",
+    "params": [
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "action_config"}
+    ],
+    "returns": "RiskLevel"
+   },
    "execute": {
     "kind": "async method",
     "params": [
@@ -3986,7 +3994,8 @@
  "personalclaw.sdk.channel.validate_file_path": {
   "kind": "function",
   "params": [
-   {"annotation": "str", "kind": "positional_or_keyword", "name": "raw"}
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "raw"},
+   {"annotation": "Callable[[str], bool] | None", "default": "None", "kind": "keyword_only", "name": "sensitive"}
   ],
   "returns": "str | None"
  },
@@ -8353,6 +8362,15 @@
   "kind": "function",
   "params": [],
   "returns": "Callable[[], None]"
+ },
+ "personalclaw.sdk.testing.launch_acp_entry": {
+  "kind": "async function",
+  "params": [
+   {"annotation": "Mapping[str, Any]", "kind": "positional_or_keyword", "name": "options"},
+   {"annotation": "Path", "kind": "positional_or_keyword", "name": "work_dir"},
+   {"annotation": "float", "default": "60.0", "kind": "keyword_only", "name": "timeout"}
+  ],
+  "returns": "int"
  },
  "personalclaw.sdk.tool.AgentError": {"kind": "alias", "of": "personalclaw.sdk.action.AgentError"},
  "personalclaw.sdk.tool.DEFAULT_TOOL_OUTPUT_CAP": {"kind": "value", "type": "int", "value": "60000"},

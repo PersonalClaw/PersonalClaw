@@ -124,6 +124,9 @@ class FireContext:
     capabilities: dict[str, Any] | None = None
     #: The actions this fire wants, `{key: [values]}` — checked against the FROZEN capability set.
     requested: dict[str, list[str]] = field(default_factory=dict)
+    #: The config of the action this fire runs, for a provider whose effect it decides
+    #: (`screen.READ_ONLY_WHEN_DECLARED`).
+    action_config: dict[str, Any] = field(default_factory=dict)
     moment: datetime | None = None
     #: None means "no budget configured"; a number is the remaining allowance. A budget that
     #: could not be
@@ -489,7 +492,11 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         # existence. Deny-by-default stays where it matters: an unclassified provider reads as
         # write-capable, so a new action still needs the opt-in.
         needs_fence = {
-            key: [v for v in values if not (key == "providers" and provider_is_read_only(v))]
+            key: [
+                v
+                for v in values
+                if not (key == "providers" and provider_is_read_only(v, ctx.action_config))
+            ]
             for key, values in ctx.requested.items()
         }
         needs_fence = {k: v for k, v in needs_fence.items() if v}

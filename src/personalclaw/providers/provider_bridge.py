@@ -824,18 +824,29 @@ def _build_native_runtime(
     # because it's cwd-coupled (workspace path confinement); the session-coupled app
     # providers are registry singletons that resolve this turn via contextvars
     # (runtime._invoke binds them).
+    #
+    # Except the lite agent, which gets NONE. It runs the background chores (titles, follow-ups,
+    # suggestions, folder icons, history compression, memory consolidation, the prompt optimizer),
+    # each of which answers in text from what its prompt carries, and that prompt quotes chats,
+    # pages and messages nobody vetted. With a tool surface, text planted in a chat could make a
+    # title turn record a decision, write a file or run a command. With none, there is nothing to
+    # call: the model is offered no tools, and a call it makes anyway names a tool that does not
+    # exist.
+    from personalclaw.agents.defaults import LITE_AGENT_NAME
     from personalclaw.tool_providers.registry import tool_surface
 
-    platform = NativeBuiltinToolProvider(
-        cwd=_cwd,
-        agent=name or "",
-        session_key=session_key or "",
-        extra_roots=[Path(r) for r in (extra_tool_roots or [])],
-        categories=PLATFORM_CATEGORIES,
-        provider_name=PLATFORM_PROVIDER_NAME,
-        display=PLATFORM_DISPLAY_NAME,
-    )
-    tool_providers = tool_surface(platform)
+    tool_providers: list[Any] = []
+    if name != LITE_AGENT_NAME:
+        platform = NativeBuiltinToolProvider(
+            cwd=_cwd,
+            agent=name or "",
+            session_key=session_key or "",
+            extra_roots=[Path(r) for r in (extra_tool_roots or [])],
+            categories=PLATFORM_CATEGORIES,
+            provider_name=PLATFORM_PROVIDER_NAME,
+            display=PLATFORM_DISPLAY_NAME,
+        )
+        tool_providers = tool_surface(platform)
 
     runtime = NativeAgentRuntime(
         definition=definition,

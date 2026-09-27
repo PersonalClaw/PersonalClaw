@@ -941,7 +941,11 @@ def diagnose(
                         f"{action!r}",
                     )
                 )
-            elif action and not provider_is_read_only(action) and action not in granted:
+            elif (
+                action
+                and not provider_is_read_only(action, (inline or wf).get("config"))
+                and action not in granted
+            ):
                 report.findings.append(
                     Finding(
                         trigger_id=tid,

@@ -88,7 +88,7 @@ from personalclaw.memory import MemoryStore
 from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY, SessionManager
+from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.subagent import (
     INJECTION_TIMEOUT,
@@ -2711,13 +2711,22 @@ class GatewayOrchestrator:
         so a task keeps the background prompt, the unattended approval policy, and delivery to its
         `<!-- deliver:… -->` target. A task still unfinished (`HEARTBEAT_KEEP`) delivers nothing, so
         a task retried every pass does not notify every pass.
+
+        Each task runs in a session of its own, as the owner's agent with its tools: that is what
+        the owner allowed (`heartbeat.consent`). The Background model binding still serves it. It
+        used to run on the chores' session, so a title turn and a heartbeat task shared one tool
+        surface, and making the chores toolless would have taken the tools from the task too.
         """
         assert self.sessions is not None
         assert self.ctx_builder is not None
-        session_key = BACKGROUND_KEY
+        from personalclaw.action_providers.heartbeat_tasks_provider import task_session_key
+
+        session_key = task_session_key()
         _acquired = False
         try:
-            client, is_new, _resumed = await self.sessions.get_or_create(session_key)
+            client, is_new, _resumed = await self.sessions.get_or_create(
+                session_key, model_axis="background"
+            )
             _acquired = True
             from personalclaw.context_headroom import resolve_window
 
@@ -2733,7 +2742,7 @@ class GatewayOrchestrator:
 
             # Heartbeat is a pure UNATTENDED background loop — no user present.
             # The approval policy is DERIVED from the session's SafetyProfile, not
-            # hardcoded: `_bg` classifies as unattended, so `profile_for_session`
+            # hardcoded: a `cron:` key classifies as unattended, so `profile_for_session`
             # resolves to HEADLESS and its approval ("hook_based") maps to
             # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
             # construction (AUTONOMY-GUARDRAILS Success Criterion #7). This is
@@ -2772,7 +2781,14 @@ class GatewayOrchestrator:
         finally:
             if _acquired:
                 self.sessions.release(session_key)
-                await self.sessions.recycle_background()
+            # The task's session ends with it, unless a subagent it started is still running or
+            # reporting back: that one answers into this session, and the cron path resets it
+            # after the last one.
+            children = self.subagent_mgr is not None and any(
+                a.parent_session_key == session_key for a in self.subagent_mgr.running
+            )
+            if not children and not self._cron_injecting.get(session_key):
+                await self.sessions.reset(session_key)
 
         result_safe, _ = redact_exfiltration_urls(result_text)
         result_safe, _ = redact_credentials(result_safe)

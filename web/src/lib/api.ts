@@ -89,8 +89,15 @@ export function isTransientFailure(e: unknown): boolean {
   return e.status >= 500 || e.status === 429
 }
 
+/** Every write below says it will ask the owner when the gateway asks for their yes
+ *  (`dashboard/consent_ask.py`). The question then comes back as a 200 marked
+ *  `X-PersonalClaw-Consent-Asked` rather than a 400 the browser logs as a failed request, and `j`
+ *  hands it on as the same `ApiError` (`confirmation_required`, the question in `.detail`) that
+ *  `withSecurityConsent` answers. Nothing was written: the question is not a success. */
+const ASKS_FOR_CONSENT = { 'X-PersonalClaw-Consent': 'ask' }
+
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw await apiError(r)
+  if (!r.ok || r.headers?.get?.('X-PersonalClaw-Consent-Asked') === '1') throw await apiError(r)
   return r.json() as Promise<T>
 }
 
@@ -98,11 +105,11 @@ const get = <T>(p: string) => refuseIfSignedOut() ?? fetch(p, { headers: { ...SK
 // `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
 // (`lib/staleWrite.ts`) — and nothing else rides it.
 const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const del = (p: string) => refuseIfSignedOut() ?? fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
 /** App install/update: POST that returns the parsed body on ANY HTTP status.

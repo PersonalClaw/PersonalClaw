@@ -20,6 +20,7 @@ tools until the owner says so. A pass leaves every other task where it is, and s
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
@@ -37,6 +38,18 @@ PROVIDER_NAME = "heartbeat-tasks"
 
 #: How often the queue is read: the cadence the heartbeat loop always had.
 INTERVAL_SECS = 60
+
+#: Where a task runs: a session of its own, fresh for every task, named the way a scheduled run's
+#: is (``cron:<trigger>:<run>``). Not the background chores' session: that one is the lite agent,
+#: which has no tools, and an allowed task runs with the owner's agent and its tools, as the
+#: Allow dialog says (`heartbeat.consent`).
+TASK_SESSION_PREFIX = f"cron:{HEARTBEAT_TASKS_TRIGGER_ID}:"
+
+
+def task_session_key() -> str:
+    """A new session key for one heartbeat task."""
+    return TASK_SESSION_PREFIX + uuid.uuid4().hex[:8]
+
 
 # A pass the gateway missed while it was down is done by the next pass, so the restart review
 # offers no card for it: `triggers.models.MISSED_FIRE_SUPERSEDED_PROVIDERS` lists this provider.

@@ -496,10 +496,15 @@ def test_the_real_edit_file_tool_checkpoints_before_it_writes(ws):
 
 
 def test_the_real_write_file_tool_never_stores_a_dotenv_body(ws):
+    """The file tools do not reach a ``.env`` at all (`file_roots.admit`, as the Files view): the
+    write is refused before a checkpoint could capture anything, and the store holds none of it."""
     tc.begin_turn(SESSION, cwd=ws)
     p = _provider(ws)
-    _observe(p, ".env")
-    asyncio.run(p.invoke("write_file", {"path": ".env", "content": "API_TOKEN=replaced\n"}))
+    result = asyncio.run(
+        p.invoke("write_file", {"path": ".env", "content": "API_TOKEN=replaced\n"})
+    )
+    assert not result.success
+    assert PLANTED_SECRET in (ws / ".env").read_text(encoding="utf-8")
     assert PLANTED_SECRET.encode() not in _all_store_bytes(tc.store_root())
 
 
@@ -509,14 +514,16 @@ def test_three_files_mangled_through_the_real_tools_restore_byte_identical(ws):
     tc.begin_turn(SESSION, cwd=ws)
     originals = {str(ws / n): _sha(ws / n) for n in ("alpha.py", "beta.txt", "gamma.json")}
     p = _provider(ws)
-    _observe(p, "alpha.py", "beta.txt", "gamma.json", ".env")
+    _observe(p, "alpha.py", "beta.txt", "gamma.json")
     asyncio.run(p.invoke("write_file", {"path": "alpha.py", "content": "no\n"}))
     asyncio.run(
         p.invoke("edit_file", {"path": "beta.txt", "old_str": "line two", "new_str": "nope"})
     )
     asyncio.run(p.invoke("write_file", {"path": "gamma.json", "content": "{}\n"}))
-    # ...and touch the .env in the same turn, so the secrecy leg rides the same drive.
-    asyncio.run(p.invoke("write_file", {"path": ".env", "content": "API_TOKEN=x\n"}))
+    # ...and try the .env in the same turn, so the secrecy leg rides the same drive: the tools
+    # refuse it outright.
+    refused = asyncio.run(p.invoke("write_file", {"path": ".env", "content": "API_TOKEN=x\n"}))
+    assert not refused.success
 
     pv = tc.preview_rewind(SESSION, 1)
     assert {f.path for f in pv.files if f.action == "restore"} == set(originals)

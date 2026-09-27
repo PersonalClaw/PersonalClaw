@@ -380,6 +380,7 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
     "nothing permitted" would send users widening allowlists they never needed.
     """
     from personalclaw.triggers.screen import (
+        action_config,
         provider_is_read_only,
         requested_capabilities,
         unfenced_actions,
@@ -388,8 +389,9 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
     declared = getattr(trigger, "capabilities", None)
     declared = dict(declared) if isinstance(declared, dict) else {}
     requested = requested_capabilities(trigger)
+    config = action_config(trigger)
     needs_fence = {
-        key: [v for v in values if not (key == "providers" and provider_is_read_only(v))]
+        key: [v for v in values if not (key == "providers" and provider_is_read_only(v, config))]
         for key, values in requested.items()
     }
     needs_fence = {k: v for k, v in needs_fence.items() if v}

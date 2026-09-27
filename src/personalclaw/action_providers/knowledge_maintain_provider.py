@@ -26,6 +26,7 @@ from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
 from personalclaw.knowledge import consolidation
+from personalclaw.tool_providers.base import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,10 @@ class KnowledgeHealthActionProvider(ActionProvider):
     @property
     def display_name(self) -> str:
         return "Check Knowledge Health"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """A read: a deterministic report over the store, which it does not change."""
+        return RiskLevel.SAFE
 
     async def execute(
         self,
@@ -130,6 +135,10 @@ class KnowledgeGapsActionProvider(ActionProvider):
     @property
     def display_name(self) -> str:
         return "Find Knowledge Gaps"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """A read: a set difference over the store, which it does not change."""
+        return RiskLevel.SAFE
 
     async def execute(
         self,

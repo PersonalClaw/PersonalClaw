@@ -193,6 +193,12 @@ has cost someone a debugging session.
 - **An install needs consent, always.** `POST /api/apps/preview {source}` returns what
   the app would get plus a `consent` digest of the exact bytes; `POST /api/apps`
   `{source, consent}` installs only those bytes. A request without it installs nothing.
+- **A write that needs the owner's yes answers with the question.** Sent without
+  `"confirm": true`, it is refused `400 confirmation_required` with `{field, consent, title}` in
+  `error.detail`, and nothing is written. A client that will ask the owner itself sends
+  `X-PersonalClaw-Consent: ask` and gets the same body as a `200` marked
+  `X-PersonalClaw-Consent-Asked: 1`, which the dashboard does for every write, so its Allow
+  dialogs log no failed request. Treat that `200` as the question, never as a success.
 - **Task comment authors are server-derived.** `POST /api/tasks/{task_id}/comments`
   rejects an `author` in the body; the configured username wins.
 - **Locked dashboard presets refuse mutation.** `PUT`/`DELETE` on a locked

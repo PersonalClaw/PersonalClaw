@@ -46,6 +46,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
+from personalclaw.tool_providers.base import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,10 @@ class SelfQaTriageActionProvider(ActionProvider):
     @property
     def display_name(self) -> str:
         return "Triage Commits for Self-QA"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """A read: git inspection whose only effect is its run-ledger row."""
+        return RiskLevel.SAFE
 
     @property
     def internal(self) -> bool:

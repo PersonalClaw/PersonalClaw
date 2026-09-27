@@ -198,10 +198,16 @@ class CodeGraphIndex:
 
     def _candidate_files(self) -> "list[tuple[str, str, float, int]]":
         """Every indexable file as ``(relpath, language, mtime, size)``."""
+        from personalclaw.file_roots import Admission
+
         out: list[tuple[str, str, float, int]] = []
         root = Path(self.workspace)
         if not root.is_dir():
             return out
+        # Indexed only when the file tools could open it (`file_roots.admit`): never a secret
+        # file, and never one a link inside the workspace leads to outside it — the walk does not
+        # descend into a linked folder, but a linked FILE is read like any other.
+        admission = Admission([os.path.realpath(root)])
         for dirpath, dirnames, filenames in os.walk(root):
             # Prune in place so os.walk never descends into the noise.
             dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
@@ -210,6 +216,8 @@ class CodeGraphIndex:
                 if not language:
                     continue
                 full = Path(dirpath) / filename
+                if admission(str(full)) is None:
+                    continue
                 try:
                     stat = full.stat()
                 except OSError:

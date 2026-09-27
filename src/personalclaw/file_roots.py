@@ -193,7 +193,7 @@ def all_dashboard_roots() -> list[tuple[str, str]]:
     return roots
 
 
-def within(canonical: str, roots: Iterable[str]) -> bool:
+def within(canonical: str, roots: Iterable[str], *, home: str = "") -> bool:
     """Whether *canonical* (a real path) lies inside one of *roots* through a root that reaches it.
 
     🔴 A ROOT THAT CONTAINS THE HOME DOES NOT REACH INTO IT. A loop or project bound to ``~``, or
@@ -203,10 +203,14 @@ def within(canonical: str, roots: Iterable[str]) -> bool:
     runs as the owner (`owner_only`), reached through a root nobody bound to reach them. So a path
     inside the home is admitted only through a root that is itself inside it: the workspace,
     uploads, a project's context, a code loop's own folder. The home itself is never a root.
-    """
-    from personalclaw.config.loader import resolve_config_dir
 
-    home = os.path.realpath(str(resolve_config_dir()))
+    *home* is the home's real path when the caller already resolved it (:class:`Admission`, once
+    for a whole walk); empty resolves it here.
+    """
+    if not home:
+        from personalclaw.config.loader import resolve_config_dir
+
+        home = os.path.realpath(str(resolve_config_dir()))
     in_home = canonical == home or canonical.startswith(home + os.sep)
     for root in roots:
         if not root or not (canonical == root or canonical.startswith(root + os.sep)):
@@ -234,90 +238,129 @@ def admit(raw: str, roots: Iterable[str]) -> str | None:
          it. This constrains the path-traversal surface so a request like
          ``GET /api/file-read?path=/etc/passwd`` is rejected.
 
-    Returns the canonical path or ``None`` if rejected.
+    Returns the canonical path or ``None`` if rejected. A caller asking about many paths (a
+    listing, a search, an index) makes one :class:`Admission` and asks it instead: the same
+    answer, with what does not depend on the path resolved once.
+    """
+    return Admission(roots)(raw)
+
+
+#: Suffixes refused wherever they sit, alongside the blocked basenames (see :class:`Admission`).
+_BLOCKED_SUFFIXES = (".key", ".pem", ".secret")
+
+
+class Admission:
+    """:func:`admit`, for a caller that asks about many paths: a listing, a search, an index.
+
+    It IS :func:`admit`'s implementation, so the two cannot disagree. What does not depend on the
+    path is resolved once, when it is made: the roots, the PersonalClaw home, the protected
+    locations (a :class:`~personalclaw.security.SensitivePaths`, which is nearly all of one
+    check's cost), and, per directory, which of its files carry a blocked name. Make one per walk
+    and drop it after, as :class:`~personalclaw.security.SensitivePaths` says for itself.
     """
 
-    from personalclaw.hooks import validate_file_path
+    def __init__(self, roots: Iterable[str]) -> None:
+        from personalclaw.config.loader import resolve_config_dir
+        from personalclaw.security import (
+            HOME_SECRET_FILE_BASENAMES,
+            OWN_SECRET_BASENAMES,
+            SensitivePaths,
+        )
 
-    canonical = validate_file_path(raw)
-    if canonical is None:
-        return None
+        self._roots = [r for r in roots if r]
+        self._home = os.path.realpath(str(resolve_config_dir()))
+        self._sensitive = SensitivePaths()
+        # Even within allowed roots, block known-sensitive filenames (e.g. HMAC
+        # keys, telemetry salt, app secrets) to prevent credential disclosure
+        # via /api/file-read. Extensionless names must be listed here explicitly —
+        # the blocked suffixes cannot reach them.
+        #
+        # Two layers, because the host filesystem is often case-INSENSITIVE
+        # (macOS/APFS, Windows/NTFS) while these comparisons used to be
+        # case-SENSITIVE — so ``<home>/.LOCAL_SECRET`` sailed past the blocklist yet
+        # resolved to the real ``.local_secret`` bytes (issue #690).
+        #   Layer 1 — spelling: ``casefold()`` both sides so EVERY case variant of a
+        #     blocked basename or suffix is refused, on any filesystem.
+        #   Layer 2 — identity: on a case-insensitive (or hard-link-capable) volume
+        #     the robust defence is file identity, not spelling. If the target
+        #     resolves to the same inode as a blocked-name file in the same
+        #     directory, refuse it whatever name reached it — this closes hard-link
+        #     and short-name (8.3) aliases layer 1 cannot see. Bounded to the fixed
+        #     blocked basenames (a handful of ``stat()``s per DIRECTORY, remembered for
+        #     the walk), so it stays cheap even when a listing asks per entry, and it is
+        #     SKIPPED for a not-yet-existing target so create/write/move/upload of a
+        #     fresh file is never rejected.
+        # `OWN_SECRET_BASENAMES` is the SHARED definition (security.py), so this area and the
+        # bash/terminal guards cannot disagree about what is secret. They did: every name here
+        # was refused by `/api/file-read` and unknown to `is_sensitive_path`, which the terminal
+        # cwd guard and the bash read hook both consult (#643).
+        #
+        # 🔴 DERIVED, NOT RE-LISTED (#354). Both halves come from `security.py`:
+        #   `OWN_SECRET_BASENAMES`       — ours by NAME, wherever the file sits.
+        #   `HOME_SECRET_FILE_BASENAMES` — ours by LOCATION (`.env`, `session_key`,
+        #                                  `sessions.json`), applied here as a name rule because
+        #                                  this tier is already scoped to the browsable roots.
+        # Those three used to be spelled out here as literals, and that re-listing IS the mechanism
+        # of the bug: `session_key` was documented as the session SIGNING KEY in `session_store.py`
+        # and named a secret in `security.py`, and this list still did not have it — a hand-copied
+        # list only ever knows what someone remembered to copy. The set is unchanged today; what
+        # changes is that the NEXT name added to the one declaration is refused here without anyone
+        # having to notice. `test_secret_file_blocklist_rail.py` asserts exactly that by adding a
+        # synthetic name to the declaration and requiring this function to refuse it.
+        #
+        # The secret DIRECTORIES (`auth/`, `credentials/`, `governance/`) are deliberately NOT
+        # folded in: a subtree is not a basename, and they are already refused one layer up by
+        # `validate_file_path` → `is_sensitive_path`, which resolves them against the ACTIVE
+        # `PERSONALCLAW_HOME`. Naming them here too would refuse a user's own `credentials/`
+        # folder inside a workspace, which is an ordinary directory name.
+        self._blocked = tuple(sorted(set(OWN_SECRET_BASENAMES) | set(HOME_SECRET_FILE_BASENAMES)))
+        self._blocked_cf = frozenset(name.casefold() for name in self._blocked)
+        self._suffixes_cf = tuple(suffix.casefold() for suffix in _BLOCKED_SUFFIXES)
+        self._blocked_ids: dict[str, frozenset[tuple[int, int]]] = {}
 
-    if not within(canonical, roots):
-        return None
+    def __call__(self, raw: str) -> str | None:
+        """The canonical path *raw* names when it is admitted, else ``None`` (:func:`admit`)."""
+        from personalclaw.hooks import validate_file_path
 
-    # Even within allowed roots, block known-sensitive filenames (e.g. HMAC
-    # keys, telemetry salt, app secrets) to prevent credential disclosure
-    # via /api/file-read. Extensionless names must be listed here explicitly —
-    # ``blocked_suffixes`` below cannot reach them.
-    #
-    # Two layers, because the host filesystem is often case-INSENSITIVE
-    # (macOS/APFS, Windows/NTFS) while these comparisons used to be
-    # case-SENSITIVE — so ``<home>/.LOCAL_SECRET`` sailed past the blocklist yet
-    # resolved to the real ``.local_secret`` bytes (issue #690).
-    #   Layer 1 — spelling: ``casefold()`` both sides so EVERY case variant of a
-    #     blocked basename or suffix is refused, on any filesystem.
-    #   Layer 2 — identity: on a case-insensitive (or hard-link-capable) volume
-    #     the robust defence is file identity, not spelling. If the target
-    #     resolves to the same inode as a blocked-name file in the same
-    #     directory, refuse it whatever name reached it — this closes hard-link
-    #     and short-name (8.3) aliases layer 1 cannot see. Bounded to the fixed
-    #     blocked basenames (a handful of ``stat()``s), so it stays cheap even
-    #     when file-list calls this per directory entry, and it is SKIPPED for a
-    #     not-yet-existing target so create/write/move/upload of a fresh file is
-    #     never rejected.
-    # `OWN_SECRET_BASENAMES` is the SHARED definition (security.py), so this area and the
-    # bash/terminal guards cannot disagree about what is secret. They did: every name here
-    # was refused by `/api/file-read` and unknown to `is_sensitive_path`, which the terminal
-    # cwd guard and the bash read hook both consult (#643).
-    #
-    # 🔴 DERIVED, NOT RE-LISTED (#354). Both halves come from `security.py`:
-    #   `OWN_SECRET_BASENAMES`       — ours by NAME, wherever the file sits.
-    #   `HOME_SECRET_FILE_BASENAMES` — ours by LOCATION (`.env`, `session_key`,
-    #                                  `sessions.json`), applied here as a name rule because
-    #                                  this tier is already scoped to the browsable roots.
-    # Those three used to be spelled out here as literals, and that re-listing IS the mechanism
-    # of the bug: `session_key` was documented as the session SIGNING KEY in `session_store.py`
-    # and named a secret in `security.py`, and this list still did not have it — a hand-copied
-    # list only ever knows what someone remembered to copy. The set is unchanged today; what
-    # changes is that the NEXT name added to the one declaration is refused here without anyone
-    # having to notice. `test_secret_file_blocklist_rail.py` asserts exactly that by adding a
-    # synthetic name to the declaration and requiring this function to refuse it.
-    #
-    # The secret DIRECTORIES (`auth/`, `credentials/`, `governance/`) are deliberately NOT
-    # folded in: a subtree is not a basename, and they are already refused one layer up by
-    # `validate_file_path` → `is_sensitive_path`, which resolves them against the ACTIVE
-    # `PERSONALCLAW_HOME`. Naming them here too would refuse a user's own `credentials/`
-    # folder inside a workspace, which is an ordinary directory name.
-    from personalclaw.security import HOME_SECRET_FILE_BASENAMES, OWN_SECRET_BASENAMES
-
-    blocked_basenames = set(OWN_SECRET_BASENAMES) | set(HOME_SECRET_FILE_BASENAMES)
-    # An over-long final component reaches the OS as `ENAMETOOLONG` and surfaced as a 500 from
-    # `file-move` (over-long dest) and `create-dir`, which take a whole PATH rather than a name
-    # and so never met the name rules (#652). Bounded here, at the one place every path-taking
-    # endpoint already funnels through, rather than in each handler.
-    if len(os.path.basename(canonical).encode("utf-8")) > MAX_NAME_BYTES:
-        return None
-    blocked_suffixes = (".key", ".pem", ".secret")
-    base_cf = os.path.basename(canonical).casefold()
-    if base_cf in {name.casefold() for name in blocked_basenames}:
-        return None
-    if any(base_cf.endswith(suffix.casefold()) for suffix in blocked_suffixes):
-        return None
-
-    # Layer 2 — identity. A missing target (create/write/move/upload validate
-    # paths that need not exist yet) has no inode to compare, so fall through to
-    # the layer-1 result rather than rejecting a legitimate new file.
-    try:
-        target_st = os.stat(canonical)
-    except OSError:
-        return canonical
-    parent = os.path.dirname(canonical)
-    for blocked in blocked_basenames:
-        try:
-            cand_st = os.stat(os.path.join(parent, blocked))
-        except OSError:
-            continue
-        if cand_st.st_ino == target_st.st_ino and cand_st.st_dev == target_st.st_dev:
+        canonical = validate_file_path(raw, sensitive=self._sensitive)
+        if canonical is None:
             return None
-    return canonical
+
+        if not within(canonical, self._roots, home=self._home):
+            return None
+
+        # An over-long final component reaches the OS as `ENAMETOOLONG` and surfaced as a 500 from
+        # `file-move` (over-long dest) and `create-dir`, which take a whole PATH rather than a name
+        # and so never met the name rules (#652). Bounded here, at the one place every path-taking
+        # endpoint already funnels through, rather than in each handler.
+        name = os.path.basename(canonical)
+        if len(name.encode("utf-8")) > MAX_NAME_BYTES:
+            return None
+        base_cf = name.casefold()
+        if base_cf in self._blocked_cf or base_cf.endswith(self._suffixes_cf):
+            return None
+
+        # Layer 2 — identity. A missing target (create/write/move/upload validate
+        # paths that need not exist yet) has no inode to compare, so fall through to
+        # the layer-1 result rather than rejecting a legitimate new file.
+        try:
+            target_st = os.stat(canonical)
+        except OSError:
+            return canonical
+        if (target_st.st_dev, target_st.st_ino) in self._blocked_in(os.path.dirname(canonical)):
+            return None
+        return canonical
+
+    def _blocked_in(self, parent: str) -> frozenset[tuple[int, int]]:
+        """The identities of the blocked-name files in *parent*, looked up once per directory."""
+        ids = self._blocked_ids.get(parent)
+        if ids is None:
+            found: set[tuple[int, int]] = set()
+            for blocked in self._blocked:
+                try:
+                    st = os.stat(os.path.join(parent, blocked))
+                except OSError:
+                    continue
+                found.add((st.st_dev, st.st_ino))
+            ids = self._blocked_ids[parent] = frozenset(found)
+        return ids

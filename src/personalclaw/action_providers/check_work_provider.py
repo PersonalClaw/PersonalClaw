@@ -38,6 +38,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
+from personalclaw.tool_providers.base import RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,10 @@ class CheckWorkActionProvider(ActionProvider):
     @property
     def display_name(self) -> str:
         return "Check Work"
+
+    def effect(self, action_config: dict[str, Any]) -> RiskLevel:
+        """A read: bounded reads under the run's root; it never runs a command."""
+        return RiskLevel.SAFE
 
     async def execute(
         self,

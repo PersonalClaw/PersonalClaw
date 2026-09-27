@@ -223,10 +223,19 @@ class RouteError(Exception):
         self.agent_error = agent_error
 
 
-def _find_route(app_name: str, op: str) -> RouteEntry:
+def declared_route(app_name: str, op: str) -> RouteEntry | None:
+    """The agent-callable route *app_name* declares as *op*, or ``None`` when it declares none
+    (or the app is not enabled)."""
     for name, route in iter_app_routes():
         if name == app_name and route.op == op:
             return route
+    return None
+
+
+def _find_route(app_name: str, op: str) -> RouteEntry:
+    route = declared_route(app_name, op)
+    if route is not None:
+        return route
     # Not found (or not agentCallable) — suggest the app's callable ops.
     callable_ops = sorted({r.op for n, r in iter_app_routes() if n == app_name})
     raise RouteError(
@@ -251,9 +260,13 @@ async def call_app_route(resolution: RouteResolution) -> ToolResult:
     ``127.0.0.1:{port}`` under ``LOOPBACK_INTERNAL``. A backend that isn't running
     → a coded ``ERR_APP_BACKEND_UNAVAILABLE`` the agent can act on; a 404 →
     dead-declared drift (recorded once) surfaced as ``ERR_APP_ROUTE_UNKNOWN``."""
+    from yarl import URL
+
+    from personalclaw.apps.app_secret import proxy_signature
     from personalclaw.apps.backend_runtime import get_backend_supervisor
     from personalclaw.dashboard.token_auth import app_session_token
     from personalclaw.net import LOOPBACK_INTERNAL, EgressBlocked, fetch
+    from personalclaw.proxy_signature import PROXY_SIGNATURE_HEADER
 
     app_name, route = resolution.app, resolution.route
     rb = get_backend_supervisor().get(app_name)
@@ -268,24 +281,44 @@ async def call_app_route(resolution: RouteResolution) -> ToolResult:
             ),
         )
 
-    url = f"{rb.base_url}/{resolution.path.lstrip('/')}"
     method = (route.method or "GET").upper()
+    # Built as the dashboard proxy builds its target, so the path and query the signature
+    # covers are exactly what the backend reads as `request.raw_path`.
+    target = URL(rb.base_url).with_path("/" + resolution.path.lstrip("/"))
+    if resolution.query:
+        target = target.with_query({k: str(v) for k, v in resolution.query.items()})
+    body = b"" if resolution.body is None else json.dumps(resolution.body).encode("utf-8")
+    # Signed like every request the gateway sends an app's backend (`app_secret.proxy_signature`):
+    # its middleware refuses anything unsigned, which answered this call 401 before. Never sent
+    # unsigned: a backend with no secret was never started protected.
+    signature = proxy_signature(app_name, method, target.raw_path_qs, body)
+    if signature is None:
+        return ToolResult(
+            success=False,
+            agent_error=AgentError(
+                code="ERR_APP_BACKEND_UNAVAILABLE",
+                what=f"app {app_name!r} backend cannot be called: it has no proxy secret",
+                why="its backend was not started protected, and a call is never sent unsigned",
+                fix=f"restart {app_name!r} from the App Library so its backend starts protected",
+            ),
+        )
     headers = {
         # The app's current app-scoped token, not a fresh session per call (ledger 255).
         "Authorization": f"Bearer {app_session_token('dashboard', app_name)[0]}",
         "X-PersonalClaw-App": app_name,
+        PROXY_SIGNATURE_HEADER: signature,
     }
-    data: bytes | None = None
     if resolution.body is not None:
-        data = json.dumps(resolution.body).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    if resolution.query:
-        from urllib.parse import urlencode
-
-        url = f"{url}?{urlencode({k: str(v) for k, v in resolution.query.items()})}"
 
     try:
-        resp = await fetch(url, policy=LOOPBACK_INTERNAL, method=method, headers=headers, data=data)
+        resp = await fetch(
+            str(target),
+            policy=LOOPBACK_INTERNAL,
+            method=method,
+            headers=headers,
+            data=body or None,
+        )
     except EgressBlocked as exc:
         return ToolResult(
             success=False,

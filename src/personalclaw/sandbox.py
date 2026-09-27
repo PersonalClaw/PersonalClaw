@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -309,6 +310,49 @@ def _declared_env_passthrough(site: str) -> set[str]:
             )
             continue
         out.add(name)
+    return out
+
+
+def app_env_name_refusal(name: str) -> str:
+    """Why an app may not declare *name* as a variable its child reads from the gateway's
+    environment, or ``""`` when it may.
+
+    An app declares names its CLI or backend uses to pick a provider, a region or a model
+    (:func:`declared_env`). Stricter than ``sandbox.env_passthrough``, whose names the owner
+    chose: an app's declaration is not the owner's decision, so it never carries a credential —
+    neither a name the floor refuses nor one shaped like a credential
+    (``workflows.workspace.looks_secret``: a key, a token, a password, a credentials file). A
+    child reads its keys from its own config or credential files.
+    """
+    from personalclaw.workflows.workspace import looks_secret
+
+    if not _ENV_NAME_RE.match(name):
+        return "not a valid environment variable name"
+    if env_name_is_sensitive(name) or looks_secret(name):
+        return "credential-shaped, and an app never passes a credential through"
+    return ""
+
+
+def declared_env(
+    names: Iterable[str], *, site: str, source: dict[str, str] | None = None
+) -> dict[str, str]:
+    """The variables an app declared its child reads, as the gateway's environment holds them.
+
+    For each name :func:`app_env_name_refusal` allows that is set in *source* (the gateway's
+    environment by default): its value, without the user name and password of any address in
+    it, as the inherited base is passed. A child built by :func:`build_child_env` takes these as
+    part of its *extra*, so the credential floor holds for them a second time there.
+    """
+    src = dict(os.environ) if source is None else dict(source)
+    out: dict[str, str] = {}
+    for raw in names or ():
+        name = str(raw).strip()
+        if app_env_name_refusal(name) or name not in src:
+            continue
+        kept = _without_credentials(name, src[name])
+        if kept != src[name]:
+            _say_left_out(site, name)
+        out[name] = kept
     return out
 
 

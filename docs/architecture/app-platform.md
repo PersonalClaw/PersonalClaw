@@ -325,8 +325,11 @@ therefore session auth and `app_permission_middleware` entirely. The app
 platform's whole permission story assumes requests arrive through the proxy —
 so that assumption is now enforced, not merely documented.
 
-Every request the proxy forwards carries an HMAC signature the backend verifies
-**fail-closed**:
+Every request the gateway sends a backend carries an HMAC signature the backend
+verifies **fail-closed**: what the proxy forwards, and what an agent's or a trigger's
+`call_app_route` sends (`tool_providers/app_routes.py`). Both sign through one signer,
+`apps/app_secret.proxy_signature`, over the contract in `personalclaw/proxy_signature.py`,
+and neither sends a request unsigned when the app has no secret:
 
 - **Header:** `X-PersonalClaw-Proxy: <ts>:<hmac_hex>`.
 - **Signed message:** `<ts>:<METHOD>:<raw_path?query>:<sha256_hex(body)>` —
@@ -374,6 +377,9 @@ backend has no access to the gateway's SecurityEventLog).
   protocol-thin branded model apps, and `testing.keychain_off` for an app's
   test harness, which keeps the test process out of the machine's OS keychain
   (one keychain serves every home, so a scratch `PERSONALCLAW_HOME` does not).
+  `testing.launch_acp_entry` launches an ACP entry's command with the environment
+  a spawn from that entry gets, so an ACP app's tests check what its CLI is
+  handed with a stub in the CLI's place, never the CLI itself.
 - **Its signatures are a reviewed contract**: every name each `sdk` module publishes
   is recorded in `src/personalclaw/sdk/signatures.json`
   (`scripts/sdk_signature_snapshot.py`), `tests/test_sdk_signature_snapshot.py`

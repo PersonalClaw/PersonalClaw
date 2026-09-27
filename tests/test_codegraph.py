@@ -527,8 +527,20 @@ class TestQueries:
 
 
 def _invoke(tool: str, arguments: dict):
+    """The tool as a session's turn calls it: the runtime binds the session's folder
+    (`builtin_tools.bind_tool_context`), which is the ``workspace`` these tests name."""
+    from personalclaw.agents.native.builtin_tools import bind_tool_context, reset_tool_context
+
     provider = CodeMapToolProvider()
-    return asyncio.run(provider.invoke(tool, arguments))
+
+    async def _call():
+        tokens = bind_tool_context(cwd=arguments.get("workspace") or None)
+        try:
+            return await provider.invoke(tool, arguments)
+        finally:
+            reset_tool_context(tokens)
+
+    return asyncio.run(_call())
 
 
 class TestCodeMapTool:

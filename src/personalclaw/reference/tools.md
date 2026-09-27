@@ -2451,7 +2451,7 @@ Look up where a symbol is defined and which files reference it, or outline one f
 - `file` (string, optional) — Outline this file instead: its imports and every definition with line numbers. A workspace-relative or trailing path fragment both work.
 - `refresh` (boolean, optional) — Re-index changed files before answering. The index self-updates, so this is only for a tree you just modified outside the session.
 - `symbol` (string, optional) — Function, class, method or type name to locate. Returns its definition sites plus the files that reference it.
-- `workspace` (string, optional) — Directory to query. Defaults to the active workspace; you rarely need to set this.
+- `workspace` (string, optional) — Directory to query, inside the session's workspace. Defaults to the workspace itself; you rarely need to set this.
 
 **Example — Find where a function is defined and what calls it:**
 
@@ -2485,7 +2485,7 @@ The codebase's shape: the most-referenced modules and their public surface, with
 **Response type:** `code.map.overview`
 
 **Parameters:**
-- `workspace` (string, optional) — Directory to summarize (defaults to the active one).
+- `workspace` (string, optional) — Directory to summarize, inside the session's workspace (defaults to the workspace itself).
 
 **Example — Get the shape of an unfamiliar codebase before exploring it:**
 

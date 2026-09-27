@@ -99,3 +99,20 @@ def read_app_secret(name: str) -> str | None:
         return value or None
     except OSError:
         return None
+
+
+def proxy_signature(name: str, method: str, path_qs: str, body: bytes) -> str | None:
+    """The ``X-PersonalClaw-Proxy`` value for a request the gateway sends app ``name``'s backend,
+    or ``None`` when the app has no secret (its backend was never started protected, and the
+    request must not go unsigned).
+
+    *path_qs* is the exact wire path and query the backend's aiohttp reads as
+    ``request.raw_path``, and *body* the exact bytes sent (``b""`` for none): the signature covers
+    both. The one signer for every such request — the dashboard's reverse proxy and an agent's
+    or a trigger's ``call_app_route`` — so an app's fail-closed middleware
+    (`sdk.security.require_proxy_signature`) admits them alike.
+    """
+    from personalclaw.proxy_signature import sign_proxy_request
+
+    secret = read_app_secret(name)
+    return sign_proxy_request(secret, method, path_qs, body) if secret else None

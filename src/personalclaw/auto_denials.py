@@ -92,11 +92,14 @@ def answerable_chat(session_key: str) -> str:
 
 def unattended_origin(session_key: str) -> str:
     """Who was running, for an unattended session key — prose, never the key itself."""
+    from personalclaw.action_providers.heartbeat_tasks_provider import TASK_SESSION_PREFIX
     from personalclaw.guardrails.policy import is_unattended_session
 
     key = session_key or ""
     if ownership.is_owned(key):
         return "A workflow step"
+    if key.startswith(TASK_SESSION_PREFIX):
+        return "A heartbeat task"
     if key.startswith("cron:"):
         return "A scheduled automation"
     if key.startswith("subagent:"):

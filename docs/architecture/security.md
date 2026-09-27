@@ -235,6 +235,23 @@ listed on the Tools page with Allow, which asks the same question first. The pro
 both ask before they start anything. PersonalClaw's own server is defined by its code
 (`agent._MANAGED_MCP_SERVERS`), never read from `mcp.json`.
 
+### Every file tool stays in the workspace (`file_roots.admit`)
+
+The native file tools (`read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`,
+`repo_map`) and `code_map` resolve every path through the check the Files view and
+`/api/file-read` make: symlinks and `..` resolved; inside the session's folder or one of its extra
+roots; the PersonalClaw home reached only through a root inside it (`file_roots.within`); no
+protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
+`governance/`); and no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
+or `*.secret` file, nor any alias of one. A path that fails is refused with the reason. A `glob` or
+`grep` pattern that is absolute, starts at `~` or climbs with `..` is refused as a whole, and
+every match is checked one by one, so a listing, a search or a map leaves out what the tools
+could not open, including a file a link inside the workspace leads to outside it. `code_map`
+indexes the session's workspace, or a folder inside the places its file tools reach, and its
+index skips the same files (`codegraph.CodeGraphIndex`). A walk makes one `file_roots.Admission`
+and asks it for every path: the same answer as `admit`, with the protected locations resolved
+once.
+
 ### A tool reads only when it declares so (`task_modes.py`)
 
 Every posture that runs a read without asking — Ask and Plan mode (and `personalclaw run` without
@@ -471,6 +488,22 @@ rules are load-bearing controls, not UX:
   explicit per-task permission. PersonalClaw does **not** describe, design, or expose anti-bot or
   CAPTCHA avoidance as a capability; any such effect is an incidental consequence of legitimate
   traffic from the user's own machine, never a feature.
+
+### A background chore runs with no tools (`provider_bridge._build_native_runtime`)
+
+The chores that run behind the chat — a chat's title and tags, its follow-up chips, the home
+suggestions, a folder's icon, history compression, memory consolidation and skill refinement, the
+prompt optimizer, a Slack thread's title — each answer in text from what their prompt carries, and
+that prompt quotes chats, pages and messages nobody vetted. They run as the lite agent
+(`personalclaw-lite`), whose runtime is built with no tool providers at all: its model is offered
+no tools, and a call it makes anyway names a tool that does not exist. The shared background
+session (`_bg`) is the lite agent whoever reaches it first and whatever agent it names
+(`SessionManager.get_or_create`). The one-shot completions (inbox triage, digests, re-tagging,
+schedule parsing) call the model directly and never carried tools.
+
+A heartbeat task is not a chore: the owner allowed it to run "with your agent's tools"
+(`heartbeat.consent`), so it runs as their agent in a session of its own that ends with the task
+(`cron:system:heartbeat-tasks:<run>`), never in the chores' session.
 
 ## Untrusted-content fencing
 

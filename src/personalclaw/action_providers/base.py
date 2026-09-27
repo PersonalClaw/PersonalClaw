@@ -2,9 +2,12 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.errors import AgentError
+
+if TYPE_CHECKING:
+    from personalclaw.tool_providers.base import RiskLevel
 
 
 @dataclass
@@ -204,6 +207,21 @@ class ActionProvider(ABC):
         a dry run against a provider that returns False here and records a preview
         of what WOULD run instead (T9 honesty)."""
         return False
+
+    def effect(self, action_config: dict[str, Any]) -> "RiskLevel":
+        """What running this action with *action_config* does, declared the way a tool declares
+        it (:class:`~personalclaw.tool_providers.base.RiskLevel`): ``SAFE`` when its one effect is
+        a read, ``DESTRUCTIVE`` when it deletes, and a change (``CAUTION``) when the provider
+        declares nothing — the default, so an undeclared action is never taken for a read.
+
+        Read wherever how much an action may do unasked is decided: a workflow plan's
+        confirmations (`workflows.autonomy`), and for a provider whose effect depends on its
+        config, whether a trigger may fire it without the owner's grant
+        (`triggers.screen.provider_is_read_only`). Never inferred from the provider's name.
+        """
+        from personalclaw.tool_providers.base import RiskLevel
+
+        return RiskLevel.CAUTION
 
     @property
     def reversal_kinds(self) -> tuple[str, ...]:

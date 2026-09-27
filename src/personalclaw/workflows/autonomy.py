@@ -198,6 +198,22 @@ class RiskHit:
         }
 
 
+def declared_effect(node: Any) -> RiskLevel | None:
+    """What an action node DECLARES it does (`ActionProvider.effect`, with the config the node runs
+    it with), or ``None`` for a node that is not an action. Never read from the provider's name:
+    an action that declares nothing is the change it may be."""
+    if node.kind.value != "action":
+        return None
+    from personalclaw.action_providers.registry import action_effect
+
+    cfg = node.config or {}
+    action_config = cfg.get("with") or cfg.get("config") or {}
+    return action_effect(
+        str(cfg.get("provider", "") or ""),
+        action_config if isinstance(action_config, dict) else {},
+    )
+
+
 def scan_risk(spec: dict[str, Any]) -> list[RiskHit]:
     """Every risk signal this plan trips, with the node and the evidence.
 
@@ -231,6 +247,20 @@ def scan_risk(spec: dict[str, Any]) -> list[RiskHit]:
         if isinstance(with_args, dict):
             text_parts.extend(str(v) for v in with_args.values())
         haystack = " ".join(text_parts).lower()
+        # What the action declares it does. A declared read trips no provider's signal (an app
+        # route the app declares `readOnly` sends nothing and changes nothing), and a declared
+        # deletion is the destructive operation it says it is, whatever its provider's name.
+        effect = declared_effect(node)
+        if effect == RiskLevel.DESTRUCTIVE:
+            hits.append(
+                RiskHit(
+                    signal="destructive_op",
+                    level=RiskLevel.DESTRUCTIVE.value,
+                    node_id=node_id,
+                    evidence=f"the `{provider}` action declares that it deletes",
+                    consequence=SIGNALS_BY_NAME["destructive_op"].consequence,
+                )
+            )
 
         for signal in RISK_SIGNALS:
             # Capability AND content, not either-or. The provider check used to `continue` past the
@@ -238,7 +268,7 @@ def scan_risk(spec: dict[str, Any]) -> list[RiskHit]:
             # only as "uses the run-script provider" — the same verdict on far worse evidence. A
             # reviewer told the capability has to go read the node; one told the matched text
             # already knows.
-            if provider and provider in signal.providers:
+            if provider and provider in signal.providers and effect != RiskLevel.SAFE:
                 hits.append(
                     RiskHit(
                         signal=signal.name,
@@ -615,12 +645,11 @@ def _classify_node(node: Any, hits: list[RiskHit]) -> tuple[ConfirmationType, Ri
         return ConfirmationType.WRITE, RiskLevel.CAUTION
 
     kind = node.kind.value
-    cfg = node.config or {}
     if kind == "action":
-        provider = str(cfg.get("provider", "") or "")
-        # A knowledge write is a write; a knowledge read is not. Treating every action as a write
-        # would make a retrieve-heavy plan stop constantly for nothing.
-        if provider.endswith(("-retrieve", "-health", "-gaps")):
+        # What the action DECLARES it does (`declared_effect`), never its name: a read is not a
+        # write, so a retrieve-heavy plan does not stop for nothing, and a provider that declares
+        # nothing is the change it may be. (A declared deletion arrives as a destructive hit.)
+        if declared_effect(node) == RiskLevel.SAFE:
             return ConfirmationType.READ, RiskLevel.SAFE
         return ConfirmationType.WRITE, RiskLevel.CAUTION
     if kind in ("transform",):

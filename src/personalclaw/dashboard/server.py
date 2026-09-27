@@ -2407,6 +2407,7 @@ async def start_dashboard(
     # list (healthz, the manifest, the pre-session front door, WS upgrades, and
     # everything outside /api/) is enumerated with reasons in api_version_gate.py.
     from personalclaw.dashboard.api_version_gate import api_version_middleware
+    from personalclaw.dashboard.consent_ask import consent_ask_middleware
     from personalclaw.dashboard.invalid_id_gate import invalid_id_middleware
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
@@ -2456,6 +2457,10 @@ async def start_dashboard(
             ]
         ),
         app_permission_middleware,
+        # The owner's consent question as an answer to a client that asks one, and as the 400
+        # refusal to any other. OUTSIDE the security log's audit, which records the refusal as the
+        # handler made it. See consent_ask.py.
+        consent_ask_middleware,
         sel_audit_middleware,
         # Maps an unguarded request-shape fault (a non-object JSON body, a non-numeric
         # query/path param) raised by the handler to the one 400 wire envelope, so a

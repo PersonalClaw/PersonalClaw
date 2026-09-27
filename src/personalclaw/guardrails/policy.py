@@ -257,9 +257,9 @@ def is_unattended_session(session_key: str) -> bool:
     from personalclaw.session import _STATELESS_PREFIXES, BACKGROUND_KEY
 
     key = session_key or ""
-    # ``_bg`` is the shared background/heartbeat/cron/lessons session key (see
-    # session.py) — genuinely unattended, so it resolves through HEADLESS even though
-    # it matches no prefix. It's an exact key, not a prefix, hence the equality check.
+    # ``_bg`` is the background chores' shared session key (see session.py) — genuinely
+    # unattended, so it resolves through HEADLESS even though it matches no prefix. It's an
+    # exact key, not a prefix, hence the equality check.
     if key == BACKGROUND_KEY:
         return True
     if key.startswith(_DASHBOARD_WRAPPER + INBOUND_PREFIX):

@@ -272,12 +272,6 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
         ]
       },
-      "src/personalclaw/dashboard/handlers/apps.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.security"
-        ]
-      },
       "src/personalclaw/gateway.py": {
         "edges": 20,
         "violations": [
@@ -435,12 +429,12 @@
     ],
     "totals": {
       "by_rule": {
-        "core-must-not-import-its-own-published-facade": 6,
+        "core-must-not-import-its-own-published-facade": 5,
         "core-must-not-import-the-http-surface": 51,
         "ledger-is-a-leaf": 0
       },
-      "edges": 57,
-      "files": 27
+      "edges": 56,
+      "files": 26
     }
   },
   "structural-size": {

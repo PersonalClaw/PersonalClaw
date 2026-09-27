@@ -296,7 +296,10 @@ async def test_call_app_route_backend_unavailable_is_coded(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_call_app_route_404_reports_drift(tmp_path, monkeypatch):
     """A live backend that 404s a declared route → ERR_APP_ROUTE_UNKNOWN + drift note."""
+    from personalclaw.apps.app_secret import ensure_app_secret
+
     _install(tmp_path)
+    ensure_app_secret("demo")
 
     class _RB:
         base_url = "http://127.0.0.1:65500"
@@ -325,7 +328,10 @@ async def test_call_app_route_404_reports_drift(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_app_route_success_returns_body(tmp_path, monkeypatch):
+    from personalclaw.apps.app_secret import ensure_app_secret
+
     _install(tmp_path)
+    ensure_app_secret("demo")
 
     class _RB:
         base_url = "http://127.0.0.1:65500"
@@ -355,6 +361,80 @@ async def test_call_app_route_success_returns_body(tmp_path, monkeypatch):
     assert captured["method"] == "GET"
     assert captured["headers"]["Authorization"].startswith("Bearer ")
     assert captured["headers"]["X-PersonalClaw-App"] == "demo"
+    assert captured["headers"]["X-PersonalClaw-Proxy"], "the call is signed"
+
+
+@pytest.mark.asyncio
+async def test_call_app_route_is_refused_unsigned_rather_than_sent(tmp_path, monkeypatch):
+    """A backend with no proxy secret was never started protected: the call is not sent."""
+    _install(tmp_path)
+
+    class _RB:
+        base_url = "http://127.0.0.1:65500"
+
+    sent: list[str] = []
+
+    async def _fake_fetch(url, **kwargs):
+        sent.append(url)
+        raise AssertionError("an unsigned call was sent")
+
+    monkeypatch.setattr(
+        "personalclaw.apps.backend_runtime.get_backend_supervisor",
+        lambda: type("S", (), {"get": lambda self, n: _RB()})(),
+    )
+    monkeypatch.setattr("personalclaw.net.fetch", _fake_fetch)
+    result = await ar.call_app_route(ar.resolve_route("demo", "list_items", {}))
+    assert result.success is False
+    assert result.agent_error.code == "ERR_APP_BACKEND_UNAVAILABLE"
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_call_app_route_reaches_a_backend_that_requires_the_proxy_signature(
+    tmp_path, monkeypatch
+):
+    """🔴 Red on main: an agent's call carried no proxy signature, so a backend behind the SDK's
+    fail-closed middleware (`require_proxy_signature`) answered every one of them 401. Driven
+    against a real backend on loopback, through the real egress fetch."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    from personalclaw.apps.app_secret import ensure_app_secret
+    from personalclaw.sdk.security import require_proxy_signature
+
+    _install(tmp_path)
+    secret = ensure_app_secret("demo")
+    assert secret
+
+    async def _list(request: web.Request) -> web.Response:
+        return web.json_response({"items": [request.query.get("limit")]})
+
+    async def _create(request: web.Request) -> web.Response:
+        return web.json_response({"created": json.loads(request["body_bytes"])})
+
+    backend = web.Application(middlewares=[require_proxy_signature(secret)])
+    backend.router.add_get("/items", _list)
+    backend.router.add_post("/items", _create)
+    server = TestServer(backend, host="127.0.0.1")
+    await server.start_server()
+    try:
+
+        class _RB:
+            base_url = str(server.make_url("")).rstrip("/")
+
+        monkeypatch.setattr(
+            "personalclaw.apps.backend_runtime.get_backend_supervisor",
+            lambda: type("S", (), {"get": lambda self, n: _RB()})(),
+        )
+        read = await ar.call_app_route(ar.resolve_route("demo", "list_items", {"limit": 5}))
+        write = await ar.call_app_route(ar.resolve_route("demo", "create_item", {"title": "x"}))
+    finally:
+        await server.close()
+
+    assert read.success, (read.error, read.output)
+    assert json.loads(read.output) == {"items": ["5"]}
+    assert write.success, (write.error, write.output)
+    assert json.loads(write.output) == {"created": {"title": "x"}}
 
 
 # ── the action provider + registration wiring ───────────────────────────────────

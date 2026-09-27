@@ -964,6 +964,11 @@ def json_error(
     return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
 
 
+#: Marks a response as the owner's consent question (:func:`consent_required`), so
+#: `dashboard.consent_ask` can answer it as a question to a client that asks one.
+CONSENT_QUESTION = "personalclaw.consent_question"
+
+
 def consent_required(field: str, consent: str, *, title: str) -> web.Response:
     """The ``400 confirmation_required`` a write that needs the owner's yes answers when it did
     not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
@@ -972,10 +977,15 @@ def consent_required(field: str, consent: str, *, title: str) -> web.Response:
     ``error.detail``. *consent* is the sentence the dialog shows and *title* is its heading, and
     both are product copy: the title names the question being asked, so a grant question never
     reads "Loosen a security setting?" (``config/edit_spec.LOOSEN_TITLE``), which is the heading
-    of a loosening alone."""
-    return json_error(
+    of a loosening alone.
+
+    A client that says it asks (`dashboard.consent_ask`) receives the same body as a ``200``:
+    the question, not a failure. Every other client keeps the ``400``."""
+    response = json_error(
         "confirmation_required",
         message=f'send {{"confirm": true}} to confirm — {consent}',
         status=400,
         error_extra={"detail": {"field": field, "consent": consent, "title": title}},
     )
+    response[CONSENT_QUESTION] = True
+    return response
