@@ -4,7 +4,8 @@
   home (``/Users/old-name/src/app``). :func:`on_this_machine` finds the same path under THIS home,
   and :func:`display_path` says it the way a person reads it.
 - **One file, one item** (:func:`text_item`), read through floors 1 and 2.
-- **Skills** (:func:`scan_skills`): a directory with a ``SKILL.md``, whichever tool it came from.
+- **Skills** (:func:`scan_skills`): a directory with a ``SKILL.md``, whichever tool it came from,
+  with the supply-chain scan its install will make (:class:`ImportedSkillMarketplace`).
 - **Prompt history** (:func:`prompt_history`): counted and named, never imported.
 - **A conversation's title and note** (:func:`one_line`, :func:`conversation_note`).
 - **An MCP server** (:class:`McpServer`, :func:`mcp_item`): what a tool has configured, values
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +29,17 @@ from personalclaw.onboarding_import.model import (
     ImportItem,
     NotImported,
     ScanResult,
+    SkillScan,
 )
+from personalclaw.skills.marketplace import (
+    SkillDetail,
+    SkillEntry,
+    SkillsMarketplace,
+    read_skill_file_entry,
+    scan_before_install,
+)
+
+logger = logging.getLogger(__name__)
 
 #: A title is a line in a list, not the first paragraph of a conversation.
 TITLE_CHARS = 80
@@ -136,12 +148,98 @@ def text_item(
     return True
 
 
+def _skill_files(skill_dir: Path) -> list[dict[str, Any]]:
+    """A skill directory's files as an install stages them: every file but a credential file,
+    which is never staged, scanned or installed (the floor the scan counts it with)."""
+    files: list[dict[str, Any]] = []
+    for path in sorted(skill_dir.rglob("*")):
+        if not path.is_file() or refuses(path):
+            continue
+        try:
+            files.append(read_skill_file_entry(path, path.relative_to(skill_dir).as_posix()))
+        except OSError:
+            logger.warning("skipping unreadable file in imported skill %s", skill_dir.name)
+    return files
+
+
+class ImportedSkillMarketplace(SkillsMarketplace):
+    """A transient, single-directory skills source rooted at a foreign skill dir.
+
+    Not registered in the shared registry — another tool's skills dir is not a marketplace. It
+    exists so an imported skill is scanned before the import (:func:`scan_skills`) and installed
+    by it (``writers._write_skill``) through the one gate a Store skill goes through
+    (quarantine → scan → commit → lock), at the ``community`` trust tier (foreign, unsigned).
+    """
+
+    def __init__(self, skill_dir: Path) -> None:
+        self._skill_dir = Path(skill_dir)
+
+    @property
+    def marketplace_type(self) -> str:
+        return "onboarding_import"
+
+    @property
+    def trust_tier(self) -> str:
+        return "community"
+
+    def search(self, query: str, limit: int = 20) -> list[SkillEntry]:  # pragma: no cover
+        return []
+
+    def fetch(self, skill_id: str) -> SkillDetail:
+        return SkillDetail(
+            id=skill_id,
+            name=self._skill_dir.name,
+            files=_skill_files(self._skill_dir),
+            audit_status="pass",
+        )
+
+
+#: The findings a person weighs before importing a skill: what refuses it, and what it needs
+#: their acceptance for. A ``low`` finding changes neither, so it is not listed.
+_SHOWN_SEVERITIES = frozenset({"warning", "dangerous"})
+
+
+def _skill_scan(skill_dir: Path, name: str) -> SkillScan | None:
+    """The supply-chain scan the import's install will make of this skill, made now: ``None``
+    when its files cannot be staged, in which case the install says why."""
+    try:
+        report, consent = scan_before_install(ImportedSkillMarketplace(skill_dir), name)
+    except (ValueError, OSError):
+        logger.debug("could not scan imported skill %s", name, exc_info=True)
+        return None
+    findings = tuple(
+        {
+            "rule": finding.rule,
+            "severity": finding.severity.value,
+            "path": finding.path,
+            # A snippet of the skill's own file: through the detector like any text shown.
+            "evidence": safe_text(finding.evidence)[0],
+        }
+        for finding in report.findings
+        if finding.severity.value in _SHOWN_SEVERITIES
+    )
+    return SkillScan(verdict=report.verdict.value, findings=findings, consent=consent)
+
+
+def _warnings_note(scan: SkillScan | None) -> str:
+    if scan is None or not scan.needs_acceptance:
+        return ""
+    count = sum(1 for finding in scan.findings if finding["severity"] == "warning")
+    one = count == 1
+    return (
+        f"Its security scan found {count} warning{'' if one else 's'}, so it comes over only if "
+        f"you accept {'it' if one else 'them'}."
+    )
+
+
 def scan_skills(source: str, roots: list[tuple[Path, str]], result: ScanResult) -> None:
     """Every ``<root>/<name>/SKILL.md``, one skill per name: ``roots`` is ``(directory, origin)``
     in the order the tool reads them, and the first root to hold a name is the one it keeps.
 
     A dot-directory is the tool's own (Codex keeps the skills it ships in ``skills/.system``),
-    not one of yours.
+    not one of yours. Each skill carries the supply-chain scan its install will make, so the step
+    shows what refuses it, or what it needs accepting, before anything is chosen: a skill whose
+    scan has warnings starts unticked.
     """
     seen: set[str] = set()
     for root, origin in roots:
@@ -157,6 +255,7 @@ def scan_skills(source: str, roots: list[tuple[Path, str]], result: ScanResult) 
             # uninstalled file — the count and the behaviour cannot drift.
             withheld = sum(1 for f in skill_dir.rglob("*") if f.is_file() and refuses(f))
             result.secrets_skipped += withheld
+            scan = _skill_scan(skill_dir, name)
             result.items.append(
                 ImportItem(
                     source=source,
@@ -165,7 +264,10 @@ def scan_skills(source: str, roots: list[tuple[Path, str]], result: ScanResult) 
                     title=name,
                     path=str(skill_dir),
                     origin=origin,
+                    note=_warnings_note(scan),
+                    preselect=scan is None or not scan.needs_acceptance,
                     secrets_skipped=withheld,
+                    scan=scan,
                 )
             )
 

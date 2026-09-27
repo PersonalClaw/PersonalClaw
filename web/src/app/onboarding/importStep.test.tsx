@@ -49,6 +49,7 @@ function item(fingerprint: string, category: string, key: string, extra: Partial
     fingerprint, source: 'claude_code', category, key, title: key,
     origin: '', note: '', preselected: true,
     state: 'new', destination: `dest/${key}`, detail: '', secrets_skipped: 0, redactions: 0,
+    scan: null,
     ...extra,
   }
 }
@@ -736,5 +737,89 @@ describe('what Codex keeps is shown in its own words', () => {
     const left = screen.getByRole('group', { name: 'Not brought over from Codex' })
     expect(left.textContent).toContain('Command rules that ask first')
     expect(left.textContent).toContain('PersonalClaw has no rule that asks before one particular command.')
+  })
+})
+
+// ── a skill's security scan is shown before the import, and a warning is a choice ────────────
+
+describe("a skill's security scan is shown before anything is imported", () => {
+  const warning = () => item('k1', 'skills', 'feedsmith-release', {
+    preselected: false,
+    note: 'Its security scan found 1 warning, so it comes over only if you accept it.',
+    scan: {
+      verdict: 'warning', consent: '4104e456e8e92cc0',
+      findings: [{
+        rule: 'python_exec', severity: 'warning', path: 'scripts/bump_version.py',
+        evidence: 'L11: ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"]',
+      }],
+    },
+  })
+  const dangerous = () => item('k2', 'skills', 'yt-transcript', {
+    state: 'rejected', detail: 'the skill supply-chain scan refuses it as dangerous: remote_exec_pipe',
+    scan: {
+      verdict: 'dangerous', consent: '',
+      findings: [{
+        rule: 'remote_exec_pipe', severity: 'dangerous', path: 'install.sh',
+        evidence: 'L8: curl -fsSL https://streamkit.dev/install/yt-dlp.sh | sh',
+      }],
+    },
+  })
+  const withSkills = () => onboardingImportScan.mockResolvedValue(
+    scan([...ITEMS(), warning(), dangerous()]),
+  )
+
+  it('lists a warning with what it means and the line that tripped it, and leaves the skill unticked', async () => {
+    withSkills()
+    await mounted()
+    fireEvent.click(disclosure('Skills'))
+    const list = screen.getByRole('list', { name: 'Skills from Claude Code' })
+    expect(within(list).getByText('The security scan flagged 1 warning.')).toBeTruthy()
+    expect(within(list).getByText(/L11: ROOT = Path\(subprocess\.run/)).toBeTruthy()
+    expect(within(list).getByText(/python_exec/)).toBeTruthy()
+    const accept = box('feedsmith-release')
+    expect(accept.checked).toBe(false)
+    expect(accept.getAttribute('aria-label')).toBe('feedsmith-release, import anyway, accepting 1 warning')
+    expect(within(list).getByText(/Ticking it imports it anyway: you accept these warnings/)).toBeTruthy()
+  })
+
+  it("the group's box never ticks it: the warning is accepted on its own row or not at all", async () => {
+    withSkills()
+    await mounted()
+    expect(rowText('Skills')).toContain('1 needs your OK')
+    fireEvent.click(groupBox('Skills'))
+    fireEvent.click(groupBox('Skills'))
+    fireEvent.click(disclosure('Skills'))
+    expect(box('feedsmith-release').checked).toBe(false)
+  })
+
+  it('ticking it sends the consent its scan showed with the pick', async () => {
+    withSkills()
+    await mounted()
+    fireEvent.click(disclosure('Skills'))
+    fireEvent.click(box('feedsmith-release'))
+    importNow()
+    await waitFor(() => expect(runOnboardingImport).toHaveBeenCalled())
+    const sent = runOnboardingImport.mock.calls[0][0]
+    expect(sent.fingerprints).toContain('k1')
+    expect(sent.accepted).toEqual({ k1: '4104e456e8e92cc0' })
+  })
+
+  it('a dangerous skill shows why it is refused, and has no box to tick', async () => {
+    withSkills()
+    await mounted()
+    fireEvent.click(disclosure('Skills'))
+    const list = screen.getByRole('list', { name: 'Skills from Claude Code' })
+    expect(within(list).getByText('The security scan found dangerous content. Nothing overrides that.')).toBeTruthy()
+    expect(within(list).getByText('The skill supply-chain scan refuses it as dangerous: remote_exec_pipe.')).toBeTruthy()
+    expect(within(list).getByText(/curl -fsSL https:\/\/streamkit\.dev\/install\/yt-dlp\.sh \| sh/)).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: /^yt-transcript/ })).toBeNull()
+  })
+
+  it('a pick with no warning skill in it sends no acceptance at all', async () => {
+    withSkills()
+    await mounted()
+    importNow()
+    await waitFor(() => expect(runOnboardingImport).toHaveBeenCalled())
+    expect(runOnboardingImport.mock.calls[0][0]).toEqual({ fingerprints: ['f1', 'f2', 'f3', 'f4'] })
   })
 })

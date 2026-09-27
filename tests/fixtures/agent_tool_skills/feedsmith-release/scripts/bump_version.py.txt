@@ -1,0 +1,50 @@
+"""Bump feedsmith's version, roll the changelog, commit and tag. Never pushes."""
+
+from __future__ import annotations
+
+import datetime as dt
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip())
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def _replace(path: Path, pattern: str, repl: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    new, n = re.subn(pattern, repl, text, count=1, flags=re.M)
+    if n != 1:
+        sys.exit(f"could not update version in {path}")
+    path.write_text(new, encoding="utf-8")
+
+
+def main(version: str) -> None:
+    if not VERSION_RE.match(version):
+        sys.exit(f"not a release version: {version}")
+    status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=ROOT)
+    if status.stdout.strip():
+        sys.exit("working tree is not clean")
+
+    _replace(ROOT / "pyproject.toml", r'^version = ".*"$', f'version = "{version}"')
+    _replace(ROOT / "src/feedsmith/__init__.py", r'^__version__ = ".*"$', f'__version__ = "{version}"')
+
+    changelog = ROOT / "CHANGELOG.md"
+    today = dt.date.today().isoformat()
+    text = changelog.read_text(encoding="utf-8")
+    if "## Unreleased" not in text:
+        sys.exit("CHANGELOG.md has no Unreleased section")
+    changelog.write_text(
+        text.replace("## Unreleased", f"## Unreleased\n\n## {version} - {today}", 1), encoding="utf-8"
+    )
+
+    subprocess.run(["git", "commit", "-am", f"release: {version}"], cwd=ROOT, check=True)
+    subprocess.run(["git", "tag", "-a", f"v{version}", "-m", f"feedsmith {version}"], cwd=ROOT, check=True)
+    print(f"tagged v{version}; push with: git push origin main v{version}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.exit("usage: bump_version.py <version>")
+    main(sys.argv[1])
