@@ -218,14 +218,17 @@ async def api_apps_list(request: web.Request) -> web.Response:
     """GET /api/apps — installed apps with manifest summary + runtime state.
 
     APE-7: on this existing read path (no polling loop) we also compute which installed
-    apps have a newer version available from their local source, tag each such app
-    ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
+    apps have a newer version available from their source — a local source, or the Store
+    source the app was installed from, as the Store's own discovery last read it — tag each
+    such app ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
     notification per newly-available version (deduped by ``name + latest_version`` in
-    ``surface_app_updates`` so re-viewing never re-nags)."""
+    ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
+    of the app starts when none was found: the source it was installed from."""
     from personalclaw.apps.catalog import (
         resolve_hero_url,
         source_kind_for_origin,
         surface_app_updates,
+        update_source_for,
     )
     from personalclaw.apps.manager import app_dir, list_apps, ui_revision
 
@@ -345,6 +348,9 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "latestVersion": updates_by_name.get(name, {}).get("latestVersion", ""),
                 # Where that version was found: the Update dialog starts from it.
                 "latestSource": updates_by_name.get(name, {}).get("latestSource", ""),
+                # Where an Update starts when no newer version was found: the source the app
+                # was installed from, when an update can come from there ("" otherwise).
+                "updateSource": update_source_for(app),
                 **_app_status(name),
             }
         )

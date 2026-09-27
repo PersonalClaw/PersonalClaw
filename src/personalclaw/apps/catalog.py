@@ -26,6 +26,7 @@ import re
 import shutil
 import socket
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -423,6 +424,11 @@ _registry_cache: dict[str, tuple[float, list["RegistryPointer"]]] = {}
 # for discovery (a user adds a source + expects to see it immediately).
 _GIT_SCAN_TTL_SECS = 300.0  # 5 minutes
 _git_scan_cache: dict[str, tuple[float, list["CatalogEntry"]]] = {}
+# What a SINGLE-app git source (a root ``app.json``) offers, read off the same clone the scan
+# makes: url → version. The Store lists such a source by its URL rather than as a card, so the
+# scan cache holds nothing for it, and the update check would otherwise have no version for an
+# app installed from it (:func:`_offered_versions`).
+_git_root_versions: dict[str, str] = {}
 
 # ── Bounding the catalog build (#408) ──
 #
@@ -1089,6 +1095,8 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
             return []
 
         root = Path(tmp)
+        # Set again below only while the repository is still a single app.
+        _git_root_versions.pop(url, None)
 
         # If a registry index exists, this source is handled by
         # _scan_registries — don't double-surface.
@@ -1097,8 +1105,13 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
             return []
 
         # If a root app.json exists, it's a single-app repo — the existing
-        # git-source URL list already surfaces it for direct install.
+        # git-source URL list already surfaces it for direct install. Its version is kept
+        # for the update check of an app installed from it.
         if (root / "app.json").is_file():
+            try:
+                _git_root_versions[url] = AppManifest.from_json_file(root / "app.json").version
+            except Exception:
+                logger.debug("git scan: bad root manifest in %s", url, exc_info=True)
             _git_scan_cache[url] = (now, [])
             return []
 
@@ -1698,10 +1711,21 @@ def available_bundled() -> list[CatalogEntry]:
 #
 # An installed app's SOURCE may offer a newer version than the copy on disk. We
 # surface that WITHOUT a polling loop: the latest-available version is computed on
-# the existing ``/api/apps`` read path from CHEAP, on-disk local-source manifest
-# reads (the same dir-scan ``_scan_local_sources`` does) — no network clone on the
-# hot path. The Store keeps its own (cached, network-capable) discovery for BROWSING;
-# this is the always-cheap "is anything I already have out of date?" check.
+# the existing ``/api/apps`` read path, and nothing on that path touches the network.
+# Two places answer it:
+#
+# * a LOCAL source: its on-disk manifests (the same dir-scan ``_scan_local_sources`` does),
+#   matched by the app's name — the dev loop;
+# * the Store source the app was INSTALLED from (F-46): a Store card installs from a
+#   pointer — ``url#app`` from a multi-app repository, a registry listing's repo, or a
+#   single-app repository's URL — and ``installed.json`` records it. What that pointer
+#   offers now is read from the Store's OWN discovery caches: the registry indexes
+#   (``_registry_cache``, 1 h), the multi-app scans (``_git_scan_cache``, 5 min) and the
+#   single-app versions the same scans read (``_git_root_versions``). The Store's catalog
+#   read is what refreshes them, under its budget and failure backoff, and the Apps page
+#   makes that read whenever it opens — so an app installed from GitHub is checked exactly
+#   as often as the Store is looked at, and never by a poller. Before this, only local
+#   sources were read, so an app installed from the Store never showed an update.
 #
 # One notification per ``(name, latest_version)`` is delivered through the registered
 # ``apps/update`` attention kind, deduped by a persisted ``entity_settings/app_updates.json``
@@ -1744,32 +1768,98 @@ def _latest_local_versions() -> dict[str, tuple[str, str]]:
     return latest
 
 
-def updates_available() -> list[dict[str, Any]]:
-    """Installed apps whose local source now offers a NEWER version.
+def _pointer_key(repository: str, subdirectory: str) -> tuple[str, str]:
+    """An install pointer's identity: its repository by :func:`_git_source_key` (so one
+    repository typed with and without ``.git`` is one) and the subdirectory."""
+    return _git_source_key(repository), subdirectory.strip("/")
 
-    Compares each installed app's on-disk version against the highest version the configured
-    local sources declare for that app, using the single app-version comparator
-    (``manifest.version_tuple``). Returns one entry per out-of-date app::
+
+def _offered_versions() -> dict[tuple[str, str], str]:
+    """What each install pointer the Store has discovered offers now: ``{pointer key: highest
+    version}``, read from the Store's own discovery caches — the registry indexes, the
+    multi-app scans and the single-app versions those scans read. Only sources still
+    configured count: a source the owner removed is no longer asked. No network."""
+    from personalclaw.apps.source import git_pointer
+
+    configured = {_git_source_key(u) for u in list_git_sources()}
+    offered: dict[tuple[str, str], str] = {}
+
+    def note(pointer: str, version: str) -> None:
+        parts = git_pointer(pointer)
+        if parts is None or not version:
+            return
+        key = _pointer_key(*parts)
+        if key not in offered or version_tuple(version) > version_tuple(offered[key]):
+            offered[key] = version
+
+    for source, (_at, pointers) in list(_registry_cache.items()):
+        if _git_source_key(source) in configured:
+            for p in pointers:
+                note(_install_pointer(source, p), p.version)
+    for url, (_at, entries) in list(_git_scan_cache.items()):
+        if _git_source_key(url) in configured:
+            for entry in entries:
+                note(entry.pointer, entry.version)
+    for url, version in list(_git_root_versions.items()):
+        if _git_source_key(url) in configured:
+            note(url, version)
+    return offered
+
+
+def update_source_for(app: Mapping[str, Any]) -> str:
+    """Where an Update of installed ``app`` starts: the source it was installed from, when an
+    update can come from there — a git repository (the Store's pointer, or a URL the owner
+    typed) or a folder that still exists — else ``""``. Never for an app PersonalClaw ships:
+    those update with PersonalClaw itself."""
+    from personalclaw.apps.source import git_pointer
+
+    source = str(app.get("source") or "").strip()
+    if not source or str(app.get("origin") or "") == "builtin":
+        return ""
+    if git_pointer(source) is not None:
+        return source
+    return source if Path(source).expanduser().is_dir() else ""
+
+
+def updates_available() -> list[dict[str, Any]]:
+    """Installed apps whose source now offers a NEWER version.
+
+    Compares each installed app's on-disk version against the highest version offered for it,
+    using the single app-version comparator (``manifest.version_tuple``): what the configured
+    local sources declare under its name, and what the Store source it was installed from
+    offers now (:func:`_offered_versions`, matched by its recorded install pointer). Returns
+    one entry per out-of-date app::
 
         {"name", "displayName", "installedVersion", "latestVersion", "latestSource"}
 
-    ``latestSource`` is the directory the newer version was found in — what the Update dialog
-    starts from, so the owner does not have to type where the gateway just looked.
+    ``latestSource`` is where the newer version was found — the directory, or the pointer the
+    app was installed from — and what the Update dialog starts from, so the owner does not
+    have to type where the gateway just looked.
 
-    Pure + cheap (on-disk reads, no network, no side effects) — safe to call on the
-    ``/api/apps`` read path. An app with no newer version, or with no source-side manifest,
-    is simply absent."""
+    Pure + cheap (on-disk and in-memory reads, no network, no side effects) — safe to call on
+    the ``/api/apps`` read path. An app with no newer version, or whose source is not known
+    to offer one, is simply absent."""
     from personalclaw.apps.manager import list_apps
+    from personalclaw.apps.source import git_pointer
 
     latest = _latest_local_versions()
+    offered = _offered_versions()
     out: list[dict[str, Any]] = []
     for app in list_apps():
         name = app.get("name", "")
         installed_version = str(app.get("version", ""))
-        found = latest.get(name)
-        if not name or not found:
+        if not name:
             continue
-        latest_version, latest_source = found
+        candidates: list[tuple[str, str]] = []
+        if name in latest:
+            candidates.append(latest[name])
+        source = str(app.get("source") or "").strip()
+        pointer = git_pointer(source) if str(app.get("origin") or "") != "builtin" else None
+        if pointer is not None and _pointer_key(*pointer) in offered:
+            candidates.append((offered[_pointer_key(*pointer)], source))
+        if not candidates:
+            continue
+        latest_version, latest_source = max(candidates, key=lambda c: version_tuple(c[0]))
         if version_tuple(latest_version) > version_tuple(installed_version):
             manifest = app.get("manifest") or {}
             out.append(

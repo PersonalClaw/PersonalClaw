@@ -86,8 +86,8 @@ describe('Update starts from the source the gateway found', () => {
     expect(field.value).toBe('/somewhere/else/growth')
   })
 
-  it('starts empty when the gateway found no newer version', async () => {
-    await openInLibrary([app({ updateAvailable: false, latestVersion: '', latestSource: '' })])
+  it('starts empty when the gateway found no newer version and knows nowhere to update from', async () => {
+    await openInLibrary([app({ updateAvailable: false, latestVersion: '', latestSource: '', updateSource: '' })])
     expect(screen.queryByText('Update available')).toBeNull()
     fireEvent.click(updateButton())
     const field = await screen.findByLabelText(/New source/) as HTMLInputElement

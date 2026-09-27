@@ -859,6 +859,9 @@ export interface AppSummary {
   latestVersion?: string
   /** Where the gateway found that newer version — the Update dialog starts from it. */
   latestSource?: string
+  /** Where an Update starts when no newer version was found: the source the app was installed
+   *  from. `""` when there is nowhere to update from (a folder that is gone, a shipped app). */
+  updateSource?: string
   // APE-4: the app's declared quality bar. `{}`/absent = declared nothing → no badges.
   quality?: AppQualityWire
 }
