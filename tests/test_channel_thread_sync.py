@@ -106,9 +106,20 @@ class TestDashboardStateLinkChannel:
 
 
 class TestSessionRestoreChannelLink:
-    # TODO: Add integration test for restore_sessions() populating channel link
-    # from SessionStore. The restore path is complex and requires full
-    # DashboardState initialization with real SessionManager.
+    def test_stored_link_populates_new_session(self, tmp_path):
+        """A session is rehydrated through `get_or_create_session` (at startup and on resume),
+        and that is where the link its channel thread was stored under comes back."""
+        from personalclaw.dashboard.chat import _history_key_for
+
+        state = _make_state(tmp_path)
+        state.sessions.get_channel_link.return_value = ("1234.5678", "C123")
+
+        session = state.get_or_create_session("s1")
+
+        assert session._channel_linked is True
+        assert session._channel_id == "C123"
+        assert session._channel_thread_ts == "1234.5678"
+        state.sessions.get_channel_link.assert_called_once_with(_history_key_for("s1"))
 
     def test_unlinked_session_stays_false(self, tmp_path):
         state = _make_state(tmp_path)

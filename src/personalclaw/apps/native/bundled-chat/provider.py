@@ -62,6 +62,7 @@ import logging
 import math
 import re
 import shutil
+import ssl
 import struct
 import tempfile
 import threading
@@ -1031,6 +1032,98 @@ async def download_weight(*, progress: Any = None) -> Path:
     return target
 
 
+_STILL_USABLE = "You can still use PersonalClaw: bind any provider in Settings → Models."
+
+#: Statuses a source answers when it cannot serve the request RIGHT NOW: the request timed out
+#: (408), it is rate-limited (429), or the server failed (5xx). The pin is fine and waiting is
+#: the fix, so these are `unreachable` like no network, not `bad-status` like a moved pin.
+_RETRY_LATER = frozenset({408, 429})
+
+#: How `http.client` reports an HTTPS proxy that refused the CONNECT: an `OSError` carrying the
+#: PROXY's status, raised before the source was asked anything. The same words on 3.12-3.14.
+_TUNNEL_REFUSED = re.compile(r"Tunnel connection failed: (\d{3})")
+
+
+def _proxy_wants_credentials(detail: str) -> DownloadFailed:
+    # No "put your password in HTTPS_PROXY": every agent-influenced child inherits that
+    # variable on the premise that it holds no credential (`sandbox.CHILD_ENV_BASE_NAMES`),
+    # and the service installer refuses a proxy URL with one in it (`service/environment.py`).
+    return DownloadFailed(
+        DOWNLOAD_UNREACHABLE,
+        f"the proxy between this computer and the model source asked for credentials "
+        f"({detail}). Ask whoever runs this network to let this computer reach the model "
+        f"source, or retry on a network that does not need a proxy sign-in. {_STILL_USABLE}",
+    )
+
+
+def _status_failure(exc: urllib.error.HTTPError) -> DownloadFailed:
+    """The failure for an HTTP status, by what the user can do about it."""
+    status = f"HTTP {exc.code} ({exc.reason})"
+    if exc.code == 407:
+        return _proxy_wants_credentials(status)
+    if exc.code in _RETRY_LATER or 500 <= exc.code < 600:
+        headers = getattr(exc, "headers", None)
+        wait = str(headers.get("Retry-After", "") if headers is not None else "").strip()
+        when = f"in {int(wait)} seconds" if wait.isdigit() else "in a few minutes"
+        return DownloadFailed(
+            DOWNLOAD_UNREACHABLE,
+            f"the model source could not answer right now ({status}). That is on its side, not "
+            f"a problem with this computer or the pinned file: retry {when}. {_STILL_USABLE}",
+        )
+    return DownloadFailed(
+        DOWNLOAD_BAD_STATUS,
+        f"the model source answered {status}. The URL pins an immutable upstream revision, so "
+        f"this is not a transient error — the pin needs fixing. {_STILL_USABLE}",
+    )
+
+
+def _connection_failure(exc: BaseException) -> DownloadFailed:
+    """The failure for a connection that did not get as far as the source's HTTP status."""
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    tunnel = _TUNNEL_REFUSED.search(str(reason))
+    if tunnel is not None:
+        # Through an HTTPS proxy this, not an HTTPError, is how a 407 arrives.
+        if tunnel.group(1) == "407":
+            return _proxy_wants_credentials(str(reason))
+        return DownloadFailed(
+            DOWNLOAD_UNREACHABLE,
+            f"the proxy between this computer and the model source would not connect to it "
+            f"({reason}). Retry in a few minutes, and if the proxy keeps refusing, ask whoever "
+            f"runs this network to allow the model source. {_STILL_USABLE}",
+        )
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        # The network is up, so "retry when you are connected" would be the wrong advice. The
+        # usual causes are a wrong clock and a proxy or security product presenting its own
+        # certificate, and the fix for both keeps the check: switching it off would hand the
+        # download to whatever is in the middle. SSL_CERT_FILE is named because OpenSSL reads it
+        # everywhere; the macOS keychain, for one, is not where Python's OpenSSL looks.
+        return DownloadFailed(
+            DOWNLOAD_UNREACHABLE,
+            f"could not verify the model source's certificate ({reason}). Something answered for "
+            "the source, but this computer could not confirm it was the real one. That usually "
+            "means the date and time on this computer are wrong, or a proxy or security software "
+            "on this network presents its own certificate. Set the date and time, or trust that "
+            "certificate authority, for example by pointing SSL_CERT_FILE at a certificate file "
+            f"that includes it, then retry. {_STILL_USABLE}",
+        )
+    if isinstance(reason, ssl.SSLError):
+        # A handshake cut off or refused before any verdict on the certificate. The clock
+        # cannot cause that, so this sentence does not send anyone to it.
+        return DownloadFailed(
+            DOWNLOAD_UNREACHABLE,
+            f"could not set up a secure connection to the model source ({reason}). Something "
+            "on this network cut the connection off before it was secure, usually a proxy, a "
+            "firewall or security software. Retry in a few minutes, and if it keeps failing, "
+            f"ask whoever runs this network to allow the model source. {_STILL_USABLE}",
+        )
+    return DownloadFailed(
+        DOWNLOAD_UNREACHABLE,
+        f"could not reach the model source ({exc}). This download needs network access once; "
+        "everything after it works offline. Retry when you are connected, or bind a provider "
+        "you already have in Settings → Models.",
+    )
+
+
 async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any) -> None:
     """The bytes half of :func:`download_weight`: read, verify, atomically replace."""
     handle, temp_name = tempfile.mkstemp(dir=str(target.parent), suffix=".partial")
@@ -1052,20 +1145,9 @@ async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any)
                 _SOCKET_TIMEOUT_S,
             )
         except urllib.error.HTTPError as exc:
-            raise DownloadFailed(
-                DOWNLOAD_BAD_STATUS,
-                f"the model source answered HTTP {exc.code} ({exc.reason}). The URL pins an "
-                "immutable upstream revision, so this is not a transient error — the pin needs "
-                "fixing. You can still use PersonalClaw: bind any provider in "
-                "Settings → Models.",
-            ) from exc
+            raise _status_failure(exc) from exc
         except (urllib.error.URLError, OSError) as exc:
-            raise DownloadFailed(
-                DOWNLOAD_UNREACHABLE,
-                f"could not reach the model source ({exc}). This download needs network access "
-                "once; everything after it works offline. Retry when you are connected, or bind "
-                "a provider you already have in Settings → Models.",
-            ) from exc
+            raise _connection_failure(exc) from exc
         with response:
             declared_total = response.headers.get("Content-Length")
             if declared_total and declared_total.isdigit():

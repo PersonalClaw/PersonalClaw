@@ -35,9 +35,11 @@ import asyncio
 import hashlib
 import math
 import shutil
+import ssl
 import struct
 import threading
 import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
@@ -1405,6 +1407,204 @@ def test_a_404_says_the_pin_is_broken_rather_than_telling_a_user_to_retry(
     assert caught.value.outcome == DOWNLOAD_BAD_STATUS
     assert "HTTP 404" in str(caught.value)
     assert "not a transient error" in str(caught.value)
+    assert _leftovers(target) == []
+
+
+def _http_error(code: int, reason: str, headers: dict | None = None) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        "https://example.invalid/x", code, reason, headers or {}, None  # type: ignore[arg-type]
+    )
+
+
+#: Words that would send a user to switch certificate checking off. No sentence here may say
+#: them: a check that fails is the one telling them something is between them and the source.
+_DISABLES_VERIFICATION = ("verify=false", "disable", "insecure", "cert_none", "pythonhttpsverify")
+
+
+@pytest.mark.parametrize("code", [403, 404, 410])
+def test_a_status_that_no_wait_can_fix_still_says_the_pin_is_broken(
+    rail, home, monkeypatch, code
+) -> None:
+    """The vacuity arm for the statuses below: the rest of the 4xx range keeps the pin message."""
+    sign_off(rail, monkeypatch, home)
+    _serve(rail, monkeypatch, _http_error(code, "Nope"))
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight())
+    assert caught.value.outcome == DOWNLOAD_BAD_STATUS
+    assert f"HTTP {code}" in str(caught.value)
+    assert "the pin needs fixing" in str(caught.value)
+
+
+@pytest.mark.parametrize("code", [408, 429, 500, 502, 503, 504])
+def test_a_source_that_cannot_answer_now_says_retry_later_not_fix_the_pin(
+    rail, home, monkeypatch, code
+) -> None:
+    """A timeout, a rate limit and the server's own failures are the source's state right now.
+
+    Every HTTP error used to be "not a transient error — the pin needs fixing", which sent a
+    user who only had to wait to believe nothing on their machine would ever work.
+    """
+    target = sign_off(rail, monkeypatch, home)
+    _serve(rail, monkeypatch, _http_error(code, "Busy"))
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight())
+    said = str(caught.value)
+    assert caught.value.outcome == DOWNLOAD_UNREACHABLE
+    assert f"HTTP {code}" in said
+    assert "retry in a few minutes" in said
+    assert "not a transient error" not in said and "pin needs fixing" not in said
+    assert "Settings → Models" in said
+    assert _leftovers(target) == []
+
+
+def test_a_rate_limit_passes_on_how_long_the_source_asked_to_wait(rail, home, monkeypatch) -> None:
+    sign_off(rail, monkeypatch, home)
+    _serve(rail, monkeypatch, _http_error(429, "Too Many Requests", {"Retry-After": "120"}))
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight())
+    assert "retry in 120 seconds" in str(caught.value)
+
+
+def _asks_for_a_password_in_the_environment(said: str) -> bool:
+    """The sandbox passes HTTPS_PROXY to every child it starts, as a variable that holds no
+    credential, so no sentence may tell a user to put their proxy password in it."""
+    return "HTTPS_PROXY" in said or "password" in said.lower()
+
+
+def test_a_proxy_asking_for_credentials_is_named_as_the_proxy(rail, home, monkeypatch) -> None:
+    """A proxy answering in the source's place sends 407 as the response itself. It is the
+    network between the user and the source, not the source and not the pin."""
+    target = sign_off(rail, monkeypatch, home)
+    _serve(rail, monkeypatch, _http_error(407, "Proxy Authentication Required"))
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight())
+    said = str(caught.value)
+    assert caught.value.outcome == DOWNLOAD_UNREACHABLE
+    assert "HTTP 407" in said and "proxy" in said and "asked for credentials" in said
+    assert "Ask whoever runs this network" in said
+    assert not _asks_for_a_password_in_the_environment(said), said
+    assert "pin needs fixing" not in said
+    assert _leftovers(target) == []
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        # A proxy or security product presenting its own certificate.
+        "certificate verify failed: unable to get local issuer certificate",
+        # A clock set before the certificate's start, or after its end.
+        "certificate verify failed: certificate has expired",
+    ],
+    ids=["unknown-authority", "wrong-clock"],
+)
+def test_a_certificate_that_cannot_be_verified_names_the_clock_and_the_ca(
+    rail, home, monkeypatch, detail
+) -> None:
+    """The network is up, so "retry when you are connected" was the wrong advice: the usual
+    causes are a wrong clock and a proxy presenting its own certificate."""
+    target = sign_off(rail, monkeypatch, home)
+    # How urllib reports it: the handshake's SSLCertVerificationError, wrapped in a URLError.
+    _serve(rail, monkeypatch, urllib.error.URLError(ssl.SSLCertVerificationError(1, detail)))
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight())
+    said = str(caught.value)
+    assert caught.value.outcome == DOWNLOAD_UNREACHABLE
+    assert "certificate" in said and "date and time" in said and "certificate authority" in said
+    assert "Retry when you are connected" not in said
+    assert not [word for word in _DISABLES_VERIFICATION if word in said.lower()], said
+    assert _leftovers(target) == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        # Something closed the connection in the middle of the handshake.
+        urllib.error.URLError(ssl.SSLEOFError(8, "EOF occurred in violation of protocol")),
+        # An alert while the response is read escapes `urlopen` unwrapped.
+        ssl.SSLError(1, "[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error"),
+    ],
+    ids=["cut-off-handshake", "alert-while-reading"],
+)
+def test_a_secure_connection_cut_off_names_the_network_not_the_clock(
+    rail, home, monkeypatch, failure
+) -> None:
+    """No certificate was judged, so the clock cannot be the cause and the sentence must not
+    send anyone to it. Nor to "when you are connected": they are."""
+    target = sign_off(rail, monkeypatch, home)
+    _serve(rail, monkeypatch, failure)
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight())
+    said = str(caught.value)
+    assert caught.value.outcome == DOWNLOAD_UNREACHABLE
+    assert "secure connection" in said and "Retry in a few minutes" in said
+    assert "date and time" not in said and "Retry when you are connected" not in said
+    assert not [word for word in _DISABLES_VERIFICATION if word in said.lower()], said
+    assert _leftovers(target) == []
+
+
+class _RefusingProxy:
+    """An HTTPS proxy on loopback that answers every CONNECT with one status, so nothing goes
+    past it: the proxy half of a proxied download, with no network."""
+
+    def __init__(self, status: int, reason: str) -> None:
+        self.asked: list[str] = []
+        asked = self.asked
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_CONNECT(self) -> None:  # noqa: N802 — the stdlib dispatches on the verb
+                asked.append(self.path)
+                self.send_response(status, reason)
+                if status == 407:
+                    self.send_header("Proxy-Authenticate", 'Basic realm="proxy"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> _RefusingProxy:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "advice"),
+    [
+        (407, "Proxy Authentication Required", "asked for credentials"),
+        (503, "Service Unavailable", "Retry in a few minutes"),
+    ],
+    ids=["proxy-wants-credentials", "proxy-refuses"],
+)
+def test_a_proxy_refusing_the_tunnel_is_read_from_what_urllib_really_raises(
+    rail, home, monkeypatch, status, reason, advice
+) -> None:
+    """Through an HTTPS proxy a refusal is not an HTTPError: `http.client` raises an OSError from
+    the CONNECT, before the source is asked. So this drives the REAL `urlopen` at a proxy that
+    refuses, and the mapping is checked against the stdlib's own words rather than a copy."""
+    target = sign_off(rail, monkeypatch, home)
+    for name in ("NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy", "https_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    # `urlopen` builds its opener once, and the opener reads the proxy settings then: a cached
+    # one would ignore the variable set below.
+    monkeypatch.setattr(rail.urllib.request, "_opener", None)
+    with _RefusingProxy(status, reason) as proxy:
+        monkeypatch.setenv("HTTPS_PROXY", proxy.url)
+        with pytest.raises(rail.DownloadFailed) as caught:
+            asyncio.run(rail.download_weight())
+    said = str(caught.value)
+    assert proxy.asked == ["example.invalid:443"], "the download must have gone to the proxy"
+    assert caught.value.outcome == DOWNLOAD_UNREACHABLE
+    assert f"Tunnel connection failed: {status}" in said and "proxy" in said and advice in said
+    assert "Retry when you are connected" not in said and "pin needs fixing" not in said
+    assert not _asks_for_a_password_in_the_environment(said), said
     assert _leftovers(target) == []
 
 
