@@ -69,7 +69,7 @@ describe('a waiting agent hook', () => {
 
   it('Allow sends the hook as the page read it, seal included', async () => {
     mount()
-    fireEvent.click(await screen.findByRole('button', { name: 'Allow' }))
+    fireEvent.click(await screen.findByRole('button', { name: `Allow the preToolUse hook: ${WAITING.command}` }))
     await waitFor(() => expect(allowAgentHook).toHaveBeenCalledWith(WAITING))
     await waitFor(() => expect(agentHooks).toHaveBeenCalledTimes(2))
   })
@@ -77,7 +77,7 @@ describe('a waiting agent hook', () => {
   it('a refusal — the file changed since, or the owner declined — is shown, not swallowed', async () => {
     allowAgentHook.mockRejectedValue(new Error('“/home/me/.personalclaw/hooks/audit-pre.sh” changed since this page read it.'))
     mount()
-    fireEvent.click(await screen.findByRole('button', { name: 'Allow' }))
+    fireEvent.click(await screen.findByRole('button', { name: `Allow the preToolUse hook: ${WAITING.command}` }))
     expect(await screen.findByText(/changed since this page read it/)).toBeInTheDocument()
   })
 

@@ -138,7 +138,7 @@ export function EngineSection({ app, displayName, onInstalled }: {
   const tail = status.job.log_tail.slice(-6)
 
   return (
-    <section aria-label={`${displayName} engine`} className="mt-2 flex flex-col gap-s rounded-md border border-outline-variant bg-surface-high p-m">
+    <section role="region" aria-label={`${displayName} engine`} className="mt-2 flex flex-col gap-s rounded-md border border-outline-variant bg-surface-high p-m">
       <div data-type="label-l" className="flex items-center gap-2 text-on-surface"><Cpu size={14} aria-hidden="true" /> Engine</div>
 
       {status.installed && !running ? (

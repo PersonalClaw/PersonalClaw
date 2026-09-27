@@ -56,17 +56,17 @@ describe('the heartbeat tasks panel', () => {
     expect(screen.getByText(/Allowed — runs with your agent’s tools/)).toBeInTheDocument()
     expect(screen.getByText('dashboard:s1')).toBeInTheDocument()
     // Allow only where there is something to allow.
-    expect(screen.getAllByRole('button', { name: 'Allow' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^Allow the queued task:/ })).toHaveLength(1)
   })
 
   it('Allow sends the task as the panel listed it, and re-reads the queue', async () => {
     render(<ScheduleDetail job={job('heartbeat-tasks')} {...props} />)
     API.heartbeatTasks.mockResolvedValue([{ ...AGENTS, allowed: true }, OWNERS])
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Allow' }))
+    fireEvent.click(await screen.findByRole('button', { name: `Allow the queued task: ${AGENTS.text}` }))
 
     await waitFor(() => expect(API.allowHeartbeatTask).toHaveBeenCalledWith(AGENTS.text))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Allow the queued task:/ })).toBeNull())
     expect(API.heartbeatTasks).toHaveBeenCalledTimes(2)
   })
 
@@ -74,7 +74,7 @@ describe('the heartbeat tasks panel', () => {
     API.allowHeartbeatTask.mockRejectedValue(new Error('That task is not in HEARTBEAT.md any more: it finished, or it was edited.'))
     render(<ScheduleDetail job={job('heartbeat-tasks')} {...props} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Allow' }))
+    fireEvent.click(await screen.findByRole('button', { name: `Allow the queued task: ${AGENTS.text}` }))
 
     expect(await screen.findByText(/not in HEARTBEAT.md any more/)).toBeInTheDocument()
   })

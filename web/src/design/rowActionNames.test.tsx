@@ -320,13 +320,15 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
     expect(mute, `still sharing one name across rows:\n${mute.map((m) => m.text).join('\n')}`).toEqual([])
   })
 
-  it('the remainder is a measured ceiling of 5 — classify, do not add', () => {
-    // `ChatPage` "Open", `GuardrailsPanel` "Hand back"/"Undo", `PacksPanel` "Install" ×2. Each needs its
-    // own look: a row action gets the subject, a singleton stays as it is. The default for a NEW one is
-    // "not yet reviewed", which is why this is a ceiling rather than a to-do list.
+  it('the remainder is a measured ceiling of 2 — classify, do not add', () => {
+    // `GuardrailsPanel` "Hand back"/"Undo". Each needs its own look: a row action gets the subject, a
+    // singleton stays as it is. The default for a NEW one is "not yet reviewed", which is why this is a
+    // ceiling rather than a to-do list. 5 → 2: `PacksPanel`'s two "Install"s were named, and the three
+    // that arrived later (the waiting hook's and the queued task's "Allow", the attachment chip's
+    // "Open", which is `ChatPage`'s own "Open" moved with the chips) now name their row.
     const mute = rowActions().filter((r) => !r.named)
     expect(mute.length, `unnamed row-scoped actions:\n${mute.map((m) => `${m.rel} "${m.text}"`).join('\n')}`)
-      .toBeLessThanOrEqual(5)
+      .toBeLessThanOrEqual(2)
     expect(mute.length, 'and the census must still see the family it bounds').toBeGreaterThan(0)
   })
 })

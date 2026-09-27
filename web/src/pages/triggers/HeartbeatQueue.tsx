@@ -59,7 +59,8 @@ export function HeartbeatQueue({ reloadKey }: { reloadKey: number | string }) {
               </div>
             </div>
             {!t.allowed && (
-              <Button size="sm" variant="secondary" onClick={() => allow(t)} loading={busy === t.text} disabled={busy !== ''}>Allow</Button>
+              <Button size="sm" variant="secondary" onClick={() => allow(t)} loading={busy === t.text} disabled={busy !== ''}
+                ariaLabel={`Allow the queued task: ${t.text}`}>Allow</Button>
             )}
           </li>
         ))}
