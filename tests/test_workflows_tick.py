@@ -398,13 +398,18 @@ class TestLoop:
         assert loop_should_continue(node, iteration=3)[0] is False
 
     def test_max_iterations_is_a_hard_cap(self) -> None:
+        """A condition that resolves and is never met: the cap is what stops it. (One that cannot
+        resolve stops the loop as broken before the cap is asked, the test after this one.)"""
+        from personalclaw.workflows.bindings import BindingContext
+
         node = _node(
             {
                 **self.LP,
                 "config": {"mode": "until", "condition": "{{inputs.never}}", "max_iterations": 2},
             }
         )
-        keep, reason = loop_should_continue(node, iteration=2)
+        never = BindingContext(inputs={"never": False})
+        keep, reason = loop_should_continue(node, iteration=2, ctx=never)
         assert keep is False and reason == "max_iterations"
 
     def test_an_unresolvable_until_condition_stops_rather_than_spins(self) -> None:

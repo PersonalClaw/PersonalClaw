@@ -39,6 +39,10 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
   const wsRef = useRef<WebSocket | null>(null)
   const [status, setStatus] = useState<Status>('connecting')
   const [exitCode, setExitCode] = useState<number | null>(null)
+  // Why the session did not open, in the server's words: a sandboxed tab whose tier is gone is
+  // refused with a sentence rather than given a shell on this computer, and the sentence is the
+  // only place the user learns which it was.
+  const [errorText, setErrorText] = useState('')
   // restart nonce — bumping it tears down + recreates the session/WS in place.
   const [restartKey, setRestartKey] = useState(0)
   const sessionIdRef = useRef(tab.id)
@@ -132,7 +136,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
             // claimed by the flush and burned against a pane already showing
             // "Process exited" (issue 598). Restart re-registers via [restartKey].
             if (m.type === 'exited') { setExitCode(typeof m.code === 'number' ? m.code : null); setStatus('exited'); unregisterTerminal(boundSession); onExited() }
-            else if (m.type === 'error') setStatus('error')
+            else if (m.type === 'error') { setErrorText(typeof m.message === 'string' ? m.message : ''); setStatus('error') }
           } catch { /* pong / noise */ }
           return
         }
@@ -196,12 +200,15 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
 
   async function restart() {
     // dead session id is gone server-side → create a fresh one, then reconnect.
-    setStatus('connecting'); setExitCode(null)
+    setStatus('connecting'); setExitCode(null); setErrorText('')
     try {
       const r = await api.createTerminal(tab.cwd, tab.sandbox)
       sessionIdRef.current = r.session_id
       onSession?.(r.session_id)  // tell the host so its PTY teardown tracks the live id
-    } catch { /* keep old id; connect will retry */ }
+    } catch {
+      // keep old id; connect will retry. The id carries the tab's sandbox tier, so that reopen is
+      // in the same tier or refused with the server's sentence, never a shell on this computer.
+    }
     termRef.current?.clear()
     setRestartKey((k) => k + 1)
   }
@@ -243,9 +250,11 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-canvas/70 backdrop-blur-sm">
           <div className="text-center">
             <div className="text-on-surface text-[0.9375rem]" style={fvs(500)}>
-              {status === 'error' ? 'Session error' : exitCode ? `Process exited (code ${exitCode})` : 'Process exited'}
+              {status === 'error' ? 'The terminal did not open' : exitCode ? `Process exited (code ${exitCode})` : 'Process exited'}
             </div>
-            <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">The shell session has ended.</div>
+            <div className="mt-0.5 max-w-md px-l text-on-surface-low text-[0.8125rem]">
+              {status === 'error' ? (errorText || 'The shell could not be started.') : 'The shell session has ended.'}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={restart}

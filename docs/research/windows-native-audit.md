@@ -241,7 +241,7 @@ until a port is decided.
   is Linux-only (`:106-117`).
 - **Provider registry** — `sandbox_providers/` with a `none` provider
   (`none.py`, `available()` always `True`) that adds no isolation; `resolve_provider`
-  falls back to it so an unavailable backend never blocks a spawn.
+  returns it when no tier is named (a named tier that is not installed is refused).
 
 **Why it matters.** On native Windows every one of these resolves to "none": no
 path isolation, no CPU/memory/FD ceilings, no OOM protection. An agent-run `bash`

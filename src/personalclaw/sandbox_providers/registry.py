@@ -4,7 +4,8 @@ Mirrors :mod:`personalclaw.sync_transports.registry` and ``channel_transports``:
 builtin self-registers on import (:func:`register_builtin_providers`), and an installed
 ``sandbox`` app is registered on enable / removed on disable by
 :class:`personalclaw.providers.registry.SandboxTypeHandler`. Spawn sites resolve the configured
-backend by name through :func:`get_provider`, falling back to ``none``.
+backend by name through :func:`resolve_provider`: no name is ``none``, and a name that is not
+registered is refused, never ``none``.
 """
 
 from __future__ import annotations
@@ -52,16 +53,26 @@ def register_builtin_providers() -> None:
 
 
 def resolve_provider(name: str = "") -> "SandboxProvider":
-    """Return the named provider, or the ``none`` builtin as the always-available fallback.
+    """Return the named provider; the ``none`` builtin when no tier is named.
 
-    A sandbox is a best-effort bound: an unknown/unavailable name must never BLOCK a spawn, so
-    this resolves to ``none`` rather than raising. Ensures the builtin is registered first.
+    A NAMED tier that is not registered raises :class:`SandboxUnavailableError`, the same refusal
+    a registered tier gives when its runtime is down. It used to resolve to ``none``, so whatever
+    asked for isolation ran on the host instead, with nothing to say so: an agent session resumed
+    after a restart while its tier's app was off, a second opinion inheriting a stalled run's
+    tier. Ensures the builtins are registered first.
     """
+    from personalclaw.sandbox_providers.base import SandboxUnavailableError
     from personalclaw.sandbox_providers.none import NONE_PROVIDER_NAME, NoneSandboxProvider
 
     if NONE_PROVIDER_NAME not in _providers:
         register_builtin_providers()
-    provider = _providers.get(name) if name else None
+    if not name or name == NONE_PROVIDER_NAME:
+        return _providers.get(NONE_PROVIDER_NAME) or NoneSandboxProvider()
+    provider = _providers.get(name)
     if provider is None:
-        provider = _providers.get(NONE_PROVIDER_NAME) or NoneSandboxProvider()
+        raise SandboxUnavailableError(
+            what=f"{name} sandbox requested but not installed",
+            why="no sandbox tier by that name is installed and turned on.",
+            fix="turn on the app that provides it, or choose a different sandbox tier.",
+        )
     return provider

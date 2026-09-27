@@ -305,8 +305,14 @@ async def _run_step_durable(
         str(out_path),
         *worker,
     ]
-    if not await tmux_substrate.new_session(
-        name, workspace=str(cwd), command=command, env=session_env
+    # `new_session` is True only while the step is running. A step that already FINISHED in the
+    # session reads False too, and its rc file says so: reading it is the result, and falling back
+    # would run the step a second time.
+    if (
+        not await tmux_substrate.new_session(
+            name, workspace=str(cwd), command=command, env=session_env
+        )
+        and not rc_path.exists()
     ):
         return None
 

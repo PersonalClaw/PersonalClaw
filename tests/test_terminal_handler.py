@@ -981,6 +981,9 @@ class TestPersistence:
             def __init__(self, argv):
                 self.argv = ["fake-tier-run", *argv]
 
+            def cleanup(self):
+                pass
+
         class _Provider:
             def wrap(self, _spec, argv):
                 return _Handle(argv)
@@ -989,8 +992,13 @@ class TestPersistence:
             "personalclaw.sandbox_providers.get_provider",
             lambda name: _Provider() if name == "fake-tier" else None,
         )
-        if tier:
-            monkeypatch.setitem(terminal._pending_sandbox, "tier-sess", tier)
+
+        async def _no_tmux_sessions():
+            return []
+
+        monkeypatch.setattr(tmux_substrate, "list_sessions", _no_tmux_sessions)
+        # A session opened in a tier carries it in its id.
+        sid = f"tier-sess@{tier}" if tier else "tier-sess"
 
         captured: dict = {}
         worker_fds: list[int] = []
@@ -1022,13 +1030,13 @@ class TestPersistence:
 
         try:
             async with TestClient(TestServer(_make_app(registry=registry))) as client:
-                async with client.ws_connect("/api/ws/terminal/tier-sess") as ws:
+                async with client.ws_connect(f"/api/ws/terminal/{sid}") as ws:
                     await ws.send_str(json.dumps({"type": "ping"}))
                     msg = await ws.receive(timeout=3)
                     assert json.loads(msg.data) == {"type": "pong"}
                     await ws.close()
-                persistent = registry["tier-sess"].persistent
-                await terminal._kill_session(registry["tier-sess"])
+                persistent = registry[sid].persistent
+                await terminal._kill_session(registry[sid])
         finally:
             for fd in worker_fds:
                 os.close(fd)

@@ -102,8 +102,10 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
       const labels = loadLabels()
       const live = (r.sessions || []).filter((s) => s.alive !== false)
       if (live.length) {
+        // The tier comes back with the tab: without it, Restart on a restored sandboxed tab
+        // opened a shell on this computer.
         const restoredTabs = live.map((s, i) => ({
-          id: s.session_id, cwd: s.cwd, shell: s.shell,
+          id: s.session_id, cwd: s.cwd, shell: s.shell, sandbox: s.sandbox || undefined,
           label: labels[s.session_id] || `Session ${i + 1}`,
           custom: !!labels[s.session_id],
         }))

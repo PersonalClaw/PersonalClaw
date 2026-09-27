@@ -89,16 +89,20 @@ def live():
     return out
 
 
-if sub == "has-session":
+if sub == "list-panes" and "-t" in argv:
+    # `list-panes -s -t =<name> -F '#{{pane_dead}}'`: one live pane, or not on the server at all
     want = argv[argv.index("-t") + 1].lstrip("=")
-    sys.exit(0 if any(n == want for n, _ in live()) else 1)
+    if not any(n == want for n, _ in live()):
+        sys.exit(1)
+    print("0")
+    sys.exit(0)
 if sub == "list-panes":
     for n, cwd in live():
-        print(n + "\\t" + cwd)
+        print(n + "\\t" + cwd + "\\t0")
     sys.exit(0)
 if sub == "list-sessions":
     for n, _ in live():
-        print(n)
+        print(n + "\\t")
     sys.exit(0)
 sys.exit(0)
 '''
