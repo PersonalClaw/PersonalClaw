@@ -180,12 +180,22 @@ says what that means.
   resolve only its own keys (`config/secret_refs.py`). A change to a switched-off app's
   settings or instances is saved and loads nothing until the app is switched on, and neither
   starts an app this core cannot host (`providers/routes.py::apply_saved_settings`).
+- **Your models are yours.** A model provider says where your model calls go and which of
+  your keys goes with them, and a binding says which model each use runs on; the model your
+  chats run on decides the tool calls your agent makes. An app that could write either could
+  send your chats to a server of its choosing, or answer them itself. Every route under
+  `/api/model-providers` and `/api/models` is owner-only for an app, reads included
+  (`ROUTE_AUTHZ` `OwnerOnly` rows; both are `SECURITY_ROUTE_FAMILIES` and
+  `READ_DECLARED_FAMILIES`), and so is the onboarding wizard's one-click bind
+  (`OWNER_ONLY_API_PATHS["/api/onboarding/local-model/bind"]`), which adds a model provider
+  and moves your chats onto it.
 - **A new route fails closed.** Every write route under a family that decides what runs
   as you, whether it asks first, or who may reach you (`SECURITY_ROUTE_FAMILIES`), and every
-  read under your conversation families, your notification log and your providers
-  (`READ_DECLARED_FAMILIES`), is either owner-only or declared `AppMay` with its reason. An
-  undeclared one is refused to every app token at runtime (`undeclared_security_route`), and
-  `tests/test_security_posture_rail.py` fails the build on it.
+  read under your conversation families, your notification log, your providers and your
+  models (`READ_DECLARED_FAMILIES`), is either owner-only or declared `AppMay` with its
+  reason. An undeclared one is refused to every app token at runtime
+  (`undeclared_security_route`), and `tests/test_security_posture_rail.py` fails the build on
+  it.
 - **An automation that approves itself asks you first.** The owner's own write that makes
   a trigger's or a workflow step's agent approve its own tool calls (`approval_mode:
   auto`) or gives it write access (`capability: mutating`) needs `"confirm": true`
@@ -343,7 +353,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 |---|---|---|---|
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory; an app token cannot write your agents, skills, prompts or routing notes, or post into your chats, rooms or inbox answers | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing); `apps/permissions.py` (`ROUTE_AUTHZ`, `OWNER_ONLY_API_PATHS["/api/onboarding/import"]`, `OWNER_ONLY_API_PATHS["/api/send-message"]`) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
-| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them, each provider held to its own app | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_ownership_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
+| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them, each provider held to its own app, your model providers and model bindings the owner's | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_ownership_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
 | **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree (tooling left out of both, nothing skipped in what remains, an unreadable file disclosed); staging never follows a link out of the bundle; a registry listing names a public `https://` repo, checked again at every connection its fetch makes | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`, `never_installed`); `apps/catalog.py::listing_repo_refusal`; `net/git.py::run_git_guarded` | enforced |
 | **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist; an app token cannot define an MCP server or an automation, and the owner confirms an automation step that approves its own tool calls | `security.py`; `sandbox.py`; `apps/permissions.py` (`OWNER_ONLY_API_PATHS["/api/mcp"]`, `ROUTE_AUTHZ`); `automation_posture.py` | enforced *(an installed app's own code runs as you: documented limitation, [limitations.md](limitations.md) §7)* |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes; an app writes memory, lessons included, only with its `memory` grant | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py`; `apps/permissions.py::MEMORY_API_PATHS` | enforced |

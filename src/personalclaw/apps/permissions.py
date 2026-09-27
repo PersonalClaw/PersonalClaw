@@ -407,6 +407,16 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
         "bringing your setup over from other agent tools — their instructions, skills and "
         "MCP servers"
     ),
+    # The wizard's one-click bind (`seed_local_model.bind_local_model`) adds a model provider at
+    # the endpoint the request names and binds your chat model to it, and your embedding model
+    # when the server offers one: the owner-only `POST /api/model-providers` and
+    # `PUT /api/models/active/{use_case}` in one request. Its endpoint check admits loopback,
+    # where an app's own backend listens (`backend_runtime.py`), and the model it binds answers
+    # every turn you send.
+    "/api/onboarding/local-model/bind": (
+        "moving your chats onto a model server on this machine or your network — it adds a "
+        "model provider there, and your chats run on its model"
+    ),
     # ── Speaking as your agent ──
     # The schedules' delivery door. `session: "origin"` with a `caller_session` of `cron:<id>`
     # appends the text to the chat that schedule came from and starts a turn there, with your
@@ -531,6 +541,16 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: and no other. Its reads are declared as well (:data:`READ_DECLARED_FAMILIES`), since another
 #: app's settings say where it connects even with the credentials masked, and the list answers an
 #: app with its own providers only.
+#:
+#: **Your models are yours.** A model provider says where your model calls go and which of your
+#: keys goes with them, and a binding says which model each use runs on. Your chats and agents
+#: send your chat model what you say, and its answers decide the tool calls your agent makes with
+#: your tools. An app that could write either could send your chats to a server of its choosing,
+#: or answer them itself. So every write in ``/api/model-providers`` and ``/api/models`` is the
+#: owner's: a provider, a binding, the routing table and its proposals, a use's settings, the
+#: Hugging Face token, a download, a runtime install, a local model. Their reads are declared as
+#: well (:data:`READ_DECLARED_FAMILIES`) and are the owner's too; no shipped app reads them, and
+#: one that needs a read gets an ``AppMay`` row saying why it is safe.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -565,17 +585,22 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/notifications": "your notifications — what reaches you, and how loudly",
     "/api/lexicon": "your vocabulary, and the corrections that rewrite what you dictate",
     "/api/providers": "providers — where each one connects, and the credential it connects with",
+    "/api/model-providers": "model providers — where your model calls go, and the key they go with",
+    "/api/models": (
+        "your models — which one each use runs on, and the models this machine downloads, "
+        "installs and runs"
+    ),
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
-#: conversations, what reached you, and each app's provider settings. A read here answers with a
-#: transcript, a list of whose conversations exist, the notifications that reached you, or where a
-#: provider connects, so it is refused to every app until :data:`ROUTE_AUTHZ` declares it
-#: (:func:`undeclared_security_route`): default-deny, where a read anywhere else is the ordinary
-#: allowlist's business. A read that names one conversation, or one app's provider, carries ``owns``
-#: and reaches only the calling app's own; a list is ``AppMay`` because its handler answers an app
-#: with the app's own conversations (or notifications, or providers) and nothing else; the rest are
-#: the owner's.
+#: conversations, what reached you, each app's provider settings, and your models. A read here
+#: answers with a transcript, a list of whose conversations exist, the notifications that reached
+#: you, where a provider connects, or which models your work runs on and how it went, so it is
+#: refused to every app until :data:`ROUTE_AUTHZ` declares it (:func:`undeclared_security_route`):
+#: default-deny, where a read anywhere else is the ordinary allowlist's business. A read that names
+#: one conversation, or one app's provider, carries ``owns`` and reaches only the calling app's own;
+#: a list is ``AppMay`` because its handler answers an app with the app's own conversations (or
+#: notifications, or providers) and nothing else; the rest are the owner's.
 READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
     {
         "/api/chat",
@@ -586,6 +611,8 @@ READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
         "/api/reveal",
         "/api/notifications",
         "/api/providers",
+        "/api/model-providers",
+        "/api/models",
     }
 )
 
@@ -791,6 +818,131 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/providers/{name}/instances/{id}/test": AppMay(
         "tests an instance of the app's own provider; it runs only the app's own code",
         owns=_OWN_APP,
+    ),
+    # ── model providers (yours: where your model calls go, and with which key) ──
+    "GET /api/model-providers": OwnerOnly(
+        "your model providers — where each one connects, and whether it holds a key"
+    ),
+    "POST /api/model-providers": OwnerOnly(
+        "adding a model provider — a place your model calls can go, and the key they go with"
+    ),
+    "PUT /api/model-providers/{name}": OwnerOnly(
+        "changing a model provider — where the model calls it serves go, and the key they go with"
+    ),
+    "DELETE /api/model-providers/{name}": OwnerOnly(
+        "removing a model provider, and every model binding that runs on it"
+    ),
+    "POST /api/model-providers/{name}/test": OwnerOnly(
+        "testing a model provider — the gateway connects to it with what you saved"
+    ),
+    "POST /api/model-providers/{name}/selftest": OwnerOnly(
+        "a real inference for each thing a model provider serves — your tokens, or this "
+        "machine's compute"
+    ),
+    "GET /api/model-providers/{name}/models": OwnerOnly(
+        "the models a model provider offers, asked of the provider itself"
+    ),
+    "GET /api/model-providers/{name}/search": OwnerOnly(
+        "searching a model provider's catalog of models to download"
+    ),
+    "GET /api/model-providers/{name}/show": OwnerOnly(
+        "a model's details, asked of the model provider that serves it"
+    ),
+    "POST /api/model-providers/{name}/pull": OwnerOnly(
+        "downloading a model through a model provider"
+    ),
+    "POST /api/model-providers/{name}/models/delete": OwnerOnly(
+        "deleting a model from a model provider"
+    ),
+    # ── your models (which one each use runs on, and the models this machine holds) ──
+    "GET /api/models/active": OwnerOnly("which model each of your uses runs on"),
+    "PUT /api/models/active/{use_case}": OwnerOnly(
+        "which model a use runs on — each use sends its model what it handles, and your chat "
+        "model's answers decide what your agent does with your tools"
+    ),
+    "GET /api/models/chat": OwnerOnly("the models your chats and agents can run on"),
+    "GET /api/models/available": OwnerOnly(
+        "every model your providers and this machine offer, and how each fits this machine"
+    ),
+    "GET /api/models/use-cases/{use_case}/settings": OwnerOnly(
+        "a use's settings — how its model is routed, and how your voice listens and speaks"
+    ),
+    "PUT /api/models/use-cases/{use_case}/settings": OwnerOnly(
+        "a use's settings — how its model is routed, and how your voice listens and speaks"
+    ),
+    "GET /api/models/routing-policy": OwnerOnly(
+        "which model your routing sends each kind of work to first, and why"
+    ),
+    "PUT /api/models/routing-policy": OwnerOnly(
+        "which model your routing sends each kind of work to first"
+    ),
+    "GET /api/models/routing-proposals": OwnerOnly(
+        "the routing changes proposed to you, and the evidence from your work behind them"
+    ),
+    "POST /api/models/routing-proposals/{id}/accept": OwnerOnly(
+        "accepting a routing proposal — it changes which model runs a kind of your work"
+    ),
+    "DELETE /api/models/routing-proposals/{id}": OwnerOnly(
+        "declining a routing proposal — the same change is not proposed again for a while"
+    ),
+    "GET /api/models/telemetry": OwnerOnly(
+        "how each model did on your work — its cost, its speed and your feedback"
+    ),
+    "GET /api/models/health": OwnerOnly(
+        "how your model providers are answering — the failures and latency of your model calls"
+    ),
+    "GET /api/models/hf-token/status": OwnerOnly(
+        "your Hugging Face token — whether one is saved, and which account it signs in as"
+    ),
+    "PUT /api/models/hf-token": OwnerOnly(
+        "your Hugging Face token — the account your model downloads sign in as"
+    ),
+    "DELETE /api/models/hf-token": OwnerOnly("removing your Hugging Face token"),
+    "GET /api/models/downloads": OwnerOnly(
+        "the models this machine is downloading, and has just downloaded"
+    ),
+    "POST /api/models/downloads": OwnerOnly("downloading a model onto this machine"),
+    "DELETE /api/models/downloads/{id}": OwnerOnly("cancelling a model download"),
+    "GET /api/models/downloads/{id}/stream": OwnerOnly("a model download's progress"),
+    "GET /api/models/downloads/cleanup-candidates": OwnerOnly(
+        "the leftovers of unfinished model downloads on this machine"
+    ),
+    "POST /api/models/downloads/cleanup": OwnerOnly(
+        "deleting the leftovers of unfinished model downloads from this machine"
+    ),
+    "POST /api/models/sidecar/{provider}/install": OwnerOnly(
+        "installing a model runtime on this machine — a Python environment, the packages it "
+        "names, and its model weights"
+    ),
+    "DELETE /api/models/sidecar/{provider}/install": OwnerOnly(
+        "removing a model runtime this machine installed"
+    ),
+    "GET /api/models/sidecar/{provider}/install/status": OwnerOnly(
+        "a model runtime's install on this machine — its steps, and its log"
+    ),
+    "GET /api/models/loaded": OwnerOnly(
+        "which models are in this machine's memory, and how much memory is left"
+    ),
+    "POST /api/models/unload": OwnerOnly("taking a model out of this machine's memory"),
+    "GET /api/models/local/{provider}/health": OwnerOnly(
+        "whether a model runtime on this machine answers"
+    ),
+    "GET /api/models/local/{provider}/search": OwnerOnly(
+        "searching a model runtime's catalog of models to download"
+    ),
+    "POST /api/models/local/{provider}/selftest": OwnerOnly(
+        "a real inference on a model on this machine — it can load the model into memory"
+    ),
+    "DELETE /api/models/local/{provider}/{model}": OwnerOnly(
+        "deleting a downloaded model from this machine"
+    ),
+    "GET /api/models/embedding/reindex": OwnerOnly("your embedding re-index runs"),
+    "POST /api/models/embedding/reindex": OwnerOnly(
+        "re-embedding your knowledge and memory with the embedding model you chose, in place of "
+        "the vectors they have"
+    ),
+    "GET /api/models/embedding/reindex/{id}/stream": OwnerOnly(
+        "an embedding re-index run's progress"
     ),
     # ── packs ──
     "POST /api/packs/bundled/{name}/install": OwnerOnly(_INSTALLS_PACK),

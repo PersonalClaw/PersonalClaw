@@ -150,10 +150,21 @@ the gateway launches, so no app reaches it, reads included, as with `/api/mcp`. 
 settings resolve only keys stored under that app, so an app pointing its own provider
 somewhere sends only its own key there.
 
+Your models are yours. A model provider says where your model calls go and which of your
+keys goes with them, and a binding says which model each use runs on. Your chats and agents
+send your chat model what you say, and its answers decide the tool calls your agent makes.
+So under `/api/model-providers` and `/api/models` an app may not add, change, test or remove
+a model provider, bind a use to a model, change the routing table or a use's settings, set
+or clear your Hugging Face token, download, install, delete or unload a model, or re-embed
+what you stored. It may not read them either: your providers, your bindings, your routing
+table and your usage are yours. The onboarding wizard's one-click bind of a local model
+(`/api/onboarding/local-model/bind`) is refused for the same reason: it adds a model provider
+and moves your chats onto it.
+
 Every write route in these families, and every read in your conversation families, your
-notification log and your providers, has to be declared one way or the other: one that is not
-is refused to every app until someone declares it, and `tests/test_security_posture_rail.py`
-fails the build on it.
+notification log, your providers and your models, has to be declared one way or the other: one
+that is not is refused to every app until someone declares it, and
+`tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
 because `/api/config` also carries ordinary settings an app may legitimately write: an
