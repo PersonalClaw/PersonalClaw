@@ -841,6 +841,18 @@ jobs:
       - name: a stale tab's save never overwrites another tab's (web/e2e/staleWrite.spec.ts)
         working-directory: web
         run: npx playwright test e2e/staleWrite.spec.ts --project=chromium
+      # THE COMPOSER'S HALO, AS PAINTED. `ui/DotGlow`'s bloom reaches ~180px past the composer inside
+      # a layer that clips at its own box, so on an ongoing chat it ran into the page bottom and the
+      # rail and stopped in a straight line, and while a reply streamed a second light sat behind the
+      # transcript (#3611). Both are painted pixels, which jsdom does not produce. The spec reads thin
+      # strips at the stage's edges against the canvas colour, with a positive control that must see
+      # the halo where it is brightest. It compares against no committed baseline, so it is
+      # platform-neutral, and it drives the scripted turns this job's harness already serves. Measured
+      # before wiring: 7 passed in 54s at this job's 3 workers. Named explicitly: a spec not listed
+      # here runs nowhere.
+      - name: the composer's halo fades before every edge (web/e2e/chatHalo.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/chatHalo.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7
