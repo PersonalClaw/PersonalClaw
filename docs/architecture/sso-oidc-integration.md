@@ -9,9 +9,9 @@ deletion reds a test instead of leaving the note pointing somewhere else. (It us
 numbers, and most of them had drifted.) Where the as-built contradicts an assumption, the as-built
 wins and the contradiction is stated.
 
-Read [`security.md`](security.md#auth-modes) §"Auth modes" first — it already records that `oauth2`
-is declared and unreachable, and that wiring the selector "carries one design question worth
-settling deliberately rather than in passing". This note settles it.
+Read [`security.md`](security.md#auth-modes) §"Auth modes" first. The gateway has two auth modes,
+`none` and `local_token`; an `oauth2` mode that no configuration could select was deleted along
+with its verifier. This note is how SSO would be added without bringing back a mode.
 
 ---
 
@@ -67,54 +67,44 @@ opens nothing. Three are the login front door — `/login`, `/api/auth/login` an
 device-code and pairing completion, the pairing page, and the MCP sign-in callback
 `/api/mcp/oauth/callback` — the closest precedent for an SSO callback (§2).
 
-### 1.2 The declared-but-unreachable fourth thing — and why it is not the answer
+### 1.2 The deleted `oauth2` mode — and why it was not the answer
 
-`AuthMode.OAUTH2` exists (`src/personalclaw/auth/modes.py::AuthMode`) and a complete OIDC JWT
-verifier ships with it (`src/personalclaw/auth/oidc.py::OidcVerifier`, with `cryptography`
-imported lazily in `src/personalclaw/auth/oidc.py::OidcVerifier.__init__`). It is wired:
-`src/personalclaw/dashboard/token_auth.py::auth_middleware` branches on the mode and constructs an
-`OidcVerifier` in its `OAUTH2` branch.
+An `AuthMode.OAUTH2` used to exist, with a complete OIDC JWT verifier and a branch of
+`src/personalclaw/dashboard/token_auth.py::auth_middleware` that used it, but no configuration
+could select it: `src/personalclaw/auth/modes.py::SELECTABLE_MODES` held only `none` and
+`local_token`, as it still does. It was deleted rather than wired, because selecting it would have
+been the wrong fix. The branch **replaced the entire middleware** with a bearer-JWT validator:
 
-It is also **not selectable**. `src/personalclaw/auth/modes.py::SELECTABLE_MODES` contains only
-`none` and `local_token`; `oauth2` and `api_key` are in
-`src/personalclaw/auth/modes.py::UNSELECTABLE_MODES`; and
-`src/personalclaw/auth/modes.py::AuthConfig.from_env` returns
-`src/personalclaw/auth/modes.py::classify_auth_mode_request`'s `effective` mode, which for `oauth2`
-is `LOCAL_TOKEN` plus a warning. The only three runtime construction sites are all `from_env()`:
-`src/personalclaw/dashboard/server.py::start_dashboard`,
-`src/personalclaw/dashboard/api_server.py::start_api_server` and
-`src/personalclaw/dashboard/origin.py::auth_is_off`. So the missing half is **selection, not
-verification.**
-
-But selection alone would be the wrong fix, because of *what* the OAUTH2 branch does. It
-**replaces the entire middleware** with a bearer-JWT validator:
-
-- it reads only `Authorization: Bearer` — browsers do not send that on navigations, so it cannot
-  serve a dashboard SSO login at all;
-- it sets `request["user"] = claims.get("sub", "")` and **never sets `request["app"]`**, which
+- it read only `Authorization: Bearer` — browsers do not send that on navigations, so it could
+  not serve a dashboard SSO login at all;
+- it set `request["user"]` from the JWT's `sub` and **never set `request["app"]`**, which
   `src/personalclaw/dashboard/token_auth.py::token_auth_middleware._adopt` does on every path.
   `request["app"]` is what the app permission sandbox
   (`src/personalclaw/dashboard/server.py::app_permission_middleware`) keys on — the identical
   defect class [`security.md`](security.md) §"The `AUTH_MODE=none` sandbox fix" records;
-- it has no cookie, no CSRF/origin check, no IP binding
+- it had no cookie, no CSRF/origin check, no IP binding
   (`src/personalclaw/dashboard/token_auth.py::bind_token_ip`), and no SEL audit row on grant or
   deny — all of which the `local_token` path has;
-- its refusal is a bare `{"error": "Unauthorized"}`
-  (`src/personalclaw/dashboard/token_auth.py::_deny_401`), where every refusal of a browser's
-  sign-in on the `local_token` path carries a sentence saying why and how to sign in
+- its refusal was a bare `{"error": "Unauthorized"}`, where every refusal of a browser's sign-in
+  on the `local_token` path carries a sentence saying why and how to sign in
   (`src/personalclaw/dashboard/token_auth.py::refusal_notice`);
-- it removes the `?token=` escape hatch that the login module deliberately preserves ("Login never
+- it removed the `?token=` escape hatch that the login module deliberately preserves ("Login never
   becomes the only way in") so a credential problem cannot brick the box.
 
-In the vocabulary of §1.1, the OAUTH2 branch is a **second validation path**. That is precisely
-the thing the login module's rule forbids. Therefore:
+In the vocabulary of §1.1 it was a **second validation path**. That is precisely the thing the
+login module's rule forbids. Therefore:
 
 > **Design decision.** Browser SSO is one more **ISSUER** of the existing session token — a new
-> door — not a second validator. The IdP proves who the operator is; `mint_session()` remains the
-> only thing that mints a session and `token_auth_middleware` remains the only thing that
-> validates one.
+> door — not a second validator and not a mode. The IdP proves who the operator is;
+> `mint_session()` remains the only thing that mints a session and `token_auth_middleware`
+> remains the only thing that validates one.
 
-The fate of the existing OAUTH2 middleware branch is a separate ruling — see §4, control **C4**.
+The mode switch itself stays what it is today: `src/personalclaw/auth/modes.py::AuthConfig.from_env`
+returns `src/personalclaw/auth/modes.py::classify_auth_mode_request`'s `effective` mode, and the
+only three runtime construction sites are all `from_env()`:
+`src/personalclaw/dashboard/server.py::start_dashboard`,
+`src/personalclaw/dashboard/api_server.py::start_api_server` and
+`src/personalclaw/dashboard/origin.py::auth_is_off`.
 
 ### 1.3 The two identity strings this must respect (issue #960)
 
@@ -164,37 +154,22 @@ does not block it: this design reuses the *fields*, whatever their labels end up
 make the rename more valuable, because after SSO the sign-in side may be provisioned rather than
 typed, and a label that says "attribution" survives that change while "Username" does not.
 
-### 1.4 What the shipped verifier gives us, and two measured gaps
+### 1.4 What an OIDC provider needs, and what the gateway already has
 
-Adopted **unchanged** (`src/personalclaw/auth/oidc.py`):
+**The back half: an ID-token verifier.** None ships. The deleted `oauth2` mode's verifier showed
+the shape one needs, and the two places it fell short, both measured before it was deleted:
 
-- JWKS fetch with a 1-hour cache (`src/personalclaw/auth/oidc.py::_JWKS_TTL_SECS`) and
-  stale-on-refresh-failure fallback (`src/personalclaw/auth/oidc.py::OidcVerifier._fetch_jwks`);
-- signing-key selection by `kid` with RSA / EC / `x5c` handling
-  (`src/personalclaw/auth/oidc.py::OidcVerifier._find_key`);
-- the algorithm allowlist — RS/ES 256/384/512, everything else refused, which is what rejects the
-  `alg: none` and HMAC-confusion attacks — and `exp`, `nbf`, `iss` and `aud` validation, both in
-  `src/personalclaw/auth/oidc.py::OidcVerifier.verify`;
-- lazy `cryptography` import so the dependency is never loaded outside this mode
-  (`OidcVerifier.__init__`), and the module-level ban on importing auth libraries stated in the
-  module docstring of `src/personalclaw/auth/modes.py`;
-- the all-or-nothing return contract: `verify()` raises
-  `src/personalclaw/auth/oidc.py::OidcVerificationError` and "never returns partial claims".
+- a JWKS fetch with a short cache and a stale-on-refresh-failure fallback, and signing-key
+  selection by `kid` (RSA, EC and `x5c`) that does **not** treat a missing `kid` as "any key";
+- an algorithm allowlist — RS/ES 256/384/512, everything else refused, which is what rejects the
+  `alg: none` and HMAC-confusion attacks — and `exp`, `nbf`, `iss` and `aud` validation;
+- an all-or-nothing contract: it raises, and never returns partial claims;
+- **what it lacked:** a `nonce` check, which binds the ID token to the authorization request, and
+  discovery. It built the JWKS URI as `{issuer}/.well-known/jwks.json`, which real IdPs do not
+  publish there (Okta serves `/oauth2/v1/keys`, Entra `/discovery/v2.0/keys`), so against most
+  providers it would have fetched a 404 and refused everyone.
 
-Two gaps, **measured, not assumed** — both are why this is a spike and not a one-line selector fix:
-
-1. **No token-endpoint exchange, and no `nonce` check.** `OidcVerifier.verify()` validates a JWT
-   you already hold; nothing in the module performs an authorization-code exchange, and `nonce` is
-   never read (`verify` checks `exp`/`nbf`/`iss`/`aud` and nothing else). A browser
-   authorization-code flow needs both — the code→token POST, and the `nonce` echo check that binds
-   the ID token to the authorization request. The verifier is the *back half* of the flow.
-2. **The JWKS URI is hardcoded, not discovered.** `OidcVerifier.__init__` builds
-   `f"{issuer}/.well-known/jwks.json"`. There is no reference to
-   `/.well-known/openid-configuration` anywhere in the module. Real IdPs publish their JWKS
-   elsewhere (Okta at `/oauth2/v1/keys`, Entra at `/discovery/v2.0/keys`), so against most
-   providers the current verifier fetches a 404 and raises. Discovery is required work, not polish.
-
-**The front half exists elsewhere in the gateway now.** A remote MCP server's OAuth sign-in
+**The front half exists in the gateway already.** A remote MCP server's OAuth sign-in
 (`src/personalclaw/mcp_oauth.py`) discovers an authorization server's endpoints through RFC 8414
 and OpenID configuration (`src/personalclaw/mcp_oauth.py::_server_metadata_urls`), runs the code
 flow with PKCE S256 and a single-use 256-bit `state`
@@ -202,12 +177,8 @@ flow with PKCE S256 and a single-use 256-bit `state`
 (`src/personalclaw/mcp_oauth.py::finish_sign_in`), and sends every request through the egress
 guard under its own policy (`src/personalclaw/net/policy.py::mcp_sign_in_egress_policy`). It is
 not an identity login — it obtains an access token for a resource and verifies no ID token, so the
-`nonce` check is still new — but it is the precedent SSO-1 and SSO-4 should build on, not a second
-implementation of the same flow beside it.
-
-A third, lower-severity observation: `OidcVerifier._find_key` treats a missing `kid` as "any key
-matches" and returns the first usable one. Acceptable for a single-key IdP; worth tightening when
-the flow is real.
+verifier and the `nonce` check are still new — but it is the precedent SSO-1 and SSO-4 should
+build on, not a second implementation of the same flow beside it.
 
 ---
 
@@ -225,8 +196,8 @@ GET /api/auth/       │  SsoProvider.authorize_url(state, nonce, redirect_uri) 
                      └──────────────────────────────────────────────────────────────────┘
                      ┌──────────────────────────────────────────────────────────────────┐
 GET /api/auth/       │  SsoProvider.exchange(code, state) -> SsoIdentity                │
-  sso/callback ─────▶│    OidcProvider: token POST, then the SHIPPED OidcVerifier       │◀── IdP
-                     │      (auth/oidc.py, OidcVerifier.verify) + nonce echo check      │
+  sso/callback ─────▶│    OidcProvider: token POST, then the ID-token verifier          │◀── IdP
+                     │      (SSO-1) + nonce echo check                                  │
                      └───────────────────────────────┬──────────────────────────────────┘
                                                      │  SsoIdentity(subject, issuer, claims)
                                                      ▼
@@ -242,9 +213,8 @@ GET /api/auth/       │  SsoProvider.exchange(code, state) -> SsoIdentity      
 ```
 
 **Where it lives.** `src/personalclaw/auth/sso/` — `protocol.py` (the `SsoProvider` protocol and
-the frozen `SsoIdentity` dataclass), `oidc_provider.py` (wraps `auth/oidc.py`, adds discovery,
-PKCE and the token POST), `registry.py` (name → provider). `auth/oidc.py` itself is not moved:
-it is the verification primitive and keeps its current public surface.
+the frozen `SsoIdentity` dataclass), `oidc_provider.py` (discovery, PKCE, the token POST and the
+ID-token verifier of §1.4), `registry.py` (name → provider).
 
 **What the plugin may and may not do.** A provider returns a verified `SsoIdentity` and nothing
 else. It does not read config, does not touch the credential store, does not mint a session, and
@@ -343,30 +313,26 @@ up" (the module docstring of `src/personalclaw/auth/credentials.py`). A client s
 property.
 
 It is never logged, never put in argv, never returned by an API, and never included in a status
-payload — the prohibitions that docstring states for the password plaintext. Note that
-`src/personalclaw/dashboard/handlers_system.py::api_auth_status` already echoes `oauth2_issuer`
-into the auth-status body; the issuer is not a secret and that is fine, but it is the boundary to
-be careful about — the client id may join it, the secret may not.
+payload — the prohibitions that docstring states for the password plaintext. The auth-status body
+(`src/personalclaw/dashboard/handlers_system.py::api_auth_status`) is the boundary to be careful
+about: the issuer and the client id may appear in it, the secret may not.
 
-### 3.3 Selection: from config, not only from env
+### 3.3 Selection: from config, not from the auth mode
 
-`AuthConfig`'s per-mode fields already exist —
-`src/personalclaw/auth/modes.py::AuthConfig.oauth2_issuer`,
-`src/personalclaw/auth/modes.py::AuthConfig.oauth2_client_id` and
-`src/personalclaw/auth/modes.py::AuthConfig.oauth2_audience`. The clean break is that `auth.sso_*`
-**populates those** rather than a second parallel set being minted. Nothing new is declared on
-`AuthConfig`; a `from_config()` (or an `AppConfig`-aware `from_env`) fills them.
+SSO is not a mode (§1.2), so nothing is added to `src/personalclaw/auth/modes.py::AuthConfig`: the
+provider reads `auth.sso_*` the way the login door reads `auth.login_enabled`. (The deleted
+`oauth2` mode carried `AuthConfig` fields for an issuer, a client id and an audience that nothing
+ever filled; they went with it.)
 
-One caveat, already flagged in [`security.md`](security.md#auth-modes) and confirmed here:
-`from_env()` is also called inside a request path —
+One caveat, confirmed here: `from_env()` is also called inside a request path —
 `src/personalclaw/dashboard/origin.py::auth_is_off`, which the Doctor's remote-reachability probe
 (`src/personalclaw/resilience/doctor.py::_probe_remote_reachability`) calls — not only at boot. So
 a selector that raises on a bad SSO configuration turns a misconfiguration into a failed request
 rather than a clean boot failure. The refuse-at-startup-vs-fall-back question is control **C7**.
 
-The interim legibility half — a requested-but-unhonored mode must not be silent — is already
-shipped by SL-8 (`classify_auth_mode_request`, and the warning `AuthConfig.from_env` logs) and is
-not re-solved here.
+The legibility half — a value that is not a mode must not be ignored silently — is shipped by
+SL-8 (`classify_auth_mode_request`, and the warning `AuthConfig.from_env` logs) and is not
+re-solved here.
 
 ---
 
@@ -381,11 +347,11 @@ owner ruling first. The recommendation column is this note's proposal, not a dec
 | **C1** | **Session issuance** | One more door into `src/personalclaw/dashboard/token_auth.py::mint_session`, setting the same cookie through `src/personalclaw/dashboard/handlers/auth.py::_set_session_cookie`. TTL from `auth.session_ttl`, or from the IdP's token lifetime? | Reuse `auth.session_ttl` (`src/personalclaw/dashboard/token_auth.py::browser_session_ttl`), which the 90-day limit already bounds. An IdP-controlled TTL hands session lifetime to an external party — and one could ask for longer than the limit. | 🔴 OWNER-ESCALATION |
 | **C2** | **Unauthenticated route surface** | Two new entries in `src/personalclaw/dashboard/token_auth.py::_BYPASS_EXACT`, growing the pre-auth attack surface by two paths; every existing entry carries the reason it opens nothing, and these would need the same. | Accept, with the same guards `/api/auth/login` carries: per-IP lockout (`src/personalclaw/dashboard/handlers/auth.py::_record_failure`), SEL rows, and a single-use `state` as the MCP sign-in callback has. | 🔴 OWNER-ESCALATION |
 | **C3** | **Credential-record shape and the escape hatch** | `src/personalclaw/auth/credentials.py::has_credentials` requires `password_hash`, and `src/personalclaw/dashboard/token_auth.py::_login_offered` requires it *and* `login_enabled`. An SSO-only install has no password, so `/login` is not offered and `_deny` never redirects there. | Widen `has_credentials()` to "password **or** SSO subject", and keep `?token=` as the escape hatch unconditionally. The lockout-not-lockout reasoning in `_login_offered`'s docstring is the invariant to preserve. | 🔴 OWNER-ESCALATION |
-| **C4** | **The existing `AuthMode.OAUTH2` middleware branch** | The `OAUTH2` branch of `src/personalclaw/dashboard/token_auth.py::auth_middleware` is a second *validation* path: no cookie, no CSRF, no IP binding, no SEL, a bare `Unauthorized` refusal, and it never adopts `request["app"]` (`token_auth_middleware._adopt` does), so it bypasses the app permission sandbox — the defect class `security.md` §"The `AUTH_MODE=none` sandbox fix" records. | **Delete it.** Clean break: browser SSO is an issuer (§1.2), and a machine-to-machine bearer path is a separate product decision with its own atom. Keeping both is two validators. | 🔴 OWNER-ESCALATION |
+| **C4** | **The `AuthMode.OAUTH2` middleware branch** | It was a second *validation* path: no cookie, no CSRF, no IP binding, no SEL, a bare `Unauthorized` refusal, and it never adopted `request["app"]` (`token_auth_middleware._adopt` does), so it bypassed the app permission sandbox — the defect class `security.md` §"The `AUTH_MODE=none` sandbox fix" records. | Delete it. Browser SSO is an issuer (§1.2), and a machine-to-machine bearer path is a separate product decision with its own atom. | ✅ DONE — deleted with the mode and its verifier |
 | **C5** | **RBAC — there is none, and this is where one would leak in** | The module docstring of `src/personalclaw/auth/credentials.py`: "there is deliberately no user table, no roles, and no signup." The only principal scoping in a request is `request["app"]` (`token_auth_middleware._adopt`) feeding `src/personalclaw/apps/permissions.py::app_request_denial`. An IdP hands over `groups` / `roles` / `scope` claims for free. | **Drop every authorization claim at the boundary, explicitly.** `SsoIdentity` carries `subject` and `issuer`; `claims` is retained for audit only and no admission decision reads it. Adopting IdP roles invents the role system the product deliberately lacks. Say so in code, not by omission. | 🔴 OWNER-ESCALATION |
 | **C6** | **CSRF / origin on the callback** | `/api/auth/login` is guarded by `src/personalclaw/dashboard/origin.py::check_origin` (called first in `api_auth_login`). The SSO callback is a cross-site `GET` redirect *from the IdP*, so that check cannot apply unchanged. | Single-use, short-TTL, server-side `state` + PKCE `code_verifier` carries the CSRF job, as it already does for `/api/mcp/oauth/callback`. Do **not** relax `check_origin` for existing routes to accommodate the new one. | 🔴 OWNER-ESCALATION |
 | **C7** | **Fail-open vs fail-closed on a bad SSO config** | `from_env()` runs in a request path (`src/personalclaw/dashboard/origin.py::auth_is_off`), so raising fails a request, not the boot (`security.md` §"Auth modes"). | Validate at boot and refuse to *offer* SSO (leaving `local_token` in force and the `?token=` hatch open) rather than raising from a request. Fails closed on admission, open on availability. | 🔴 OWNER-ESCALATION |
-| **C8** | **Outbound network from the gateway** | The verifier fetches JWKS with a raw `urllib.request.urlopen` (`src/personalclaw/auth/oidc.py::OidcVerifier._fetch_jwks`), and the token exchange adds a second outbound POST. Both are new egress from an auth path. | Route both through the egress chokepoint (`src/personalclaw/net/client.py::fetch`) under a named policy, as `src/personalclaw/net/policy.py::mcp_sign_in_egress_policy` does for the MCP sign-in, rather than raw `urllib`, and keep the timeout explicit as `_fetch_jwks` already does. | 🔴 OWNER-ESCALATION |
+| **C8** | **Outbound network from the gateway** | An OIDC provider fetches the IdP's discovery document and JWKS and posts the token exchange. All three are new egress from an auth path. | Route them through the egress chokepoint (`src/personalclaw/net/client.py::fetch`) under a named policy, as `src/personalclaw/net/policy.py::mcp_sign_in_egress_policy` does for the MCP sign-in, never a raw `urllib`, with explicit timeouts. | 🔴 OWNER-ESCALATION |
 
 **One requirement that is not an escalation.** Every new grant and deny emits a SEL row, following
 `login_success` / `login_failed` / `login_locked_out` / `login_origin_rejected`
@@ -408,13 +374,13 @@ propose it, open an issue — see [CONTRIBUTING](../../CONTRIBUTING.md#the-model
 
 | Step | Scope | Gated on |
 |---|---|---|
-| **SSO-1** — OIDC discovery + JWKS URI | `oidc.py` reads `{issuer}/.well-known/openid-configuration` and takes `jwks_uri`, `authorization_endpoint`, `token_endpoint` from it, replacing the URI hardcoded in `OidcVerifier.__init__` — reusing the discovery `mcp_oauth.py` already does rather than writing a second one. Non-cheatable: a fixture IdP publishing a JWKS at a non-default path must verify. | none (pure defect fix, §1.4 gap 2) |
+| **SSO-1** — the ID-token verifier, with discovery | A verifier with the §1.4 shape — allowlisted algorithms, `exp`/`nbf`/`iss`/`aud`, `kid` selection that refuses a missing `kid` against a multi-key JWKS, all-or-nothing — that takes `jwks_uri`, `authorization_endpoint` and `token_endpoint` from `{issuer}/.well-known/openid-configuration`, reusing the discovery `mcp_oauth.py` already does rather than writing a second one. Non-cheatable: a fixture IdP publishing its JWKS at a non-default path verifies, and an `alg: none` token is refused. | none |
 | **SSO-2** — the plugin boundary, no provider | `auth/sso/protocol.py`: `SsoProvider` protocol + frozen `SsoIdentity(subject, issuer, claims)`, plus a registry. No routes, no config, no session. Non-cheatable: a fixture provider satisfies the protocol without importing anything from `dashboard/`. | C5 (what `SsoIdentity` may carry) |
 | **SSO-3** — config round-trip, no flow | The six `auth.sso_*` fields through all five wiring points of §3.1, plus `PERSONALCLAW_SSO_CLIENT_SECRET` through `save_credential`. Non-cheatable: `test_config_roundtrip` passes and a test asserts the secret is absent from `to_dict()` output and from the auth-status body. | none |
-| **SSO-4** — `OidcProvider`: PKCE + token exchange + nonce | The front half §1.4 gap 1 names, wrapping the shipped verifier unchanged. Non-cheatable: an ID token with a mismatched `nonce` is refused, and a replayed `state` is refused. | C6 |
+| **SSO-4** — `OidcProvider`: PKCE + token exchange + nonce | The front half, around SSO-1's verifier. Non-cheatable: an ID token with a mismatched `nonce` is refused, and a replayed `state` is refused. | SSO-1, C6 |
 | **SSO-5** — the two routes as a new door | `/api/auth/sso/start` + `/api/auth/sso/callback`, `_BYPASS_EXACT` entries, SEL rows, error codes, and an `sso` issuer. Mints via the same `mint_session` + `_set_session_cookie`. Non-cheatable: a test asserts the middleware cannot distinguish an SSO-minted session from a link-minted one, and that no new validation path exists. | C1, C2, C6 |
 | **SSO-6** — subject → sign-in username | `set_sso_subject()` beside `set_password` in `auth/credentials.py`; `has_credentials()` widened per C3. Non-cheatable: a test asserts `dashboard.username` (`identity.current_username()`) is **unchanged** across a full SSO login, and that `?token=` still works with no password configured. | C3 |
-| **SSO-7** — delete the OAUTH2 middleware branch | Remove the `OAUTH2` branch of `auth_middleware` and `AuthMode.OAUTH2` from `UNSELECTABLE_MODES`; update `security.md`'s mode table. Non-cheatable: no second validation path remains; `test_sl8_unhonored_auth_mode_is_named.py` still passes. | C4 |
+| ~~**SSO-7** — delete the OAUTH2 middleware branch~~ | Done: `AuthMode.OAUTH2`, its middleware branch and its verifier were deleted, and `test_sl8_unhonored_auth_mode_is_named.py` requires every `AuthMode` to be selectable. | — |
 | **SSO-8** — login page affordance | An SSO button on `/login` when `sso_enabled` and configured. Non-cheatable: with SSO misconfigured the page still renders the password form and the paste-token gate is still reachable. | C7 |
 | **SSO-9** — SAML provider | A second `SsoProvider` implementation, proving the boundary. Non-cheatable: no file under `auth/sso/` outside `saml_provider.py` changes. | SSO-2, SSO-5 |
 

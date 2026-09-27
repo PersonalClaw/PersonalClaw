@@ -36,10 +36,10 @@ from personalclaw.inbound import capture_proxy as proxy
 
 PORT = 10000
 CAPTURE_PATHS = (proxy.ROUTE_OPENAI, proxy.ROUTE_ANTHROPIC)
-# The modes `token_auth.py` actually implements a bypass list for. AuthMode.NONE is
-# deliberately absent: it is a passthrough by construction, so it can neither exempt nor
-# deny anything and a "bypass" assertion under it would be vacuous.
-GATED_MODES = (AuthMode.LOCAL_TOKEN, AuthMode.API_KEY, AuthMode.OAUTH2)
+# The modes `token_auth.py` implements a bypass list for. AuthMode.NONE is deliberately
+# absent: it is a passthrough by construction, so it can neither exempt nor deny anything and
+# a "bypass" assertion under it would be vacuous.
+GATED_MODES = (AuthMode.LOCAL_TOKEN,)
 _SURFACES = ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE")
 
 
@@ -64,13 +64,7 @@ def _isolate(tmp_path, monkeypatch):
 
 def _middleware(mode: AuthMode):
     """The real middleware for `mode`, built the way `server.py` builds it."""
-    cfg = AuthConfig(
-        mode=mode,
-        api_key_env="PERSONALCLAW_TEST_API_KEY",
-        oauth2_issuer="https://issuer.invalid",
-        oauth2_audience="personalclaw",
-    )
-    return token_auth.auth_middleware(cfg, port=PORT)
+    return token_auth.auth_middleware(AuthConfig(mode=mode), port=PORT)
 
 
 def _request(path: str):

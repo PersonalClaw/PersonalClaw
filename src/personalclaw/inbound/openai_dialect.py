@@ -50,7 +50,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.inbound import auth
+from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 
@@ -248,10 +248,15 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, Any |
     # admission paths cannot be told apart by timing.
     client = _lookup_client(presented)
     if not surface_ok and client is None:
-        audit(OPENAI_SURFACE, route=route, status=401, refused="bad bearer")
+        # A token this gateway issued that has since expired, or was revoked or replaced,
+        # is told so; the code stays `unauthorized` for every refusal.
+        ended = tokens.ending(OPENAI_SURFACE, presented)
+        audit(
+            OPENAI_SURFACE, route=route, status=401, refused=ended.reason if ended else "bad bearer"
+        )
         return (
             openai_error(
-                "Incorrect API key provided.",
+                ended.sentence if ended else "Incorrect API key provided.",
                 code="unauthorized",
                 type_="invalid_request_error",
                 status=401,

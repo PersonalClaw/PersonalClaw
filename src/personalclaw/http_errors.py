@@ -177,6 +177,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
     "device_unknown": "No such paired device.",
+    # Settings → Devices → Integrations: the token was already revoked, or was replaced.
+    "integration_unknown": (
+        "That integration token is no longer listed: it was already revoked, or replaced."
+    ),
     # ── browse user-browser connector (handlers/browse_connector.py — BA-8) ──
     # The connector is the operator's own browser on THIS machine, so all three are
     # distinct because their remedies differ: `loopback_only` is "you reached a

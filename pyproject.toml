@@ -212,7 +212,6 @@ anthropic = ["anthropic>=0.20"]
 openai    = ["openai>=1.0"]
 bedrock   = ["boto3>=1.34"]        # Amazon Bedrock Converse provider
 httpx     = ["httpx>=0.27"]        # Ollama + vLLM providers
-oauth2    = ["cryptography>=42"]   # OIDC / OAuth2 auth mode
 
 # Feature extras.
 # NOTE — these extras are a convenience install path for apps whose Python deps are

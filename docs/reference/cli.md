@@ -378,12 +378,21 @@ has nothing to mount yet.
 
 | Command | What it does |
 |---|---|
-| `personalclaw inbound token create <surface> [--rotate]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. `--rotate` replaces an existing token, which immediately invalidates the old one. |
-| `personalclaw inbound token show <surface>` | Report whether a usable token is configured, and why not if it isn't. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
+| `personalclaw inbound token create <surface> [--rotate] [--ttl 90d]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. It works for `--ttl` (`30m`, `20h`, `7d`; default and limit 90 days — longer is refused, never shortened), and the output says until when. `--rotate` replaces a working token, which immediately invalidates the old one; a token that expired or was revoked is replaced without it. |
+| `personalclaw inbound token show <surface>` | Report whether a usable token is configured, when it was created and when it stops working — or why it is not usable. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
+| `personalclaw inbound token revoke <surface>` | Revoke that surface's token at once: whatever still presents it is refused and told it was revoked. The surface stays on, so a registered client's own token keeps working, and the revoked value stays refused for as long as it is configured — even when the environment sets it again at the next start. `create` then makes a new one. |
 
 A token is refused if it is shorter than 32 bytes, equal to the dashboard token or
 internal secret, or equal to **another surface's** token — five surfaces sharing one
 bearer would collapse five independently revocable credentials into one.
+
+Every integration token lasts at most 90 days — a surface token for its `--ttl`, a registered
+client's for the `ttl` it was registered with. A token from before lifetimes existed, or one set
+outside the CLI (Settings → Secrets, an environment variable), lasts 90 days from the first time
+the gateway sees it; a client registered before then, 90 days from its registration. Past its
+lifetime a token is refused with the same `unauthorized` code as any other refusal, and a
+sentence saying it stopped working, when, and how to get a new one. **Settings → Devices** lists
+every integration token with when it stops working, and revokes any of them.
 
 Minting a token is not enough on its own — enable the surface too, and the master
 switch above it:

@@ -690,9 +690,11 @@ Examples:
         "inbound", help="Manage the inbound access surfaces (openai, mcp, a2a, capture, bridge)"
     )
     inbound_sub = inbound_parser.add_subparsers(dest="inbound_command")
-    inbound_token = inbound_sub.add_parser("token", help="Create or inspect a surface token")
+    inbound_token = inbound_sub.add_parser(
+        "token", help="Create, inspect or revoke a surface token"
+    )
     inbound_token.add_argument(
-        "token_action", choices=("create", "show"), nargs="?", default="create"
+        "token_action", choices=("create", "show", "revoke"), nargs="?", default="create"
     )
     # `choices` is deliberately NOT set from `EXTERNAL_ACCESS_SURFACES` here: importing
     # the config loader at parser-build time would put a heavy module on every CLI
@@ -708,6 +710,14 @@ Examples:
         "--rotate",
         action="store_true",
         help="Replace an existing token (the old one stops working)",
+    )
+    inbound_token.add_argument(
+        "--ttl",
+        default="90d",
+        help=(
+            "How long a created token works: 30m, 20h, 7d (default: 90d, the limit for a "
+            "long-lived credential — longer is refused)"
+        ),
     )
 
     # capture — telemetry import for agents that cannot be proxied

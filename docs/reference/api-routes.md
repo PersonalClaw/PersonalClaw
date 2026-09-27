@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **881 registrations** over **713 distinct paths** — 874 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **883 registrations** over **715 distinct paths** — 876 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -59,6 +59,7 @@ The 128 families the surface divides into, largest first.
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/auth` | 7 | 7 |
 | `/api/browse` | 7 | 5 |
+| `/api/devices` | 7 | 7 |
 | `/api/config` | 6 | 3 |
 | `/api/doc-comments` | 6 | 3 |
 | `/api/legibility` | 6 | 4 |
@@ -68,7 +69,6 @@ The 128 families the surface divides into, largest first.
 | `/api/tools` | 6 | 6 |
 | `/api/autonudge` | 5 | 3 |
 | `/api/desktop` | 5 | 4 |
-| `/api/devices` | 5 | 5 |
 | `/api/external-access` | 5 | 5 |
 | `/api/feedback` | 5 | 5 |
 | `/api/push` | 5 | 5 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 874 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 876 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -396,6 +396,8 @@ The 874 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/desktop/state` | the shell pushes a refreshed capability manifest. |
 | `POST` | `/api/desktop/unregister` | the shell is quitting; forget its capabilities. |
 | `GET` | `/api/devices` | every device and token signed in to this gateway. |
+| `GET` | `/api/devices/integrations` | every integration token that can reach this gateway. |
+| `POST` | `/api/devices/integrations/{id}/revoke` | revoke one integration's token. |
 | `POST` | `/api/devices/pair/complete` | redeem a code for a durable device session. |
 | `POST` | `/api/devices/pair/start` | mint a single-use pairing code + QR payload. |
 | `POST` | `/api/devices/revoke-others` | sign out every device and token but the caller's own. |

@@ -27,7 +27,6 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-from personalclaw.auth.modes import AuthConfig, AuthMode
 from personalclaw.dashboard import session_store, token_auth
 from personalclaw.dashboard.handlers import devices as devices_h
 from personalclaw.dashboard.server import _security_headers_middleware
@@ -424,33 +423,3 @@ def test_the_skip_modes_name_the_session_a_header_presents() -> None:
     # An app token names no owner session, and a forged one names nothing.
     assert token_auth.presented_session_nonce(_Req(_bearer(app_token)), PORT) == ""
     assert token_auth.presented_session_nonce(_Req(_bearer(token + "x")), PORT) == ""
-
-
-# ── the header is local-token mode's, not every mode's ─────────────────────────────────
-
-
-@pytest.mark.parametrize("mode", [AuthMode.API_KEY, AuthMode.OAUTH2])
-@pytest.mark.asyncio
-async def test_the_owner_token_does_not_cross_into_the_api_key_or_oauth_modes(
-    mode: AuthMode, monkeypatch
-) -> None:
-    """Control: those modes own their own ``Authorization`` header, and an owner token is
-    not their credential."""
-    token = token_auth.generate_token("owner", ttl_seconds=300)
-    monkeypatch.setenv("PERSONALCLAW_TEST_API_KEY", "a-different-api-key")
-    middleware = token_auth.auth_middleware(
-        AuthConfig(
-            mode=mode,
-            api_key_env="PERSONALCLAW_TEST_API_KEY",
-            oauth2_issuer="https://issuer.invalid",
-            oauth2_audience="personalclaw",
-        ),
-        port=PORT,
-    )
-    client = await _client(middleware)
-    try:
-        response = await client.get("/api/probe", headers=_bearer(token))
-        assert response.status == 401
-        assert token not in await response.text()
-    finally:
-        await client.close()

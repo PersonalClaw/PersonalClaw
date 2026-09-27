@@ -77,6 +77,7 @@ from aiohttp import web
 from personalclaw import approval_answer, notification_kinds
 from personalclaw.approval_answer import Principal
 from personalclaw.http_errors import json_error
+from personalclaw.inbound import tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_key, verify_bearer
 from personalclaw.inbound.clients import InboundClient, log_binding_violation, lookup_by_token
@@ -493,9 +494,17 @@ def _admit(
     if client is None and not verify_bearer(BRIDGE_SURFACE, presented):
         # The audited reason names the CLIENT-lookup outcome when there is one:
         # "matches no registered client" and "that client is disabled" are different
-        # operator problems behind the same 401.
-        audit(BRIDGE_SURFACE, route=route, status=401, refused=client_reason or "bad bearer")
-        return json_error("unauthorized", status=401), client_reason or "bad bearer", None
+        # operator problems behind the same 401. A token this gateway issued that has
+        # since expired, or was revoked or replaced, is told so; the code stays
+        # `unauthorized` for every refusal.
+        ended = tokens.ending(BRIDGE_SURFACE, presented)
+        why = (ended.reason if ended else "") or client_reason or "bad bearer"
+        audit(BRIDGE_SURFACE, route=route, status=401, refused=why)
+        return (
+            json_error("unauthorized", message=ended.sentence if ended else None, status=401),
+            why,
+            None,
+        )
     return None, "", client
 
 

@@ -713,7 +713,11 @@ async def test_every_route_emits_a_sel_event(_isolated, sel_events) -> None:
     ops = [e["operation"] for e in sel_events]
     for expected in ("device_pair_started", "device_paired", "devices_listed", "device_revoked"):
         assert expected in ops, f"{expected} was not audited"
-    assert all(e["source"] == "devices" for e in sel_events)
+    # The pairing is a sign-in and the revoke a sign-out, and those two rows are written in the
+    # shape every sign-in shares (`auth/signins.py`); every other row is this module's own.
+    session_rows = [e for e in sel_events if e["operation"].startswith("session_signed_")]
+    assert [e["operation"] for e in session_rows] == ["session_signed_in", "session_signed_out"]
+    assert all(e["source"] == "devices" for e in sel_events if e not in session_rows)
 
 
 @pytest.mark.asyncio

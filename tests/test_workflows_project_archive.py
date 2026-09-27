@@ -392,7 +392,7 @@ def test_ENCRYPTION_is_available_on_this_install():
     assert pa.encryption_available() is True
 
 
-@pytest.mark.skipif(not pa.encryption_available(), reason="optional `cryptography` extra absent")
+@pytest.mark.skipif(not pa.encryption_available(), reason="the `cryptography` package is absent")
 def test_an_ENCRYPTED_archive_round_trips(tmp_path: Path, project: Path):
     raw, _ = pa.export_project_archive(
         "p-round", project_root=project, project_name="Round Trip", passphrase="correct horse"
@@ -411,7 +411,7 @@ def test_an_ENCRYPTED_archive_round_trips(tmp_path: Path, project: Path):
     assert (dest / "context" / "overview.md").read_text(encoding="utf-8") == OVERVIEW
 
 
-@pytest.mark.skipif(not pa.encryption_available(), reason="optional `cryptography` extra absent")
+@pytest.mark.skipif(not pa.encryption_available(), reason="the `cryptography` package is absent")
 def test_a_WRONG_passphrase_is_refused(tmp_path: Path, project: Path):
     raw, _ = pa.export_project_archive("p-round", project_root=project, passphrase="right")
     archive = tmp_path / "enc.zip"
@@ -421,7 +421,7 @@ def test_a_WRONG_passphrase_is_refused(tmp_path: Path, project: Path):
     assert exc.value.reason == "decrypt_failed"
 
 
-@pytest.mark.skipif(not pa.encryption_available(), reason="optional `cryptography` extra absent")
+@pytest.mark.skipif(not pa.encryption_available(), reason="the `cryptography` package is absent")
 def test_TAMPERED_ciphertext_is_refused_like_a_wrong_passphrase(tmp_path: Path, project: Path):
     """One refusal for both: AES-GCM cannot tell them apart, and inventing a distinction would tell
     an attacker which of the two they achieved."""
@@ -435,7 +435,7 @@ def test_TAMPERED_ciphertext_is_refused_like_a_wrong_passphrase(tmp_path: Path, 
     assert exc.value.reason == "decrypt_failed"
 
 
-@pytest.mark.skipif(not pa.encryption_available(), reason="optional `cryptography` extra absent")
+@pytest.mark.skipif(not pa.encryption_available(), reason="the `cryptography` package is absent")
 def test_an_encrypted_archive_without_a_passphrase_says_SO(tmp_path: Path, project: Path):
     """Not "corrupt". The magic header exists precisely so this case is distinguishable."""
     raw, _ = pa.export_project_archive("p-round", project_root=project, passphrase="right")
@@ -446,7 +446,7 @@ def test_an_encrypted_archive_without_a_passphrase_says_SO(tmp_path: Path, proje
     assert exc.value.reason == "passphrase_required"
 
 
-@pytest.mark.skipif(not pa.encryption_available(), reason="optional `cryptography` extra absent")
+@pytest.mark.skipif(not pa.encryption_available(), reason="the `cryptography` package is absent")
 def test_two_encryptions_of_ONE_archive_differ(project: Path):
     """A reused salt/nonce pair under one passphrase is the one mistake AES-GCM does not survive."""
     a, _ = pa.export_project_archive("p-round", project_root=project, passphrase="same")

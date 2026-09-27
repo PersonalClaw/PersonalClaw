@@ -445,11 +445,7 @@
     {"annotation": "AuthMode", "default": "AuthMode.LOCAL_TOKEN", "kind": "positional_or_keyword", "name": "mode"},
     {"annotation": "str", "default": "'127.0.0.1'", "kind": "positional_or_keyword", "name": "bind_host"},
     {"annotation": "str", "default": "'personalclaw_token'", "kind": "positional_or_keyword", "name": "cookie_name"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "oauth2_issuer"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "oauth2_client_id"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "oauth2_audience"},
-    {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "api_key_env"},
-    {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "csrf_required"}
+    {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "csrf_required"}
    ],
    "returns": "None"
   },
@@ -465,7 +461,7 @@
  "personalclaw.sdk.channel.AuthMode": {
   "bases": ["str", "Enum"],
   "kind": "enum",
-  "members": {"API_KEY": "'api_key'", "LOCAL_TOKEN": "'local_token'", "NONE": "'none'", "OAUTH2": "'oauth2'"}
+  "members": {"LOCAL_TOKEN": "'local_token'", "NONE": "'none'"}
  },
  "personalclaw.sdk.channel.AutoSkillProvenance": {
   "bases": ["object"],

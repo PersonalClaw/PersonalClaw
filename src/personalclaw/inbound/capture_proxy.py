@@ -61,7 +61,7 @@ from typing import Any, Awaitable, Callable
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
-from personalclaw.inbound import auth
+from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 from personalclaw.net.guard import evaluate
@@ -208,8 +208,16 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
     surface_ok = auth.verify_bearer(CAPTURE_SURFACE, presented)
     client, _why = _lookup_client(presented)
     if not surface_ok and client is None:
-        audit(CAPTURE_SURFACE, route=route, status=401, refused="bad bearer")
-        return json_error("unauthorized", status=401), "bad bearer", ""
+        # A token this gateway issued that has since expired, or was revoked or replaced,
+        # is told so; the code stays `unauthorized` for every refusal.
+        ended = tokens.ending(CAPTURE_SURFACE, presented)
+        why = ended.reason if ended else "bad bearer"
+        audit(CAPTURE_SURFACE, route=route, status=401, refused=why)
+        return (
+            json_error("unauthorized", message=ended.sentence if ended else None, status=401),
+            why,
+            "",
+        )
     return None, "", getattr(client, "client_id", "") or CAPTURE_SURFACE
 
 

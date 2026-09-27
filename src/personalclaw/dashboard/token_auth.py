@@ -9,12 +9,8 @@ tracking, and aiohttp middleware for channel-gated dashboard access.
 * ``NONE``        — passes all requests through (loopback enforced by
                     ``effective_bind`` before the server starts).
 * ``LOCAL_TOKEN`` — delegates to ``token_auth_middleware``.
-* ``API_KEY``     — validates ``Authorization: Bearer <key>`` against
-                    ``os.environ[auth_cfg.api_key_env]``.
-* ``OAUTH2``      — verifies a bearer JWT via :mod:`personalclaw.auth.oidc`.
 
-On any authentication failure the middleware returns HTTP 401 with a
-JSON body that does NOT echo request headers, cookies, or tokens.
+A refusal never echoes request headers, cookies, or tokens.
 """
 
 import base64
@@ -32,12 +28,14 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.auth.lifetimes import (
+from personalclaw.auth.lifetimes import (  # noqa: F401 — duration_words is re-exported
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     MAX_LIFETIME_SECS,
     configured_lifetime,
+    duration_words,
     lifetime_seconds,
     too_long,
+    when_words,
 )
 from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.dashboard.origin import is_loopback, is_private_network
@@ -944,42 +942,6 @@ REFUSED_LINK_USED = "link_used"
 REFUSED_ENDED = "ended"
 
 
-def duration_words(secs: float) -> str:
-    """``30 days`` / ``20 hours`` / ``1 hour`` / ``45 minutes`` / ``1 second`` — how every
-    surface that states a session's lifetime words it (the gateway banner, `personalclaw
-    token`, the signed-out sentence)."""
-    secs = max(0, round(secs))
-    # Days from two days up (a day is "24 hours", which is how a link window reads); hours and
-    # minutes from two of them up, or exactly one.
-    if secs >= 2 * 86400:
-        count = round(secs / 86400)
-        return f"{count} days"
-    for unit, size in (("hour", 3600), ("minute", 60)):
-        if secs >= 2 * size or secs == size:
-            count = round(secs / size)
-            return f"{count} {unit}{'' if count == 1 else 's'}"
-    return f"{secs} second{'' if secs == 1 else 's'}"
-
-
-def _when_words(ts: float, now: float | None = None) -> str:
-    """``today at 09:14`` / ``yesterday at 09:14`` / ``on 27 September at 09:14``.
-
-    In this machine's local time — the gateway's owner is the reader, on the same machine or
-    the same network — and absolute, so the sentence stays true however long it is read after.
-    """
-    now = time.time() if now is None else now
-    moment = time.localtime(ts)
-    clock = time.strftime("%H:%M", moment)
-    today = time.localtime(now)
-    if (moment.tm_year, moment.tm_yday) == (today.tm_year, today.tm_yday):
-        return f"today at {clock}"
-    yesterday = time.localtime(now - 86400)
-    if (moment.tm_year, moment.tm_yday) == (yesterday.tm_year, yesterday.tm_yday):
-        return f"yesterday at {clock}"
-    year = f" {moment.tm_year}" if moment.tm_year != today.tm_year else ""
-    return f"on {moment.tm_mday} {time.strftime('%B', moment)}{year} at {clock}"
-
-
 #: How a device that has no sign-in gets one, when nothing is known about what it was.
 _PAIR_THIS_DEVICE = "pair this device from Settings → Devices on a device that is signed in"
 
@@ -1090,7 +1052,7 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
     kind = ended.kind if ended is not None else ""
     device = "This browser" if kind == "browser" else "This device"
     if ended is not None and ended.reason != END_EXPIRED:
-        when = _when_words(ended.at)
+        when = when_words(ended.at)
         pool = _pool_of_ended(ended)
         why = {
             END_SIGNED_OUT: f"{device} signed out {when}.",
@@ -1129,7 +1091,7 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
             at=deadline,
             message=(
                 f"Your sign-in on this device lasted {duration_words(deadline - issued)} and "
-                f"ended {_when_words(deadline)}. {_how_to_sign_back_in(via, kind)}"
+                f"ended {when_words(deadline)}. {_how_to_sign_back_in(via, kind)}"
             ),
         )
     return None
@@ -1179,7 +1141,7 @@ def refusal_notice(token: str, *, source: str) -> SignedOutNotice:
             reason=REFUSED_LINK_EXPIRED,
             at=open_until,
             message=(
-                f"This sign-in link could be opened until {_when_words(open_until)}, and that "
+                f"This sign-in link could be opened until {when_words(open_until)}, and that "
                 f"has passed. {_how_to_sign_in_with_a_new_link()}"
             ),
             heading="This link has expired",
@@ -1470,22 +1432,20 @@ def _audit_session(
     kind: str,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    """One SEL row for a session's start or end. Never the nonce or the token — the public
-    handle is what names it, the same one Settings → Devices shows. Never raises."""
-    metadata: dict[str, Any] = {"session": session_id, "issuer": issuer, "kind": kind}
-    metadata.update(extra or {})
-    detail = f" reason={metadata['reason']}" if "reason" in metadata else ""
-    try:
-        _sel_fn().log_api_access(
-            caller=caller or "system",
-            operation=operation,
-            outcome="ok",
-            source="token_auth",
-            resources=f"session={session_id} issuer={issuer}{detail}",
-            metadata=metadata,
-        )
-    except Exception:  # noqa: BLE001 — the audit must not break a sign-in or a sign-out
-        logger.warning("could not record a session event in the SEL", exc_info=True)
+    """One SEL row for a session's start or end, in the one shape every credential shares
+    (``auth.signins``). Never the nonce or the token — the public handle is what names it, the
+    same one Settings → Devices shows. Never raises."""
+    from personalclaw.auth import signins
+
+    signins.record(
+        operation,
+        caller=caller,
+        session_id=session_id,
+        issuer=issuer,
+        kind=kind,
+        source="token_auth",
+        extra=extra,
+    )
 
 
 def _signed_out(ended: Any, reason: str, *, actor: str) -> int:
@@ -2025,20 +1985,13 @@ def auth_middleware(
 ) -> Callable[..., Any]:
     """Factory returning aiohttp middleware dispatched by ``auth_cfg.mode``.
 
-    Dispatches to the appropriate auth strategy based on ``AuthMode``:
-
     * ``NONE``        — passthrough (loopback invariant enforced at bind time).
     * ``LOCAL_TOKEN`` — delegates to :func:`token_auth_middleware`.
-    * ``API_KEY``     — validates ``Authorization: Bearer`` against
-                        ``os.environ[auth_cfg.api_key_env]``.
-    * ``OAUTH2``      — verifies bearer JWT via :mod:`personalclaw.auth.oidc`.
 
-    Failures always return HTTP 401 JSON with a generic message — request
-    headers, cookies, and tokens are never echoed.
-
-    The returned middleware carries the ``_is_token_auth = True`` sentinel
-    so the ``server.py`` security invariant check still passes for all modes
-    except ``NONE`` (where auth is intentionally absent).
+    The returned middleware carries the ``_is_token_auth`` sentinel the ``server.py``
+    security invariant check reads: True for ``LOCAL_TOKEN``, False for ``NONE`` (where
+    auth is intentionally absent). A mode that is neither cannot be served at all: it
+    raises here, at startup, rather than answering every request with a refusal.
     """
     from personalclaw.auth.modes import AuthMode
 
@@ -2062,90 +2015,7 @@ def auth_middleware(
             local_only=local_only,
         )
 
-    if mode == AuthMode.API_KEY:
-        api_key_env: str = auth_cfg.api_key_env or ""
-
-        @web.middleware
-        async def _api_key_mw(request: web.Request, handler: object) -> web.StreamResponse:
-            path = request.path
-            # Static assets bypass (same set as LOCAL_TOKEN for consistency)
-            if any(path.startswith(p) for p in _BYPASS_PREFIXES):
-                return await handler(request)  # type: ignore[operator]
-            if path in _BYPASS_EXACT:
-                return await handler(request)  # type: ignore[operator]
-
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer "):
-                logger.debug("api_key_mw: missing Bearer header for %s", path)
-                return _deny_401(request, "Unauthorized")
-            provided = auth_header[len("Bearer ") :]
-            if not api_key_env:
-                logger.warning("api_key_mw: api_key_env not configured")
-                return _deny_401(request, "Unauthorized")
-            expected = os.environ.get(api_key_env, "")
-            if not expected:
-                logger.warning("api_key_mw: env var %r is not set", api_key_env)
-                return _deny_401(request, "Unauthorized")
-            if not hmac.compare_digest(provided, expected):
-                logger.debug("api_key_mw: invalid API key for %s", path)
-                return _deny_401(request, "Unauthorized")
-            request["user"] = "api_key"
-            return await handler(request)  # type: ignore[operator]
-
-        _api_key_mw._is_token_auth = True  # type: ignore[attr-defined]
-        return _api_key_mw
-
-    if mode == AuthMode.OAUTH2:
-        oauth2_issuer: str = auth_cfg.oauth2_issuer or ""
-        oauth2_audience: str = auth_cfg.oauth2_audience or ""
-        oauth2_client_id: str | None = auth_cfg.oauth2_client_id
-
-        from personalclaw.auth.oidc import OidcVerificationError, OidcVerifier
-
-        _verifier = OidcVerifier(
-            oauth2_issuer,
-            oauth2_audience,
-            client_id=oauth2_client_id,
-        )
-
-        @web.middleware
-        async def _oauth2_mw(request: web.Request, handler: object) -> web.StreamResponse:
-            path = request.path
-            if any(path.startswith(p) for p in _BYPASS_PREFIXES):
-                return await handler(request)  # type: ignore[operator]
-            if path in _BYPASS_EXACT:
-                return await handler(request)  # type: ignore[operator]
-
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer "):
-                logger.debug("oauth2_mw: missing Bearer header for %s", path)
-                return _deny_401(request, "Unauthorized")
-            token = auth_header[len("Bearer ") :]
-            try:
-                claims = _verifier.verify(token)
-            except OidcVerificationError as exc:
-                logger.debug("oauth2_mw: JWT verification failed for %s: %s", path, exc)
-                return _deny_401(request, "Unauthorized")
-            request["user"] = claims.get("sub", "")
-            return await handler(request)  # type: ignore[operator]
-
-        _oauth2_mw._is_token_auth = True  # type: ignore[attr-defined]
-        return _oauth2_mw
-
-    # Unknown mode — fail closed
-    logger.error("auth_middleware: unknown AuthMode %r; denying all requests", mode)
-
-    @web.middleware
-    async def _deny_all(request: web.Request, handler: object) -> web.StreamResponse:
-        return _deny_401(request, "Unauthorized")
-
-    _deny_all._is_token_auth = True  # type: ignore[attr-defined]
-    return _deny_all
-
-
-def _deny_401(request: web.Request, reason: str) -> web.Response:
-    """Return HTTP 401 with a generic JSON body; never echoes request data."""
-    return web.json_response({"error": reason}, status=401)
+    raise ValueError(f"auth_middleware: unknown AuthMode {mode!r}")
 
 
 def _login_offered() -> bool:

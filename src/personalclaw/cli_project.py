@@ -61,8 +61,8 @@ def _export(args: argparse.Namespace) -> int:
 
     if args.passphrase and not pa.encryption_available():
         print(
-            "❌ Encryption needs the optional `cryptography` extra: "
-            "pip install 'personalclaw[oauth2]'"
+            "❌ Encryption needs the `cryptography` package, which PersonalClaw depends on and "
+            "this environment is missing: pip install 'cryptography>=42'"
         )
         return 1
 

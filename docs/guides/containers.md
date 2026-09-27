@@ -178,9 +178,9 @@ Three things worth knowing:
 Prefer a Docker/compose secret or an `EnvironmentFile` with 0600 permissions over a
 world-readable `.env` — these two variables are as sensitive as the password itself.
 
-> `PERSONALCLAW_AUTH_MODE=api_key` is **not** wired up: `AuthConfig.from_env` honors only
-> `none` (which forces a loopback bind). Use the owner login above for headless access, or
-> mint a longer-lived token with `personalclaw token --ttl` (up to `90d`).
+> `PERSONALCLAW_AUTH_MODE` has two values: `local_token` (the default) and `none`, which
+> forces a loopback bind. For headless access use the owner login above, or mint a
+> longer-lived token with `personalclaw token --ttl` (up to `90d`).
 
 ## Backups
 

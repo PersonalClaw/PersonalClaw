@@ -243,6 +243,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/desktop/state` — the shell pushes a refreshed capability manifest.
 - `POST /api/desktop/unregister` — the shell is quitting; forget its capabilities.
 - `GET /api/devices` — every device and token signed in to this gateway.
+- `GET /api/devices/integrations` — every integration token that can reach this gateway.
+- `POST /api/devices/integrations/{id}/revoke` — revoke one integration's token.
 - `POST /api/devices/pair/complete` — redeem a code for a durable device session.
 - `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
 - `POST /api/devices/revoke-others` — sign out every device and token but the caller's own.

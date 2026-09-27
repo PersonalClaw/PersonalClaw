@@ -572,7 +572,7 @@ KDF_ITERATIONS = 600_000
 
 
 class EncryptionUnavailable(Exception):
-    """AES-GCM was asked for on an install without the optional `cryptography` extra."""
+    """AES-GCM was asked for in an environment missing the `cryptography` package."""
 
 
 def encryption_available() -> bool:
@@ -616,7 +616,8 @@ def encrypt_archive(data: bytes, passphrase: str) -> bytes:
     """
     if not encryption_available():
         raise EncryptionUnavailable(
-            "AES-GCM needs the optional `cryptography` extra: pip install 'personalclaw[oauth2]'"
+            "AES-GCM needs the `cryptography` package, which PersonalClaw depends on and this "
+            "environment is missing: pip install 'cryptography>=42'"
         )
     if not passphrase:
         raise ValueError("an empty passphrase would encrypt nothing")
@@ -641,7 +642,8 @@ def decrypt_archive(data: bytes, passphrase: str) -> bytes:
     """
     if not encryption_available():
         raise EncryptionUnavailable(
-            "this archive is encrypted and AES-GCM needs the optional `cryptography` extra"
+            "this archive is encrypted and AES-GCM needs the `cryptography` package, which this "
+            "environment is missing"
         )
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM

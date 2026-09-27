@@ -290,7 +290,9 @@ exactly the situation this feature exists to prevent.
 **Settings → Devices** lists everything signed in: each browser, paired phone and desktop app,
 and every token a script or the CLI minted — what it is, when it signed in, when it was last
 seen and from which address. Sign one out there, or choose **Sign out all other devices** if a
-device is lost or you do not recognise one. From the terminal on the gateway's computer:
+device is lost or you do not recognise one. Under **Integrations** it also lists every token an
+external agent reaches an inbound surface with (an IDE's MCP token, a registered client), with
+when each stops working and a **Revoke**. From the terminal on the gateway's computer:
 
 ```bash
 personalclaw auth revoke --all    # end every session, everywhere
@@ -308,7 +310,8 @@ so the CLI or a script minting tokens never signs a browser or a phone out.
 
 A sign-in lasts `auth.session_ttl` (30 days by default) and never more than 90 days, the limit
 for a long-lived credential: the longer a sign-in lasts, the longer a copied link or a stolen
-cookie keeps working. Setting `auth.session_ttl` longer is refused with a sentence saying so; a
+cookie keeps working. Set it in **Settings → Security → Sign-in lifetime**, which offers nothing
+longer than 90 days. Setting `auth.session_ttl` longer anywhere else is refused with a sentence saying so; a
 config file that already says longer is applied as 90 days, and `personalclaw doctor` (and the
 Doctor page, under Security) says so until you fix it.
 
