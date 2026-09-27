@@ -1,13 +1,15 @@
-/** The owner's consent for a write that loosens a security setting — asked ONCE, here, for
- *  every surface.
+/** The owner's consent for a write that needs their yes — a loosened security setting, or a grant
+ *  for what a trigger runs — asked ONCE, here, for every surface.
  *
- *  🔑 THE GATEWAY DECIDES WHICH WRITES LOOSEN, NOT THIS FILE. A field on its list
+ *  🔑 THE GATEWAY DECIDES WHICH WRITES NEED IT, NOT THIS FILE. A field on its list
  *  (`config/edit_spec.py`: a `SecurityControl` on the `_EDITABLE_CONFIG` spec, or an agent's
- *  `approval_mode`) answers a loosening write with `400 confirmation_required`, carrying
- *  `{field, consent}` in `error.detail`. So a surface never predicts the direction — raising a
- *  budget, removing a denied pattern, allowing a host — and cannot disagree with the server
- *  about it. It sends the write; if the gateway asks, the owner is asked in the gateway's own
- *  words, and the write is resent with `confirm: true` only after they agree.
+ *  `approval_mode`), or an action a trigger is not allowed to run (`triggers/grants.py`), answers
+ *  the write with `400 confirmation_required`, carrying `{field, consent, title}` in
+ *  `error.detail`. So a surface never predicts the direction — raising a budget, removing a denied
+ *  pattern, allowing a host — and cannot disagree with the server about it. It sends the write; if
+ *  the gateway asks, the owner is asked in the gateway's own words, heading included, and the
+ *  write is resent with `confirm: true` only after they agree. The heading is the gateway's too:
+ *  a grant question is not headed "Loosen a security setting?", which is a loosening's alone.
  *
  *  A surface that already asked its own, more specific question (the YOLO switch, "Allow all
  *  private networks", turning the 2FA requirement off, "Propose fix branches", letting an MCP
@@ -27,16 +29,17 @@ export class ConsentDeclined extends Error {
   }
 }
 
-interface ConsentAsked { field: string; consent: string }
+interface ConsentAsked { field: string; consent: string; title: string }
 
 /** The gateway's consent question inside a rejection, or `null` when it is anything else. */
 export function consentAsked(e: unknown): ConsentAsked | null {
   if (!(e instanceof Error) || (e as { code?: unknown }).code !== 'confirmation_required') return null
   const detail = (e as { detail?: unknown }).detail
   if (!detail || typeof detail !== 'object') return null
-  const { field, consent } = detail as Record<string, unknown>
+  const { field, consent, title } = detail as Record<string, unknown>
   return typeof field === 'string' && typeof consent === 'string' && consent.trim()
-    ? { field, consent }
+    && typeof title === 'string' && title.trim()
+    ? { field, consent, title }
     : null
 }
 
@@ -54,7 +57,7 @@ export async function withSecurityConsent<T>(
     const asked = confirmed ? null : consentAsked(e)
     if (!asked) throw e
     const ok = await confirm({
-      title: 'Loosen a security setting?',
+      title: asked.title,
       body: asked.consent,
       confirmLabel: 'Allow',
       danger: true,

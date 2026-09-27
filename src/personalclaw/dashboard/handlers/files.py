@@ -1448,6 +1448,39 @@ async def api_file_raw(request: web.Request) -> web.Response:
     return web.Response(body=data, headers=headers)
 
 
+def _allow_heartbeat_tasks_the_owner_wrote(
+    path: str, before: bytes, after: str, *, caller: str
+) -> None:
+    """The owner's save of HEARTBEAT.md is their yes to the tasks it added (`heartbeat`).
+
+    A task the owner types in the Files editor runs with its tools, as every task did before a
+    task the agent wrote was held to read-only: the owner typing it is the yes. Only the owner's
+    save — an app's write through this route is the app's words, and waits like the agent's.
+    """
+    from personalclaw import heartbeat
+    from personalclaw.apps.permissions import request_app
+
+    if request_app():
+        return
+    try:
+        if os.path.realpath(path) != os.path.realpath(heartbeat.heartbeat_path()):
+            return
+        sealed = heartbeat.seal_owner_edit(before.decode("utf-8", errors="replace"), after)
+    except Exception:  # noqa: BLE001 - the save stands; the task waits for an Allow
+        logging.getLogger(__name__).warning(
+            "could not record the owner's heartbeat tasks", exc_info=True
+        )
+        return
+    for text in sealed:
+        _sel().log_api_access(
+            caller=caller,
+            operation="heartbeat_task.grant",
+            outcome="success",
+            source="dashboard",
+            resources=f"written by the owner in the Files editor: {text[:200]}",
+        )
+
+
 async def api_file_write(request: web.Request) -> web.Response:
     """POST /api/file-write — write file content from the markdown panel.
 
@@ -1545,6 +1578,9 @@ async def api_file_write(request: web.Request) -> web.Response:
             raise
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_write", outcome="success", resources=path
+        )
+        _allow_heartbeat_tasks_the_owner_wrote(
+            path, head, content, caller=request.get("user", "dashboard")
         )
         written = whole_text(content.encode("utf-8"))
         return web.json_response(

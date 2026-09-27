@@ -338,7 +338,7 @@ def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
     sentences: list[str] = []
     grant = grants.question(candidate, before=before)
     if grant is not None:
-        sentences.append(grant[1])
+        sentences.append(grant.sentence)
     inline = (candidate.workflow or {}).get("inline") or {}
     raw = inline.get("config")
     config: dict = raw if isinstance(raw, dict) else {}

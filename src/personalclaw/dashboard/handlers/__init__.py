@@ -207,16 +207,22 @@ from personalclaw.dashboard.handlers.files import (  # noqa: E402, F401
     api_upload_file,
 )
 
+# ── The HEARTBEAT.md queue on the Triggers page (handlers/heartbeat_tasks.py). ──
+from personalclaw.dashboard.handlers.heartbeat_tasks import (  # noqa: E402, F401
+    api_heartbeat_task_allow,
+    api_heartbeat_tasks,
+)
+
 # ── Actions + webhook runner (handlers/hooks.py — lifecycle CRUD moved to
 # triggers.py; this keeps the action catalog, the agent-scoped view, and the
 # external-webhook→agent runner). ──
 from personalclaw.dashboard.handlers.hooks import (  # noqa: E402, F401
     _get_hook_store,
-    _load_hook_context,
     _run_hook_agent,
     _run_hook_inner,
     _verify_hook_token,
     api_action_providers,
+    api_agent_hook_allow,
     api_agent_hooks,
     api_hooks_agent,
 )

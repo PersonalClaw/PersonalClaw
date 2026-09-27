@@ -96,14 +96,18 @@ permission model holds in every auth mode.
 
 ### Webhook auth
 
-`POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is
-middleware-exempt; its **only** gate is `_verify_hook_token` — a
+`POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is one of the token
+middleware's internal paths: from this machine it takes the internal secret (a
+local relay, the way the `mcp-core` process calls in) or an owner session, and
+from anywhere else it is refused. Past that, `_verify_hook_token` is a
 constant-time (`hmac.compare_digest`) check of the Bearer or
 `x-personalclaw-token` header against `hooks.webhook_token` in config — a
 `{{secret:…}}` reference there, resolved from the credential store at the
 check (`config/secret_refs.py`). No configured token, or a reference the store
-cannot answer, means every request is refused. Denials are logged to the
-Security Event Log.
+cannot answer, means every request is refused. And a session key a callback
+the agent registered names (`webhook_callbacks.py`) starts a turn only once the
+owner allowed that callback: until then the answer is `403 not_allowed`.
+Denials are logged to the Security Event Log.
 
 ## Command screening (`security.py`)
 
@@ -146,11 +150,13 @@ is allow-by-default (`(version 1)\n(allow default)`) with targeted `deny file-re
 credential paths (`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.docker`, `~/.kube`,
 `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, `.personalclaw/.env`, plus `~/.ssh` in
 `strict`); the Linux path is equivalent (bind-mount empty dirs over those paths). It raises the
-cost of credential theft; it does not stop an agent from doing anything else.
+cost of credential theft. The one place it confines writes is the home's owner-only paths (below);
+it does not stop an agent from doing anything else.
 
 | It **does** | It does **not** |
 |---|---|
-| Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`) |
+| Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`, and the owner-only paths) |
+| Refuse writes to the owner-only paths at every level (macOS deny-writes; Linux read-only binds) | |
 | Scrub credential env vars from the child, every mode | Restrict **network / egress** from the child |
 | Deny `~/.ssh` writes (macOS `strict` only) | Limit processes, CPU, or memory (no rlimits) |
 | Path-allowlist a subagent's cwd (advisory — the prompt tells the agent its scope) | Provide a filesystem **jail** or a real execution boundary |
@@ -160,6 +166,33 @@ The honest, complete statement of limitations lives in
 [`../security/threat-model.md`](../security/threat-model.md) and
 [`../security/limitations.md`](../security/limitations.md); this section is the architectural
 summary, not a substitute for them.
+
+### What runs as the owner is owner-only (`owner_only.py`)
+
+Four places in the home hold what runs as the owner and what they allowed: `config.json` (among
+much else, the agent CLI's own hooks, `agent.agent_hooks`), `hooks/` (the scripts those hooks
+import), `agents/` (the agent CLI's config and every agent definition) and `grants/` (the owner's
+yes to what an agent wrote, `owner_grants.py`). An agent writes none of them, at three layers that
+each read `owner_only`:
+
+- **The fence**: the sandbox around the agent's shell denies the write — a Seatbelt
+  `deny file-write*` at every level; on Linux each is bind-mounted onto itself read-only (a missing
+  directory is made first; `config.json` only when it exists). This is the kernel refusing, so it
+  holds however the command spells the path.
+- **The screen**: `HookManager.on_tool_call`, which every approval path consults before a card,
+  an auto-approve pattern or an unattended default, and the native `bash` tool refuse a call that
+  names one, with the reason. Defence in depth — a command can build the path out of pieces no
+  reading of its text sees.
+- **The roots**: no file root reaches into the home except a root that is itself inside it
+  (`file_roots.within`), so the file explorer, file-backed artifacts, apps and the native file
+  tools never name them however a workspace or a loop is bound.
+
+The owner is untouched: their own editor, and the gateway writing for the owner's surfaces. And
+because a fence is not consent, the agent CLI's hooks also run only once the owner allowed them
+(`agent_hook_grants.py`): a hook the owner has not allowed, or whose file changed since, is left
+out of the agent CLI's config and listed on the Agents page with Allow. What the CLI runs is a copy
+of the file as the owner allowed it (`<home>/hooks/.allowed/<seal>`), not the file, so an edit to
+it — a script outside the home is no owner-only path — never runs on the old yes.
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 

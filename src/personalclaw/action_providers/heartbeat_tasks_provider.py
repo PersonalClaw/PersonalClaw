@@ -12,7 +12,9 @@ Nothing here re-implements scheduling, overlap or ledgering: the clock tick arms
 `overlap: skip` keeps a long pass from stacking a second one, and `_record_fire_outcome` writes
 each pass's run. The TASKS still run through the gateway's heartbeat turn (`heartbeat
 .task_runner`): the background prompt, the unattended approval policy, and delivery of each
-finished task's result to its `<!-- deliver:… -->` target, exactly as before.
+finished task's result to its `<!-- deliver:… -->` target. A task runs only once the owner
+allowed it (`heartbeat`): the agent writes this file, and its words do not run unattended with its
+tools until the owner says so. A pass leaves every other task where it is, and says how many wait.
 """
 
 from __future__ import annotations
@@ -75,17 +77,23 @@ class HeartbeatTasksActionProvider(ActionProvider):
         except Exception as exc:  # noqa: BLE001 - a broken pass reports, never crashes the tick
             logger.warning("heartbeat tasks pass failed", exc_info=True)
             return ActionResult(success=False, error=f"could not run {HEARTBEAT_FILE}: {exc}")
+        waiting = (
+            f"{done.waiting} waiting for your Allow on the Triggers page" if done.waiting else ""
+        )
         if done.ran == 0:
             # `skip`: recorded as the inert `skipped_noop` (`schedule_history.status_for_result`),
-            # which folds out of the default history, so a pass every minute over an empty queue
-            # does not bury the passes that ran a task.
+            # which folds out of the default history, so a pass every minute over a queue with
+            # nothing to run does not bury the passes that ran a task. The trigger's panel lists
+            # the waiting tasks, each with its Allow.
             return ActionResult(
-                success=True, stdout=f"no tasks in {HEARTBEAT_FILE}", outcome="skip"
+                success=True,
+                stdout=f"no task ran: {waiting}" if waiting else f"no tasks in {HEARTBEAT_FILE}",
+                outcome="skip",
             )
         summary = (
             f"{done.ran} task{'s' if done.ran != 1 else ''} ran: {done.done} done, "
             f"{done.kept} kept for the next pass"
-        )
+        ) + (f"; {waiting}" if waiting else "")
         if done.failed:
             return ActionResult(
                 success=False,
@@ -146,8 +154,9 @@ def reconcile_heartbeat_tasks_trigger(store: Any) -> None:
         if existing is None:
             trigger.spec = {"kind": "interval", "interval_secs": INTERVAL_SECS}
         trigger.workflow = {"inline": {"provider": PROVIDER_NAME, "config": {}}}
-        # The frozen grant (decision 7): each task is an unattended agent turn with its tools, and
-        # a system-created trigger's opt-in is the code path that created it.
+        # The frozen grant (decision 7): each task is an unattended agent turn, and a
+        # system-created trigger's opt-in is the code path that created it. Whether a task runs at
+        # all is the owner's yes to that task, not this grant (`heartbeat.allowed`).
         trigger.capabilities = _screen.capabilities_for_action(trigger)
         if not trigger.next_fire_at:
             armed = _arm(trigger)

@@ -11,6 +11,23 @@ listed on the Triggers page with its cadence, its runs and its switch; this modu
 file's format (:func:`run_tasks`, the ``HEARTBEAT_KEEP`` sentinel) because the agent writes it
 and the trigger reads it.
 
+🔴 **A TASK RUNS ONLY WITH THE OWNER'S YES ON IT, as a trigger the chat makes does.** The file sits
+in the agent's workspace, and the agent is the writer the product tells to use it
+(``config/prompts/background.md``): its ``write_file`` and its shell write it, and so does an app
+that declared ``/api/file-write``. Measured on `main`: a task any of them wrote ran on the next
+pass as an unattended turn in which every tool the security hooks did not deny was approved, and
+nobody was asked. So a task runs only once the owner allowed it, sealed to its text (:data:`BOOK`,
+`owner_grants`): one they wrote in the Files editor (the save is the yes to the lines it added,
+:func:`seal_owner_edit`) and one they allowed on the Triggers page (:func:`allow`, which asks
+first). Any other task waits in the file, listed on the Heartbeat tasks trigger's panel, and a pass
+leaves it where it is. An edit to a task is a new task, and a finished task takes its yes with it.
+
+Why not "read-only until allowed", which would let the agent's checks run on their own: the
+read-only posture an unattended run gets is the task-mode classifier (``task_modes``), and it
+reads a tool it has no declaration for by its name. Measured on a live gateway: 75 of the agent's
+115 tools pass it, ``computer_click``, ``workflow_start`` and ``memory_remember`` among them. A
+task held to it could still change things, so "read-only" would be a promise nothing enforces.
+
 **Store maintenance is not here at all (PLATFORM-RESILIENCE §4.4, PR2-8).** Memory FTS
 reconciliation, the history and SEL prunes and skill-library aging belong to the
 health-scored remediation engine, which is driven by ONE adaptive-clock trigger
@@ -32,6 +49,7 @@ from typing import TYPE_CHECKING, Callable, Coroutine
 from personalclaw import shutdown_event
 from personalclaw.atomic_write import atomic_write
 from personalclaw.memory import workspace_dir
+from personalclaw.owner_grants import GrantBook, seal
 
 if TYPE_CHECKING:
     from personalclaw.history import HistoryConsolidator
@@ -82,18 +100,75 @@ def heartbeat_path() -> Path:
 #: One HEARTBEAT.md task as the gateway's unattended background turn: `(task, deliver) -> response`.
 #: Registered by the gateway at boot, dashboard or not, so the `heartbeat-tasks` trigger runs the
 #: queue through the same turn it always used: the background prompt, the unattended approval
-#: policy, and delivery of each finished task's result to its `deliver:` target.
-_task_runner: Callable[[str, str], Awaitable[str | None]] | None = None
+#: policy, and delivery of each finished task's result to its `deliver:` target. Handed only the
+#: tasks the owner allowed (:func:`run_tasks`).
+TaskRunner = Callable[[str, str], Awaitable[str | None]]
+_task_runner: TaskRunner | None = None
 
 
-def set_task_runner(runner: Callable[[str, str], Awaitable[str | None]] | None) -> None:
+def set_task_runner(runner: TaskRunner | None) -> None:
     global _task_runner
     _task_runner = runner
 
 
-def task_runner() -> Callable[[str, str], Awaitable[str | None]] | None:
+def task_runner() -> TaskRunner | None:
     """The registered runner, or None before the gateway has started."""
     return _task_runner
+
+
+#: The owner's yes to a task, keyed and sealed by its text (`owner_grants`).
+BOOK = GrantBook("heartbeat")
+
+
+def allowed(task_text: str) -> bool:
+    """Whether the owner allowed *task_text*, exactly as written, to run."""
+    return BOOK.holds(seal(task_text), task_text)
+
+
+def allow(task_text: str) -> None:
+    """The owner's yes to *task_text*: the Triggers page's Allow, after its question."""
+    BOOK.give(seal(task_text), task_text)
+
+
+def seal_owner_edit(before: str, after: str) -> list[str]:
+    """The tasks the owner's own save of HEARTBEAT.md added or changed, allowed as theirs.
+
+    Called by the Files editor's save (`dashboard/handlers/files.api_file_write`) for the owner,
+    never an app: the owner typed them, which is the yes. A task that was already in the file keeps
+    whatever it had — a save is not a yes to lines someone else wrote. Returns what it allowed.
+    """
+    earlier = {text for text, _deliver in _extract_tasks(before)}
+    sealed: list[str] = []
+    for text, _deliver in _extract_tasks(after):
+        if text not in earlier and not allowed(text):
+            allow(text)
+            sealed.append(text)
+    return sealed
+
+
+def queued() -> list[dict[str, object]]:
+    """The tasks in HEARTBEAT.md as the Triggers page lists them: text, delivery target, and
+    whether the owner's yes is on it."""
+    path = heartbeat_path()
+    if not path.exists():
+        return []
+    return [
+        {"text": text, "deliver": deliver, "allowed": allowed(text)}
+        for text, deliver in _extract_tasks(path.read_text(encoding="utf-8").strip())
+    ]
+
+
+def consent(task_text: str) -> str:
+    """The sentence the owner agrees to on the Triggers page's Allow — product copy."""
+    return (
+        f"Allowing “{task_text}” lets the heartbeat run it with your agent's tools, with nobody "
+        "watching, on every pass until it is done: it can change files, run commands and do "
+        "anything else your agent can. Until you allow it, it does not run."
+    )
+
+
+#: The consent dialog's heading for :func:`consent` (`http_errors.consent_required`).
+CONSENT_TITLE = "Allow this heartbeat task to run?"
 
 
 def ensure_heartbeat_file() -> Path:
@@ -106,10 +181,12 @@ def ensure_heartbeat_file() -> Path:
 
 @dataclass
 class TaskPass:
-    """What one pass over HEARTBEAT.md did: how many tasks it ran, and which it kept."""
+    """What one pass over HEARTBEAT.md did: how many tasks it ran, which it kept, and how many it
+    left waiting for the owner's Allow."""
 
     ran: int = 0
     kept: int = 0
+    waiting: int = 0
     failed: list[str] = field(default_factory=list)
 
     @property
@@ -117,35 +194,44 @@ class TaskPass:
         return self.ran - self.kept
 
 
-async def run_tasks(run_task: Callable[[str, str], Awaitable[str | None]]) -> TaskPass:
-    """Run every task in HEARTBEAT.md once, concurrently, and keep the unfinished ones.
+async def run_tasks(run_task: TaskRunner) -> TaskPass:
+    """Run every task in HEARTBEAT.md the owner allowed once, concurrently, and keep the rest.
 
-    A task is kept when it raised (it retries on the next pass) or when its response carries
-    ``HEARTBEAT_KEEP`` (the agent's "not done yet"); every other task is removed. The file is
-    rewritten only when there were tasks, so an empty queue costs one read.
+    A task the owner has not allowed (:func:`allowed`) is not run: it stays in the file as it is,
+    waiting for their yes. A task that ran is kept when it raised (it retries on the next pass) or
+    when its response carries ``HEARTBEAT_KEEP`` (the agent's "not done yet"); every other one is
+    removed, and the yes it had with it — the same words written again later are a new task. The
+    file is rewritten only when a task ran, so a queue with nothing to run costs one read.
     """
     path = heartbeat_path()
     result = TaskPass()
     if not path.exists():
         return result
     tasks = _extract_tasks(path.read_text(encoding="utf-8").strip())
-    if not tasks:
+    ready = [(text, deliver) for text, deliver in tasks if allowed(text)]
+    result.waiting = len(tasks) - len(ready)
+    if not ready:
         return result
-    logger.info("Heartbeat: %d task(s) found", len(tasks))
-    keep: list[tuple[str, str]] = []
-    outcomes = await asyncio.gather(*[run_task(t, d) for t, d in tasks], return_exceptions=True)
-    for (task_text, deliver), outcome in zip(tasks, outcomes):
+    logger.info("Heartbeat: %d task(s) to run, %d waiting", len(ready), result.waiting)
+    finished: set[str] = set()
+    outcomes = await asyncio.gather(*[run_task(t, d) for t, d in ready], return_exceptions=True)
+    for (task_text, _deliver), outcome in zip(ready, outcomes):
         if isinstance(outcome, BaseException):
             logger.warning("Heartbeat task failed: %s", task_text[:80], exc_info=outcome)
-            keep.append((task_text, deliver))
             result.failed.append(task_text[:80])
+            result.kept += 1
         elif _should_keep(outcome):
             logger.info("Heartbeat task incomplete, keeping: %s", task_text[:80])
-            keep.append((task_text, deliver))
-    result.ran = len(tasks)
-    result.kept = len(keep)
+            result.kept += 1
+        else:
+            finished.add(task_text)
+    result.ran = len(ready)
+    for text in finished:
+        BOOK.revoke(seal(text))
     lines = _HEADER
-    for text, deliver in keep:
+    for text, deliver in tasks:
+        if text in finished:
+            continue
         suffix = f"  <!-- deliver:{deliver} -->" if deliver else ""
         lines += f"- {text}{suffix}\n"
     atomic_write(path, lines)

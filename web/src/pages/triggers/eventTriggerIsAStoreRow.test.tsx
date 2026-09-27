@@ -21,6 +21,7 @@ function mockApi() {
       schedules: () => Promise.resolve({ jobs: [] }),
       hooks: () => Promise.resolve([]),
       storeTriggers: () => Promise.resolve(storeRows),
+      callbacks: () => Promise.resolve([]),
       triggerReview: () => Promise.resolve([]),
       actionProviders: () => Promise.resolve([]),
       autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),

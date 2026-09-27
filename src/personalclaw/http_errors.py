@@ -896,15 +896,18 @@ def json_error(
     return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
 
 
-def consent_required(field: str, consent: str) -> web.Response:
-    """The ``400 confirmation_required`` a write that loosens a security setting answers when it
-    did not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
-    approval mode, an automation's posture), because the SPA's ``withSecurityConsent`` asks the
-    owner by reading exactly this: ``{field, consent}`` in ``error.detail``, with *consent* being
-    the sentence the dialog shows (``config/edit_spec.SecurityControl.consent``)."""
+def consent_required(field: str, consent: str, *, title: str) -> web.Response:
+    """The ``400 confirmation_required`` a write that needs the owner's yes answers when it did
+    not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
+    approval mode, an automation's posture, a grant for what a trigger runs), because the SPA's
+    ``withSecurityConsent`` asks the owner by reading exactly this: ``{field, consent, title}`` in
+    ``error.detail``. *consent* is the sentence the dialog shows and *title* is its heading, and
+    both are product copy: the title names the question being asked, so a grant question never
+    reads "Loosen a security setting?" (``config/edit_spec.LOOSEN_TITLE``), which is the heading
+    of a loosening alone."""
     return json_error(
         "confirmation_required",
         message=f'send {{"confirm": true}} to confirm — {consent}',
         status=400,
-        error_extra={"detail": {"field": field, "consent": consent}},
+        error_extra={"detail": {"field": field, "consent": consent, "title": title}},
     )

@@ -56,7 +56,7 @@ beforeEach(() => {
   agentMetadata.mockReset().mockResolvedValue('')
   routingStatus.mockReset().mockResolvedValue({ enabled: true, muted: [], dismissals: {} })
   mcpActive.mockReset().mockResolvedValue([])
-  agentHooks.mockReset().mockResolvedValue({})
+  agentHooks.mockReset().mockResolvedValue({ hooks: {}, waiting: [] })
   chatModels.mockReset().mockResolvedValue([
     { name: 'fake-oai:fake-model-1', model_id: 'fake-model-1', provider: 'fake-oai' },
   ])

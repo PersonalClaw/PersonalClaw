@@ -131,6 +131,12 @@ class SecurityControl:
     consent: str
 
 
+#: The consent dialog's heading for a write that loosens a :class:`SecurityControl` — and only
+#: for that: every other question the owner is asked names itself (`http_errors.consent_required`
+#: takes the title from its caller).
+LOOSEN_TITLE = "Loosen a security setting?"
+
+
 @dataclass(frozen=True)
 class NotASecurityControl:
     """A field in a :data:`SECURITY_SECTIONS` section that loosens nothing when changed.

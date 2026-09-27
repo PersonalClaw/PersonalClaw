@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **876 registrations** over **708 distinct paths** — 869 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **879 registrations** over **711 distinct paths** — 872 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 127 families the surface divides into, largest first.
+The 128 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -87,11 +87,13 @@ The 127 families the surface divides into, largest first.
 | `/api/terminal` | 3 | 2 |
 | `/api/usage` | 3 | 3 |
 | `/api/agent` | 2 | 1 |
+| `/api/agent-hooks` | 2 | 2 |
 | `/api/agent-providers` | 2 | 2 |
 | `/api/approvals` | 2 | 2 |
 | `/api/channel` | 2 | 2 |
 | `/api/computer-use` | 2 | 2 |
 | `/api/guardrails` | 2 | 1 |
+| `/api/heartbeat` | 2 | 2 |
 | `/api/session` | 2 | 2 |
 | `/api/system` | 2 | 2 |
 | `/api/upload` | 2 | 2 |
@@ -100,7 +102,6 @@ The 127 families the surface divides into, largest first.
 | `/action` | 1 | 1 |
 | `/actions` | 1 | 1 |
 | `/api/action-providers` | 1 | 1 |
-| `/api/agent-hooks` | 1 | 1 |
 | `/api/agent-runners` | 1 | 1 |
 | `/api/attachment-extract` | 1 | 1 |
 | `/api/auth-status` | 1 | 1 |
@@ -154,12 +155,13 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 869 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 872 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
 | `GET` | `/api/action-providers` | the registered action providers + their |
-| `GET` | `/api/agent-hooks` | read-only view of agent hooks from personalclaw.json. |
+| `GET` | `/api/agent-hooks` | the agent CLI's hooks in effect, and the ones waiting for the owner. |
+| `POST` | `/api/agent-hooks/allow` | the owner's yes to one waiting agent hook. |
 | `GET` | `/api/agent-marketplace/agents` | list agents from a marketplace. |
 | `POST` | `/api/agent-marketplace/agents` | create a new agent definition. |
 | `DELETE` | `/api/agent-marketplace/agents/{name}` | delete an agent definition. |
@@ -462,6 +464,8 @@ The 869 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/guardrails/project-trust` | the whole store; |
 | `POST` | `/api/guardrails/project-trust` | the whole store; |
 | `GET` | `/api/healthz` | Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP. |
+| `GET` | `/api/heartbeat/tasks` | every task in HEARTBEAT.md, and whether the owner allowed it. |
+| `POST` | `/api/heartbeat/tasks/allow` | the owner's yes to one queued task. |
 | `POST` | `/api/hooks/agent` | run an agent turn from an external webhook. |
 | `GET` | `/api/inbox` | list all inbox items (recency, optionally engagement-weighted). |
 | `POST` | `/api/inbox/digest` | on-demand channel digest. |
