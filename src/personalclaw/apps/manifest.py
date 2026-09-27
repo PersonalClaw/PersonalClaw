@@ -990,13 +990,13 @@ _PREREQUISITE_LIMITS = {"name": 80, "why": 300, "how": 600}
 
 @dataclass
 class Prerequisite:
-    """Something an app needs on this machine that PersonalClaw does not install — the server
-    Local Image Generation sends its work to (ComfyUI), a program a tool shells out to.
+    """Something an app needs on this machine that PersonalClaw does not install — a local
+    image server the app sends its work to, a program a tool shells out to.
 
     ``name`` is what it is, ``why`` what the app uses it for, ``how`` what the owner does to
     have it. Install consent and the Store card show all three before anything installs, so
-    "it needs ComfyUI" is read where the choice is made rather than in an error after it.
-    Plain text: no surface renders markup from it.
+    "it needs an image server" is read where the choice is made rather than in an error after
+    it. Plain text: no surface renders markup from it.
     """
 
     name: str = ""
@@ -1842,8 +1842,9 @@ class AppManifest:
     extra: dict[str, Any] = field(default_factory=dict)
 
     # --- Prerequisites ---
-    # What the app needs on this machine that PersonalClaw does not install (a ComfyUI server,
-    # a program it runs), each with why and how. Shown at install consent and on the Store card.
+    # What the app needs on this machine that PersonalClaw does not install (a local server it
+    # sends work to, a program it runs), each with why and how. Shown at install consent and on
+    # the Store card.
     # Last, so no published field moves position (``sdk/signatures.json``).
     requires: list[Prerequisite] = field(default_factory=list)
 

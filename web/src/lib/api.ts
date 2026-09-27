@@ -970,8 +970,9 @@ export interface AppDisclosure {
  *  spec arrives `false`, which is the louder of the two disclosures and the same
  *  fail-closed direction the guard takes. */
 export interface AppPythonDependency { spec: string; coreOwned: boolean }
-/** Something an app needs on this machine that PersonalClaw does not install (a ComfyUI server),
- *  what the app uses it for, and what the owner does to have it — the manifest's `requires`. */
+/** Something an app needs on this machine that PersonalClaw does not install (a local server the
+ *  app sends its work to), what the app uses it for, and what the owner does to have it — the
+ *  manifest's `requires`. */
 export interface AppPrerequisite { name: string; why: string; how: string }
 export interface AppCatalogEntry {
   name: string; displayName: string; description: string; version: string

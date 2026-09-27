@@ -90,7 +90,7 @@ export interface StoreItem extends AppCatalogEntry {
   updateSource?: string
 }
 
-/** "ComfyUI", "ComfyUI and Ollama", "A, B and C": the names a card says an app needs. */
+/** "A", "A and B", "A, B and C": the names a card says an app needs. */
 const NEEDS = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' })
 
 /** An installed app (AppSummary) projected onto the catalog-entry shape so it can
