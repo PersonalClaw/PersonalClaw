@@ -510,7 +510,7 @@
  },
  "personalclaw.sdk.channel.BACKGROUND_KEY": {"kind": "value", "type": "str", "value": "'_bg'"},
  "personalclaw.sdk.channel.CANCELLED_STOP_REASONS": {"kind": "value", "type": "tuple", "value": "('cancelled', 'stopped_by_user')"},
- "personalclaw.sdk.channel.CANNED_PAIRING_REPLY": {"kind": "value", "type": "str", "value": "\"I don't recognize you yet. Ask my owner for an 8-digit pairing code (they can run `personalclaw pair <provider>`), then send it here to start talking.\""},
+ "personalclaw.sdk.channel.CANNED_PAIRING_REPLY": {"kind": "value", "type": "str", "value": "\"I don't recognize you yet. Ask my owner for an 8-digit pairing code, then send it here to start talking.\""},
  "personalclaw.sdk.channel.CRED_OWNER_ID": {"kind": "value", "type": "str", "value": "'PERSONALCLAW_OWNER_ID'"},
  "personalclaw.sdk.channel.CRED_SLACK_APP_TOKEN": {"kind": "value", "type": "str", "value": "'SLACK_APP_TOKEN'"},
  "personalclaw.sdk.channel.CRED_SLACK_BOT_TOKEN": {"kind": "value", "type": "str", "value": "'SLACK_BOT_TOKEN'"},
@@ -886,6 +886,13 @@
     "kind": "async method",
     "params": [],
     "returns": "dict[str, Any]"
+   },
+   "validate_target": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "target"}
+    ],
+    "returns": "str"
    }
   }
  },
@@ -3633,7 +3640,8 @@
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "sender_name"},
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_id"},
    {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "is_dm"},
-   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "text"}
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "text"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_name"}
   ],
   "returns": "TrustVerdict"
  },
@@ -3774,7 +3782,8 @@
   "params": [
    {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "sender_id"},
-   {"annotation": "str", "kind": "positional_or_keyword", "name": "code"}
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "code"},
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "name"}
   ],
   "returns": "bool"
  },

@@ -226,8 +226,8 @@ Manage scheduled jobs.
 | Subcommand | What it does |
 |---|---|
 | `cron list` | List cron jobs. |
-| `cron add NAME MESSAGE [--every SECS] [--cron EXPR] [--channel ID] [--approval-mode auto]` | Add a job — interval (`--every`) or cron expression (`--cron "0 9 * * MON-FRI"`); optionally post results to a channel; `--approval-mode auto` auto-approves the job's tools. |
-| `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel ID] [--approval-mode auto\|default]` | Update a job (`default` resets approval mode). |
+| `cron add NAME MESSAGE [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto]` | Add a job — interval (`--every`) or cron expression (`--cron "0 9 * * MON-FRI"`); optionally send results on a chat channel: `--channel telegram` for your DMs there, `--channel telegram:-100123` for a chat. The channel checks the id; `--approval-mode auto` auto-approves the job's tools. |
+| `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto\|default]` | Update a job (`default` resets approval mode). |
 | `cron remove JOB_ID` | Remove a job. |
 | `cron pause JOB_ID` / `cron resume JOB_ID` | Pause / resume a job. |
 | `cron trigger JOB_ID` | Fire a job immediately. |

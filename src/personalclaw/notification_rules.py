@@ -65,9 +65,11 @@ logger = logging.getLogger(__name__)
 #: Delivery targets. ``native`` is LIVE as of DESKTOP-CAPABILITIES `DC-5` (see
 #: :func:`native_delivery`) and ``push`` is LIVE as of MOBILE-COMPANION `MC-5` — a rule
 #: carrying it sends a content-free ``{kind, item_id}`` ping through
-#: :mod:`personalclaw.push`. ``channel_dm`` is the one target still accepted and persisted
-#: but inert; storing it means a user's choice survives rather than being silently dropped
-#: and needing re-entry later.
+#: :mod:`personalclaw.push`. ``channel_dm`` sends the note to the owner's DM on the first
+#: connected chat channel that reaches them (``channel_delivery.reach_owner``, from
+#: ``DashboardState.notify``); for ``approval/requested`` it asks there, with Approve/Deny
+#: where the channel has them (``DashboardApprovalState._ask_on_a_channel``). Unlike ``push``
+#: it carries the note's text, because the channel is where the owner reads it.
 TARGETS: tuple[str, ...] = ("dashboard", "channel_dm", "push", "native")
 DEFAULT_TARGETS: tuple[str, ...] = ("dashboard",)
 
@@ -91,6 +93,43 @@ SOUND_CUES: tuple[str, ...] = (
 #: capability vocabulary the second name comes from.
 NATIVE_TARGET = "native"
 NATIVE_CAPABILITY = "native_notifications"
+
+
+def dashboard_link(fragment: str) -> str:
+    """An absolute link to ``fragment`` (``#/…``) on this dashboard, or "" when none is known.
+
+    For a message read OUTSIDE the dashboard (a channel DM), where a bare hash route leads
+    nowhere. The base is the declared public URL, else ``dashboard.url`` — the URL an owner sets
+    for links sent to chat channels. With neither, there is no honest link to give."""
+    if not fragment:
+        return ""
+    try:
+        from personalclaw.dashboard.exposure import public_url
+        from personalclaw.dashboard.origin import dashboard_origin
+
+        base = dashboard_origin(
+            public_url() or str(config_loader.AppConfig.load().dashboard.url or "")
+        )
+    except Exception:  # noqa: BLE001 - a link is a courtesy; the message goes without it
+        logger.debug("no dashboard base URL for a link", exc_info=True)
+        return ""
+    return f"{base}/{fragment.lstrip('/')}" if base else ""
+
+
+def channel_dm_text(note: dict[str, Any]) -> str:
+    """What the ``channel_dm`` target sends for ``note``: its title, its body, and its link.
+
+    Redacted here as every outbound channel text is (a channel app redacts again), because this
+    leaves the machine."""
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+    parts = [str(note.get("title") or "").strip(), str(note.get("body") or "").strip()]
+    text = "\n\n".join(p for p in parts if p)
+    text, _ = redact_exfiltration_urls(text)
+    text, _ = redact_credentials(text)
+    link = dashboard_link(str(note.get("statusUrl") or ""))
+    return f"{text}\n{link}" if link else text
+
 
 #: Digest defaults. 08:00 local, matching the plan's morning-digest intent.
 DEFAULT_DIGEST_SCHEDULE = "0 8 * * *"

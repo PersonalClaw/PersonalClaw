@@ -18,6 +18,8 @@ import {
 } from './ScheduleForm'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { InlineLoadError } from '../../ui/ListScaffold'
+import { useQuery } from '../../lib/data'
+import { channelLabel } from './notifyChannel'
 
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
  *  WorkflowDetail), the schedule + execution summary, last result/error, and a
@@ -37,6 +39,12 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   // Edit mode is owned by the URL (?edit=1), threaded in fully controlled.
   const setEditing = onEditingChange
   const [draft, setDraft] = useState<ScheduleDraft>(() => toDraft(job))
+  // Display names for the chip below. A failed read leaves the channel's key on the chip, which is
+  // still true, and says the names couldn't be read. The key without Settings → Providers' catch,
+  // same as the Notify channel picker.
+  const { data: channels, error: channelsError, refresh: refreshChannels } = useQuery(
+    'settings:channels-owners', () => api.channels(), { persist: true },
+  )
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -313,12 +321,24 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       {(job.timezone || job.channel || job.silent || job.strict_schedule || (job.skip_dates?.length ?? 0) > 0) && (
         <div className="flex flex-wrap gap-1.5 text-[0.75rem]">
           {job.timezone && <Chip>{job.timezone}</Chip>}
-          {job.channel && <Chip>↳ {job.channel}</Chip>}
+          {job.channel && <Chip>↳ {channelLabel(job.channel, channels)}</Chip>}
           {job.silent && <Chip>silent</Chip>}
           {job.strict_schedule && <Chip>strict</Chip>}
           {(job.skip_dates?.length ?? 0) > 0 && <Chip>{job.skip_dates!.length} skip date{job.skip_dates!.length > 1 ? 's' : ''}</Chip>}
         </div>
       )}
+      {job.channel && channelsError && !channels ? (
+        <InlineLoadError what="your chat channels" error={channelsError} onRetry={refreshChannels} />
+      ) : null}
+      {/* The server's sentence for a channel its results can't reach: one that isn't set up here
+          (a route saved before routes named their channel reads as a channel called `C0123`), or
+          an id the channel refuses. Said, so the chip above is not read as a working route. */}
+      {job.channel && job.channel_problem ? (
+        <p role="status" data-type="caption" className="text-warn">
+          <AlertTriangle size={12} className="mr-1 inline-block align-[-1px]" aria-hidden="true" />
+          {job.channel_problem} Results reach the dashboard only.
+        </p>
+      ) : null}
 
       {/* last outcome */}
       <Section label="Last run">

@@ -1538,7 +1538,12 @@ async def start_dashboard(
     )
     from personalclaw.dashboard.handlers.channel_trust import (
         api_channel_trust,
+        api_channel_trust_pairing_cancel,
+        api_channel_trust_pairing_start,
+        api_channel_trust_policies,
         api_channel_trust_revoke,
+        api_channel_trust_track,
+        api_channel_trust_untrack,
     )
     from personalclaw.dashboard.handlers.channels import (
         api_channel_connect,
@@ -1556,6 +1561,15 @@ async def start_dashboard(
     app.router.add_get("/api/channels/trust", api_channel_trust)
     app.router.add_delete(
         "/api/channels/trust/{provider}/senders/{sender_id}", api_channel_trust_revoke
+    )
+    app.router.add_put("/api/channels/trust/{provider}/policies", api_channel_trust_policies)
+    app.router.add_post("/api/channels/trust/{provider}/channels", api_channel_trust_track)
+    app.router.add_delete(
+        "/api/channels/trust/{provider}/channels/{channel_id}", api_channel_trust_untrack
+    )
+    app.router.add_post("/api/channels/trust/{provider}/pairing", api_channel_trust_pairing_start)
+    app.router.add_delete(
+        "/api/channels/trust/{provider}/pairing", api_channel_trust_pairing_cancel
     )
     app.router.add_get("/api/channels/{name}", api_channel_get)
     app.router.add_post("/api/channels/{name}/connect", api_channel_connect)

@@ -66,6 +66,31 @@ class _EmptyStore:
         return []
 
 
+@pytest.fixture
+def fakechat():
+    """A chat channel set up here. A schedule's route names the channel its results go to, and a
+    name that is no chat channel is refused, so a channel route needs one to exist."""
+    from personalclaw import channel_transports
+    from personalclaw.channel_transports.base import ChannelTransportProvider
+
+    class _Chat(ChannelTransportProvider):
+        name = property(lambda self: "fakechat")
+        display_name = property(lambda self: "FakeChat")
+
+        async def connect(self) -> bool:
+            return True
+
+        async def disconnect(self) -> None:
+            return None
+
+        async def send(self, message: object) -> bool:
+            return True
+
+    channel_transports.register_transport(_Chat())
+    yield "fakechat"
+    channel_transports.unregister_transport("fakechat")
+
+
 def _store(home):
     return TriggerStore(base_dir=home)
 
@@ -1127,11 +1152,11 @@ def test_the_spec_carries_every_schedule_field(home, state):
     assert spec["strict"] is True
 
 
-def test_channel_and_silent_become_DELIVERY(home, state):
+def test_channel_and_silent_become_DELIVERY(home, state, fakechat):
     """`LEGACY_FIELD_MAP`: `channel → delivery`, `silent → delivery == none`. Writing them into the
     action config (where they used to live) would make the projection render them empty."""
-    _create_schedule(state, channel="C0AP3QR7Z4M")
-    assert _store(home).get("clock:nightly").trigger.delivery == "channel:C0AP3QR7Z4M"
+    _create_schedule(state, channel="fakechat:C0AP3QR7Z4M")
+    assert _store(home).get("clock:nightly").trigger.delivery == "channel:fakechat:C0AP3QR7Z4M"
     _run(
         T.api_trigger_detail(
             _req("DELETE", "/api/triggers/x", state, match_info={"id": "schedule:clock:nightly"})

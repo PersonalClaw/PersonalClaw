@@ -88,6 +88,31 @@ def test_a_malformed_policy_does_not_break_the_projection():
 # ── the PATCH path, driven through the real handler ──
 
 
+@pytest.fixture
+def fakechat():
+    """A chat channel set up here. A schedule's route names the channel its results go to, and a
+    name that is no chat channel is refused, so a channel route needs one to exist."""
+    from personalclaw import channel_transports
+    from personalclaw.channel_transports.base import ChannelTransportProvider
+
+    class _Chat(ChannelTransportProvider):
+        name = property(lambda self: "fakechat")
+        display_name = property(lambda self: "FakeChat")
+
+        async def connect(self) -> bool:
+            return True
+
+        async def disconnect(self) -> None:
+            return None
+
+        async def send(self, message: object) -> bool:
+            return True
+
+    channel_transports.register_transport(_Chat())
+    yield "fakechat"
+    channel_transports.unregister_transport("fakechat")
+
+
 class _State:
     """The two `DashboardState` members the schedule handlers touch."""
 
@@ -183,7 +208,7 @@ async def test_the_defaults_a_form_that_sends_nothing_gets(home):
 
 
 @pytest.mark.asyncio
-async def test_patch_round_trips_every_route_and_both_dedupe_states(home):
+async def test_patch_round_trips_every_route_and_both_dedupe_states(home, fakechat):
     state = _State()
     row = await _create(
         state,
@@ -195,7 +220,7 @@ async def test_patch_round_trips_every_route_and_both_dedupe_states(home):
         },
     )
     raw = row["raw_id"]
-    for route in ("none", "", "inbox", "channel:C0123456789"):
+    for route in ("none", "", "inbox", "channel:fakechat", "channel:fakechat:C0123456789"):
         for dedupe in (True, False):
             status, payload = await _update(
                 state, raw, {"failure_delivery": route, "failure_dedupe": dedupe}

@@ -916,13 +916,34 @@ async def _create_lifecycle(
     return web.json_response({"ok": True, "trigger": _serialize_lifecycle(hook, [])})
 
 
+#: What a failure route may be, said when a caller sends something else.
+_FAILURE_ROUTE_RULE = (
+    "'failure_delivery' must be 'inbox', 'none', 'channel:<name>', 'channel:<name>:<id>', or '' to "
+    "follow the result route"
+)
+
+
+def _channel_problem(channel: str | None) -> str:
+    """Why a schedule's ``channel`` can't be delivered to, or ``""``.
+
+    ``channel`` is the chat channel's name, for the owner's DM there, or ``<name>:<target>`` for a
+    chat on it: the route without its ``channel:`` prefix, which is how a schedule row shows it.
+    The channel checks its own ids (``validate_target``). The one rule core used to apply was a
+    single platform's channel-id shape, which refused every other channel's chats.
+    """
+    if not channel:
+        return ""
+    from personalclaw.triggers import delivery as _delivery
+
+    return _delivery.channel_route_problem(f"{_delivery.CHANNEL_ROUTE_PREFIX}{channel}")
+
+
 async def _create_schedule(state: DashboardState, body: dict, request: web.Request) -> web.Response:
     from zoneinfo import available_timezones
 
     from personalclaw.schedule import normalize_action
     from personalclaw.triggers import delivery as _delivery
     from personalclaw.triggers.models import Trigger
-    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 
     name = str(body.get("name", "")).strip()
     if not name:
@@ -936,8 +957,9 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     cron_expr = body.get("cron")
     at_ts = body.get("at")
     channel = str(body.get("channel", "")).strip() or None
-    if channel and (len(channel) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(channel)):
-        return web.json_response({"error": "invalid channel ID format"}, status=400)
+    problem = _channel_problem(channel)
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
     timezone_val = str(body.get("timezone") or "").strip()
     if timezone_val and timezone_val not in available_timezones():
         return web.json_response(
@@ -951,14 +973,10 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     # field must accept it identically.
     failure_delivery = body.get("failure_delivery", Trigger.failure_delivery)
     if not _delivery.is_valid_route(failure_delivery):
-        return json_error(
-            "invalid_request",
-            message=(
-                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
-                "result route"
-            ),
-            status=400,
-        )
+        return json_error("invalid_request", message=_FAILURE_ROUTE_RULE, status=400)
+    problem = _delivery.channel_route_problem(failure_delivery)
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
     failure_dedupe = body.get("failure_dedupe", False)
     if not isinstance(failure_dedupe, bool):
         return json_error(
@@ -1188,7 +1206,6 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
     from zoneinfo import available_timezones
 
     from personalclaw.triggers import delivery as _delivery
-    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 
     kwargs: dict[str, Any] = {}
     # 🔴 `failure_delivery`/`failure_dedupe` join this allowlist (WF2AUT-15). The delivery contract
@@ -1206,15 +1223,12 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
     ):
         if key in body:
             kwargs[key] = body[key]
-    if "failure_delivery" in kwargs and not _delivery.is_valid_route(kwargs["failure_delivery"]):
-        return json_error(
-            "invalid_request",
-            message=(
-                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
-                "result route"
-            ),
-            status=400,
-        )
+    if "failure_delivery" in kwargs:
+        if not _delivery.is_valid_route(kwargs["failure_delivery"]):
+            return json_error("invalid_request", message=_FAILURE_ROUTE_RULE, status=400)
+        problem = _delivery.channel_route_problem(kwargs["failure_delivery"])
+        if problem:
+            return json_error("invalid_request", message=problem, status=400)
     if "failure_dedupe" in kwargs and not isinstance(kwargs["failure_dedupe"], bool):
         # A 400, not a coercion, and for the reason `enabled` gives on the create path: the JSON
         # string "false" is truthy under `bool()`, so coercing would silently turn dedup ON for a
@@ -1227,8 +1241,9 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
     if "channel" in kwargs:
         ch = (kwargs["channel"] or "").strip() or None
         kwargs["channel"] = ch
-        if ch and (len(ch) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(ch)):
-            return web.json_response({"error": "invalid channel ID format"}, status=400)
+        problem = _channel_problem(ch)
+        if problem:
+            return json_error("invalid_request", message=problem, status=400)
     if "cron" in body:
         kwargs["cron_expr"] = body["cron"]
     if "every" in body:

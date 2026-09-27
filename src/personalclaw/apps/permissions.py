@@ -396,8 +396,12 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     "/api/durability": "your backups — exporting your home, and restoring or importing one over it",
     # ── Your access ──
     # The list of people who may message the agent from a chat channel (sender ids are PII),
-    # and revoking one — which cuts the owner off from their own agent on that channel.
-    "/api/channels/trust": "who may message your agent from a chat channel, and revoking them",
+    # and changing it: a pairing code, a group tracked, a channel opened to anyone, a revoke
+    # that cuts the owner off from their own agent on that channel.
+    "/api/channels/trust": (
+        "who may message your agent from a chat channel: pairing them, tracking groups, the rules "
+        "for strangers, and revoking them"
+    ),
     # ── What your agents are told ──
     # The import copies MCP servers (commands the gateway launches) and skills in from the
     # owner's other agent tools, and folds their CLAUDE.md-style instructions into memory — the

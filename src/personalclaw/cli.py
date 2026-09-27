@@ -539,7 +539,10 @@ Examples:
     cron_add.add_argument(
         "--cron", dest="cron_expr", help='Cron expression (e.g. "0 9 * * MON-FRI")'
     )
-    cron_add.add_argument("--channel", help="Channel ID to post results to")
+    cron_add.add_argument(
+        "--channel",
+        help="Where results go: a chat channel's name (your DMs there) or <name>:<chat id>",
+    )
     cron_add.add_argument(
         "--approval-mode",
         dest="approval_mode",
@@ -553,7 +556,9 @@ Examples:
     cron_update.add_argument("--message", help="New message")
     cron_update.add_argument("--every", type=int, dest="every_secs", help="New interval in seconds")
     cron_update.add_argument("--cron", dest="cron_expr", help="New cron expression")
-    cron_update.add_argument("--channel", help="New channel ID")
+    cron_update.add_argument(
+        "--channel", help="New place results go: a chat channel's name or <name>:<chat id>"
+    )
     cron_update.add_argument(
         "--approval-mode",
         dest="approval_mode",

@@ -711,6 +711,9 @@ class GatewayOrchestrator:
                                     if session_resolver
                                     else resolved_session
                                 ),
+                                # This channel is already asking: the `channel_dm` target
+                                # must not ask a second time.
+                                asked_on_channel=True,
                             )
                         )
 
