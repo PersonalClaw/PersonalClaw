@@ -41,7 +41,7 @@ export function CallbackDetail({ callback, onChanged, onDeleted }: {
     <div className="flex flex-col gap-l">
       <div className="flex flex-wrap items-center gap-s">
         <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
-        <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] cursor-pointer">
+        <label data-type="body-s" className="ml-auto inline-flex items-center gap-s cursor-pointer">
           <span className="text-on-surface-var">{callback.enabled ? 'Allowed to run' : 'Not allowed to run'}</span>
           <Toggle on={callback.enabled} onChange={() => setAllowed(!callback.enabled)} disabled={busy} label="Allow this callback to run" size="sm" />
         </label>
@@ -52,7 +52,7 @@ export function CallbackDetail({ callback, onChanged, onDeleted }: {
       )}
 
       <Section label="What it does">
-        <p className="text-on-surface-var text-[0.8125rem]">
+        <p data-type="body-s" className="text-on-surface-var">
           When an outside system that holds your webhook token posts to{' '}
           <span className="font-mono">/api/hooks/agent</span> with the session key below,
           PersonalClaw starts an agent turn, with the agent's tools, from this context.
@@ -61,16 +61,16 @@ export function CallbackDetail({ callback, onChanged, onDeleted }: {
 
       <Section label="Context the agent saved">
         {callback.context_summary
-          ? <pre className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.75rem] font-mono overflow-x-auto whitespace-pre-wrap break-words">{callback.context_summary}</pre>
-          : <p className="text-on-surface-low text-[0.8125rem]">No context: the turn starts from the outside system's message alone.</p>}
+          ? <pre data-type="caption" className="rounded-md bg-surface-container px-m py-s text-on-surface-var font-mono overflow-x-auto whitespace-pre-wrap break-words">{callback.context_summary}</pre>
+          : <p data-type="body-s" className="text-on-surface-low">No context: the turn starts from the outside system's message alone.</p>}
       </Section>
 
       <Section label="Session key">
-        <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{callback.session_key}</span>
+        <span data-type="caption" className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var">{callback.session_key}</span>
       </Section>
 
       <Section label="Registered">
-        <span className="text-on-surface-var text-[0.8125rem]">By the agent, {relPast(callback.registered_at)}</span>
+        <span data-type="body-s" className="text-on-surface-var">By the agent, {relPast(callback.registered_at)}</span>
       </Section>
     </div>
   )

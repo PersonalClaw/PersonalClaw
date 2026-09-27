@@ -26,9 +26,8 @@ export function ModelUnavailableNote({ model, unavailable, fixHere }: {
   model: string; unavailable: ModelUnavailable; fixHere: string
 }) {
   return (
-    <div role="note" data-testid="agent-model-unavailable"
-      className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
-      style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)', color: 'var(--color-warning)' }}>
+    <div role="note" data-testid="agent-model-unavailable" data-type="body-s"
+      className="flex items-start gap-s rounded-lg bg-warn/10 px-m py-s text-warn">
       <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
       <span className="min-w-0 flex-1">
         <span className="font-mono">{model}</span> is unavailable: {unavailable.why}. Until you choose another,

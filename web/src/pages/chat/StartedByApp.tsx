@@ -59,7 +59,7 @@ export function StartedByApp({ s }: { s: AppStarted }) {
 /** Above the composer of an app's conversation: whose permissions what you send runs under. */
 export function AppPermissionNotice({ name, autoApproves }: { name: string; autoApproves: boolean }) {
   return (
-    <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-on-surface-low">
+    <div data-type="caption" className="mb-2 flex items-center gap-1.5 text-on-surface-low">
       <Blocks size={13} className="shrink-0" aria-hidden />
       <span>{appPermissionSentence(name, autoApproves)}</span>
     </div>

@@ -396,8 +396,8 @@ function AgentHooksWaiting() {
     finally { setBusy('') }
   }
   return (
-    <div role="note" className="flex flex-col gap-2 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)' }}>
-      <p className="text-[0.8125rem]" style={{ color: 'var(--color-warn)' }}>
+    <div role="note" className="flex flex-col gap-s rounded-md bg-warn/10 px-m py-s">
+      <p data-type="body-s" className="text-warn">
         Not allowed to run yet: your agent's CLI leaves {data.waiting.length === 1 ? 'this hook' : 'these hooks'} out
         until you allow {data.waiting.length === 1 ? 'it' : 'them'}. Allowing one asks you first, and a change to its
         file does not run until you allow it again.
@@ -406,7 +406,7 @@ function AgentHooksWaiting() {
         const id = `${w.event} ${w.command} ${w.matcher}`
         return (
           <div key={id} className="flex items-center gap-s rounded-md bg-surface-container px-2.5 py-1.5">
-            <div className="min-w-0 flex-1 font-mono text-[0.75rem] text-on-surface-low overflow-x-auto" style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
+            <div data-type="caption" className="min-w-0 flex-1 font-mono text-on-surface-low overflow-x-auto" style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
               <span className="text-on-surface-var">{w.event}</span>{w.matcher && <span className="text-primary"> [{w.matcher}]</span>} {w.command}
             </div>
             <Button size="sm" variant="secondary" onClick={() => allow(w)} loading={busy === id} disabled={busy !== ''}
