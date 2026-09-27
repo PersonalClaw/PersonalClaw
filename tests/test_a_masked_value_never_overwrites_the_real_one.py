@@ -359,6 +359,9 @@ def test_renaming_an_agent_schedule_keeps_the_key_in_its_prompt(schedules):
                     "name": "Nightly digest",
                     "cron": "0 9 * * *",
                     "action": _agent_action(prompt),
+                    # A schedule that runs an agent needs the owner's yes to the grant (#3712),
+                    # which the create dialog sends with the rest.
+                    "confirm": True,
                 },
             )
         )
