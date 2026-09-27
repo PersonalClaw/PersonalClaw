@@ -11,7 +11,7 @@ import {
   type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
 import { BundledDownloadProgress, modelBytes } from '../chat/bundledModelDownload'
-import { splitModelRef } from '../../lib/modelRef'
+import { namesModel, splitModelRef } from '../../lib/modelRef'
 import {
   occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
 } from '../../lib/residency'
@@ -85,6 +85,9 @@ const CHAT_SUBCATEGORIES = new Set(['code_tools', 'reasoning', 'background', 'or
  *  Without the synthetic row the use-case reads "N active" but the bound model is invisible
  *  AND unremovable in the picker — a phantom binding the user can't clear. Synthetic rows
  *  carry `downloaded:false` so the not-downloaded chip renders; toggling one off unbinds it.
+ *
+ *  A row or binding that names no model (`namesModel`) is none to pick: toggling it would bind
+ *  `"provider:"`, which chose no model and which the gateway refuses.
  *  Pure + exported for unit testing. */
 export function capableModels(useCase: string, allModels: AvailableModel[], activeModels: string[]): AvailableModel[] {
   const capability = CHAT_SUBCATEGORIES.has(useCase) ? 'chat' : useCase
@@ -93,12 +96,12 @@ export function capableModels(useCase: string, allModels: AvailableModel[], acti
   for (const m of allModels) {
     if (!m.capabilities.includes(capability)) continue
     const ref = `${m.provider}:${m.id}`
-    if (seen.has(ref)) continue
+    if (seen.has(ref) || !namesModel(ref)) continue
     seen.add(ref)
     out.push(m)
   }
   for (const ref of activeModels) {
-    if (seen.has(ref)) continue
+    if (seen.has(ref) || !namesModel(ref)) continue
     seen.add(ref)
     const { provider, model: id } = splitModelRef(ref)
     out.push({ id, name: id, provider, capabilities: [useCase], downloaded: false } as AvailableModel)
@@ -682,7 +685,7 @@ const NO_CHAIN: Revisioned<string[]> = { value: [], revision: '' }
  *  instead. It used to ask "Change & re-index" for a clear as well, and nothing re-indexed. */
 const EMBEDDING_CHANGE = {
   title: 'Change the embedding model?',
-  body: 'Changing the embedding model will re-index ALL knowledge and memories. Existing embeddings are computed with the current model and are incompatible with a different one, so they must be regenerated.\n\nRe-indexing runs in the background and may take a while for large stores.',
+  body: 'The knowledge and memories this model has not embedded are re-embedded with it. Until then, search finds them by keyword: an embedding from another model cannot be compared with this model\'s.\n\nRe-indexing runs in the background and may take a while for large stores.',
   confirmLabel: 'Change & re-index',
 }
 const EMBEDDING_CLEAR = {
@@ -822,7 +825,9 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
   const [reindex, setReindex] = useState<import('../../lib/api').ReindexJob | null>(null)
-  const activeModels = chain.value
+  // The bindings that name a model. One stored before the gateway refused `"provider:"` chose
+  // none: it is not shown, and the next change here writes the chain without it.
+  const activeModels = useMemo(() => chain.value.filter(namesModel), [chain.value])
   const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', chain: false, icon: Boxes }
   // Filter to models declaring this capability, then DEDUPE by the `provider:id`
   // ref. A model can legitimately surface from two discovery paths (e.g.
@@ -913,7 +918,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
       // re-index the user was warned about never starts — so `startReindex()` runs from the
       // guard's `onSaved`, only once a save has landed. A stale copy is not a failure: the notice
       // below keeps the change for the user to re-apply or drop.
-      await reportingWrite('change the model', () => guard.apply(chain, op))
+      await reportingWrite('change the model', () => guard.apply(chain, (theirs) => op(theirs.filter(namesModel))))
     } finally { setSaving(false) }
   }
   const toggle = (ref: string) => {

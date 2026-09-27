@@ -326,6 +326,19 @@ def split_ref(ref: str) -> tuple[str, str] | None:
     return (provider_name, model_id)
 
 
+def names_model(ref: object) -> bool:
+    """Whether a chain entry names a model: ``"<provider>:<model id>"``, or a bare model id.
+
+    ``""``, and a ``"<provider>:"`` whose model half is blank, name none. Like a call, a binding
+    names its model (``llm.registry.require_model``), so ``PUT /api/models/active`` refuses an
+    entry that names none, and Settings → Models offers none.
+    """
+    if not isinstance(ref, str):
+        return False
+    parsed = split_ref(ref)
+    return bool((parsed[1] if parsed else ref).strip())
+
+
 # ── Per-use-case behavior settings (provider-agnostic) ───────────────────────
 
 
@@ -472,7 +485,7 @@ def openai_family_providers() -> list[dict[str, str]]:
     The remote STT/TTS/image adapters build from this so a single OpenAI-compatible
     provider configured in Settings serves every capability it offers — chat,
     embedding, transcription, speech, images — from the same endpoint + credential.
-    ``type`` lets the adapter look up the vendor's contributed media catalog
+    ``type`` lets the image adapter look up the vendor's contributed image catalog
     (personalclaw.media_catalogs) instead of host-sniffing.
     """
     from personalclaw.config.loader import config_path

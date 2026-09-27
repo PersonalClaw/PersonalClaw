@@ -308,6 +308,9 @@ export interface DegradedSurface {
   /** False when the surface is down because no model is chosen for a use case it needs (an
    *  instance saved without a Default Model, nothing bound) — waiting on a choice, not degraded. */
   model_chosen: boolean
+  /** What an unavailable surface waits on, as one sentence — the one its notice says: that no
+   *  model is chosen, or why the chosen one cannot serve. `null` on an available surface. */
+  problem?: string | null
 }
 /** One scheduled backup job's last run + whether it's due (DURABILITY-AND-SYNC §3). */
 export interface DurabilityJob {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { modelIdOf, boundModelLabel, splitModelRef } from './modelRef'
+import { modelIdOf, boundModelLabel, namesModel, splitModelRef } from './modelRef'
 
 // #3528 — the reading behind "Chat model: …" on the first-run recap. The value it turns into
 // words is `active_models.json`'s chat chain, so the two traps are: a model id that contains
@@ -40,6 +40,13 @@ describe('modelIdOf', () => {
 
   it('tolerates a provider name with spaces, which is what the display name is', () => {
     expect(modelIdOf('My Work OpenAI:gpt-5')).toBe('gpt-5')
+  })
+})
+
+describe('namesModel', () => {
+  it("is the gateway's rule: a blank model half, or nothing, names no model", () => {
+    for (const ref of ['', '   ', 'openai:', 'Bedrock:  ', ':']) expect(namesModel(ref)).toBe(false)
+    for (const ref of ['openai:gpt-5', 'Local Ollama:qwen2.5vl:7b', 'claude-sonnet-4-5']) expect(namesModel(ref)).toBe(true)
   })
 })
 

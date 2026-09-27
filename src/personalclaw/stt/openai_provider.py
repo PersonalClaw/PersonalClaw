@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 
+from personalclaw.llm.registry import ProviderResolutionError, require_model
 from personalclaw.stt.provider import SttProvider
 
 logger = logging.getLogger(__name__)
@@ -20,11 +21,8 @@ logger = logging.getLogger(__name__)
 class OpenAISttProvider(SttProvider):
     """Transcribe audio via an OpenAI-compatible hosted Whisper endpoint."""
 
-    def __init__(
-        self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = ""
-    ) -> None:
+    def __init__(self, *, provider_name: str, endpoint: str = "", api_key: str = "") -> None:
         self._provider_name = provider_name
-        self._provider_type = provider_type
         self._endpoint = endpoint
         self._api_key = api_key
 
@@ -35,16 +33,6 @@ class OpenAISttProvider(SttProvider):
     @property
     def display_name(self) -> str:
         return f"{self._provider_name} (remote STT)"
-
-    def _default_model(self) -> str:
-        """The vendor's unpinned STT default, from the catalog its app CONTRIBUTED
-        for this provider type (personalclaw.media_catalogs) — no vendor id or host
-        is hard-coded here. Empty when the type contributed no catalog (a
-        bring-your-own endpoint), so the caller requires a pinned model."""
-        from personalclaw.media_catalogs import get_media_catalog
-
-        cat = get_media_catalog("stt", self._provider_type)
-        return cat.default_model if cat else ""
 
     async def is_available(self) -> bool:
         """Usable when a credential resolves and the openai SDK is importable."""
@@ -63,6 +51,14 @@ class OpenAISttProvider(SttProvider):
     # a separate axis (LocalModelProvider) that only local backends implement.
 
     async def transcribe(self, audio_path: str, model: str = "", language: str = "") -> str | None:
+        # Like chat, a call names its model (the Speech-to-text binding in Settings → Models), and
+        # one that names none is refused. The vendor's default (OpenAI's whisper-1) used to be
+        # sent in its place.
+        try:
+            model_id = require_model(model)
+        except ProviderResolutionError as exc:
+            logger.error("Remote STT on %r refused: %s", self._provider_name, exc)
+            return None
         try:
             import openai
         except ImportError:
@@ -78,17 +74,6 @@ class OpenAISttProvider(SttProvider):
             logger.error("No API key for remote STT provider %r", self._provider_name)
             return None
 
-        # Unpinned falls back to the vendor's contributed default (e.g. OpenAI's
-        # whisper-1, contributed by the openai-models app). A provider type that
-        # contributed no catalog has no known default → require a pinned model.
-        model_id = model or self._default_model()
-        if not model_id:
-            logger.error(
-                "No STT model selected for %r (this endpoint has no contributed "
-                "default); pin one in Settings → Models.",
-                self._provider_name,
-            )
-            return None
         lang = language.split("-")[0] if language else None
         base_url = self._endpoint or None
 

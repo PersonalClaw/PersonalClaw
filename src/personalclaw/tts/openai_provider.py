@@ -17,6 +17,7 @@ import os
 import tempfile
 from typing import Any
 
+from personalclaw.llm.registry import ProviderResolutionError, require_model
 from personalclaw.tts.provider import TtsProvider
 
 logger = logging.getLogger(__name__)
@@ -30,11 +31,8 @@ _DEFAULT_SPEECH_VOICE = "alloy"
 class OpenAITtsProvider(TtsProvider):
     """Synthesize speech via an OpenAI-compatible hosted TTS endpoint."""
 
-    def __init__(
-        self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = ""
-    ) -> None:
+    def __init__(self, *, provider_name: str, endpoint: str = "", api_key: str = "") -> None:
         self._provider_name = provider_name
-        self._provider_type = provider_type
         self._endpoint = endpoint
         self._api_key = api_key
 
@@ -45,14 +43,6 @@ class OpenAITtsProvider(TtsProvider):
     @property
     def display_name(self) -> str:
         return f"{self._provider_name} (remote TTS)"
-
-    def _default_model(self) -> str:
-        """The vendor's unpinned TTS default from its app-contributed catalog
-        (personalclaw.media_catalogs); empty when the type contributed none."""
-        from personalclaw.media_catalogs import get_media_catalog
-
-        cat = get_media_catalog("tts", self._provider_type)
-        return cat.default_model if cat else ""
 
     async def is_available(self) -> bool:
         if not self._resolve_api_key():
@@ -85,6 +75,14 @@ class OpenAITtsProvider(TtsProvider):
         persona (alloy / nova / …). ``speed`` maps to the API ``speed`` param.
         Caller owns deleting the returned file.
         """
+        # Like chat, a call names its model (the Text-to-speech binding in Settings → Models), and
+        # one that names none is refused. The vendor's default (OpenAI's tts-1) used to be sent in
+        # its place.
+        try:
+            model_id = require_model(voice)
+        except ProviderResolutionError as exc:
+            logger.error("Remote TTS on %r refused: %s", self._provider_name, exc)
+            return None
         try:
             import openai
         except ImportError:
@@ -103,17 +101,6 @@ class OpenAITtsProvider(TtsProvider):
         if not text.strip():
             return None
 
-        # Unpinned falls back to the vendor's contributed default (OpenAI's tts-1,
-        # from the openai-models app); a type with no contributed catalog requires a
-        # pinned model.
-        model_id = voice or self._default_model()
-        if not model_id:
-            logger.error(
-                "No TTS model selected for %r (this endpoint has no contributed "
-                "default); pin one in Settings → Models.",
-                self._provider_name,
-            )
-            return None
         persona = speech_voice or _DEFAULT_SPEECH_VOICE
         base_url = self._endpoint or None
 

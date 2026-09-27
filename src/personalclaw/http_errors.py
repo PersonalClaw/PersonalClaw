@@ -897,6 +897,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "This question was already answered, or the trigger no longer waits on it; run it again "
         "to be asked afresh."
     ),
+    # ── binding a use case's models (dashboard/handlers/model_registry.py —
+    #    PUT /api/models/active/{use_case}) ──
+    # 400: an entry of the chain names no model ("" or "provider:"); the message names it.
+    "model_ref_names_no_model": (
+        'A model in the chain names no model; name each as "provider:model", or choose one in '
+        "Settings → Models."
+    ),
 }
 
 

@@ -1753,6 +1753,37 @@ def model_chosen(use_case: str) -> bool:
     )
 
 
+def use_case_problem(use_case: str) -> tuple[str, str] | None:
+    """``(why, fix)`` for a use case :func:`can_resolve_use_case` reads as unable to serve now.
+
+    The same walk, building nothing: the head of its chain when no entry of the chain can serve
+    (in the words resolution refuses it with, ``_diagnose_unbuildable_ref``), else — with nothing
+    bound — the first candidate that declares the capability and cannot serve
+    (``_first_unready_candidate``). ``None`` when it can serve, or when the walk names no cause.
+    What the degraded report says a surface is waiting on, so the chip and the notice about it
+    say what is wrong rather than that "no model" exists.
+    """
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.use_cases import active_model_refs, parent_capability, split_ref
+
+    capability = parent_capability(use_case)
+    try:
+        refs = active_model_refs(use_case)
+        if not refs:
+            return _first_unready_candidate(capability)
+        registry = get_default_registry()
+        entries = {e.name: e for e in registry.list_entries()}
+        if any(_ref_can_serve(registry, entries, ref) for ref in refs):
+            return None
+        parsed = split_ref(refs[0])
+        if parsed is None:
+            return None
+        return _diagnose_unbuildable_ref(parsed[0], parsed[1], use_case, capability)
+    except Exception:  # noqa: BLE001 — a diagnosis must never raise over the state it explains
+        logger.debug("could not diagnose use case %r", use_case, exc_info=True)
+        return None
+
+
 def can_resolve_use_case(use_case: str) -> bool:
     """Cheaply report whether a ModelProvider for ``use_case`` is resolvable
     *right now*, without building one.

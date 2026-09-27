@@ -271,7 +271,6 @@ def _store(tmp_path, *, embedder: bool, graph: bool = True):
     store._graph_enabled = graph
     if embedder:
         store.embed_fn = lambda text: [0.1] * 8
-        store._embedding_dim = 8
     return store
 
 

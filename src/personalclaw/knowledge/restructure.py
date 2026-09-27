@@ -618,7 +618,11 @@ def refresh_derived(store: Any, item_ids: list[str], *, reason: str) -> list[str
         # Drops the chunk rows AND their ANN index entries, and clears the similarity sweep
         # marker so the edge pass re-examines the item.
         store.clear_chunks(item_id)
-        store.db.execute("UPDATE items SET embedding = NULL WHERE id = ?", (item_id,))
+        store.db.execute(
+            "UPDATE items SET embedding = NULL, embedding_model_id = NULL, "
+            "embedding_provider = NULL WHERE id = ?",
+            (item_id,),
+        )
         store.db.execute("DELETE FROM mention_sweeps WHERE item_id = ?", (item_id,))
         # An empty `keep` set releases every edge this item's own pass claimed, leaving the
         # ones its neighbours claimed intact. A plain delete on either leg would destroy a

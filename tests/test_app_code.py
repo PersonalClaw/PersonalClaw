@@ -20,7 +20,7 @@ import pytest
 
 from personalclaw import app_code, media_catalogs
 from personalclaw.apps.native_contract import app_dir_on_path, load_bundle_module
-from personalclaw.media_catalogs import MediaCatalog
+from personalclaw.media_catalogs import MediaCatalog, MediaModel
 
 APP = "code-probe"
 
@@ -59,8 +59,8 @@ def test_a_registration_the_apps_module_makes_on_import_is_taken_back(root):
     _write(
         root / "provider.py",
         """
-        from personalclaw.sdk.model import MediaCatalog, register_media_catalog
-        register_media_catalog("tts", "code-probe", MediaCatalog(default_model="m"))
+        from personalclaw.sdk.model import MediaCatalog, MediaModel, register_media_catalog
+        register_media_catalog("tts", "code-probe", MediaCatalog(models=(MediaModel(name="m"),)))
         """,
     )
     _load(root)
@@ -77,8 +77,8 @@ def test_a_core_module_the_app_imports_registers_as_core(root, tmp_path, monkeyp
     _write(
         elsewhere / "corelike_probe.py",
         """
-        from personalclaw.media_catalogs import MediaCatalog, register_media_catalog
-        register_media_catalog("tts", "corelike", MediaCatalog(default_model="m"))
+        from personalclaw.media_catalogs import MediaCatalog, MediaModel, register_media_catalog
+        register_media_catalog("tts", "corelike", MediaCatalog(models=(MediaModel(name="m"),)))
         """,
     )
     monkeypatch.syspath_prepend(str(elsewhere))
@@ -95,10 +95,11 @@ def test_a_registration_made_later_from_the_apps_own_call_is_taken_back(root):
     _write(
         root / "provider.py",
         """
-        from personalclaw.sdk.model import MediaCatalog, register_media_catalog
+        from personalclaw.sdk.model import MediaCatalog, MediaModel, register_media_catalog
 
         def on_first_use():
-            register_media_catalog("tts", "code-probe-late", MediaCatalog(default_model="m"))
+            catalog = MediaCatalog(models=(MediaModel(name="m"),))
+            register_media_catalog("tts", "code-probe-late", catalog)
         """,
     )
     _load(root).on_first_use()
@@ -112,12 +113,12 @@ def test_a_take_back_leaves_a_newer_registration_under_the_same_key(root):
     _write(
         root / "provider.py",
         """
-        from personalclaw.sdk.model import MediaCatalog, register_media_catalog
-        register_media_catalog("tts", "code-probe", MediaCatalog(default_model="old"))
+        from personalclaw.sdk.model import MediaCatalog, MediaModel, register_media_catalog
+        register_media_catalog("tts", "code-probe", MediaCatalog(models=(MediaModel(name="old"),)))
         """,
     )
     _load(root)
-    newer = MediaCatalog(default_model="newer")
+    newer = MediaCatalog(models=(MediaModel(name="newer"),))
     media_catalogs.register_media_catalog("tts", "code-probe", newer)  # core, after the app
 
     app_code.release(APP)

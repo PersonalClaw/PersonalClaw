@@ -44,6 +44,13 @@ export function modelIdOf(ref: string): string {
   return splitModelRef(ref).model.trim()
 }
 
+/** Whether a ref names a model — `use_cases.names_model`'s rule, which the gateway refuses a
+ *  binding by: `''` and a `"provider:"` with no model half name none. A picker never offers
+ *  one, and never writes one back into a chain. */
+export function namesModel(ref: string): boolean {
+  return modelIdOf(ref) !== ''
+}
+
 /** The bound chat model's name from an active-model chain, or `''` when nothing names one.
  *
  *  Position 0 is the default and the rest of the chain is fallback (see

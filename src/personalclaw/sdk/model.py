@@ -95,10 +95,10 @@ from personalclaw.llm.stream_tags import (  # noqa: F401
     make_think_splitter,
 )
 
-# Media-model catalog contribution: the OpenAI-compatible audio/image PROTOCOL
-# clients are core, but WHICH concrete models a vendor serves (OpenAI's whisper-1/
-# gpt-image-1/dall-e-*) is vendor data the provider's app contributes here, keyed by
-# provider type. See personalclaw.media_catalogs.
+# Media-model catalog contribution: the OpenAI-compatible image PROTOCOL client is
+# core, but WHICH concrete models a vendor serves (OpenAI's gpt-image-1/dall-e-*) is
+# vendor data the provider's app contributes here, keyed by provider type. A catalog
+# names no default: a media call names its model. See personalclaw.media_catalogs.
 from personalclaw.media_catalogs import (  # noqa: F401
     MediaCatalog,
     MediaModel,
