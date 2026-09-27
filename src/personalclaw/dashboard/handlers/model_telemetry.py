@@ -195,11 +195,19 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
             {"error": {"code": "internal", "message": "could not save the routing policy"}},
             status=500,
         )
-    body_out: dict[str, object] = {"ok": True, "use_case": use_case, "applied": applied}
-    if order is not None:
-        # The cell's new revision, so a tab that stays open reorders again over this one.
-        body_out["order_revision"] = revision_of(order_cell(use_case, query_class))
-    return web.json_response(body_out)
+    return web.json_response(
+        {
+            "ok": True,
+            "use_case": use_case,
+            "applied": applied,
+            # The cell's new revision, so a tab that stays open reorders again over this one.
+            **(
+                {"order_revision": revision_of(order_cell(use_case, query_class))}
+                if order is not None
+                else {}
+            ),
+        }
+    )
 
 
 async def api_routing_proposals(request: web.Request) -> web.Response:

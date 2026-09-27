@@ -260,7 +260,28 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: on both sides, so ``FLAT_BASELINE`` (1499) stays — shrink-only, not raised. The one added
 #: unresolved site is ``dashboard/chat_session_map.py:424``. MAIN-RELATIVE, so re-measure at the
 #: next rebase.
-UNRESOLVED_PAYLOAD_CEILING = 216
+#: 216 → **218**, a re-measure rather than one change: ``main`` measured 219. Between SSM-2's
+#: measurement and this one, five rows LEFT and eight ARRIVED with no row here, because they
+#: merged while CI was not a merge gate. The five that left build their body at the call site or
+#: answer through :func:`json_error` now (``chat_handlers.api_chat_sessions``,
+#: ``agents.api_theme_detail``, ``knowledge.get_entity_items``, ``triggers._update_event``,
+#: ``tasks/handlers.api_tasks_create``). Of the eight, ``model_telemetry.api_routing_policy_put``
+#: composed its own body in a local, so it is a call-site literal again in this change. The other
+#: seven are 200-status SUCCESS bodies whose shape a composer owns, the SSM-2 shape:
+#: ``apps.api_app_preview`` (the install review's ``to_dict()``, #3608),
+#: ``loop_routes._run_backed_action`` and ``loop_routes.api_loop_get`` (``loop_view.
+#: get_loop_view``, #3613; the second holds it in a local for its ``None`` check),
+#: ``mcp.api_mcp_pool_stats`` (``pool_stats()``, which #3652 stopped wrapping in the
+#: ``available`` flag nothing read), ``onboarding_import.api_onboarding_import_stop`` (the job's
+#: ``to_dict()``, #3717), ``sessions.api_sessions_search`` (the search result's ``to_dict()``,
+#: redacted in place, #3731) and ``tasks/handlers._tick`` (``_updated_payload``, the composer
+#: ``api_tasks_update`` already answers with, #3690). Spelling their keys out at the call site
+#: would put a second author on each composer's schema. **The slack is not spendable on an error
+#: envelope:** none of the seven is one, the refusals beside them are :func:`json_error` or flat
+#: rows the flat census already counts, and
+#: ``test_the_composer_bodies_admitted_at_218_are_still_the_ones_counted`` pins all seven by
+#: handler, so one leaving cannot hand its slot to a new row elsewhere. MAIN-RELATIVE.
+UNRESOLVED_PAYLOAD_CEILING = 218
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -941,3 +962,60 @@ def test_the_a2a_surface_hides_no_flat_envelope_in_its_unresolved_rows():
     assert all(row[3] is False for row in unresolved), "none of these is via a wrapper"
     assert [row for row in census.flat if row[0] == module] == []
     assert [row for row in census.flat_via_wrapper if row[0] == module] == []
+
+
+#: The composer-owned SUCCESS bodies the 216 → 218 re-measure admitted, by (module, handler,
+#: payload node type), with how many such rows that handler holds now. ``api_loop_get``'s count
+#: includes the loop view it already answered with before #3613 added the run-backed one.
+_COMPOSER_BODIES_ADMITTED_AT_218: dict[tuple[str, str, str], int] = {
+    ("src/personalclaw/dashboard/handlers/apps.py", "api_app_preview", "Call"): 1,
+    ("src/personalclaw/dashboard/handlers/loop_routes.py", "_run_backed_action", "Call"): 1,
+    ("src/personalclaw/dashboard/handlers/loop_routes.py", "api_loop_get", "Name"): 2,
+    ("src/personalclaw/dashboard/handlers/mcp.py", "api_mcp_pool_stats", "Call"): 1,
+    (
+        "src/personalclaw/dashboard/handlers/onboarding_import.py",
+        "api_onboarding_import_stop",
+        "Call",
+    ): 1,
+    ("src/personalclaw/dashboard/handlers/sessions.py", "api_sessions_search", "Name"): 1,
+    ("src/personalclaw/tasks/handlers.py", "_tick", "Call"): 1,
+}
+
+
+def _handler_of(rel: str, line: int) -> str:
+    """The innermost function around *line* of *rel*, from a census row's own coordinates."""
+    tree = ast.parse((SRC.parent.parent / rel).read_text(encoding="utf-8"))
+    best: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.lineno <= line <= (node.end_lineno or node.lineno):
+            if best is None or node.lineno > best.lineno:
+                best = node
+    return best.name if best is not None else "<module>"
+
+
+def test_the_composer_bodies_admitted_at_218_are_still_the_ones_counted():
+    """What the 216 → 218 re-measure bought, pinned so a slot cannot be handed on.
+
+    Each admitted row must still be an unresolved, direct row of the same kind in the same
+    handler. If one leaves (its handler builds a literal now, or the route is gone), this reds
+    and asks for the ceiling to come down, instead of the freed slot quietly hosting the next
+    unreadable payload somewhere else. A new row in one of these handlers reds the ceiling.
+    """
+    census = scan()
+    counted: dict[tuple[str, str, str], int] = {}
+    for rel, line, kind, via_wrapper in census.unresolved:
+        if via_wrapper:
+            continue
+        key = (rel, _handler_of(rel, line), kind)
+        counted[key] = counted.get(key, 0) + 1
+    moved = {
+        key: (want, counted.get(key, 0))
+        for key, want in _COMPOSER_BODIES_ADMITTED_AT_218.items()
+        if counted.get(key, 0) != want
+    }
+    assert not moved, (
+        "an admitted composer body is not counted as it was (wanted, now). If one left, lower "
+        f"UNRESOLVED_PAYLOAD_CEILING by the difference and update this table: {moved}"
+    )
