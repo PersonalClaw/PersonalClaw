@@ -1082,7 +1082,10 @@ def resolve_provider_for_use_case(
        ``chat`` selection.
     2. Implicit fallback: any configured provider (config.json ``providers[]``)
        declaring the requested capability — picks the first. Avoids forcing the
-       user to set a selection when only one sensible provider exists.
+       user to set a selection when only one sensible provider exists. Never for
+       image understanding, which no provider-type declaration can pick a model for
+       (``_implicit_candidates``): an unbound image reader is resolved by name through
+       :func:`personalclaw.providers.image_input.resolve_image_reader`.
     """
     from personalclaw.providers.use_cases import (
         VALID_USE_CASES,
@@ -1433,6 +1436,28 @@ def resolve_provider_for_use_case(
     if fallback is not None:
         return fallback
 
+    # Image understanding with nothing bound: no implicit pick can name a model that reads images
+    # (see ``_implicit_candidates``), and the chat-model fallback is ``image_input.image_reader``'s
+    # to make, by name. Reaching here means neither holds, so the refusal says what does.
+    from personalclaw.llm.capabilities import Capability
+
+    if _capability_enum(capability) is Capability.VISION:
+        raise ProviderResolutionError(
+            "No image model is set up. Choose one in Settings → Models.",
+            AgentError(
+                code="ERR_MODEL_UNRESOLVED",
+                what=f"no model is set up to read images (use case {use_case!r})",
+                why=(
+                    "nothing is bound to image understanding, and a provider that carries images "
+                    "does not say which of its models reads them"
+                ),
+                fix=(
+                    "choose an image-understanding model in Settings → Models, or chat with a "
+                    "model that takes images"
+                ),
+            ),
+        )
+
     # Nothing READY declares the capability. When something does declare it but its type says
     # it cannot serve yet (a model that is not downloaded), that is the true cause and the only
     # one with a fix a user can act on — "no provider declares the capability" would be false
@@ -1492,7 +1517,18 @@ def _implicit_candidates(registry: Any, target_cap: Any, *, skip_agent_runtimes:
     as the search registry's keyless floor (``search_providers/registry.py``: "a provider that
     declares itself ``keyless`` sorts last among candidates so a user-configured/keyed provider
     always wins").
+
+    Image understanding has NO implicit candidate. Reading an image is a property of a MODEL: a
+    type that declares vision says its wire can carry an image, not which of its models reads one,
+    so this walk could only hand back an entry built with its own ``model`` — empty for an instance
+    saved from the Add-instance form, which Ollama refused ("model is required"), and a text-only
+    model otherwise. With nothing bound, the chat model reads images when it takes them:
+    :func:`personalclaw.providers.image_input.image_reader` asks, and resolves it by name.
     """
+    from personalclaw.llm.capabilities import Capability
+
+    if target_cap is Capability.VISION:
+        return []
     out = []
     for entry in sorted(registry.list_entries(), key=lambda e: getattr(e, "floor", False)):
         if skip_agent_runtimes and entry.type == "acp_agent":

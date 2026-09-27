@@ -318,7 +318,7 @@ def test_screen_share_vision_and_non_vision(monkeypatch):
     image_input.clear_cache()
 
     def route(ref: str):
-        return sc.resolve_delivery(asyncio.run(image_input.image_input(ref)).accepted)
+        return asyncio.run(sc.resolve_delivery(asyncio.run(image_input.image_input(ref)).accepted))
 
     # vision model → the frame is delivered NATIVELY as an image part
     assert route("Local:ollama-vision:7b") == (sc.DELIVERY_NATIVE, "")

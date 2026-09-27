@@ -1497,8 +1497,10 @@ def _mark_screen_context(session: _ChatSession, value: object) -> None:
 async def _describe_screen_frame(data_url: str) -> str:
     """One-shot vision call converting *data_url* to a text description.
 
-    Resolves the ``image_modality`` use case (Settings → Models) — NOT the session's
-    chat model, which by construction is the model that can't read the image. Returns
+    Resolves the platform's image reader (``providers.image_input.resolve_image_reader``):
+    the ``image_modality`` binding (Settings → Models), else a chat model that takes images —
+    NOT the session's own model, which by construction is the model that can't read the
+    image. Returns
     ``""`` on any failure, which makes the caller inject nothing at all: a turn that
     silently drops the frame is worse than one that says nothing, so the caller
     annotates only when this returns text.
@@ -1514,9 +1516,9 @@ async def _describe_screen_frame(data_url: str) -> str:
     latency buys correctness instead of costing it.
     """
     from personalclaw.llm.base import EVENT_TEXT_CHUNK
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.providers.image_input import resolve_image_reader
 
-    provider = resolve_provider_for_use_case("image_modality")
+    provider = await resolve_image_reader()
     prompt = (
         "Describe this screenshot of the user's screen factually and in detail: what "
         "application or page is shown, the visible text, and any errors or highlighted "
@@ -1575,7 +1577,9 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
         )
         return message
 
-    mode, _reason = screen_context.resolve_delivery((await _turn_image_input(client)).accepted)
+    mode, _reason = await screen_context.resolve_delivery(
+        (await _turn_image_input(client)).accepted
+    )
 
     if mode == screen_context.DELIVERY_NATIVE:
         stage = getattr(client, "stage_image_part", None)

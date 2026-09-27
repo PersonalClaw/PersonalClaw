@@ -54,7 +54,7 @@ class AttachmentExtractor:
         except Exception:
             logger.warning("attachment extract failed for %s", path, exc_info=True)
             return Extracted("", False)
-        return Extracted(got.text[:_MAX_TEXT_CHARS], got.read)
+        return Extracted(got.text[:_MAX_TEXT_CHARS], got.read, got.unread)
 
     async def get(self, path: str, mime: str | None = None) -> Extracted:
         """Await + return what extraction got from *path*. Starts extraction if it

@@ -3,8 +3,9 @@
 Nodes register under ``(node_type, backend)`` (mirrors OpenForge's
 ``register_backend``). A model-backed node resolves its provider through a
 Settings>Models **use-case** at run-time — whatever model the user selected for
-that use-case is used; if none is active the node is skipped gracefully (never a
-hard item failure).
+that use-case is used (for image understanding with nothing selected, a chat model
+that takes images); if none serves, the node is skipped gracefully (never a hard
+item failure).
 """
 
 from __future__ import annotations
@@ -56,13 +57,13 @@ def node_available(node: "ProcessingNode") -> bool:
         return False
 
 
-def resolve_runnable(node_type: str, preferred: str) -> tuple["ProcessingNode", str] | None:
+async def resolve_runnable(node_type: str, preferred: str) -> tuple["ProcessingNode", str] | None:
     """The backend for *node_type* that can run now, preferring *preferred*.
 
     One node type may have several alternative implementations — a model-backed one and an
     engine-backed one for ``ocr``, pdfplumber vs pymupdf for a reader. "Runnable" means both
-    halves hold: the node's own use-case resolves to an active model (``None`` use-case
-    always does) AND :func:`node_available` says its dependency is present.
+    halves hold: a model serves the node's own use-case (:func:`unserved_reason` is empty;
+    a ``None`` use-case always is) AND :func:`node_available` says its dependency is present.
 
     The preferred backend wins whenever it is runnable, so this never changes what a working
     install does. Only when the preference cannot run is an alternative tried, in registration
@@ -74,23 +75,34 @@ def resolve_runnable(node_type: str, preferred: str) -> tuple["ProcessingNode", 
         node = NODE_REGISTRY.get((node_type, backend))
         if node is None:
             continue
-        if can_resolve_use_case(node.uses_use_case) and node_available(node):
+        if not await unserved_reason(node.uses_use_case) and node_available(node):
             return node, backend
     return None
 
 
-def can_resolve_use_case(use_case: str | None) -> bool:
-    """True if a model is active for *use_case* (so a model-backed node can run).
+async def unserved_reason(use_case: str | None) -> str:
+    """Why no model serves *use_case* right now, or ``""`` when one does (so a model-backed node
+    can run).
 
-    None use-case (pure-python node) → always True. Resolution failure → False, so
-    the executor skips the node and marks the item partial rather than hard-failing.
+    A ``None`` use-case (pure-python node) is always served. Image understanding asks the
+    platform's image reader (``providers.image_input.image_reader``): its binding, else a chat
+    model that takes images — a fallback the bridge's no-instantiate probe cannot see, because
+    whether a model takes images is its catalog's answer. Every other use case asks that probe.
+    A probe that raises is "unserved", so the executor skips the node and marks the item partial
+    rather than hard-failing.
     """
     if not use_case:
-        return True
+        return ""
     try:
-        from personalclaw.providers.provider_bridge import can_resolve_use_case as _can
+        from personalclaw.providers.image_input import IMAGE_USE_CASE, image_reader
 
-        return bool(_can(use_case))
+        if use_case == IMAGE_USE_CASE:
+            reader = await image_reader()
+            return "" if reader.ref else reader.reason
+        from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+        if can_resolve_use_case(use_case):
+            return ""
     except Exception:
         logger.debug("use-case resolvability check failed for %s", use_case, exc_info=True)
-        return False
+    return f"no model serves the {use_case} use case"

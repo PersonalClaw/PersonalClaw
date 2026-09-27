@@ -22,6 +22,11 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+#: ``Extracted.unread`` when reading the file needed an image model and none is set up: nothing
+#: is bound to image understanding and the chat model takes no images. A stable value — the
+#: attachment chip and the sent turn's preview branch on it to say so and link Settings → Models.
+UNREAD_NO_IMAGE_MODEL = "no_image_model"
+
 
 @dataclass(frozen=True)
 class Extracted:
@@ -32,10 +37,14 @@ class Extracted:
     when it is only the structural descriptor ("Image: x.png (800×600, PNG) — no extractable text
     content") or nothing at all. A surface that tells a user what a model will be given reads
     ``read``, so "the text read from the image" is never said of a descriptor.
+
+    ``unread`` says why nothing was read, when that is known: :data:`UNREAD_NO_IMAGE_MODEL`, or
+    ``""`` — the reading ran and found nothing, or the file needed no model.
     """
 
     text: str
     read: bool
+    unread: str = ""
 
 
 async def extract_file(file_path: str, mime: str | None = None) -> Extracted:
@@ -91,15 +100,19 @@ async def extract_file(file_path: str, mime: str | None = None) -> Extracted:
     if text:
         return Extracted(text, True)
 
-    # No extractable text (e.g. an image with no OCR/vision model configured, or a
-    # text-free media file). Fall back to a structural descriptor from the exif/
-    # media metadata so the agent at least knows WHAT was attached (format, size,
-    # dimensions, duration) rather than a content-less blank — mirrors the
-    # graceful-degradation in runner._structural_descriptor.
-    return Extracted(_structural_descriptor(file_path, item_type, result), False)
+    # No extractable text (e.g. an image nothing is set up to read, or a text-free media
+    # file). Fall back to a structural descriptor from the exif/media metadata so the agent
+    # at least knows WHAT was attached (format, size, dimensions, duration) rather than a
+    # content-less blank — mirrors the graceful-degradation in runner._structural_descriptor.
+    # An image skipped for want of an image model was never looked at, so the descriptor says
+    # that instead of claiming it holds no text.
+    from personalclaw.providers.image_input import NO_IMAGE_MODEL
+
+    unread = UNREAD_NO_IMAGE_MODEL if NO_IMAGE_MODEL in result.unserved.values() else ""
+    return Extracted(_structural_descriptor(file_path, item_type, result, unread), False, unread)
 
 
-def _structural_descriptor(file_path: str, item_type: str, result) -> str:
+def _structural_descriptor(file_path: str, item_type: str, result, unread: str = "") -> str:
     """A one-line 'Image: foo.png (800×600, PNG)' style descriptor from the
     non-pooled structural metadata, when no text was extracted."""
     meta: dict = {}
@@ -123,6 +136,9 @@ def _structural_descriptor(file_path: str, item_type: str, result) -> str:
     if not bits:
         return ""
     label = (item_type or "file").capitalize()
-    return (
-        f"{label}: {os.path.basename(file_path)} ({', '.join(bits)}) — no extractable text content."
+    tail = (
+        "not read: no image model is set up."
+        if unread == UNREAD_NO_IMAGE_MODEL
+        else "no extractable text content."
     )
+    return f"{label}: {os.path.basename(file_path)} ({', '.join(bits)}) — {tail}"

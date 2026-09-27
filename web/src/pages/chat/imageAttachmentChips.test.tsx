@@ -57,12 +57,23 @@ describe('the composer chip for an attached image', () => {
 
   it("says only the size and format go when nothing could read the image — never 'text read from'", async () => {
     h.imageInput.mockResolvedValue({ accepted: false, reason: "gemma3:1b can't take images.", model: 'gemma3:1b' })
-    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'Image: shot.png (240×160, PNG, 1 KB) — no extractable text content.', read: false })
+    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'Image: shot.png (240×160, PNG, 1 KB) — no extractable text content.', read: false, unread: '' })
     chips()
-    await waitFor(() => expect(screen.getByRole('note').textContent).toContain("gets only the image's size and format"))
-    const note = screen.getByRole('note').textContent ?? ''
-    expect(note).toContain('Settings → Models')
-    expect(note).not.toContain('text read from')
+    await waitFor(() => expect(screen.getByRole('note').textContent)
+      .toBe("gemma3:1b can't take images. Nothing could read the image, so it gets only the image's size and format."))
+    // An image model read it and found nothing: "set one up" would say none is.
+    expect(screen.queryByRole('link', { name: 'Settings → Models' })).toBeNull()
+  })
+
+  it('says no image model is set up, and links to Settings → Models, when nothing can read images', async () => {
+    h.imageInput.mockResolvedValue({ accepted: false, reason: "gemma3:1b can't take images.", model: 'gemma3:1b' })
+    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'Image: shot.png (240×160, PNG, 1 KB) — not read: no image model is set up.', read: false, unread: 'no_image_model' })
+    chips()
+    await waitFor(() => expect(screen.getByRole('note').textContent).toBe(
+      "gemma3:1b can't take images. No image model is set up, so it gets only the image's size and format. Choose one in Settings → Models.",
+    ))
+    expect(screen.getByRole('link', { name: 'Settings → Models' }).getAttribute('href')).toBe('#/settings/models')
+    expect(screen.getByText('as text')).toBeTruthy()
   })
 
   it('claims only the reason while the image is still being read', async () => {
@@ -114,6 +125,17 @@ describe('the chip on a sent turn', () => {
     expect(await screen.findByText('TEXT READ FROM IT')).toBeTruthy()
   })
 
+  it('says no image model is set up, and links to Settings → Models, when nothing read the image', async () => {
+    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'Image: shot.png (240×160, PNG, 1 KB) — not read: no image model is set up.', read: false, unread: 'no_image_model' })
+    render(<TurnAttachments paths={[IMG]} delivery={{ byPath: { [IMG]: 'text' }, reason: "gemma3:1b can't take images." }} onOpenFile={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /shot\.png/ }))
+    const link = await screen.findByRole('link', { name: 'Settings → Models' })
+    expect(link.getAttribute('href')).toBe('#/settings/models')
+    expect(link.closest('p')?.textContent).toBe(
+      "gemma3:1b can't take images. No image model is set up, so only its size and format were sent. Choose one in Settings → Models.",
+    )
+  })
+
   it('says a failed read failed, not that the file has no text', async () => {
     h.attachmentExtract.mockRejectedValue(new Error('upload is gone'))
     render(<TurnAttachments paths={[DOC]} onOpenFile={() => {}} />)
@@ -151,8 +173,11 @@ describe('the image helpers', () => {
   })
 
   it('names the images in the plural', () => {
-    expect(imagesAsTextNote({ accepted: false, reason: "m can't take images.", model: 'm' }, 2, true))
+    const input = { accepted: false, reason: "m can't take images.", model: 'm' }
+    expect(imagesAsTextNote(input, 2, { read: true, noImageModel: false }))
       .toBe("m can't take images. It gets the text read from the images instead.")
-    expect(imagesAsTextNote(undefined, 1, true)).toBeNull()
+    expect(imagesAsTextNote(input, 2, { read: false, noImageModel: true }))
+      .toBe("m can't take images. No image model is set up, so it gets only each image's size and format.")
+    expect(imagesAsTextNote(undefined, 1, { read: true, noImageModel: false })).toBeNull()
   })
 })

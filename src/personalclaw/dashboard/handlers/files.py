@@ -1005,7 +1005,10 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
     uploads dir to prevent reading arbitrary files through this surface.
 
     ``read`` says whether the text was read from the file's content, or is only its
-    structural descriptor (size and format) — the attachment chip's sentence depends on it."""
+    structural descriptor (size and format) — the attachment chip's sentence depends on it.
+    ``unread`` says why nothing was read when that is known: ``"no_image_model"`` when the
+    file needed an image model and none is set up (``knowledge.extract.UNREAD_NO_IMAGE_MODEL``),
+    else ``""``."""
     import mimetypes as _mt
 
     caller = request.get("user", "dashboard")
@@ -1034,7 +1037,9 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
         outcome="allowed",
         resources=f"name={display_name(path)} chars={len(got.text)}",
     )
-    return web.json_response({"name": display_name(path), "text": got.text, "read": got.read})
+    return web.json_response(
+        {"name": display_name(path), "text": got.text, "read": got.read, "unread": got.unread}
+    )
 
 
 async def api_screenshot(request: web.Request) -> web.Response:

@@ -16,16 +16,26 @@ export interface ImageDelivery {
   reason?: string
 }
 
+/** `AttachmentExtract.unread` when an image needed an image model and none is set up — nothing is
+ *  bound to image understanding and the chat model takes no images (`knowledge/extract.py`). */
+export const UNREAD_NO_IMAGE_MODEL = 'no_image_model'
+
+/** What the attached images' own extraction got, as the note needs it: `read` when their content
+ *  was read; `noImageModel` when nothing read them because no image model is set up. `undefined`
+ *  while extraction is still running. */
+export interface ImagesRead { read: boolean; noImageModel: boolean }
+
 /** The sentence under the composer's chips when attached images will go as text, or `null` when
- *  they go as images (or the answer is not in yet — a chip never guesses). `read` is what the
- *  images' own extraction got: true when their content was read, false when only their size and
- *  format could be told, `undefined` while extraction is still running. */
-export function imagesAsTextNote(input: ChatImageInput | undefined, count: number, read: boolean | undefined): string | null {
+ *  they go as images (or the answer is not in yet — a chip never guesses). When no image model is
+ *  set up the caller follows the sentence with a link to Settings → Models. */
+export function imagesAsTextNote(input: ChatImageInput | undefined, count: number, got: ImagesRead | undefined): string | null {
   if (!input || input.accepted || count < 1) return null
   const reason = input.reason.trim()
   const lead = reason ? `${reason} ` : ''
   const them = count === 1 ? 'the image' : 'the images'
-  if (read === undefined) return reason || null
-  if (read) return `${lead}It gets the text read from ${them} instead.`
-  return `${lead}Nothing could read ${them}, so it gets only ${count === 1 ? "the image's" : "each image's"} size and format. Choose an image-understanding model in Settings → Models to have ${them} read.`
+  const sizeAndFormat = `${count === 1 ? "the image's" : "each image's"} size and format`
+  if (got === undefined) return reason || null
+  if (got.read) return `${lead}It gets the text read from ${them} instead.`
+  if (got.noImageModel) return `${lead}No image model is set up, so it gets only ${sizeAndFormat}.`
+  return `${lead}Nothing could read ${them}, so it gets only ${sizeAndFormat}.`
 }

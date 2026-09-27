@@ -5154,6 +5154,18 @@ export interface ResidentProvider {
 export interface ResidencySnapshot {
   loaded: LoadedModel[]; providers: ResidentProvider[]; pressure: MemoryPressure
 }
+/** `GET /api/attachment-extract` — what extraction got from one uploaded attachment. */
+export interface AttachmentExtract {
+  name: string
+  /** What the model is handed for the file: its text, or — when nothing was read — a one-line
+   *  size-and-format descriptor. */
+  text: string
+  /** `text` was read from the file's content, rather than being only that descriptor. */
+  read: boolean
+  /** Why nothing was read, when that is known: `'no_image_model'` when the file needed an image
+   *  model and none is set up; `''` otherwise. */
+  unread: string
+}
 /** `GET /api/chat/image-input` — how an attached image reaches the model on a chat's next turn. */
 export interface ChatImageInput {
   /** The model the next turn is served by takes images as pixels. */
@@ -7201,7 +7213,7 @@ export const api = {
     post<{ ok: boolean; path: string; name: string }>('/api/chat/screen-frame/pin', { session, frame_b64 }),
   /** How an attached image reaches the model on this chat's next turn: as an image
    *  (`accepted`), or as its text, with the server-composed `reason`. What that text is comes
-   *  from the image's own extraction (`attachmentExtract`'s `read`). Asked with the composer's
+   *  from the image's own extraction (`attachmentExtract`'s `read` and `unread`). Asked with the composer's
    *  agent/model (and the ACP `runtime` the pick runs on, if any) before a session exists; a
    *  session answers for itself. */
   chatImageInput: (session: string, sel: { agent?: string; model?: string; runtime?: string } = {}) => {
@@ -8771,7 +8783,7 @@ export const api = {
   // by the chat attachment-chip preview. Awaits the upload-time extraction.
   /** What extraction got from an uploaded attachment. `read` is false when `text` is only the
    *  file's size and format — nothing could read its content. */
-  attachmentExtract: (path: string) => get<{ name: string; text: string; read: boolean }>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),
+  attachmentExtract: (path: string) => get<AttachmentExtract>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),
   uploadFiles: async (
     files: File[],
     onProgress?: (fileIndex: number, p: { loaded: number; total: number; pct: number }) => void,
