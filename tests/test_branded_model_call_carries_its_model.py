@@ -101,11 +101,26 @@ def test_the_entry_model_beats_the_instance_default(protocol):
     assert provider._model == "entry-model"
 
 
+@pytest.mark.anyio
 @pytest.mark.parametrize("protocol", ["openai", "anthropic"])
-def test_with_nothing_configured_the_spec_default_stands(protocol):
-    spec, factory = _factory(protocol, "spec-curated-default")
+async def test_with_nothing_configured_no_model_is_picked_and_the_call_is_refused(protocol):
+    """An instance that names no model, on a call that names none, is not answered by the app's
+    curated default (``claude-subscription`` served ``claude-opus-4-8`` that way): a provider
+    choosing a model nobody chose is as wrong as sending an empty one. The call is refused
+    before anything is sent, in words that say where the model is chosen."""
+    from personalclaw.llm.registry import ProviderResolutionError
 
-    assert factory(entry=_entry(spec))._model == "spec-curated-default"
+    spec, factory = _factory(protocol, "spec-curated-default")
+    provider = factory(entry=_entry(spec))
+
+    assert provider._model == ""
+    with pytest.raises(ProviderResolutionError, match="No model is chosen for this call"):
+        async for _event in provider.complete([{"role": "user", "content": PROMPT}]):
+            pass
+    with pytest.raises(ProviderResolutionError, match="Settings → Models"):
+        async for _event in provider.stream(PROMPT):
+            pass
+    assert provider._history == [], "a refused call leaves nothing in the conversation"
 
 
 @pytest.mark.anyio

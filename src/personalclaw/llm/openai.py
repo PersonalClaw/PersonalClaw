@@ -29,7 +29,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import PromptCache
-from personalclaw.llm.registry import CredentialMissing
+from personalclaw.llm.registry import CredentialMissing, require_model
 from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
 
 logger = logging.getLogger(__name__)
@@ -192,33 +192,10 @@ class OpenAIProvider(ModelProvider):
     async def start(self) -> None:
         """Idempotent — the AsyncOpenAI client is already constructed.
 
-        When no model was pinned (``self._model`` empty), resolve a default from
-        LIVE ``/v1/models`` discovery rather than a hardcoded id (de-hardcode
-        directive 2026-07-06): pick the first chat-capable model the endpoint
-        advertises. Leaves it empty if discovery yields nothing (the call then
-        errors clearly rather than sending a bogus baked id)."""
-        if not self._model:
-            try:
-                from personalclaw.llm.catalog import (
-                    infer_capabilities,
-                    openai_compatible_list_models,
-                )
-
-                cred = getattr(self._client, "api_key", "") or ""
-                models = await openai_compatible_list_models(self._base_url or "", cred)
-                chat = next(
-                    (
-                        m.id
-                        for m in models
-                        if "chat" in (m.capabilities or infer_capabilities(m.id))
-                    ),
-                    models[0].id if models else "",
-                )
-                if chat:
-                    self._model = chat
-                    logger.info("OpenAI: auto-selected default %r from /v1/models discovery", chat)
-            except Exception:
-                logger.debug("OpenAI default resolution via discovery failed", exc_info=True)
+        It never picks a model: a provider built for no model stays so, and each request refuses
+        rather than name none (:func:`~personalclaw.llm.registry.require_model`). It used to take
+        the first chat model the endpoint's ``/v1/models`` listed, so with nothing bound a Groq
+        instance saved without a Default Model answered on a model nobody chose."""
         logger.info(
             "OpenAI provider ready: model=%s base_url=%s",
             self._model or "<unresolved>",
@@ -243,12 +220,13 @@ class OpenAIProvider(ModelProvider):
         single ``EVENT_TOOL_CALL`` is emitted per completed call once the
         next call begins or the stream finishes.
         """
+        model = require_model(self._model)
         self._history.append({"role": "user", "content": message})
         if len(self._history) > _MAX_HISTORY:
             self._history = self._history[-_MAX_HISTORY:]
 
         request_kwargs: dict[str, Any] = {
-            "model": self._model,
+            "model": model,
             "messages": self._history,
             "stream": True,
             # Ask the endpoint to emit a final usage chunk so we can report
@@ -451,7 +429,7 @@ class OpenAIProvider(ModelProvider):
         completed call once the next call begins or the stream finishes.
         """
         request_kwargs: dict[str, Any] = {
-            "model": model or self._model,
+            "model": require_model(model or self._model),
             "messages": messages,
             "stream": True,
             # Ask for a final usage chunk (drives the token tickers); without
@@ -640,13 +618,13 @@ class OpenAIProvider(ModelProvider):
 
         The embedding model comes from the ``embedding_model`` key in
         ``extra_options`` (threaded from the embedding use-case binding); it has no
-        vendor default (empty ⇒ the call errors clearly rather than sending an
-        OpenAI-specific id to a non-OpenAI compatible endpoint).
+        vendor default (empty ⇒ the call is refused before it is sent, rather than naming
+        no model or an OpenAI-specific id to a non-OpenAI compatible endpoint).
         """
         if not inputs:
             return []
         resp = await self._client.embeddings.create(
-            model=self._embedding_model,
+            model=require_model(self._embedding_model),
             input=inputs,
         )
         data = getattr(resp, "data", []) or []

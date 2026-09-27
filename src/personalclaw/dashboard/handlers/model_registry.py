@@ -669,7 +669,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
     # branching). Each provider's list runs concurrently; a provider with no
     # catalog contributes nothing.
     from personalclaw.llm.capabilities import Capability
-    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.llm.registry import get_default_registry, own_model
 
     registry = get_default_registry()
     live = {e.name: e for e in registry.list_entries()}
@@ -718,12 +718,15 @@ async def api_models_chat(request: web.Request) -> web.Response:
         if connection.state == FAILED:
             continue
         catalog = _catalog_for_config_provider(p)
+        # The instance's own model (its model, else its Default Model): the one it serves when
+        # nothing names one, so the model offered when discovery cannot list any.
+        pinned = own_model(p.get("model"), p.get("options"))
         if catalog is None:
-            # No discovery available — surface a pinned model if the entry has one.
-            if p.get("model"):
-                _add(pname, p["model"])
+            # No discovery available — surface the instance's own model if it names one.
+            if pinned:
+                _add(pname, pinned)
             continue
-        tasks.append((pname, p.get("model", ""), catalog.list_models()))
+        tasks.append((pname, pinned, catalog.list_models()))
 
     if tasks:
         results = await asyncio.gather(*(t[2] for t in tasks), return_exceptions=True)
@@ -745,7 +748,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
     # are never floors), and the row above contributed nothing for it.
     listed = {m["provider"] for m in all_models}
     for entry in live.values():
-        if entry.name in listed or entry.type == "acp_agent" or not entry.model:
+        if entry.name in listed or entry.type == "acp_agent" or not entry.own_model:
             continue
         if entry.name in config_names and not getattr(entry, "floor", False):
             continue
@@ -757,7 +760,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 caps = frozenset()
         if Capability.CHAT not in caps or _cannot_serve(entry.name):
             continue
-        _add(entry.name, entry.model)
+        _add(entry.name, entry.own_model)
 
     return web.json_response(all_models)
 

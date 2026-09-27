@@ -751,20 +751,25 @@ async def one_shot_completion(
     if provider is None:
         from personalclaw.llm.registry import get_default_registry
 
+        # ``provider`` is None only because the bridge raised, so this is its refusal.
+        assert unresolved is not None
         registry = get_default_registry()
         entries = registry.list_entries()
-        if not entries:
-            # Nothing can serve, so the bridge's refusal IS the cause: typed, with the
-            # WHAT/WHY/FIX it derived (which use case, and what to add where). A bare
-            # RuntimeError here left a workflow step unable to tell "no model is set up" from
-            # a transient fault, and the run page offered a Retry that could only fail again.
-            if unresolved is not None:
-                raise unresolved
-            raise RuntimeError("No provider entries registered")
-        fallback = entries[0]
-        fallback_ref = f"{fallback.name}:{fallback.model}" if fallback.model else fallback.name
+        fallback = entries[0] if entries else None
+        # With no entry, or one that names no model of its own (``ProviderEntry.own_model``),
+        # nothing can serve: nothing named a model for this call, and building that entry could
+        # only send the model empty or leave its provider to pick one. So the bridge's refusal
+        # IS the cause: typed, with the WHAT/WHY/FIX it derived (which use case, and what to set
+        # where). A bare RuntimeError here left a workflow step unable to tell "no model is set
+        # up" from a transient fault, and the run page offered a Retry that could only fail again.
+        if fallback is None or (not fallback.own_model and fallback.type != "acp_agent"):
+            raise unresolved
+        fallback_model = fallback.own_model
+        fallback_ref = f"{fallback.name}:{fallback_model}" if fallback_model else fallback.name
         try:
-            provider = registry.build(fallback.name, **(await _entry_kw(fallback_ref)))
+            provider = registry.build(
+                fallback.name, **{"model": fallback_model, **(await _entry_kw(fallback_ref))}
+            )
         except Exception:  # noqa: BLE001 — an unaccepted build kwarg degrades, never blocks
             logger.debug(
                 "one_shot_completion: last-resort build rejected derived kwargs for %r",

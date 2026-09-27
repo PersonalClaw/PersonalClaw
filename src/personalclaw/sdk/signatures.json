@@ -6659,7 +6659,10 @@
    ],
    "returns": "None"
   },
-  "kind": "dataclass"
+  "kind": "dataclass",
+  "members": {
+   "own_model": {"kind": "property", "returns": "str", "settable": false}
+  }
  },
  "personalclaw.sdk.model.ProviderRegistry": {
   "bases": ["object"],
@@ -6870,6 +6873,14 @@
   ],
   "returns": "int | None"
  },
+ "personalclaw.sdk.model.own_model": {
+  "kind": "function",
+  "params": [
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "model"},
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "options"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.model.per_call_temperature": {
   "kind": "function",
   "params": [
@@ -6907,6 +6918,13 @@
    {"annotation": "Callable[[list[dict[str, Any]]], list[Any]]", "kind": "positional_or_keyword", "name": "scanner"}
   ],
   "returns": "None"
+ },
+ "personalclaw.sdk.model.require_model": {
+  "kind": "function",
+  "params": [
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "model"}
+  ],
+  "returns": "str"
  },
  "personalclaw.sdk.net.CONNECTOR": {"kind": "value", "type": "EgressPolicy", "value": "EgressPolicy(name='connector', allow_schemes=('http', 'https'), allow_private=False, loopback_only=False, allow_hosts=(), deny_hosts=(), allow_only=False, max_redirects=5, max_bytes=10000000, timeout_s=20.0, pin_resolved_ip=True, on_violation='deny')"},
  "personalclaw.sdk.net.EgressBlocked": {

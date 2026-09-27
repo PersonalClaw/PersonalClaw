@@ -44,6 +44,9 @@ const activeChain = vi.mocked(api.activeChain)
 const BOUND = { needs_model: false, has_model_provider: true, has_chat_binding: true }
 const FLOOR = { needs_model: false, has_model_provider: true, has_chat_binding: false }
 const UNSET = { needs_model: true, has_model_provider: false, has_chat_binding: false }
+// A provider is connected but no model is chosen for it — an instance saved from the form with
+// no Default Model, nothing bound — so nothing answers chat and the offer shows.
+const UNCHOSEN = { needs_model: true, has_model_provider: true, has_chat_binding: false }
 const OFFER = {
   provider: 'bundled-chat',
   model: 'SmolLM2-135M-Instruct-Q8_0',
@@ -88,6 +91,16 @@ describe('BundledFloorNotice — the download offer', () => {
     expect(screen.getByRole('link', { name: /connect a provider/i })).toHaveAttribute('href', '#/settings/models')
     // …and it says what the model is like, so a short shaky answer is expected rather than a defect.
     expect(card).toHaveTextContent(/short, shaky answers and no tool use/i)
+  })
+
+  it('with a provider connected but no model chosen, its link says to choose one, not connect one', async () => {
+    // 🔴 Red on main: the link told a user who had just connected Ollama to "connect a provider".
+    onboarding.mockResolvedValue({ ...UNCHOSEN, chat_download_offer: OFFER })
+    render(<BundledFloorNotice />)
+    await screen.findByTestId('bundled-model-offer')
+    const link = screen.getByRole('link', { name: 'Or choose a model from a provider you’ve connected' })
+    expect(link).toHaveAttribute('href', '#/settings/models')
+    expect(screen.queryByRole('link', { name: /connect a provider/i })).toBeNull()
   })
 
   it('shows bytes, a percentage bar and an ETA while it runs, with a reachable cancel', async () => {

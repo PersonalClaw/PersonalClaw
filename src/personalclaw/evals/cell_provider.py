@@ -337,7 +337,7 @@ def _register_cell_type(binding: CellProviderBinding) -> str:
         # sampled one answer N times, and no call got the budget core sized for it.
         return build_protocol_provider(
             spec,
-            model=entry.model or binding.model,
+            model=entry.own_model or binding.model,
             credential=credential,
             base_url=binding.base_url,
             extra_options=options,

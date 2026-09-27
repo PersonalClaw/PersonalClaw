@@ -381,12 +381,13 @@ def migrate_legacy_bindings() -> bool:
     ``extension:instance`` binding in ``use_cases.json``, separate from the
     model-level ``active_models.json``. There is now one store. This one-shot,
     run at startup, fills any use case that has no active selection yet with the
-    bound provider's configured model (``provider:model``), then deletes the
+    bound provider's own model (``provider:model``), then deletes the
     legacy file so only one store remains. Returns True if a migration ran.
 
     Best-effort: a binding names an ``extension``/provider but no model id, so we
-    use the provider's configured ``model`` from config.json. Bindings we can't
-    map (no resolvable model) are skipped — the user re-selects in Settings.
+    use the provider's own model from config.json (its ``model``, else its Default
+    Model). Bindings we can't map (no resolvable model) are skipped — the user
+    re-selects in Settings.
     """
     path = _legacy_bindings_path()
     if not path.is_file():
@@ -422,8 +423,13 @@ def migrate_legacy_bindings() -> bool:
 
 
 def _config_provider_models() -> dict[str, str]:
-    """Map ``provider_name -> configured model`` from config.json ``providers[]``."""
+    """Map ``provider_name -> its own model`` from config.json ``providers[]``.
+
+    An instance's own model is its ``model``, else its Default Model
+    (:func:`personalclaw.llm.registry.own_model`); an instance that names neither maps nothing.
+    """
     from personalclaw.config.loader import config_path
+    from personalclaw.llm.registry import own_model
 
     path = config_path()
     if not path.is_file():
@@ -437,8 +443,11 @@ def _config_provider_models() -> dict[str, str]:
         return {}
     out: dict[str, str] = {}
     for p in providers:
-        if isinstance(p, dict) and p.get("name") and p.get("model"):
-            out[str(p["name"])] = str(p["model"])
+        if not isinstance(p, dict) or not p.get("name"):
+            continue
+        model = own_model(p.get("model"), p.get("options"))
+        if model:
+            out[str(p["name"])] = model
     return out
 
 

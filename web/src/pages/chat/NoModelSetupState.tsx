@@ -30,12 +30,26 @@ export function isNoModelSetupError(text: string | null | undefined): boolean {
   )
 }
 
+/** The provider a no-model refusal names when the cause is that no model is CHOSEN for it —
+ *  an instance saved from the Add-instance form without a Default Model, with nothing bound in
+ *  Settings → Models — or `null` for every other cause. A model provider IS connected then, so
+ *  "No model connected yet" would be false about it.
+ *
+ *  Keyed on the stable WHY of `no_model_chosen` (src/personalclaw/llm/registry.py), which the
+ *  co-located test pins verbatim, as the WHAT above is. */
+export function noModelChosenFor(text: string | null | undefined): string | null {
+  const m = /^WHY: no model is chosen for “(.+)”$/m.exec(text ?? '')
+  return m ? m[1] : null
+}
+
 /** WT-04: the calm setup empty-state shown in the transcript when a turn cannot run
  *  because no model is connected yet. Replaces the raw WHAT/WHY/FIX danger block —
  *  which read as a stack dump on a newcomer's very first screen — with one plain
  *  sentence, the way forward as a CTA, and the full envelope tucked behind a
- *  collapsed disclosure (charter: calm setup-framing, error-shape rule). */
+ *  collapsed disclosure (charter: calm setup-framing, error-shape rule). When a provider is
+ *  connected but no model is chosen for it, the sentence names that provider instead. */
 export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup: () => void }) {
+  const provider = noModelChosenFor(detail)
   return (
     <div
       role="status"
@@ -50,13 +64,17 @@ export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup
           <Sparkles size={18} className="text-primary" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <p data-type="title-m" className="text-on-surface" style={fvs(600)}>No model connected yet</p>
+          <p data-type="title-m" className="text-on-surface" style={fvs(600)}>
+            {provider ? `No model chosen for ${provider}` : 'No model connected yet'}
+          </p>
           <p data-type="body-s" className="mt-0.5 text-on-surface-var">
-            Connect a model to start chatting. You can set one up in Settings → Models.
+            {provider
+              ? 'Choose which of its models to chat with in Settings → Models.'
+              : 'Connect a model to start chatting. You can set one up in Settings → Models.'}
           </p>
           <div className="mt-2.5">
             <Button size="sm" onClick={onSetup}>
-              Set up a model
+              {provider ? 'Choose a model' : 'Set up a model'}
             </Button>
           </div>
           <details className="mt-2">

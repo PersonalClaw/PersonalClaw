@@ -68,6 +68,7 @@ from personalclaw.llm.registry import (  # noqa: F401
     ProviderEntry,
     ProviderResolutionError,
     get_default_registry,
+    own_model,
 )
 from personalclaw.llm.subscription_credentials import (  # noqa: F401
     SubscriptionSource,
@@ -328,11 +329,13 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         _camel_key = str(options.pop("apiKey", "") or "")
         if cred is None:
             cred, _ = resolve_spec_secret(spec, explicit_key=_snake_key or _camel_key)
-        # The configured model: the entry's, else the instance's Default Model (the field the
-        # Add-instance form writes — it creates the entry with `model: ""`), else the spec's.
-        # The order `create_provider` below follows. A model the caller BOUND for this call
-        # (the `model` build kwarg) wins over all three, in `build_protocol_provider`.
-        configured_model = str(entry.model or options.get("default_model") or spec.default_model)
+        # The configured model is the entry's own (`ProviderEntry.own_model`: its model, else the
+        # instance's Default Model, the field the Add-instance form writes — it creates the entry
+        # with `model: ""`). Never the spec's `default_model`: that is the app choosing a model
+        # nobody chose, which is as wrong as sending none. A model the caller BOUND for this call
+        # (the `model` build kwarg) wins, in `build_protocol_provider`; with neither, the wire
+        # client refuses each request (`require_model`).
+        configured_model = entry.own_model
         # Drop remaining routing/label fields that are NOT model-call params so they
         # don't leak into extra_options → request_kwargs → the SDK's stream()/create()
         # ("unexpected keyword argument …"). Only genuine call params (temperature,
@@ -362,7 +365,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         )
         cred = cred or _anon_credential(spec)
         base_url = str(cfg.get("endpoint") or cfg.get("base_url") or spec.default_base_url)
-        model = str(cfg.get("model") or cfg.get("default_model") or spec.default_model)
+        model = own_model(cfg.get("model"), cfg)  # the same answer as `_factory` above
         return build_protocol_provider(spec, model=model, credential=cred, base_url=base_url)
 
     def create_catalog(options: dict[str, Any] | None = None, *, model: str = "") -> ModelCatalog:

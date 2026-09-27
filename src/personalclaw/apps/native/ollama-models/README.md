@@ -53,7 +53,7 @@ any other app. (Or `POST /api/apps {"source": ".../apps/ollama-models"}`.)
 | Key | Label | Notes |
 |---|---|---|
 | `endpoint` | Ollama Endpoint | Base URL of the Ollama API server. |
-| `default_model` | Default Model | Model to use when no specific model is requested. Leave empty to use the first available. |
+| `default_model` | Default Model | The model this instance answers with when nothing in Settings → Models names one. Leave it empty to choose its models in Settings → Models. |
 | `embedding_model` | Embedding Model | Ollama model to use for embedding operations. Leave empty to use sentence-transformers instead. |
 | `timeout_secs` | Request Timeout | Maximum seconds to wait for a response from Ollama. |
 | `context_window` | Served Context Window | Tokens this endpoint actually serves (Ollama's `num_ctx`). Leave blank to detect it. |
