@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import web
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
@@ -1350,12 +1351,8 @@ def _atomic_write(path: Path, data: dict) -> None:
 
         write_mcp_document(path, data)
         return
-    from personalclaw.agent import (  # noqa: F811  # circular: agent imports dashboard handlers
-        _atomic_json_write,
-    )
-
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_json_write(path, data)
+    atomic_json_write(path, data)
 
 
 def _find_server_spec_anywhere(name: str) -> dict | None:

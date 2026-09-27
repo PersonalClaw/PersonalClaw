@@ -28,7 +28,6 @@ import re
 import shutil
 import stat
 import sys
-import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,56 +41,6 @@ from personalclaw.sel import (  # circular import: sel imports config which impo
 from personalclaw.self_update import is_frozen
 
 logger = logging.getLogger(__name__)
-
-
-def _atomic_json_write(path: Path, data: dict) -> None:
-    """Write JSON atomically via tmp+rename to prevent read-of-partial-file.
-
-    ACP agent reads agent configs at spawn and set_mode.  Non-atomic writes
-    (truncate-then-write) can deliver empty or partial JSON, crashing the
-    ACP process with exit code 1.  rename() is atomic on Linux when source
-    and destination are on the same filesystem.
-
-    Uses mkstemp for a unique temp file per call so concurrent writers
-    to the same path don't clobber each other's temp files.
-
-    Under the PersonalClaw home (``mcp.json``, whose server ``env`` blocks carry tokens)
-    the file is 0600 in a 0700 directory — the home rule ``atomic_write`` enforces, applied
-    through the same :func:`~personalclaw.atomic_write.private_mode_for`. Anywhere else
-    (an external CLI's own agent config) the file keeps the mode it already has.
-    """
-    from personalclaw.atomic_write import ensure_private_dir, private_mode_for
-
-    home_mode = private_mode_for(path)
-    if home_mode is not None:
-        ensure_private_dir(path.parent)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            if home_mode is not None:
-                mode = home_mode
-            else:
-                try:
-                    mode = stat.S_IMODE(path.stat().st_mode)
-                except FileNotFoundError:
-                    mode = 0o644
-            os.fchmod(f.fileno(), mode)
-            json.dump(data, f, indent=2)
-            f.write("\n")
-        try:
-            os.replace(tmp_name, path)
-        except OSError:
-            # Fallback for container bind mounts where rename fails with EBUSY
-            import shutil
-
-            shutil.copy2(tmp_name, path)
-            os.unlink(tmp_name)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
 
 
 # Honor PERSONALCLAW_HOME. config_dir() in personalclaw.config.loader respects the env

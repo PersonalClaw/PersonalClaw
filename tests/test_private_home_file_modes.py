@@ -5,8 +5,9 @@ Settings — was 0644, world-readable. The settings stores are written through `
 and ``atomic_write`` defaulted to the umask mode, so every writer of every file that can hold a
 secret (``config.json``, an app's ``data/config.json``, a provider instance record) produced a
 0644 file unless its author remembered ``mode=0o600``. ``mcp.json`` went through a second raw
-writer (``agent._atomic_json_write``) with a hardcoded 0644 for a new file, and three writers of
-``config.json`` itself bypassed ``atomic_write`` altogether with a bare ``write_text``.
+writer with a hardcoded 0644 for a new file (now ``atomic_json_write``, on ``_atomic_write``), and
+three writers of ``config.json`` itself bypassed ``atomic_write`` altogether with a bare
+``write_text``.
 
 The rail is the writer itself: under the home it writes 0600 in a 0700 directory, and an explicit
 wider mode is REFUSED rather than honoured, so no write path can produce a readable secret file.
@@ -127,14 +128,14 @@ def test_a_config_json_created_on_a_fresh_install_is_private():
 
 def test_mcp_json_is_private_whether_new_or_rewritten():
     """`mcp.json` carries MCP server env blocks, which hold tokens."""
-    from personalclaw.agent import _atomic_json_write
+    from personalclaw.atomic_write import atomic_json_write
 
     mcp = config_loader.config_dir() / "mcp.json"
-    _atomic_json_write(mcp, {"mcpServers": {}})
+    atomic_json_write(mcp, {"mcpServers": {}})
     assert _mode(mcp) == 0o600, oct(_mode(mcp))
 
     mcp.chmod(0o644)  # an upgraded home: the file already exists, world-readable
-    _atomic_json_write(mcp, {"mcpServers": {"x": {"command": "true"}}})
+    atomic_json_write(mcp, {"mcpServers": {"x": {"command": "true"}}})
     assert _mode(mcp) == 0o600, "a rewrite preserved the loose mode"
     assert json.loads(mcp.read_text())["mcpServers"]["x"]["command"] == "true"
 

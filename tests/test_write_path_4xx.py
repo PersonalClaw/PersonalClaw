@@ -158,7 +158,7 @@ class TestAgentDetailPatch:
 
         src = inspect.getsource(A.api_agent_detail)
         for_list_fields = src.split('for key in ("skills", "tools", "triggers")')[1]
-        body = for_list_fields.split("_atomic_json_write")[0]
+        body = for_list_fields.split("atomic_json_write(f, data)")[0]
         assert (
             "data.pop(key, None)" not in body
         ), "a wrong type is being treated as a delete instruction again"
@@ -192,13 +192,13 @@ class TestAgentDetailPatch:
 
     def test_the_write_is_atomic(self):
         """A bare `write_text` truncates the live runtime config if the process dies mid-write.
-        `agent.py` and `apps/mcp_bridge.py` both use `_atomic_json_write` for this exact file."""
+        The one JSON writer, `atomic_write.atomic_json_write`, is what writes this file."""
         import inspect
 
         from personalclaw.dashboard.handlers import agents as A
 
         src = inspect.getsource(A.api_agent_detail)
-        assert "_atomic_json_write(f, data)" in src
+        assert "atomic_json_write(f, data)" in src
         assert "f.write_text(json.dumps(data" not in src
 
     def test_the_mutations_are_audited(self):
