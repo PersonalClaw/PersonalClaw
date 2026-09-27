@@ -820,10 +820,15 @@ class SkillsLoader:
         return True
 
     def delete_skill(self, name: str) -> bool:
-        """Delete a skill directory from any discovery path.  Returns True if found and removed."""
+        """Delete a skill directory from the home's libraries.  Returns True if found and removed.
+
+        The agent's own folder and this library, both in the home. A skill found through the
+        folder AI tools share (``skill_discovery_paths``) is not PersonalClaw's to delete, so it is
+        not found here."""
         if not self._safe_name(name):
             return False
-        for search_dir in self._search_dirs():
+        own = [self._agent_dir] if self._agent_dir is not None and not self._scoped else []
+        for search_dir in own + [self._dir]:
             skill_dir = search_dir / name
             if skill_dir.is_dir():
                 shutil.rmtree(skill_dir)

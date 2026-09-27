@@ -1766,6 +1766,7 @@ async def start_dashboard(
     app.router.add_get("/api/security/stats", handlers.api_security_stats)
     app.router.add_get("/api/security/denied-commands", handlers.api_security_denied_commands)
     app.router.add_get("/api/security/egress", handlers.api_security_egress)
+    app.router.add_get("/api/security/outside-home", handlers.api_security_outside_home)
     # The SEL read surface: paginated + filtered + chain-verify, owner-only. Superseded
     # `/api/sel/{events,verify}` — one audit log, one way to read it.
     from personalclaw.dashboard.handlers.security_audit import register_security_audit_routes
@@ -1909,6 +1910,21 @@ async def start_dashboard(
             logger.exception("Failed to migrate legacy mcp.json")
 
     app.on_startup.append(_mcp_migrate_startup)
+
+    async def _settle_outside_home_startup(app_: web.Application) -> None:
+        """Once per home: copy home the skills earlier releases installed in ~/.agents/skills,
+        and let go of a saved workspace pointer that is only the old default. Writes nothing
+        outside the home (``outside_home.settle_previous_locations``)."""
+        from personalclaw.outside_home import settle_previous_locations
+
+        try:
+            report = await asyncio.to_thread(settle_previous_locations)
+            if report.get("skills_copied") or report.get("workspace_pointer_dropped"):
+                logger.info("Settled what earlier releases kept outside the home: %s", report)
+        except Exception:
+            logger.exception("Failed to settle what earlier releases kept outside the home")
+
+    app.on_startup.append(_settle_outside_home_startup)
 
     async def _record_running_version_startup(app_: web.Application) -> None:
         """RUM-9: remember which version ran last, so a rollback has a target.

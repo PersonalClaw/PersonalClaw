@@ -6,7 +6,9 @@ two-source lookup. Sources, in priority order:
   1. ``credential_store``  the PClaw secret store (:func:`config.credentials.get_credential`
                            — keychain ∪ ``~/.personalclaw/.env`` at 0600)
   2. ``env``               ``HF_TOKEN``, legacy ``HUGGING_FACE_HUB_TOKEN``
-  3. ``hf_cli_file``       ``~/.cache/huggingface/token`` (``huggingface-cli login``)
+  3. ``hf_cli_file``       ``~/.cache/huggingface/token`` (``huggingface-cli login``), read
+                           only once the owner allowed the machine-wide Hugging Face folder
+                           (:data:`personalclaw.outside_home.HUGGINGFACE_CACHE`)
 
 **The first source that has a token AND survives a live ``whoami`` wins** — an invalid
 higher-priority token is skipped, never blocking a valid lower-priority one, and each source
@@ -83,6 +85,9 @@ class HfSourceStatus:
     username: str
     masked: str
     active: bool
+    #: Why an absent source was not read, when that is the owner's setting and not a missing
+    #: token: the ``huggingface-cli`` file is outside the home until the owner allows it.
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -118,16 +123,23 @@ def mask_token(token: str) -> str:
 def _hf_cli_token_path() -> Path:
     """Path to the ``huggingface-cli login`` token file (source 3).
 
-    Honors the HF library's own overrides (``HF_TOKEN_PATH`` then ``HF_HOME``) so we read the
-    same file the CLI wrote, and defaults to the documented ``~/.cache/huggingface/token``.
+    Honors the HF library's own overrides (``HF_TOKEN_PATH``, then the Hugging Face folder
+    :func:`~personalclaw.outside_home.huggingface_home` finds) so we read the same file the CLI
+    wrote.
     """
     explicit = os.environ.get("HF_TOKEN_PATH")
     if explicit:
         return Path(explicit).expanduser()
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        return Path(hf_home).expanduser() / "token"
-    return Path.home() / ".cache" / "huggingface" / "token"
+    from personalclaw import outside_home
+
+    return outside_home.huggingface_home() / "token"
+
+
+def _hf_cli_file_allowed() -> bool:
+    """Whether the owner allowed reading the machine-wide Hugging Face folder, token included."""
+    from personalclaw import outside_home
+
+    return outside_home.allowed(outside_home.HUGGINGFACE_CACHE)
 
 
 def _read_credential_store() -> str:
@@ -151,7 +163,10 @@ def _read_env() -> str:
 
 
 def _read_hf_cli_file() -> str:
-    """Source 3: the ``huggingface-cli`` token file, or ``""`` if absent/unreadable."""
+    """Source 3: the ``huggingface-cli`` token file, or ``""`` if absent/unreadable, or while the
+    owner has not allowed reading the Hugging Face folder it is in."""
+    if not _hf_cli_file_allowed():
+        return ""
     try:
         path = _hf_cli_token_path()
         if not path.is_file():
@@ -327,9 +342,20 @@ async def token_status() -> list[HfSourceStatus]:
     for source, reader_name in _SOURCE_ORDER:
         token = _read_source(reader_name)
         if not token:
+            note = ""
+            if source == SOURCE_HF_CLI and not _hf_cli_file_allowed():
+                from personalclaw import outside_home
+
+                note = outside_home.not_allowed_reason("the Hugging Face folder other tools share")
             out.append(
                 HfSourceStatus(
-                    source=source, present=False, valid=False, username="", masked="", active=False
+                    source=source,
+                    present=False,
+                    valid=False,
+                    username="",
+                    masked="",
+                    active=False,
+                    note=note,
                 )
             )
             continue

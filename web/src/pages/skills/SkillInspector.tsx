@@ -25,7 +25,10 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
   // `source`, NOT `provenance`: a taught skill is a `local` skill and is exactly as editable
   // as a hand-placed one. Reading provenance here instead would lock the user out of editing
   // the skill their own session just taught (#576).
-  const editable = skill.source !== 'bundled'
+  // A `shared` skill is in the folder AI tools share, outside PersonalClaw's home: read, never
+  // edited or deleted from here (the server refuses both), so neither is offered.
+  const shared = skill.source === 'shared'
+  const editable = skill.source !== 'bundled' && !shared
 
   const { data: files } = useQuery<SkillFile[]>(`skill:files:${skill.name}`, () => api.skillFiles(skill.name).then((d) => d.files ?? []).catch(() => []), { persist: true })
 
@@ -108,6 +111,11 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
           <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil size={14} /> Edit SKILL.md</Button>
           <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete skill</Button>
         </div>
+      )}
+      {shared && (
+        <p data-type="body-s" className="text-on-surface-low">
+          This skill is in the folder other AI tools share, outside PersonalClaw’s home, so PersonalClaw only reads it. Edit or remove it there.
+        </p>
       )}
     </div>
   )

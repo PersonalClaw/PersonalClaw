@@ -17,11 +17,7 @@ from personalclaw.dashboard.approval_state import APP_OWN_APPROVAL_REFUSAL
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import SEARCH_MIN_CHARS
 from personalclaw.http_errors import json_error
-from personalclaw.mcp_discovery import (
-    discover_servers_to_sync,
-    register_servers_for_cc,
-    sync_to_agent_config,
-)
+from personalclaw.mcp_discovery import discover_servers_to_sync, sync_to_agent_config
 from personalclaw.validation import sanitize_string
 
 logger = logging.getLogger(__name__)
@@ -603,8 +599,6 @@ async def api_sessions_restart(request: web.Request) -> web.Response:
             to_sync = await asyncio.to_thread(discover_servers_to_sync)
             if to_sync:
                 ok: bool = await asyncio.to_thread(sync_to_agent_config, to_sync)
-                # Register for claude-code unconditionally (it reads its own .mcp.json)
-                await asyncio.to_thread(register_servers_for_cc, to_sync)
                 if ok:
                     return len(to_sync)
             return 0

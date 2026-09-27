@@ -12,6 +12,7 @@ export const SOURCE_TONE: Record<string, string> = {
 /** Human label for a skill source badge (agent-local shows the owning agent). */
 export function sourceLabel(source: string, agent?: string): string {
   if (source === 'agent-local') return agent ? `agent: ${agent}` : 'agent-local'
+  if (source === 'shared') return 'shared folder'
   return source
 }
 

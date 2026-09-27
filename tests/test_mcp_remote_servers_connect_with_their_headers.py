@@ -413,27 +413,6 @@ def test_a_remote_definition_that_cannot_be_saved_is_refused_and_writes_nothing(
     assert not (home / "mcp.json").exists(), "a refused save wrote mcp.json"
 
 
-def test_the_claude_code_copy_of_a_remote_server_is_one_claude_code_reads(home, tmp_path) -> None:
-    from personalclaw.mcp_discovery import discover_servers_to_sync, register_servers_for_cc
-
-    write_mcp_document(
-        home / "mcp.json",
-        {
-            "mcpServers": {
-                NAME: {"type": "http", "url": "https://mcp.example.invalid/mcp"},
-                "sse-one": {"type": "sse", "url": "https://mcp.example.invalid/sse"},
-            }
-        },
-    )
-    dot_mcp = tmp_path / "dot.mcp.json"
-    register_servers_for_cc(discover_servers_to_sync(), mcp_json_path=dot_mcp)
-    written = _servers(dot_mcp)
-    # Claude Code's own shapes: `type` is `http` or `sse` (it refuses `streamable-http`), and a
-    # server at a URL is never written as a stdio one with an empty command.
-    assert written[NAME] == {"type": "http", "url": "https://mcp.example.invalid/mcp"}
-    assert written["sse-one"] == {"type": "sse", "url": "https://mcp.example.invalid/sse"}
-
-
 def test_the_provider_card_keeps_a_remote_servers_transport(home) -> None:
     from personalclaw.providers import mcp_instances
 

@@ -500,6 +500,25 @@ async def api_security_egress(_request: web.Request) -> web.Response:
     )
 
 
+async def api_security_outside_home(_request: web.Request) -> web.Response:
+    """GET /api/security/outside-home — the places outside the home it may be allowed to read.
+
+    Each place says whether it is allowed. Written through PATCH /api/config/personalclaw
+    ``security.outside_home``, which asks the owner to confirm an addition.
+
+    ``allowed`` is the whole saved list, which can name a place no longer offered (the sign-in
+    of an app since removed), so a write that changes one place keeps the others as they are."""
+    from personalclaw import outside_home
+
+    allowed = outside_home.allowed_ids()
+    return web.json_response(
+        {
+            "places": [p.to_dict(allowed=p.id in allowed) for p in outside_home.places()],
+            "allowed": sorted(allowed),
+        }
+    )
+
+
 # ── PersonalClaw Config API ──
 #: The three `agent.*` fields `PUT /api/config/personalclaw` owns. Their bounds are NOT restated
 #: here: all three are declared in `_EDITABLE_CONFIG`, so this used to be a second copy of the
@@ -969,6 +988,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             loosens_when_added(),
             "The added MCP server will be able to interrupt its own tool calls to ask you "
             "questions.",
+        ),
+    },
+    # Per place, like the elicitation grant: each id is one folder or sign-in outside the
+    # home (`outside_home.places()`), so allowing one never allows the others.
+    "security.outside_home": {
+        "type": "str_list",
+        "max_items": 50,
+        "security": SecurityControl(
+            loosens_when_added(),
+            "PersonalClaw will read the place you added, which is outside its own home.",
         ),
     },
     # AUTONOMY-GUARDRAILS: the runtime-editable guardrail subset (§7). Incident is

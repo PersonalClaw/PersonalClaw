@@ -4496,6 +4496,12 @@ export interface DeniedCommands {
   user_additions: number
 }
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
+/** One place outside the PersonalClaw home the owner can let it READ (`personalclaw/outside_home.py`):
+ *  the skills folder other AI tools share, the machine-wide Hugging Face folder, a subscription
+ *  provider's sign-in. Off until allowed; `paths` is where it is on this machine. */
+export interface OutsideHomePlace { id: string; label: string; paths: string[]; detail: string; allowed: boolean }
+/** `allowed` is the whole saved list, which can name a place no longer offered, so a write keeps it. */
+export interface OutsideHomeState { places: OutsideHomePlace[]; allowed: string[] }
 /** Where this instance's credentials live, and whether the move is reversible (SH-2).
  *
  *  `backend` is the RESOLVED outcome; `requested` is the intent. `blocked` is the mismatch
@@ -4960,6 +4966,9 @@ export interface ProviderTestResult { ok: boolean; status?: string; message: str
 export interface HfTokenSource {
   source: 'credential_store' | 'env' | 'hf_cli_file'
   present: boolean; valid: boolean; username: string; masked: string; active: boolean
+  /** Why an absent source was not read, when that is a setting and not a missing token: the
+   *  `huggingface-cli` file is outside the home until the owner allows it in Settings → Security. */
+  note?: string
 }
 export interface HfTokenStatus { sources: HfTokenSource[]; cleared?: boolean }
 // A local provider's health (LMMV §6). The endpoint never 500s: an unavailable/raising
@@ -8333,6 +8342,11 @@ export const api = {
   // security write (`patchConfig`).
   setUserDeniedCommands: (patterns: string[]) => api.patchConfig('security.denied_commands', patterns),
   securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
+  outsideHome: () => get<OutsideHomeState>('/api/security/outside-home'),
+  // The whole list of allowed places. Adding one is a loosening the gateway asks about unless
+  // `confirmed` says the panel already asked; removing one never asks.
+  setOutsideHome: (ids: string[], confirmed = false) =>
+    api.patchConfig('security.outside_home', ids, confirmed),
   // SH-2 — the credential store. Both writes send `confirm: true`: the flag is the
   // protocol-level record that the user was shown the snapshot step, and the backend
   // refuses without it independently, so this client cannot skip the consent.

@@ -1380,7 +1380,9 @@ Examples:
         "--marketplace", default="skills.sh", help="Marketplace to install from"
     )
     skills_install.add_argument(
-        "--target", default="", help="Install directory (default: ~/.agents/skills/)"
+        "--target",
+        default="",
+        help="Install directory (default: the skills folder in PersonalClaw's home)",
     )
     skills_install.add_argument(
         "--force",
@@ -1388,7 +1390,9 @@ Examples:
         help="Install despite an overridable WARNING verdict from the supply-chain scan. "
         "A DANGEROUS verdict is never overridable.",
     )
-    skills_remove = skills_sub.add_parser("remove", help="Remove a locally installed skill")
+    skills_remove = skills_sub.add_parser(
+        "remove", help="Remove a skill installed in PersonalClaw's home"
+    )
     skills_remove.add_argument("name", help="Skill directory name to remove")
     skills_curate = skills_sub.add_parser(
         "curate", help="Groom the auto/ skill library (age active→stale→archived by last-use)"
@@ -1839,11 +1843,8 @@ def _handle_skills(args) -> None:  # noqa: ANN001
 
     # skills.sh moved to a standalone app (apps/skills-sh/); it registers via the app
     # loader when installed, so core no longer eager-imports it here.
-    from personalclaw.skills.marketplace import (
-        DEFAULT_SKILLS_INSTALL_PATH,
-        get_default_skills_registry,
-        list_local_skills,
-    )
+    from personalclaw.skills.loader import skills_dir
+    from personalclaw.skills.marketplace import get_default_skills_registry, list_local_skills
     from personalclaw.supply_chain import rule_gloss
 
     cmd = getattr(args, "skills_command", None)
@@ -1878,7 +1879,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         skill_id = args.id
         marketplace_name = getattr(args, "marketplace", "skills.sh")
         target_str = getattr(args, "target", "")
-        target = Path(target_str) if target_str else DEFAULT_SKILLS_INSTALL_PATH
+        target = Path(target_str).expanduser() if target_str else skills_dir()
         force = bool(getattr(args, "force", False))
         from personalclaw.skills.marketplace import SkillInstallRefused
 
@@ -1922,15 +1923,25 @@ def _handle_skills(args) -> None:  # noqa: ANN001
 
     if cmd == "remove":
         name = args.name
-        removed = False
-        for base_str in _all_skill_paths():
-            skill_dir = Path(base_str) / name
-            if skill_dir.is_dir():
-                shutil.rmtree(skill_dir)
-                print(f"✅ Removed: {skill_dir}")
-                removed = True
-                break
-        if not removed:
+        if not name or Path(name).name != name or name in (".", ".."):
+            print(f"❌ '{name}' is not a skill name")
+            return
+        # Only the home's own skills are PersonalClaw's to delete; one found in another root
+        # (the folder AI tools share, a project's skills) is left exactly where it is.
+        skill_dir = skills_dir() / name
+        if skill_dir.is_dir():
+            shutil.rmtree(skill_dir)
+            print(f"✅ Removed: {skill_dir}")
+            return
+        elsewhere = next(
+            (Path(b) / name for b in _all_skill_paths() if (Path(b) / name).is_dir()), None
+        )
+        if elsewhere is not None:
+            print(
+                f"❌ Skill '{name}' is in {elsewhere.parent}, outside PersonalClaw's home, so "
+                "PersonalClaw does not delete it. Remove it there if you no longer want it."
+            )
+        else:
             print(f"❌ Skill '{name}' not found")
         return
 

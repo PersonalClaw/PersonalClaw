@@ -378,11 +378,8 @@ def test_importing_a_claude_code_server_stores_its_values(home):
     assert TOKEN not in (home / "mcp.json").read_text()
 
 
-def test_the_claude_code_scope_gets_the_value_and_the_implicit_copy_does_not(
-    home, tmp_path, monkeypatch
-):
+def test_the_claude_code_scope_gets_the_value(home, tmp_path, monkeypatch):
     from personalclaw.dashboard.handlers import mcp as mcp_mod
-    from personalclaw.mcp_discovery import discover_servers_to_sync, register_servers_for_cc
 
     cc_json = tmp_path / "claude.json"
     monkeypatch.setattr(mcp_mod, "_cc_global_json", lambda: cc_json)
@@ -396,13 +393,6 @@ def test_the_claude_code_scope_gets_the_value_and_the_implicit_copy_does_not(
     cc = _read(cc_json)["mcpServers"]["gh"]
     assert cc["env"] == {"GITHUB_TOKEN": TOKEN, "LOG_LEVEL": "info"}
     assert "plainEnv" not in cc
-
-    # The copy nobody asked for — `~/.mcp.json`, at the umask mode — carries plain values only.
-    (home / "agents" / "personalclaw.json").write_text(json.dumps({"mcpServers": {}}))
-    dot_mcp = tmp_path / "dot.mcp.json"
-    register_servers_for_cc(discover_servers_to_sync(), mcp_json_path=dot_mcp)
-    assert _read(dot_mcp)["mcpServers"]["gh"]["env"] == {"LOG_LEVEL": "info"}
-    assert TOKEN not in dot_mcp.read_text()
 
 
 def test_a_pack_connector_references_its_credential_and_the_spawn_resolves_it(

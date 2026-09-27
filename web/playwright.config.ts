@@ -94,8 +94,8 @@ export const SCRIPTED = {
 
 // An ISOLATED, ONBOARDED gateway, with AUTH LEFT ON.
 //  - PERSONALCLAW_HOME under the OS temp dir, wiped per run. Never ~/.personalclaw.
-//  - PERSONALCLAW_WORKSPACE too: PERSONALCLAW_HOME does NOT confine workspace_dir,
-//    which otherwise falls back to the real ~/workplace/personalclaw-workspace.
+//  - PERSONALCLAW_WORKSPACE too, at the home's own `workspace` folder: the default is there
+//    anyway, and naming it keeps the run inside the temp dir whatever that default becomes.
 //  - `dashboard.user_name` pre-seeded into config.json, because `onboarded` is
 //    DERIVED from a non-empty SERVER-side name (web/src/app/identity.tsx). Seeding
 //    the file skips the onboarding hijack without a PUT — so no CSRF/origin dance,

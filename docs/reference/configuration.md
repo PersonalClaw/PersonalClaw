@@ -77,7 +77,7 @@ substituted.
 | `agent.spawn_min_memory_gb` | number (0–64) | `4.0` | Settings → Agent defaults | Minimum available memory (GB) required to spawn a subagent. `0` disables the check. |
 | `agent.subagent_max_turns` | integer (1–200) | `100` | Settings → Agent defaults | Default tool-call budget per subagent. |
 | `agent.subagent_timeout_secs` | integer (60–7200) | `1800` | Settings → Agent defaults | Wall-clock timeout per subagent execution. |
-| `agent.subagent_cwd_allowed_roots` | list of strings | `["~/workspace", "~/workplace"]` | Settings → Agent defaults | Directory roots under which a subagent's `cwd` override is permitted (`~` expands). Empty list disables cwd overrides. |
+| `agent.subagent_cwd_allowed_roots` | list of strings | `["~/workspace", "~/workplace"]` | Settings → Agent defaults | Directory roots under which a subagent's `cwd` override is permitted (`~` expands), besides the workspace. Empty list disables cwd overrides. |
 | `agent.log_level` | enum: `DEBUG`, `INFO`, `WARNING`, `ERROR` | `WARNING` | Settings → Agent defaults | Persistent backend log level. Applied at startup; the `--verbose` CLI flag overrides it. |
 | `agent.soft_stop_budget_secs` | number (0.5–60) | `10.0` | Settings → Agent defaults | Seconds to wait for a cooperative cancel before hard-killing a session. |
 | `agent.unattended_requires_verified_adapter` | boolean | `false` | Settings → Agent defaults | Refuse an UNATTENDED spawn onto an external agent runner whose ACP adapter has no verified provenance: an `npx -y` fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. "Unattended" is derived from the session key, so it covers cron fires, loop-cycle workers, subagents, the background/heartbeat session, inbox and side sweeps, channel deliveries and trigger dispatches — no caller has to opt in. Interactive chat is never gated. Fails closed: an unverifiable runner is refused. |
@@ -226,6 +226,7 @@ cap, so removing it changes no run-start behaviour; a stored value is ignored.
 | `security.egress.allow_hosts` | list of strings | `[]` | Settings → Security | Hosts (bare domain covers subdomains) permitted even when they resolve to a private/LAN address — for homelab webhooks/services. Applies to all egress surfaces. |
 | `security.egress.deny_hosts` | list of strings | `[]` | Settings → Security | Hosts the agent must never reach, even if public. A deny always overrides an allow. |
 | `security.egress.allow_private` | boolean | `false` | Settings → Security | Permit egress to private/LAN addresses globally. Only enable on a fully trusted network — it removes SSRF protection for the whole LAN. |
+| `security.outside_home` | list of strings | `[]` | Settings → Security → Outside PersonalClaw's home | The places outside the PersonalClaw home it may read, by name: `agent-skills` (`~/.agents/skills`, the skills other AI tools share), `huggingface-cache` (the machine-wide Hugging Face folder and its `huggingface-cli login` token) and `sign-in:<source>` (a subscription provider's sign-in, such as Claude Code's). Empty keeps every read and write inside the home. Adding one asks you to confirm. PersonalClaw never writes or deletes in these places. |
 
 ## Inbox (`inbox.*`)
 
@@ -343,7 +344,7 @@ Not config-file fields, but part of the same operator surface:
 |---|---|
 | `PERSONALCLAW_HOME` | Relocate the config/state directory (default `~/.personalclaw`). |
 | `PERSONALCLAW_PORT` | Override the dashboard/API port (default `10000`). Validated at CLI entry. A running gateway **overwrites** this in its own environment with the port it actually bound, so every child it spawns agrees with the live socket even under `--port` / `--port auto`. |
-| `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories: the default chat workspace, and where the folder picker opens. Default `~/workplace/personalclaw-workspace`; the container image sets `/data/workspace`, so it lives on the image's one volume. |
+| `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories: the default chat workspace, and where the folder picker opens. Default `workspace` in the PersonalClaw home (`~/.personalclaw/workspace`), or the folder `personalclaw setup` saved; the container image sets `/data/workspace`, so it lives on the image's one volume. |
 | `PERSONALCLAW_BIND_HOST` | Bind address for the gateway (e.g. `0.0.0.0` for LAN access). |
 | `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` | `1` = skip token auth for any client whose **resolved** address is private (loopback/RFC1918/link-local/ULA). Dev convenience for a trusted LAN. **Do not set it behind a reverse proxy:** the address the gateway resolves is then the proxy's own, which is private, so requests forwarded from anywhere are admitted with no token. `personalclaw doctor`'s `remote` row fails when this is set together with `dashboard.trusted_proxies` or `dashboard.public_url`. See [remote-access.md](../guides/remote-access.md). |
 | `PERSONALCLAW_FIRST_PARTY_APPS_DIR` | Point a packaged install at a first-party apps directory. |

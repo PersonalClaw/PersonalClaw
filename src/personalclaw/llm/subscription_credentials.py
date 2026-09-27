@@ -34,6 +34,11 @@ Three contracts hold it together:
    fixed sentence instead of the parser's exception text, so no fragment of the file can
    ride out inside an error message.
 
+4. **Read only once the owner allowed it.** The store belongs to another tool and lives outside
+   the PersonalClaw home, so each registered source is a place in :mod:`personalclaw.outside_home`
+   (``sign-in:<id>``) that the owner turns on in Settings → Security. Until then a resolve opens
+   nothing and answers not-signed-in, with the sentence that says where to allow it.
+
 **Core ships no vendor rows.** A :class:`SubscriptionSource` is *declared by the app* and
 registered at app import time, exactly like the provider type and catalog it ships beside
 (see ``sdk/provider_helpers.py``). Core knows how to read a declared store; it does not
@@ -176,6 +181,11 @@ def register_subscription_source(source: SubscriptionSource) -> None:
     app_code.keep(_forget)
 
 
+def registered_sources() -> list[SubscriptionSource]:
+    """The sources apps registered, in registration order (``outside_home`` lists each)."""
+    return list(_SOURCES.values())
+
+
 def _walk(payload: Any, keys: tuple[str, ...]) -> Any:
     """Follow ``keys`` through nested mappings; None when any hop is missing."""
     node: Any = payload
@@ -226,6 +236,15 @@ def resolve_subscription_credential(source_id: str) -> SubscriptionAuth:
                 f"no {wanted!r} subscription credential source is registered "
                 "(its provider app is not installed or not enabled)"
             ),
+        )
+
+    from personalclaw import outside_home
+
+    if not outside_home.allowed(outside_home.SIGN_IN_PREFIX + source.id):
+        return SubscriptionAuth(
+            source=source.id,
+            logged_in=False,
+            reason=outside_home.not_allowed_reason(f"the {source.id} sign-in"),
         )
 
     now = time.time()
@@ -287,6 +306,7 @@ __all__ = [
     "SubscriptionAuth",
     "SubscriptionSource",
     "register_subscription_source",
+    "registered_sources",
     "resolve_subscription_credential",
     "subscription_source_status",
 ]

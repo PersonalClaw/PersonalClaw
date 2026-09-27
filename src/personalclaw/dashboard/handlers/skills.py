@@ -19,7 +19,6 @@ from aiohttp import web
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import json_object_body, require_string, string_field
-from personalclaw.skills.marketplace import DEFAULT_SKILLS_INSTALL_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -207,12 +206,17 @@ async def api_skills_list(request: web.Request) -> web.Response:
     :func:`_synthesis_producer`) so the inspector's ``synthesized_skill`` thumbs attribute a
     verdict to the synthesizer with no lookup — the identity Feedback-Signal's one enforced
     suppression gate keys on."""
+    from personalclaw import outside_home
     from personalclaw.agent import _all_skill_paths
     from personalclaw.skills.loader import iter_skill_files
     from personalclaw.skills.marketplace import _parse_description, verify_skill_integrity
     from personalclaw.skills.native import _bundled_root
 
     bundled_path = str(_bundled_root())
+    # The folder AI tools share, when the owner lets PersonalClaw read it: its skills are listed
+    # as `shared`, read-only here, because nothing there is PersonalClaw's to edit or delete.
+    shared = outside_home.place_path(outside_home.AGENT_SKILLS)
+    shared_path = str(shared) if shared is not None else None
 
     skills: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -221,6 +225,7 @@ async def api_skills_list(request: web.Request) -> web.Response:
         if not base.is_dir():
             continue
         is_bundled = base_str == bundled_path
+        is_shared = base_str == shared_path
         # 🔴 `iter_skill_files` — the LOADER's own enumeration, shared rather than re-derived.
         # This walked ONE level with `iterdir()`, so a NAMESPACE directory — `auto/`, which holds
         # every accepted skill proposal and has no `SKILL.md` of its own — was skipped whole.
@@ -249,9 +254,9 @@ async def api_skills_list(request: web.Request) -> web.Response:
                 "description": _parse_description(skill_md),
                 "always": _parse_always(skill_md),
                 "path": str(skill_md),
-                "source": "bundled" if is_bundled else "local",
+                "source": "bundled" if is_bundled else ("shared" if is_shared else "local"),
                 "provenance": provenance,
-                "type": "bundled" if is_bundled else "installed",
+                "type": "bundled" if is_bundled else ("read-only" if is_shared else "installed"),
                 "integrity": integrity,
             }
             producer = _synthesis_producer(name, provenance)
@@ -518,8 +523,7 @@ def _safe_skill_name(name: str) -> bool:
 def _resolve_skill_root(name: str) -> Path | None:
     """Return the discovery dir that owns ``<name>/SKILL.md``, or None.
 
-    Mirrors ``api_skills_list``/``api_skills_delete`` — first match across
-    ``_all_skill_paths()`` wins (project > user > agents > bundled).
+    Mirrors ``api_skills_list``: the first match across ``_all_skill_paths()`` wins.
     """
     from personalclaw.agent import _all_skill_paths
 
@@ -596,9 +600,10 @@ async def api_skill_files(request: web.Request) -> web.Response:
 
 
 async def api_skills_install(request: web.Request) -> web.Response:
-    """POST /api/skills/install — install a skill from a marketplace.
+    """POST /api/skills/install — install a skill from a marketplace into the home.
 
-    Body: ``{id: "<skill-id>", marketplace: "skills.sh", target?: "..."}``.
+    Body: ``{id: "<skill-id>", marketplace: "skills.sh", force?: bool}``. A skill always lands
+    in ``<home>/skills``: there is no target, so no caller can have it written anywhere else.
     """
     try:
         body: dict[str, Any] = await request.json()
@@ -609,8 +614,9 @@ async def api_skills_install(request: web.Request) -> web.Response:
     if not skill_id:
         return web.json_response({"error": "id is required"}, status=400)
     marketplace_name = str(body.get("marketplace", "skills.sh"))
-    target_str = body.get("target", "")
-    target = Path(target_str) if target_str else DEFAULT_SKILLS_INSTALL_PATH
+    from personalclaw.skills.loader import skills_dir
+
+    target = skills_dir()
     # Explicit override for an overridable WARNING verdict — a calculated risk the user
     # takes. A DANGEROUS verdict is NEVER overridable, force or not (the security floor).
     force = bool(body.get("force", False))
@@ -660,7 +666,11 @@ async def api_skills_install(request: web.Request) -> web.Response:
 
 
 async def api_skills_delete(request: web.Request) -> web.Response:
-    """DELETE /api/skills/:name — remove a locally installed skill."""
+    """DELETE /api/skills/:name — remove a skill installed in the home.
+
+    Only ``<home>/skills/<name>`` is ever removed. A skill that lives anywhere else (the folder AI
+    tools share, a project's skills, the bundled set) is not PersonalClaw's to delete: 409, and
+    the folder is left exactly as it is."""
     name = request.match_info["name"]
     # Reject path-traversal before any rmtree — ``name`` is a single URL segment
     # but ``..`` alone still resolves to a skill dir's parent.
@@ -668,20 +678,29 @@ async def api_skills_delete(request: web.Request) -> web.Response:
         _sel_log("skills.delete", "denied", f"unsafe:{name}", request)
         return web.json_response({"error": "invalid skill name"}, status=400)
     from personalclaw.agent import _all_skill_paths
+    from personalclaw.skills.loader import skills_dir
 
-    removed: str | None = None
-    for base_str in _all_skill_paths():
-        skill_dir = Path(base_str) / name
-        if skill_dir.is_dir():
-            shutil.rmtree(skill_dir)
-            removed = str(skill_dir)
-            break
+    skill_dir = skills_dir() / name
+    if skill_dir.is_dir():
+        shutil.rmtree(skill_dir)
+        _sel_log("skills.delete", "ok", name, request)
+        return web.json_response({"ok": True, "removed": str(skill_dir)})
 
-    if removed is None:
-        return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
-
-    _sel_log("skills.delete", "ok", name, request)
-    return web.json_response({"ok": True, "removed": removed})
+    elsewhere = next(
+        (Path(base) / name for base in _all_skill_paths() if (Path(base) / name).is_dir()), None
+    )
+    if elsewhere is not None:
+        _sel_log("skills.delete", "denied", f"outside-home:{name}", request)
+        return web.json_response(
+            {
+                "error": (
+                    f"Skill '{name}' is in {elsewhere.parent}, outside PersonalClaw's home, so "
+                    "PersonalClaw does not delete it. Remove it there if you no longer want it."
+                )
+            },
+            status=409,
+        )
+    return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
 
 
 async def api_skill_verify(request: web.Request) -> web.Response:

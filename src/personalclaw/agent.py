@@ -300,8 +300,8 @@ def _all_skill_paths() -> list[str]:
 
     Returns directories containing SKILL.md files from (in priority order):
     - ``PERSONALCLAW_PROJECT_DIR/skills`` (project-level, highest priority)
-    - ``~/.personalclaw/skills`` (user-created)
-    - ``~/.agents/skills/`` (agentskills.io cross-client standard)
+    - ``<home>/skills`` (installed and user-created)
+    - ``~/.agents/skills/`` (the folder AI tools share), only once the owner allowed it
     - Package-bundled skills (lowest priority, always available)
     """
     paths: set[str] = set()
@@ -319,10 +319,12 @@ def _all_skill_paths() -> list[str]:
     user_skills = _user_skills_dir()
     if user_skills.is_dir():
         paths.add(str(user_skills))
-    # agentskills.io cross-client standard path (~/.agents/skills/)
-    agents_skills = Path.home() / ".agents" / "skills"
-    if agents_skills.is_dir():
-        paths.add(str(agents_skills))
+    # The folder AI tools share, read only when the owner allowed it (outside the home).
+    from personalclaw import outside_home
+
+    shared = outside_home.place_path(outside_home.AGENT_SKILLS)
+    if shared is not None and shared.is_dir():
+        paths.add(str(shared))
     # Package-bundled skills (always available as baseline)
     from personalclaw.skills.native import _bundled_root
 

@@ -61,6 +61,7 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
         baseline: { version: '1', pattern_count: 1, sha256: 'a'.repeat(64), verified: true, user_additions: 0 },
       }),
       securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: false }),
+      outsideHome: () => Promise.resolve({ places: [], allowed: [] }),
       desktopState: () => Promise.resolve({
         connected: false, shell: null, capabilities: {}, registered_at: '', last_seen: '',
       }),

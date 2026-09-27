@@ -312,6 +312,19 @@ Data leaving the running system:
   searches every member for every value the store holds). What a reference cannot cover (copies
   made before the upgrade, a value with a NUL character, Claude Code's own config) is in
   [limitations.md §6](limitations.md).
+- **One home, and read-only places outside it only by choice** (`outside_home.py`): PersonalClaw
+  installs, writes and deletes inside its home. Skills install into `<home>/skills`, the workspace
+  defaults to `<home>/workspace`, and neither a session restart nor an MCP sync writes
+  `~/.mcp.json`. A place outside the home that is worth reading (the skills folder AI tools share,
+  the machine-wide Hugging Face folder with its `huggingface-cli login` token, a subscription
+  provider's sign-in) is declared in that module, is off until the owner turns it on in Settings →
+  Security → Outside PersonalClaw's home (`security.outside_home`, a loosening the PATCH asks to
+  confirm), and is only read. Deleting a skill that lives outside the home is refused (409). The
+  Files page has no root for the home itself, whose `config.json`, `mcp.json` and automations it
+  used to let you edit, only for the work folders inside it.
+  `tests/test_personalclaw_stays_inside_its_home.py` fails on code that names a location in the
+  user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
+  (the service installer, the Claude Code importer, the terminal, the folder picker).
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 

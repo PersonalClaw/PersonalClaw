@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **861 registrations** over **696 distinct paths** — 854 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **862 registrations** over **697 distinct paths** — 855 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -54,9 +54,9 @@ The 127 families the surface divides into, largest first.
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
+| `/api/security` | 9 | 9 |
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/onboarding` | 8 | 7 |
-| `/api/security` | 8 | 8 |
 | `/api/auth` | 7 | 7 |
 | `/api/browse` | 7 | 5 |
 | `/api/config` | 6 | 3 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 854 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 855 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -831,6 +831,7 @@ The 854 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/security/credentials/rollback` | restore the pre-migration ``.env``. |
 | `GET` | `/api/security/denied-commands` | the bash denylist for the Security panel. |
 | `GET` | `/api/security/egress` | the operator's outbound-egress overrides for the |
+| `GET` | `/api/security/outside-home` | the places outside the home it may be allowed to read. |
 | `GET` | `/api/security/stats` | live security feature counts. |
 | `POST` | `/api/sel/rotate` | archive existing SEL log and start a fresh chain. |
 | `POST` | `/api/send-message` | deliver a message to the messaging channel and/or dashboard. |
@@ -857,7 +858,7 @@ The 854 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/skills/ephemeral/{session}` | the session-live drafts awaiting a |
 | `POST` | `/api/skills/ephemeral/{session}/promote` | promote ONE draft to a tier. |
 | `DELETE` | `/api/skills/ephemeral/{session}/{slug}` | forget one draft, or |
-| `POST` | `/api/skills/install` | install a skill from a marketplace. |
+| `POST` | `/api/skills/install` | install a skill from a marketplace into the home. |
 | `GET` | `/api/skills/marketplace/detail` | _(no summary)_ |
 | `GET` | `/api/skills/marketplaces` | list registered skill marketplaces. |
 | `POST` | `/api/skills/overlay/revert` | drop a skill's accepted-refinement overlay. |
@@ -866,7 +867,7 @@ The 854 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/skills/proposals/{id}` | full proposal incl. procedure + fenced source. |
 | `POST` | `/api/skills/proposals/{id}/accept` | install into the live auto/ tier |
 | `GET` | `/api/skills/search` | search across all registered skill providers. |
-| `DELETE` | `/api/skills/{name}` | remove a locally installed skill. |
+| `DELETE` | `/api/skills/{name}` | remove a skill installed in the home. |
 | `GET` | `/api/skills/{name}` | get or update a skill. (Listing is served by |
 | `PUT` | `/api/skills/{name}` | get or update a skill. (Listing is served by |
 | `GET` | `/api/skills/{name}/files` | provider-backed file browser. |
