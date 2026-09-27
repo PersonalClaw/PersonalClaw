@@ -13,7 +13,7 @@ import { spring } from '../../design/motion'
 import { api, type FsEntry } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { FileViewer, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
-import { baseName } from '../files/fileMeta'
+import { attachedName } from '../files/fileMeta'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 
 const MIN_W = 360, MAX_W = 900, DEFAULT_W = 480
@@ -73,7 +73,11 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   // `save` is the viewer's own: it sends the draft over the copy it was built from (`FileViewer`).
   const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact; name: string } | null>(null)
   const viewerRef = useRef<FileViewerHandle>(null)
-  const entry: FsEntry = { name: baseName(path), path, is_dir: false }
+  // An attachment is named as it was attached (`uploads/<uuid-hex>_image.png` is `image.png`):
+  // the viewer's title, the name emphasized below and a download all read it. The full path
+  // stays in the row's tooltip.
+  const name = attachedName(path)
+  const entry: FsEntry = { name, path, is_dir: false }
 
   // ⌘S saves the open file; Esc collapses an expanded panel, else closes.
   useEffect(() => {
@@ -84,7 +88,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
   }, [expanded, onClose])
 
-  const saveAsArtifact = (e: FsEntry, save: SaveAsArtifact) => setArtModal({ entry: e, save, name: baseName(e.path) })
+  const saveAsArtifact = (e: FsEntry, save: SaveAsArtifact) => setArtModal({ entry: e, save, name: attachedName(e.path) })
   const confirmArtifact = async () => {
     if (!artModal || !artModal.name.trim()) return
     const { entry: target, save, name } = artModal
@@ -104,7 +108,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
     <div className="flex items-center gap-2 border-b border-outline-variant/40 px-m py-1.5">
       <span data-type="caption" className="min-w-0 flex-1 truncate text-on-surface-low" title={path}>
         {dir && <span className="opacity-60">{dir}/</span>}
-        <span className="text-on-surface" style={fvs(500)}>{baseName(path)}</span>
+        <span className="text-on-surface" style={fvs(500)}>{name}</span>
       </span>
       <div className="flex shrink-0 items-center gap-0.5">
         <IconButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? 'Collapse to panel' : 'Expand to full width'} size={28} onClick={() => setExpanded((v) => !v)} />
@@ -122,7 +126,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
       {artModal && (
         <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
           <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
-            <p data-type="body-s" className="text-on-surface-low">Creates a versioned artifact that live-points at <span className="font-mono">{baseName(artModal.entry.path)}</span>. Re-saving bumps it instead of duplicating.</p>
+            <p data-type="body-s" className="text-on-surface-low">Creates a versioned artifact that live-points at <span className="font-mono">{artModal.entry.name}</span>. Re-saving bumps it instead of duplicating.</p>
             <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
             <div className="flex justify-end gap-s">
               <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>

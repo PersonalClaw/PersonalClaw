@@ -867,7 +867,8 @@ class TestPin:
         assert body["path"] == str(written[0])
         assert written[0].read_bytes() == _png_bytes(b"PINNEDMARK1")
         assert oct(written[0].stat().st_mode)[-3:] == "600"
-        assert extractor.start.called
+        # A frame is an image: read into text only when its text is asked for.
+        assert not extractor.start.called
 
     @pytest.mark.asyncio
     async def test_pin_is_refused_in_an_incognito_session(self, tmp_path, monkeypatch):

@@ -225,3 +225,12 @@ export function relTime(iso: string | number): string {
 export function baseName(path: string): string {
   return path.replace(/\/+$/, '').split('/').pop() || path
 }
+
+/** The name a chat attachment was attached with. The upload routes save one as
+ *  `uploads/<uuid-hex>_<name>` so two files of one name never collide; that prefix is the
+ *  server's alone, so everything that names the file drops it. Any other path is its basename. */
+export function attachedName(path: string): string {
+  const parts = path.replace(/\/+$/, '').split('/')
+  const name = baseName(path)
+  return parts[parts.length - 2] === 'uploads' ? name.replace(/^[0-9a-f]{32}_(?=.)/, '') : name
+}

@@ -288,7 +288,8 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
         shutil.move(str(final_path), str(dest))
         os.chmod(dest, 0o600)
         # Kick content extraction now (mirrors api_upload_file), so the attachment's
-        # text is ready by the time the turn runs.
+        # text is ready by the time the turn runs. An image is not read until its text
+        # is asked for.
         try:
             import mimetypes as _mt
 

@@ -7,6 +7,7 @@ import { IconButton } from '../../ui/IconButton'
 import { Modal } from '../../ui/Modal'
 import { TextLink } from '../../ui/TextLink'
 import { FieldError } from '../../ui/forms'
+import { attachedName } from '../files/fileMeta'
 import { imagesAsTextNote, UNREAD_NO_IMAGE_MODEL, type ImageDelivery } from './imageAttachments'
 
 export interface AttachmentChipsProps {
@@ -48,7 +49,8 @@ function ImageAttachmentChips({ paths, images, session, agent, model, runtime, o
 
 /** What a model that takes no images gets instead: the text read from each image, or — when
  *  nothing could read one — only its size and format, and when that is because no image model is
- *  set up, where to set one up. Read from the images' own extraction (it started at upload), so
+ *  set up, where to set one up. Read from the images' own extraction, which this asking starts (an
+ *  image is read only when its text is wanted, `AttachmentExtractor.start`), so
  *  the sentence is about these files, not about what might be installed. */
 function ImagesAsTextNote({ input, images }: { input: ChatImageInput; images: string[] }) {
   const { data, error } = useQuery(
@@ -89,9 +91,6 @@ function SetUpAnImageModel() {
 function MentionChips({ paths, images = [], asText = [], onRemove, onOpen }: { paths: string[]; images?: string[]; asText?: string[]; onRemove: (p: string) => void; onOpen: (p: string) => void }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   if (!paths.length) return null
-  // Uploaded files are saved as `<uuid4-hex>_<original-name>`; strip that
-  // collision-avoidance prefix so the chip shows the clean name the user dropped.
-  const base = (p: string) => (p.replace(/\/+$/, '').split('/').pop() || p).replace(/^[0-9a-f]{32}_/, '')
   return (
     <div className="mb-2 flex flex-wrap gap-2">
       {paths.map((p) => {
@@ -105,7 +104,7 @@ function MentionChips({ paths, images = [], asText = [], onRemove, onOpen }: { p
             <button type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : p)}
               title={open ? 'Collapse' : 'Show full path'}
               className="min-w-0 text-left font-mono text-on-surface">
-              {open ? <span className="break-all">{p}</span> : base(p)}
+              {open ? <span className="break-all">{p}</span> : attachedName(p)}
             </button>
             {asText.includes(p) && <span className="shrink-0 text-[0.75rem] text-on-surface-var">as text</span>}
             {open && (
@@ -128,28 +127,27 @@ function MentionChips({ paths, images = [], asText = [], onRemove, onOpen }: { p
  *  and exactly what was fed to the model. */
 export function TurnAttachments({ paths, delivery, onOpenFile }: { paths: string[]; delivery?: ImageDelivery; onOpenFile: (p: string) => void }) {
   const [peek, setPeek] = useState<string | null>(null)
-  const base = (p: string) => (p.replace(/\/+$/, '').split('/').pop() || p).replace(/^[0-9a-f]{32}_/, '')
   return (
     <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
       {paths.map((p) => {
         const how = delivery?.byPath[p]
         return (
           <button key={p} type="button" onClick={() => setPeek(p)}
-            title={how === 'text' ? `Preview ${base(p)} — sent as text${delivery?.reason ? `: ${delivery.reason}` : ''}` : `Preview ${base(p)}`}
+            title={how === 'text' ? `Preview ${attachedName(p)} — sent as text${delivery?.reason ? `: ${delivery.reason}` : ''}` : `Preview ${attachedName(p)}`}
             className="inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 bg-surface-container px-2.5 py-1 text-[0.75rem] text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface">
             {how ? <ImageIcon size={11} className="shrink-0 text-on-surface-low" /> : <Paperclip size={11} className="shrink-0 text-on-surface-low" />}
-            <span className="max-w-[200px] truncate">{base(p)}</span>
+            <span className="max-w-[200px] truncate">{attachedName(p)}</span>
             {how === 'text' && <span className="shrink-0 text-on-surface-low">· sent as text</span>}
           </button>
         )
       })}
-      {peek && <AttachmentPeekModal path={peek} name={base(peek)} delivery={delivery?.byPath[peek]} reason={delivery?.reason} onOpenFile={onOpenFile} onClose={() => setPeek(null)} />}
+      {peek && <AttachmentPeekModal path={peek} name={attachedName(peek)} delivery={delivery?.byPath[peek]} reason={delivery?.reason} onOpenFile={onOpenFile} onClose={() => setPeek(null)} />}
     </div>
   )
 }
 
 /** Preview an attachment: its extracted text content (what the agent saw) +
- *  open-original. Extraction is fetched on open (awaits the upload-time job). */
+ *  open-original. Extraction is fetched on open (it awaits the job already running, or starts it). */
 function AttachmentPeekModal({ path, name, delivery, reason, onOpenFile, onClose }: { path: string; name: string; delivery?: 'image' | 'text'; reason?: string; onOpenFile: (p: string) => void; onClose: () => void }) {
   const [text, setText] = useState<string | null>(null)
   const [read, setRead] = useState(true)

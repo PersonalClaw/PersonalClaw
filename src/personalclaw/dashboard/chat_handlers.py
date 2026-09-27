@@ -1470,19 +1470,18 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     — which is the ephemerality guarantee working as designed, not a limitation.
 
     Once written, the frame is an ordinary upload: the uploads dir, the same
-    sanitized-name + random-prefix + 0600 treatment, and the same content extraction
-    every attachment gets. Sending it on to the knowledge library is then the user's
-    normal explicit ingest action; nothing here touches knowledge.db or memory.db.
+    sanitized-name + random-prefix + 0600 treatment, and read into text, like every
+    attached image, only when its text is asked for. Sending it on to the knowledge
+    library is then the user's normal explicit ingest action; nothing here touches
+    knowledge.db or memory.db.
 
     Refused in incognito/temporary sessions — "writes suppressed" is the whole
     contract of those modes, and a pinned screenshot is a write.
     """
-    import mimetypes as _mt
     import re
     import uuid as _uuid
 
     from personalclaw.dashboard import screen_context
-    from personalclaw.dashboard.attachment_extract import get_extractor
     from personalclaw.dashboard.handlers.files import _upload_dir
     from personalclaw.uploads.policy import check_upload
 
@@ -1551,10 +1550,8 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     dest = _upload_dir() / f"{_uuid.uuid4().hex}_{safe}"
     dest.write_bytes(raw)
     os.chmod(dest, 0o600)
-    try:
-        get_extractor().start(str(dest), frame.media_type or _mt.guess_type(str(dest))[0])
-    except Exception:
-        logger.debug("pinned-frame extract kickoff failed", exc_info=True)
+    # Not read ahead: a frame is an image, read only when its text is asked for
+    # (`AttachmentExtractor.start`).
 
     sel().log_api_access(
         caller="dashboard",

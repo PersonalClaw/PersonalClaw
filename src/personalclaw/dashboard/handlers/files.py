@@ -956,8 +956,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
     # Kick off content extraction NOW (while the user is still typing the query),
     # so an attachment's text is ready — or nearly so — by the time the turn runs.
     # The chat runner awaits these per-file before answering (knowledge extraction
-    # graph only: text read / ASR / OCR / ffmpeg — no enrichment). See
-    # dashboard.attachment_extract + knowledge.extract.
+    # graph only: text read / ASR / OCR / ffmpeg — no enrichment). An image is not
+    # read until its text is asked for. See dashboard.attachment_extract + knowledge.extract.
     try:
         from personalclaw.dashboard.attachment_extract import get_extractor
 
@@ -974,7 +974,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
 async def api_attachment_extract(request: web.Request) -> web.Response:
     """GET /api/attachment-extract?path=... — the extracted text content for an
     uploaded attachment, so the chat UI can preview what the agent saw. Awaits
-    the extraction kicked off at upload (or runs it now). Restricted to the
+    the extraction kicked off at upload, or runs it now (an image is only ever read
+    when this, or its turn, asks). Restricted to the
     uploads dir to prevent reading arbitrary files through this surface.
 
     ``read`` says whether the text was read from the file's content, or is only its
@@ -1047,15 +1048,8 @@ async def api_screenshot(request: web.Request) -> web.Response:
         return web.json_response({"error": "screenshot timed out"}, status=504)
     if not dest.exists():
         return web.json_response({"path": ""})  # user cancelled
-    # Same head start an upload gets: begin extracting (OCR for a screenshot) while the
-    # user is still typing, so the turn does not wait on it. The runner awaits it per
-    # file before answering either way.
-    try:
-        from personalclaw.dashboard.attachment_extract import get_extractor
-
-        get_extractor().start(str(dest), "image/png")
-    except Exception:
-        logger.debug("screenshot extraction kickoff failed", exc_info=True)
+    # Not read ahead: a screenshot is an image, read only when its text is asked for
+    # (`AttachmentExtractor.start`).
     return web.json_response({"path": str(dest)})
 
 
