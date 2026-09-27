@@ -39,7 +39,12 @@ from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.provider_bridge import agent_model_problem
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
-from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
+from personalclaw.stale_write import (
+    claimed_revision,
+    refusal_outcome,
+    revision_of,
+    stale_write_refusal,
+)
 
 
 def config_dir() -> Path:
@@ -1469,9 +1474,9 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
                     audit={
                         "caller": request.get("user", "dashboard"),
                         "operation": "agent.update",
-                        "outcome": "denied",
+                        "outcome": refusal_outcome(stale),
                         "source": "dashboard",
-                        "resources": f"{name}: stale base",
+                        "resources": name,
                     },
                 )
         # Against the agent as it is at the write, in the config transaction.
@@ -1671,8 +1676,8 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
                 _sel().log_api_access(
                     caller=caller,
                     operation="agent_metadata.put",
-                    outcome="denied",
-                    resources=f"{name}: stale base",
+                    outcome=refusal_outcome(stale),
+                    resources=name,
                 )
             except Exception:
                 logger.warning("SEL logging failed", exc_info=True)

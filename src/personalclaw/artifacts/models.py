@@ -182,7 +182,9 @@ class ArtifactStaleWrite(ValueError):
     """
 
     def __init__(self, slug: str, current: str) -> None:
-        super().__init__(f"artifact {slug!r}'s body changed since it was read — re-read, re-apply")
+        super().__init__(
+            f"the body of artifact {slug!r} changed since it was read — re-read, re-apply"
+        )
         self.slug = slug
         self.current = current
 

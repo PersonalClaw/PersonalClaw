@@ -32,7 +32,9 @@ import {
   RefreshCw, RotateCcw, Search, Send, ShieldCheck, Sparkles, SquareCheck, Star,
   Target, Trash2, Users, Video, X, Zap,
 } from 'lucide-react'
+import { apiError } from '../lib/api'
 import { useInvestigate } from '../lib/investigate'
+import { basedOn, isStaleWrite } from '../lib/staleWrite'
 // The host's own design-system primitives, re-exported to apps under
 // `@personalclaw/app-sdk/ui` (APE-11). Imported by identity — an app page built from
 // these is built from the SAME components a native page is, not from copies.
@@ -135,12 +137,24 @@ async function appAuthHeaders(appName: string): Promise<Record<string, string>> 
   return t ? { ...SK, Authorization: `Bearer ${t}` } : { ...SK }
 }
 
+/** A write's precondition, the same one core's own pages send (`basedOn` in `lib/staleWrite.ts`).
+ *
+ *  A route that replaces a whole document — an app's own settings (`PUT /api/apps/<name>/config`),
+ *  a task, a knowledge item's body — reports the document's `revision` on its read and refuses a
+ *  write that does not name it: `428 revision_required` with none, `409 stale_write` when the
+ *  document changed since that read (another tab, Settings → Providers, the app's own backend).
+ *  `basedOn` is that revision; the client sends it as `If-Match`. It is the only header an app
+ *  sets: the client owns the rest, the app's identity included. */
+export interface AppWriteOptions {
+  basedOn?: string
+}
+
 export interface AppApiClient {
   backendBase: string
   get: <T>(path: string) => Promise<T>
-  post: <T>(path: string, body?: unknown) => Promise<T>
-  put: <T>(path: string, body?: unknown) => Promise<T>
-  patch: <T>(path: string, body?: unknown) => Promise<T>
+  post: <T>(path: string, body?: unknown, opts?: AppWriteOptions) => Promise<T>
+  put: <T>(path: string, body?: unknown, opts?: AppWriteOptions) => Promise<T>
+  patch: <T>(path: string, body?: unknown, opts?: AppWriteOptions) => Promise<T>
   del: <T>(path: string) => Promise<T>
   can: (path: string) => boolean
 }
@@ -151,6 +165,12 @@ export interface AppApiClient {
  *  (the `ctx` your mount function receives). An app's own backend
  *  (`/apps/<name>/api/*`) is always reachable; any other path must be declared
  *  or the call throws (and the gateway rejects it too — A5).
+ *
+ *  A write that replaces a whole document names the revision its read reported —
+ *  `api.put(path, next, { basedOn: read.revision })` — or the gateway refuses it
+ *  (`AppWriteOptions`). A refusal rejects with the gateway's `status`, `code` and sentence;
+ *  `isStaleWrite(e)` is true when the document changed since that read, and nothing was saved:
+ *  read it again, re-apply the edit, and save over the new revision.
  *
  *  🪤 The scope binds THIS CLIENT, not the app (#492). `app_permission_middleware`
  *  acts only on a request carrying an app identity, which is the `Bearer` token
@@ -172,7 +192,7 @@ export function createAppApi(app: AppContext): AppApiClient {
     return matchesAny(pathname, app.permissions.api)
   }
 
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function request<T>(method: string, path: string, body?: unknown, opts?: AppWriteOptions): Promise<T> {
     if (!allowed(path)) {
       throw new AppPermissionError(
         `app "${app.name}" is not permitted to access ${path} — declare it in permissions.api`,
@@ -183,13 +203,13 @@ export function createAppApi(app: AppContext): AppApiClient {
       init.headers = { ...init.headers, 'Content-Type': 'application/json' }
       init.body = JSON.stringify(body)
     }
+    if (opts?.basedOn) init.headers = { ...init.headers, ...basedOn(opts.basedOn) }
     const r = await fetch(path, init)
-    if (!r.ok) {
-      const text = await r.text().catch(() => '')
-      let msg = text || `HTTP ${r.status}`
-      try { const p = JSON.parse(text); if (p?.error) msg = p.error } catch { /* not JSON */ }
-      throw new Error(msg)
-    }
+    // The same builder core's pages throw from, so a refusal carries the gateway's `status` and
+    // `code` (`isStaleWrite` reads the code) and its sentence. Reading `body.error` as the message
+    // made every platform-envelope refusal — `{"error": {"code", "message"}}`, 428 and 409
+    // included — read "[object Object]".
+    if (!r.ok) throw await apiError(r)
     const ct = r.headers.get('Content-Type') || ''
     return (ct.includes('application/json') ? await r.json() : await r.text()) as T
   }
@@ -197,9 +217,9 @@ export function createAppApi(app: AppContext): AppApiClient {
   return {
     backendBase: `/apps/${app.name}/api`,
     get: <T,>(path: string) => request<T>('GET', path),
-    post: <T,>(path: string, body?: unknown) => request<T>('POST', path, body),
-    put: <T,>(path: string, body?: unknown) => request<T>('PUT', path, body),
-    patch: <T,>(path: string, body?: unknown) => request<T>('PATCH', path, body),
+    post: <T,>(path: string, body?: unknown, opts?: AppWriteOptions) => request<T>('POST', path, body, opts),
+    put: <T,>(path: string, body?: unknown, opts?: AppWriteOptions) => request<T>('PUT', path, body, opts),
+    patch: <T,>(path: string, body?: unknown, opts?: AppWriteOptions) => request<T>('PATCH', path, body, opts),
     del: <T,>(path: string) => request<T>('DELETE', path),
     can: allowed,
   }
@@ -642,6 +662,10 @@ export function installAppSdk(): void {
       createAgentTask,
       createAppApi,
       createAppEvents,
+      // A refused whole-document save from `createAppApi` — the copy it was built from changed
+      // since it was read — is the one refusal an app page recovers from itself (re-read,
+      // re-apply, save), so it gets the predicate core's pages branch on.
+      isStaleWrite,
       notify,
       readAppTheme,
       ChatEmbed,

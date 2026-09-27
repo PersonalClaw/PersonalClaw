@@ -292,7 +292,9 @@ def posture_refusal(
     page's dialog, the CLI's ``--yes``) and pass their yes as `owner_consented`. Every other caller
     — the chat's ``automation_update`` is the one that can send a whole action — is refused here,
     with nothing saved, because the grant the owner can give from the Triggers page covers what the
-    action runs, not whether its agent stops asking. Tightening one asks nobody.
+    action runs, not whether its agent stops asking. Tightening one asks nobody. Like the grant
+    refusals read away from the dashboard (`grants.refusal`), it says where the yes is given, not
+    who gives it: the chat relays it to the owner.
     """
     from personalclaw.automation_posture import unconsented_step_loosening
 
@@ -306,8 +308,8 @@ def posture_refusal(
     where = "create it" if creating else "make that change"
     return AutomationToolResult(
         False,
-        f"Error: nothing was saved, because this needs the owner's yes: “{sentence}” The owner can "
-        f"{where} on the Triggers page, which asks them first.",
+        f"Error: nothing was saved: “{sentence}” That can be allowed only on the Triggers page, "
+        f"which asks first: {where} there.",
         {"needs_consent": sentence},
     )
 
@@ -781,7 +783,7 @@ def update(
     elif missing and applied.get("enabled"):
         return AutomationToolResult(
             False,
-            f"Error: {grants.refusal(trigger, missing, agent=True, switching_on=True)}",
+            f"Error: {grants.refusal(trigger, missing, elsewhere=True, switching_on=True)}",
             {"needs_grant": grants.labels(trigger)},
         )
     saved = store.upsert(trigger)
@@ -826,7 +828,7 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
         if missing:
             return AutomationToolResult(
                 False,
-                "Error: " + grants.refusal(row.trigger, missing, agent=True, switching_on=True),
+                "Error: " + grants.refusal(row.trigger, missing, elsewhere=True, switching_on=True),
                 {"needs_grant": grants.labels(row.trigger)},
             )
     saved = store.set_enabled(trigger_id, not paused)
@@ -861,8 +863,8 @@ def _awaiting_review_refusal(trigger: Any) -> AutomationToolResult:
     return AutomationToolResult(
         False,
         f"Error: {trigger.id} ({trigger.name}) was brought over from an older version of "
-        "PersonalClaw and has not been allowed to run here. Switch it on from the Triggers page, "
-        "which shows what it runs and asks the owner to allow it first.",
+        "PersonalClaw and has not been allowed to run here. It can be switched on only from the "
+        "Triggers page, which shows what it runs and asks first.",
         {"needs_review": True},
     )
 
@@ -1069,7 +1071,7 @@ def run(
     if needs_review(trigger):
         return _awaiting_review_refusal(trigger)
     if missing:
-        lines.append(f"  refused: {grants.refusal(trigger, missing, agent=True)}")
+        lines.append(f"  refused: {grants.refusal(trigger, missing, elsewhere=True)}")
         return AutomationToolResult(
             False, "\n".join(lines), {"plan": plan, "needs_grant": grants.labels(trigger)}
         )

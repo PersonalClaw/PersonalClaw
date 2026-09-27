@@ -128,6 +128,12 @@ class _Vocabulary:
     which is the safe direction, because it demands a decision about a word that may not
     need one. Narrowing the scan to SEL writers would SHRINK the census, and shrinking the
     census is the same "go green by making a word invisible" move this rail exists to stop.
+
+    A call to a function that CHOOSES the word is read through: ``outcome=refusal_outcome(stale)``
+    resolves to every word that function returns, when each of its returns is itself readable
+    (:meth:`_returned_words`). The alternative was the same ternary copied into every route that
+    audits a stale-write refusal, which is exactly the "make the choice local and duplicated"
+    shape this rail should not be the reason for.
     """
 
     def __init__(self) -> None:
@@ -137,6 +143,9 @@ class _Vocabulary:
         self._consts_by_module: dict[str, dict[str, str]] = {}
         self._enums: dict[str, dict[str, str]] = {}
         self._consts: dict[str, str] = {}
+        #: Module-level functions by name, with the stem of the module that defines each.
+        self._functions: dict[str, list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]] = {}
+        self._reading: set[str] = set()
         trees: dict[Path, ast.Module] = {}
         for path in sorted(_SRC.rglob("*.py")):
             try:
@@ -152,6 +161,8 @@ class _Vocabulary:
                     members = _string_constants(node.body)
                     if members:
                         self._enums.setdefault(node.name, {}).update(members)
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self._functions.setdefault(node.name, []).append((path.stem, node))
         for path, tree in trees.items():
             where = path.relative_to(_SRC).as_posix()
             for node in ast.walk(tree):
@@ -211,8 +222,55 @@ class _Vocabulary:
                 and len(node.args) == 2
             ):
                 return self._resolve(node.args[1], stem)
+            if isinstance(func, ast.Name):
+                words = self._returned_words(func.id, stem)
+                if words:
+                    return words
         self.unresolved.append(ast.unparse(node))
         return set()
+
+    def _returned_words(self, name: str, stem: str) -> set[str]:
+        """Every word the module-level function *name* can return, or ``set()`` when that is not
+        statically known: the name is ambiguous (defined in two modules, neither of them *stem*),
+        a return is bare or unreadable, or the function returns through itself.
+
+        All-or-nothing on purpose. A function with one readable return and one dynamic one is
+        still a runtime hop, and reading its readable half would be the half-read ternary again,
+        so it stays in :attr:`unresolved`. Reading a return records no residue of its own: the
+        call site is the one unresolved expression when the function cannot be read."""
+        defs = self._functions.get(name, [])
+        own = [d for d in defs if d[0] == stem]
+        chosen = own or defs
+        if len(chosen) != 1 or name in self._reading:
+            return set()
+        home, fn = chosen[0]
+        returns = [n for n in _own_nodes(fn) if isinstance(n, ast.Return)]
+        if not returns:
+            return set()
+        mark = len(self.unresolved)
+        self._reading.add(name)
+        words: set[str] = set()
+        try:
+            for ret in returns:
+                got = self._resolve(ret.value, home) if ret.value is not None else set()
+                if not got:
+                    return set()
+                words |= got
+            return words
+        finally:
+            del self.unresolved[mark:]
+            self._reading.discard(name)
+
+
+def _own_nodes(fn: ast.AST):
+    """The nodes of *fn*'s own body — not of a function, lambda or class nested inside it, whose
+    returns are not *fn*'s."""
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            stack.extend(ast.iter_child_nodes(node))
 
 
 @lru_cache(maxsize=1)
@@ -252,6 +310,7 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
         "delivered",
         "flush_produced",
         "grounded",
+        "imported",
         "installed",
         "invoked",
         "launched",
@@ -273,9 +332,14 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     # before anyone answered: nobody allowed it, nobody refused it and nothing broke, so a
     # Denied pill returning it would report a refusal that never happened. `archived` and
     # `removed` are the audit trail's own rotation and retention steps (`sel.rotated`,
-    # `sel.archive_expired`).
+    # `sel.archive_expired`). `imported` is a legacy trigger file's rows brought over, switched off
+    # and waiting for review (`trigger.import`, #3691): it records that an import happened, and
+    # the rows' own grant decisions are audited separately (`trigger.grant`).
+    # `absent` is an app setup step deleting a credential that was not stored (`app_cli`'s
+    # `removed if removed else absent`): nothing to delete, nothing refused, nothing broke.
     "the work did not need doing, so nothing ran: a no-op is not a success, not a refusal of "
     "a caller, and not a fault": (
+        "absent",
         "expired",
         "flush_skipped",
         "no_change",
@@ -406,6 +470,24 @@ def test_the_scanner_sees_a_constant_valued_outcome() -> None:
     assert not (
         inline - set(emitted)
     ), f"the AST pass LOST words the regex saw: {inline - set(emitted)}"
+
+
+def test_the_scanner_reads_a_function_that_chooses_the_word() -> None:
+    """The control for reading through a word-choosing function, in both directions.
+
+    ``refusal_outcome`` (``stale_write.py``) returns one of two declared words, so the routes
+    that audit a stale-write refusal with ``outcome=refusal_outcome(stale)`` are readable call
+    sites: both words are counted AT them, not only at their declaration, and the call is not
+    residue. A function with a return that cannot be read stays residue — ``run_outcome``
+    returns ``None`` on one path and a table lookup on the other."""
+    vocabulary = _vocabulary()
+    assert "refusal_outcome(stale)" not in set(vocabulary.unresolved)
+    for word in ("denied_stale_write", "denied_revision_required"):
+        at_call_sites = [
+            s for s in vocabulary.sites.get(word, []) if not s.startswith("stale_write.py:")
+        ]
+        assert at_call_sites, f"{word!r} is counted only where it is declared"
+    assert "run_outcome(run)" in set(vocabulary.unresolved), "an unreadable function was read"
 
 
 def test_the_scan_reports_what_it_cannot_see() -> None:

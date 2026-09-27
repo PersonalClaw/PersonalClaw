@@ -371,6 +371,35 @@ backend has no access to the gateway's SecurityEventLog).
   resolves bare `react` / `@personalclaw/app-sdk` imports so app UIs don't
   bundle their own React.
 
+### Saving a whole document from an app page
+
+A route that replaces a whole document — an app's own settings (`PUT /api/apps/<name>/config`),
+a task, a knowledge item's body — refuses a write that does not name the copy it was built from
+([the contract](../reference/api-overview.md#request-and-response-conventions)). Its read
+reports a `revision`; keep it beside the value, and hand it back on the save:
+
+```js
+import { createAppApi, isStaleWrite } from '@personalclaw/app-sdk'
+
+const api = createAppApi(ctx)
+const read = await api.get(`/api/apps/${ctx.name}/config`)   // { config, revision, … }
+try {
+  await api.put(`/api/apps/${ctx.name}/config`, { ...read.config, collection: 'journal' },
+    { basedOn: read.revision })
+} catch (e) {
+  if (isStaleWrite(e)) {
+    // 409: the settings changed since this page read them (another tab, Settings → Providers,
+    // your own backend). Nothing was saved. Read again, re-apply the edit, save over the new
+    // revision — or show the user both and let them choose.
+  } else throw e
+}
+```
+
+`post`, `put` and `patch` take the same `{ basedOn }`; the client sends it as `If-Match`, the
+one header an app sets. A write that names no revision is refused with `428
+revision_required`. Every refusal rejects with the gateway's `status`, `code` and sentence
+(`e.message`), the same `ApiError` core's own pages get.
+
 ### The UI SDK's gated subpaths (APE-11)
 
 Two subpaths sit beside the base module, each unlocked by one entry in the manifest's

@@ -249,7 +249,8 @@ def test_a_granted_trigger_still_runs_now(home, ran):
 
 def test_the_chat_automation_run_refuses_before_its_runner(home):
     """🔴 Red on main: the runner was called. `automation_run` hands the id to `/run`; it answers
-    first, so the agent is told who can allow it."""
+    first, so the reader is told where it is allowed (`test_trigger_refusals_point_at_the_
+    triggers_page.py` holds the wording)."""
     _schedule(home)
     calls: list[dict] = []
 
@@ -258,7 +259,7 @@ def test_the_chat_automation_run_refuses_before_its_runner(home):
     assert not result.ok
     assert calls == []
     assert "not allowed to use the “Bash Command” action" in result.text
-    assert "owner" in result.text
+    assert "only on the Triggers page" in result.text
 
 
 def test_schedule_trigger_passes_the_refusal_on(monkeypatch):

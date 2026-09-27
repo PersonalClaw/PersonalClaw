@@ -372,7 +372,9 @@ function EventRow({ ev }: { ev: SelEvent }) {
       ? { background: 'color-mix(in srgb, var(--color-danger) 16%, var(--color-surface-container))' }
       : { background: 'var(--color-surface-container)' }}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} data-type="caption" className="flex w-full items-center gap-2 text-left">
-        <span data-type="caption" className="w-14 shrink-0 font-mono" style={{ color: tone }}>{ev.outcome || '—'}</span>
+        {/* At least the column, and wider for a longer word: a fixed `w-14` painted anything past
+            about eight characters over the pill beside it (`denied_revision_required`). */}
+        <span data-type="caption" className="min-w-14 shrink-0 whitespace-nowrap font-mono" style={{ color: tone }}>{ev.outcome || '—'}</span>
         <span data-type="caption" className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low">{ev.event_type}</span>
         <span className="min-w-0 flex-1 truncate text-on-surface">{ev.operation || ev.resources || '—'}</span>
         {/* Not colour alone: the glyph + its accessible label carry the meaning too. */}

@@ -33,6 +33,10 @@ now cannot undo anyone else's change.
 The digest is of the SAME projection the read hands out. A route that masks part of a document
 (a stored secret) takes the revision of the masked form, so a revision never encodes more than
 its reader could already see.
+
+A route that audits a refusal records which one it was, with :func:`refusal_outcome` — never
+words of its own. Each route used to write its own ("stale base", ``stale_write``, a bare
+``denied``), and none could tell the two refusals apart.
 """
 
 from __future__ import annotations
@@ -45,10 +49,27 @@ from aiohttp import web
 
 from personalclaw.http_errors import json_error
 
-__all__ = ["REVISION_HEADER", "claimed_revision", "revision_of", "stale_write_refusal"]
+__all__ = [
+    "OUTCOME_REVISION_REQUIRED",
+    "OUTCOME_STALE_WRITE",
+    "REVISION_HEADER",
+    "claimed_revision",
+    "refusal_outcome",
+    "revision_of",
+    "stale_write_refusal",
+]
 
 #: The request header a whole-document write names its base revision in.
 REVISION_HEADER = "If-Match"
+
+#: The audit outcome of each refusal, named after its wire code. Two words, because they are two
+#: events. A ``409 stale_write`` kept a change made elsewhere from being undone. A ``428
+#: revision_required`` came from a writer that names no base at all — an older client, a script,
+#: an app page that cannot send the header — and nothing about it was stale; recording it as a
+#: stale base told the operator a concurrent edit happened when none did. Both are in the Denied
+#: family (``sel.AUDIT_OUTCOME_FAMILIES``): in each the write was asked for and refused.
+OUTCOME_STALE_WRITE = "denied_stale_write"
+OUTCOME_REVISION_REQUIRED = "denied_revision_required"
 
 
 def revision_of(document: Any) -> str:
@@ -108,3 +129,9 @@ def stale_write_refusal(request: web.Request, current: Any, *, what: str) -> web
             status=409,
         )
     return None
+
+
+def refusal_outcome(refusal: web.Response) -> str:
+    """The audit outcome for a refusal :func:`stale_write_refusal` returned — which of the two it
+    was, read off the refusal itself, so a route cannot word it differently from the answer."""
+    return OUTCOME_REVISION_REQUIRED if refusal.status == 428 else OUTCOME_STALE_WRITE

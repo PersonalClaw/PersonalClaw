@@ -707,7 +707,9 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // read BEFORE `r.ok`, so the substitute feeds the error message, never a surface claim. These are
   // the sites #532's own comment warns against blanket-deleting, and they are why this map is a
   // budget rather than a target of zero.
-  'app/appSdk.tsx': 3,
+  // 3 → 2: `createAppApi`'s refusal is read by `lib/api.ts`'s `apiError` now, not a local
+  // `r.text().catch(() => '')`.
+  'app/appSdk.tsx': 2,
   'lib/api.ts': 5,
   'lib/errText.ts': 1,
 
