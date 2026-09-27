@@ -586,11 +586,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # Speech synthesis refused because the owner turned it off. Same family as `tool_disabled`:
     # a switched-off capability, not a malformed request. 503 rather than 403 to match the
-    # sibling refusal on the same route ("no TTS voice selected"), which is also a
-    # configuration-absent answer (#651).
+    # sibling refusal on the same route (`tts_unbound`), which is also a configuration-absent
+    # answer (#651). The switch named is the master one, not "Speak replies aloud".
     "tts_disabled": (
-        "Text-to-speech is switched off. Fix: turn on “Speak replies aloud” in "
+        "Text-to-speech is switched off. Fix: turn on “Enable text-to-speech” in "
         "Settings → Speech & Transcription."
+    ),
+    # Speech synthesis refused because no text-to-speech model is bound, so there is nothing to
+    # speak with. Its own code because its fix is a different page from `tts_disabled`'s.
+    "tts_unbound": (
+        "No text-to-speech model is set up. Fix: choose one for Text-to-speech in "
+        "Settings → Models."
     ),
     # ── capture telemetry import (inbound/capture_proxy.py — EXTERNAL-ACCESS §8) ──
     # ONE code, for the store failing under the import — NOT for a file that parsed badly.

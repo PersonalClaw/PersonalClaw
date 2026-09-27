@@ -99,12 +99,19 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
     except VoiceProfileError as exc:
         return web.json_response({"error": exc.message, "reason": exc.reason}, status=exc.status)
     if params is None:
-        return web.json_response(
-            {"error": "No TTS voice selected — choose one in Settings → Models"},
+        # No text-to-speech model is bound (and no voice profile names an engine). The fix is
+        # the binding, so the sentence names where it is made — Settings → Models, under the
+        # use case's own label there.
+        return json_error(
+            "tts_unbound",
+            message=(
+                "No text-to-speech model is set up. Choose one for Text-to-speech in "
+                "Settings → Models."
+            ),
             status=503,
         )
     # 🔴 HONOR THE TOGGLE. `active_voice_params` has always published `enabled` and nothing
-    # read it, so Settings › Speech & Transcription › "Speak replies aloud" persisted, loaded
+    # read it, so Settings › Speech & Transcription › "Enable text-to-speech" persisted, loaded
     # into this dict, and changed nothing: Speak synthesized either way (#651).
     #
     # This is the shape where a grep finds a "reader" that is a pass-through — the registry
@@ -113,12 +120,14 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
     # Refused HERE and not only in the UI, because the endpoint is the boundary: a channel, an
     # app or a saved SOP can POST it directly. 503 matches the sibling refusal directly above —
     # both are "the feature is not available in this configuration", and the message names the
-    # switch so the answer is actionable rather than a bare unavailability.
+    # switch so the answer is actionable rather than a bare unavailability. The switch is the
+    # MASTER one: "Speak replies aloud" (`auto_speak`) only decides whether replies are read out
+    # on their own, and turning it on would not make this request speak.
     if not params.get("enabled", False):
         return json_error(
             "tts_disabled",
             message=(
-                "Text-to-speech is switched off. Turn on “Speak replies aloud” in "
+                "Text-to-speech is switched off. Turn on “Enable text-to-speech” in "
                 "Settings → Speech & Transcription."
             ),
             status=503,
