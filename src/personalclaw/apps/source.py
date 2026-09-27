@@ -65,6 +65,22 @@ def _looks_like_git_url(source: str) -> bool:
     return s.startswith(("http://", "https://", "git://", "ssh://", "git@")) or s.endswith(".git")
 
 
+def git_pointer(source: str) -> tuple[str, str] | None:
+    """``(repository URL, subdirectory)`` of an install source that names a git repository —
+    ``url``, or ``url#subdirectory`` for one app of a multi-app repository, the form a Store
+    card installs from and ``installed.json`` records — or ``None`` for a local path.
+
+    The one reading of that form: :func:`resolve` clones by it, and the Store's update check
+    finds what the same place offers now by it."""
+    s = str(source).strip()
+    base, subdir = s, ""
+    if "#" in s and _looks_like_git_url(s.split("#", 1)[0]):
+        base, subdir = s.rsplit("#", 1)
+    if not _looks_like_git_url(base):
+        return None
+    return base, subdir.strip("/")
+
+
 def _subdir_app_names(root: Path) -> list[str]:
     """The immediate subdirectories of a clone that hold an ``app.json`` — i.e. the
     installable apps of a multi-app repository (the published apps repo's shape)."""
@@ -108,16 +124,12 @@ def resolve(source: str, *, listed_by: str = "") -> ResolvedSource:
     if not s:
         raise SourceError("empty install source")
 
-    # Parse optional #subdirectory suffix (multi-app git repos).
-    subdir: str | None = None
-    base = s
-    if "#" in s and _looks_like_git_url(s.split("#", 1)[0]):
-        base, subdir = s.rsplit("#", 1)
-        subdir = subdir.strip("/") or None
+    # A git repository, with an optional #subdirectory (one app of a multi-app repo).
+    pointer = git_pointer(s)
+    policy = _listing_fetch_policy(s, pointer[0] if pointer else s, listed_by)
 
-    policy = _listing_fetch_policy(s, base, listed_by)
-
-    if _looks_like_git_url(base):
+    if pointer is not None:
+        base, subdir = pointer
         resolved = _clone_git(base, policy=policy)
         if subdir:
             target = resolved.path / subdir

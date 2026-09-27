@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
@@ -80,6 +80,8 @@ export interface StoreItem extends AppCatalogEntry {
   latestVersion?: string
   /** Where that version was found — the Update dialog starts from it. */
   latestSource?: string
+  /** Where the Update dialog starts when no newer version was found: where it was installed from. */
+  updateSource?: string
 }
 
 /** An installed app (AppSummary) projected onto the catalog-entry shape so it can
@@ -93,6 +95,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
     native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, origin: a.origin,
     updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion, latestSource: a.latestSource,
+    updateSource: a.updateSource,
     // APE-4: carried, not defaulted. Coercing an installed app's absent block to `{}`
     // here would be harmless today but would make the Library the one surface that
     // cannot tell "declared nothing" from "declared all-false".
@@ -190,8 +193,7 @@ type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 
 // name is the only one a person recognises, and a dialog title is a sentence for the person.
 type DispatchAppAction = (app: {
   name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean
-  updateAvailable?: boolean; latestVersion?: string; latestSource?: string
-}, action: AppActionKind) => void
+} & UpdateFields, action: AppActionKind) => void
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
  *  modals ONCE at the host level. Returns a `dispatch` both the cards and the
@@ -202,7 +204,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
   // Each carries the display name beside the slug: the slug is the API's identifier, and a
   // dialog title is a sentence for a person ("Update research-lab" named nobody's app).
   type Named = { name: string; displayName: string }
-  const [updateFor, setUpdateFor] = useState<(Named & { found?: FoundUpdate }) | null>(null)
+  const [updateFor, setUpdateFor] = useState<(Named & { start?: UpdateStart }) | null>(null)
   const [uninstallFor, setUninstallFor] = useState<Named | null>(null)
   const [removeFor, setRemoveFor] = useState<Named | null>(null)
 
@@ -214,7 +216,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       case 'configure':
         if (app.configuredPerInstance) { nav('settings/providers'); return }
         setConfigFor({ name: app.name, displayName: app.displayName }); return
-      case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, found: foundUpdate(app) }); return
+      case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, start: updateStart(app) }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
       case 'force-uninstall': setUninstallFor({ name: app.name, displayName: app.displayName }); return
       case 'toggle': {
@@ -235,7 +237,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
 
   const modals = (
     <>
-      {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} found={updateFor.found}
+      {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} start={updateFor.start}
         onClose={() => setUpdateFor(null)} onUpdated={() => { setUpdateFor(null); reload() }} />}
       {configFor && <ConfigModal name={configFor.name} displayName={configFor.displayName} onClose={() => setConfigFor(null)} />}
       {removeFor && <RemoveAppModal name={removeFor.name} displayName={removeFor.displayName} onClose={() => setRemoveFor(null)}
@@ -251,7 +253,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
  *  detail panel. Enable/disable, configure, update, open, force-uninstall; a
  *  platform provider shows only "Open page" (it has no install lifecycle). */
 function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: DispatchAppAction }) {
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, ...updateFields(item) }
   return (
     <Popover align="right" placement="bottom" width={200}
       // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
@@ -452,9 +454,21 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // Store catalog is lifted here (was inside StoreView) so the shared, pinned
   // controls bar can host the Store's search + Filter&sort too — same idiom as
   // the Library, instead of a second control bar that scrolls with the body.
-  const { data: catalog, error: catalogErr, stale: catalogStale, refresh: refreshCatalog } = useQuery(
+  const { data: catalog, error: catalogErr, stale: catalogStale, revalidating: catalogReading, refresh: refreshCatalog } = useQuery(
     'app-catalog', () => api.appCatalog(), { persist: true },
   )
+  // An app installed from the Store shows its update from what the Store's catalog read last
+  // found: the gateway checks those sources when the Store is read, never on a timer. The two
+  // reads start together, so the apps list could answer before the catalog read it depends on
+  // landed, and a newer version on GitHub stayed hidden until the next visit. Re-read the list
+  // each time a catalog read lands.
+  const catalogWasReading = useRef(false)
+  useEffect(() => {
+    if (catalogReading) { catalogWasReading.current = true; return }
+    if (!catalogWasReading.current) return
+    catalogWasReading.current = false
+    if (!catalogErr) refresh()
+  }, [catalogReading, catalogErr, refresh])
   const [search, setSearch] = useQueryParam(q, sq, 'q', '', { replace: true })
   const [openName, setOpenName] = useQueryParam(q, sq, 'open', '')
   // Three tabs (user 2026-07-05): Native (bundled apps — locked on, not
@@ -1212,7 +1226,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, ...updateFields(item) }
   // Right-click / long-press → the SAME real actions this card dispatches. A native
   // app is always-on (no install lifecycle): omit uninstall/toggle + force-uninstall,
   // and show "Configure" only when it has settings (hasConfig) — a config-less native
@@ -1508,27 +1522,37 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
 }
 
 // ── Update: the new source is typed here; what it changes, and the consent, are the dialog's ──
-/** Where the gateway found an app's newer version, when it found one. */
-interface FoundUpdate { source: string; version?: string }
+/** What an installed app says about where its Update starts. Every route to "Update…" (the
+ *  detail panel, a card's menu, its right-click menu) carries these, so they cannot disagree. */
+interface UpdateFields { updateAvailable?: boolean; latestVersion?: string; latestSource?: string; updateSource?: string }
 
-/** The found update an Update dialog starts from — none when the app has no update the
- *  gateway located, and then the owner types the source. */
-function foundUpdate(app: { updateAvailable?: boolean; latestSource?: string; latestVersion?: string }): FoundUpdate | undefined {
-  return app.updateAvailable && app.latestSource ? { source: app.latestSource, version: app.latestVersion } : undefined
+function updateFields(app: UpdateFields): UpdateFields {
+  return { updateAvailable: app.updateAvailable, latestVersion: app.latestVersion, latestSource: app.latestSource, updateSource: app.updateSource }
 }
 
-function UpdateModal({ name, displayName, found, onClose, onUpdated }: {
+/** Where an Update dialog starts. `found` when the gateway found the newer version there; else
+ *  it is where the app was installed from. */
+interface UpdateStart { source: string; version?: string; found: boolean }
+
+/** Where the gateway found the newer version, else where the app was installed from. None when
+ *  neither is known, and then the owner types the source. */
+function updateStart(app: UpdateFields): UpdateStart | undefined {
+  if (app.updateAvailable && app.latestSource) return { source: app.latestSource, version: app.latestVersion, found: true }
+  return app.updateSource ? { source: app.updateSource, found: false } : undefined
+}
+
+function UpdateModal({ name, displayName, start, onClose, onUpdated }: {
   /** The app SLUG — the update API's identifier. */
   name: string
   /** What the title says: a person recognises "Research Lab", not `research-lab`. */
   displayName: string
-  /** Where the gateway found the newer version. The field starts with it and stays editable:
-   *  the owner should not have to type where the gateway just looked. */
-  found?: FoundUpdate
+  /** Where the field starts. It stays editable: the owner should not have to type where the
+   *  gateway just looked, or where the app came from. */
+  start?: UpdateStart
   onClose: () => void
   onUpdated: () => void
 }) {
-  const [source, setSource] = useState(found?.source ?? '')
+  const [source, setSource] = useState(start?.source ?? '')
   const install = useAppInstall({ onInstalled: () => onUpdated() })
   if (install.active) return install.dialog
   const s = source.trim()
@@ -1538,9 +1562,11 @@ function UpdateModal({ name, displayName, found, onClose, onUpdated }: {
         <label htmlFor="app-update-source" data-type="body-s" className="text-on-surface-low">New source — local path or git URL (data is preserved)</label>
         <TextInput id="app-update-source" value={source} onChange={setSource} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
-        {found && (
+        {start && (
           <p data-type="label-s" className="text-on-surface-low">
-            {`PersonalClaw found ${found.version ? `version ${found.version}` : 'the newer version'} there. Change it to update from somewhere else.`}
+            {start.found
+              ? `PersonalClaw found ${start.version ? `version ${start.version}` : 'the newer version'} there. Change it to update from somewhere else.`
+              : `${displayName} was installed from there. Change it to update from somewhere else.`}
           </p>
         )}
         <p data-type="label-s" className="text-on-surface-low">
@@ -1737,7 +1763,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
         </>)}
       </div>
 
-      {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} found={foundUpdate(app)}
+      {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} start={updateStart(app)}
         onClose={() => setUpdateOpen(false)} onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
       {configOpen && <ConfigModal name={app.name} displayName={app.displayName} onClose={() => setConfigOpen(false)} />}
       {confirmRemove && <RemoveAppModal name={app.name} displayName={app.displayName}

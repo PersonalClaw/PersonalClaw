@@ -80,6 +80,15 @@ backend**.
   what the app gets (compared with the installed copy's disclosure), or scans with
   warnings, needs the same `consent` digest (`POST /api/apps/preview {source, name}`);
   one that changes none of it needs none.
+- **Finding an update** (`apps/catalog.updates_available`) — `/api/apps` marks an app
+  whose source offers a newer version: a configured local source, by the app's name,
+  and for an app installed from the Store, the pointer `installed.json` recorded
+  (`url#app`, a registry listing's repo, or a single-app repository), read from the
+  Store's own discovery caches. The Store's catalog read refreshes those under its
+  budget and failure backoff, and the Apps page re-reads the list when that read
+  lands. Nothing polls, and `/api/apps` never touches the network. The Update dialog
+  starts from where the newer version was found, else from where the app was
+  installed from (`updateSource`).
 - **Removal** distinguishes deactivate (providers deregistered, files kept)
   from force-uninstall.
 
