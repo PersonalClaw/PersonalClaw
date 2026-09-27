@@ -4513,7 +4513,13 @@ export interface MemorySlotTrimProposal {
   drop_candidates: string[]
   message: string
 }
-export interface SecurityStats { denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number }
+export interface SecurityStats {
+  denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number
+  /** Whether Max memory and Max processes contain an agent child on the GATEWAY's host, with the
+   *  sentence that says so when they don't (`sandbox.child_ceilings_note`: on macOS they never do).
+   *  Absent from a response cached before the field existed. */
+  child_ceilings?: { contained: boolean; note: string }
+}
 /** The packaged baseline's identity, as served by /api/security/denied-commands.
  *  `verified` is whether the file on disk still matches the fingerprint captured at
  *  import — it is an anti-drift check, NOT a claim that the baseline cannot be changed

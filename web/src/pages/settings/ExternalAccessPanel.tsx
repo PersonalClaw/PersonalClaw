@@ -320,9 +320,9 @@ export function ExternalAccessPanel() {
         )}
         {clients.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
-            No clients yet. Create one with <code>personalclaw inbound client create</code> — or
-            keep using a plain surface token, which works but cannot be scoped or revoked on its
-            own.
+            No clients yet. A client is created through the API,{' '}
+            <code>POST /api/external-access/clients</code>, which returns its token once. A plain
+            surface token also works, but it cannot be scoped or revoked on its own.
           </div>
         ) : (
           <div className="flex flex-col gap-1">

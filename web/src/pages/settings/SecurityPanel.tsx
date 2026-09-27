@@ -86,7 +86,7 @@ export function SecurityPanel() {
           onChange={onDeniedChange} />
       ) : null}
       <CredentialStoreEditor />
-      <ChildProcessCeilings />
+      <ChildProcessCeilings note={s.child_ceilings?.note ?? ''} onScopesSaved={refreshStats} />
       <EgressPolicyEditor />
       <OutsideHomeEditor />
       <DesktopCapabilitiesPanel />
@@ -107,7 +107,13 @@ export function SecurityPanel() {
  *  which env names are refused outright are code-level floors with no config field — no PATCH here
  *  can widen them, and `env_passthrough` in particular still loses to the credential floor at spawn
  *  time. A control that implied otherwise would be the worse defect. */
-function ChildProcessCeilings() {
+function ChildProcessCeilings({ note, onScopesSaved }: {
+  /** What Max memory and Max processes do on the gateway's host, or `''` when they contain a
+   *  child. From the server, never `navigator`: the browser may be on another machine. */
+  note: string
+  /** The note depends on Cgroup scopes, so a saved toggle re-reads it. */
+  onScopesSaved: () => void
+}) {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const { data, error: loadErr, refresh } = useQuery('settings:sandbox', () =>
     api.personalclawConfig().then((c) => (c.sandbox ?? {}) as Record<string, unknown>),
@@ -118,7 +124,10 @@ function ChildProcessCeilings() {
   const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
     const prev = (cfg ?? {})[key]
     setCfg((c) => ({ ...c, [key]: value }))
-    api.patchConfig(`sandbox.${key}`, value).then(() => onSaved?.()).catch((e) => {
+    api.patchConfig(`sandbox.${key}`, value).then(() => {
+      onSaved?.()
+      if (key === 'cgroup_scopes') onScopesSaved()
+    }).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
       notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
@@ -127,6 +136,14 @@ function ChildProcessCeilings() {
   return (
     <Section title="Child process ceilings"
       hint="Limits applied to processes the agent can influence — bash tools, app backends, MCP servers, hook and cron scripts. They take effect on the next spawn; a running child keeps the limits it was started with. 0 disables an individual limit.">
+      {/* Before the fields, not under them: on a Mac two of these do nothing a user would want,
+          and the one place that said so was a warning in the gateway log. */}
+      {note ? (
+        <p data-type="body-s" className="mb-3 flex items-start gap-1.5 text-on-surface">
+          <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+          <span>{note}</span>
+        </p>
+      ) : null}
       {!data && loadErr
         ? <LoadError what="sandbox ceilings" error={loadErr} onRetry={refresh} />
         : !cfg

@@ -1206,7 +1206,7 @@ def _warn_unenforced_ceilings(ceilings: "ResourceCeilings") -> None:
     global _UNENFORCED_CEILINGS_WARNED
     if ceilings.max_pids <= 0 and ceilings.max_rss_mb <= 0:
         return
-    if ceilings.cgroup_scopes and probe_cgroup_scopes()[0]:
+    if _tree_ceilings_hold(ceilings):
         return
     if _UNENFORCED_CEILINGS_WARNED:
         return
@@ -1234,6 +1234,50 @@ def _warn_unenforced_ceilings(ceilings: "ResourceCeilings") -> None:
         why,
         ceilings.nofile,
         probe_cgroup_scopes()[1],
+    )
+
+
+def _tree_ceilings_hold(ceilings: "ResourceCeilings") -> bool:
+    """Whether the pids and RSS ceilings bound an agent child's whole process tree here.
+
+    Only a cgroup scope does that, and only when it is both opted in and available. One
+    answer for the log warning above and for Settings › Security (:func:`child_ceilings_note`),
+    so the two cannot disagree about when the ceilings hold.
+    """
+    return ceilings.cgroup_scopes and probe_cgroup_scopes()[0]
+
+
+def child_ceilings_note(ceilings: "ResourceCeilings | None" = None) -> str:
+    """What Settings › Security says about Max memory and Max processes on this host.
+
+    ``""`` when they bound a child's whole process tree. Otherwise the sentence the
+    Child process ceilings section shows above those two fields, for the same condition that
+    makes :func:`_warn_unenforced_ceilings` log. The log reached only someone reading the
+    gateway log, so the panel offered two limits that on a Mac do nothing a user would want.
+    Said whether or not a ceiling is set, because it is what decides whether to set one.
+    """
+    cel = ceilings if ceilings is not None else ResourceCeilings.from_config()
+    if _tree_ceilings_hold(cel):
+        return ""
+    if sys.platform == "darwin":
+        return (
+            "On this Mac, Max memory is never applied, because macOS refuses a memory limit on "
+            "a child process, and Max processes counts every process you run rather than the "
+            "child's. Neither contains a runaway child. Max open files is enforced."
+        )
+    if not sys.platform.startswith("linux"):
+        return "PersonalClaw applies none of these ceilings on this platform."
+    available, detail = probe_cgroup_scopes()
+    how = (
+        "Turn on Cgroup scopes below to bound the whole tree."
+        if available
+        else "Bounding the whole tree needs cgroup scopes, which this machine can't run "
+        f"({detail})."
+    )
+    return (
+        "Here, Max memory bounds each process of a child on its own, and Max processes counts "
+        "every process you run, so neither contains a child's whole process tree. "
+        f"{how} Max open files is enforced."
     )
 
 

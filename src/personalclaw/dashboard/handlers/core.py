@@ -424,7 +424,13 @@ async def api_sel_rotate(request: web.Request) -> web.Response:
 
 
 async def api_security_stats(_request: web.Request) -> web.Response:
-    """GET /api/security/stats — live security feature counts."""
+    """GET /api/security/stats — live security feature counts.
+
+    ``child_ceilings`` says whether Max memory and Max processes contain an agent child on this
+    host (``sandbox.child_ceilings_note``). On macOS they do not, and until this the one place
+    that said so was a warning in the gateway log.
+    """
+    from personalclaw.sandbox import child_ceilings_note
     from personalclaw.security import denied_command_patterns
 
     denied = len(denied_command_patterns())
@@ -435,6 +441,8 @@ async def api_security_stats(_request: web.Request) -> web.Response:
     # gated set and read as a coverage figure it wasn't).
     schemas = len(_validation_mod.validated_tool_names())
 
+    ceilings_note = child_ceilings_note()
+
     # 5 output paths where redaction is applied (architectural constant from
     # security-deep-dive.md): dashboard streaming mid-flush, dashboard streaming
     # trailing, dashboard non-chunk messages, dashboard history save, channel final.
@@ -444,6 +452,7 @@ async def api_security_stats(_request: web.Request) -> web.Response:
             "suspicious_patterns": len(SUSPICIOUS_BASH_PATTERNS),
             "tool_schemas": schemas,
             "redaction_paths": 5,
+            "child_ceilings": {"contained": not ceilings_note, "note": ceilings_note},
         }
     )
 
