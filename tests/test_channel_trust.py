@@ -239,6 +239,75 @@ def test_unknown_sender_notification_is_deduped_per_sender():
     assert _sel_ops().count("sender_denied") == 1
 
 
+def test_the_canned_reply_is_throttled_with_the_notification():
+    """``UNKNOWN_SENDER_RENOTIFY_SECS`` throttles the canned reply AND the owner notification.
+
+    Only the notification was: every message from a stranger got "I don't recognize you yet…"
+    back. On a mailbox that is one reply per mail from everyone who writes to it, sent from the
+    owner's own address."""
+    state = _RecordingState()
+    first = ct.guard_inbound(state, "email", "a@example.com", is_dm=True, text="hi")
+    second = ct.guard_inbound(state, "email", "a@example.com", is_dm=True, text="again")
+    assert first.canned_reply == ct.CANNED_PAIRING_REPLY and first.fired_notification
+    assert second.allowed is False
+    assert second.canned_reply == "" and second.fired_notification is False
+    # The throttle is per sender: someone else still gets their first reply.
+    other = ct.guard_inbound(state, "email", "b@example.com", is_dm=True, text="hello")
+    assert other.canned_reply == ct.CANNED_PAIRING_REPLY
+
+
+def test_the_canned_reply_throttle_survives_a_restart():
+    """The window is the persisted per-sender stamp, so a restarted gateway does not answer a
+    stranger it answered an hour ago."""
+    ct.guard_inbound(None, "email", "a@example.com", is_dm=True, text="hi")
+    ct.reset_inbound_reports()  # everything a restart forgets
+    again = ct.guard_inbound(None, "email", "a@example.com", is_dm=True, text="still there?")
+    assert again.canned_reply == ""
+
+
+def test_the_canned_reply_comes_back_once_the_window_has_passed(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    t0 = datetime(2026, 9, 27, 9, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(ct, "_now", lambda: t0)
+    ct.guard_inbound(None, "email", "a@example.com", is_dm=True, text="hi")
+    later = t0 + timedelta(seconds=ct.UNKNOWN_SENDER_RENOTIFY_SECS + 1)
+    monkeypatch.setattr(ct, "_now", lambda: later)
+    verdict = ct.guard_inbound(None, "email", "a@example.com", is_dm=True, text="hi again")
+    assert verdict.canned_reply == ct.CANNED_PAIRING_REPLY and verdict.fired_notification
+
+
+def test_the_door_throttles_the_canned_reply_for_every_channel():
+    """Two different messages from one stranger through the inbound door every transport uses:
+    the first carries the reply, the second carries none. The door caches per MESSAGE, so this
+    is the store's window at work, not the admission cache."""
+    from personalclaw import channel_inbound as ci
+    from personalclaw.channel_transports.base import ChannelMessage
+
+    ci.reset_admissions()
+
+    async def turn_runner(state, session, text):  # pragma: no cover - a denied message never runs
+        raise AssertionError("a stranger's message must not reach a session")
+
+    class _Services:
+        dashboard_state = None
+
+    async def go():
+        verdicts = []
+        for n in (1, 2):
+            msg = ChannelMessage(
+                channel_id="dm-1", text=f"message {n}", sender="stranger", message_id=f"m{n}"
+            )
+            verdicts.append(
+                await ci.deliver_inbound(_Services(), "discord", msg, turn_runner=turn_runner)
+            )
+        return verdicts
+
+    first, second = asyncio.run(go())
+    assert first.canned_reply == ct.CANNED_PAIRING_REPLY
+    assert second.canned_reply == ""
+
+
 def test_allow_action_from_notification_persists_the_sender():
     state = _RecordingState()
     ct.guard_inbound(state, "telegram", "stranger", sender_name="Bob", is_dm=True, text="hi")

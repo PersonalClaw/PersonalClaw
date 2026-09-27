@@ -403,6 +403,10 @@ class InstanceState(str, Enum):
     ESCALATED = "escalated"  # circuit breaker tripped
     BLOCKED = "blocked"  # e.g. protocol_violation — never a silent hang
     CANCELLED = "cancelled"
+    #: A person said no: Deny on an approval gate, or on a step that stopped for them. Not a
+    #: failure — nothing went wrong, and `on_error` is a failure policy — and not a pass: nothing
+    #: after it runs, and the run ends `declined` (`gate_answers.end_at_gate`).
+    DECLINED = "declined"
 
 
 #: States after which a node will not run again without an explicit mutation.
@@ -421,6 +425,7 @@ TERMINAL_STATES = frozenset(
         InstanceState.ESCALATED,
         InstanceState.BLOCKED,
         InstanceState.CANCELLED,
+        InstanceState.DECLINED,
     }
 )
 
@@ -585,6 +590,10 @@ class RunStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     ESCALATED = "escalated"
+    #: A person declined an approval the run needed (`InstanceState.DECLINED`). Its own ending,
+    #: not `failed` (nothing went wrong) and not `cancelled` (the run was not stopped from the
+    #: outside): the run's error names the gate and who declined it.
+    DECLINED = "declined"
 
 
 #: Every `RunStatus` member's :class:`LifecyclePhase`. Exhaustive in both directions by rail.
@@ -597,6 +606,7 @@ RUN_PHASES: dict[RunStatus, LifecyclePhase] = {
     RunStatus.FAILED: LifecyclePhase.ENDED,
     RunStatus.CANCELLED: LifecyclePhase.ENDED,
     RunStatus.ESCALATED: LifecyclePhase.ENDED,
+    RunStatus.DECLINED: LifecyclePhase.ENDED,
 }
 
 #: Run states that have stopped producing. Read as "an end timestamp belongs here".
@@ -623,6 +633,7 @@ _RUN_ENDING_PHRASES: dict[RunStatus, str] = {
     RunStatus.FAILED: "failed",
     RunStatus.COMPLETE: "has finished",
     RunStatus.ESCALATED: "has stopped",
+    RunStatus.DECLINED: "was declined",
 }
 
 
@@ -1371,6 +1382,12 @@ class NodeInstance:
     #: of the user's chain served because the model the step asked for could not. Persisted and
     #: cleared at every dispatch for the reasons `schema_shortfall` is.
     model_substituted: list[str] = field(default_factory=list)
+    #: What this step asks the person while it WAITS on one — a gate's prompt, a parked action's
+    #: question, an action's clarification (`Ask.to_dict()`). Written each time it begins to wait,
+    #: and read by `gate_answers.ensure_continuation` for the ask it mints. PER STEP, and
+    #: persisted, because `run.attention` is one slot for the whole run: two steps waiting at once
+    #: (parallel gates) both asked what the later one had written there.
+    ask: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1394,6 +1411,7 @@ class NodeInstance:
             "cached": self.cached,
             "schema_shortfall": self.schema_shortfall,
             "model_substituted": list(self.model_substituted),
+            "ask": dict(self.ask),
         }
 
     @classmethod
@@ -1425,4 +1443,5 @@ class NodeInstance:
             cached=bool(d.get("cached", False)),
             schema_shortfall=str(d.get("schema_shortfall", "") or ""),
             model_substituted=[str(s) for s in (d.get("model_substituted") or []) if s],
+            ask=dict(d.get("ask") or {}) if isinstance(d.get("ask"), dict) else {},
         )

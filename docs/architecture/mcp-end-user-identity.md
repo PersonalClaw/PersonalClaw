@@ -459,7 +459,9 @@ Code is the as-built authority. Three shipped documents disagree with it and are
    (`src/personalclaw/dashboard/token_auth.py:383`) and caps the session at one year
    (`src/personalclaw/dashboard/token_auth.py:401`). Anyone reasoning about token lifetime
    from that docstring will be wrong by orders of magnitude — treat a minted token as
-   long-lived and sensitive.
+   long-lived and sensitive. *Since resolved:* #3727 corrected the docstring, and the change
+   after it capped every session, link and token at 90 days
+   (`src/personalclaw/auth/lifetimes.py::MAX_LIFETIME_SECS`), refusing a request for longer.
 3. **The pairing TTL is ten minutes, not an hour.** Planning text describes a one-hour
    pairing code; `src/personalclaw/channel_trust.py:57` is 600 seconds.
 

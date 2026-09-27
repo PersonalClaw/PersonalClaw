@@ -446,6 +446,18 @@ class HookManager:
             if offer is not None:
                 return ToolHookResult.deny(offer.observation)
 
+        # What runs as the owner, and what they allowed (always enforced): a call that names one of
+        # those paths — an edit, a write, a shell command that is not a pure read — does not run,
+        # whoever would approve it (`owner_only`). Before every approval path: a card, an
+        # auto-approve pattern and an unattended default alike. Reads stay the read rules' business.
+        if not tool_name.startswith("Reading "):
+            from personalclaw.owner_only import named_in, refusal
+            from personalclaw.task_modes import is_read_only_bash
+
+            named = named_in(normalized)
+            if named and not (tool_name.startswith("Running: ") and is_read_only_bash(normalized)):
+                return ToolHookResult.deny(refusal(named))
+
         # Built-in security deny list (always enforced)
         reason = is_denied(normalized, self._config.auto_deny_tools) or is_denied(
             tool_name, self._config.auto_deny_tools
@@ -981,15 +993,33 @@ class ScriptHookStore:
         self._load()
 
     def _load(self) -> None:
+        """Read ``hooks.json``. Never raises: an entry that is not a lifecycle trigger is skipped
+        and logged, so one bad write cannot stop the rest loading.
+
+        Measured on `main`: the chat's ``hook_register`` wrote its registrations into this file,
+        and ``hook_id="hooks"`` replaced the list with an object — every later start raised
+        ``AttributeError`` here, the store never loaded, and no lifecycle trigger ran. Callbacks
+        have their own file now (`webhook_callbacks`), and this store is this file's only writer.
+        """
         if not self._path.exists():
             return
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-            for h in data.get("hooks", []):
-                hook = ScriptHook.from_dict(h)
-                self._hooks[hook.id] = hook
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to load hooks: %s", exc)
+            return
+        entries = data.get("hooks") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            if entries is not None or not isinstance(data, dict):
+                logger.warning("hooks.json holds no list of lifecycle triggers; none loaded")
+            return
+        for entry in entries:
+            try:
+                hook = ScriptHook.from_dict(entry)
+            except (AttributeError, TypeError, ValueError):
+                logger.warning("hooks.json: skipping an entry that is not a lifecycle trigger")
+                continue
+            self._hooks[hook.id] = hook
 
     def _save(self) -> None:
         data = {"hooks": [h.to_dict() for h in self._hooks.values()]}

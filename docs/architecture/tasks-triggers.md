@@ -127,7 +127,23 @@ relative to `PersonalClaw/src/personalclaw/`.
   one blocks the tool call it was asked about rather than letting it through.
   The wire carries `needs_grant` (display names) so the page can badge the row
   and offer Allow. A `webhook` trigger that is switched off or paused answers
-  `/fire` with the 404 an unknown one gets.
+  `/fire` with the 404 an unknown one gets. Each question is the gateway's,
+  heading included (`http_errors.consent_required` takes a `title` from every
+  caller): "Allow what this trigger runs?", "Allow the changed action?", "Allow
+  this trigger to run?", and "Loosen a security setting?" only for a posture
+  that loosens — a question with both halves says both.
+- **Callbacks the agent registers** (`webhook_callbacks.py`) — the chat's
+  `hook_register` saves context for a later `POST /api/hooks/agent`, which
+  starts an agent turn, with the agent's tools, from that context. Callbacks
+  live in `webhook_callbacks.json`, which only that module writes; the
+  lifecycle trigger store (`hooks.json`, `hooks.ScriptHookStore`) is the
+  owner's, and a store that meets an entry that is not a trigger skips it
+  rather than failing to load. A callback follows the grant rule: registered
+  switched off, listed on the Triggers page as a **Callback**, and allowed by
+  switching it on, which asks first and names the context the page read (its
+  seal), so a callback registered again with other context waits again. A post
+  naming a callback the owner has not allowed answers `403 not_allowed`; a
+  session key nobody registered is the owner's own integration.
 - **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
   one-shot LLM call, **validated with croniter before use** (a hallucinated
   expression never reaches the store).
@@ -147,6 +163,13 @@ would dispatch, as `{provider, config}` — and that answer is the whole result:
 no run row, no `last_run_ts` move, so the panel renders it instead of waiting
 for one. `supports_dry_run` (run-prompt, run-workflow) is a provider's own
 observe-mode capability, reported by the Doctor's would-execute simulator.
+
+**A run's history row says what the action did.** Both recorders write the
+row's summary as the sentence the action wrote for a person
+(`ActionResult.summary`, `schedule_history.summary_for_result`), else what it
+printed, which stays the row's trace. A browse run prints its whole account as
+JSON for the workflow engine to bind, and says "Browse finished in 3 steps at
+example.com. Noted: …" for its row.
 
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.
@@ -209,6 +232,49 @@ with the reason; **Dismiss** records `skipped_missed`. Both go through
 `missed.resolve_missed` and land in that automation's history
 (`POST /api/triggers/review`).
 
+### An action that stops for you asks you
+
+An action can stop on something only a person can lift: browse at a sign-in
+page returns `outcome="needs_input"` with the card its handoff composes ("Sign
+in to example.com, then confirm", and what it tried). Inside a workflow run
+the engine parks the step and asks through the run
+([workflows.md](workflows.md#waiting-on-a-person)); from a trigger,
+`triggers/parks.py` asks. Both recorders — the fire path
+(`gateway._record_fire_outcome`) and the Run button (`_record_manual_run`) —
+record the run `waiting` (`schedule_history.status_for_result`; the runs feed
+reads it as `deferred`), with the summary "Waiting for you." and the question,
+and stamp the trigger's `last_waiting_at` rather than `last_success_at`: the
+action did nothing it was asked yet. `last_run_ts` is the newest of the
+success, failure and waiting stamps, so a Run button still clears when its run
+stops for you. Then both call `parks.settle`:
+
+- **A park raises one question.** One park file per trigger
+  (`trigger_parks/` in the home) holds a single-use token and the card; its
+  ONE Inbox row carries the card and the token, deduped per trigger, so a
+  trigger that runs again before anyone answers asks nothing new. An expired
+  browse session raises no row of its own: the mirror's banner says it
+  expired, and the trigger's row is the one that runs anything.
+- **Approve runs it again, with the answer.** `POST
+  /api/triggers/{id}/answer {resume_token, answer}` spends the token once
+  (a double click runs nothing twice; a stale token answers `409
+  trigger_park_gone`), then dispatches the action through the Run button's own
+  path — its grants and capability fence — with `ActionContext.answer=True` on
+  that one dispatch, which is what lets browse leave its pre-run sign-in check,
+  as an approved in-run park does. A refusal the Run button honours (incident
+  mode, the kill switch) is read before the token is spent. **Deny** closes the
+  question until the trigger next stops.
+- **A run that goes through withdraws it.** A later plain success (a session
+  signed in since) makes the question moot, so the park and its row go; a
+  failure or a skip leaves it standing.
+
+The park holds the trigger's id and the card, never the action's config:
+Approve re-reads the trigger, so a secret the config names is resolved at run
+time and never written to the park. The answer route is the owner's alone
+(`apps/permissions.ROUTE_AUTHZ`, for the reason Run now's is), and
+`trigger_parks/` is in the durability inventory's `IGNORED`: the question is
+about a sign-in in this machine's browser profile, which no snapshot carries
+either, so a restored copy could only ask again.
+
 ### The HEARTBEAT.md queue is a system trigger
 
 `workspace/HEARTBEAT.md` is the queue the agent writes "keep checking until
@@ -224,6 +290,23 @@ history records as the inert `skipped_noop` (`schedule_history
 .status_for_result`, the one status rule the fire path and the Run button
 share), so it folds out of the default history. The heartbeat loop itself no
 longer reads the file.
+
+**A task runs only once the owner allowed it** (`heartbeat.py`), as a trigger
+the chat makes does. The agent writes this file, as can its shell and an app
+that declared `/api/file-write`, so a task is the agent's words until the owner
+says otherwise, and a pass does not run it: it stays in the file as written,
+and the pass reports how many wait (`no task ran: 1 waiting for your Allow on
+the Triggers page`, an inert `skip` when nothing ran). The owner's yes is sealed
+to the task's text (`grants/heartbeat.json`): a task they type in the Files
+editor is allowed as they save it (`files._allow_heartbeat_tasks_the_owner_wrote`,
+never for an app's write), and any other is listed on the Heartbeat tasks
+trigger's panel with **Allow** (`GET /api/heartbeat/tasks`,
+`POST /api/heartbeat/tasks/allow`, which asks first and is owner-only). An edit
+to a task is a new task, and a finished task takes its yes with it. Not
+"read-only until allowed": the read-only posture an unattended run gets is the
+task-mode classifier, which reads a tool it has no declaration for by its name,
+and 75 of the agent's 115 tools pass it — `computer_click`, `workflow_start`
+and `memory_remember` among them.
 
 ### App-manifest crons
 

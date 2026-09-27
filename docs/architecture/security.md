@@ -77,26 +77,45 @@ permission model holds in every auth mode.
   the one `auth_bearer_invalid`, and no refusal echoes or audits the token. Only the
   Bearer scheme is the gateway's: another scheme in the same header (a reverse
   proxy's `Basic` login) is ignored, not refused.
-- `generate_token(user_id, ttl_seconds, app=...)` mints tokens with an
-  optional **`app` claim**; app-scoped tokens bound a request to that app's
-  declared permissions. In the Bearer header an app token only narrows the
-  owner session it is presented beside, for the same user.
+- `mint_session(user_id, ttl, issuer=...)` mints every session, naming the door it came
+  through (the startup link, the harness token, `personalclaw token`, a password, a device
+  code, a pairing, an app); `generate_token(user_id, ttl_seconds, app=...)` is the published
+  mint for the `token` door, with an optional **`app` claim**. App-scoped tokens bound a
+  request to that app's declared permissions. In the Bearer header an app token only narrows
+  the owner session it is presented beside, for the same user.
 - App backends never see the owner's credential: the reverse proxy strips
-  cookie + Authorization and injects a fresh 1-hour app-scoped token
+  cookie + Authorization and injects the app's own 1-hour app-scoped token
   (see [app-platform.md](app-platform.md#the-reverse-proxy--token-model)).
-- Session TTLs are capped (`MAX_SESSION_TTL_SECS`); nonces are registered and
-  evicted.
+- No session, link or token lasts longer than 90 days (`MAX_SESSION_TTL_SECS`): a long-lived
+  credential is replaced at least every 90 days, because the longer a link or token keeps
+  working, the longer anyone who copies it can use the dashboard. A request for longer — `personalclaw token --ttl`, `?ttl=` on
+  `/api/token/local`, `auth.session_ttl`, an app's `generate_token` — is refused with a sentence
+  naming the limit and why, never shortened; a config file that already says longer is applied
+  as 90 days and `personalclaw doctor` says so; and a token minted longer before the limit
+  existed stops 90 days after it was issued. Browser sign-ins last `auth.session_ttl`, 30 days by
+  default, and a token that names no lifetime 20 hours. How many may be signed in is bounded per kind — 20 browsers, 20 paired
+  devices, 20 tokens, and each app separately — over the durable store, so the limit holds
+  across restarts, and the one it signs out is the least recently used of its own kind. Every
+  sign-in and sign-out is an SEL row (`session_signed_in` / `session_signed_out`, with the
+  reason). Every refusal a browser or the desktop app can meet carries a sentence saying why and
+  how to sign in (`session_signed_out`, `session_expired`, `session_required`); a request that
+  presents garbage, or a token another key signed, reads exactly what presenting nothing reads.
+  A script's Bearer keeps the one uniform `auth_bearer_invalid`.
 
 ### Webhook auth
 
-`POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is
-middleware-exempt; its **only** gate is `_verify_hook_token` — a
+`POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is one of the token
+middleware's internal paths: from this machine it takes the internal secret (a
+local relay, the way the `mcp-core` process calls in) or an owner session, and
+from anywhere else it is refused. Past that, `_verify_hook_token` is a
 constant-time (`hmac.compare_digest`) check of the Bearer or
 `x-personalclaw-token` header against `hooks.webhook_token` in config — a
 `{{secret:…}}` reference there, resolved from the credential store at the
 check (`config/secret_refs.py`). No configured token, or a reference the store
-cannot answer, means every request is refused. Denials are logged to the
-Security Event Log.
+cannot answer, means every request is refused. And a session key a callback
+the agent registered names (`webhook_callbacks.py`) starts a turn only once the
+owner allowed that callback: until then the answer is `403 not_allowed`.
+Denials are logged to the Security Event Log.
 
 ## Command screening (`security.py`)
 
@@ -121,15 +140,23 @@ environment-variable denylist (credential env vars like `SLACK_BOT_TOKEN`
 never reach a sandboxed child).
 
 Child **environments** are built by allowlist, not inherited: `build_child_env`
-gives a hook, cron-script or bash-action child a minimal base
+gives a hook, cron-script or bash-action child, and everything the gateway starts
+for an app (the pip and npm that install what it declares, its engine's venv and
+pip, its setup hooks, backend, worker, sidecar and MCP servers), a minimal base
 (`PATH`, locale, home-equivalents, proxy/CA settings, and the three
 `PERSONALCLAW_*` vars) plus whatever names the operator declared in
-`sandbox.env_passthrough`. Nothing else from the gateway environment reaches
-them, so a credential the gateway holds is not readable by `printenv`. The
-sensitive-prefix list above is the floor: a declaration cannot pass
-`AWS_SECRET*`, `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME` or `GIT_ASKPASS`.
-Withheld names are listed in the debug log at each spawn, so a script that
-needs one more variable is diagnosable rather than mysteriously broken.
+`sandbox.env_passthrough`. An install also gets its installer's own settings
+(`installer="pip"`: `PIP_*`; `installer="npm"`: `npm_config_*`), less the ones
+that would move where it lands and npm's `_auth*` login keys. Nothing else from
+the gateway environment reaches them, so a credential the gateway holds is not
+readable by `printenv`. An inherited value with a login in it (a proxy address,
+an index URL) arrives without it: `http://ada:pw@proxy:3128` becomes
+`http://proxy:3128`, and the gateway logs once per site which name lost one. A
+name the operator declared arrives as it is. The sensitive-prefix list above is
+the floor: a declaration cannot pass `AWS_SECRET*`, `AWS_SESSION*`,
+`SSH_AUTH_SOCK`, `GNUPGHOME` or `GIT_ASKPASS`. Withheld names are listed in the
+debug log at each spawn, so a script that needs one more variable is diagnosable
+rather than mysteriously broken.
 
 ### What the sandbox does and does not do
 
@@ -139,11 +166,13 @@ is allow-by-default (`(version 1)\n(allow default)`) with targeted `deny file-re
 credential paths (`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.docker`, `~/.kube`,
 `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, `.personalclaw/.env`, plus `~/.ssh` in
 `strict`); the Linux path is equivalent (bind-mount empty dirs over those paths). It raises the
-cost of credential theft; it does not stop an agent from doing anything else.
+cost of credential theft. The one place it confines writes is the home's owner-only paths (below);
+it does not stop an agent from doing anything else.
 
 | It **does** | It does **not** |
 |---|---|
-| Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`) |
+| Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`, and the owner-only paths) |
+| Refuse writes to the owner-only paths at every level (macOS deny-writes; Linux read-only binds) | |
 | Scrub credential env vars from the child, every mode | Restrict **network / egress** from the child |
 | Deny `~/.ssh` writes (macOS `strict` only) | Limit processes, CPU, or memory (no rlimits) |
 | Path-allowlist a subagent's cwd (advisory — the prompt tells the agent its scope) | Provide a filesystem **jail** or a real execution boundary |
@@ -153,6 +182,33 @@ The honest, complete statement of limitations lives in
 [`../security/threat-model.md`](../security/threat-model.md) and
 [`../security/limitations.md`](../security/limitations.md); this section is the architectural
 summary, not a substitute for them.
+
+### What runs as the owner is owner-only (`owner_only.py`)
+
+Four places in the home hold what runs as the owner and what they allowed: `config.json` (among
+much else, the agent CLI's own hooks, `agent.agent_hooks`), `hooks/` (the scripts those hooks
+import), `agents/` (the agent CLI's config and every agent definition) and `grants/` (the owner's
+yes to what an agent wrote, `owner_grants.py`). An agent writes none of them, at three layers that
+each read `owner_only`:
+
+- **The fence**: the sandbox around the agent's shell denies the write — a Seatbelt
+  `deny file-write*` at every level; on Linux each is bind-mounted onto itself read-only (a missing
+  directory is made first; `config.json` only when it exists). This is the kernel refusing, so it
+  holds however the command spells the path.
+- **The screen**: `HookManager.on_tool_call`, which every approval path consults before a card,
+  an auto-approve pattern or an unattended default, and the native `bash` tool refuse a call that
+  names one, with the reason. Defence in depth — a command can build the path out of pieces no
+  reading of its text sees.
+- **The roots**: no file root reaches into the home except a root that is itself inside it
+  (`file_roots.within`), so the file explorer, file-backed artifacts, apps and the native file
+  tools never name them however a workspace or a loop is bound.
+
+The owner is untouched: their own editor, and the gateway writing for the owner's surfaces. And
+because a fence is not consent, the agent CLI's hooks also run only once the owner allowed them
+(`agent_hook_grants.py`): a hook the owner has not allowed, or whose file changed since, is left
+out of the agent CLI's config and listed on the Agents page with Allow. What the CLI runs is a copy
+of the file as the owner allowed it (`<home>/hooks/.allowed/<seal>`), not the file, so an edit to
+it — a script outside the home is no owner-only path — never runs on the old yes.
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { LANES, laneFor, isKnownKind, KNOWN_KINDS, toLanes } from './attentionLanes'
+import { LANES, laneFor, isKnownKind, KNOWN_KINDS, toLanes, approvalRaisedBy, inboxRaisedBy } from './attentionLanes'
 import type { ActivityInput, ApprovalInput, AttentionInput, Lane, LaneCard } from './attentionLanes'
 import type { InboxItemKind, InboxItemStatus } from './api'
 
@@ -400,5 +400,74 @@ describe('malformed input does not blank the surface', () => {
     expect(byId.get('multi')!.title).toBe('first line')
     expect(byId.get('summary')!.title).toBe('from the summary')
     expect(byId.get('blank')!.title).toBe('(no message)')
+  })
+})
+
+// ── Who raised a card ───────────────────────────────────────────────────────────────────────────
+//
+// Shaped the way the backend writes them. A workflow's gate, a trigger's question, a loop's wait and
+// the control bridge's confirm all ride the `loop/needs_input` notification pair, so each row's
+// sender and channel ARE "loop" (`emit_attention_item` writes the pair's source into both) — the
+// one word every one of these cards showed about where it came from.
+
+describe('who raised a card', () => {
+  const onThePair = (id: string, refs: Record<string, unknown>): AttentionInput =>
+    mkItem({ id, item_kind: 'needs_input', sender_name: 'loop', channel_name: 'loop', refs })
+
+  const asked: Array<[string, AttentionInput]> = [
+    ['Workflow · release', onThePair('gate', { workflow: 'run-1', workflow_name: 'release', workflow_node: 'approve', resume_token: 't1' })],
+    ['Trigger · Check my balance', onThePair('park', { trigger_park: 'balance', trigger: 'balance', trigger_name: 'Check my balance', resume_token: 't2' })],
+    ['Loop', onThePair('wait', { loop: 'abc123', loop_kind: 'general' })],
+    // A loop that runs as a workflow run stamps both: the loop is what asked.
+    ['Loop', onThePair('escalated', { loop: 'r1', loop_kind: 'general', workflow: 'r1' })],
+    ['Control bridge', onThePair('bridge', { source: 'control_bridge', action: 'restart', confirm_token: 'c1' })],
+  ]
+
+  it('names the work an Inbox card is for, never the notification pair it rode', () => {
+    for (const [label, item] of asked) expect(inboxRaisedBy(item)).toBe(label)
+    const cards = toLanes(asked.map(([, item]) => item), [])['your-turn']
+    expect(new Map(cards.map((c) => [c.id, c.raisedBy]))).toEqual(
+      new Map(asked.map(([label, item]) => [item.id, label])),
+    )
+    // The sender is not on the card twice: `raisedBy` took over the line it was.
+    expect(cards.map((c) => c.subtitle)).toEqual(cards.map(() => undefined))
+  })
+
+  it('keeps the sender on a card whose refs name no work', () => {
+    const digest = mkItem({ id: 'd', item_kind: 'digest', sender_name: 'learning', channel_name: 'learning', refs: { session: 'dashboard:abc' } })
+    expect(inboxRaisedBy(digest)).toBe('learning')
+    expect(inboxRaisedBy(mkItem({ sender_name: '', channel_name: 'general' }))).toBe('general')
+  })
+
+  it('names who an approval is for, from its trigger and its session', () => {
+    const cases: Array<[string, ApprovalInput]> = [
+      ['Chat · Trip planning', mkApproval({ source: '', session: 'dashboard:abc', session_title: 'Trip planning' })],
+      ['Chat', mkApproval({ source: 'subagent', session: 'abc', session_title: '' })],
+      ['Workflow · sweep step', mkApproval({ source: 'subagent', session: 'workflow:df5827ca:sweep' })],
+      ['Trigger · Check my balance', mkApproval({ source: 'subagent', session: 'cron:balance', trigger: 'balance', trigger_name: 'Check my balance' })],
+      ['Trigger · balance', mkApproval({ source: 'subagent', session: 'cron:balance' })],
+      ['Loop', mkApproval({ source: 'subagent', session: 'loop-abc123' })],
+      ['MCP server · github', mkApproval({ source: 'mcp:github', session: '' })],
+    ]
+    for (const [label, a] of cases) expect(approvalRaisedBy(a)).toBe(label)
+    const cards = toLanes([], cases.map(([, a], i) => ({ ...a, id: `a${i}` })))['needs-approval']
+    expect(new Map(cards.map((c) => [c.id, c.raisedBy]))).toEqual(
+      new Map(cases.map(([label], i) => [`a${i}`, label])),
+    )
+  })
+
+  it('keeps what the tool is for as the approval card\'s line, and no longer a bare session key', () => {
+    const [withPurpose] = toLanes([], [mkApproval({ tool_purpose: 'List the build folder', session: 'workflow:r1:sweep' })])['needs-approval']
+    expect([withPurpose.raisedBy, withPurpose.subtitle]).toEqual(['Workflow · sweep step', 'List the build folder'])
+    const [bare] = toLanes([], [mkApproval({ tool_purpose: '', session: 'workflow:r1:sweep' })])['needs-approval']
+    expect([bare.raisedBy, bare.subtitle]).toEqual(['Workflow · sweep step', undefined])
+    // An approval that names nobody says nothing about who asked, rather than guessing.
+    const [unnamed] = toLanes([], [mkApproval({ source: 'hook', session: '' })])['needs-approval']
+    expect(unnamed.raisedBy).toBeUndefined()
+  })
+
+  it('names an approval\'s own Inbox row by the approval\'s session once the approval has left the list', () => {
+    const row = mkItem({ item_kind: 'agent_request', sender_name: 'system', channel_name: 'system', refs: { approval: 'gone', session: 'workflow:r1:sweep' } })
+    expect(inboxRaisedBy(row)).toBe('Workflow · sweep step')
   })
 })

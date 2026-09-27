@@ -89,12 +89,13 @@ export function InboxSettingsPanel() {
     ? "Couldn't read your configuration, so this switch has no saved value to show — retry at the top of the panel."
     : 'Still reading your configuration — this switch appears once it loads.'
 
+  // The inbox reads this switch at every poll, so the next one follows it: nothing to restart.
+  // A refused save reverts the switch AND says why, like the triage pair below.
   const setSources = (v: boolean) => {
     setSourcesOn(v)
     api.patchConfig('inbox.enabled', v)
-      .then(() => api.restartInbox())  // re-attach/detach the poll provider live
       .then(flash)
-      .catch(() => setSourcesOn(!v))   // revert the optimistic flip on failure
+      .catch((e) => { setSourcesOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
   }
 
   // Two writes, in this order, and the order is criterion 10. The config PATCH is the one source
@@ -158,11 +159,11 @@ export function InboxSettingsPanel() {
 
       {/* Collection + ordering. These two were reachable ONLY from the Inbox side panel, so a
           user who went to Settings → Inbox (the canonical home for every other inbox setting)
-          could not turn poll sources on, and could not find the ranking switch at all. */}
+          could not turn the drop folder on, and could not find the ranking switch at all. */}
       <Section title="Collection" hint="What the inbox gathers, and how it is ordered.">
-        <Row label="Poll message sources"
-          hint="Collect messages from connected poll sources (filesystem drops; channel apps). Agents can always post here directly.">
-          <Toggle on={!!sourcesOn} onChange={setSources} label="Poll message sources" disabled={sourcesOn === null} />
+        <Row label="Poll the drop folder"
+          hint="Collect the messages a program on this machine drops as JSON files in the inbox's incoming folder. Off unless you use one: anything that can write to this machine can drop a file there. Inbox apps you install (Mail Inbox, Slack) are collected while they are enabled, and agents can always post here directly.">
+          <Toggle on={!!sourcesOn} onChange={setSources} label="Poll the drop folder" disabled={sourcesOn === null} />
         </Row>
         <Row label="Engagement ranking"
           hint="Rank the inbox by how much you engage with each channel/sender (favorites, opens, replies boost; dismisses lower) on top of recency. Off = pure newest-first.">

@@ -372,7 +372,8 @@ class TestMarker:
 
     def test_no_new_run_status_member_was_added(self) -> None:
         """The queue is a marker, not a state. A new `RunStatus` member would be a
-        state-machine change with a frontend status union and badge `Record` to match."""
+        state-machine change with a frontend status union and badge `Record` to match —
+        `declined` (a person refused an approval) is one such change, made on purpose."""
         assert {s.value for s in RunStatus} == {
             "draft",
             "running",
@@ -382,6 +383,7 @@ class TestMarker:
             "failed",
             "cancelled",
             "escalated",
+            "declined",
         }
 
 

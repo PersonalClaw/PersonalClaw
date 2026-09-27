@@ -6,6 +6,12 @@
     "type": "bool"
   },
   {
+    "default": "",
+    "path": "agent.approval_channel",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": "auto",
     "path": "agent.approval_mode",
     "sensitive": false,

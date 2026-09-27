@@ -290,9 +290,10 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     in the app's own dir. The scanner has already vetted the staged content
     before this ever runs (install gate); a hook that errors aborts the op.
 
-    The hook's environment names the app packages on ``PYTHONPATH``
+    The hook's environment is the child allowlist with the app packages on ``PYTHONPATH``
     (``app_python.app_packages_env``), so a hook that runs Python can import what the app
-    declared — the dependency step runs before ``onInstall``/``onUpdate`` for that.
+    declared — the dependency step runs before ``onInstall``/``onUpdate`` for that — and never
+    sees the secrets the gateway holds in its own environment.
     """
     if not cmd.strip():
         return

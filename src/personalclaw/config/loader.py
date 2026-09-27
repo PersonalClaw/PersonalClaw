@@ -517,6 +517,13 @@ def _approval_minutes(raw: object) -> int:
     return min(raw, APPROVAL_TIMEOUT_MINUTES_MAX)
 
 
+def _approval_channel(raw: object) -> str:
+    """``agent.approval_channel`` as ``load()`` reads it: the channel's name, trimmed, or ``""``
+    (the default order) for anything that is not a string. A name no connected channel answers to
+    is kept as written, so Settings can show it as not connected rather than as the default."""
+    return raw.strip() if isinstance(raw, str) else ""
+
+
 @dataclass
 class SelfQaConfig:
     """Self-QA Companion settings (SELF-VERIFICATION §3) — the commit-watch QA loop.
@@ -605,6 +612,24 @@ class AgentConfig:
             "How long a tool approval waits for your answer before it is denied. An approval a "
             "subagent or workflow step asks for also ends when that work's own time limit does. "
             "Unattended runs never wait: no one is there to ask, so they are denied at once.",
+        ),
+    )
+    #: Which chat channel asks you to approve a tool call ("Send approvals to") when the chat
+    #: asking did not start on a channel: a chat that did is asked there first, since the person
+    #: asking is there. Empty asks the first connected channel that knows you, in name order,
+    #: which is all there was before an owner with several channels paired could choose. A
+    #: channel's name asks only there: when it cannot reach you the approval waits in
+    #: PersonalClaw, and no other channel is asked.
+    approval_channel: str = field(
+        default="",
+        metadata=_meta(
+            "Send Approvals To",
+            "Where a tool approval asks you when its chat did not start on a channel (a chat in "
+            "PersonalClaw, an unattended run, a trigger), by the channel's name (telegram, "
+            "discord, email, slack). A chat that started on a channel is asked there first. "
+            "Empty asks the first connected channel that knows you, in name order. A named "
+            "channel asks only there; when it cannot reach you, the approval waits in "
+            "PersonalClaw.",
         ),
     )
     acp_concurrent_sessions: bool = field(
@@ -2669,9 +2694,16 @@ class RoomsConfig:
 class InboxConfig:
     """Inbox — reads your messages, drafts replies, presents for approval."""
 
+    #: The built-in drop folder's switch (``inbox_providers.source_catalog``). An installed inbox
+    #: app (Mail Inbox, Slack) is polled while its app is enabled, whatever this says.
     enabled: bool = field(
         default=False,
-        metadata=_meta("Enabled", "Enable Inbox background polling."),
+        metadata=_meta(
+            "Poll the Drop Folder",
+            "Collect the messages a program on this machine drops as JSON files in "
+            "inbox/incoming/. Off by default, since anything that can write to this machine can "
+            "drop one there. Installed inbox apps are polled while they are enabled.",
+        ),
     )
     user_id: str = field(
         default="",
@@ -4039,6 +4071,7 @@ class AppConfig:
                 approval_timeout_minutes=_approval_minutes(
                     agent_data.get("approval_timeout_minutes")
                 ),
+                approval_channel=_approval_channel(agent_data.get("approval_channel")),
                 acp_concurrent_sessions=agent_data.get("acp_concurrent_sessions", False),
                 # Defaults ON: caching is semantically
                 # transparent — the model sees the same tokens either way and every

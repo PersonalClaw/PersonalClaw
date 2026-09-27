@@ -518,7 +518,7 @@ def test_get_knowledge_embedder_none_safe(monkeypatch):
     import personalclaw.knowledge as kn
 
     monkeypatch.setattr(kn, "_embedder", None, raising=False)
-    monkeypatch.setattr(kn, "_embedder_spec", object(), raising=False)  # force rebuild
+    monkeypatch.setattr(kn, "_embedder_basis", object(), raising=False)  # force rebuild
     monkeypatch.setattr(
         "personalclaw.embedding_providers.registry._active_embedding_spec",
         lambda: ("native", "all-MiniLM-L6-v2"),
@@ -537,7 +537,7 @@ def test_get_knowledge_embedder_rebuilds_on_model_switch(monkeypatch):
     import personalclaw.knowledge as kn
 
     monkeypatch.setattr(kn, "_embedder", None, raising=False)
-    monkeypatch.setattr(kn, "_embedder_spec", False, raising=False)
+    monkeypatch.setattr(kn, "_embedder_basis", False, raising=False)
 
     spec = {"v": ("native", "model-a")}
     monkeypatch.setattr(

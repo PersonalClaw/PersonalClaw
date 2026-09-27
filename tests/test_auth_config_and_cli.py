@@ -206,12 +206,15 @@ def test_config_duration_is_capped() -> None:
     assert parse_config_duration("99999d", default_secs=1) == MAX_SESSION_TTL_SECS
 
 
-def test_the_token_duration_parser_is_unchanged() -> None:
-    """`parse_duration` serves `--ttl`, where an unknown unit must stay a hard error."""
+def test_the_token_duration_parser_reads_the_one_lifetime_grammar() -> None:
+    """`parse_duration` serves `--ttl`, where an unknown unit must stay a hard error. Days are
+    part of the one lifetime grammar now, so `--ttl 90d` means what it says."""
     from personalclaw.dashboard.token_auth import parse_duration
 
-    assert parse_duration("30d") is None  # deliberately still rejected here
+    assert parse_duration("30d") == 30 * 86400
     assert parse_duration("12h") == 12 * 3600
+    assert parse_duration("10y") is None
+    assert parse_duration("12") is None
 
 
 # ── The CLI ───────────────────────────────────────────────────────────────

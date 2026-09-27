@@ -11,12 +11,12 @@ import { join } from 'node:path'
 //
 // Two config flags existed ONLY in the side panel:
 //
-//     inbox.enabled                        "Poll message sources"
+//     inbox.enabled                        "Poll the drop folder" (then "Poll message sources")
 //     inbox.engagement_ranking_enabled     "Engagement ranking"
 //
 // Both are real, consumed flags — `handlers_inbox.py` gates the ranking blend on the second
 // ("GATED behind inbox.engagement_ranking_enabled"), and 7 + 3 backend references respectively.
-// So a user who went to Settings → Inbox looking for them could not turn poll collection on and
+// So a user who went to Settings → Inbox looking for them could not turn the drop folder on and
 // could not find the ranking switch at all. Verified live after the fix: both toggles render on
 // #/settings/inbox, and a real click on "Engagement ranking" issues
 // `PATCH /api/config/personalclaw {"path":"inbox.engagement_ranking_enabled","value":true}` and

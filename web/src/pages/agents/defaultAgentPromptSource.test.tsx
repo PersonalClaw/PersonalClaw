@@ -54,7 +54,7 @@ beforeEach(() => {
   agentMetadata.mockReset().mockResolvedValue({ value: '', revision: 'r0' })
   routingStatus.mockReset().mockResolvedValue({ enabled: true, muted: [], dismissals: {} })
   mcpActive.mockReset().mockResolvedValue([])
-  agentHooks.mockReset().mockResolvedValue({})
+  agentHooks.mockReset().mockResolvedValue({ hooks: {}, waiting: [] })
 })
 
 describe('the default agent says where its prompt comes from', () => {

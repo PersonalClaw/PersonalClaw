@@ -41,7 +41,7 @@ function mockApi(muted: string[]) {
         routingUnmute: (agent: string) => { unmuted.push(agent); return Promise.resolve({ ok: true, agent }) },
         agentMetadata: () => Promise.resolve({ value: '', revision: 'r0' }),
         mcpActive: () => Promise.resolve([]),
-        agentHooks: () => Promise.resolve([]),
+        agentHooks: () => Promise.resolve({ hooks: {}, waiting: [] }),
         modelsActive: () => Promise.resolve({ chat: [] }),
       },
     }

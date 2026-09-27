@@ -40,7 +40,16 @@ the Self-QA watch and a logged decision's review card. None of them takes an act
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
+
+
+class Question(NamedTuple):
+    """What saving a trigger needs the owner to allow, as the owner is asked it: the providers,
+    the sentence they agree to (:func:`consent`) and the dialog's heading (:func:`title`)."""
+
+    providers: list[str]
+    sentence: str
+    title: str
 
 
 def missing(trigger: Any) -> list[str]:
@@ -98,7 +107,12 @@ def _uses(providers: list[str]) -> str:
 
 
 def _name(trigger: Any) -> str:
-    return str(getattr(trigger, "name", "") or getattr(trigger, "id", "") or "this trigger")
+    """The trigger as these sentences name it: its name masked the way the Automations page shows
+    it (`security.redact_for_display`), since a consent dialog or a refusal is a read of it too."""
+    from personalclaw.security import redact_for_display
+
+    name = str(getattr(trigger, "name", "") or getattr(trigger, "id", "") or "this trigger")
+    return redact_for_display(name)
 
 
 def _runs(trigger: Any, provider: str) -> dict[str, Any] | None:
@@ -168,8 +182,8 @@ def narrow(trigger: Any, before: Any) -> list[str]:
     return changed
 
 
-def question(candidate: Any, *, before: Any = None) -> tuple[list[str], str] | None:
-    """What saving `candidate` needs the owner to allow — ``(providers, sentence)`` — or None.
+def question(candidate: Any, *, before: Any = None) -> Question | None:
+    """What saving `candidate` needs the owner to allow (:class:`Question`), or None.
 
     The one grant question every owner surface asks: the create dialog, the editor and the CLI.
     `before` is the row as stored, None for a new one. The candidate is narrowed against it first
@@ -181,8 +195,38 @@ def question(candidate: Any, *, before: Any = None) -> tuple[list[str], str] | N
     if not need:
         return None
     if before is None:
-        return need, consent(candidate, need, creating=True)
-    return need, consent(candidate, need, saving=True, changed=changed)
+        return Question(
+            need, consent(candidate, need, creating=True), title(candidate, need, creating=True)
+        )
+    return Question(
+        need,
+        consent(candidate, need, saving=True, changed=changed),
+        title(candidate, need, saving=True, changed=changed),
+    )
+
+
+def title(
+    trigger: Any,
+    providers: list[str],
+    *,
+    creating: bool = False,
+    saving: bool = False,
+    changed: list[str] | tuple[str, ...] = (),
+) -> str:
+    """The consent dialog's heading for the question :func:`consent` words, with the same
+    arguments. It names what is being allowed; "Loosen a security setting?" is the heading of a
+    loosened posture alone (`config.edit_spec.LOOSEN_TITLE`)."""
+    from personalclaw.triggers.legacy_import import IMPORTED_BY
+
+    if creating:
+        return "Allow what this trigger runs?"
+    if saving:
+        if changed and set(providers) <= set(changed):
+            return "Allow the changed action?"
+        return "Allow the new action?"
+    if getattr(trigger, "created_by", "") == IMPORTED_BY:
+        return "Allow a trigger from an older version?"
+    return "Allow this trigger to run?"
 
 
 def consent(

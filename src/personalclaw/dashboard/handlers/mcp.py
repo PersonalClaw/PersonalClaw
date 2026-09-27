@@ -16,7 +16,14 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    MaskConflict,
+    keep_masked_spans,
+    keep_masked_values,
+    redact_credentials,
+    redact_exfiltration_urls,
+    redact_for_display,
+)
 from personalclaw.sel import sel
 from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
@@ -357,13 +364,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
         d["enabled"] = not is_disabled
         if is_disabled:
             d["status"] = "disabled"
-        d = as_agents_see_it(_with_sign_in(d, s))
-        err = d.get("error")
-        if err:
-            err, _ = redact_credentials(err)
-            err, _ = redact_exfiltration_urls(err)
-            d["error"] = err
-        result.append(d)
+        result.append(as_agents_see_it(_with_sign_in(d, s)))
     return web.json_response(result)
 
 
@@ -845,7 +846,9 @@ def _definition_view(name: str, spec: dict[str, Any]) -> dict[str, Any]:
             "name": name,
             "editable": True,
             "transport": transport,
-            "url": str(spec.get("url") or ""),
+            # Masked: a URL can carry a token (`?token=…`), which is why the list withholds it
+            # (`MCPServerInfo.to_dict`). A save restores it (`_keep_masked_definition`).
+            "url": redact_for_display(str(spec.get("url") or "")),
             "headers": mcp_headers_view(spec),
         }
     args = spec.get("args")
@@ -853,10 +856,31 @@ def _definition_view(name: str, spec: dict[str, Any]) -> dict[str, Any]:
         "name": name,
         "editable": True,
         "transport": transport,
-        "command": spec.get("command", ""),
-        "args": [str(a) for a in args] if isinstance(args, list) else [],
+        # Masked like the URL: a command and its arguments can carry a token (`--api-key …`).
+        "command": redact_for_display(str(spec.get("command") or "")),
+        "args": [redact_for_display(str(a)) for a in args] if isinstance(args, list) else [],
         "env": mcp_env_view(spec),
     }
+
+
+def _keep_masked_definition(body: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
+    """*body* with each marker the edit form echoes back restored from the saved definition.
+
+    The form is seeded from :func:`_definition_view`, which masks a server's command, arguments
+    and URL, and it sends all three back, so each would be saved as the marker. Restored before
+    the request is parsed, which judges the URL and the command as they will be saved.
+    """
+    out = dict(body)
+    if isinstance(out.get("command"), str):
+        out["command"] = keep_masked_spans(out["command"], str(stored.get("command") or ""))
+    if isinstance(out.get("args"), list):
+        saved = stored.get("args")
+        out["args"] = keep_masked_values(
+            out["args"], [str(a) for a in saved] if isinstance(saved, list) else []
+        )
+    if isinstance(out.get("url"), str):
+        out["url"] = keep_masked_spans(out["url"], str(stored.get("url") or ""))
+    return out
 
 
 def _has_saved_value(value: Any) -> bool:
@@ -1222,13 +1246,21 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             message=f"transport must be one of {', '.join(MCP_TRANSPORTS)}",
             status=400,
         )
-    requested = _stdio_request(body) if transport == "stdio" else _remote_request(body)
-    if isinstance(requested, web.Response):
-        return requested
-
     # Write to ~/.personalclaw/mcp.json — the PersonalClaw scope the native MCP
     # client actually spawns + lists tools from (mcp_client._personalclaw_mcp_specs).
     async with _get_mcp_lock():
+        # The saved copy: what each marker the form echoes back is restored from, and what the
+        # revision check below compares. Read under this lock with no `await` before the write,
+        # so a marker keeps the value saved now, and restored before the request is parsed, which
+        # judges the URL and the command as they will be saved.
+        configured = _definition_of(name)
+        try:
+            body = _keep_masked_definition(body, configured or {})
+        except MaskConflict as exc:
+            return json_error("mask_conflict", message=str(exc), status=409)
+        requested = _stdio_request(body) if transport == "stdio" else _remote_request(body)
+        if isinstance(requested, web.Response):
+            return requested
         # `_load_json_for_update`, not `_load_json_or_empty`: an mcp.json that exists but cannot be
         # read would otherwise load as `{}` and be written back holding ONLY this one server,
         # erasing every MCP server the user had configured. Raising surfaces it as a failed request
@@ -1237,7 +1269,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         servers = data.setdefault("mcpServers", {})
         existing = servers.get(name)
         if not isinstance(existing, dict):
-            existing = _definition_of(name) or {}
+            existing = configured or {}
         reason = _not_editable_reason(name, {"type": transport})
         if reason is not None:
             return json_error("mcp_server_not_editable", message=reason, status=409)
@@ -1247,7 +1279,6 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         # GET takes it, under this lock and with no `await` before the write. A name nobody has
         # configured is an add, which replaces nothing; a revision for one is a form whose server
         # was removed after it read it.
-        configured = _definition_of(name)
         if configured is not None or claimed_revision(request):
             current = _definition_view(name, configured) if configured is not None else None
             stale = stale_write_refusal(request, current, what=f"the MCP server {name!r}")

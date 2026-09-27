@@ -24,6 +24,7 @@ package instead means an upgrade ships new templates with no reconciliation at a
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from functools import lru_cache
@@ -133,13 +134,23 @@ def _read_cached(name: str, mtime_ns: int) -> WorkflowDef | None:
 
 
 def read_template(name: str) -> WorkflowDef | None:
-    """Load one bundled template with macros expanded, or None if it cannot be used."""
+    """Load one bundled template with macros expanded, or None if it cannot be used.
+
+    Every caller gets its OWN copy (ledger 294). The cache holds one parsed definition per
+    template, and handing that object out let any caller edit the library for every later one: a
+    test that rewrote one node's argument in place (`test_workflows_bundled`'s mutation control)
+    made `rich-ingest` fail validation for whichever test read it next on the same worker, and a
+    product caller that edited what it read would have done the same to every run started after.
+    A copy costs a deep copy of one spec; the parse and the macro expansion it saves are the
+    expensive part, and they stay cached.
+    """
     path = bundled_root() / name / DEF_FILE
     try:
         mtime_ns = path.stat().st_mtime_ns
     except OSError:
         return None
-    return _read_cached(name, mtime_ns)
+    cached = _read_cached(name, mtime_ns)
+    return copy.deepcopy(cached) if cached is not None else None
 
 
 def register_bundled_provider() -> None:

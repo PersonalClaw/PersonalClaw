@@ -156,7 +156,7 @@ def test_a_loop_with_no_ledger_counts_zero() -> None:
     would resurrect exactly what the sweep just deleted.
     """
     assert loop_files.cycles_completed("deadbeef") == 0
-    root = loop_files._loops_root()
+    root = loop_files.loops_root()
     assert not (root / "deadbeef").exists(), "reading a count created the loop's dir"
 
 
@@ -164,7 +164,7 @@ def test_the_orphan_reap_still_sees_a_backed_dir() -> None:
     """`reap_orphan_dirs` reads `list_all()`, which no longer carries a cycle count. Pin that the
     sweep still spares a dir with a row and still takes one without."""
     loop = _loop_with_cycles(2)
-    root = loop_files._loops_root()
+    root = loop_files.loops_root()
     (root / "beefcafe").mkdir(parents=True, exist_ok=True)
 
     assert loop_files.reap_orphan_dirs() == 1, "the sweep stopped reaping an unbacked dir"

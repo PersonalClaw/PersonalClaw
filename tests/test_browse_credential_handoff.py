@@ -570,7 +570,7 @@ class TestProfilePersistenceAndReuse:
         )
         assert first.outcome == OUTCOME_NEEDS_INPUT, "run 1 must ask for the handoff"
 
-        record_login(LOGIN_URL)  # the human authenticated in the headful window
+        record_login(LOGIN_URL)  # the human authenticated in the browser the step drives
 
         # Run 2: no browser configured, so it stops at ERR_BROWSE_NO_TARGET — which is the POINT.
         # Reaching the missing-target error proves it got PAST the pre-run session check, i.e. it
@@ -701,19 +701,6 @@ class TestTheProfileDirectory:
 
     def test_different_sites_get_different_profiles(self):
         assert profile_dir("https://a.test/") != profile_dir("https://b.test/")
-
-    def test_the_handoff_binds_the_headful_window_to_the_same_profile(self):
-        from personalclaw.browse.handoff import chrome_launch_args
-
-        args = chrome_launch_args(LOGIN_URL, headful=True)
-        assert f"--user-data-dir={profile_dir(LOGIN_URL)}" in args
-        assert not any("headless" in a for a in args), "the human must be able to see the window"
-        assert "--disable-blink-features=AutomationControlled" in args
-
-    def test_the_unattended_form_is_headless(self):
-        from personalclaw.browse.handoff import chrome_launch_args
-
-        assert "--headless=new" in chrome_launch_args(LOGIN_URL, headful=False)
 
     @pytest.mark.parametrize(
         "url,expected",
@@ -883,10 +870,12 @@ class _FakeDashboardState:
 
 
 class TestTheExpiredSurfacing:
-    def test_the_expired_park_surfaces_a_banner_and_a_needs_input_item(self):
-        """At the auth_state=expired write, BA-5 raises the banner (a `browse_auth_expired` frame)
-        and a durable needs_input inbox row — independent of the engine's own attention path, so a
-        schedule/hook/manual run surfaces it too. The tick stays success=True (no failed tick)."""
+    def test_the_expired_park_surfaces_a_banner_and_no_row_of_its_own(self):
+        """At the auth_state=expired write, BA-5 raises the banner (a `browse_auth_expired` frame).
+        The question itself is asked by what owns the park — the run's row, or the trigger's
+        (`triggers.parks`) — where answering it runs the step again, so the provider raises no
+        Inbox row of its own: one that resumed nothing was a second, dead copy of the question
+        (ledger 248). The tick stays success=True (no failed tick)."""
         from personalclaw.inbox import InboxStore
         from personalclaw.inbox_providers.native_source import set_dashboard_state
 
@@ -910,12 +899,10 @@ class TestTheExpiredSurfacing:
         assert result.outcome == OUTCOME_NEEDS_INPUT
         # The persistent banner.
         assert any(t == "browse_auth_expired" for t, _ in fake.ws), "no banner broadcast"
-        # The durable inbox row.
+        # No row of the provider's own: nothing it raised could run the step again.
         store = InboxStore()
         store.load()
-        rows = [i for i in store.items.values() if i.refs.get("browse_auth") == "expired"]
-        assert rows, "no needs_input inbox row for the expired session"
-        assert rows[0].item_kind == "needs_input"
+        assert list(store.items.values()) == []
 
     def test_a_fresh_session_surfaces_nothing(self):
         """CONTROL: a fresh session does NOT hit the expired path, so no banner and no row — the

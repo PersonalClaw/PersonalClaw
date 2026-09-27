@@ -383,10 +383,12 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
     moved on, would report on something recall does not use — in either direction. It never
     touches a live handle beyond reading its id list, so no embed_fn is wired as a side effect.
 
-    Missing rows split two ways because their remedies differ: ``missing`` rows are at the width
-    the current model produces and a rebuild indexes them; ``other_model`` rows were embedded by
-    a different model and only a re-embed can make them searchable. A deleted row still in the
-    index is not counted — search skips it.
+    Missing rows split two ways because their remedies differ: ``missing`` rows are the bound
+    model's at the width it produces and a rebuild indexes them; ``other_model`` rows were
+    embedded by a different model (each vector records its model; one with none recorded is
+    another model's once a model is bound) or at another width, and only a re-embed can make them
+    searchable. With no model bound, only the width tells. A deleted row still in the index is
+    not counted — search skips it.
 
     Shared by the ``memory.store`` probe and its Fix preview, so the row and the Fix cannot
     disagree about what is broken.
@@ -403,8 +405,12 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
     try:
         ev["journal_mode"] = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
         ev["integrity"] = str(conn.execute("PRAGMA integrity_check(1)").fetchone()[0])
+        # Read-only, so a database the store has not migrated yet has no model column to read:
+        # every vector in it is one with no model recorded.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(episodic_memories)").fetchall()}
+        model_col = "embedding_model" if "embedding_model" in cols else "NULL"
         rows = conn.execute(
-            "SELECT id, length(embedding) FROM episodic_memories "
+            f"SELECT id, length(embedding), {model_col} FROM episodic_memories "  # noqa: S608
             "WHERE is_deleted=0 AND embedding IS NOT NULL ORDER BY created_at, id"
         ).fetchall()
     finally:
@@ -422,11 +428,22 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
             ids = []
         indexed = set(ids) if isinstance(ids, list) else set()
         ev["index_source"] = "file"
-    current = rows[-1][1] if rows else 0  # the newest row's byte width: the model bound now
+    from personalclaw.embedding_providers.registry import bound_embedding
+
+    # The model recall compares under: the one bound now, or with none bound the vectors that
+    # name no model (the store's own rule, `VectorMemoryStore._comparison_space`).
+    bound = bound_embedding().ref()
+    space = bound or ""
+    ours = [r for r in rows if (r[2] or "") == space]
+    current = ours[-1][1] if ours else 0  # its newest vector's byte width: its width now
     ev["faiss_ids"] = sum(1 for r in rows if r[0] in indexed)
-    ev["missing"] = sum(1 for r in rows if r[1] == current and r[0] not in indexed)
-    ev["other_model"] = sum(1 for r in rows if r[1] != current)
+    ev["missing"] = sum(1 for r in ours if r[1] == current and r[0] not in indexed)
+    other = sum(1 for r in ours if r[1] != current)
+    if bound is not None:
+        other += len(rows) - len(ours)
+    ev["other_model"] = other
     ev["dim"] = current // 4
+    ev["embedding_model"] = space
     return ev
 
 
@@ -1511,6 +1528,38 @@ async def _probe_credentials_file(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_session_lifetime(_ctx: DoctorContext) -> ProbeResult:
+    """security — does ``auth.session_ttl`` ask for longer than the 90-day limit? (ledger 285)
+
+    A sign-in lasts at most 90 days, the most a long-lived credential may live. A WRITE of a
+    longer value is refused; a config file that already says longer is applied as 90 days
+    instead, because a hand-edited file must never brick the box. So the file says one lifetime
+    and every sign-in lasts another — a WARN on this card, and nothing else, until it is fixed.
+    The same report ``personalclaw doctor`` prints (``lifetimes.session_lifetime_report``).
+    """
+    from personalclaw.auth.lifetimes import exact_words, session_lifetime_report
+
+    def _configured() -> str:
+        try:
+            return str(config_loader.AppConfig.load().auth.session_ttl or "")
+        except Exception:  # noqa: BLE001 — an unreadable config gets the default, as sign-ins do
+            return ""
+
+    report = session_lifetime_report(await asyncio.to_thread(_configured))
+    evidence = {
+        "configured": report.configured,
+        "applied_secs": report.applied_secs,
+        "limit_secs": report.limit_secs,
+    }
+    if report.over_limit:
+        return ProbeResult(ok=False, detail=report.warning, evidence=evidence, remedy=report.remedy)
+    return ProbeResult(
+        ok=True,
+        detail=f"a sign-in lasts {exact_words(report.applied_secs)}, within the 90-day limit",
+        evidence=evidence,
+    )
+
+
 async def _probe_legacy_trigger_files(ctx: DoctorContext) -> ProbeResult:
     """automations — is a legacy automation file back after this home imported it?
 
@@ -2195,6 +2244,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_credentials_file,
             "credentials.json moved into the credential store",
+        )
+    )
+    register_probe(
+        Probe(
+            "security.session_lifetime",
+            "security",
+            Tier.CAPABILITY,
+            _probe_session_lifetime,
+            "Sign-ins last no longer than the 90-day limit",
         )
     )
     register_probe(

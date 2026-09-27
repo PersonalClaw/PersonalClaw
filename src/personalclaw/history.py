@@ -20,15 +20,20 @@ than the session, and that it is a leftover of an earlier version (#464).
 
 import asyncio
 import hashlib
+import itertools
 import json
 import logging
 import math
 import os
 import re
+import threading
 import time as _time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
@@ -240,8 +245,8 @@ def import_conversation(
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps(message) for message in messages]
     # The count the chat list shows, with the bytes of the lines it counts, as the dashboard's
-    # save records them (`ConversationLog._message_count`): without them, listing a history of
-    # imported chats read every line of every one.
+    # save records them (`_recorded_count`): without them, listing a history of imported chats
+    # read every line of every one.
     head = {
         "_type": "metadata",
         **metadata,
@@ -254,20 +259,225 @@ def import_conversation(
     return path
 
 
-def _count_message_lines(lines) -> int:
-    """How many of *lines* (bytes) :meth:`ConversationLog._read_messages` reads as messages."""
-    count = 0
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+# ── What the chat list reads of each transcript ──
+
+#: How many of a transcript's first lines the title fallback looks through for a first prompt.
+_TITLE_SCAN_LINES = 21
+
+
+@dataclass(frozen=True)
+class _Head:
+    """What the chat list reads of one transcript: its metadata line, how many messages it holds,
+    and — when the metadata names no title — its first prompt.
+
+    ``meta`` is the metadata line (empty when the first line is not one) and ``head_bytes`` that
+    line's length. A head read for its metadata alone (:meth:`ConversationLog.get_metadata`) is
+    not ``complete``: ``messages`` and ``first_prompt`` are ``None`` until a listing reads them.
+    """
+
+    meta: Mapping[str, Any]
+    head_bytes: int
+    messages: int | None
+    first_prompt: str | None
+    complete: bool
+
+
+def _metadata_line(first: bytes) -> dict:
+    """The metadata a transcript's first line holds, or ``{}`` when it is not a metadata line."""
+    if not first.strip():
+        return {}
+    try:
+        data = json.loads(first)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) and data.get("_type") == "metadata" else {}
+
+
+def _prompt_of(data: object) -> str:
+    """A message line's text when it is the user's, as the title fallback takes it."""
+    if isinstance(data, dict) and data.get("role") == "user":
+        content = data.get("content")
+        if isinstance(content, str) and content:
+            return content[:80]
+    return ""
+
+
+def _recorded_count(meta: Mapping[str, Any], message_bytes: int) -> int | None:
+    """The message count the metadata records, while the file still holds exactly the message
+    bytes it was recorded with — the dashboard's save and the import both record them. A writer
+    that appended since (a channel app's ``append``) changed those bytes: ``None``, count them."""
+    recorded, recorded_bytes = meta.get("message_count"), meta.get("message_bytes")
+    if type(recorded) is int and type(recorded_bytes) is int and recorded_bytes == message_bytes:
+        return recorded
+    return None
+
+
+def _read_head(path: Path, size: int, *, listing: bool) -> _Head | None:
+    """Read what the chat list needs of one transcript in ONE open: the metadata line and, for a
+    ``listing``, the message count and title fallback too. ``None`` when it cannot be read.
+
+    The count is read from the metadata when it records one (:func:`_recorded_count`), and
+    counted otherwise; the title fallback is the first user message in the first
+    :data:`_TITLE_SCAN_LINES` lines, for a transcript whose metadata names no title.
+    """
+    try:
+        with open(path, "rb") as f:
+            first = f.readline()
+            meta = _metadata_line(first)
+            if not listing:
+                return _Head(MappingProxyType(meta), len(first), None, None, False)
+            recorded = _recorded_count(meta, size - len(first))
+            need_title = not meta.get("title")
+            counted, prompt = 0, ""
+            if recorded is None or need_title:
+                for number, raw in enumerate(itertools.chain([first], f)):
+                    if number == 0 and meta:
+                        continue  # the metadata line itself
+                    if recorded is not None and (prompt or number >= _TITLE_SCAN_LINES):
+                        break
+                    message = _message_line(raw)
+                    if message is None:
+                        continue
+                    counted += 1
+                    if need_title and not prompt and number < _TITLE_SCAN_LINES:
+                        prompt = _prompt_of(message)
+    except OSError:
+        return None
+    messages = recorded if recorded is not None else counted
+    return _Head(MappingProxyType(meta), len(first), messages, prompt, True)
+
+
+def _message_line(raw: bytes) -> dict | None:
+    """A transcript line as :meth:`ConversationLog._read_messages` reads it: a message, or
+    ``None`` for a blank, unparsable or metadata line."""
+    if not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("_type") == "metadata":
+        return None
+    return data
+
+
+def _signature(stat: os.stat_result) -> tuple[int, int, int]:
+    """What changes when a transcript does: every write replaces it (a new inode) or grows it."""
+    return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+class _TranscriptHeads:
+    """Each transcript's :class:`_Head`, kept for as long as the file is unchanged.
+
+    ONE store for every :class:`ConversationLog` in the process — the dashboard's, the search
+    index's, a script's — so a log made after another lists without opening a transcript again.
+    Two logs each keeping their own had every new one read all of them: 24,000 opens to list
+    12,005 chats, which the search index's pass paid every five minutes (measured). Keyed by the
+    file's path and valid for its :func:`_signature`; it holds metadata lines, never a message.
+    """
+
+    #: A bound far past any real history: cleared whole when crossed.
+    LIMIT = 200_000
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._kept: dict[str, tuple[tuple[int, int, int], _Head]] = {}
+
+    def get(self, path: str, signature: tuple[int, int, int]) -> _Head | None:
+        with self._lock:
+            kept = self._kept.get(path)
+        return kept[1] if kept is not None and kept[0] == signature else None
+
+    def keep(self, path: str, signature: tuple[int, int, int], head: _Head) -> None:
+        with self._lock:
+            if len(self._kept) >= self.LIMIT:
+                self._kept.clear()
+            self._kept[path] = (signature, head)
+
+    def drop(self, path: str) -> None:
+        with self._lock:
+            self._kept.pop(path, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._kept.clear()
+
+
+#: The process's transcript heads, shared by every conversation log.
+_HEADS = _TranscriptHeads()
+
+#: The home's chat list, as last listed: beside the ``sessions`` directory it describes.
+LISTING_FILE = "session_listing.json"
+_LISTING_VERSION = 1
+#: A listing that had to open this many transcripts writes the listing file back. A handful
+#: changed since (one chat's turn) costs the next process that many opens, not a rewrite of
+#: the whole file each time; a restart after a bulk change pays once and records it.
+_LISTING_REWRITE_OPENS = 32
+_LISTING_LOADED: set[str] = set()
+_LISTING_LOCK = threading.Lock()
+
+
+def _load_listing(sessions_dir: Path) -> None:
+    """Seed :data:`_HEADS` from the home's listing file, once per process.
+
+    A gateway that has just started has read no transcript yet, and listing 12,005 chats then
+    opened every one of them — 1.8 s on a machine whose security agent makes each open cost
+    85 µs (measured). Each entry is the head a listing read, with the signature of the file it
+    read it from, so it counts only while that file is unchanged; the file is derived and
+    disposable, and one that is missing, unreadable or of another version is ignored.
+    """
+    key = str(sessions_dir)
+    with _LISTING_LOCK:
+        if key in _LISTING_LOADED:
+            return
+        _LISTING_LOADED.add(key)
+    try:
+        payload = json.loads((sessions_dir.parent / LISTING_FILE).read_bytes())
+    except (OSError, ValueError):
+        return
+    if not isinstance(payload, dict) or payload.get("version") != _LISTING_VERSION:
+        return
+    heads = payload.get("heads")
+    if not isinstance(heads, dict):
+        return
+    for name, row in heads.items():
         try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
+            ino, size, mtime_ns, head_bytes, messages, first_prompt, meta = row
+        except (TypeError, ValueError):
             continue
-        if isinstance(data, dict) and data.get("_type") != "metadata":
-            count += 1
-    return count
+        if not (
+            isinstance(name, str)
+            and all(type(v) is int for v in (ino, size, mtime_ns, head_bytes))
+            and (messages is None or type(messages) is int)
+            and isinstance(first_prompt, str)
+            and isinstance(meta, dict)
+        ):
+            continue
+        path = os.path.join(key, name)
+        if _HEADS.get(path, (ino, size, mtime_ns)) is None:
+            head = _Head(MappingProxyType(meta), head_bytes, messages, first_prompt, True)
+            _HEADS.keep(path, (ino, size, mtime_ns), head)
+
+
+def _save_listing(sessions_dir: Path, heads: list[tuple[str, tuple[int, int, int], _Head]]) -> None:
+    """Write the home's listing file: each listed transcript's head, with its signature.
+
+    A restricted chat's head is left out — its metadata stays in its own transcript and nowhere
+    else — and costs the next process one open.
+    """
+    rows = {
+        name: [*signature, head.head_bytes, head.messages, head.first_prompt, dict(head.meta)]
+        for name, signature, head in heads
+        if head.complete and head.meta.get("memory_mode") not in ("incognito", "temporary")
+    }
+    payload = {"version": _LISTING_VERSION, "heads": rows}
+    try:
+        atomic_write(
+            sessions_dir.parent / LISTING_FILE,
+            json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
+        )
+    except OSError:
+        logger.debug("could not write the chat listing file", exc_info=True)
 
 
 def speaker_of(msg: dict) -> str:
@@ -288,12 +498,9 @@ class ConversationLog:
 
     def __init__(self, base_dir: Path | None = None):
         self._dir = base_dir or _sessions_dir()
-        # mtime-based message cache: key → (mtime, messages)
+        # mtime-based message cache: key → (mtime, messages). What a listing reads of each
+        # transcript is process-wide instead (`_HEADS`), so a new log lists for free.
         self._msg_cache: dict[str, tuple[float, list[dict]]] = {}
-        # mtime-based metadata cache: key → (mtime, metadata)
-        self._meta_cache: dict[str, tuple[float, dict]] = {}
-        # Message-count cache for `list_sessions`: key → ((mtime, size), count)
-        self._count_cache: dict[str, tuple[tuple[float, int], int | None]] = {}
 
     def init(self) -> None:
         """Create sessions directory if missing."""
@@ -453,143 +660,98 @@ class ConversationLog:
     def list_sessions(self) -> list[dict]:
         """Return metadata for all session files, newest first.
 
-        Deduplicates stacked ``dashboard_`` prefix files, keeping the
-        most recently modified version.  Uses mtime-based metadata cache
-        when available, falling back to reading only the first line for
-        title extraction.
+        Deduplicates stacked ``dashboard_`` prefix files, keeping the most recently modified
+        version. See :meth:`list_sessions_with_metadata`, which this is without the metadata.
         """
-        sessions: list[dict] = []
+        return [entry for entry, _meta in self.list_sessions_with_metadata()]
+
+    def list_sessions_with_metadata(self) -> list[tuple[dict, Mapping[str, Any]]]:
+        """Each session, newest first, with its metadata line (read-only): ``(entry, meta)``.
+
+        What it costs is one ``stat`` per transcript, and one open of each transcript that
+        changed since this PROCESS last read it (:data:`_HEADS`): the metadata line, which also
+        says how many messages the chat holds. Measured at 12,005 chats: listing opened every
+        transcript twice (24,110 opens, 2.1 s), and so did every new log — the search index's
+        pass paid it every five minutes — while ``get_metadata`` read each file whole.
+        """
         if not self._dir.exists():
-            return sessions
-        # Deduplicate stacked dashboard_ prefixes by canonical key, keeping newer
-        by_canon: dict[str, dict] = {}
-        for path in self._dir.glob("*.jsonl"):
+            return []
+        home = self.is_home_log()
+        if home:
+            _load_listing(self._dir)
+        by_canon: dict[str, tuple[dict, Mapping[str, Any]]] = {}
+        try:
+            with os.scandir(self._dir) as found:
+                entries = [item for item in found if item.name.endswith(".jsonl")]
+        except OSError:
+            return []
+        heads: list[tuple[str, tuple[int, int, int], _Head]] = []
+        opened = 0
+        for item in entries:
+            # Skip symlinks — these are handoff aliases pointing to the real session
+            if item.is_symlink():
+                continue
             try:
-                stat = path.stat()
+                if not item.is_file():
+                    continue
+                stat = item.stat()
             except OSError:
                 continue
-            # Skip symlinks — these are handoff aliases pointing to the real session
-            if path.is_symlink():
-                continue
-            key = path.stem
-            meta: dict = {
+            signature = _signature(stat)
+            kept = _HEADS.get(item.path, signature)
+            head = self._head(item.path, stat, listing=True)
+            if head is not None:
+                heads.append((item.name, signature, head))
+                opened += kept is not head
+            meta: Mapping[str, Any] = head.meta if head is not None else MappingProxyType({})
+            key = item.name[: -len(".jsonl")]
+            entry: dict = {
                 "key": key,
-                "messages": self._message_count(key, path, stat.st_mtime, stat.st_size),
+                "messages": head.messages if head is not None else None,
                 "modified": stat.st_mtime,
-                "created": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "created": meta.get("created_at")
+                or datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "memory_mode": meta.get("memory_mode", "persistent"),
+                "title": meta.get("title")
+                or (head.first_prompt if head is not None else "")
+                or key,
             }
-            # Try metadata cache first (populated by _read_metadata calls)
-            cached_meta = self._meta_cache.get(key)
-            if cached_meta and cached_meta[0] == stat.st_mtime:
-                d = cached_meta[1]
-                if d.get("created_at"):
-                    meta["created"] = d["created_at"]
-                if d.get("title"):
-                    meta["title"] = d["title"]
-                if d.get("agent"):
-                    meta["agent"] = d["agent"]
-                meta["memory_mode"] = d.get("memory_mode", "persistent")
-            else:
-                # Read only the first line for metadata
-                try:
-                    with open(path, encoding="utf-8") as f:
-                        first_line = f.readline().strip()
-                    if first_line:
-                        d = json.loads(first_line)
-                        if d.get("_type") == "metadata":
-                            if d.get("created_at"):
-                                meta["created"] = d["created_at"]
-                            if d.get("title"):
-                                meta["title"] = d["title"]
-                            if d.get("agent"):
-                                meta["agent"] = d["agent"]
-                            meta["memory_mode"] = d.get("memory_mode", "persistent")
-                            self._meta_cache[key] = (stat.st_mtime, d)
-                except Exception:
-                    pass
-            # Ensure memory_mode is always present (old sessions lack it)
-            meta.setdefault("memory_mode", "persistent")
-            # Extract first user message as title fallback
-            if "title" not in meta:
-                msg_cached = self._msg_cache.get(key)
-                if msg_cached and msg_cached[0] == stat.st_mtime:
-                    for m in msg_cached[1]:
-                        if m.get("role") == "user" and m.get("content"):
-                            meta["title"] = m["content"][:80]
-                            break
-                else:
-                    try:
-                        with open(path, encoding="utf-8") as f:
-                            for i, ln in enumerate(f):
-                                if i > 20:
-                                    break
-                                ln = ln.strip()
-                                if not ln:
-                                    continue
-                                try:
-                                    d = json.loads(ln)
-                                except json.JSONDecodeError:
-                                    continue
-                                if d.get("role") == "user" and d.get("content"):
-                                    meta["title"] = d["content"][:80]
-                                    break
-                    except Exception:
-                        pass
-            if "title" not in meta:
-                meta["title"] = key
+            if meta.get("agent"):
+                entry["agent"] = meta["agent"]
             # Deduplicate: keep newer entry per canonical key
             canon = self._canonical_key(key)
             existing = by_canon.get(canon)
-            if existing is None or stat.st_mtime >= existing["modified"]:
-                by_canon[canon] = meta
-        sessions = list(by_canon.values())
-        sessions.sort(key=lambda s: s.get("modified", 0), reverse=True)
-        return sessions
+            if existing is None or stat.st_mtime >= existing[0]["modified"]:
+                by_canon[canon] = (entry, meta)
+        if home and opened >= _LISTING_REWRITE_OPENS:
+            _save_listing(self._dir, heads)
+        listed = list(by_canon.values())
+        listed.sort(key=lambda pair: pair[0].get("modified", 0), reverse=True)
+        return listed
 
-    def _message_count(self, key: str, path: Path, mtime: float, size: int) -> int | None:
-        """How many messages *path* holds — the number its conversation serves when opened.
+    @staticmethod
+    def _head(path: str, stat: os.stat_result, *, listing: bool) -> _Head | None:
+        """*path*'s :class:`_Head`: the one this process kept while the file is unchanged, or read
+        now — for a ``listing``, completed with the message count and title fallback."""
+        signature = _signature(stat)
+        kept = _HEADS.get(path, signature)
+        if kept is not None:
+            if kept.complete or not listing:
+                return kept
+            # Read for its metadata alone: a recorded count and a title complete it unread.
+            recorded = _recorded_count(kept.meta, stat.st_size - kept.head_bytes)
+            if recorded is not None and kept.meta.get("title"):
+                completed = _Head(kept.meta, kept.head_bytes, recorded, "", True)
+                _HEADS.keep(path, signature, completed)
+                return completed
+        head = _read_head(Path(path), stat.st_size, listing=listing)
+        if head is not None:
+            _HEADS.keep(path, signature, head)
+        return head
 
-        Never a guess. This read ``size / 200`` for every chat not in memory, so after a
-        restart a five-message chat listed as "8 messages". The dashboard's save records the
-        real count in the metadata line, with the byte length of the message lines it
-        counted; while the file still has exactly that many bytes after its first line, the
-        recorded count stands. A writer that
-        appended since (a channel app's ``append``) changes those bytes, and the lines are
-        counted instead. Cached per (mtime, size), so a list
-        request re-reads only the files that changed. ``None`` — shown as no count — only
-        when the file cannot be read at all.
-        """
-        stamp = (mtime, size)
-        cached = self._count_cache.get(key)
-        if cached is not None and cached[0] == stamp:
-            return cached[1]
-        count: int | None
-        try:
-            with open(path, "rb") as f:
-                first = f.readline()
-                try:
-                    head = json.loads(first) if first.strip() else {}
-                except json.JSONDecodeError:
-                    head = {}
-                if not isinstance(head, dict) or head.get("_type") != "metadata":
-                    count = _count_message_lines([first]) + _count_message_lines(f)
-                else:
-                    recorded = head.get("message_count")
-                    recorded_bytes = head.get("message_bytes")
-                    if (
-                        type(recorded) is int
-                        and type(recorded_bytes) is int
-                        and size - len(first) == recorded_bytes
-                    ):
-                        count = recorded
-                    else:
-                        count = _count_message_lines(f)
-        except OSError:
-            count = None
-        self._count_cache[key] = (stamp, count)
-        return count
-
-    def search_sessions(self, query: str, limit: int = 50) -> list[dict]:
+    def search_sessions(
+        self, query: str, limit: int = 50, *, keys: "list[str] | None" = None
+    ) -> list[dict]:
         """Return session metadata for files whose message content matches *query*.
 
         Case-insensitive substring match over each message's ``content``
@@ -612,13 +774,20 @@ class ConversationLog:
         matches are dropped.  Ties break by recency (existing
         ``list_sessions`` order - newest first).  Caps results at *limit*.
         Only the ``_SEARCH_SCAN_WINDOW`` most recent files are scored, so
-        I/O stays bounded even with hundreds of sessions.
+        I/O stays bounded even with hundreds of sessions — unless *keys* names the sessions
+        to read, which reads exactly those (the chats a search index has not caught up with).
         """
         if not query or limit <= 0 or not self._dir.exists():
             return []
         needle = query.casefold()
         scored: list[tuple[float, int, dict]] = []  # (score, -rank, meta)
-        for rank, meta in enumerate(self.list_sessions()[:_SEARCH_SCAN_WINDOW]):
+        listed = self.list_sessions()
+        if keys is None:
+            listed = listed[:_SEARCH_SCAN_WINDOW]
+        else:
+            wanted = set(keys)
+            listed = [meta for meta in listed if meta["key"] in wanted]
+        for rank, meta in enumerate(listed):
             # Restricted (incognito/temporary) sessions promise to stay out of
             # history — they must not be discoverable through content search.
             # Both sources are consulted: the persisted mode survives a restart,
@@ -908,41 +1077,32 @@ class ConversationLog:
         return messages
 
     def _invalidate_cache(self, key: str) -> None:
-        """Invalidate caches for a key after a write operation."""
+        """Invalidate caches for a key after a write operation — and, for the home's own
+        transcripts, tell the search index to read it again."""
         self._msg_cache.pop(key, None)
-        self._meta_cache.pop(key, None)
-        self._count_cache.pop(_safe_key(key), None)
+        _HEADS.drop(str(self._path(key)))
+        if self.is_home_log():
+            from personalclaw import session_search
+
+            session_search.INDEXER.note_changed(_safe_key(key))
 
     def get_metadata(self, key: str) -> dict:
         """Return session metadata for *key*."""
         return self._read_metadata(key)
 
     def _read_metadata(self, key: str) -> dict:
-        """Read the metadata line (first line) from a session JSONL file.
+        """The metadata line (first line) of a session JSONL file, as a dict of the caller's own.
 
-        Uses mtime-based caching to avoid re-reading unchanged files.
+        Only the first line is read, once while the file is unchanged (:data:`_HEADS`). It read
+        the whole file to take its first line: 352 MB to answer this for 12,005 chats (measured).
         """
-        path = self._path(key)
-        if not path.exists():
-            self._meta_cache.pop(key, None)
-            return {}
+        path = str(self._path(key))
         try:
-            mtime = path.stat().st_mtime
+            stat = os.stat(path)
         except OSError:
             return {}
-        cached = self._meta_cache.get(key)
-        if cached and cached[0] == mtime:
-            return cached[1]
-        first = path.read_text(encoding="utf-8").split("\n", 1)[0].strip()
-        if not first:
-            return {}
-        try:
-            data = json.loads(first)
-            meta = data if data.get("_type") == "metadata" else {}
-        except json.JSONDecodeError:
-            meta = {}
-        self._meta_cache[key] = (mtime, meta)
-        return meta
+        head = self._head(path, stat, listing=False)
+        return dict(head.meta) if head is not None else {}
 
 
 # ── Module-level helpers for auto skill eligibility ──
@@ -1576,9 +1736,10 @@ class HistoryConsolidator:
             from personalclaw.learning import outcome_resolver
 
             rep = outcome_resolver.resolve(self._svc)
-            if rep.get("resolved") or rep.get("inconclusive"):
+            if rep.get("resolved") or rep.get("unscored") or rep.get("inconclusive"):
                 outcomes_note = (
-                    f"outcomes resolved={rep['resolved']} inconclusive={rep['inconclusive']}"
+                    f"outcomes resolved={rep['resolved']} unscored={rep['unscored']} "
+                    f"inconclusive={rep['inconclusive']}"
                 )
         except Exception:
             logger.debug("Outcome resolver failed", exc_info=True)

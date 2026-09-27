@@ -202,7 +202,8 @@ class _FakeMarketplace(SkillsMarketplace):
 
 
 def _drive_install(monkeypatch, capsys, tmp_path, files: list[dict[str, str]]) -> str:
-    """Run the real ``personalclaw skills install`` handler and return what it printed."""
+    """Run the real ``personalclaw skills install`` handler and return the refusal it printed:
+    on stderr, with exit status 1, because a refused install did not install anything."""
     registry = SkillsRegistry()
     registry.register("fake", _FakeMarketplace(files))
     monkeypatch.setattr(
@@ -210,16 +211,18 @@ def _drive_install(monkeypatch, capsys, tmp_path, files: list[dict[str, str]]) -
     )
     from personalclaw.cli import _handle_skills
 
-    _handle_skills(
-        Namespace(
-            skills_command="install",
-            id="suspect",
-            marketplace="fake",
-            target=str(tmp_path / "live"),
-            force=False,
+    with pytest.raises(SystemExit) as exited:
+        _handle_skills(
+            Namespace(
+                skills_command="install",
+                id="suspect",
+                marketplace="fake",
+                target=str(tmp_path / "live"),
+                force=False,
+            )
         )
-    )
-    return capsys.readouterr().out
+    assert exited.value.code == 1
+    return capsys.readouterr().err
 
 
 def _many_python_exec(n: int) -> list[dict[str, str]]:

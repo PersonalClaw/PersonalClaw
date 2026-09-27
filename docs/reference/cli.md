@@ -27,7 +27,7 @@ process everything else talks to.
 | `--no-crons` | Skip the cron scheduler — use when another instance handles cron execution. |
 | `--no-open` | Do not auto-open the dashboard URL in the browser on startup. |
 | `--port PORT` | Override the dashboard port — an integer, or `auto` for an OS-assigned ephemeral port. Falls back to config when omitted. |
-| `--json-ready` | Print one `PERSONALCLAW_READY:{...}` line (port, token, pid, home) once bound — for test harnesses. The token grants access for up to 20 hours; treat captured stdout as sensitive. |
+| `--json-ready` | Print one `PERSONALCLAW_READY:{...}` line (port, token, token_expires_in, token_expires_at, pid, home) once bound — for test harnesses. The token is an owner sign-in: send it as `Authorization: Bearer`, or open `/?token=` with it in a browser. It lasts as long as a browser sign-in (`auth.session_ttl`, 30 days by default); treat captured stdout as sensitive. |
 | `--approval {reads,yolo,interactive}` | Default tool-approval mode. `reads` auto-approves read-only tools; `yolo` auto-approves everything (refused unless `PERSONALCLAW_HOME` is explicitly non-default); `interactive` uses the prompt flow. |
 | `--test-mode` | Convenience bundle: `--port auto --no-open --json-ready --approval reads` (explicit `--port`/`--approval` win). |
 | `--seed FIXTURE` | Dev tool: populate `$PERSONALCLAW_HOME` from a named fixture (under `tests_fixtures/`) before starting. Refuses the main gateway home (`~/.personalclaw`) and non-empty targets. |
@@ -174,8 +174,8 @@ directories). No flags.
 | `personalclaw stop [--port]` | Stop a running gateway. |
 | `personalclaw restart [--port]` | Restart the gateway (service if installed, else foreground). |
 | `personalclaw logs [-f] [-n LINES]` | Show gateway logs (`-f` live tail; `-n` line count, default 100). Reads the systemd journal (Linux service), launchd stdout file (macOS), or the foreground log file. |
-| `personalclaw token [--port] [--ttl 20h]` | Print a dashboard access URL with a fresh auth token (`--ttl` e.g. `1h`, `30m`). |
-| `personalclaw logout [--port]` | Revoke all active dashboard sessions. |
+| `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`30m`, `20h`, `7d`; at most `90d`, the limit for a long-lived credential — longer is refused, with a sentence saying why), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
+| `personalclaw logout [--port]` | Sign every device and token out, everywhere. Each one's next request is told when and from where, and how to sign back in. |
 | `personalclaw update` | Update PersonalClaw to the latest version (git fetch + rebuild). |
 
 ## `personalclaw service`
@@ -340,8 +340,8 @@ Security audit and deny list.
 
 | Command | What it does |
 |---|---|
-| `personalclaw snapshot [OUTPUT_DIR] [--keep N] [--list]` | Create a portable backup of PersonalClaw state (keeps the N most recent, default 7; `--list` shows existing snapshots). It carries no credential value — keys and tokens stay in the credential store, and settings hold references to them. |
-| `personalclaw restore [SNAPSHOT] [--mode replace\|merge] [--dry-run] [--components LIST] [--list-components] [--force]` | Restore state from a snapshot `.tar.gz`. `--force` restores even while the gateway runs. |
+| `personalclaw snapshot [OUTPUT_DIR] [--keep N] [--list]` | Create a portable backup of PersonalClaw state (keeps the N most recent, default 7; `--list` shows existing snapshots). It carries no credential value — keys and tokens stay in the credential store, and settings hold references to them. It leaves out each app's engine (the app's own Python environment, `apps/<app>/venv`), which is built for the machine it runs on. |
+| `personalclaw restore [SNAPSHOT] [--mode replace\|merge] [--dry-run] [--components LIST] [--list-components] [--force]` | Restore state from a snapshot `.tar.gz`. `--force` restores even while the gateway runs. It names each restored app whose engine is not installed here; Install engine, on the app's card in Settings → Providers, puts it back. |
 | `personalclaw backup export [OUT_DIR] [--incremental]` | Export state as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly and syncs without re-uploading unchanged data). Defaults to `<home>/shards`. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. |
 | `personalclaw backup validate [SHARD_DIR]` | Verify an export end to end: the manifest parses, every declared shard exists, and each one's byte length, row count, and SHA-256 re-derive — plus every row re-parses. **Exits non-zero on any problem**, so it works as a cron/CI check. A backup nobody has verified is a hope, not a backup. |
 

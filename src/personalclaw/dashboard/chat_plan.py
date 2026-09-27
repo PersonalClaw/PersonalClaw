@@ -53,6 +53,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
 from personalclaw.request_validation import json_object_body
+from personalclaw.security import MaskConflict
 from personalclaw.sel import sel
 from personalclaw.stale_write import stale_write_refusal
 
@@ -364,13 +365,18 @@ async def api_chat_plan_edit(request: web.Request) -> web.Response:
     # in between, so the turn-end redraft cannot land in the gap.
     # A step that is not at the review gate is refused below whatever the edit names.
     step = next((s for s in sess.steps if s.id == step_id), None)
+    markdown = str(body["markdown"])
     if step is not None and step.status == StepStatus.AWAITING_REVIEW.value:
         stale = stale_write_refusal(
-            request, PS.step_markdown(step), what=f"the plan step {step.title!r}"
+            request, PS.shown_markdown(step), what=f"the plan step {step.title!r}"
         )
         if stale is not None:
             return stale
-    if not PS.edit_artifact(sess, step_id, str(body["markdown"])):
+        try:
+            markdown = PS.keep_masked_markdown(step, markdown)
+        except MaskConflict as exc:
+            return json_error("mask_conflict", message=str(exc), status=409)
+    if not PS.edit_artifact(sess, step_id, markdown):
         return json_error(
             "step_not_awaiting_review", message="That step is not awaiting review", status=409
         )

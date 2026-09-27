@@ -314,6 +314,11 @@ class GateStats:
     node_id: str
     passes: int = 0
     rejects: int = 0
+    #: Asks a reviewer answered by sending a step back to be changed (`gate_revised`) —
+    #: counted apart, because a revise is neither a pass nor a reject: the gate asks again about
+    #: the changed work, and THAT answer is the one `passes`/`rejects` count. Outside `total`, so
+    #: the pass rate stays a rate over decisions.
+    revised: int = 0
     retries_consumed: int = 0
 
     @property
@@ -345,6 +350,7 @@ class GateStats:
             "node_id": self.node_id,
             "passes": self.passes,
             "rejects": self.rejects,
+            "revised": self.revised,
             "retries_consumed": self.retries_consumed,
             "total": self.total,
             "pass_rate": self.pass_rate,
@@ -353,7 +359,8 @@ class GateStats:
 
 
 def gate_stats(events: list[dict[str, Any]]) -> dict[str, GateStats]:
-    """Per-gate said-no statistics, derived from `GATE_RESOLVED`'s `approved` field.
+    """Per-gate said-no statistics, derived from `GATE_RESOLVED`'s `approved` field — and, apart
+    from both, the asks answered with a revise (`GATE_REVISED`).
 
     NOT from `GATE_REJECTED`: that event kind is declared in `journal.py` and emitted nowhere, so a
     metric reading it would report zero rejections for every gate in the library and flag
@@ -376,6 +383,8 @@ def gate_stats(events: list[dict[str, Any]]) -> dict[str, GateStats]:
                 stats.passes += 1
             else:
                 stats.rejects += 1
+        elif kind == "gate_revised":
+            out.setdefault(node_id, GateStats(node_id=node_id)).revised += 1
         elif kind == "step_attempt":
             # Only for a node that IS a gate. Attributing every `step_attempt` created an
             # entry for any retried node, so `publish` (an action) appeared in the gate table with

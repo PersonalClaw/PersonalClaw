@@ -36,8 +36,11 @@ function device(over: Partial<DeviceRec> = {}): DeviceRec {
     kind: 'mobile',
     minted_at: 1_786_500_000,
     last_seen: 0,
+    ip: '',
     issuer: 'pair',
+    pool: 'device',
     expires_at: 1_790_000_000,
+    current: false,
     ...over,
   }
 }
@@ -124,17 +127,17 @@ describe('the registry shows every column the owner needs', () => {
     mount()
     await waitFor(() => expect(screen.getByText('Unnamed device')).toBeTruthy())
     // A revoke control with no name would be unusable by anyone not looking at the row.
-    expect(screen.getByRole('button', { name: /Revoke Unnamed device/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Sign out Unnamed device/i })).toBeTruthy()
   })
 })
 
-describe('revoking is confirmed, named, and never silent', () => {
+describe('signing a device out is confirmed, named, and never silent', () => {
   it('the confirmation NAMES the device it is about to lock out', async () => {
     const revoke = vi.spyOn(api, 'deviceRevoke').mockResolvedValue({ ok: true, revoked: 1 })
     vi.spyOn(api, 'devices').mockResolvedValue([device()])
     mount()
     await waitFor(() => expect(screen.getByText('Kitchen tablet')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: /Revoke Kitchen tablet/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Sign out Kitchen tablet/i }))
 
     // `alertdialog` is the shell's DANGER role — finding it here is the proof this was raised as
     // destructive rather than as a neutral "are you sure?".
@@ -148,7 +151,7 @@ describe('revoking is confirmed, named, and never silent', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([device()])
     mount()
     await waitFor(() => expect(screen.getByText('Kitchen tablet')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: /Revoke Kitchen tablet/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Sign out Kitchen tablet/i }))
     const dialog = await screen.findByRole('alertdialog')
     const cancel = Array.from(dialog.querySelectorAll('button')).find((b) => /cancel/i.test(b.textContent ?? ''))
     expect(cancel).toBeTruthy()
@@ -165,9 +168,9 @@ describe('revoking is confirmed, named, and never silent', () => {
     list.mockResolvedValueOnce([device()]).mockResolvedValue([])
     mount()
     await waitFor(() => expect(screen.getByText('Kitchen tablet')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: /Revoke Kitchen tablet/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Sign out Kitchen tablet/i }))
     const dialog = await screen.findByRole('alertdialog')
-    const go = Array.from(dialog.querySelectorAll('button')).find((b) => /revoke access/i.test(b.textContent ?? ''))
+    const go = Array.from(dialog.querySelectorAll('button')).find((b) => /^sign out$/i.test(b.textContent ?? ''))
     fireEvent.click(go!)
 
     await waitFor(() => expect(revoke).toHaveBeenCalledWith('dev-1'))
@@ -184,12 +187,12 @@ describe('revoking is confirmed, named, and never silent', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([device()])
     mount()
     await waitFor(() => expect(screen.getByText('Kitchen tablet')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: /Revoke Kitchen tablet/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Sign out Kitchen tablet/i }))
     const dialog = await screen.findByRole('alertdialog')
-    const go = Array.from(dialog.querySelectorAll('button')).find((b) => /revoke access/i.test(b.textContent ?? ''))
+    const go = Array.from(dialog.querySelectorAll('button')).find((b) => /^sign out$/i.test(b.textContent ?? ''))
     fireEvent.click(go!)
 
-    await waitFor(() => expect(toasts.some((t) => /Couldn't revoke Kitchen tablet/i.test(t))).toBe(true))
+    await waitFor(() => expect(toasts.some((t) => /Couldn't sign out Kitchen tablet/i.test(t))).toBe(true))
     // And it carries the server's reason, not a generic sentence.
     expect(toasts.join(' ')).toMatch(/read-only/)
     expect(screen.getByText('Kitchen tablet'), 'still there, because it still has access').toBeTruthy()
@@ -200,7 +203,7 @@ describe('an empty registry and a failed read are different answers', () => {
   it('says nothing is paired, honestly, and offers the way to change that', async () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     // Two entrances to ONE pairing flow, with DISTINCT names: identical accessible names on one
     // screen make the action ambiguous to anyone navigating by name.
     expect(screen.getByRole('button', { name: /^Pair a device$/i }), 'the section control').toBeTruthy()
@@ -212,7 +215,7 @@ describe('an empty registry and a failed read are different answers', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     const start = vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: /Pair your first device/i }))
     await waitFor(() => expect(start).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
@@ -223,7 +226,7 @@ describe('an empty registry and a failed read are different answers', () => {
     mount()
     await waitFor(() => expect(screen.getByText(/devices unreadable/)).toBeTruthy())
     // The whole point: a rejection must not borrow "nothing is paired", which reads as a fact.
-    expect(screen.queryByText(/No devices paired/i)).toBeNull()
+    expect(screen.queryByText(/No devices signed in/i)).toBeNull()
   })
 })
 
@@ -232,7 +235,7 @@ describe('pairing surfaces the code and the link', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
 
     await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
@@ -254,7 +257,7 @@ describe('pairing surfaces the code and the link', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
 
     await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
@@ -278,7 +281,7 @@ describe('pairing surfaces the code and the link', () => {
       ...START, expires_at: Math.floor(Date.now() / 1000) - 5, expires_in: 0,
     })
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
 
     await waitFor(() => expect(screen.getByText(/This code has expired/i)).toBeTruthy())
@@ -299,7 +302,7 @@ describe('pairing surfaces the code and the link', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue({ ...START, pairing_url: '' })
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
 
     await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
@@ -317,7 +320,7 @@ describe('pairing surfaces the code and the link', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockRejectedValue(new Error('too many outstanding codes'))
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
 
     await waitFor(() => expect(toasts.some((t) => /Couldn't start pairing/i.test(t))).toBe(true))
@@ -360,7 +363,7 @@ describe('the pairing flow says what happened, and keeps your place', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
     const { container } = mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
 
     // Mounted and EMPTY before anything happens — that is what makes the later update observable.
     const region = () => container.querySelector('[role="status"][aria-live="polite"].sr-only')
@@ -377,7 +380,7 @@ describe('the pairing flow says what happened, and keeps your place', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
     const { container } = mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
     await waitFor(() => expect(screen.getByText(/Expires in/)).toBeTruthy())
 
@@ -395,7 +398,7 @@ describe('the pairing flow says what happened, and keeps your place', () => {
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
     mount()
-    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
     await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
 
@@ -421,5 +424,113 @@ describe('the pairing flow says what happened, and keeps your place', () => {
     expect(src, 'guarded on the code it already announced').toContain('if (announce.current === pairing.code) return')
     expect(src, 'and the effect depends on the pairing object, not on the countdown').toMatch(/\}, \[pairing\]\)/)
     expect(src, 'the countdown state must NOT be a dependency of the focus effect').not.toMatch(/\}, \[pairing, left\]\)/)
+  })
+})
+
+// ── The list is EVERY sign-in, and any of them can be signed out ──────────────────────────────
+//
+// The list used to be paired phones only, so the owner's own browsers, the desktop app and every
+// script token — the sessions the old five-session limit silently signed out — could not even be
+// seen. Each row now says what it is, when it signed in, when and where it was last seen, and
+// how it got in; the one asking is marked; and "Sign out all other devices" is one click.
+describe('the list names every sign-in, and signs any of them out', () => {
+  const now = () => Math.floor(Date.now() / 1000)
+  const rows = (): DeviceRec[] => [
+    device({
+      id: 'me', name: 'Chrome on Mac', kind: 'browser', issuer: 'startup', pool: 'browser',
+      current: true, ip: '127.0.0.1', last_seen: now() - 60, minted_at: now() - 3 * 86400,
+    }),
+    device({ id: 'phone', name: 'iPhone', ip: '192.168.1.40', last_seen: now() - 3600 }),
+    device({
+      id: 'script', name: 'curl', kind: 'cli', issuer: 'token', pool: 'token', ip: '127.0.0.1',
+      last_seen: now() - 120, minted_at: now() - 7200,
+    }),
+  ]
+
+  it('shows what each one is, when it signed in, when and where it was last seen', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue(rows())
+    mount()
+    await waitFor(() => expect(screen.getByText('Chrome on Mac')).toBeTruthy())
+
+    const meta = (name: string) =>
+      screen.getByText(name).closest('div.flex.items-center.justify-between')?.textContent ?? ''
+    expect(meta('Chrome on Mac'), 'the one asking is marked').toMatch(/This device/)
+    expect(meta('Chrome on Mac')).toMatch(/Browser · Last seen 1m ago · from 127\.0\.0\.1/)
+    expect(meta('Chrome on Mac'), 'how it got in').toMatch(/opened at startup/)
+    expect(meta('Chrome on Mac'), 'when it signed in').toMatch(/Signed in 3d ago/)
+    expect(meta('iPhone')).toMatch(/Phone · Last seen 1h ago · from 192\.168\.1\.40 · Paired with a code/)
+    expect(meta('iPhone')).not.toMatch(/This device/)
+    // A token nothing has opened is listed apart, as a token, with when it stops working.
+    const tokens = screen.getByText(/^Tokens \(1\)$/).closest('section') ?? document.body
+    expect(tokens.textContent).toMatch(/curl/)
+    expect(meta('curl')).toMatch(/Token · Last seen 2m ago/)
+    expect(meta('curl')).toMatch(/Issued 2h ago · stops working/)
+  })
+
+  it('a token already used by a client that did not name itself never reads as unused', async () => {
+    // Found driving it: Node's `fetch` names itself only "node", so a script's token was listed
+    // as "Token not used yet" directly above "Last seen just now · from 127.0.0.1".
+    vi.spyOn(api, 'devices').mockResolvedValue([
+      device({
+        id: 'used', name: '', kind: 'unknown', issuer: 'token', pool: 'token', ip: '127.0.0.1',
+        last_seen: now() - 30, minted_at: now() - 600,
+      }),
+      device({ id: 'fresh', name: '', kind: 'unknown', issuer: 'token', pool: 'token', minted_at: now() - 60 }),
+    ])
+    mount()
+    await waitFor(() => expect(screen.getByText('Unrecognised client')).toBeTruthy())
+    expect(screen.getAllByText('Token not used yet'), 'only the one with no use listed').toHaveLength(1)
+  })
+
+  it('signing ANOTHER device out names it, and sends its id', async () => {
+    const revoke = vi.spyOn(api, 'deviceRevoke').mockResolvedValue({ ok: true, revoked: 1 })
+    vi.spyOn(api, 'devices').mockResolvedValue(rows())
+    mount()
+    await waitFor(() => expect(screen.getByText('iPhone')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^Sign out iPhone$/i }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent ?? '').toMatch(/iPhone/)
+    expect(dialog.textContent ?? '', 'a paired device signs back in by pairing').toMatch(/pair it again/)
+    fireEvent.click(Array.from(dialog.querySelectorAll('button')).find((b) => /^sign out$/i.test(b.textContent ?? ''))!)
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith('phone'))
+  })
+
+  it('"Sign out all other devices" confirms how many, and keeps this one', async () => {
+    const others = vi.spyOn(api, 'devicesRevokeOthers').mockResolvedValue({ ok: true, revoked: 2 })
+    const one = vi.spyOn(api, 'deviceRevoke')
+    vi.spyOn(api, 'devices').mockResolvedValue(rows())
+    mount()
+    await waitFor(() => expect(screen.getByText('Chrome on Mac')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^Sign out all other devices$/i }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent ?? '').toMatch(/2 other devices and tokens/)
+    expect(dialog.textContent ?? '').toMatch(/This device stays signed in/)
+    expect(others, 'asking is not doing').not.toHaveBeenCalled()
+    fireEvent.click(Array.from(dialog.querySelectorAll('button')).find((b) => /sign out all others/i.test(b.textContent ?? ''))!)
+    await waitFor(() => expect(others).toHaveBeenCalledTimes(1))
+    expect(one, 'one call, not a loop of single sign-outs').not.toHaveBeenCalled()
+  })
+
+  it('with only this device signed in there is no "sign out others" to offer', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([rows()[0]])
+    mount()
+    await waitFor(() => expect(screen.getByText('Chrome on Mac')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: /Sign out all other devices/i })).toBeNull()
+  })
+
+  it('signing THIS device out uses the sign-out route, never a revoke of its own row', async () => {
+    const logout = vi.spyOn(api, 'authLogout').mockResolvedValue({ ok: true, revoked: true })
+    const revoke = vi.spyOn(api, 'deviceRevoke')
+    const reload = vi.fn()
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location)
+    vi.spyOn(api, 'devices').mockResolvedValue(rows())
+    mount()
+    await waitFor(() => expect(screen.getByText('Chrome on Mac')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^Sign out of this device$/i }))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(Array.from(dialog.querySelectorAll('button')).find((b) => /^sign out$/i.test(b.textContent ?? ''))!)
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(reload).toHaveBeenCalled())
+    expect(revoke).not.toHaveBeenCalled()
   })
 })

@@ -46,7 +46,7 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, AsyncIterator, NamedTuple
+from typing import TYPE_CHECKING, AsyncIterator, Callable, NamedTuple
 
 from personalclaw import context_headroom
 from personalclaw.context_compaction import compact, should_compact
@@ -616,6 +616,7 @@ async def run_member_turn(
                 # The member's model failed before it replied and the next of its chain answers:
                 # said as it happens, in the member's slot, for the same reason as the note above.
                 on_substitution=lambda sentence: _note(room_id, member_name, sentence),
+                on_complete=_usage_recorder(key, member_name, provider),
             )
 
     cursors.advance(room_id, member_name, len(messages))
@@ -632,6 +633,34 @@ async def run_member_turn(
         return ""
     append_message(room_id, role="assistant", content=reply, speaker=member_name)
     return reply
+
+
+def _usage_recorder(
+    key: str, member_name: str, provider: "ModelProvider"
+) -> Callable[[object], None]:
+    """The ``on_complete`` that writes a member turn's row to the usage ledger.
+
+    One row per member turn, under the member's own session key and agent, so Settings → Usage
+    counts a room and a room's spend reads per member. The shared seam prices the row by the model
+    that answered and names the provider entry it came from (``usage_ledger.record_from_event``).
+    An ACP member's CLI names neither, so the row keeps its runtime (``acp:claude-code``) and the
+    model the CLI reports.
+    """
+
+    def record(event: object) -> None:
+        from personalclaw.usage_ledger import record_from_event
+
+        asked = getattr(getattr(provider, "client", None), "_model", "") or ""
+        record_from_event(
+            event,
+            source="room",
+            session_key=key,
+            agent=member_name,
+            provider=str(getattr(provider, "provider_id", "") or ""),
+            model=asked if isinstance(asked, str) and asked != "auto" else "",
+        )
+
+    return record
 
 
 #: The room's line for a turn that came back with no text. Product copy, pinned by test: it is

@@ -47,6 +47,7 @@ vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 import { ModelsPanel } from './ModelsPanel'
 import { resetDataStore } from '../../lib/data'
 import { ApiError } from '../../lib/api'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 const hosted = (id: string, provider = 'openai') => ({
   id, name: id, capabilities: ['chat'], provider, provider_type: provider,
@@ -86,9 +87,13 @@ describe('the model chain is saved over the chain the panel painted', () => {
     const notice = await screen.findByRole('alert')
     expect(notice.textContent).toContain('changed elsewhere')
     // Kept, not dropped: the change waits for the user, and no second edit can be built from the
-    // same stale copy meanwhile.
+    // same stale copy meanwhile. A model's row says so and refuses the click, keeping its tab stop.
     expect(setActiveModel).toHaveBeenCalledTimes(1)
-    expect((screen.getByRole('button', { name: 'claude-x' }) as HTMLButtonElement).disabled).toBe(true)
+    const held = screen.getByRole('button', { name: 'claude-x' })
+    expect(held.getAttribute('aria-disabled')).toBe('true')
+    expect(held.getAttribute('title')).toBe(HELD_CHANGE_REASON)
+    fireEvent.click(held)
+    expect(setActiveModel).toHaveBeenCalledTimes(1)
 
     const reapply = await screen.findByRole('button', { name: 'Reload and reapply' })
     await waitFor(() => expect(reapply.getAttribute('aria-disabled')).not.toBe('true'))

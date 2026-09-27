@@ -16,12 +16,14 @@ message text enters an LLM prompt, mirroring how the web-tools app fences web_fe
 output at its tool boundary.
 
 The service is channel-independent: draft/classify/digest operate on the stored items
-(populated by the native push source + any configured poll providers), so they work
-even with no external provider connected.
+(populated by the native push source + every polled source), so they work even with no
+external source connected.
 
-It also owns the inbox **background loop** (:meth:`start` / :meth:`stop`): each tick
-polls the wired message-source provider for new messages (ingesting them with
-alert evaluation + live WS broadcast). Polling no-ops when no provider is wired.
+It also owns the inbox **background loop** (:meth:`start` / :meth:`stop`): each tick polls
+EVERY source :func:`personalclaw.inbox_providers.polled_sources` names — each installed inbox
+app's, and the built-in drop folder while ``inbox.enabled`` is on — ingesting what each
+returns with alert evaluation + live WS broadcast. One source failing does not stop the
+others, and what it said is that source's health (:meth:`health`).
 
 Periodic **maintenance** — retention cleanup honoring the entity settings
 (``auto_cleanup_enabled`` / ``retention_days``), dismissed-set pruning, and the
@@ -40,7 +42,7 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw import shutdown_event
 from personalclaw import trace_recorder as _trace
@@ -72,6 +74,11 @@ def _dashboard_state():
 
     return get_dashboard_state()
 
+
+#: How long one source's poll may take before the inbox stops waiting for it. A source bounds its
+#: own I/O (Mail Inbox's sockets time out); this is what keeps one that does not from holding
+#: every other source's poll behind it.
+SOURCE_POLL_TIMEOUT_SECS = 300.0
 
 # Bound how much external text we feed a single prompt (a busy thread can be huge).
 _MAX_MESSAGE_CHARS = 6000
@@ -187,18 +194,22 @@ class InboxService:
         *,
         state: InboxState | None = None,
         store: InboxStore | None = None,
-        provider: "MessageSourceProvider | None" = None,
+        sources: "Callable[[], list[MessageSourceProvider]] | None" = None,
         user_name: str = "",
         style_rules: str = "",
     ) -> None:
+        """``sources`` names what each tick polls; it is re-read every tick, so an inbox app
+        enabled or disabled since the last one is picked up. None polls nothing (tests,
+        headless); the gateway passes :func:`personalclaw.inbox_providers.polled_sources`."""
         self.state = state or InboxState()
         self.inbox = store or InboxStore()
-        self._provider = provider
+        self._sources: "Callable[[], list[MessageSourceProvider]]" = sources or (lambda: [])
         self._user_name = user_name or "the user"
         self._style_rules = style_rules or ""
         self._last_poll_at = 0.0
-        self._last_poll_ok = True
-        self._last_error = ""
+        #: source name → what its last poll did (:meth:`_note_poll`), the per-source half of
+        #: :meth:`health`. A source that stops being polled leaves it at the next tick.
+        self._source_health: dict[str, dict[str, Any]] = {}
         self._poll_count = 0
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
         # The event loop that owns the store, captured in start(). The remediation engine
@@ -207,15 +218,39 @@ class InboxService:
 
     # ── health (mirrors what the dashboard status handler expects) ──
     def health(self) -> dict:
+        """The loop's health, and each polled source's: what its last poll did.
+
+        ``last_poll_ok`` is false while any source's last poll failed, and ``last_error`` names
+        each failing source with the sentence its poll raised, so the one-line status a reader
+        takes from this is true about every source, not only the first."""
         stale = bool(self._last_poll_at) and (time.time() - self._last_poll_at) > 900
+        rows = [dict(row) for _, row in sorted(self._source_health.items())]
+        failing = [row for row in rows if row["error"]]
         return {
             "running": self._task is not None and not self._task.done(),
             "last_poll_at": self._last_poll_at,
-            "last_poll_ok": self._last_poll_ok,
-            "last_error": self._last_error,
+            "last_poll_ok": not failing,
+            "last_error": "; ".join(f"{row['label']}: {row['error']}" for row in failing),
             "poll_count": self._poll_count,
             "stale": stale,
+            "sources": rows,
         }
+
+    def _note_poll(self, source: "MessageSourceProvider", error: str) -> None:
+        """Record what *source*'s poll just did: ``error`` is its sentence, or "" when it read."""
+        from personalclaw.inbox_providers import source_label
+
+        name = str(source.source_name)
+        now = time.time()
+        previous = self._source_health.get(name) or {"name": name, "last_ok_at": 0.0}
+        if error and previous.get("error") != error:
+            # Once per new sentence, not once per tick: a refused login fails every minute.
+            logger.warning("inbox source %s: poll failed: %s", name, error)
+        row = {**previous, "label": source_label(source), "ok": not error, "error": error}
+        row["last_poll_at"] = now
+        if not error:
+            row["last_ok_at"] = now
+        self._source_health[name] = row
 
     # ── background loop (poll + maintenance) ──
     def start(self) -> None:
@@ -225,10 +260,8 @@ class InboxService:
             # bounce the engine's maintenance call back onto it (the store is mutated only here).
             self._owner_loop = asyncio.get_running_loop()
             self._task = asyncio.create_task(self._loop())
-            logger.info(
-                "Inbox loop started (provider=%s)",
-                self._provider.source_name if self._provider else "none",
-            )
+            names = [str(source.source_name) for source in self._sources()]
+            logger.info("Inbox loop started (polling: %s)", ", ".join(names) or "nothing yet")
 
     def stop(self) -> None:
         if self._task is not None:
@@ -254,48 +287,75 @@ class InboxService:
                 pass  # normal wake-up
             # Maintenance is NOT run here — it is the remediation engine's `inbox.maintenance`
             # job now, so this loop only polls. One cadence, one owner per pass.
-            if self._provider is not None:
-                try:
-                    await self._poll_once()
-                    self._last_poll_ok = True
-                    self._last_error = ""
-                except Exception as exc:
-                    self._last_poll_ok = False
-                    self._last_error = str(exc) or exc.__class__.__name__
-                    logger.warning("Inbox poll failed", exc_info=True)
-                self._last_poll_at = time.time()
-                self._poll_count += 1
+            try:
+                await self._poll_once()
+            except Exception:  # noqa: BLE001 - the loop outlives any one pass
+                logger.warning("Inbox poll pass failed", exc_info=True)
 
     async def _poll_once(self) -> None:
-        """Fetch new messages from the wired provider and ingest them."""
-        assert self._provider is not None
+        """Poll every source :attr:`_sources` names, one after another, and ingest each.
+
+        A source that raises (or runs past :data:`SOURCE_POLL_TIMEOUT_SECS`) keeps its
+        checkpoints and contributes nothing this tick; what it raised is its health. The rest
+        are polled as if it were not there."""
         from personalclaw.config.loader import AppConfig
 
         cfg = AppConfig.load().inbox
-        messages, checkpoints = await self._provider.poll(
-            list(cfg.watched_channels), dict(self.state.last_read_ts), cfg.user_id
-        )
-        if checkpoints:
-            self.state.last_read_ts.update(checkpoints)
-        ingested = self._ingest(messages, own_user_id=cfg.user_id, test_mode=cfg.test_mode)
-        if ingested or checkpoints:
+        sources = self._sources()
+        polled = {str(source.source_name) for source in sources}
+        for gone in set(self._source_health) - polled:
+            del self._source_health[gone]  # its app was disabled: no row for a source not polled
+        changed = False
+        for source in sources:
+            try:
+                messages, checkpoints = await asyncio.wait_for(
+                    source.poll(
+                        list(cfg.watched_channels), dict(self.state.last_read_ts), cfg.user_id
+                    ),
+                    timeout=SOURCE_POLL_TIMEOUT_SECS,
+                )
+            except asyncio.TimeoutError:
+                self._note_poll(
+                    source,
+                    f"its last poll did not finish within {SOURCE_POLL_TIMEOUT_SECS:g} seconds",
+                )
+                continue
+            except Exception as exc:  # noqa: BLE001 - a source's failure is its health
+                self._note_poll(source, str(exc).strip() or type(exc).__name__)
+                logger.debug("inbox source %s: poll raised", source.source_name, exc_info=True)
+                continue
+            self._note_poll(source, "")
+            if checkpoints:
+                self.state.last_read_ts.update(checkpoints)
+                changed = True
+            if self._ingest(
+                messages, source=source, own_user_id=cfg.user_id, test_mode=cfg.test_mode
+            ):
+                changed = True
+        if changed:
             self.state.save()
+        self._last_poll_at = time.time()
+        self._poll_count += 1
 
     def _ingest(
         self,
         messages: "list[IncomingMessage]",
         *,
+        source: "MessageSourceProvider",
         own_user_id: str = "",
         test_mode: bool = False,
     ) -> int:
-        """Convert polled messages to stored items (dedup, mute/dismiss filters),
-        evaluating alerts + broadcasting each new item live. Returns # ingested."""
+        """Convert *source*'s polled messages to stored items (dedup, mute/dismiss filters),
+        evaluating alerts + broadcasting each new item live. Returns # ingested.
+
+        Each row records the source it came from, which is where a reply to it is sent
+        (``api_inbox_send``); the drop folder's rows cannot be answered."""
         if not messages:
             return 0
         operator = operator_name()
         dash_state = _dashboard_state()
-        can_reply = bool(self._provider is not None and self._provider.source_name != "filesystem")
-        source_name = self._provider.source_name if self._provider else "native"
+        source_name = str(source.source_name)
+        can_reply = source_name != "filesystem"
         count = 0
         for m in messages:
             item_id = f"{m.channel_id}_{m.timestamp}"
@@ -319,6 +379,11 @@ class InboxService:
                 created_at=m.timestamp or time.time(),
                 source=source_name,
                 can_reply=can_reply,
+                # The source's own id for the message: a reply to this row is addressed with it
+                # (`send_reply`'s third argument). Mail Inbox finds the exact mail by it; the
+                # thread id alone named none for a first mail, and a reply went to whoever
+                # wrote to the same address last.
+                reply_target=str(m.id or "") if can_reply else "",
                 # What the source says this IS (mention / email / plain message), validated
                 # against the closed set — the inbox's kind filter is a live reader, so an
                 # unvalidated value here would be a row no chip can reach.
@@ -615,13 +680,15 @@ class InboxService:
         return item
 
     async def _recent_messages(self, channel_id: str, hours: float) -> list[str]:
-        """Attributed, oldest-first message lines for the window — from the provider's
-        channel history if available, else from stored items for that channel."""
+        """Attributed, oldest-first message lines for the window — from the channel's own
+        source's history if it keeps one, else from stored items for that channel."""
         cutoff = time.time() - hours * 3600
         lines: list[str] = []
-        if self._provider is not None:
+        owners = {it.source for it in self.inbox.items.values() if it.channel == channel_id}
+        source = next((s for s in self._sources() if str(s.source_name) in owners), None)
+        if source is not None:
             try:
-                raw = await self._provider.get_channel_history(channel_id, oldest=str(cutoff))
+                raw = await source.get_channel_history(channel_id, oldest=str(cutoff))
                 for m in raw:
                     who = str(m.get("sender_name") or m.get("user") or "someone")
                     txt = str(m.get("text") or "")

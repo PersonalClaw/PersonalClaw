@@ -342,7 +342,7 @@ class McpServerConn:
         command = self.spec.get("command", "")
         if not command:
             raise ValueError("server spec has neither 'url' nor 'command'")
-        env = stdio_spawn_env(self.spec.get("env") or {})
+        env = stdio_spawn_env(self.spec.get("env") or {}, server=self.name)
         # ``cwd`` lets an app-shipped server (registered by the app-platform MCP
         # bridge with cwd=app_dir) resolve relative command/args; ignored when
         # absent (the historical behavior — spawn in the gateway's cwd).

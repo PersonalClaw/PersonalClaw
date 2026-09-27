@@ -16,6 +16,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
 
 from ._shared import (
     _blocks_reads_session,
@@ -228,10 +229,27 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
     from personalclaw.memory_service import service_for
 
     svc = service_for(_get_memory(state))
-    ok = svc.delete_lesson(rule_sub)
+    # The list shows a rule masked (`api_lessons`), and the page deletes by the rule it showed. A
+    # masked rule names the stored one it masks; a rule with no marker matches as it always has.
+    try:
+        rule = stored_name(rule_sub, _stored_rules(svc))
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    ok = svc.delete_lesson(rule) if rule is not None else False
     if ok:
         state.push_refresh("lessons")
     return web.json_response({"ok": ok})
+
+
+def _stored_rules(svc) -> list[str]:
+    """Every stored lesson's rule text, what a masked rule shown by the list is matched against."""
+    rules: list[str] = []
+    for e in svc.get_lessons():
+        try:
+            rules.append(str(json.loads(e["value_json"])))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return rules
 
 
 async def api_lessons(request: web.Request) -> web.Response:
@@ -282,7 +300,9 @@ async def api_lessons(request: web.Request) -> web.Response:
         evidence = getattr(verdict, "evidence", None)
         data.append(
             {
-                "rule": rule,
+                # Masked as the memory list masks the same `lesson.*` fact. A delete by the
+                # masked rule finds the stored one (`api_lessons_delete`).
+                "rule": redact_values_for_display(rule),
                 "category": "knowledge",
                 "ts": e.get("updated_at", ""),
                 "scope": e.get("scope") or "global",

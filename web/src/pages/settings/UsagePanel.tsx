@@ -13,7 +13,7 @@ import { BigStat, KVList } from './bento'
 /** Account-level cost/token usage.
  *
  *  Reads the per-turn ledger (never SpendMeter's enforcement store — this is
- *  observation only): period totals, a by-model + by-source table, the cache
+ *  observation only): period totals, by-model, by-provider and by-source tables, the cache
  *  savings line, and a read-only "spent $X of your $Y cap" from the guardrails
  *  config. Honest-partial: a period mixing a model with no price row shows a
  *  "partial — N unpriced" marker, never a confidently-complete dollar figure. */
@@ -106,6 +106,13 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   const { data: bySource, error: bySourceErr, refresh: refreshBySource } = useQuery(
     `settings:usage-rollup:source:${period}`,
     () => api.usageRollup({ group_by: 'source', since }).then((d) => d.rows),
+    { persist: false },
+  )
+  // Which provider entry answered: the `FakeUp` of `FakeUp:gpt-4o`, or an ACP runtime. The same
+  // model id can come from two entries at two prices, and "By model" folds them together.
+  const { data: byProvider, error: byProviderErr, refresh: refreshByProvider } = useQuery(
+    `settings:usage-rollup:provider:${period}`,
+    () => api.usageRollup({ group_by: 'provider', since }).then((d) => d.rows),
     { persist: false },
   )
   // The configured daily $ cap (read-only; SpendMeter owns enforcement). 0 = unlimited.
@@ -209,7 +216,11 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
         <UsageTable rows={byModel} error={byModelErr} onRetry={refreshByModel} keyField="model" empty="No model usage recorded this period." />
       </Section>
 
-      <Section title="By source" hint="Which subsystem spent — chat, subagents, loops, automations.">
+      <Section title="By provider" hint="Which provider each answer came from, as your model settings name it.">
+        <UsageTable rows={byProvider} error={byProviderErr} onRetry={refreshByProvider} keyField="provider" empty="No provider usage recorded this period." />
+      </Section>
+
+      <Section title="By source" hint="Which subsystem spent — chat, rooms, subagents, loops, automations.">
         <UsageTable rows={bySource} error={bySourceErr} onRetry={refreshBySource} keyField="source" empty="No usage recorded this period." />
       </Section>
 
@@ -265,10 +276,12 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   )
 }
 
+const KEY_HEADER = { model: 'Model', provider: 'Provider', source: 'Source' } as const
+
 function UsageTable({ rows, keyField, empty, error, onRetry }: {
   /** `undefined` is UNKNOWN — loading or failed. Never defaulted to `[]` by a caller. */
   rows: Array<UsageAgg & Record<string, string>> | undefined
-  keyField: 'model' | 'source'
+  keyField: 'model' | 'provider' | 'source'
   empty: string
   error?: unknown
   onRetry?: () => void
@@ -287,10 +300,10 @@ function UsageTable({ rows, keyField, empty, error, onRetry }: {
     <Table
       sized={false}
       data-type="body-s" className="border-collapse"
-      caption={`Token usage and cost per ${keyField === 'model' ? 'model' : 'source'}`}>
+      caption={`Token usage and cost per ${keyField}`}>
       <THead>
         <tr>
-          <Th pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">{keyField === 'model' ? 'Model' : 'Source'}</Th>
+          <Th pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">{KEY_HEADER[keyField]}</Th>
           <Th align="right" pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">Tokens</Th>
           <Th align="right" pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">Cost</Th>
           <Th align="right" pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">Share</Th>

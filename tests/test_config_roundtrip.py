@@ -73,6 +73,24 @@ def test_save_load_roundtrip_companion(cfg_file):
     assert loaded.companion.instance_name == "Living room Mac"
 
 
+def test_save_load_roundtrip_approval_channel(cfg_file):
+    """`agent.approval_channel` ("Send approvals to") survives a save and comes back from load()."""
+    cfg = AppConfig()
+    cfg.agent.approval_channel = "telegram"
+    cfg.save()
+
+    raw = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert raw["agent"]["approval_channel"] == "telegram"
+    assert AppConfig.load().agent.approval_channel == "telegram"
+
+
+def test_approval_channel_in_editable_allowlist():
+    from personalclaw.config.editable import _EDITABLE_CONFIG
+
+    spec = _EDITABLE_CONFIG["agent.approval_channel"]
+    assert spec["type"] == "str" and callable(spec["sanitize"])
+
+
 def test_companion_fields_in_editable_allowlist():
     """Both companion fields are PATCH-editable (the write path of the round-trip)."""
     from personalclaw.config.editable import _EDITABLE_CONFIG

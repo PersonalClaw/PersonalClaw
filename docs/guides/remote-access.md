@@ -283,18 +283,34 @@ invalidates any outstanding ones.
 
 ### Sessions, and ending them
 
-Sessions survive a gateway restart (they are recorded under `~/.personalclaw/auth/`, mode 0600).
-That is deliberate: being logged out by an unattended update, while away from home, is exactly
-the situation this feature exists to prevent.
+Sessions survive a gateway restart (they are recorded in `~/.personalclaw/sessions.json`, mode
+0600). That is deliberate: being logged out by an unattended update, while away from home, is
+exactly the situation this feature exists to prevent.
+
+**Settings → Devices** lists everything signed in: each browser, paired phone and desktop app,
+and every token a script or the CLI minted — what it is, when it signed in, when it was last
+seen and from which address. Sign one out there, or choose **Sign out all other devices** if a
+device is lost or you do not recognise one. From the terminal on the gateway's computer:
 
 ```bash
 personalclaw auth revoke --all    # end every session, everywhere
 ```
 
-Use that if a device is lost. It survives a restart too. Your password and 2FA enrollment are
-untouched, so you just sign in again.
+Every sign-out survives a restart too. Your password and 2FA enrollment are untouched, so you
+just sign in again. **Sign out** on this device's own row revokes that session properly — the
+token dies, not just the cookie.
 
-Sign-out from the UI revokes **that** session properly — the token dies, not just the cookie.
+A signed-out device is told why the next time it is used — "This device was signed out today
+at 09:14 from Settings → Devices on another device", or "Your sign-in on this device lasted 30
+days and ended…" — and how to sign back in, on the page it opens and in the dashboard if it was
+open. Each kind of sign-in has a limit of 20 (browsers, paired devices, and tokens separately),
+so the CLI or a script minting tokens never signs a browser or a phone out.
+
+A sign-in lasts `auth.session_ttl` (30 days by default) and never more than 90 days, the limit
+for a long-lived credential: the longer a sign-in lasts, the longer a copied link or a stolen
+cookie keeps working. Setting `auth.session_ttl` longer is refused with a sentence saying so; a
+config file that already says longer is applied as 90 days, and `personalclaw doctor` (and the
+Doctor page, under Security) says so until you fix it.
 
 ### Failed attempts
 
@@ -450,7 +466,8 @@ Being straight about the limits, because a false sense of safety is worse than n
 
 - **A weak password.** Rate limiting slows online guessing; it does nothing about a password that
   appears in a breach list. Use a passphrase.
-- **A compromised device.** A session cookie on a stolen unlocked phone is a session. Revoke.
+- **A compromised device.** A session cookie on a stolen unlocked phone is a session. Sign it out
+  from Settings → Devices.
 - **Your tunnel provider.** Anything terminating your TLS can see your traffic. That is inherent
   to the arrangement, not specific to PersonalClaw.
 - **The agent's own reach.** Sign-in controls who reaches the *dashboard*. What the agent may do

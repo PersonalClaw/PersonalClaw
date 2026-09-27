@@ -3,8 +3,10 @@
  * every surface — including one that never heard the field was sensitive.
  *
  * The gateway answers a write that loosens a field on its security list with
- * `400 confirmation_required` and `{field, consent}` in `error.detail` (`config/edit_spec.py`).
- * `withSecurityConsent` turns that into one dialog and one resend carrying `confirm: true`. The
+ * `400 confirmation_required` and `{field, consent, title}` in `error.detail`
+ * (`config/edit_spec.py`), and so does a write whose action needs a grant (`triggers/grants.py`).
+ * `withSecurityConsent` turns that into one dialog, headed with the gateway's own title, and one
+ * resend carrying `confirm: true`. The
  * last block drives the real `api.patchConfig` through a stubbed `fetch`, so what is asserted is
  * the wire: the first body carries no consent, and only an accepted dialog produces a second one
  * that does.
@@ -17,11 +19,13 @@ const confirmSpy = vi.hoisted(() => vi.fn(async (_opts: unknown) => true))
 vi.mock('../ui/dialog', () => ({ confirm: (opts: unknown) => confirmSpy(opts) }))
 
 const CONSENT = 'Turning YOLO on skips every tool-approval confirmation, for every session, until it is turned off.'
+const LOOSEN = 'Loosen a security setting?'
 
-const asked = () =>
+const asked = (title = LOOSEN) =>
   new ApiError('send {"confirm": true} to confirm', 400, 'confirmation_required', {
     field: 'agent.yolo',
     consent: CONSENT,
+    title,
   })
 
 afterEach(() => {
@@ -32,9 +36,13 @@ afterEach(() => {
 
 describe('consentAsked', () => {
   it('reads the gateway question, and nothing else', () => {
-    expect(consentAsked(asked())).toEqual({ field: 'agent.yolo', consent: CONSENT })
+    expect(consentAsked(asked())).toEqual({ field: 'agent.yolo', consent: CONSENT, title: LOOSEN })
     expect(consentAsked(new ApiError('nope', 400, 'invalid_request'))).toBeNull()
     expect(consentAsked(new ApiError('no detail', 400, 'confirmation_required'))).toBeNull()
+    // The heading is part of the question: without one there is no dialog to show.
+    expect(consentAsked(new ApiError('untitled', 400, 'confirmation_required', {
+      field: 'agent.yolo', consent: CONSENT,
+    }))).toBeNull()
     expect(consentAsked(new Error('network'))).toBeNull()
   })
 })
@@ -55,9 +63,21 @@ describe('withSecurityConsent', () => {
     await expect(withSecurityConsent(send)).resolves.toBe('written')
     expect(send.mock.calls).toEqual([[false], [true]])
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    const opts = confirmSpy.mock.calls[0][0] as { body: string; danger: boolean }
+    const opts = confirmSpy.mock.calls[0][0] as { title: string; body: string; danger: boolean }
+    expect(opts.title).toBe(LOOSEN)
     expect(opts.body).toBe(CONSENT)
     expect(opts.danger).toBe(true)
+  })
+
+  it('the dialog is headed with the question the gateway asked, not one fixed heading', async () => {
+    // Measured before this: every question read "Loosen a security setting?", a plain grant for
+    // what a trigger runs included — a heading that was untrue of the question under it.
+    const send = vi.fn(async (c: boolean) => {
+      if (!c) throw asked('Allow what this trigger runs?')
+      return 'created'
+    })
+    await expect(withSecurityConsent(send)).resolves.toBe('created')
+    expect((confirmSpy.mock.calls[0][0] as { title: string }).title).toBe('Allow what this trigger runs?')
   })
 
   it('a decline sends nothing more, and says nothing changed', async () => {
@@ -106,7 +126,7 @@ describe('api.patchConfig on the wire', () => {
           error: {
             code: 'confirmation_required',
             message: 'send {"confirm": true} to confirm',
-            detail: { field: body.path, consent: CONSENT },
+            detail: { field: body.path, consent: CONSENT, title: LOOSEN },
           },
         })
       }
@@ -173,7 +193,7 @@ describe('an automation whose agent approves itself asks the same way', () => {
           error: {
             code: 'confirmation_required',
             message: 'send {"confirm": true} to confirm',
-            detail: { field: 'triggers.t.action.approval_mode', consent: CONSENT },
+            detail: { field: 'triggers.t.action.approval_mode', consent: CONSENT, title: LOOSEN },
           },
         })
       }

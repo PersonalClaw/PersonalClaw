@@ -26,6 +26,7 @@ from typing import Any
 
 from personalclaw.workflows import store
 from personalclaw.workflows.models import (
+    TERMINAL_RUN_STATUSES,
     TERMINAL_STATES,
     InstanceState,
     RunStatus,
@@ -232,12 +233,7 @@ def _audit_run(
                 )
 
     if instances and all(st.state in TERMINAL_STATES for st in instances.values()):
-        if not has_controller and run.status not in (
-            RunStatus.COMPLETE,
-            RunStatus.FAILED,
-            RunStatus.CANCELLED,
-            RunStatus.ESCALATED,
-        ):
+        if not has_controller and run.status not in TERMINAL_RUN_STATUSES:
             finding = AuditFinding(
                 kind=Finding.LOST_RUN,
                 run_id=run.id,

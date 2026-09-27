@@ -1,4 +1,4 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut } = require("electron");
+const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut, webContents } = require("electron");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFileSync } = require("child_process");
@@ -27,6 +27,9 @@ const { loadRegistry } = require("./endpointRegistry");
 const {
   LOCAL_ENDPOINT_ID,
   HEALTH_REACHABLE,
+  HEALTH_SIGNED_OUT,
+  sessionEventFrom,
+  signedOutHealth,
   adoptGatewayLabel,
   assertLoopbackTarget,
   shouldAttachBridge,
@@ -517,9 +520,11 @@ function waitForBackend(targetWin) {
  *
  * The difference that matters is not the URL, it is the refusals. `waitForBackend` retries
  * anything below a 500 because a gateway it just spawned is only ever slow. A gateway on the
- * network can *answer and refuse* — a revoked device session (401/403), a redirect, or a host that
+ * network can *answer and refuse* — a health check answered 401/403, a redirect, or a host that
  * is not a PersonalClaw gateway at all — and none of those becomes ready by waiting. Each rejects
- * immediately, carrying the probe so the caller can say which happened.
+ * immediately, carrying the probe so the caller can say which happened. (A revoked device session
+ * is not one of them: the probe carries no session, so it cannot see one. The page loads, the
+ * gateway tells it why it is signed out, and `noteSessionEvent` puts that on the row.)
  */
 function waitForEndpoint(targetWin, url) {
   const start = Date.now();
@@ -833,6 +838,66 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
     delete details.requestHeaders["Referer"];
     callback({ requestHeaders: details.requestHeaders });
   });
+
+  // A paired gateway that signs this app out says so on the page's OWN traffic: a
+  // 401/403 carrying `X-Auth-Required`. The credential-free health probe cannot see that — the
+  // probe presents no session — so the switcher's row read "Reachable" while the window showed
+  // the gateway's sentence. Status and headers only; the shell presents nothing.
+  view.webContents.session.webRequest.onCompleted((details) => {
+    noteSessionEvent(details).catch((err) => console.warn(`session note failed: ${err.message}`));
+  });
+}
+
+/** The origin whose sign-out sentence was last asked for, so one sign-out is one ask. */
+let signedOutOrigin = "";
+
+/**
+ * Record what the page's response says about the active gateway's sign-in on its row.
+ *
+ * 🔑 THE PAGE FETCHES THE SENTENCE, NOT THIS PROCESS — the same rule as `adoptInstanceName`. The
+ * session is an httponly cookie in the WebView's jar; the main process cannot present it and must
+ * not go looking for a way to. So the page asks its own gateway once, and the refusal's
+ * `error.message` — why, when, and how to sign back in — comes back through `executeJavaScript`
+ * as untrusted text, cleaned and clamped by `signedOutHealth`.
+ */
+async function noteSessionEvent(details) {
+  if (!activeUrl || activeUrl === localGatewayUrl || !shellStore) return;
+  let origin;
+  try {
+    origin = new URL(activeUrl).origin;
+  } catch {
+    return;
+  }
+  const event = sessionEventFrom(details, origin);
+  const id = loadRegistry(shellStore).active;
+  if (!event || !id) return;
+  if (event === "signed_in") {
+    signedOutOrigin = "";
+    if (endpointHealth[id] && endpointHealth[id].status === HEALTH_SIGNED_OUT) {
+      endpointHealth = { ...endpointHealth, [id]: { status: HEALTH_REACHABLE, httpStatus: details.statusCode, version: "", detail: "" } };
+    }
+    return;
+  }
+  if (signedOutOrigin === origin) return;
+  signedOutOrigin = origin;
+  const wc = webContents.fromId(details.webContentsId);
+  let message = "";
+  if (wc && !wc.isDestroyed()) {
+    try {
+      message = await wc.executeJavaScript(
+        `fetch('/api/status', {credentials: 'same-origin', headers: {Accept: 'application/json'}})
+           .then(r => r.json().catch(() => null))
+           .then(j => (j && j.error && typeof j.error.message === 'string') ? j.error.message : '')
+           .catch(() => '')`
+      );
+    } catch {
+      message = "";
+    }
+  }
+  if (activeUrl && new URL(activeUrl).origin === origin) {
+    endpointHealth = { ...endpointHealth, [id]: signedOutHealth(message, details.statusCode) };
+  }
+  console.log(`gateway ${origin} signed this app out`);
 }
 
 function makeWindow() {
@@ -1063,9 +1128,11 @@ function cancelReachProbe() {
  * credential in the loop to be retried in the first place. `nextReconnectStep` decides what
  * happens next, and its three non-retry answers are the whole point:
  *
- *   - `needs_pairing` (the gateway answered 401/403 — a revoked device session) → **stop dead**.
- *     Zero further attempts. The row says "needs pairing again" and the user decides. Hammering it
- *     would also drive that gateway's own per-IP pairing lockout against its owner.
+ *   - `refused` (the health check itself answered 401/403) → **stop dead**. Zero further
+ *     attempts. A PersonalClaw gateway never refuses `/api/healthz`, so this is something in front
+ *     of it, or something else; hammering it would also drive a gateway's per-IP lockout against
+ *     its owner. (A revoked device session is seen on the page's own traffic instead —
+ *     `noteSessionEvent` — because this probe, carrying no session, cannot see one.)
  *   - `stop` (not a gateway / redirected / refused by policy) → stop. The host answered, and the
  *     answer was not "try later".
  *   - `give_up` (attempts exhausted) → stop and wait for a human. Bounded, so a machine that is

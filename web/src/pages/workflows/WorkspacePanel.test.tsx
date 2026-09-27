@@ -183,7 +183,9 @@ describe('the run cockpit exposes the Workspace trigger', () => {
     })
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
-    const trigger = await screen.findByTitle(/Workspace — changed files/i)
+    // By role, not by title: the header cluster's measurement probes carry the same title, hidden.
+    const trigger = await screen.findByRole('button', { name: 'Workspace' })
+    expect(trigger).toHaveAttribute('title', expect.stringMatching(/Workspace — changed files/i))
     // Nothing is fetched until the panel is actually opened: answering costs a `git status` plus
     // a conflict probe, and most runs are never reviewed.
     expect(workflowRunWorkspace).not.toHaveBeenCalled()

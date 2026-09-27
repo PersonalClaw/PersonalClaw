@@ -8,10 +8,11 @@ import os
 import re
 import stat
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs
 
 from personalclaw.sel import SecurityEvent, SecurityEventLog
@@ -1015,6 +1016,18 @@ def _scheme_run_start(text: str, sep: int) -> int:
 _URL_USERINFO_TAG = "[REDACTED: url credential]"
 
 
+def _url_userinfo_spans(text: str) -> Iterator[tuple[int, int, str]]:
+    """``(start, end, scheme)`` for each ``<scheme>://userinfo@`` in *text*: where its scheme
+    begins, just past its ``@``, and the scheme. The one reading of "a URL with a credential in
+    it" that :func:`redact_url_userinfo` and :func:`strip_url_userinfo` both use."""
+    for m in _URL_USERINFO_CORE_RE.finditer(text):
+        sep = m.start()
+        first = _SCHEME_FIRST_RE.search(text, _scheme_run_start(text, sep), sep)
+        if first is None:
+            continue  # no scheme, so no match — `://x@y`, or `1://x@y`
+        yield first.start(), m.end(), text[first.start() : sep]
+
+
 def redact_url_userinfo(text: str) -> tuple[str, list[str]]:
     """Replace `<scheme>://userinfo@` with a redaction tag, keeping scheme and host.
 
@@ -1026,21 +1039,37 @@ def redact_url_userinfo(text: str) -> tuple[str, list[str]]:
     out: list[str] = []
     pos = 0
 
-    for m in _URL_USERINFO_CORE_RE.finditer(text):
-        sep = m.start()
-        first = _SCHEME_FIRST_RE.search(text, _scheme_run_start(text, sep), sep)
-        if first is None:
-            continue  # no scheme, so no match — `://x@y`, or `1://x@y`
-        scheme = text[first.start() : sep]
-        out.append(text[pos : first.start()])
+    for start, end, scheme in _url_userinfo_spans(text):
+        out.append(text[pos:start])
         out.append(f"{scheme}://{_URL_USERINFO_TAG}@")
         warnings.append(f"Redacted credential in a {scheme} URL")
-        pos = m.end()
+        pos = end
 
     if not warnings:
         return text, []
     out.append(text[pos:])
     return "".join(out), warnings
+
+
+def strip_url_userinfo(text: str) -> str:
+    """*text* with the user name and password taken out of every URL in it:
+    ``http://ada:pw@proxy:3128`` becomes ``http://proxy:3128``.
+
+    For a value that must keep WORKING without its credential, where a redaction tag would be a
+    wrong password sent to the host: a proxy address handed to a child process
+    (``sandbox.build_child_env``) still routes through the proxy, and a proxy that wants a password
+    answers 407 at once instead of the child waiting on a connection that never comes.
+    """
+    out: list[str] = []
+    pos = 0
+    for start, end, scheme in _url_userinfo_spans(text):
+        out.append(text[pos:start])
+        out.append(f"{scheme}://")
+        pos = end
+    if not out:
+        return text
+    out.append(text[pos:])
+    return "".join(out)
 
 
 # 🔴 A WEBHOOK URL IS ITS OWN CREDENTIAL. An incoming webhook (Slack, Discord, Teams, Zapier, a
@@ -1159,6 +1188,22 @@ def redact_for_display(text: str) -> str:
     masked, _ = redact_credentials(text)
     masked, _ = redact_exfiltration_urls(masked)
     return masked
+
+
+def redact_values_for_display(value: Any) -> Any:
+    """:func:`redact_for_display` over every string in a JSON-shaped value.
+
+    For a read that hands out a structured blob, a trigger's action or a loop's plan, whose strings
+    are text a user or an agent wrote. Dict keys and non-string leaves pass through unchanged. The
+    inverse a save uses is :func:`keep_masked_values`.
+    """
+    if isinstance(value, str):
+        return redact_for_display(value)
+    if isinstance(value, dict):
+        return {key: redact_values_for_display(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_values_for_display(item) for item in value]
+    return value
 
 
 def redact_field(text: str) -> str:
@@ -1328,6 +1373,26 @@ def keep_masked_values(submitted: Any, stored: Any) -> Any:
             kept.append(keep_masked_values(value, items[index] if index < len(items) else None))
         return kept
     return submitted
+
+
+def stored_name(shown: str, stored: Iterable[str]) -> str | None:
+    """The stored name a client means by *shown*, a name it may have been shown masked.
+
+    For a name that identifies a stored thing, a tag or a memory fact's key, rather than text that
+    is kept: removing a masked tag has to remove the real one. *shown* itself when a stored name is
+    written exactly so or it carries no mask; the one stored name that shows as it otherwise;
+    ``None`` when none does. Raises :class:`MaskConflict` when two do, because the client cannot
+    have told them apart.
+    """
+    if not _MASK_RE.search(shown):
+        return shown
+    names = list(stored)
+    if shown in names:
+        return shown
+    matches = [name for name in names if redact_for_display(name) == shown]
+    if len(matches) > 1:
+        raise MaskConflict()
+    return matches[0] if matches else None
 
 
 # Suspicious bash patterns to flag during audit

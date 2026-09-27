@@ -32,7 +32,7 @@ that established it has no home.
    (see the `name` row), rather than a key parked in `extra`, the tolerant-reader spillover dict.
    Renaming a run-backed loop after launch is not wired yet: the title is set at create only.
 2. **The status vocabularies are not a superset relationship.** `LoopStatus` has twelve members and
-   `RunStatus` eight, and each has members the other cannot express — see `STATUS_VOCABULARY_DELTA`.
+   `RunStatus` nine, and each has members the other cannot express — see `STATUS_VOCABULARY_DELTA`.
    "One status vocabulary" therefore costs a decision per orphan, not a rename.
 3. **`WorkflowRun.task_list_id` was declared and inert — RETIRED.** It had no
    writer and no reader outside `models.py`, and it was singular where a loop keeps one TaskList
@@ -309,7 +309,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         RUN,
         "WorkflowRun.status",
         "NOT a rename: see `STATUS_VOCABULARY_DELTA`. Five LoopStatus members have no RunStatus "
-        "equivalent and three RunStatus members have no LoopStatus one.",
+        "equivalent and four RunStatus members have no LoopStatus one.",
     ),
     FieldHome(
         "created_at",
@@ -427,6 +427,7 @@ STATUS_VOCABULARY_DELTA: dict[str, tuple[str, ...]] = {
     # supervisor-set attention states a run has no member for (`needs_input` means a HUMAN was
     # asked, which is a different fact); `stopped` is a user stop, which `cancelled` covers.
     "loop_only": ("intake", "planning", "review", "ready", "stagnant", "blocked", "stopped"),
-    # RunStatus members with no LoopStatus equivalent.
-    "run_only": ("draft", "cancelled", "escalated"),
+    # RunStatus members with no LoopStatus equivalent. `declined` — a person refused an approval —
+    # projects onto `stopped` (stop reason `user`), as `cancelled` does.
+    "run_only": ("draft", "cancelled", "escalated", "declined"),
 }

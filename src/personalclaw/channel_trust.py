@@ -70,8 +70,8 @@ DEFAULT_DM_POLICY = "pairing"
 DEFAULT_GROUP_POLICY = "tracked_only"
 
 #: How often the canned pairing-needed reply / owner notification may re-fire for the
-#: SAME unknown sender. One SEL entry + one notification per sender per window — never a
-#: flood from a chatty stranger.
+#: SAME unknown sender. One SEL entry + one notification + one canned reply per sender per
+#: window — never a flood from a chatty stranger, and never a reply per message.
 UNKNOWN_SENDER_RENOTIFY_SECS = 24 * 3600
 
 #: The canned reply a DM-policy=pairing transport sends back to an unknown sender.
@@ -900,17 +900,15 @@ def channel_display_name(provider: str) -> str:
     return name or provider
 
 
-def note_unknown_sender(
-    state: Any, provider: str, sender_id: str, sender_name: str = "", *, silent: bool = False
-) -> bool:
+def note_unknown_sender(state: Any, provider: str, sender_id: str, sender_name: str = "") -> bool:
     """Record + surface a first contact from an unknown sender. Returns whether it fired.
 
     Emits exactly ONE ``sender_denied`` SEL entry and ONE actionable owner notification per
     sender per :data:`UNKNOWN_SENDER_RENOTIFY_SECS` window — a chatty stranger cannot flood
     either. The notification carries ``actions=["allow","deny"]`` plus the ``provider`` /
     ``sender_id`` the Allow button needs; a click routes to :func:`apply_trust_action`,
-    which persists the sender. ``silent`` suppresses the canned reply text only (policy
-    ``owner_only``), never the audit/notification.
+    which persists the sender. Whether the sender also gets the canned reply is
+    :func:`guard_inbound`'s call (policy ``pairing`` only), riding the same window.
 
     Deduped on the persisted ``rate`` map (an ISO timestamp per sender), so the dedup
     survives a restart — an unknown sender who messaged before you slept does not re-alert
@@ -994,8 +992,9 @@ def guard_inbound(
     * **DM**, policy ``open`` → allowed. Policy ``pairing`` / ``owner_only`` → allowed only
       if the sender is already approved; otherwise the unknown-sender flow fires
       (:func:`note_unknown_sender`) and the message is denied. ``pairing`` returns the
-      canned pairing-needed reply; ``owner_only`` stays silent (open question resolved:
-      no in-channel reply).
+      canned pairing-needed reply with the notification, so once per sender per
+      :data:`UNKNOWN_SENDER_RENOTIFY_SECS`; ``owner_only`` stays silent (open question
+      resolved: no in-channel reply).
     * **DM**, policy ``pairing``, and the message is exactly an outstanding 8-digit code →
       :func:`redeem_pairing_code` consumes it and the sender joins the allowlist
       (``via="pairing"``). The verdict is ``allowed=False, reason="paired"`` carrying
@@ -1092,13 +1091,15 @@ def guard_inbound(
                     channel_id=channel_id,
                     is_dm=True,
                 )
-            fired = note_unknown_sender(
-                state, provider, sender_id, sender_name, silent=(policy == "owner_only")
-            )
+            fired = note_unknown_sender(state, provider, sender_id, sender_name)
+            # The reply rides the same per-sender window as the notification
+            # (UNKNOWN_SENDER_RENOTIFY_SECS): once per stranger per window, never once per
+            # message. Answering every message put one reply on the wire for each mail anyone
+            # sent to a mailbox the email channel watches, from the owner's own address.
             verdict = TrustVerdict(
                 allowed=False,
                 reason="unknown_sender",
-                canned_reply="" if policy == "owner_only" else CANNED_PAIRING_REPLY,
+                canned_reply=CANNED_PAIRING_REPLY if fired and policy == "pairing" else "",
                 fired_notification=fired,
             )
         # A code-shaped DM that was neither the owner's code nor a sender's code just redeemed

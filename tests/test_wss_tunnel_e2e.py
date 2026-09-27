@@ -268,13 +268,17 @@ def _app() -> tuple[web.Application, list[dict[str, str]]]:
 
 
 def _paired_token(*, device: bool = True) -> str:
-    """A real signed token whose session row optionally carries a paired device."""
-    token = token_auth.generate_token("owner")
-    if device:
-        nonce = token_auth.token_nonce(token)
-        assert nonce, "the minted token must carry a nonce for the test to mean anything"
-        assert ss.attach_device(nonce, ss.DeviceInfo(id="dev-1", name="Phone", kind="mobile"))
-    return token
+    """A real signed token — issued by PAIRING, or (``device=False``) an ordinary one."""
+    if not device:
+        return token_auth.generate_token("owner")
+    minted = token_auth.mint_session(
+        "owner",
+        3600,
+        issuer=ss.ISSUER_PAIR,
+        device=ss.DeviceInfo(id="dev-1", name="Phone", kind="mobile"),
+    )
+    assert minted.persisted, "the fixture must persist a real paired row"
+    return minted.token
 
 
 class _Rig:

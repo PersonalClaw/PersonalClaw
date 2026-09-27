@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from personalclaw.loop import files as loop_files
 from personalclaw.loop.kinds import LoopKindStrategy, register
 from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.security import redact_for_display
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +140,10 @@ class _CommandRunnability:
         return self.runnable
 
     def to_dict(self, command: str) -> dict:
+        # Masked like the `kind_config.verify_command` the same loop view carries
+        # (`store.get_redacted`): the cockpit's runnability chip shows the command too.
         out = {
-            "command": (command or "").strip(),
+            "command": redact_for_display((command or "").strip()),
             "runnable": self.runnable,
             "binary": self.binary,
         }
@@ -813,7 +816,7 @@ class CodeKind(LoopKindStrategy):
             stall_event.update(
                 {
                     "label": label,
-                    "command": command,
+                    "command": redact_for_display(command),
                     "binary": runnable.binary,
                 }
             )
@@ -1221,7 +1224,7 @@ class CodeKind(LoopKindStrategy):
                     {
                         "loop_id": loop.id,
                         "label": label,
-                        "command": cmd,
+                        "command": redact_for_display(cmd),
                         "ok": None,
                         "stage": stage,
                         "skipped": skipped,
@@ -1238,7 +1241,7 @@ class CodeKind(LoopKindStrategy):
                     {
                         "loop_id": loop.id,
                         "label": label,
-                        "command": cmd,
+                        "command": redact_for_display(cmd),
                         "ok": False,
                         "stage": stage,
                     },

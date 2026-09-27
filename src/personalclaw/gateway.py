@@ -55,8 +55,12 @@ from personalclaw.dashboard.origin import (
 )
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import (
-    DEFAULT_BROWSER_SESSION_TTL_SECS,
-    generate_token,
+    ISSUER_READY,
+    ISSUER_STARTUP,
+    MintedSession,
+    browser_session_ttl,
+    duration_words,
+    mint_session,
 )
 from personalclaw.env import _is_wsl, browser_available
 from personalclaw.frontend import build_frontend_async
@@ -251,6 +255,37 @@ _WRITE_INDICATORS = (
     "kill",
     "terminate",
 )
+
+
+def mint_startup_token(issuer: str, auth_cfg: Any) -> MintedSession:
+    """The token the gateway hands out at startup: the dashboard link it prints (and opens),
+    or the ``--json-ready`` line's token for a test harness.
+
+    Both are how a browser signs in — the link is opened in one, and a harness opens its token
+    in one — so they last as long as every other browser sign-in: ``auth.session_ttl``
+    (``token_auth.browser_session_ttl``, 30 days by default). They used to hard-code the 30
+    days, so a shortened setting did not reach the two doors every install opens first.
+    """
+    return mint_session("local-startup", browser_session_ttl(auth_cfg), issuer=issuer)
+
+
+def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
+    """The one ``PERSONALCLAW_READY:{...}`` line ``--json-ready`` prints once the gateway binds.
+
+    Machine-readable, so what its token is and how long it lasts ride as fields: the token is an
+    owner session (``Authorization: Bearer <token>``, or open ``/?token=<token>`` in a browser),
+    and ``token_expires_in`` / ``token_expires_at`` are its real lifetime — the help text used to
+    promise "up to 20 hours" for a token the code minted for 30 days.
+    """
+    payload = {
+        "port": port,
+        "token": minted.token,
+        "token_expires_in": minted.lifetime_secs,
+        "token_expires_at": minted.expires_at,
+        "pid": os.getpid(),
+        "home": str(home),
+    }
+    return f"PERSONALCLAW_READY:{json.dumps(payload)}"
 
 
 def _is_read_only_tool(event_title: str) -> bool:
@@ -692,11 +727,23 @@ class GatewayOrchestrator:
 
             request_id = str(event.request_id)
 
-            # Prompt via the active channel (Slack, …) if one is registered. The
-            # channel owns its approval UI + owner-response wait; core races it
-            # against the dashboard prompt via the on_prompted hook (which hands us
-            # the channel's pending future so a dashboard click resolves both).
-            if self._channel_delivery is not None:
+            # Prompt on the channel that asks the owner approvals: the channel the parent chat
+            # started on first, since the person asking is there, then their "Send approvals
+            # to" choice, else the first connected channel that knows them
+            # (`channel_delivery.approval_delivery`). The channel owns its approval UI +
+            # owner-response wait; core races it against the dashboard prompt via the
+            # on_prompted hook (which hands us the channel's pending future so a dashboard
+            # click resolves both).
+            from personalclaw.channel_delivery import approval_delivery
+
+            origin = ""
+            if self.dashboard_state is not None:
+                parent = parent_session_key or (
+                    session_resolver(request_id) if session_resolver else resolved_session
+                )
+                origin = self.dashboard_state.channel_provider_for(parent) if parent else ""
+            asker = approval_delivery(origin)
+            if asker is not None:
                 try:
                     dashboard_future = None
                     approved: "bool | None" = None
@@ -741,7 +788,7 @@ class GatewayOrchestrator:
                     # surface; this is data, not rendering.
                     attach_approval_brief(event)
                     try:
-                        approved = await self._channel_delivery.request_approval(
+                        approved = await asker.request_approval(
                             event,
                             source=source,
                             parent_session_key=parent_session_key,
@@ -888,7 +935,10 @@ class GatewayOrchestrator:
             episodic_limit=self._cfg.memory.episodic_max_results,
         )
         # graph_enabled is deliberately NOT pinned here — the store reads
-        # `memory.graph_enabled` live so the Settings toggle works without a restart.
+        # `memory.graph_enabled` live so the Settings toggle works without a restart. Nor is an
+        # embedding function: the store embeds with the model bound in Settings → Models at each
+        # use, so a rebind or a clear reaches it without a restart — and an app-provided model is
+        # built at first use, after the dashboard init has registered the app's provider type.
         self.vector_memory.init()
         memory.vector_store = self.vector_memory
         self.vector_memory.serve_recall()
@@ -1959,7 +2009,11 @@ class GatewayOrchestrator:
         """
         try:
             from personalclaw.config.loader import config_dir
-            from personalclaw.schedule_history import ScheduleRun, status_for_result
+            from personalclaw.schedule_history import (
+                ScheduleRun,
+                status_for_result,
+                summary_for_result,
+            )
             from personalclaw.triggers import autopause
             from personalclaw.triggers.models import TriggerState
             from personalclaw.triggers.store import TriggerStore
@@ -1997,6 +2051,14 @@ class GatewayOrchestrator:
             reported = str(getattr(result, "error", "") or "") if result is not None else ""
             run_error = error or ("" if ok_exit else reported or "the action reported failure")
             output = str(getattr(result, "stdout", "") or "") if result is not None else ""
+            # What a person reads on the row: the sentence the action wrote, else what it printed,
+            # which stays the trace — a browse run's JSON account.
+            line = summary_for_result(result)
+            from personalclaw.triggers import parks
+
+            if ok_exit and parks.parked(result):
+                # A park's row says it waits on you and on what, not the payload it parked with.
+                output = line = parks.waiting_line(result)
             await store_runs.append(
                 ScheduleRun(
                     run_id=f"fire-{int(now * 1000)}",
@@ -2005,11 +2067,15 @@ class GatewayOrchestrator:
                     started_at=now,
                     finished_at=now,
                     status=status_for_result(result) if ok_exit else "failure",
-                    summary=output if ok_exit else run_error,
-                    trace=output if ok_exit else run_error,
+                    summary=line if ok_exit else run_error,
+                    trace=(output or line) if ok_exit else run_error,
                     error=run_error[:_ERROR_SUMMARY_MAX],
                 )
             )
+            if ok_exit:
+                # A park asks you, once, with the action's own card; a fire that went through
+                # withdraws the question an earlier one asked.
+                parks.settle(trigger, result, state=getattr(self, "dashboard_state", None))
             # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
             # (`count = consecutive_failures + 1`, then pauses at the threshold). Counting the row
             # just written would double-count and pause after FOUR failures — caught by driving the
@@ -2041,7 +2107,11 @@ class GatewayOrchestrator:
             from datetime import datetime, timezone
 
             stamp = datetime.now(timezone.utc).isoformat()
-            if exit_type == autopause.ExitType.OK.value:
+            if ok_exit and parks.parked(result):
+                # A fire that stopped for you is not a success: it did nothing it was
+                # asked yet. It stamps its own outcome, which `last_run_ts` reads as a run.
+                live.last_waiting_at = stamp
+            elif ok_exit:
                 live.last_success_at = stamp
             else:
                 live.last_failure_at = stamp
@@ -2808,6 +2878,11 @@ class GatewayOrchestrator:
             on_auto_archive=_auto_archive_sessions,
         )
         await self.heartbeat_svc.start()
+        # The cross-session search index keeps itself caught up with the transcripts, on its
+        # own thread and at a pace that leaves the gateway its time (`SessionIndexer`).
+        from personalclaw import session_search
+
+        session_search.INDEXER.start()
 
     def _register_graph_maintenance_passes(self) -> None:
         """Give the standing maintenance jobs their cadence (KL-14).
@@ -3213,13 +3288,14 @@ class GatewayOrchestrator:
         """Construct the Inbox service (state + store + on-demand AI triage).
 
         Source-independent: draft/classify/digest run over STORED items (populated by
-        the native push source + any configured poll provider) through the bound chat
-        model, so they work with no external provider connected. A message-source
-        provider is attached when one is configured, enabling poll/history; otherwise
-        polling no-ops. Attached to the dashboard state in ``_init_dashboard`` (which
-        runs after this)."""
+        the native push source + every polled source) through the bound chat model, so
+        they work with no external source connected. What the service polls is
+        ``inbox_providers.polled_sources``, read on every tick: each installed inbox app's
+        source, and the built-in drop folder while ``inbox.enabled`` is on. Attached to the
+        dashboard state in ``_init_dashboard`` (which runs after this)."""
         from personalclaw.identity import operator_name
         from personalclaw.inbox import InboxState, InboxStore
+        from personalclaw.inbox_providers import polled_sources
         from personalclaw.inbox_service import InboxService
 
         sec = self._cfg.inbox
@@ -3228,42 +3304,21 @@ class GatewayOrchestrator:
         store = InboxStore()
         store.load()
 
-        provider = None
-        if sec.enabled:
-            try:
-                # The inbox's poll source is the in-process filesystem source. (The
-                # inbox is also fed by the always-on native push source regardless.)
-                # Sources are selected BY NAME through the vendor-neutral seam below,
-                # so this names no vendor: any other source — including one an app
-                # contributes — is resolved by its own ``source_name``, not assumed
-                # here. Since INU-8 the seam resolves an app-declared source too
-                # (app-contributed instance → entry-point class → native →
-                # filesystem); which NAME the inbox polls is the caller's choice, and
-                # this default call site asks for the in-process filesystem source.
-                from personalclaw.inbox_providers import get_default_provider
-
-                provider = get_default_provider("filesystem")
-            except Exception:
-                logger.debug("inbox: message-source provider unavailable", exc_info=True)
-
         if self.inbox_svc is not None:
             self.inbox_svc.stop()
         self.inbox_svc = InboxService(
             state=state,
             store=store,
-            provider=provider,
+            sources=polled_sources,
             # The OPERATOR's name (drafts are written on behalf of the human —
             # "reply as {{user_name}}"), NOT agent.bot_name (the assistant's name).
             user_name=operator_name() or "the user",
             style_rules="\n".join(sec.style_rules or []),
         )
-        # Background loop: polls the wired provider (when any). Cheap when idle.
+        # Background loop: polls every source polled_sources names. Cheap when idle.
         # Retention/dismissed/feedback maintenance is the remediation engine's
         # `inbox.maintenance` job now, not a second cadence in this loop.
         self.inbox_svc.start()
-        logger.info(
-            "Inbox service initialized (provider=%s)", provider.source_name if provider else "none"
-        )
 
     async def _restart_inbox(self) -> str:
         """Rebuild the inbox service from current config (e.g. after a settings
@@ -4449,6 +4504,9 @@ class GatewayOrchestrator:
                 pass
         if self.heartbeat_svc:
             self.heartbeat_svc.stop()
+        from personalclaw import session_search
+
+        await asyncio.to_thread(session_search.INDEXER.stop, wait=True)
         if self.inbox_svc:
             self.inbox_svc.stop()
         # Kill all ACP processes and close connections
@@ -4782,24 +4840,6 @@ class GatewayOrchestrator:
     # Main run loop
     # ------------------------------------------------------------------
 
-    def _wire_embeddings(self) -> None:
-        """Bind the Settings > Models embedding selection to the gateway's vector memory.
-
-        Called AFTER the dashboard / API-server init, never before it: that init is where the
-        installed apps register their provider types (``load_all_extensions``) and where
-        ``config.json``'s ``providers[]`` are replayed into the LLM registry. Resolved any
-        earlier — as it was, right after ``_init_services()`` — an app-provided embedding model
-        (Ollama, the sentence-transformers app) could not be built because its app had not
-        registered it yet: the vector memory booted with no embed fn, and an Ollama binding logged
-        a chained traceback on every boot for a provider that was configured correctly. When no
-        embedding model is bound, semantic embeddings stay off until the user picks one.
-        """
-        from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-        embed_fn = get_active_embed_fn()
-        if embed_fn and getattr(self, "vector_memory", None) is not None:
-            self.vector_memory.embed_fn = embed_fn
-
     async def run(self) -> None:
         """Start all services and block until shutdown signal."""
         # ── GOVERNANCE BOOT, first and fail-closed ──
@@ -4856,23 +4896,16 @@ class GatewayOrchestrator:
         # What the boot passes found while the dashboard did not exist yet: one notice, now that
         # it can be delivered.
         self._surface_held_boot_review()
-        self._wire_embeddings()
 
         # Emit machine-readable READY line for test harnesses (--json-ready).
         # Printed BEFORE bg_session and other startup chatter so the harness
         # can read it deterministically with a single readline() in the
         # PERSONALCLAW_READY: prefix matcher.
         if self._json_ready:
-            ready_token = generate_token(
-                "local-startup", ttl_seconds=DEFAULT_BROWSER_SESSION_TTL_SECS
+            ready = mint_startup_token(ISSUER_READY, self._cfg.auth)
+            print(
+                ready_line(port=self._dashboard_port, home=config_dir(), minted=ready), flush=True
             )
-            ready_payload = {
-                "port": self._dashboard_port,
-                "token": ready_token,
-                "pid": os.getpid(),
-                "home": str(config_dir()),
-            }
-            print(f"PERSONALCLAW_READY:{json.dumps(ready_payload)}", flush=True)
 
         # AutoNudge must run after dashboard init — _fire callback dereferences
         # self.dashboard_state. In --no-dashboard mode the guard inside _fire
@@ -4999,11 +5032,9 @@ class GatewayOrchestrator:
             if not self._no_dashboard:
                 host = resolve_dashboard_host(self._local_only, self._configured_host)
                 base_url = f"http://{host}:{self._dashboard_port}"
-                startup_token = generate_token(
-                    "local-startup", ttl_seconds=DEFAULT_BROWSER_SESSION_TTL_SECS
-                )
+                startup = mint_startup_token(ISSUER_STARTUP, self._cfg.auth)
                 dashboard_url = build_dashboard_url(
-                    base_url, startup_token, local_only=self._local_only
+                    base_url, startup.token, local_only=self._local_only
                 )
                 for line in format_dashboard_urls(
                     dashboard_url,
@@ -5012,6 +5043,12 @@ class GatewayOrchestrator:
                     has_custom_host=bool(self._configured_host),
                 ):
                     print(line)
+                print(
+                    f"   (a sign-in link: open it within {duration_words(startup.open_within_secs)}"
+                    f"; a browser that opens it stays signed in for "
+                    f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
+                    "sign-in.)"
+                )
 
                 # Auto-open dashboard — skip on headless remote sessions. The predicate
                 # lives in `env.browser_available()` because `personalclaw setup` asks the

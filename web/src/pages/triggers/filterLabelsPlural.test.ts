@@ -25,7 +25,7 @@ describe('the triggers filter labels are plural categories', () => {
     const block = src.match(/const FILTERS[\s\S]*?\]\n/)?.[0] ?? ''
     const labels = [...block.matchAll(/label: '([^']+)'/g)].map((m) => m[1])
     expect(labels, 'the FILTERS census must not go empty').toEqual(
-      ['All', 'Schedules', 'Lifecycle events', 'Data events', 'Automations'],
+      ['All', 'Schedules', 'Lifecycle events', 'Data events', 'Automations', 'Callbacks'],
     )
     // The specific drift this closed: no chip may be the singular "Lifecycle".
     expect(labels, 'the lifecycle chip must be the plural category').not.toContain('Lifecycle')

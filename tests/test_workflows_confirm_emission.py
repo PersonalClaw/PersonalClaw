@@ -15,10 +15,10 @@ Both halves now fire from the controller, and the placement is the whole design:
 * **RESOLVED fires AFTER the claim is won and the epoch checked.** Emitting earlier would log an
   approval for a race the caller LOST, and the audit would show two people approving one gate.
 
-The id is derived from `(run, gate, epoch)` via the shipped `confirmation.request_id`,
-never from the
-resume token: a token is single-use and rotates, so a token-derived id would give the two halves
-different values and they would never pair up.
+The id is derived from `(run, gate, epoch)` and which ask of that step it is, via the shipped
+`confirmation.request_id`, never from the resume token — and minted ONCE, with the ask, and carried
+on its continuation, so the resolving half cites the id the pending half was written with rather
+than deriving one again (`test_workflows_each_ask_keeps_its_own_record` drives the second ask).
 """
 
 import asyncio
@@ -263,7 +263,11 @@ def test_a_parked_gate_OPENS_an_escalation_OUTCOME():
     # with no vector store at all
     assert question.metric_source == outcomes.SOURCE_LEDGER
     assert question.metric == CONFIRMATION_RESOLVED
-    assert question.match == {"confirmation_id": _rows(CONFIRMATION_PENDING)[0]["confirmation_id"]}
+    # Graded by an ANSWER only: a withdrawn ask (the run ended under it) is not the person's no.
+    assert question.match == {
+        "confirmation_id": _rows(CONFIRMATION_PENDING)[0]["confirmation_id"],
+        "answered": True,
+    }
     assert question.horizon_secs > 0.0
 
 
@@ -335,6 +339,32 @@ def test_the_EPOCH_is_in_the_id_so_a_rewind_asks_a_NEW_question():
     from personalclaw.workflows.gate_answers import stable_confirmation_id
 
     assert stable_confirmation_id("r", "g", 1) != stable_confirmation_id("r", "g", 2)
+
+
+def test_the_ASK_is_in_the_id_so_asking_again_in_one_epoch_is_a_NEW_question():
+    """A step can ask twice in one epoch (approved, run again, stopped again). The first ask keeps
+    the id it always had; each later one is a new record."""
+    from personalclaw.workflows.gate_answers import stable_confirmation_id
+
+    first = stable_confirmation_id("r", "g", 1)
+    assert stable_confirmation_id("r", "g", 1, ask=0) == first == request_id("r", "g", 1)
+    assert len({first, stable_confirmation_id("r", "g", 1, ask=1)}) == 2
+    assert stable_confirmation_id("r", "g", 1, ask=1) != stable_confirmation_id("r", "g", 2, ask=1)
+
+
+def test_the_resolution_cites_the_id_the_ask_was_minted_with():
+    """Paired by construction: the continuation carries the pending half's id, and the answer
+    writes that id back."""
+
+    async def go():
+        controller, conts = await _park_on_gate(APPROVAL)
+        minted = conts[0].confirmation_id
+        controller.resume(conts[0].token, True, responder="a")
+        return minted
+
+    minted = asyncio.run(go())
+    assert minted == _rows(CONFIRMATION_PENDING)[0]["confirmation_id"]
+    assert _rows(CONFIRMATION_RESOLVED)[0]["confirmation_id"] == minted
 
 
 def test_the_id_is_NOT_the_resume_token():

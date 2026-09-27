@@ -93,9 +93,9 @@ export interface WorkflowViewModel {
 
 const TERMINAL_NODE = new Set([
   'done', 'degraded', 'failed', 'skipped', 'no_change', 'scope_violation',
-  'discarded', 'escalated', 'blocked', 'cancelled',
+  'discarded', 'escalated', 'blocked', 'cancelled', 'declined',
 ])
-const TERMINAL_RUN = new Set(['complete', 'failed', 'cancelled', 'escalated'])
+const TERMINAL_RUN = new Set(['complete', 'failed', 'cancelled', 'escalated', 'declined'])
 
 /** Fold a server snapshot into the view-model. Reruns whole on every snapshot — the
  *  snapshot is authoritative, so it RESETS the dedup and epoch state rather than merging

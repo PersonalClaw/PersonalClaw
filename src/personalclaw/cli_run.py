@@ -67,10 +67,13 @@ _BOOT_TIMEOUT_SECS = 90.0
 #: Default ceiling on one headless turn. Overridable with ``--timeout``.
 _DEFAULT_TURN_TIMEOUT_SECS = 600.0
 
-#: TTL for the token minted for one CLI invocation. Short on purpose: a headless run is
-#: seconds-to-minutes, and ``generate_token`` evicts the oldest of five concurrent
-#: nonces — a long-lived CLI token would push the operator's browser session out.
-_TOKEN_TTL_SECS = 3600
+#: TTL for the token minted for one CLI invocation, in the token endpoint's own grammar. Short on
+#: purpose: a headless run is seconds-to-minutes, and a token that outlives its run is a live
+#: credential for nothing. (It counts against the TOKEN limit only, so however many runs there
+#: are, none of them can sign the operator's browser or phone out — ledger 255.) It was the bare
+#: number ``3600``, which is not a duration the endpoint reads, so every run was quietly minted
+#: the endpoint's default lifetime instead — and the endpoint now refuses it.
+_TOKEN_TTL = "1h"
 
 
 class RunError(Exception):
@@ -155,7 +158,7 @@ def mint_local_token(port: int, *, timeout: float = 5.0) -> str:
     if not secret:
         raise RunError(f"{secret_path} is empty — cannot mint a token.")
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/token/local?ttl={_TOKEN_TTL_SECS}",
+        f"http://127.0.0.1:{port}/api/token/local?ttl={_TOKEN_TTL}",
         headers={"X-Local-Secret": secret},
     )
     try:

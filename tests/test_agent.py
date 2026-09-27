@@ -610,6 +610,17 @@ class TestResolvePersonalclawBin:
 class TestAgentHooksMerge:
     """Tests for agent.agent_hooks merge into ACP agent agent config."""
 
+    @pytest.fixture(autouse=True)
+    def _owner_allowed_every_hook(self, monkeypatch):
+        """These tests are about the merge's mechanics — validation, dedup, caps — so the owner's
+        yes is given for every hook here, and the command the CLI runs is the file itself. The
+        yes, the copy the CLI runs, and a hook merged without either are
+        `test_an_agent_hook_runs_only_once_the_owner_allows_it`."""
+        monkeypatch.setattr(
+            "personalclaw.agent_hook_grants.pinned",
+            lambda event, command, matcher, *, write=True: command,
+        )
+
     def _bundled_with_hooks(self, tmp_path: Path) -> Path:
         """Write bundled defaults with realistic list-based hooks."""
         cfg_dir = tmp_path / "config"
@@ -1038,6 +1049,12 @@ class TestDefaultDialectHooksAutoimport:
         isolation, so we fake HOME = tmp_path for every test in this class.
         """
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        # The merge's mechanics are this class's subject; the owner's yes and the copy the CLI
+        # runs are `test_an_agent_hook_runs_only_once_the_owner_allows_it`'s, so both are given.
+        monkeypatch.setattr(
+            "personalclaw.agent_hook_grants.pinned",
+            lambda event, command, matcher, *, write=True: command,
+        )
 
     def _make_script(
         self,

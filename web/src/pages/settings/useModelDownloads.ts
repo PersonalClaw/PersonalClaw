@@ -15,8 +15,12 @@ import { api, isLiveDownload, type DownloadJob } from '../../lib/api'
  *  always, because the handler returns before the worker coroutine has run. So the ONE path that
  *  starts a download opened no stream and reported the job settled, and its row sat at
  *  `0 MiB of <total>` through completion. The mount path was never affected, which is exactly
- *  why a reload "fixed" it and made the bug look cosmetic. */
-export function useModelDownloads(provider: string, onSettled: () => void) {
+ *  why a reload "fixed" it and made the bug look cosmetic.
+ *
+ *  `reattach: false` skips that mount-time list, for a caller that tracks only the downloads it
+ *  starts: every model row of Settings → Models holds one for its Repair, and a list read per row
+ *  would be a request per model on every open. */
+export function useModelDownloads(provider: string, onSettled: () => void, { reattach = true }: { reattach?: boolean } = {}) {
   const [jobs, setJobs] = useState<Record<string, DownloadJob>>({})
   const streams = useRef<Map<string, EventSource>>(new Map())
   const settled = useRef(onSettled)
@@ -47,13 +51,15 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
   // Re-attach to any in-flight jobs of this provider on mount.
   useEffect(() => {
     let alive = true
-    api.modelDownloads().then((all) => {
-      if (!alive) return
-      all.filter((j) => j.provider === provider).forEach(attach)
-    }).catch(() => { /* none */ })
+    if (reattach) {
+      api.modelDownloads().then((all) => {
+        if (!alive) return
+        all.filter((j) => j.provider === provider).forEach(attach)
+      }).catch(() => { /* none */ })
+    }
     const map = streams.current
     return () => { alive = false; map.forEach((es) => es.close()); map.clear() }
-  }, [provider, attach])
+  }, [provider, attach, reattach])
 
   const start = useCallback(async (model: string) => {
     const job = await api.startModelDownload(provider, model)

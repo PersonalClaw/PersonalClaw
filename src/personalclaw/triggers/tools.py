@@ -36,6 +36,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.security import redact_for_display, redact_values_for_display
+
 logger = logging.getLogger(__name__)
 
 #: Decision 5d: "`created_by: workflow|agent` triggers are announced to the user on creation and
@@ -654,17 +656,19 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
             continue
         if state == "paused" and trigger.enabled:
             continue
+        # The name and last error are masked the way the Automations page masks them: this list is
+        # a read of the same triggers, and it lands in a chat's context.
         out.append(
             {
                 "id": trigger.id,
-                "name": trigger.name,
+                "name": redact_for_display(trigger.name or ""),
                 "kind": trigger.kind,
                 "enabled": trigger.enabled,
                 "created_by": trigger.created_by,
                 "health": trigger.health_status,
                 "runs": trigger.run_count,
                 "next_fire_at": trigger.next_fire_at,
-                "last_error": trigger.last_error_summary,
+                "last_error": redact_for_display(trigger.last_error_summary or ""),
                 "broken": [i.message for i in row.errors],
             }
         )
@@ -1041,7 +1045,8 @@ def run(
     plan = manual_gate_plan(dry_run)
     trigger = row.trigger
     lines = [
-        f"{'Dry run' if dry_run else 'Manual run'} of {trigger.id} ({trigger.name}).",
+        f"{'Dry run' if dry_run else 'Manual run'} of {trigger.id} "
+        f"({redact_for_display(trigger.name or '')}).",
         f"  gates enforced: {', '.join(plan['enforced'])}",
         f"  bypassed (manual): {', '.join(plan['bypassed']) or 'none'}",
     ]
@@ -1054,8 +1059,12 @@ def run(
         if missing:
             lines.append(f"  note: a real run is refused: {grants.refusal(trigger, missing)}")
         lines.append("  nothing was executed.")
+        # The trigger as a read shows it, masked: a dry run is a read of the automation, and its
+        # answer reaches the page and the chat that asked.
         return AutomationToolResult(
-            True, "\n".join(lines), {"plan": plan, "trigger": trigger.to_dict()}
+            True,
+            "\n".join(lines),
+            {"plan": plan, "trigger": redact_values_for_display(trigger.to_dict())},
         )
     # 🔴 The gates the plan claims to enforce, actually enforced. Below the dry-run return so a dry
     # run still REPORTS the plan during an incident (that is a read, and telling an operator what

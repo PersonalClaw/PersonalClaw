@@ -213,27 +213,28 @@ def test_an_old_shape_row_is_discarded(_isolated) -> None:
     assert ss.load_sessions() == {}, "an un-attributable session must not authenticate"
 
 
-def test_attach_refuses_an_absent_nonce(_isolated) -> None:
+def test_noting_a_client_never_resurrects_a_session(_isolated) -> None:
     """Annotating must never resurrect a session the store already retired."""
-    assert ss.attach_device("gone", _device()) is False
+    note = ss.note_client("gone", ip="10.0.0.2", user_agent="curl/8", browser_carrier=False)
+    assert note.wrote is False
     assert ss.load_session_records() == {}
 
 
-def test_attach_preserves_the_original_expiry(_isolated) -> None:
+def test_noting_a_client_preserves_the_original_expiry(_isolated) -> None:
     exp = time.time() + 1234
     ss.remember_session("n1", exp)
-    assert ss.attach_device("n1", _device()) is True
+    assert ss.note_client("n1", ip="10.0.0.2", user_agent="curl/8", browser_carrier=False).wrote
     assert ss.load_session_records()["n1"].expiry == exp
 
 
-def test_nonces_for_device_finds_every_session(_isolated) -> None:
-    """Re-pairing before the old session expires is legitimate; a partial revoke is not."""
+def test_nonces_for_session_finds_every_session_under_one_handle(_isolated) -> None:
+    """A sign-out that left a second row under the same name would leave the device in."""
     ss.remember_session("n1", time.time() + 3600, issuer=ss.ISSUER_PAIR, device=_device())
     ss.remember_session("n2", time.time() + 3600, issuer=ss.ISSUER_PAIR, device=_device())
     ss.remember_session("n3", time.time() + 3600)
-    assert sorted(ss.nonces_for_device("dev-1")) == ["n1", "n2"]
-    assert ss.nonces_for_device("nope") == []
-    assert ss.nonces_for_device("") == []
+    assert sorted(ss.nonces_for_session("dev-1")) == ["n1", "n2"]
+    assert ss.nonces_for_session("nope") == []
+    assert ss.nonces_for_session("") == []
 
 
 def test_a_device_kind_outside_the_vocabulary_becomes_unknown(_isolated) -> None:
@@ -252,10 +253,14 @@ def test_the_store_stays_owner_only_with_a_device_row(_isolated) -> None:
     assert oct(ss.sessions_path().stat().st_mode)[-3:] == "600"
 
 
-def test_only_device_rows_are_in_the_registry(_isolated) -> None:
+def test_every_sign_in_is_listed_but_only_a_pairing_is_paired(_isolated) -> None:
+    """The list is every sign-in; the pairing-only capabilities read the ISSUER, so listing the
+    owner's browser cannot hand it what only a paired device may do."""
     ss.remember_session("owner", time.time() + 3600)
     ss.remember_session("phone", time.time() + 3600, issuer=ss.ISSUER_PAIR, device=_device())
-    assert set(ss.device_sessions()) == {"phone"}
+    ss.remember_session("app", time.time() + 3600, issuer=ss.ISSUER_APP, app="notes")
+    assert set(ss.signed_in_sessions()) == {"owner", "phone"}, "an app token is not a device"
+    assert set(ss.paired_sessions()) == {"phone"}
 
 
 def test_stats_count_devices_without_naming_them(_isolated) -> None:
@@ -281,15 +286,16 @@ def _stored_device(nonce: str) -> ss.DeviceInfo:
 
 
 def _count_saves(monkeypatch) -> list[int]:
-    """Count real ``save_session_records`` calls. The WRITE is the cost being throttled."""
+    """Count real store writes (``_save_state``, the one writer). The WRITE is the cost being
+    throttled."""
     calls = [0]
-    original = ss.save_session_records
+    original = ss._save_state
 
-    def counting(records):
+    def counting(state):
         calls[0] += 1
-        original(records)
+        return original(state)
 
-    monkeypatch.setattr(ss, "save_session_records", counting)
+    monkeypatch.setattr(ss, "_save_state", counting)
     return calls
 
 
@@ -356,20 +362,21 @@ def test_a_stamp_older_than_the_threshold_is_written_again(_isolated, monkeypatc
     assert _stored_device("n1").last_seen == pytest.approx(later)
 
 
-def test_a_non_device_session_is_never_stamped(_isolated, monkeypatch) -> None:
-    """A plain owner-token row has no device, so there is nothing to be 'last seen'."""
+def test_every_session_is_stamped_and_an_absent_one_never(_isolated, monkeypatch) -> None:
+    """Settings → Devices shows "last seen" for every sign-in, and the per-kind limit signs out
+    the least recently USED — so an owner's plain session is stamped like a paired phone. A
+    nonce the store never recorded is not resurrected, and costs no write."""
     ss.remember_session("owner", time.time() + 3600)
     calls = _count_saves(monkeypatch)
-    assert ss.touch_device_last_seen("owner") is False
+    assert ss.touch_device_last_seen("owner") is True
     assert ss.touch_device_last_seen("never-stored") is False
-    assert calls[0] == 0, "a no-op must be a no-op on disk too"
+    assert calls[0] == 1, "one write for the stamp, none for the absent nonce"
 
 
 def test_two_rapid_authorizations_write_the_store_once(_isolated, monkeypatch) -> None:
     """The property that made the field payable, asserted at the AUTHORIZE path."""
     token = token_auth.generate_token("owner", ttl_seconds=3600)
     nonce = next(iter(ss.load_session_records()))
-    ss.attach_device(nonce, _device(last_seen=0.0))
     calls = _count_saves(monkeypatch)
 
     assert token_auth.validate_token(token, use_session_exp=True)[0] is True
@@ -382,8 +389,6 @@ def test_two_rapid_authorizations_write_the_store_once(_isolated, monkeypatch) -
 def test_an_authorization_still_succeeds_when_the_stamp_raises(_isolated, monkeypatch) -> None:
     """Best-effort by contract: a store that cannot be stamped must not deny a valid session."""
     token = token_auth.generate_token("owner", ttl_seconds=3600)
-    nonce = next(iter(ss.load_session_records()))
-    ss.attach_device(nonce, _device(last_seen=0.0))
 
     def exploding(*_a, **_kw):
         raise OSError("read-only file system")
@@ -407,7 +412,6 @@ def test_the_in_memory_throttle_suppresses_even_the_read(_isolated, monkeypatch)
     """The two layers are separable: the map suppresses a write the store WOULD have allowed."""
     token = token_auth.generate_token("owner", ttl_seconds=3600)
     nonce = next(iter(ss.load_session_records()))
-    ss.attach_device(nonce, _device(last_seen=0.0))
     assert token_auth.validate_token(token, use_session_exp=True)[0] is True
     _age_stored_last_seen(nonce, ss.LAST_SEEN_THROTTLE_SECS + 10)
 
@@ -424,7 +428,6 @@ def test_a_restart_forgets_the_throttle(_isolated, monkeypatch) -> None:
     """
     token = token_auth.generate_token("owner", ttl_seconds=3600)
     nonce = next(iter(ss.load_session_records()))
-    ss.attach_device(nonce, _device(last_seen=0.0))
     assert token_auth.validate_token(token, use_session_exp=True)[0] is True
     _age_stored_last_seen(nonce, ss.LAST_SEEN_THROTTLE_SECS + 10)
 
@@ -540,8 +543,8 @@ async def test_clause_4_revoke_locks_the_device_out_across_a_restart(_isolated) 
     token_auth.reset_secret_cache()
     valid, _user, reason = token_auth.validate_token(token, use_session_exp=True)
     assert valid is False, "a revoke that un-revokes on reboot is worse than no revoke"
-    assert reason in ("no active sessions", "token superseded", "session expired")
-    assert ss.device_sessions() == {}
+    assert reason == "signed out"
+    assert ss.paired_sessions() == {}
 
 
 @pytest.mark.asyncio
@@ -587,12 +590,14 @@ async def test_the_registry_reports_a_real_last_seen_once_stamped(_isolated) -> 
 
 
 @pytest.mark.asyncio
-async def test_an_owner_session_is_not_a_device(_isolated) -> None:
-    """The registry must not list the owner's own browser as a paired device."""
+async def test_an_owner_session_is_listed_but_not_as_a_paired_device(_isolated) -> None:
+    """The list names every sign-in — but the owner's own session is not listed
+    as a PAIRED device: it keeps the door it came through."""
     token_auth.generate_token("owner", ttl_seconds=3600)
     async with TestClient(TestServer(_app())) as client:
         payload = await (await client.get("/api/devices")).json()
-    assert payload["devices"] == []
+    [row] = payload["devices"]
+    assert row["issuer"] == ss.ISSUER_TOKEN and row["pool"] == ss.POOL_TOKEN
 
 
 @pytest.mark.asyncio
@@ -609,16 +614,18 @@ async def test_revoke_drops_every_session_of_that_device(_isolated) -> None:
     async with TestClient(TestServer(_app())) as client:
         first = await _complete(client, (await _start(client))["code"], device_name="Phone")
         device_id = (await first.json())["device_id"]
-        # A second session for the SAME device id, as a re-pair before expiry produces.
-        token_auth.generate_token(devices_h.PAIRED_DEVICE_USER, ttl_seconds=3600)
-        extra = next(
-            n for n in ss.load_session_records() if not ss.load_session_records()[n].device
+        # A second session under the SAME handle — nothing mints one today, which is exactly
+        # why a sign-out must not assume there is only ever one.
+        token_auth.mint_session(
+            devices_h.PAIRED_DEVICE_USER,
+            3600,
+            issuer=ss.ISSUER_PAIR,
+            device=ss.DeviceInfo(id=device_id, name="Phone", kind="mobile"),
         )
-        ss.attach_device(extra, ss.DeviceInfo(id=device_id, name="Phone", kind="mobile"))
 
         resp = await client.post(f"/api/devices/{device_id}/revoke", json={})
         assert (await resp.json())["revoked"] == 2
-    assert ss.device_sessions() == {}
+    assert ss.paired_sessions() == {}
 
 
 @pytest.mark.asyncio
@@ -632,9 +639,12 @@ async def test_a_hostile_device_name_and_kind_are_clamped(_isolated) -> None:
             device_name="<script>alert(1)</script>" + "x" * 200,
             kind="../../etc/passwd",
         )
-    device = next(iter(ss.device_sessions().values())).device
+    device = next(iter(ss.paired_sessions().values())).device
     assert device is not None
-    assert device.kind == "unknown"
+    # The caller cannot choose its kind: the hostile value is clamped, and the kind falls back
+    # to what its User-Agent says (the test client's `aiohttp/` agent is a script, `cli`).
+    assert device.kind in ss.DEVICE_KINDS and device.kind != "../../etc/passwd"
+    assert device.kind == "cli"
     assert len(device.name) == ss.MAX_DEVICE_NAME
 
 
@@ -645,7 +655,7 @@ async def test_an_omitted_device_name_is_derived(_isolated) -> None:
         data = await _start(client)
         resp = await _complete(client, data["code"])
         assert resp.status == 200
-    device = next(iter(ss.device_sessions().values())).device
+    device = next(iter(ss.paired_sessions().values())).device
     assert device is not None
     assert device.name, "an unnamed device would be unidentifiable in the registry"
 
@@ -660,7 +670,7 @@ async def test_an_undeclared_kind_is_derived_from_the_user_agent(_isolated) -> N
             headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"},
         )
         assert resp.status == 200
-    device = next(iter(ss.device_sessions().values())).device
+    device = next(iter(ss.paired_sessions().values())).device
     assert device is not None
     assert (device.kind, device.name) == ("mobile", "iPhone")
 
@@ -670,7 +680,7 @@ async def test_the_owners_label_beats_a_derived_name(_isolated) -> None:
     async with TestClient(TestServer(_app())) as client:
         resp = await client.post("/api/devices/pair/start", json={"label": "Kitchen tablet"})
         await _complete(client, (await resp.json())["code"])
-    device = next(iter(ss.device_sessions().values())).device
+    device = next(iter(ss.paired_sessions().values())).device
     assert device is not None and device.name == "Kitchen tablet"
 
 
@@ -856,9 +866,15 @@ async def test_a_wrong_origin_is_refused_on_both_pair_routes(_isolated, monkeypa
 @pytest.mark.asyncio
 async def test_a_session_that_cannot_be_attributed_is_retracted(_isolated, monkeypatch) -> None:
     """An un-listed device session is the exact failure the registry exists to prevent."""
-    monkeypatch.setattr(devices_h, "attach_device", lambda *a, **k: False)
     async with TestClient(TestServer(_app())) as client:
         data = await _start(client)
+        # The session store cannot be written, so the device would be neither listed nor
+        # revocable, nor survive a restart.
+        monkeypatch.setattr(
+            ss, "atomic_write", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only"))
+        )
         resp = await _complete(client, data["code"])
         assert resp.status == 503
+        token = resp.cookies.get(f"pc_token_{PORT}")
+    assert token is None, "no cookie for a session that was retracted"
     assert ss.load_session_records() == {}, "the unattributable session was retracted"

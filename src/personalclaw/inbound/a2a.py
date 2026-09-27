@@ -103,6 +103,8 @@ STATE_INPUT_REQUIRED = "input-required"
 STATE_COMPLETED = "completed"
 STATE_FAILED = "failed"
 STATE_CANCELED = "canceled"
+#: The agent decided not to proceed — reached when the owner declines an approval the run needed.
+STATE_REJECTED = "rejected"
 
 #: ``RunStatus`` value → A2A task state. EXHAUSTIVE over ``models.RunStatus`` — every
 #: member has a row, and ``test_inbound_a2a`` asserts that, so adding a run status without
@@ -125,6 +127,9 @@ _RUN_STATE_MAP: dict[str, str] = {
     "failed": STATE_FAILED,
     "cancelled": STATE_CANCELED,
     "escalated": STATE_INPUT_REQUIRED,
+    # A person declined an approval the run needed: the agent will not proceed with it, which is
+    # A2A's `rejected`. Not `canceled`, which reads to a caller as its own cancel.
+    "declined": STATE_REJECTED,
 }
 
 #: How long a streamed task is followed before the stream closes with whatever state the

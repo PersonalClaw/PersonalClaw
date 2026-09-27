@@ -210,7 +210,9 @@ function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; on
           : <span className="size-2 rounded-full" style={{ background: tone }} />}
         {CHANNEL_STATE_LABEL[state] ?? state}
       </span>
-      {(detail ?? channel.health.detail) && <span data-type="caption" className="text-on-surface-low truncate max-w-[60%]">{detail ?? channel.health.detail}</span>}
+      {/* Wrapped, never clipped: a failing channel's sentence says what to do, and its end is the
+          part that says it ("…set CA Certificate File…"). */}
+      {(detail ?? channel.health.detail) && <span data-type="caption" className="min-w-0 flex-1 break-words text-on-surface-low">{detail ?? channel.health.detail}</span>}
       <div className="ml-auto flex items-center gap-1.5">
         {/* One strip per channel provider, so these three share names across rows too. */}
         <button type="button" onClick={() => act('test')} disabled={!!busy} aria-label={`Test: ${channel.name}`}

@@ -92,7 +92,7 @@ def _archive_on_disk(state, name: str) -> None:
     meta["closed"] = True
     lines[0] = json.dumps(meta) + "\n"
     path.write_text("".join(lines), encoding="utf-8")
-    state.conversation_log._meta_cache.pop(hk, None)
+    state.conversation_log._invalidate_cache(hk)
     state.conversation_log._msg_cache.pop(hk, None)
 
 
@@ -100,7 +100,7 @@ def _disk(state, name: str) -> tuple[int, int, bool]:
     """The independent oracle: (bytes on disk, transcript messages, closed flag)."""
     hk = _hk(name)
     path = state.conversation_log._path(hk)
-    state.conversation_log._meta_cache.pop(hk, None)
+    state.conversation_log._invalidate_cache(hk)
     state.conversation_log._msg_cache.pop(hk, None)
     return (
         path.stat().st_size,

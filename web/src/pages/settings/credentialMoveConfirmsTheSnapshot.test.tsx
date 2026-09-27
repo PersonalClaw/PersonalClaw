@@ -53,6 +53,9 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
   vi.doMock('../../ui/dialog', () => ({ confirm: confirmSpy }))
   vi.doMock('../../lib/api', () => ({
     api: {
+      // The signed-in devices summary renders inside this SAME panel; a total
+      // mock with no `devices` read would throw before the section under test renders.
+      devices: () => Promise.resolve([]),
       securityStats: () => Promise.resolve({
         denied_commands: 1, suspicious_patterns: 1, tool_schemas: 1, redaction_paths: 1,
       }),

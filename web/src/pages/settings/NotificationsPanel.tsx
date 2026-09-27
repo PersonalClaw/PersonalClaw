@@ -4,6 +4,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { NotificationRulesMatrix, DigestSchedule } from './NotificationRulesMatrix'
+import { ApprovalChannelSection } from './ApprovalChannelSection'
 import { notify } from '../../app/appSdk'
 
 const SEVERITIES = [
@@ -47,12 +48,13 @@ export function NotificationsPanel() {
   )
   const reloadRules = () => { invalidateKeys('settings:notification-rules'); refreshRules() }
 
+  const flashSaved = () => { setSaved(true); setTimeout(() => setSaved(false), 1600) }
   const patch = (p: Partial<NotificationSettings>) => {
     setS((prev) => prev && { ...prev, ...p })
     // Optimistic locally, silent on failure. A notification setting that did not save while the UI says
     // it did is the worst member of this family: the next missed alert has no explanation.
     api.saveNotificationSettings(p)
-      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
+      .then(flashSaved)
       .catch((e) => notify(`Couldn't save your notification settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
 
@@ -92,6 +94,10 @@ export function NotificationsPanel() {
           </Row>
         )}
       </Section>
+
+      {/* Which chat channel asks an approval. Above the per-kind rules, whose Approval needed row's
+          Channel DM target it steers. */}
+      <ApprovalChannelSection onSaved={flashSaved} />
 
       {/* Per-kind rules sit BELOW the global controls because that's the order they apply
           in: the gate above decides whether anything is delivered at all, and these decide

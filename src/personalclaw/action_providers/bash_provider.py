@@ -72,6 +72,8 @@ PROTECTED_ENV_NAMES: frozenset[str] = frozenset(
         "PYTHONPATH",
         "PYTHONSTARTUP",
         "PYTHONHOME",
+        # Which bytecode a Python child runs: a prefix a payload chose would load its caches.
+        "PYTHONPYCACHEPREFIX",
         "PERL5LIB",
         "NODE_OPTIONS",
         "NODE_PATH",

@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **874 registrations** over **706 distinct paths** — 867 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **879 registrations** over **711 distinct paths** — 872 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 127 families the surface divides into, largest first.
+The 128 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -34,8 +34,8 @@ The 127 families the surface divides into, largest first.
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
 | `/api/skills` | 19 | 15 |
+| `/api/triggers` | 19 | 16 |
 | `/api/mcp` | 18 | 14 |
-| `/api/triggers` | 18 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/projects` | 14 | 10 |
@@ -68,12 +68,12 @@ The 127 families the surface divides into, largest first.
 | `/api/tools` | 6 | 6 |
 | `/api/autonudge` | 5 | 3 |
 | `/api/desktop` | 5 | 4 |
+| `/api/devices` | 5 | 5 |
 | `/api/feedback` | 5 | 5 |
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
 | `/api/uploads` | 5 | 5 |
 | `/api/autonomy` | 4 | 4 |
-| `/api/devices` | 4 | 4 |
 | `/api/external-access` | 4 | 4 |
 | `/api/update` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
@@ -87,11 +87,13 @@ The 127 families the surface divides into, largest first.
 | `/api/terminal` | 3 | 2 |
 | `/api/usage` | 3 | 3 |
 | `/api/agent` | 2 | 1 |
+| `/api/agent-hooks` | 2 | 2 |
 | `/api/agent-providers` | 2 | 2 |
 | `/api/approvals` | 2 | 2 |
 | `/api/channel` | 2 | 2 |
 | `/api/computer-use` | 2 | 2 |
 | `/api/guardrails` | 2 | 1 |
+| `/api/heartbeat` | 2 | 2 |
 | `/api/session` | 2 | 2 |
 | `/api/system` | 2 | 2 |
 | `/api/upload` | 2 | 2 |
@@ -100,7 +102,6 @@ The 127 families the surface divides into, largest first.
 | `/action` | 1 | 1 |
 | `/actions` | 1 | 1 |
 | `/api/action-providers` | 1 | 1 |
-| `/api/agent-hooks` | 1 | 1 |
 | `/api/agent-runners` | 1 | 1 |
 | `/api/attachment-extract` | 1 | 1 |
 | `/api/auth-status` | 1 | 1 |
@@ -154,12 +155,13 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 872 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
 | `GET` | `/api/action-providers` | the registered action providers + their |
-| `GET` | `/api/agent-hooks` | read-only view of agent hooks from personalclaw.json. |
+| `GET` | `/api/agent-hooks` | the agent CLI's hooks in effect, and the ones waiting for the owner. |
+| `POST` | `/api/agent-hooks/allow` | the owner's yes to one waiting agent hook. |
 | `GET` | `/api/agent-marketplace/agents` | list agents from a marketplace. |
 | `POST` | `/api/agent-marketplace/agents` | create a new agent definition. |
 | `DELETE` | `/api/agent-marketplace/agents/{name}` | delete an agent definition. |
@@ -210,7 +212,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/apps/{name}/config` | save an app's settings, and apply them to its providers. |
 | `POST` | `/api/apps/{name}/disable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/enable` | _(no summary)_ |
-| `POST` | `/api/apps/{name}/token` | mint an app-scoped identity token. |
+| `POST` | `/api/apps/{name}/token` | the app-scoped identity token this app should use. |
 | `GET` | `/api/apps/{name}/uninstall-preview` | classify shared deps (A3) and report what the app's ``data/`` holds. |
 | `POST` | `/api/apps/{name}/update` | atomic update from ``{source, consent?}``. |
 | `GET` | `/api/artifacts` | metadata-only rows; ``q`` searches metadata and body. |
@@ -393,10 +395,11 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/desktop/state` | what the desktop shell can actually do, right now. |
 | `POST` | `/api/desktop/state` | the shell pushes a refreshed capability manifest. |
 | `POST` | `/api/desktop/unregister` | the shell is quitting; forget its capabilities. |
-| `GET` | `/api/devices` | every paired device with a live session. |
+| `GET` | `/api/devices` | every device and token signed in to this gateway. |
 | `POST` | `/api/devices/pair/complete` | redeem a code for a durable device session. |
 | `POST` | `/api/devices/pair/start` | mint a single-use pairing code + QR payload. |
-| `POST` | `/api/devices/{id}/revoke` | lock one device out. |
+| `POST` | `/api/devices/revoke-others` | sign out every device and token but the caller's own. |
+| `POST` | `/api/devices/{id}/revoke` | sign one device or token out. |
 | `DELETE` | `/api/doc-comments` | empty the deck. |
 | `GET` | `/api/doc-comments` | the whole cross-document deck, oldest first. |
 | `POST` | `/api/doc-comments` | append one comment. |
@@ -461,6 +464,8 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/guardrails/project-trust` | the whole store; |
 | `POST` | `/api/guardrails/project-trust` | the whole store; |
 | `GET` | `/api/healthz` | Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP. |
+| `GET` | `/api/heartbeat/tasks` | every task in HEARTBEAT.md, and whether the owner allowed it. |
+| `POST` | `/api/heartbeat/tasks/allow` | the owner's yes to one queued task. |
 | `POST` | `/api/hooks/agent` | run an agent turn from an external webhook. |
 | `GET` | `/api/inbox` | list all inbox items (recency, optionally engagement-weighted). |
 | `POST` | `/api/inbox/digest` | on-demand channel digest. |
@@ -470,7 +475,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/inbox/open` | every row still wanting the user (PENDING or SEEN). |
 | `GET` | `/api/inbox/owners` | owners present in the store, with counts, for the filter chips. |
 | `POST` | `/api/inbox/proposals` | an APP raises a proposal (INU-7 T7.2). |
-| `GET` | `/api/inbox/providers` | list registered inbox message source providers. |
+| `GET` | `/api/inbox/providers` | every message source the inbox knows, and whether it polls it. |
 | `POST` | `/api/inbox/restart` | stop and reinitialize the inbox service. |
 | `POST` | `/api/inbox/seen` | mark items SEEN (the read/unread boundary). |
 | `POST` | `/api/inbox/send` | send a reply to an inbox item. |
@@ -587,7 +592,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/lexicon/terms` | {canonical, aliases?} — add a manual term. |
 | `DELETE` | `/api/lexicon/terms/{id}` | remove a term entirely. |
 | `PATCH` | `/api/lexicon/terms/{id}` | {enabled?} — enable/disable (prune) a term. |
-| `POST` | `/api/logout` | revoke all active dashboard sessions. |
+| `POST` | `/api/logout` | sign every dashboard session out, everywhere. |
 | `GET` | `/api/logs` | SSE stream of live log entries. |
 | `GET` | `/api/logs/level` | current backend logger level. |
 | `POST` | `/api/logs/level` | change the backend logger level at runtime. |
@@ -924,7 +929,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/themes/{slug}` | get, update, or delete a custom theme. |
 | `GET` | `/api/themes/{slug}` | get, update, or delete a custom theme. |
 | `PUT` | `/api/themes/{slug}` | get, update, or delete a custom theme. |
-| `GET` | `/api/token/local` | issue a token for local apps. |
+| `GET` | `/api/token/local` | issue a token for the CLI, a script or a local app. |
 | `GET` | `/api/tools` | Return all tools from all active tool sources. |
 | `GET` | `/api/tools/groups` | the tool-GROUP partition (Context Economy §5). |
 | `POST` | `/api/tools/invoke` | execute one tool through the Tool entity. |
@@ -942,6 +947,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/triggers/week` | the week-grid projection, from `?start=` (AUTO-A1 — S70). |
 | `DELETE` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
 | `PUT` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
+| `POST` | `/api/triggers/{id}/answer` | answer the question a trigger's action stopped on. |
 | `POST` | `/api/triggers/{id}/fire` | fire a `webhook` trigger from an EXTERNAL caller (WF2AUT-12). |
 | `GET` | `/api/triggers/{id}/history` | run records; other kinds answer `supported: false`. |
 | `GET` | `/api/triggers/{id}/history/{run_id}` | one full run record. |
@@ -1002,7 +1008,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/runs/{run_id}/ledger-rails` | GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4). |
 | `GET` | `/api/workflows/runs/{run_id}/nodes/{node_id}/inspect` | The §5 reconstructability set for one terminal node (WF2-A2). |
 | `GET` | `/api/workflows/runs/{run_id}/outbox` | GET the run's published-artifact listing — the §2.5 outbox half of R17. |
-| `GET` | `/api/workflows/runs/{run_id}/outputs/{node_id}` | _(no summary)_ |
+| `GET` | `/api/workflows/runs/{run_id}/outputs/{node_id}` | GET one node's output, masked the way the inspect drawer masks it. |
 | `POST` | `/api/workflows/runs/{run_id}/pause` | _(no summary)_ |
 | `PUT` | `/api/workflows/runs/{run_id}/policy-overrides` | PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only. |
 | `POST` | `/api/workflows/runs/{run_id}/resume` | Answer a gate, or clear a pause. |

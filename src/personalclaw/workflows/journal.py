@@ -325,10 +325,18 @@ class Journal(LedgerWriter):
             ),
         )
 
-    def step_skipped(self, path: str, node_id: str, *, epoch: int, actor: str = "engine") -> None:
+    def step_skipped(
+        self, path: str, node_id: str, *, epoch: int, actor: str = "engine", reason: str = ""
+    ) -> None:
         """`actor` distinguishes a user's deliberate skip from the engine routing around
-        an untaken branch — the refiner must not read the latter as a rejection."""
-        self.write(STEP_SKIPPED, instance_path=path, node_id=node_id, epoch=epoch, actor=actor)
+        an untaken branch — the refiner must not read the latter as a rejection. `reason` is
+        written only when there is one to name (a step a refused approval stopped), so an
+        untaken branch's row is byte-identical to before."""
+        fields: dict[str, Any] = {"instance_path": path, "node_id": node_id, "epoch": epoch}
+        fields["actor"] = actor
+        if reason:
+            fields["reason"] = reason
+        self.write(STEP_SKIPPED, **fields)
 
     def step_cached(
         self,
@@ -549,13 +557,15 @@ class Journal(LedgerWriter):
         score: float,
         resolution: str,
         producer: str = outcomes.PRODUCER_DECISION,
+        answer: str = "",
     ) -> dict[str, Any]:
         """Journal the ground-truth resolution of a `pending_outcome` (LEARN-R18).
 
         `resolution` is "measured" when `metric` was readable after the horizon and
         "inconclusive" when it was not — the latter decays faster, because an outcome we
         could not measure is weaker evidence than one we could. `pending_event_id` links
-        back to the open question so the resolver never re-resolves the same one.
+        back to the open question so the resolver never re-resolves the same one. `answer` is
+        which answer ground truth was, for a question that names one (an escalation's verb).
 
         The workflow-shaped adapter over `resolve_outcome` (PP-9): the resolver hands back the
         `producer` it read off the question, so a resolution never re-labels the bet it closes.
@@ -569,6 +579,7 @@ class Journal(LedgerWriter):
             measured=measured,
             score=score,
             resolution=resolution,
+            answer=answer,
             instance_path=path,
             node_id=node_id,
         )
@@ -713,23 +724,32 @@ class Journal(LedgerWriter):
         verb: str,
         approved: bool,
         resolved_by: str = "",
+        answered: bool = True,
+        reason: str = "",
     ) -> None:
-        """A human answered. Carries BOTH the verb and the boolean.
+        """A confirmation closed. Carries BOTH the verb and the boolean.
 
         The boolean is what the engine acted on; the verb is what the user chose. They cannot
         disagree today, but recording only the boolean would make an audit unable to distinguish a
         reject from an expiry auto-reject — which is exactly the distinction §4's per-type expiry
         policy exists to create.
+
+        `answered` is False for the one close nobody chose: a WITHDRAWN ask (the run ended under
+        it, or a rewind dropped it), whose `reason` says which. Recorded so no pending half is left
+        open forever; marked so nothing grades it as the person's no.
         """
-        self.write(
-            CONFIRMATION_RESOLVED,
-            instance_path=path,
-            node_id=node_id,
-            confirmation_id=confirmation_id,
-            verb=verb,
-            approved=bool(approved),
-            resolved_by=resolved_by or "unknown",
-        )
+        fields: dict[str, Any] = {
+            "instance_path": path,
+            "node_id": node_id,
+            "confirmation_id": confirmation_id,
+            "verb": verb,
+            "approved": bool(approved),
+            "resolved_by": resolved_by or "unknown",
+            "answered": bool(answered),
+        }
+        if reason:
+            fields["reason"] = reason
+        self.write(CONFIRMATION_RESOLVED, **fields)
 
     def task_verified(
         self,

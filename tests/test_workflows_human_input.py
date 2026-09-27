@@ -333,14 +333,17 @@ class TestResume:
         # Interpolated into a string, so JSON-ish lowercase — the answer reached the node.
         assert c._outputs["after"] == "went true"
 
-    async def test_denying_fails_the_gate_with_a_typed_reason(self) -> None:
+    async def test_denying_declines_the_gate_rather_than_failing_it(self) -> None:
+        """A Deny is a person's decision, not a fault: DECLINED, with no failure to triage, and a
+        caption naming who said no."""
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
         result = c.resume(token, False)
         assert result["ok"] and not result["approved"]
         inst = c.instances["root.children[1]"]
-        assert inst.state == InstanceState.FAILED
-        assert inst.failure.terminal_reason == "denied"
+        assert inst.state == InstanceState.DECLINED
+        assert inst.failure is None
+        assert inst.degraded_reason.startswith("declined by ")
 
     async def test_a_double_resume_is_refused(self) -> None:
         """The headline: two clicks must not become two deployments."""
@@ -457,7 +460,7 @@ class TestAnsweringRestartsTheRun:
             if c.run.is_terminal:
                 break
             await asyncio.sleep(0.05)
-        assert c.run.is_terminal and c.run.status == RunStatus.FAILED
+        assert c.run.is_terminal and c.run.status == RunStatus.DECLINED
 
 
 class TestRewindDropsTokens:

@@ -14,9 +14,13 @@ with SSE progress, mirroring :mod:`personalclaw.dashboard.model_downloads`:
     space where nothing could detect it. The job now reports the integer count it
     re-embedded and refuses to report ``done`` while any chunk is still on the old
     model.
-  * **Episodic memory** — ``VectorMemoryStore`` episodic rows (clear → re-embed
-    from preserved text → rebuild FAISS). Semantic memory embeds lazily at query
-    time, so clearing is enough there.
+  * **Memory** — EVERY ``VectorMemoryStore`` in the home: the main ``memory.db`` and each
+    working directory's store, open or not (``context.every_memory_vector_store``). Each
+    re-embeds, from its preserved text, the memories the new model has not embedded, and
+    records the model on every vector it writes (``VectorMemoryStore.reembed_stale``). The main
+    store used to be the only one — cleared and redone — so a directory's memory kept the old
+    model's vectors after every rebind. Until a vector is re-embedded it is stale: never compared
+    with the new model's, and read by keyword.
 
 A single job at a time (re-indexing twice concurrently would race the stores);
 ``start`` returns the running job if one is already in flight. Progress frames
@@ -27,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,13 +130,14 @@ class ReindexRegistry:
         return None
 
     def start(
-        self, model: str, knowledge_store: Any, vector_store: Any, embedder: Any, embed_fn: Any
+        self, model: str, knowledge_store: Any, memory_store: Any, embedder: Any
     ) -> tuple[ReindexJob | None, str | None]:
         """Begin a re-index (or return the in-flight one).
 
-        ``embedder`` (knowledge, exposes ``embed_for_item``) and ``embed_fn``
-        (memory, ``str -> list[float] | None``) must already be resolved from the
-        NEW active model — the caller gates on availability before calling here.
+        ``embedder`` (knowledge, exposes ``embed_for_item``) must already be resolved from the
+        NEW active model — the caller gates on availability before calling here. ``memory_store``
+        is the main memory store; the job visits every other memory store in the home too, and
+        each embeds with the model bound now on its own.
         """
         running = self.active()
         if running is not None:
@@ -141,29 +147,20 @@ class ReindexRegistry:
         self._jobs[job.id] = job
         run = _Running(job=job)
         self._running[job.id] = run
-        run.task = asyncio.ensure_future(
-            self._drive(run, knowledge_store, vector_store, embedder, embed_fn)
-        )
+        run.task = asyncio.ensure_future(self._drive(run, knowledge_store, memory_store, embedder))
         return job, None
 
     def _publish(self, job: ReindexJob, event: str) -> None:
         self._sse.publish(registry_key(job.id), event, job.to_dict())
 
     async def _drive(
-        self, run: _Running, knowledge_store: Any, vector_store: Any, embedder: Any, embed_fn: Any
+        self, run: _Running, knowledge_store: Any, memory_store: Any, embedder: Any
     ) -> None:
         job = run.job
         try:
-            # Tally total work up front for a determinate bar.
-            k_total = knowledge_store.count_items_to_reembed() if knowledge_store else 0
-            m_total = vector_store.count_episodic_to_reembed() if vector_store else 0
-            job.total = k_total + m_total
-            job.phase = "clearing"
-            self._publish(job, "progress")
-
             # Run the blocking SQLite + embedding work off the event loop.
             await asyncio.to_thread(
-                self._reindex_sync, run, knowledge_store, vector_store, embedder, embed_fn
+                self._reindex_sync, run, knowledge_store, memory_store, embedder
             )
 
             if job.chunks_stale:
@@ -198,15 +195,32 @@ class ReindexRegistry:
             self._running.pop(job.id, None)
 
     def _reindex_sync(
-        self, run: _Running, knowledge_store: Any, vector_store: Any, embedder: Any, embed_fn: Any
+        self, run: _Running, knowledge_store: Any, memory_store: Any, embedder: Any
     ) -> None:
-        """Blocking re-index of both stores. Publishes throttled progress frames."""
-        job = run.job
+        """Blocking re-index of knowledge and every memory store. Publishes throttled progress."""
+        from personalclaw.context import every_memory_vector_store
 
-        # Throttle SSE frames: publish at most every ~25 items (and on phase change).
+        with every_memory_vector_store(memory_store) as memory_stores:
+            self._reindex_stores(run, knowledge_store, memory_stores, embedder)
+
+    def _reindex_stores(
+        self, run: _Running, knowledge_store: Any, memory_stores: Sequence[Any], embedder: Any
+    ) -> None:
+        job = run.job
+        # Tally total work up front for a determinate bar.
+        k_total = knowledge_store.count_items_to_reembed() if knowledge_store else 0
+        job.total = k_total + sum(_to_reembed(store) for store in memory_stores)
+        job.phase = "counting"
+        self._publish(job, "progress")
+
+        # Throttle SSE frames to one per ~5% of the work, and at least one per 25 items (and on
+        # every phase change). A flat 25 left the bar of a store under 25 memories at 0/N until
+        # the job ended, however slowly the model embedded them.
+        step = max(1, min(25, job.total // 20))
+
         def _progress(done_in_phase: int, base: int) -> None:
             job.done = base + done_in_phase
-            if job.done % 25 == 0:
+            if job.done % step == 0:
                 self._publish(job, "progress")
 
         # ── Knowledge ──
@@ -232,14 +246,34 @@ class ReindexRegistry:
             job.chunks_stale = int(chunk_res.get("stale_remaining", 0))
             self._publish(job, "progress")
 
-        # ── Episodic memory ── (continue the bar after the knowledge items)
-        if vector_store is not None:
+        # ── Memory ── every store, continuing the bar after the knowledge items
+        if memory_stores:
             job.phase = "reindexing memory"
             self._publish(job, "progress")
-            vector_store.embed_fn = embed_fn
-            vector_store.clear_embeddings()
-            res = vector_store.reembed_all(on_progress=lambda d, _t: _progress(d, k_done))
-            job.memory = res.get("reembedded", 0)
+        base = k_done
+        for store in memory_stores:
+            # One store that cannot be read (a directory's database locked or damaged) must not
+            # cost every other store its re-embed; it stays stale, which its stats and the
+            # Doctor both count.
+            try:
+                res = store.reembed_stale(on_progress=lambda d, _t, b=base: _progress(d, b))
+            except Exception:  # noqa: BLE001 — logged with its store, then the next one runs
+                logger.warning(
+                    "Embedding re-index: could not re-embed the memory in %s",
+                    store.db_path,
+                    exc_info=True,
+                )
+                continue
+            job.memory += res["reembedded"]
+            base += res["total"]
+
+
+def _to_reembed(store: Any) -> int:
+    """``store.count_to_reembed()``, or 0 for a store that cannot be read (see the loop above)."""
+    try:
+        return int(store.count_to_reembed())
+    except Exception:  # noqa: BLE001 — the re-embed pass names the store
+        return 0
 
 
 #: The graph-maintenance registry name for the chunk backfill. Owned here, beside the pass

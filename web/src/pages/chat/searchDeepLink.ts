@@ -1,9 +1,9 @@
 /** Chat-history content-search deep-linking.
  *
- *  Two tiny pure helpers, kept out of ChatPage's shell so the path/label logic is
- *  unit-tested without mounting the page. Both are string-in/string-out and hold no
- *  React or DOM.
+ *  Tiny pure helpers, kept out of ChatPage's shell so the path/label logic is unit-tested
+ *  without mounting the page. They hold no React or DOM.
  */
+import type { SessionSearchAnswer } from '../../lib/api'
 
 /** The route to open a chat FROM a content-search result, carrying the query term as
  *  `?find=<term>` so the opened session's find bar comes up pre-seeded and scrolls to
@@ -28,5 +28,24 @@ export function chatFindPath(key: string, term: string): string {
 export function searchSourceLabel(source: string | null | undefined): string {
   if (source === 'index') return 'matched via index'
   if (source === 'scan') return 'scanned transcripts'
+  if (source === 'index+scan') return 'matched via index and scanned transcripts'
   return ''
+}
+
+/** How far a content search reached, for a `PartialNotice`: the chats it looked in whole, of how
+ *  many, why not the others, and how many a direct read of the rest would cover. `null` when the
+ *  answer covered every chat — or said nothing about it (no search ran). */
+export function searchCoverage(answer: Pick<SessionSearchAnswer, 'searched' | 'complete' | 'index'>): {
+  shown: number; total: number; rest: number; detail: string
+} | null {
+  if (answer.complete !== false || !answer.searched) return null
+  const { chats, of } = answer.searched
+  const rest = Math.max(0, of - chats)
+  const others = rest.toLocaleString()
+  const detail = !answer.index
+    ? 'there is no search index, so only the most recent were read.'
+    : answer.index.indexed < answer.index.of
+      ? `the search index is still being built, so matches in the other ${others} are not listed yet.`
+      : `the other ${others} are longer than the search index keeps, so only their beginnings were searched.`
+  return { shown: chats, total: of, rest, detail }
 }

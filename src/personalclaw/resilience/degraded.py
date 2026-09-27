@@ -155,9 +155,25 @@ def _backlog(contract: DegradedContract) -> int:
         return 0
 
 
+def _model_chosen(contract: DegradedContract) -> bool:
+    """Whether a model is chosen for every use case the surface needs (``model_chosen``), so an
+    unavailable surface can say whether its model is unavailable or simply not chosen yet."""
+    from personalclaw.providers.provider_bridge import model_chosen
+
+    try:
+        return all(model_chosen(uc) for uc in contract.use_cases)
+    except Exception:  # a probe fault reads as chosen — the surface keeps saying "degraded"
+        logger.debug("degraded: model-chosen probe raised for %s", contract.surface, exc_info=True)
+        return True
+
+
 def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
     """Evaluate every contract → a list of ``{surface, label, available, floor, backlog,
-    use_cases}`` rows (the ``GET /api/resilience/degraded`` payload).
+    use_cases, model_chosen}`` rows (the ``GET /api/resilience/degraded`` payload).
+
+    ``model_chosen`` is False on an unavailable surface when no model is chosen for a use case
+    it needs (``provider_bridge.model_chosen``): it is waiting on a choice, not degraded, and the
+    shell chip words it that way.
 
     When ``notify`` is set and a ``state`` with a ``.notify`` method is given, a
     surface CHANGING availability emits one notification: ``warning`` on going down,
@@ -177,6 +193,7 @@ def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
                 "floor": contract.floor,
                 "backlog": backlog,
                 "use_cases": list(contract.use_cases),
+                "model_chosen": True if available else _model_chosen(contract),
             }
         )
         if notify:

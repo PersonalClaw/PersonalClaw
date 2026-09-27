@@ -45,6 +45,30 @@ another surface's) answers `403` with the code `auth_bearer_invalid`; a request 
 two different owner tokens, one in the header and one in `?token=`, answers `403`
 `auth_credential_conflict`. Neither response contains the token.
 
+**How long a token lasts, and how many there can be.** `personalclaw token` mints one for 20
+hours unless `--ttl` says otherwise, and prints how long on stderr; `GET /api/token/local`
+answers `expires_in`, `expires_at` and `open_within` (until when the `?token=` link can still
+sign a browser in, at most 24 hours). Nothing lasts longer than 90 days: `?ttl=` longer than
+that answers `400 token_ttl_too_long`, and a `ttl` that is not a duration like `30m`, `20h` or
+`7d` answers `400 token_ttl_invalid`, each with a `message` that says what to ask for instead. Up to 20 tokens a browser has not opened can be live at
+once, and past that the one used least recently is signed out — so a script that mints a token
+per run keeps its own in use, and never signs out a browser, a paired phone or the desktop app,
+which have limits of their own. Settings → Devices lists every sign-in and signs any of them out.
+
+A browser (cookie or `?token=`) that cannot be signed in gets `403` and a `message` that says
+why and how to sign in, with `detail.reason` and `detail.at`, and `X-Auth-Required: true`:
+
+| Code | `detail.reason` | When |
+|---|---|---|
+| `session_signed_out` | `signed_out`, `signed_out_elsewhere`, `signed_out_others`, `signed_out_everywhere`, `limit`, `replaced` | Its session was ended — the message says by what, and when. |
+| `session_signed_out` | `ended` | A genuine session nobody remembers ending (more than a week ago, or the store was cleared). |
+| `session_expired` | `expired` | Its session ran its lifetime. |
+| `session_expired` | `link_expired` | A `?token=` link past the 24 hours it can be opened in. |
+| `session_required` | `link_used` | A `?token=` link already opened from another address. |
+| `session_required` | `not_signed_in` | No sign-in at all — and, word for word, garbage or a token another key signed. |
+
+A `Bearer` refusal is always the one `auth_bearer_invalid`, whatever went wrong.
+
 Reaching the API from outside the machine is a tunnel-and-password problem, not an API
 mode: see [remote access](../guides/remote-access.md) and the
 [security model](../architecture/security.md).

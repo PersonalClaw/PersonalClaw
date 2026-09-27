@@ -29,6 +29,21 @@ against core protocols). Paths are relative to
   source two seams of one bundle, so messages arriving while no session is live
   still reach the Inbox. See
   [build-a-channel-app.md](../guides/build-a-channel-app.md) for the checklist.
+  **What is polled** is one list, `inbox_providers.source_catalog()`, re-read every
+  tick: every source an app registered (`inbox_providers.registry`), then any
+  `personalclaw.message_source_providers` entry point no app took the name of, each
+  while its own `MessageSourceProvider.polling_enabled()` says so. An installed inbox
+  app's always does (Mail Inbox, Slack: enabling the app is the owner's say-so). The
+  built-in drop folder (`<home>/inbox/incoming/`) is registered by the native
+  `filesystem-inbox` app, which is locked on, so its `polling_enabled()` reads
+  `inbox.enabled` instead: any program on the machine can drop a file there. Before
+  this, the gateway polled only the drop folder, so an installed Mail Inbox did
+  nothing. Each source is polled on its own: one that raises
+  keeps its checkpoints, its exception's message becomes its row in
+  `/api/inbox/status` (the Inbox banner shows it), and the others are polled as if it
+  were not there. A reply to a polled row goes to the source it came from
+  (`api_inbox_send` → `send_reply`); only a reply the source sent closes the row, and
+  one it did not send comes back as a 409 with its reason, the text kept as the draft.
 - **Settings** live solely in
   `~/.personalclaw/entity_settings/inbox.json` (`auto_cleanup_enabled`,
   `retention_days`) with type- and range-guarded PUTs in
@@ -134,6 +149,13 @@ there is no path by which a surface learns of an approval another does not list.
 approval used to broadcast its own frame and register nowhere else, so it reached only its own
 chat.
 
+Mission Control labels each card by the work that asked (`attentionLanes.approvalRaisedBy` and
+`inboxRaisedBy`): an approval by its trigger, else by its session key's owner (a workflow's step,
+a loop's worker, a trigger's session, an MCP server, a chat), and an Inbox row by the refs its
+emitter stamped (`workflow`, `trigger_park`, `loop`, the control bridge). An Inbox row's sender
+is its notification pair's source, which is `loop` for a workflow's gate, a trigger's question
+and the control bridge's confirm alike, so it is shown only when the refs name no work.
+
 **The registry id is not the chat's id.** A chat's `request_id` is unique only inside that chat —
 an ACP agent's permission request carries the agent's JSON-RPC message id, counted from the same
 small integers on every connection — so the registry keys a chat approval
@@ -154,6 +176,20 @@ every open surface. `outcome` is how it ended (`approved`, `rejected`, `expired`
 so a card can say "cancelled" for a stopped turn instead of reading it as a Deny. No approval
 survives a restart, so `close_orphaned_approval_rows` closes, at boot, any row still asking for
 one.
+
+**Which chat channel asks.** An approval asks on a chat channel when the `approval/requested`
+rule has the `channel_dm` target (`_ask_on_a_channel`, then a link when the channel has no
+Approve/Deny), and a subagent's request to start always does (`GatewayOrchestrator._interactive_approval`).
+Both resolve the order once, in `channel_delivery`. `approval_providers(origin)` puts the channel
+the chat started on FIRST (`DashboardState.channel_provider_for`), and it asks in that chat, since the
+person asking is there. After it comes the owner's **Send approvals to** (`agent.approval_channel`,
+Settings → Notifications), which is all that decides for a turn with no channel origin (a chat in
+PersonalClaw, an unattended run, a trigger): the chosen channel alone — and none while it is not
+connected, so no other channel stands in and the approval waits in the dashboard — or, left empty,
+every connected channel in name order. `approval_delivery(origin)` is the first of those that knows
+the owner and can prompt. Before the setting, the order was the only rule, so with Discord paired
+every approval asked on Discord, a Telegram chat's included. A press on the channel and an answer in
+the dashboard resolve the same entry.
 
 **How long it waits, and what a denial without an answer leaves.** Every approval that waits
 waits one window, the owner's `agent.approval_timeout_minutes` (Settings → Agent defaults →
@@ -290,10 +326,10 @@ to a rule:
   (batch into `digest_queue.jsonl` for the scheduled summary);
 - **targets** — `dashboard` today; `native` raises a real OS notification whenever the
   desktop shell reports the capability; `push` sends a content-free `{kind, item_id}`
-  ping to a registered device; `channel_dm` is the one target still accepted and
-  persisted but **inert** — nothing in `notify()` consumes it, and the matrix dims it
-  accordingly. (`ChannelDelivery.deliver_notification` exists and is live, but the heartbeat
-  path in `gateway.py` calls it directly; it is not wired to this target.)
+  ping to a registered device; `channel_dm` sends the note to the owner's DM on the first
+  connected chat channel that reaches them (`channel_delivery.reach_owner`, from `notify()`),
+  and on the `approval/requested` row it asks the approval on a channel — see *Which chat
+  channel asks* below.
 - **conditions** — keywords / name-mention that **escalate** a quieter mode to
   `immediate`. Escalation is capped at `immediate` and never adds targets the
   user didn't choose. Name-mention matches the **user's** name (Settings →

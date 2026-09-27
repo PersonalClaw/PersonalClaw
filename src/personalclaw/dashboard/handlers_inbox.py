@@ -11,6 +11,7 @@ from personalclaw.inbox import (
     NON_CHANNEL_KINDS,
     OPEN_STATUSES,
     InboxFieldTypeError,
+    InboxItem,
     InboxState,
     InboxStore,
     ItemKind,
@@ -699,8 +700,15 @@ async def api_inbox_send(request: web.Request) -> web.Response:
     For a NATIVE item (an agent's question), the reply routes BACK to the posting
     agent's session: if that session is a live dashboard chat session, the reply
     starts an agent turn there; either way the reply text is recorded and the item
-    is marked handled. Poll-based provider replies (channel/email) await their
-    clients being wired (still 503).
+    is marked handled.
+
+    For a POLLED item, the reply goes to the source the row came from
+    (``item.source``, :func:`personalclaw.inbox_providers.polled_source`) — Mail Inbox
+    for a mail, Slack for a Slack message. Pressing Send is the owner's approval of that
+    one reply; the source's own gates still apply (Mail Inbox drafts while its Send
+    Replies is off). Only a reply the source SENT marks the row handled. One it did not
+    send answers 409 with the source's reason and keeps the text as the row's draft, so
+    nothing the owner wrote is lost.
     """
     state: "DashboardState" = request.app["state"]
     try:
@@ -753,9 +761,88 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         _announce_unless_moved(state, item, status_before)
         return web.json_response({"ok": True, "delivered_to_session": delivered})
 
-    return web.json_response(
-        {"error": f"replies for source {item.source!r} are not yet wired"}, status=503
-    )
+    return await _send_to_polled_source(state, inbox, item, text)
+
+
+async def _send_to_polled_source(
+    state: "DashboardState", inbox: InboxStore, item: InboxItem, text: str
+) -> web.Response:
+    """Hand the reply to the source the row came from; see :func:`api_inbox_send`."""
+    from personalclaw.inbox_providers import polled_source, source_label
+
+    try:
+        recorded = keep_masked_spans(text, item.draft or "")
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    source = polled_source(item.source)
+    if source is None:
+        return web.json_response(
+            {
+                "error": f"{sourceless_label(item.source)} isn't connected, so the reply was "
+                "not sent. Enable its app to send it.",
+                "sent": False,
+            },
+            status=503,
+        )
+    label = source_label(source)
+    try:
+        # Addressed with the source's own id for the message (the row's reply_target), never the
+        # thread id: every Mail Inbox row shares one channel, so a thread id that named nothing
+        # sent the reply to whoever wrote there last.
+        result = await source.send_reply(item.channel, text, item.reply_target or None)
+    except Exception as exc:  # noqa: BLE001 - the source's failure is the owner's answer
+        logger.warning("inbox send via %s failed", item.source, exc_info=True)
+        inbox.update(item.id, draft=recorded)
+        _audit_send(item, "failure")
+        return web.json_response(
+            {"error": _sentence(f"{label} could not send the reply: {exc}"), "sent": False},
+            status=502,
+        )
+    if not result:
+        detail = "" if isinstance(result, bool) or result is None else str(result).strip()
+        inbox.update(item.id, draft=recorded)
+        _audit_send(item, "denied")
+        return web.json_response(
+            {
+                "error": _sentence(
+                    f"{label} didn't send the reply" + (f": {detail}" if detail else "")
+                ),
+                "sent": False,
+            },
+            status=409,
+        )
+    status_before = item.status
+    inbox.update(item.id, draft=recorded)
+    set_item_status(state, inbox, [item], ItemStatus.HANDLED)
+    _record_signal(state, item, "reply")
+    _announce_unless_moved(state, item, status_before)
+    _audit_send(item, "success")
+    return web.json_response({"ok": True, "sent": True})
+
+
+def _sentence(text: str) -> str:
+    """*text* ending as a sentence does: a source's reason may or may not carry the period."""
+    text = text.rstrip()
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def sourceless_label(name: str) -> str:
+    """What a sentence calls a source that is not connected: its name, readably."""
+    return name.replace("_", " ").replace("-", " ").strip().capitalize() or "Its source"
+
+
+def _audit_send(item: InboxItem, outcome: str) -> None:
+    """One SEL row per reply handed to a source — sent or not."""
+    try:
+        sel().log_tool_invocation(
+            session_key="dashboard:inbox",
+            tool_name="inbox_send",
+            outcome=outcome,
+            request_id=item.id,
+            source="dashboard",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for inbox send", exc_info=True)
 
 
 async def api_inbox_open(request: web.Request) -> web.Response:
@@ -822,24 +909,35 @@ async def api_inbox_status(request: web.Request) -> web.Response:
         }
     )
 
-    # Per-source health. The native source is ALWAYS active (push-based agent→inbox
-    # sink); the poll-based providers run only when cfg.inbox.enabled. So "native
-    # source active" shows even with no external provider configured.
+    # Per-source health. The native source is ALWAYS active (push-based agent→inbox sink).
+    # Every other source the inbox knows is listed with whether it is polled
+    # (`inbox_providers.source_catalog`: an installed inbox app's always is, the drop folder
+    # only while `inbox.enabled` is on) and what its last poll did — a source that cannot be
+    # read says why here, in the sentence its poll raised.
     sources = [{"name": "native", "active": True, "kind": "push", "can_reply": True}]
+    rows = health.get("sources")
+    by_name: dict[str, dict] = {row["name"]: row for row in rows} if isinstance(rows, list) else {}
     try:
-        from personalclaw.inbox_providers import get_message_providers
+        from personalclaw.inbox_providers import source_catalog, source_label
 
-        for name in get_message_providers():
+        for source, polled in source_catalog():
+            name = str(source.source_name)
+            row = by_name.get(name) or {}
             sources.append(
                 {
                     "name": name,
-                    "active": bool(sec.enabled),
+                    "label": source_label(source),
+                    "active": polled,
                     "kind": "poll",
                     "can_reply": name != "filesystem",
+                    "ok": bool(row.get("ok", True)),
+                    "error": str(row.get("error") or ""),
+                    "last_poll_at": float(row.get("last_poll_at") or 0.0),
+                    "last_ok_at": float(row.get("last_ok_at") or 0.0),
                 }
             )
     except Exception:
-        logger.debug("inbox status: provider enumeration failed", exc_info=True)
+        logger.debug("inbox status: source enumeration failed", exc_info=True)
 
     return web.json_response(
         {
@@ -922,20 +1020,21 @@ async def api_inbox_digest(request: web.Request) -> web.Response:
 
 
 async def api_inbox_providers(request: web.Request) -> web.Response:
-    """GET /api/inbox/providers — list registered inbox message source providers."""
-    from personalclaw.inbox_providers import get_message_providers
+    """GET /api/inbox/providers — every message source the inbox knows, and whether it polls it.
 
-    providers = get_message_providers()
-    result = []
-    for name, cls in providers.items():
-        instance = cls()
-        result.append(
-            {
-                "name": name,
-                "display_name": getattr(instance, "display_name", name.replace("_", " ").title()),
-                "source_name": instance.source_name,
-            }
-        )
+    The same list the inbox polls from (``inbox_providers.source_catalog``). It listed the
+    entry-point classes alone, so an installed Mail Inbox or Slack was missing from it."""
+    from personalclaw.inbox_providers import source_catalog, source_label
+
+    result = [
+        {
+            "name": str(source.source_name),
+            "display_name": source_label(source),
+            "source_name": str(source.source_name),
+            "polled": polled,
+        }
+        for source, polled in source_catalog()
+    ]
     return web.json_response({"providers": result})
 
 

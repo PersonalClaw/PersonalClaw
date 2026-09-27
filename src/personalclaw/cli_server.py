@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from personalclaw import __version__, self_update
+from personalclaw.auth import lifetimes
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import _DEFAULT_PORT
@@ -22,7 +23,11 @@ from personalclaw.dashboard.origin import (
     dashboard_origin,
     parse_dashboard_url,
 )
-from personalclaw.dashboard.token_auth import parse_duration
+from personalclaw.dashboard.token_auth import (
+    MAX_SESSION_TTL_SECS,
+    duration_words,
+    parse_duration,
+)
 from personalclaw.frontend import build_frontend_sync, ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -97,10 +102,15 @@ def resolve_client_port(cli_port: int | None) -> int:
 
 
 def _token(args: argparse.Namespace) -> None:
-    """Print a dashboard URL with a fresh auth token."""
+    """Print a dashboard URL with a fresh auth token.
+
+    A ``--ttl`` that is not a lifetime, or one over the 90-day limit, is refused HERE, with the
+    sentence saying why — before the gateway is asked for anything (ledger 285).
+    """
     ttl = parse_duration(args.ttl)
-    if ttl is None:
-        print(f"❌ Invalid TTL: {args.ttl} (use e.g. 1h, 30m)")
+    if ttl is None or ttl > MAX_SESSION_TTL_SECS:
+        refusal = lifetimes.unreadable(args.ttl) if ttl is None else lifetimes.too_long(ttl)
+        print(f"❌ {refusal}", file=sys.stderr)
         sys.exit(1)
 
     port = resolve_client_port(args.port)
@@ -127,12 +137,46 @@ def _token(args: argparse.Namespace) -> None:
     print(f"http://localhost:{port}?token={token}")
     # On stderr, so stdout stays a list of URLs a script can open; a person running
     # `docker exec … personalclaw token` sees both.
+    lifetime = _token_lifetime_note(data)
+    if lifetime:
+        print(lifetime, file=sys.stderr)
     note = container_port_note(port)
     if note:
         print(note, file=sys.stderr)
     origin = dashboard_origin(AppConfig.load().dashboard.url)
     if origin and "localhost" not in origin:
         print(f"{origin}/?token={token}")
+
+
+def _token_lifetime_note(reply: dict) -> str:
+    """What the minted token is and how long it lasts, from the gateway's own numbers.
+
+    Empty when the gateway did not say (an older one still running beside a newer CLI):
+    stating a lifetime this side cannot know would be a guess.
+    """
+    try:
+        lasts = int(reply["expires_in"])
+        open_within = int(reply.get("open_within") or lasts)
+        until = time.strftime("%H:%M on %d %B", time.localtime(float(reply["expires_at"])))
+    except (KeyError, TypeError, ValueError):
+        return ""
+    if open_within >= lasts:
+        how = (
+            f"It works for {duration_words(lasts)}, until {until}: open it in a browser to sign "
+            "that browser in, or send the token after ?token= as an "
+            '"Authorization: Bearer" header from a script.'
+        )
+    else:
+        how = (
+            f"Open it in a browser within {duration_words(open_within)} to sign that browser in "
+            f"until {until}. From a script, send the token after ?token= as an "
+            f'"Authorization: Bearer" header; it works for {duration_words(lasts)}.'
+        )
+    return (
+        f"This is a sign-in link for your PersonalClaw dashboard. {how}\n"
+        "Treat it like a password: anyone who has it can use your dashboard. Settings → Devices "
+        "lists every sign-in, and signs any of them out."
+    )
 
 
 def _logout(port: int) -> None:
@@ -497,9 +541,13 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
         logging.getLogger(__name__).debug("resolve_target failed", exc_info=True)
         target = ""
     if not target:
-        print("\n⚠️  No matching release found for this channel/pin (offline?).")
-        print("   Nothing to update to — try again when a release is reachable.")
-        return
+        # Exit 1: the update did not happen, and "already current" is a different answer.
+        print(
+            "\n⚠️  No matching release found for this channel/pin (offline?).\n"
+            "   Nothing to update to — try again when a release is reachable.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     target_v = self_update.normalize_version(target)
     if pin:
         if target_v == self_update.normalize_version(__version__):
@@ -571,10 +619,13 @@ def _update_pip() -> None:
 
     if pin and not target:
         # A pin naming no release must NEVER silently upgrade to the latest wheel —
-        # that would defeat the whole point of pinning.
-        print("\n⚠️  No release matches the pinned version (offline?).")
-        print(f"   Nothing to install for pin {pin!r} — check `updates.pin` or retry online.")
-        return
+        # that would defeat the whole point of pinning. A refusal, so it exits 1.
+        print(
+            "\n⚠️  No release matches the pinned version (offline?).\n"
+            f"   Nothing to install for pin {pin!r} — check `updates.pin` or retry online.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     target_v = self_update.normalize_version(target)
     if pin:
@@ -602,10 +653,10 @@ def _update_container() -> None:
     Rides the ``updates`` channel/pin (RUM-7): the printed
     ``docker compose pull``+``up -d`` carry the resolved image tag —
     ``stable`` -> the moving minor ``:X.Y``, ``beta`` -> ``:beta``, a pin -> the
-    exact ``:X.Y.Z``. A pin naming no release REFUSES (mirrors ``_update_pip``'s
-    pin-miss) rather than pulling ``latest`` behind the user's back.
+    exact ``:X.Y.Z``. A pin naming no release REFUSES and exits 1 (mirrors
+    ``_update_pip``'s pin-miss) rather than pulling ``latest`` behind the user's back.
 
-    Exit code is 0 (see `_update`): the install is healthy and correctly
+    Otherwise the exit code is 0 (see `_update`): the install is healthy and correctly
     configured, and the command did the only thing it can do here — say exactly
     how to become current.
     """
@@ -621,9 +672,12 @@ def _update_container() -> None:
 
     if pin and not image_tag:
         # A pin naming no release must NEVER silently pull the latest image.
-        print("\n⚠️  No release matches the pinned version (offline?).")
-        print(f"   Nothing to pull for pin {pin!r} — check `updates.pin` or retry online.")
-        return
+        print(
+            "\n⚠️  No release matches the pinned version (offline?).\n"
+            f"   Nothing to pull for pin {pin!r} — check `updates.pin` or retry online.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     print("  📦 This is a container install — the image is replaced, not patched.")
     print("  Run these on the host:\n")
@@ -718,11 +772,13 @@ def _update(to: str = "") -> None:
 
     | kind | what happens | exit |
     |---|---|---|
-    | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure or a |
-    |  | fast-forward) + SPA build + editable install | dirty tree blocking it |
+    | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure, no |
+    |  | fast-forward) + SPA build + editable install | release found, or a |
+    |  |  | dirty tree blocking it |
     | pip | resolved installer `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
-    |  | then "restart the gateway" (pip / pipx / uv tool) |  |
-    | container | prints `docker compose pull` + `up -d` | 0 |
+    |  | then "restart the gateway" (pip / pipx / uv tool) | or a pin naming no release |
+    | container | prints `docker compose pull` + `up -d` | 0; 1 on a pin naming no |
+    |  |  | release |
     | desktop | defers to the app's own updater | 0 |
     | *unmapped* | names what it detected and refuses to guess | 1 |
 
@@ -944,23 +1000,15 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
     memory = MemoryStore()
     memory.init()
 
-    from personalclaw.embedding_providers.registry import (
-        get_active_embed_fn,
-        get_active_embedding_dim,
-    )
-
-    # confidence_threshold is read live by the store (`memory.semantic_confidence_threshold`).
+    # confidence_threshold is read live by the store (`memory.semantic_confidence_threshold`),
+    # and it embeds with the model bound in Settings → Models at each use, as the gateway's does.
     vector_memory = VectorMemoryStore(
         extra_prefixes=cfg.memory.semantic_keys or None,
         dedup_threshold=cfg.memory.episodic_dedup_threshold,
         episodic_max=cfg.memory.episodic_max_count,
         episodic_limit=cfg.memory.episodic_max_results,
-        embedding_dim=get_active_embedding_dim() or 384,
     )
     vector_memory.init()
-    embed_fn = get_active_embed_fn()
-    if embed_fn:
-        vector_memory.embed_fn = embed_fn
     memory.vector_store = vector_memory
     vector_memory.serve_recall()
 

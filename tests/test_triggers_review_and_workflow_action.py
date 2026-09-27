@@ -667,6 +667,9 @@ async def test_the_queue_trigger_runs_the_tasks_and_keeps_the_unfinished_ones(qu
     hb.set_task_runner(run)
     hb.ensure_heartbeat_file()
     queue.write_text(queue.read_text() + "- Watch the deploy\n- Say hello\n")
+    # The owner's tasks: one nobody allowed does not run (`heartbeat.run_tasks`).
+    hb.allow("Watch the deploy")
+    hb.allow("Say hello")
     result = await HeartbeatTasksActionProvider().execute({}, ActionContext(event="clock"))
     assert result.success is True, result
     assert result.stdout == "2 tasks ran: 1 done, 1 kept for the next pass"

@@ -160,6 +160,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "auth_enroll_code_invalid": "The enrollment code did not verify.",
     "auth_bearer_invalid": "The bearer credential cannot authorize this request.",
     "auth_credential_conflict": "The request presents two different owner credentials.",
+    # ── a signed-out device's refusal (dashboard/token_auth.py) — the message is the sentence
+    # that device reads: why its sign-in ended, when, and how to sign back in ──
+    "session_signed_out": "This device was signed out; the message says why and how to sign in.",
+    "session_expired": "This device's sign-in ended; the message says when and how to sign in.",
+    "session_required": "No usable sign-in came with the request; the message says how to sign in.",
+    # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
+    # 90 days, and the message is the sentence that says so ──
+    "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",
+    "token_ttl_too_long": (
+        "The requested lifetime is longer than the 90-day limit; the message says why."
+    ),
     # ── device pairing (handlers/devices.py) — fixed message per code ──
     "device_pair_code_invalid": "The pairing code did not verify.",
     "device_pair_expired": "The pairing code has expired.",
@@ -844,6 +855,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "There is not enough free disk space for this download; the message says how much it "
         "needs and how much is free."
     ),
+    # ── answering a trigger's parked action (triggers/parks.py; dashboard/handlers/triggers.py —
+    #    POST /api/triggers/{id}/answer) ──
+    # 409: the token answers nothing now — already answered (a second click), or the trigger's
+    # question was withdrawn because a later run went through.
+    "trigger_park_gone": (
+        "This question was already answered, or the trigger no longer waits on it; run it again "
+        "to be asked afresh."
+    ),
 }
 
 
@@ -884,15 +903,18 @@ def json_error(
     return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
 
 
-def consent_required(field: str, consent: str) -> web.Response:
-    """The ``400 confirmation_required`` a write that loosens a security setting answers when it
-    did not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
-    approval mode, an automation's posture), because the SPA's ``withSecurityConsent`` asks the
-    owner by reading exactly this: ``{field, consent}`` in ``error.detail``, with *consent* being
-    the sentence the dialog shows (``config/edit_spec.SecurityControl.consent``)."""
+def consent_required(field: str, consent: str, *, title: str) -> web.Response:
+    """The ``400 confirmation_required`` a write that needs the owner's yes answers when it did
+    not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
+    approval mode, an automation's posture, a grant for what a trigger runs), because the SPA's
+    ``withSecurityConsent`` asks the owner by reading exactly this: ``{field, consent, title}`` in
+    ``error.detail``. *consent* is the sentence the dialog shows and *title* is its heading, and
+    both are product copy: the title names the question being asked, so a grant question never
+    reads "Loosen a security setting?" (``config/edit_spec.LOOSEN_TITLE``), which is the heading
+    of a loosening alone."""
     return json_error(
         "confirmation_required",
         message=f'send {{"confirm": true}} to confirm — {consent}',
         status=400,
-        error_extra={"detail": {"field": field, "consent": consent}},
+        error_extra={"detail": {"field": field, "consent": consent, "title": title}},
     )

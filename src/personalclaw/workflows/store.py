@@ -750,3 +750,34 @@ def pause_requested(run_id: str) -> bool:
 
 def clear_pause(run_id: str) -> None:
     (run_dir(run_id) / "PAUSE").unlink(missing_ok=True)
+
+
+#: The edits queued on a run and not yet applied (`mid_flight`): each `{ops, actor}`, in order.
+PENDING_MUTATIONS_FILE = "pending_mutations.json"
+
+
+def write_pending_mutations(run_id: str, entries: list[dict[str, Any]]) -> None:
+    """Persist the run's queued edits — an INTENT, like a pause's, written by the request that
+    queued them and applied by the tick loop. On disk because a paused run applies its edits
+    when it is resumed, which can be after a restart: held in the controller's memory, an edit
+    queued on a paused run was gone by then. An empty queue removes the file."""
+    path = run_dir(run_id) / PENDING_MUTATIONS_FILE
+    if not entries:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(entries, indent=2, ensure_ascii=False))
+
+
+def read_pending_mutations(run_id: str) -> list[dict[str, Any]]:
+    """The run's queued edits, oldest first. `[]` when there are none or the record is unreadable
+    (logged: an edit that cannot be read cannot be applied, and saying so beats guessing)."""
+    path = run_dir(run_id) / PENDING_MUTATIONS_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError):
+        logger.warning("run %s: its queued edits could not be read", run_id)
+        return []
+    return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []

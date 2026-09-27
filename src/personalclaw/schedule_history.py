@@ -128,6 +128,9 @@ _RESULT_STATUS: dict[str, str] = {
     "launched": "launched",
     "queued": "queued",
     "skip": "skipped_noop",
+    # The action stopped for a person — browse at a sign-in page. Not `success`: nothing it was
+    # asked to do happened yet, and the trigger's question is open (`triggers.parks`).
+    "needs_input": "waiting",
 }
 
 #: Every status `status_for_result` can return: the closed vocabulary `triggers/history.py`'s
@@ -149,6 +152,20 @@ def status_for_result(result: Any) -> str:
     if not bool(getattr(result, "success", True)):
         return "failure"
     return _RESULT_STATUS.get(str(getattr(result, "outcome", "") or ""), "success")
+
+
+def summary_for_result(result: Any) -> str:
+    """The history row's line for an action that did not fail: the sentence the action wrote for
+    a person (`ActionResult.summary`), else what it printed.
+
+    ONE answer for both recorders, as `status_for_result` is. A browse run prints its whole
+    account as JSON, and its row showed that JSON (ledger 295): the row's TRACE is what an action
+    printed, and its summary is what a person reads.
+    """
+    if result is None:
+        return ""
+    said = str(getattr(result, "summary", "") or "")
+    return said or str(getattr(result, "stdout", "") or "")
 
 
 def _redact_stored(text: str | None) -> str:

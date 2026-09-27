@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Play, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow } from '../../lib/api'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
 
 // ── Trigger kind: schedule (a tick fires), lifecycle (an agent-loop event fires),
 //    event (a data event — an inbox message, a memory write or an app event — fires), or store
 //    (another unified TriggerStore kind — file/web_watch/…). A data-event trigger is a store row
-//    too; it is its own kind here because the page presents and filters it by what it listens for. ──
-export type TriggerKind = 'schedule' | 'lifecycle' | 'event' | 'store'
+//    too; it is its own kind here because the page presents and filters it by what it listens for.
+//    A callback (an outside system calling back to a session the agent registered) is listed, and
+//    allowed, here too, but never created here: the agent registers it (`hook_register`). ──
+export type TriggerKind = 'schedule' | 'lifecycle' | 'event' | 'store' | 'callback'
 export interface TriggerKindMeta { key: TriggerKind; label: string; icon: LucideIcon; tone: string; hint: string }
 export const TRIGGER_KINDS: TriggerKindMeta[] = [
   { key: 'schedule', label: 'Schedule', icon: CalendarClock, tone: 'var(--color-info)', hint: 'Fires on a clock — every N, on a cron, or once at a set time.' },
@@ -294,6 +296,7 @@ export interface Trigger {
   schedule?: ScheduleJob
   hook?: HookItem
   store?: WireTrigger        // store only: the raw wire row for the inspector
+  callback?: CallbackRow     // callback only: the raw wire row for the inspector
   /** event only: the pattern key + the ONE matcher value that pattern reads. The row itself rides
    *  `store` — an event trigger is a store row, and it opens in the store inspector. Deliberately
    *  NOT the lifecycle `hook` field: the panel's dispatch falls through to `open.hook`, so an event
@@ -430,6 +433,21 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     author: t.author, readOnly: t.read_only === true,
     needsReview: t.needs_review === true,
     needsGrant: t.needs_grant ?? [],
+  }
+}
+
+/** Project a callback the agent registered onto the shared view-model. Its switch is the owner's
+ *  yes (`enabled`), and until they give it `needs_grant` badges the row "not allowed to run". It
+ *  has no run store: what it did is the agent turn's, in the session it names. */
+export function callbackToTrigger(c: CallbackRow): Trigger {
+  return {
+    kind: 'callback', id: c.id, rawId: c.raw_id, name: c.name, enabled: c.enabled,
+    whenLabel: 'An outside system calls back', whenIcon: Webhook, whenTone: 'var(--color-primary)',
+    actionLabel: 'Agent turn', actionIcon: Bot,
+    lastRunTs: null, runStatus: null, hasRun: false, runCount: null, usedBy: [],
+    author: c.created_by,
+    needsGrant: c.needs_grant ?? [],
+    callback: c,
   }
 }
 

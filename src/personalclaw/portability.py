@@ -294,7 +294,8 @@ def _is_derived_within(entry_path: str, rel_to_entry: str) -> bool:
     generic `rglob`, so an export of a home with one bound workspace carried the whole worktree.
     Enforcing it in BOTH whole-home paths (here and `snapshot._derived_ignore`) is the point: a
     declaration honored in one direction is the asymmetry that made a restore drop what a backup
-    captured.
+    captured. The hourly shard export (`durability.shards._export_blobs`) and a restore or import
+    (`snapshot._left_out_of_restore`) ask this too, so what capture leaves out is never planted.
 
     Matches the path AND every ANCESTOR of it. `*/worktrees` names a directory, and what an export
     walks is the files inside it — `p-1/worktrees/repo/src/a.py` matches no glob written about the
@@ -1049,7 +1050,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 sp, dp = snap / entry, pc / entry
                 if sp.is_dir():
                     dp.mkdir(parents=True, exist_ok=True)
-                    _copy_tree_no_overwrite(sp, dp)
+                    # What an export leaves out an import never plants, from an older archive
+                    # that still carries it either (an app's `venv/`, a project's worktrees).
+                    _copy_tree_no_overwrite(sp, dp, entry_path=entry)
                     imported_stores += 1
                 elif sp.is_file() and not dp.exists():
                     dp.parent.mkdir(parents=True, exist_ok=True)

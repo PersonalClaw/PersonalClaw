@@ -9,6 +9,7 @@ Episodic: conversation fragments with embeddings, importance scoring,
 time-decay retrieval via FAISS (falls back to FTS5 without embeddings).
 """
 
+import itertools
 import json
 import logging
 import math
@@ -581,6 +582,30 @@ def _migrate_v10(db: sqlite3.Connection) -> None:
     db.execute("CREATE INDEX IF NOT EXISTS idx_semantic_holder ON semantic_memory(holder)")
 
 
+def _migrate_v11(db: sqlite3.Connection) -> None:
+    """Record which embedding model wrote each stored vector, in both record tables.
+
+    ``embedding_model`` is the ``provider:model`` ref of the model that produced the row's
+    ``embedding`` (``''`` for a function pinned by a test). A vector is compared only with vectors
+    of the model bound now: two models' vectors are unrelated spaces, and at the same width they
+    pass every width check and score numbers that mean nothing.
+
+    No backfill, by the rule the knowledge chunks' fingerprint set (``knowledge.store.
+    _migrate_chunk_fingerprint``): nothing in a row written before this column says which model
+    produced its vector, and stamping it with the one bound now would invent the answer. So an
+    upgraded store's vectors read as stale, which is the true statement, until they are
+    re-embedded: the gateway's next start does that, in the background
+    (``dashboard.handlers.embedding_reindex.resume_interrupted_reindex``). Idempotent (ADD COLUMN
+    guarded).
+    """
+    for table in ("semantic_memory", "episodic_memories"):
+        try:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN embedding_model TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
+
+
 _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]] = [
     (1, _SCHEMA_V1, None),
     (2, "", _migrate_v2),
@@ -592,7 +617,17 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]
     (8, "", _migrate_v8),
     (9, "", _migrate_v9),
     (10, "", _migrate_v10),
+    (11, "", _migrate_v11),
 ]
+
+#: The model predicate over a row, as SQL: its vector came from the model the parameter names.
+#: A row with no recorded model (``NULL``, written before models were recorded) matches only the
+#: pinned-function space ``''``, never a bound model.
+_OF_MODEL = "COALESCE(embedding_model, '') = ?"
+
+#: What a store embeds with until a function is pinned on it: the model bound in Settings →
+#: Models, read at each call (``embedding_providers.registry.bound_embedding``).
+_FOLLOW_BINDING: Any = object()
 
 _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
 
@@ -764,6 +799,20 @@ def _mmr_rerank(
     return [candidates[i] for i in selected]
 
 
+def _interleave(first: list[dict], second: list[dict], limit: int) -> list[dict]:
+    """``first[0], second[0], first[1], second[1], …``, cut at ``limit``.
+
+    How :meth:`VectorMemoryStore.search_episodic` merges its vector results with the keyword
+    reads of the memories they cannot be compared with. A similarity and a keyword match share
+    no scale, so neither list's scores can place the other's rows; each keeps its own order and
+    takes turns, and a list that runs out yields the rest to the other.
+    """
+    merged: list[dict] = []
+    for pair in itertools.zip_longest(first, second):
+        merged.extend(row for row in pair if row is not None)
+    return merged[:limit]
+
+
 # ── Store ──
 
 
@@ -809,8 +858,14 @@ class VectorMemoryStore(MemoryProvider):
         self._faiss_index: object | None = None  # faiss.IndexFlatIP (untyped)
         self._faiss_id_map: list[str] = []
         self._faiss_writes_since_save = 0
-        # Optional sync embedding function for migration (set by caller)
-        self.embed_fn: Callable[[str], list[float] | None] | None = None
+        # The model the index holds the vectors of (``_OF_MODEL``'s parameter), or None before
+        # the first build: the index never holds two models' vectors at once.
+        self._index_ref: str | None = None
+        # Set when a vector of that model is stored without being added (`_store_reembedding`,
+        # on the re-index's thread), so the next use rebuilds the index (`_sync_index`).
+        self._index_behind = False
+        # What this store embeds with — see `embed_fn`.
+        self._embed_fn: Any = _FOLLOW_BINDING
         # Optional one-shot contradiction judge: (new_rule, existing_rule) → bool
         # ("does new contradict existing?"). Set by the caller (wired to a
         # lightweight LLM completion). None → no judging (fail-safe: keep both).
@@ -891,6 +946,61 @@ class VectorMemoryStore(MemoryProvider):
             full_text_search=True,
             entity_graph=self.graph_enabled,
         )
+
+    @property
+    def db_path(self) -> Path:
+        """The database this store reads and writes."""
+        return self._db_path
+
+    # ── The embedding model ──
+
+    @property
+    def embed_fn(self) -> "Callable[[str], list[float] | None] | None":
+        """The function this store embeds with right now, or ``None`` when it embeds nothing.
+
+        Unpinned, it is the model bound in Settings → Models at this moment. A store is kept
+        for the process's life, and a function it was handed when it was built kept embedding
+        with the model bound THEN: a rebind reached new stores only, and clearing Embedding
+        reached none. Assigning a function pins it (``None`` pins "embed nothing") — tests and
+        benches embed with a fixed one.
+        """
+        return self._embedder()[0]
+
+    @embed_fn.setter
+    def embed_fn(self, fn: "Callable[[str], list[float] | None] | None") -> None:
+        self._embed_fn = fn
+
+    def _embedder(self) -> "tuple[Callable[[str], list[float] | None] | None, str | None]":
+        """``(fn, model)``: what this store embeds with now and the model its vectors carry.
+
+        ``model`` is the ``provider:model`` ref for the bound model, ``''`` for a pinned
+        function (which names no model), and ``None`` when nothing embeds. Resolve it ONCE per
+        operation: a query and the rows it is scored against must come from one model even if
+        the binding changes halfway through.
+        """
+        pinned = self._embed_fn
+        if pinned is _FOLLOW_BINDING:
+            from personalclaw.embedding_providers.registry import bound_embedding
+
+            return bound_embedding().current()
+        if pinned is None:
+            return None, None
+        return pinned, ""
+
+    def _embedding_ref(self) -> str | None:
+        """The model this store's vectors are compared under now (see :meth:`_embedder`), read
+        without building a provider — the index and the stale counts need only the name."""
+        pinned = self._embed_fn
+        if pinned is _FOLLOW_BINDING:
+            from personalclaw.embedding_providers.registry import bound_embedding
+
+            return bound_embedding().ref()
+        return None if pinned is None else ""
+
+    def _embed(self, text: str) -> "tuple[list[float] | None, str | None]":
+        """``(vector, model)`` for ``text``: a vector and the model that wrote it, from one read."""
+        fn, ref = self._embedder()
+        return (self._try_embed(text, fn) if fn is not None else None), ref
 
     # ── Entity graph ──────────────────────────────────────────────────────────
 
@@ -1152,16 +1262,15 @@ class VectorMemoryStore(MemoryProvider):
     ) -> list[dict]:
         """Nearest-neighbour search over episodic memory (the vector-bearing
         table). Empty when no embedder is wired (service degrades to FTS)."""
-        if self.embed_fn is None and embedding is None:
-            return []
-        if embedding is None and text:
-            embedding = self._try_embed(text)
+        if embedding is None:
+            fn = self.embed_fn
+            if fn is None:
+                return []
+            embedding = self._try_embed(text, fn) if text else None
         return self.search_episodic(query_embedding=embedding, query_text=text, limit=k)
 
     def embed(self, text: str) -> "list[float] | None":
-        if self.embed_fn is None:
-            return None
-        return self._try_embed(text)
+        return self._embed(text)[0]
 
     def append_event(
         self,
@@ -1701,9 +1810,9 @@ class VectorMemoryStore(MemoryProvider):
             if RECALL_ARM_KEYWORD in active
             else set()
         )
-        query_embedding = (
-            self._try_embed(query_text) if (self.embed_fn and RECALL_ARM_VECTOR in active) else None
-        )
+        # One embedder for the query and every row it is scored against, even across a rebind.
+        embed = self.embed_fn if RECALL_ARM_VECTOR in active else None
+        query_embedding = self._try_embed(query_text, embed) if embed is not None else None
 
         # `contributor` rides along for the owner-preference ordering term below
         # and for the recall label.
@@ -1736,7 +1845,7 @@ class VectorMemoryStore(MemoryProvider):
             vec_score = 0.0
             if query_embedding is not None:
                 entry_text = f"{r['key']} {r['value_json']}"
-                entry_emb = self._try_embed(entry_text)
+                entry_emb = self._try_embed(entry_text, embed)
                 if entry_emb:
                     vec_score = max(0.0, self._cosine_sim(query_embedding, entry_emb))
 
@@ -2115,11 +2224,18 @@ class VectorMemoryStore(MemoryProvider):
 
     # ── FAISS Index ──
 
-    def _embedded_rows(self) -> list:
-        """Every live episodic row that carries a vector, oldest first."""
+    def _comparison_space(self) -> str:
+        """The model vectors are compared under now: the bound model's ref, or ``''`` — a pinned
+        function's, and with nothing bound the vectors a caller brings, neither naming a model."""
+        return self._embedding_ref() or ""
+
+    def _embedded_rows(self, space: str) -> list:
+        """Every live episodic row carrying a vector of ``space``'s model, oldest first."""
         return self.db.execute(
             "SELECT id, embedding FROM episodic_memories "
-            "WHERE is_deleted = 0 AND embedding IS NOT NULL ORDER BY created_at, id"
+            f"WHERE is_deleted = 0 AND embedding IS NOT NULL AND {_OF_MODEL} "
+            "ORDER BY created_at, id",
+            (space,),
         ).fetchall()
 
     def _data_dimension(self, rows: list) -> int:
@@ -2132,7 +2248,7 @@ class VectorMemoryStore(MemoryProvider):
         re-index rebuilt the index at the same stale 384 and skipped every row again: "0 indexed
         vs 2 embedded" after a re-index, with consolidation (which filters rows by the same width)
         skipping them too. The data is the authority, so it decides: the newest row's width, i.e.
-        the model bound now. Rows of another width (a model switch not yet re-embedded) are
+        the model as it embeds now. Rows of another width (the model's output changed) are
         skipped and counted — a re-embed is what indexes them.
         """
         if not rows:
@@ -2140,167 +2256,215 @@ class VectorMemoryStore(MemoryProvider):
         return len(rows[-1]["embedding"]) // 4  # float32
 
     def build_faiss_index(self) -> int:
-        """Rebuild the FAISS index from the episodic embeddings in SQLite, at THEIR width.
-        Returns the number of vectors indexed."""
+        """Rebuild the FAISS index from SQLite: the vectors of the model this store compares
+        under now (:meth:`_comparison_space`), at THEIR width. Returns how many it indexed.
+
+        ONE model's vectors. A store keeps every vector it was ever handed — a rebind leaves the
+        previous model's in place until the re-index re-embeds them — and two models' vectors are
+        unrelated spaces: at the same width they would compare, and score numbers that mean
+        nothing, which no width check can see.
+        """
+        return self._build_index_for(self._comparison_space())
+
+    def _build_index_for(self, space: str) -> int:
+        """Build the index of ``space``'s vectors off to the side, then swap it in.
+
+        A search on another thread never sees an index half filled: the re-index runs on a
+        worker thread while searches go on. The behind mark is cleared before the rows are read,
+        so a vector re-embedded while this runs marks the new index behind again.
+        """
+        self._index_ref = space
+        self._index_behind = False
         if not _HAS_FAISS or not _HAS_NUMPY:
             return 0
-        rows = self._embedded_rows()
-        self._embedding_dim = self._data_dimension(rows)
-        self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
-        self._faiss_id_map = []
+        rows = self._embedded_rows(space)
+        dim = self._data_dimension(rows)
+        index = faiss.IndexFlatIP(dim)
+        id_map: list[str] = []
         skipped = 0
         for row in rows:
             vec = np.frombuffer(row["embedding"], dtype=np.float32)
-            if vec.shape[0] != self._embedding_dim:
+            if vec.shape[0] != dim:
                 skipped += 1
                 continue
-            self._faiss_index.add(vec.reshape(1, -1))  # type: ignore[union-attr]
-            self._faiss_id_map.append(row["id"])
+            index.add(vec.reshape(1, -1))
+            id_map.append(row["id"])
+        self._embedding_dim, self._faiss_id_map, self._faiss_index = dim, id_map, index
         if skipped:
             logger.warning(
-                "Skipped %d embeddings from a different model (the index is %d-dim); "
-                "re-embed to index them",
+                "Skipped %d embeddings at another width than the model now writes (the index is "
+                "%d-dim); re-embed to index them",
                 skipped,
-                self._embedding_dim,
+                dim,
             )
-        logger.info("Built FAISS index with %d vectors", len(self._faiss_id_map))
-        return len(self._faiss_id_map)
+        logger.info("Built FAISS index with %d vectors", len(id_map))
+        return len(id_map)
+
+    def _sync_index(self, space: str) -> None:
+        """Point the index at ``space``'s vectors when it holds another model's (a rebind, or a
+        clear) — at the store's next use, which is how a rebind reaches it without a restart —
+        and rebuild it when it is behind them (a re-index writing vectors of its model)."""
+        if space != self._index_ref or self._index_behind:
+            self._build_index_for(space)
+            self.save_faiss_index()
 
     def rebuild_faiss_index(self) -> dict[str, int]:
         """Rebuild the index from the stored vectors and persist it — the Doctor's Fix and the
-        maintenance job for a desynced index. Returns ``{indexed, embedded, other_model, dim}``."""
-        embedded = len(self._embedded_rows())
+        maintenance job for a desynced index. Returns ``{indexed, embedded, other_model, dim}``:
+        ``other_model`` counts the vectors the index cannot hold (another model's, or this one's
+        at another width), and is 0 with no embedding model bound, where nothing is compared."""
+        embedded = self._count_vectors()
         indexed = self.build_faiss_index()
         self.save_faiss_index()
+        bound = self._embedding_ref() is not None
         return {
             "indexed": indexed,
             "embedded": embedded,
-            "other_model": embedded - indexed if faiss_available() else 0,
+            "other_model": embedded - indexed if (faiss_available() and bound) else 0,
             "dim": self._embedding_dim,
         }
 
     def index_state(self) -> dict[str, Any]:
-        """Read-only view of the live index for the Doctor: its width and the ids it holds."""
-        return {"dim": self._embedding_dim, "ids": list(self._faiss_id_map)}
+        """Read-only view of the live index for the Doctor: its width, the ids it holds, and the
+        model they are vectors of (``embedding_model``; ``''`` names none)."""
+        return {
+            "dim": self._embedding_dim,
+            "ids": list(self._faiss_id_map),
+            "embedding_model": self._index_ref,
+        }
 
-    def clear_embeddings(self) -> int:
-        """Clear all stored embeddings and reset the FAISS index.
-
-        Called when switching embedding models since vectors from different
-        models are incompatible. The episodic text is preserved — only the
-        embedding column is nulled so they can be re-embedded later.
-        """
-        cursor = self.db.execute(
-            "UPDATE episodic_memories SET embedding = NULL WHERE embedding IS NOT NULL"
+    def _count_vectors(self, space: str | None = None, *, other: bool = False) -> int:
+        """Live episodic vectors: all of them, ``space``'s model's, or (``other``) every other."""
+        sql = (
+            "SELECT COUNT(*) FROM episodic_memories WHERE is_deleted = 0 AND embedding IS NOT NULL"
         )
-        cleared = cursor.rowcount
-        self.db.commit()
-        if _HAS_FAISS:
-            self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
-            self._faiss_id_map = []
-            self.save_faiss_index()
-        logger.info("Cleared %d embeddings (model switch)", cleared)
-        return cleared
+        params: tuple[str, ...] = ()
+        if space is not None:
+            sql += f" AND {'NOT ' if other else ''}{_OF_MODEL}"
+            params = (space,)
+        row = self.db.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
 
-    def count_episodic_to_reembed(self) -> int:
-        """How many non-deleted episodic memories carry re-embeddable text."""
-        row = self.db.execute(
-            "SELECT COUNT(*) AS n FROM episodic_memories WHERE is_deleted = 0 AND text IS NOT NULL AND text != ''"  # noqa: E501
-        ).fetchone()
-        return int(row["n"]) if row else 0
+    def _to_reembed(
+        self, fn: "Callable[[str], list[float] | None]", space: str
+    ) -> "tuple[list, list]":
+        """``(episodic, semantic)`` rows the model bound now has not embedded as it embeds now.
 
-    def reembed_all(
+        An episodic memory with text and no vector of that model: none at all, another model's,
+        one with no model recorded, or this model's at a width it no longer produces (asked of
+        the model with one probe embedding — the newest row can be the stale one). A semantic
+        row (a lesson) holding a vector that is not this model's at that width.
+        """
+        probe = self._try_embed("embedding width probe", fn)
+        width = len(probe) if probe else 0
+
+        def _stale(row: Any) -> bool:
+            blob = row["embedding"]
+            if blob is None or (row["embedding_model"] or "") != space:
+                return True
+            return bool(width) and len(blob) // 4 != width
+
+        episodic = [
+            r
+            for r in self.db.execute(
+                "SELECT id, text, embedding, embedding_model FROM episodic_memories "
+                "WHERE is_deleted = 0 AND text IS NOT NULL AND text != '' ORDER BY created_at, id"
+            ).fetchall()
+            if _stale(r)
+        ]
+        semantic = [
+            r
+            for r in self.db.execute(
+                "SELECT key, value_json, embedding, embedding_model FROM semantic_memory "
+                "WHERE is_deleted = 0 AND embedding IS NOT NULL"
+            ).fetchall()
+            if _stale(r)
+        ]
+        return episodic, semantic
+
+    def count_to_reembed(self) -> int:
+        """How many memories :meth:`reembed_stale` would embed now (0 when nothing embeds)."""
+        fn, model = self._embedder()
+        if fn is None:
+            return 0
+        episodic, semantic = self._to_reembed(fn, model or "")
+        return len(episodic) + len(semantic)
+
+    def reembed_stale(
         self, on_progress: "Callable[[int, int], None] | None" = None
     ) -> dict[str, int]:
-        """Re-embed every episodic memory with the currently wired ``embed_fn``.
+        """Embed, with the model bound now, every memory it has not embedded (:meth:`_to_reembed`).
 
-        Used after an embedding-model switch: ``clear_embeddings`` has nulled the
-        incompatible vectors; this regenerates them from the preserved ``text``
-        and rebuilds the FAISS index. Semantic memories embed lazily at query
-        time, so they need no persisted re-embed here. Returns counts.
+        The re-index Settings → Models starts after a rebind runs this on every memory store, and
+        the Doctor's Fix on the main one. Rows that are already the bound model's are left alone,
+        so it costs one embedding per stale row plus one probe, and a rebind back to a model
+        makes that model's vectors comparable again without re-embedding them. Each vector is
+        written with the model that wrote it, then the index is rebuilt for that model.
 
-        ``on_progress(done, total)`` is invoked after each row so a job runner can
-        stream progress. Embedding failures (model returns None) are tolerated —
-        the row stays vector-less and falls back to keyword retrieval.
+        ``on_progress(done, total)`` is invoked after each row so a job runner can stream
+        progress. A row the model returns nothing for keeps what it had and stays stale, so it
+        is still read by keyword and counted. Returns ``{reembedded, failed, total}``.
         """
-        if self.embed_fn is None:
+        fn, model = self._embedder()
+        if fn is None:
             return {"reembedded": 0, "failed": 0, "total": 0}
-        rows = self.db.execute(
-            "SELECT id, text FROM episodic_memories "
-            "WHERE is_deleted = 0 AND text IS NOT NULL AND text != ''"
-        ).fetchall()
-        total = len(rows)
-        done = reembedded = failed = 0
-        for row in rows:
-            if self._store_reembedding(row["id"], self._try_embed(row["text"])):
+        space = model or ""
+        episodic, semantic = self._to_reembed(fn, space)
+        total = len(episodic) + len(semantic)
+        done = reembedded = 0
+        for row in episodic:
+            if self._store_reembedding(row["id"], self._try_embed(row["text"], fn), model):
                 reembedded += 1
-            else:
-                failed += 1
+            done += 1
+            if on_progress is not None:
+                on_progress(done, total)
+        for row in semantic:
+            vec = self._try_embed(str(json.loads(row["value_json"])), fn)
+            if vec:
+                self.db.execute(
+                    "UPDATE semantic_memory SET embedding = ?, embedding_model = ? WHERE key = ?",
+                    (struct.pack(f"{len(vec)}f", *vec), model or None, row["key"]),
+                )
+                reembedded += 1
             done += 1
             if on_progress is not None:
                 on_progress(done, total)
         self.db.commit()
-        self.build_faiss_index()
+        self._build_index_for(space)
         self.save_faiss_index()
-        logger.info("Re-embedded %d/%d episodic memories (%d failed)", reembedded, total, failed)
-        return {"reembedded": reembedded, "failed": failed, "total": total}
+        logger.info("Re-embedded %d/%d memories with %s", reembedded, total, space or "its model")
+        return {"reembedded": reembedded, "failed": total - reembedded, "total": total}
 
-    def _store_reembedding(self, mem_id: str, vec: "list[float] | None", dim: int = 0) -> bool:
-        """Write one re-embedded vector, normalized. False when there is none to write.
+    def _store_reembedding(
+        self, mem_id: str, vec: "list[float] | None", model: "str | None"
+    ) -> bool:
+        """Write one re-embedded vector, normalized, with the model that wrote it. False when
+        there is none to write.
 
         Normalized like every `write_episodic` vector: the index is an inner-product index, so an
         unnormalized vector turns every similarity score — and the dedup threshold — into a
-        function of the model's output norm. ``dim`` rejects a vector of another width.
+        function of the model's output norm. The model rides the same statement, so a crash can
+        never leave a new vector wearing the old model's name.
         """
-        if not vec or (dim and len(vec) != dim):
+        if not vec:
             return False
         try:
             arr = np.array(vec, dtype=np.float32)
             norm = float(np.linalg.norm(arr))
             blob = (arr / norm if norm > 0 else arr).tobytes()
             self.db.execute(
-                "UPDATE episodic_memories SET embedding = ? WHERE id = ?", (blob, mem_id)
+                "UPDATE episodic_memories SET embedding = ?, embedding_model = ? WHERE id = ?",
+                (blob, model or None, mem_id),
             )
         except Exception:
             return False
+        if (model or "") == self._index_ref:
+            # The index holds this model's vectors and not this one: a search while the
+            # re-index runs would miss the memory (it is no longer read by keyword either).
+            # Adding it here would mutate the index under a search on another thread, so the
+            # search rebuilds it instead.
+            self._index_behind = True
         return True
-
-    def reembed_other_model(self) -> dict[str, int]:
-        """Re-embed, with the model bound now, only the memories another model embedded.
-
-        A vector's width is its model's, so a row at another width than the bound model produces
-        was written by a model that is no longer bound: the index cannot hold it and semantic
-        recall cannot compare a query with it — only re-embedding its text brings it back. The
-        bound model's width is asked of the model (one probe embedding), not read off the newest
-        row, because the newest row can be the stale one. Rows already at that width are left
-        alone, so this costs one embedding per stale row, not one per memory. Does not rebuild
-        the index; the caller does. Returns ``{reembedded, failed, total, dim}``.
-        """
-        probe = self._try_embed("embedding width probe") if self.embed_fn is not None else None
-        if not probe:
-            return {"reembedded": 0, "failed": 0, "total": 0, "dim": 0}
-        dim = len(probe)
-        stale = [
-            r
-            for r in self.db.execute(
-                "SELECT id, text, embedding FROM episodic_memories WHERE is_deleted = 0 "
-                "AND embedding IS NOT NULL AND text IS NOT NULL AND text != ''"
-            ).fetchall()
-            if len(r["embedding"]) // 4 != dim
-        ]
-        reembedded = 0
-        for row in stale:
-            if self._store_reembedding(row["id"], self._try_embed(row["text"]), dim):
-                reembedded += 1
-        if reembedded:
-            self.db.commit()
-        logger.info("Re-embedded %d/%d memories from another model", reembedded, len(stale))
-        return {
-            "reembedded": reembedded,
-            "failed": len(stale) - reembedded,
-            "total": len(stale),
-            "dim": dim,
-        }
 
     def save_faiss_index(self) -> None:
         """Persist FAISS index to disk."""
@@ -2320,20 +2484,22 @@ class VectorMemoryStore(MemoryProvider):
         """Load the persisted FAISS index, or rebuild it from SQLite. True when the file was used.
 
         The file is a CACHE of the database, and it goes stale: vectors added since the last
-        periodic save live only in memory until then, a crash loses them from the file, and an
-        older build persisted a 384-dim index over 768-dim vectors. So a loaded index is used
-        only when it holds exactly the live embedded rows at their width; anything else is
-        rebuilt from the database AND saved, so the next open — and the Doctor's check of the
+        periodic save live only in memory until then, a crash loses them from the file, an
+        older build persisted a 384-dim index over 768-dim vectors, and a rebind leaves it
+        holding the previous model's vectors. So a loaded index is used only when it holds
+        exactly the live vectors of the model compared under now, at their width; anything else
+        is rebuilt from the database AND saved, so the next open — and the Doctor's check of the
         file — read what recall actually has.
         """
         if not faiss_available():
             return False
+        space = self._comparison_space()
         id_map_path = self._faiss_path.with_suffix(".ids.json")
         if self._faiss_path.exists() and id_map_path.exists():
             try:
                 index = faiss.read_index(str(self._faiss_path))
                 id_map = json.loads(id_map_path.read_text(encoding="utf-8"))
-                rows = self._embedded_rows()
+                rows = self._embedded_rows(space)
                 dim = self._data_dimension(rows)
                 expected = {r["id"] for r in rows if len(r["embedding"]) // 4 == dim}
                 if (
@@ -2342,6 +2508,7 @@ class VectorMemoryStore(MemoryProvider):
                     and set(id_map) == expected
                 ):
                     self._faiss_index, self._faiss_id_map, self._embedding_dim = index, id_map, dim
+                    self._index_ref = space
                     logger.info("Loaded FAISS index: %d vectors", len(self._faiss_id_map))
                     return True
                 logger.info(
@@ -2354,7 +2521,7 @@ class VectorMemoryStore(MemoryProvider):
                 )
             except Exception:
                 logger.warning("FAISS index corrupted, rebuilding", exc_info=True)
-        self.build_faiss_index()
+        self._build_index_for(space)
         self.save_faiss_index()
         return False
 
@@ -2401,14 +2568,20 @@ class VectorMemoryStore(MemoryProvider):
             logger.debug("Episodic text-hash dedup: prefix matches id=%s", existing["id"])
             return False
 
-        # Auto-embed if no embedding provided and embed_fn available
-        if embedding is None and self.embed_fn is not None:
-            embedding = self._try_embed(text)
+        # Embedded with the model this store embeds with now, and stamped with it. A caller's own
+        # vector (``put`` of a record that carries one) names no model — its provenance is
+        # unknown — so it is only ever compared in the space that names none.
+        embedding_model: str | None = None
+        if embedding is None:
+            embedding, embedding_model = self._embed(text)
+        space = self._comparison_space()
+        # Dedup and the index read only the model compared under now: a vector of another model
+        # (the one written just before a rebind landed, or a caller's) is stored and stays stale.
+        comparable = (embedding_model or "") == space
+        self._sync_index(space)
 
         embedding_blob: bytes | None = None
         if embedding is not None:
-            import struct
-
             if _HAS_NUMPY:
                 vec = np.array(embedding, dtype=np.float32)
                 norm = np.linalg.norm(vec)
@@ -2427,7 +2600,8 @@ class VectorMemoryStore(MemoryProvider):
             # is the right degradation — a possible duplicate memory is a far smaller
             # problem than a write that throws.
             if (
-                OCCURRENCE_TAG not in clean_tags
+                comparable
+                and OCCURRENCE_TAG not in clean_tags
                 and self._faiss_index is not None
                 and self._faiss_index.ntotal > 0  # type: ignore[attr-defined]
                 and vec.shape[0] == self._embedding_dim
@@ -2475,13 +2649,15 @@ class VectorMemoryStore(MemoryProvider):
         # semantic one: stamped at the single row-creating statement so no writer can
         # forget, with an explicit value preserved for imports.
         self.db.execute(
-            "INSERT INTO episodic_memories (id, conversation_id, text, embedding, tags, "
-            "importance, created_at, is_deleted, contributor) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            "INSERT INTO episodic_memories (id, conversation_id, text, embedding, embedding_model, "
+            "tags, importance, created_at, is_deleted, contributor) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
             (
                 mem_id,
                 conversation_id,
                 text,
                 embedding_blob,
+                (embedding_model or None) if embedding_blob is not None else None,
                 json.dumps(clean_tags),
                 importance,
                 now,
@@ -2500,7 +2676,7 @@ class VectorMemoryStore(MemoryProvider):
         # `rebuild_faiss_index` already skips-and-warns on this same mismatch. The write path
         # not doing so is the inconsistency; matching it keeps the text (already committed
         # above) and the SQLite embedding, so a later `reembed`/rebuild recovers the vector.
-        if embedding_blob is not None and self._faiss_index is not None:
+        if comparable and embedding_blob is not None and self._faiss_index is not None:
             vec = np.frombuffer(embedding_blob, dtype=np.float32).reshape(1, -1)
             if vec.shape[1] != self._embedding_dim and self._faiss_index.ntotal == 0:  # type: ignore[attr-defined]  # noqa: E501
                 # An EMPTY index has no width to defend — its width is only the constructor's
@@ -2513,8 +2689,7 @@ class VectorMemoryStore(MemoryProvider):
                 logger.warning(
                     "Skipping FAISS add for episodic %s: embedding is %d-dim but the index is "
                     "%d-dim. The memory itself is saved; run a re-embed to restore semantic "
-                    "recall for it. This usually means the embedding model changed without "
-                    "clearing the index.",
+                    "recall for it. This usually means the model's output width changed.",
                     mem_id,
                     vec.shape[1],
                     self._embedding_dim,
@@ -2562,10 +2737,48 @@ class VectorMemoryStore(MemoryProvider):
         When ``tag_filter`` is provided, only entries matching ANY of the
         given tags are returned.
         Falls back to FTS5 text search if no embedding provided.
+
+        The query is compared only with the vectors of the model it was embedded by. The memories
+        whose vectors another model wrote — a rebind leaves them until the re-index re-embeds
+        them — are read by keyword beside those results, so the re-index never hides a memory
+        halfway through: the moment one memory is re-embedded, the rest would otherwise drop out
+        of every search. When no stored vector is comparable at all (just after a rebind), the
+        whole search is by keyword.
         """
+        if query_embedding is not None:
+            space = self._comparison_space()
+            found = self._vector_search(query_embedding, query_text, limit, mmr, tag_filter, space)
+            if found is not None:
+                if not query_text:
+                    return found
+                others = self._fts5_episodic_search(
+                    query_text, limit, tag_filter=tag_filter, beside=(space, len(query_embedding))
+                )
+                return _interleave(found, others, limit)
+
+        # FTS5 keyword search (no comparable embeddings — MMR not useful here)
+        logger.debug("Episodic keyword fallback: query=%s…", query_text[:60])
+        return (
+            self._fts5_episodic_search(query_text, limit, tag_filter=tag_filter)
+            if query_text
+            else []
+        )
+
+    def _vector_search(
+        self,
+        query_embedding: list[float],
+        query_text: str,
+        limit: int,
+        mmr: bool,
+        tag_filter: list[str] | None,
+        space: str,
+    ) -> list[dict] | None:
+        """The vector arm of :meth:`search_episodic`, over the vectors of ``space``'s model (the
+        one the query was embedded by, compared under now) and no other. ``None`` when no stored
+        vector is comparable with the query at all; ``[]`` when some are and none matched."""
+        self._sync_index(space)
         if (
-            query_embedding is not None
-            and _HAS_NUMPY
+            _HAS_NUMPY
             and _HAS_FAISS
             and self._faiss_index is not None
             and self._faiss_index.ntotal > 0  # type: ignore[attr-defined]
@@ -2581,17 +2794,16 @@ class VectorMemoryStore(MemoryProvider):
             if norm > 0:
                 vec = vec / norm
             if vec.shape[0] != self._embedding_dim:
-                # A query embedded by a different model than the index was built with. The
-                # numbers are not comparable, and `search` would assert. Fall through to the
-                # keyword path rather than raising into the caller's turn.
+                # A query of another width than the index. The numbers are not comparable, and
+                # `search` would assert. Returning nothing falls through to the keyword path
+                # rather than raising into the caller's turn.
                 logger.warning(
-                    "Semantic recall skipped: query is %d-dim but the index is %d-dim "
-                    "(embedding model changed). Falling back to keyword search; run a "
-                    "re-embed to restore semantic recall.",
+                    "Semantic recall skipped: query is %d-dim but the index is %d-dim. Falling "
+                    "back to keyword search; run a re-embed to restore semantic recall.",
                     vec.shape[0],
                     self._embedding_dim,
                 )
-                return []
+                return None
             k = min(limit * 2, self._faiss_index.ntotal)  # type: ignore[attr-defined]
             distances, indices = self._faiss_index.search(vec.reshape(1, -1), k)  # type: ignore[attr-defined]  # noqa: E501
 
@@ -2627,18 +2839,9 @@ class VectorMemoryStore(MemoryProvider):
                 self.db.commit()
             return result
 
-        # Fallback 1: stdlib cosine search over SQLite embeddings (no FAISS/numpy needed)
-        if query_embedding is not None:
-            return self._sqlite_vector_search(
-                query_embedding, query_text, limit, mmr=mmr, tag_filter=tag_filter
-            )
-
-        # Fallback 2: FTS5 keyword search (no embeddings — MMR not useful here)
-        logger.debug("Episodic keyword fallback: query=%s…", query_text[:60])
-        return (
-            self._fts5_episodic_search(query_text, limit, tag_filter=tag_filter)
-            if query_text
-            else []
+        # Fallback: stdlib cosine search over SQLite embeddings (no FAISS/numpy needed)
+        return self._sqlite_vector_search(
+            query_embedding, query_text, limit, mmr=mmr, tag_filter=tag_filter, space=space
         )
 
     def _sqlite_vector_search(
@@ -2648,10 +2851,11 @@ class VectorMemoryStore(MemoryProvider):
         limit: int,
         mmr: bool = True,
         tag_filter: list[str] | None = None,
-    ) -> list[dict]:
-        """Cosine similarity search using embeddings stored in SQLite (stdlib only)."""
-        import struct
-
+        *,
+        space: str,
+    ) -> list[dict] | None:
+        """Cosine similarity search using embeddings stored in SQLite (stdlib only), over the
+        vectors of ``space``'s model — ``None`` when none of them is the query's width."""
         # Normalize query
         norm = math.sqrt(sum(x * x for x in query_embedding))
         q = [x / norm for x in query_embedding] if norm > 0 else query_embedding
@@ -2660,7 +2864,8 @@ class VectorMemoryStore(MemoryProvider):
         rows = self.db.execute(
             "SELECT id, conversation_id, text, tags, importance, created_at, "
             "last_accessed_at, contributor, embedding FROM episodic_memories "
-            "WHERE is_deleted = 0 AND embedding IS NOT NULL"
+            f"WHERE is_deleted = 0 AND embedding IS NOT NULL AND {_OF_MODEL}",
+            (space,),
         ).fetchall()
 
         logger.debug(
@@ -2671,11 +2876,13 @@ class VectorMemoryStore(MemoryProvider):
 
         now = datetime.now(tz=timezone.utc)
         candidates: list[dict] = []
+        comparable = 0
         for r in rows:
             blob = r["embedding"]
             n_floats = len(blob) // 4
             if n_floats != q_len:
                 continue
+            comparable += 1
             if tag_filter and not self._matches_tags(dict(r), tag_filter):
                 continue
             vec = struct.unpack(f"{n_floats}f", blob)
@@ -2698,6 +2905,8 @@ class VectorMemoryStore(MemoryProvider):
                 }
             )
 
+        if not comparable:
+            return None
         candidates.sort(key=lambda x: x["score"], reverse=True)
         result = _mmr_rerank(candidates, limit=limit) if mmr else candidates[:limit]
         for c in result:
@@ -2762,8 +2971,8 @@ class VectorMemoryStore(MemoryProvider):
         to resolve rather than pointing at the wrong record. When it is ``None`` the
         block is byte-identical to the pre-citation format (every non-chat caller).
         """
-        if query_embedding is None and query_text and self.embed_fn is not None:
-            query_embedding = self._try_embed(query_text)
+        if query_embedding is None and query_text:
+            query_embedding = self._embed(query_text)[0]
         results = self.search_episodic(
             query_embedding=query_embedding, query_text=query_text, limit=self._episodic_limit
         )
@@ -2820,10 +3029,19 @@ class VectorMemoryStore(MemoryProvider):
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0) AS ep_active, "
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=1) AS ep_deleted, "
             "(SELECT COUNT(*) FROM memory_events) AS events_count, "
-            "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0 AND embedding IS NOT NULL) AS ep_with_vec, "  # noqa: E501
             "(SELECT COUNT(*) FROM semantic_memory WHERE source='user_explicit') AS user_curated"
         ).fetchone()
         faiss_size = len(self._faiss_id_map) if self._faiss_id_map else 0
+        # Embedded = searchable by meaning now: the vectors of the model bound now. The others
+        # were written by another model (or before models were recorded) and are read by keyword
+        # until the re-index re-embeds them — counted, so the Memory page can say so. With no
+        # model bound nothing is compared at all, which is not staleness.
+        ref = self._embedding_ref()
+        if ref is None:
+            embedded, stale = self._count_vectors(), 0
+        else:
+            embedded = self._count_vectors(ref)
+            stale = self._count_vectors(ref, other=True)
         return {
             "semantic_active": row[0],
             "semantic_deleted": row[1],
@@ -2831,11 +3049,12 @@ class VectorMemoryStore(MemoryProvider):
             "episodic_deleted": row[3],
             "events_count": row[4],
             "faiss_index_size": faiss_size,
-            "embedded_count": row[5],
+            "embedded_count": embedded,
+            "embedded_stale": stale,
             # Rows the human explicitly wrote or tombstoned through the memory
             # editor — deleted rows INCLUDED, since curating away is curation.
             # The Discover engagement probe reads this.
-            "user_curated": row[6],
+            "user_curated": row[5],
         }
 
     # ── Episodic Helpers ──
@@ -2918,7 +3137,9 @@ class VectorMemoryStore(MemoryProvider):
             scope_ref = None
         rule_lower = rule.lower()
         rule_words = self._lesson_keywords(rule_lower)
-        rule_emb = self._try_embed(rule) if self.embed_fn else None
+        # One embedder for the new lesson and every stored lesson it is compared with.
+        embed, lesson_model = self._embedder()
+        rule_emb = self._try_embed(rule, embed) if embed is not None else None
         backfills_done = 0
         pending_backfills: list[tuple[bytes, str]] = []  # (blob, key) pairs
         # The new lesson's deterministic key — computed upfront so "newer replaces
@@ -2944,7 +3165,9 @@ class VectorMemoryStore(MemoryProvider):
             if pending_backfills:
                 for blob, bk in pending_backfills:
                     self.db.execute(
-                        "UPDATE semantic_memory SET embedding = ? WHERE key = ?", (blob, bk)
+                        "UPDATE semantic_memory SET embedding = ?, embedding_model = ? "
+                        "WHERE key = ?",
+                        (blob, lesson_model or None, bk),
                     )
                 self.db.commit()
 
@@ -2984,13 +3207,16 @@ class VectorMemoryStore(MemoryProvider):
                         self._carry_lesson_evidence(existing["key"], new_key)
                         continue
 
-            # Semantic dedup via embeddings (use stored embedding when available)
+            # Semantic dedup via embeddings: the stored vector when this model wrote it. One
+            # another model wrote is not comparable — two models' vectors share no space, and at
+            # one width they would score a number that means nothing — so it is re-embedded.
             if rule_emb:
                 existing_emb_blob = existing.get("embedding")
                 if (
                     existing_emb_blob
                     and isinstance(existing_emb_blob, bytes)
                     and len(existing_emb_blob) >= 4
+                    and (existing.get("embedding_model") or "") == (lesson_model or "")
                 ):
                     try:
                         existing_emb = list(
@@ -2998,9 +3224,10 @@ class VectorMemoryStore(MemoryProvider):
                         )
                     except struct.error:
                         existing_emb = None
-                elif self.embed_fn and backfills_done < _MAX_BACKFILLS_PER_CALL:
-                    # Lazy backfill: compute embedding for legacy lessons (count even on failure)
-                    existing_emb = self._try_embed(existing_val)
+                elif backfills_done < _MAX_BACKFILLS_PER_CALL:
+                    # Lazy backfill: embed a lesson no vector of this model covers yet (count even
+                    # on failure)
+                    existing_emb = self._try_embed(existing_val, embed)
                     if existing_emb:
                         blob = struct.pack(f"{len(existing_emb)}f", *existing_emb)
                         pending_backfills.append((blob, existing["key"]))
@@ -3061,7 +3288,8 @@ class VectorMemoryStore(MemoryProvider):
         if err is None and rule_emb:
             emb_blob = struct.pack(f"{len(rule_emb)}f", *rule_emb)
             self.db.execute(
-                "UPDATE semantic_memory SET embedding = ? WHERE key = ?", (emb_blob, key)
+                "UPDATE semantic_memory SET embedding = ?, embedding_model = ? WHERE key = ?",
+                (emb_blob, lesson_model or None, key),
             )
             self.db.commit()
         # Contradiction judge: if the new lesson was written and a same-topic
@@ -3335,7 +3563,12 @@ class VectorMemoryStore(MemoryProvider):
 
     @staticmethod
     def _cosine_sim(a: list[float], b: list[float]) -> float:
-        """Cosine similarity between two vectors."""
+        """Cosine similarity between two vectors; 0.0 for two widths, which no model's pair has.
+
+        ``zip`` stops at the shorter vector, so a width mismatch used to score the overlap as if
+        it were a comparison — a number that means nothing, read as a similarity."""
+        if len(a) != len(b):
+            return 0.0
         dot = sum(x * y for x, y in zip(a, b))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(y * y for y in b))
@@ -3358,13 +3591,16 @@ class VectorMemoryStore(MemoryProvider):
             return ("pref.general", match.group(1).strip())
         return None
 
-    def _try_embed(self, text: str) -> list[float] | None:
-        """Embed text using embed_fn if available."""
-        if self.embed_fn is not None:
+    def _try_embed(
+        self, text: str, fn: "Callable[[str], list[float] | None] | None" = None
+    ) -> list[float] | None:
+        """Embed ``text`` with ``fn`` (resolved once by the caller), else with :attr:`embed_fn`."""
+        fn = fn if fn is not None else self.embed_fn
+        if fn is not None:
             try:
-                result = self.embed_fn(text)
+                result = fn(text)
                 if result:
-                    logger.debug("Embedded for migration: dim=%d text=%s…", len(result), text[:50])
+                    logger.debug("Embedded: dim=%d text=%s…", len(result), text[:50])
                 else:
                     logger.debug("Embed returned None for: %s…", text[:50])
                 return result
@@ -3418,7 +3654,6 @@ class VectorMemoryStore(MemoryProvider):
                 # Fallback: write as episodic
                 if self.write_episodic(
                     text,
-                    embedding=self._try_embed(text),
                     importance=0.6,
                     source="migration",
                     tags=["preference"],
@@ -3445,7 +3680,6 @@ class VectorMemoryStore(MemoryProvider):
                     text = line[2:].strip()
                     if text and self.write_episodic(
                         text,
-                        embedding=self._try_embed(text),
                         importance=0.5,
                         source="migration",
                         tags=["project", current_project],
@@ -3471,7 +3705,6 @@ class VectorMemoryStore(MemoryProvider):
                     text = text[:_EPISODIC_TEXT_MAX]
                     if self.write_episodic(
                         text,
-                        embedding=self._try_embed(text),
                         importance=0.4,
                         source="migration",
                         tags=["history"],
@@ -3530,7 +3763,6 @@ class VectorMemoryStore(MemoryProvider):
             try:
                 if self.write_episodic(
                     entry["text"],
-                    embedding=self._try_embed(entry["text"]),
                     importance=float(entry.get("importance", 0.5)),
                     source=entry.get("source", "import"),
                     tags=(
@@ -3548,9 +3780,19 @@ class VectorMemoryStore(MemoryProvider):
         return counts
 
     def _fts5_episodic_search(
-        self, query: str, limit: int, tag_filter: list[str] | None = None
+        self,
+        query: str,
+        limit: int,
+        tag_filter: list[str] | None = None,
+        *,
+        beside: tuple[str, int] | None = None,
     ) -> list[dict]:
         """Simple LIKE-based text + tags search fallback for episodic memories.
+
+        ``beside=(space, width)`` narrows it to the memories a vector search of ``space``'s model
+        at ``width`` cannot compare: the ones holding another model's vector, or this model's at
+        another width (:meth:`search_episodic` reads them beside its vector results). A memory
+        with no vector at all is not among them — it never was, which no rebind changes.
 
         Words come straight from the user's message, so cap them: a single token
         ≥ SQLite's 50k LIKE-pattern limit (a base64 paste, a JWT, minified JS)
@@ -3565,11 +3807,18 @@ class VectorMemoryStore(MemoryProvider):
         if not words:
             return []
         conditions = " OR ".join(["text LIKE ?" for _ in words] + ["tags LIKE ?" for _ in words])
-        params: list[str] = [f"%{w}%" for w in words] * 2
+        params: list[str | int] = [f"%{w}%" for w in words * 2]
         if tag_filter:
             tag_conds = " OR ".join(["tags LIKE ?" for _ in tag_filter])
             conditions = f"({conditions}) AND ({tag_conds})"
             params.extend(f'%"{t.lower()}"%' for t in tag_filter)
+        if beside is not None:
+            space, width = beside
+            conditions = (
+                f"({conditions}) AND embedding IS NOT NULL "
+                f"AND (NOT {_OF_MODEL} OR length(embedding) != ?)"
+            )
+            params.extend((space, width * 4))  # an int: to SQLite, length() 48 != '48'
         try:
             rows = self.db.execute(
                 f"SELECT id, conversation_id, text, tags, importance, created_at, "
@@ -3612,21 +3861,24 @@ class VectorMemoryStore(MemoryProvider):
             return 0
 
         promoted = 0
+        space = self._comparison_space()
+        self._sync_index(space)
         rows = self.db.execute(
             "SELECT id, conversation_id, text, embedding, importance, created_at, visit_count "
             "FROM episodic_memories "
-            "WHERE is_deleted = 0 AND embedding IS NOT NULL "
-            "ORDER BY importance DESC, created_at DESC LIMIT 500"
+            f"WHERE is_deleted = 0 AND embedding IS NOT NULL AND {_OF_MODEL} "
+            "ORDER BY importance DESC, created_at DESC LIMIT 500",
+            (space,),
         ).fetchall()
 
-        # Cluster similar episodic memories.
+        # Cluster similar episodic memories — only the vectors of the model compared under now.
+        # A store that has seen an embedding-model change holds vectors of two models, and
+        # comparing across them is meaningless: the two spaces are unrelated, so a similarity
+        # between them is a number without a meaning, even at one width (the query above).
         #
-        # Rows are filtered to the CURRENT index width first. A store that has seen an
-        # embedding-model change holds vectors of two widths, and `np.dot` on mismatched
-        # shapes raises ValueError — which would abort the whole consolidation pass, so a
-        # single stale row could stop the agent from ever promoting a pattern again.
-        # Comparing across models would be meaningless anyway: the two vector spaces are
-        # unrelated, so a similarity between them is a number without a meaning.
+        # Rows are also filtered to the CURRENT index width: `np.dot` on mismatched shapes raises
+        # ValueError — which would abort the whole consolidation pass, so a single row the model
+        # wrote at another width could stop the agent from ever promoting a pattern again.
         usable, stale = [], 0
         for row in rows:
             if len(np.frombuffer(row["embedding"], dtype=np.float32)) == self._embedding_dim:
@@ -3635,8 +3887,8 @@ class VectorMemoryStore(MemoryProvider):
                 stale += 1
         if stale:
             logger.warning(
-                "Consolidation skipped %d episodic memories embedded at a different "
-                "dimension than the current model (%d). Re-embed to include them.",
+                "Consolidation skipped %d episodic memories embedded at another width than the "
+                "model now writes (%d). Re-embed to include them.",
                 stale,
                 self._embedding_dim,
             )

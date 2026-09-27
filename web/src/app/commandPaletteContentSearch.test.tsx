@@ -115,6 +115,19 @@ describe('⌘K content search', () => {
     expect(within(chats).getAllByRole('option')).toHaveLength(1)
   })
 
+  it('says when the chats it found come from only part of them', async () => {
+    // While the search index is still being built, a chats answer covers the chats it holds; a
+    // short list must not read as all there is.
+    h.sessionsSearch.mockResolvedValue({
+      sessions: [{ key: 'dashboard_chat-7', title: 'Budget planning' }], source: 'index',
+      searched: { chats: 3210, of: 12005 }, complete: false, index: { indexed: 3210, of: 12005, building: true, long: 0 },
+    })
+    await openAndType('budget')
+    const note = await screen.findByText(/^Searched 3,210 of 12,005 chats — the search index is still being built/)
+    expect(note.getAttribute('data-partial')).toBe('true')
+    expect(within(screen.getByRole('group', { name: 'Chats' })).getByRole('option', { name: /Budget planning/ })).toBeTruthy()
+  })
+
   it('does not search content for a single character', async () => {
     await openAndType('b')
     await new Promise((r) => setTimeout(r, 400))

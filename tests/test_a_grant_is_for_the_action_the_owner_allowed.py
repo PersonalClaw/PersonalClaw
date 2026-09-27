@@ -698,9 +698,9 @@ class TestTheCliAsks:
         with pytest.raises(SystemExit) as exited:
             self._cron(cron_action="update", job_id="clock:ops", approval_mode="auto")
 
-        out = capsys.readouterr().out
+        err = capsys.readouterr().err
         assert exited.value.code == 1
-        assert "approve its own tool calls" in out and "--yes" in out
+        assert "approve its own tool calls" in err and "--yes" in err
         assert _row(home, "clock:ops").workflow == _AGENT
 
     def test_update_with_yes_saves_it(self, home):
@@ -719,7 +719,7 @@ class TestTheCliAsks:
         with pytest.raises(SystemExit):
             self._cron(cron_action="update", job_id="clock:ops", message="delete the backups")
 
-        assert "changes what the “Invoke Agent” action runs" in capsys.readouterr().out
+        assert "changes what the “Invoke Agent” action runs" in capsys.readouterr().err
         assert _row(home, "clock:ops").workflow == _AGENT
 
     def test_add_says_what_it_allows_and_creates_nothing_without_yes(self, home, capsys):
@@ -729,7 +729,7 @@ class TestTheCliAsks:
 
         assert exited.value.code == 1
         assert (
-            "Creating “ops” allows it to use the “Invoke Agent” action" in capsys.readouterr().out
+            "Creating “ops” allows it to use the “Invoke Agent” action" in capsys.readouterr().err
         )
         assert _store(home).load() == []
 

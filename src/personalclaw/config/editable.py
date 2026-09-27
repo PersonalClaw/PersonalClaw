@@ -18,6 +18,7 @@ from __future__ import annotations
 import unicodedata
 
 from personalclaw import self_update
+from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS
 from personalclaw.config.edit_spec import (
     ConfigValueError,
     NotASecurityControl,
@@ -90,6 +91,28 @@ def _bot_name_validator(value: str) -> str:
             f"{shown} can't be part of a name — use letters (any language), digits, spaces, "
             "apostrophes, hyphens, periods or underscores",
             f"agent.bot_name={value}",
+        )
+    return name
+
+
+def _approval_channel_validator(value: str) -> str:
+    """Refuse a "Send approvals to" channel this gateway has no channel app for; trim the rest.
+
+    Checked against the LIVE channel registry, as ``session.context_engine`` is, so a name only
+    becomes settable once its app has registered it. Empty is always allowed: it is the default
+    order (the first connected channel that knows the owner). The refusal names what can be
+    chosen, because "invalid value" gives the owner nothing to pick instead.
+    """
+    from personalclaw.channel_transports import WEBUI_TRANSPORT, list_transports
+
+    name = value.strip()
+    channels = sorted(n for n in list_transports() if n != WEBUI_TRANSPORT)
+    if name and name not in channels:
+        offer = ", ".join(channels) if channels else "none is set up"
+        raise ConfigValueError(
+            f"{name!r} is not a chat channel here (channels: {offer}); leave it empty to ask the "
+            "first connected channel that knows you",
+            f"agent.approval_channel={value}",
         )
     return name
 
@@ -203,6 +226,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "type": "int",
         "min": APPROVAL_TIMEOUT_MINUTES_MIN,
         "max": APPROVAL_TIMEOUT_MINUTES_MAX,
+    },
+    # "Send approvals to". Not a SecurityControl: whichever channel asks, the call runs only on
+    # the owner's explicit answer, and each channel refuses a press from anyone but its owner.
+    "agent.approval_channel": {
+        "type": "str",
+        "max_len": 64,
+        "sanitize": _approval_channel_validator,
     },
     "agent.soft_stop_budget_secs": {"type": "float", "min": 0.5, "max": 60.0},
     "agent.max_subagents": {"type": "int", "min": 0, "max": 16},
@@ -862,8 +892,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "loops.worktree_sparse": {"type": "bool"},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
-    # Gates the poll-based message sources (filesystem/channel apps). The UI
-    # toggle calls /api/inbox/restart after flipping so the service re-attaches.
+    # "Poll the drop folder": the built-in drop folder's switch alone (an installed inbox
+    # app is polled while it is enabled). Read at every poll, so no restart is needed.
     "inbox.enabled": {"type": "bool"},
     # Runtime-editable because all three are knobs the human reaches for
     # while a room is running: killing the feature, or capping a deliberation that is
@@ -1071,6 +1101,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     },
     "auth.session_ttl": {
         "type": "duration",
+        # A sign-in lasts at most 90 days (`personalclaw.auth.lifetimes`); longer is refused
+        # with the sentence saying so, never stored and quietly applied as something else.
+        "max_secs": MAX_LIFETIME_SECS,
         "security": SecurityControl(
             loosens_when_longer(),
             "A signed-in browser stays signed in longer before it must sign in again.",

@@ -6,6 +6,7 @@
 import { apiVersionHeaders } from './apiVersion'
 import { errEnvelope, errText } from './errText'
 import { withSecurityConsent } from './securityConsent'
+import { isSignedOutRefusal, reportSignedOut, signedOutState } from './signedOut'
 import { basedOn, type Revisioned } from './staleWrite'
 import { activePersonaTheme } from '../design/personalities'
 
@@ -50,7 +51,21 @@ export class ApiError extends Error {
  *  app SDK's client (`app/appSdk.tsx`), so an app page's failures are read by the same builder. */
 export async function apiError(r: Response): Promise<ApiError> {
   const { message, code, detail } = await errEnvelope(r)
+  if (isSignedOutRefusal(r)) {
+    // This browser's session ended. Recorded ONCE for the whole tab (`lib/signedOut.ts`), so the
+    // shell shows one signed-out screen with the gateway's sentence instead of every panel
+    // failing on its own with a bare refusal.
+    const reason = (detail as { reason?: unknown } | undefined)?.reason
+    reportSignedOut({ message, code, reason: typeof reason === 'string' ? reason : '' })
+  }
   return new ApiError(message, r.status, code, detail)
+}
+
+/** Once this tab is signed out, a request can only be refused — so none is sent. Every poll on
+ *  every mounted panel would otherwise keep writing a denied row to the gateway's security log. */
+function refuseIfSignedOut(): Promise<never> | null {
+  const ended = signedOutState()
+  return ended ? Promise.reject(new ApiError(ended.message, 403, ended.code)) : null
 }
 
 /** True when a rejection is this gateway's typed failure carrying exactly `code`.
@@ -79,16 +94,16 @@ async function j<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>
 }
 
-const get = <T>(p: string) => fetch(p, { headers: { ...SK } }).then(j<T>)
+const get = <T>(p: string) => refuseIfSignedOut() ?? fetch(p, { headers: { ...SK } }).then(j<T>)
 // `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
 // (`lib/staleWrite.ts`) — and nothing else rides it.
 const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const del = (p: string) => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
+  refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+const del = (p: string) => refuseIfSignedOut() ?? fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
 /** App install/update: POST that returns the parsed body on ANY HTTP status.
  *  The scanner verdict + needs_consent are carried in the 400/409 body, so a
@@ -290,6 +305,9 @@ export interface DegradedSurface {
   floor: string
   backlog: number
   use_cases: string[]
+  /** False when the surface is down because no model is chosen for a use case it needs (an
+   *  instance saved without a Default Model, nothing bound) — waiting on a choice, not degraded. */
+  model_chosen: boolean
 }
 /** One scheduled backup job's last run + whether it's due. */
 export interface DurabilityJob {
@@ -686,6 +704,10 @@ export interface LexiconCorrection { id: string; heard: string; meant: string; c
 export interface McpActiveServer { name: string; enabled: boolean }
 // A lifecycle hook in effect (redacted view from /api/agent-hooks).
 export interface AgentHook { command: string; matcher?: string; source?: string }
+/** A hook the agent CLI would run that it leaves out until the owner allows it
+ *  (`agent.user_hooks_waiting`): a new script, or one whose file changed since the owner's yes.
+ *  `seal` names the file as the page read it, so Allow is refused (409) if it changed since. */
+export interface WaitingAgentHook { event: string; command: string; matcher: string; seal: string }
 export interface AgentProvider {
   name: string; provider_id: string; type: string; ready: boolean; state: string; detail: string
 }
@@ -799,14 +821,22 @@ export interface CompanionDiscovery {
  *  state from `minted_at` and must render as "never": the backend deliberately does not
  *  backfill it from the pairing time, because a device that paired and never came back would
  *  otherwise read as freshly active. See `DeviceInfo` in `dashboard/session_store.py`. */
+/** One row of Settings → Devices: a device, browser or token signed in to this gateway.
+ *  `minted_at` is when it signed in; `last_seen` 0 means it has never made an authorized
+ *  request since; `ip` is where it was last seen from ('' until then). `issuer` is the door it
+ *  came through (`pair`, `enroll`, `login`, `token`, `startup`, `ready`, `unknown`), `pool` the
+ *  limit it counts against, and `current` marks the device asking. */
 export interface DeviceRec {
   id: string
   name: string
   kind: 'browser' | 'mobile' | 'desktop' | 'cli' | 'unknown'
   minted_at: number
   last_seen: number
+  ip: string
   issuer: string
+  pool: 'device' | 'browser' | 'token'
   expires_at: number
+  current: boolean
 }
 /** `pair/start`'s reply. `code` arrives pre-grouped (`XXXX-XXXX`) for reading out loud, and
  *  `pairing_url` already contains it, so the URL is actionable on its own — which is what makes
@@ -860,6 +890,8 @@ export interface AppSummary {
   /** A provider of it runs its engine in a child process with a Python environment of its own,
    *  which Configure offers to install (Install engine). */
   sidecar?: boolean
+  /** What it needs that PersonalClaw does not install, as install consent showed it. */
+  requires?: AppPrerequisite[]
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
@@ -1665,7 +1697,7 @@ export interface ProjectKnowledgeItem {
 // needs-input pinned first.
 export type WorkState = 'needs_input' | 'working' | 'queued' | 'suspended' | 'review' | 'done'
 /** How a `done` row ended (`containers.BoardOutcome`); `''` on a row that has not ended. */
-export type WorkOutcome = 'completed' | 'cancelled' | 'skipped' | 'failed' | 'stopped' | 'ended_early'
+export type WorkOutcome = 'completed' | 'cancelled' | 'skipped' | 'failed' | 'stopped' | 'ended_early' | 'declined'
 export interface WorkClaim { holder: string; expires_at: number; taken_at: number; renewals: number }
 export interface WorkRow {
   run_id: string; title: string; state: WorkState; origin: string; project_id: string
@@ -1880,7 +1912,7 @@ export interface WorkflowLedgerRow {
   }
 }
 export type WorkflowRunStatus =
-  'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
+  'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated' | 'declined'
 // A node INSTANCE. `instance_path` is the engine's addressing key (a foreach body
 // produces many instances of one node id), so it — not node_id — is the list key.
 export interface WorkflowNodeState {
@@ -2115,6 +2147,9 @@ export interface WorkflowGateStats {
   node_id: string
   passes: number
   rejects: number
+  // Asks answered with a revise: a step sent back to be changed, then asked again. Neither
+  // a pass nor a reject, so it is outside `total` and `pass_rate` and read as its own count.
+  revised: number
   retries_consumed: number
   total: number
   pass_rate: number
@@ -2654,6 +2689,19 @@ export type EventPattern =
 // Unified Trigger wire shape from /api/triggers (both kinds). The schedule
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
+/** A callback the agent registered with `hook_register` (`webhook_callbacks.py`): an outside
+ *  system's post to `/api/hooks/agent` with `session_key` starts an agent turn, with the agent's
+ *  tools, from `context_summary`. `enabled` IS the owner's yes to that context — switching it on is
+ *  Allow, which the gateway asks about first, naming the context it read by `seal`. */
+export interface CallbackRow {
+  kind: 'callback'; id: string; raw_id: string; name: string; enabled: boolean
+  created_by: string; needs_grant: string[]; context_summary: string; session_key: string
+  registered_at: number; seal: string
+}
+/** A task in HEARTBEAT.md (`heartbeat.queued`). `allowed` is the owner's yes to it, as written: a
+ *  task without one does not run. `deliver` is where its result goes when it is done. */
+export interface HeartbeatTask { text: string; deliver: string; allowed: boolean }
+
 export interface Trigger {
   // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
   // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
@@ -3947,9 +3995,15 @@ export interface InboxOwnerCount { username: string; total: number; open: number
 /** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
  *  unattributed rows) — the same number `InboxStatus.my_open_count` reports. */
 export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
-export interface InboxProvider { name: string; display_name: string; source_name: string }
+export interface InboxProvider { name: string; display_name: string; source_name: string; polled?: boolean }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
-export interface InboxSourceHealth { name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean }
+/** One source the inbox knows. A poll source is `active` while it is polled (an installed inbox
+ *  app's always is; the drop folder only while `inbox.enabled` is on), and `error` is the sentence
+ *  its last poll raised ("" while it reads). */
+export interface InboxSourceHealth {
+  name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean
+  label?: string; ok?: boolean; error?: string; last_poll_at?: number; last_ok_at?: number
+}
 export interface InboxStatus {
   enabled: boolean; user_id?: string
   native_source_active?: boolean; sources?: InboxSourceHealth[]
@@ -4406,7 +4460,10 @@ export interface MemoryVaultSyncResult { records: number; files: number; written
 export interface DailyDigest { day: string; text: string; created_at: string }
 export interface MemoryStats {
   semantic_active: number; semantic_deleted: number; episodic_active: number; episodic_deleted: number
-  events_count: number; embedded_count: number; embedding_provider?: string; has_legacy_memory?: boolean; migrated?: boolean
+  /** `embedded_count` — memories the model bound now embedded, so searchable by meaning;
+   *  `embedded_stale` — ones another model embedded, read by keyword until the re-index. With no
+   *  model bound (`embedding_provider: 'none'`), every memory holding a vector, and none stale. */
+  events_count: number; embedded_count: number; embedded_stale: number; embedding_provider?: string; has_legacy_memory?: boolean; migrated?: boolean
 }
 // A semantic memory entry. `value_json` is a JSON-encoded value (often double-
 // encoded) — parse defensively for display.
@@ -6521,6 +6578,27 @@ async function _collectTasks(
   }
 }
 
+/** `GET /api/sessions/search`: the matches, and how much of the history they come from.
+ *  Everything but `sessions` is absent when no search ran (a query under two characters). */
+export interface SessionSearchAnswer {
+  sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>
+  /** Which path answered: the index, a direct read of the transcripts, or both. */
+  source?: 'index' | 'scan' | 'index+scan'
+  /** How many chats the answer looked in whole, of how many there are. */
+  searched?: { chats: number; of: number }
+  /** Whether it looked in every chat whole. `false` while the search index is still being built,
+   *  when a chat is longer than the index keeps, or — with no index — when only the newest were
+   *  read; asking again with `rest` reads the others directly. A partial answer is never shown as
+   *  a complete one. */
+  complete?: boolean
+  /** The search index's own count of the chats it holds as they are (`indexed` of `of`), and of
+   *  those it holds only the beginning of (`long`); `null` when there is no index. */
+  index?: { indexed: number; of: number; building: boolean; long: number } | null
+  /** How many chats matched, of those searched — more than `sessions` lists when there were
+   *  more matches than the answer's limit. */
+  matched?: number
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -6660,16 +6738,23 @@ export const api = {
   // surface never invents a second one for a state it does not own.
   companionDiscovery: () => get<CompanionDiscovery>('/api/companion/discovery'),
   // ── The device registry ──
-  // Settings → Devices is the ONLY device list in the product; other surfaces link here
-  // rather than growing a second one. `devicePairStart` mints a short-lived code; the device
-  // itself redeems it against `pair/complete`, which is deliberately reachable WITHOUT a
-  // session (a device with no session is the whole point), so this dashboard never calls it.
+  // Settings → Devices is the ONLY device list in the product — every browser, paired device
+  // and token signed in, not only the paired ones — and other surfaces link here rather than
+  // growing a second one. `devicePairStart` mints a short-lived code; the device itself
+  // redeems it against `pair/complete`, which is deliberately reachable WITHOUT a session (a
+  // device with no session is the whole point), so this dashboard never calls it.
   devices: () => get<{ devices: DeviceRec[] }>('/api/devices').then((d) => d.devices),
   devicePairStart: (label?: string) =>
     post<DevicePairStart>('/api/devices/pair/start', label ? { label } : {}),
-  // Drops the in-memory nonce AND the durable row, so a revoke cannot un-revoke on reboot.
+  // Signs one out, in memory AND on disk, so it cannot come back on reboot; its next request
+  // is told it was signed out from here.
   deviceRevoke: (id: string) =>
     post<{ ok: boolean; revoked: number }>(`/api/devices/${encodeURIComponent(id)}/revoke`, {}),
+  // Every device and token but this one ("Sign out all other devices"). The route refuses a
+  // request without `confirm: true`; call it only from the owner's confirmation, which is what
+  // Settings → Devices does.
+  devicesRevokeOthers: () =>
+    post<{ ok: boolean; revoked: number }>('/api/devices/revoke-others', { confirm: true }),
 
   // ── Packs ──
   // The installed-pack ledger (each pack's components, connector resolutions +
@@ -6994,10 +7079,11 @@ export const api = {
   // ── Full-text conversation search (over persisted JSONL content) ──
   // `snippet` carries the matching passage with `<<`/`>>` around the matched terms
   // (present on FTS-index hits; absent when the linear-scan fallback answered).
-  // Returns `{sessions, source}` VERBATIM — `source` ('index' | 'scan') reports which
-  // path answered, and the UI surfaces it, so we keep it rather than drop it
-  // one line before the caller. `source` is absent when no search ran (empty/short q).
-  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
+  // Returns the answer VERBATIM — `source` reports which path answered, and `searched` /
+  // `complete` how much of the history it covered (see `SessionSearchAnswer`). `rest` reads
+  // directly every chat the index cannot answer for whole.
+  sessionsSearch: (q: string, opts?: { rest?: boolean; limit?: number }) =>
+    get<SessionSearchAnswer>(`/api/sessions/search?q=${encodeURIComponent(q)}${opts?.rest ? '&rest=1' : ''}${opts?.limit ? `&limit=${opts.limit}` : ''}`),
 
   // ── Background subagents monitor (spawned by crons / loops / Slack) ──
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),
@@ -7025,7 +7111,11 @@ export const api = {
   /** The MCP servers an agent gets (name + enabled). Omit agent for the default set. */
   mcpActive: (agent?: string) => get<McpActiveServer[]>(`/api/mcp/active${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`),
   /** Read-only view of the lifecycle hooks in effect (redacted commands). */
-  agentHooks: () => get<{ hooks: Record<string, AgentHook[]> }>('/api/agent-hooks').then((d) => d.hooks),
+  agentHooks: () => get<{ hooks: Record<string, AgentHook[]>; waiting: WaitingAgentHook[] }>('/api/agent-hooks'),
+  // The owner's yes to a waiting agent hook: the gateway asks first, then rebuilds the agent's
+  // config so it runs from the next turn.
+  allowAgentHook: (hook: WaitingAgentHook) =>
+    withSecurityConsent((c) => post<{ ok: boolean }>('/api/agent-hooks/allow', { ...hook, ...(c ? { confirm: true } : {}) })),
   /** Fold agents that exist only as FILES under the agents dir (Store activations, app
    *  bundles, a restored snapshot) into config.json, so `agents()` can see them. `synced`
    *  NAMES what was added — it was typed `number` here while the server has always answered
@@ -7864,6 +7954,14 @@ export const api = {
       `/api/triggers/${encodeURIComponent(triggerId)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   scheduleHistory: (id: string, limit = 10, offset = 0) => get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history?limit=${limit}&offset=${offset}`),
   scheduleRunDetail: (id: string, runId: string) => get<{ run: ScheduleRun }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
+  /** Answer the question a trigger's action stopped on (`triggers.parks`): Approve runs
+   *  the action again now, with the answer; Deny closes the question until it next runs. `triggerId`
+   *  is the store id the park's Inbox row carries (`refs.trigger`), addressed as `store:` so an id
+   *  that itself reads `schedule:…` cannot be split as a facade prefix. `waiting` is true when the
+   *  run Approve started stopped for you again — a new question, with its own row. */
+  answerTriggerPark: (triggerId: string, body: { resume_token: string; answer: boolean }) =>
+    post<{ ok: boolean; approved: boolean; name?: string; result?: string; refused?: string; waiting?: boolean }>(
+      `/api/triggers/store:${encodeURIComponent(triggerId)}/answer`, body),
   triggerVariables: () => get<TriggerVariables>('/api/triggers/variables'),
 
   // tasks
@@ -8283,6 +8381,19 @@ export const api = {
     withSecurityConsent((c) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
       c ? { enabled, confirm: true } : { enabled })),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
+  // Callbacks the agent registered (`hook_register`). Switching one ON is the owner's Allow: the
+  // gateway asks first, and `seal` names the context this page showed, so a callback registered
+  // again with other context since is refused (409) rather than allowed unseen.
+  callbacks: () => get<{ triggers: CallbackRow[] }>('/api/triggers?type=callback').then((d) => d.triggers),
+  toggleCallback: (rawId: string, enabled: boolean, seal: string) =>
+    withSecurityConsent((c) => post(`/api/triggers/callback:${encodeURIComponent(rawId)}/toggle`,
+      c ? { enabled, seal, confirm: true } : { enabled, seal })),
+  deleteCallback: (rawId: string) => del(`/api/triggers/callback:${encodeURIComponent(rawId)}`),
+  // The HEARTBEAT.md queue. Allow is the owner's yes to one task as the page listed it: the gateway
+  // asks first, and a task that is no longer queued as written is refused (404).
+  heartbeatTasks: () => get<{ tasks: HeartbeatTask[] }>('/api/heartbeat/tasks').then((d) => d.tasks),
+  allowHeartbeatTask: (text: string) =>
+    withSecurityConsent((c) => post<{ ok: boolean }>('/api/heartbeat/tasks/allow', c ? { text, confirm: true } : { text })),
   runStoreTrigger: (rawId: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
   // The `view` kind's render caller. A render surface pings this as it mounts/refreshes;

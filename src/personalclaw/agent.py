@@ -21,6 +21,7 @@ Dynamic fields resolved at install time:
   - ``prompt`` — ``file://`` URI pointing to the prompt file
 """
 
+import contextvars
 import json
 import logging
 import os
@@ -390,8 +391,18 @@ def _validate_hook_command(command: str, event: str) -> str | None:
     return resolved
 
 
+#: Off while :func:`user_hooks_waiting` recomputes the merge for the Agents page: a page read is
+#: not a merge, so it neither audits (every rejection again on every view) nor writes the copies
+#: of the allowed files the CLI runs (`agent_hook_grants.pinned`).
+_MERGING: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "personalclaw_agent_hooks_merging", default=True
+)
+
+
 def _sel_hook_rejected(event: str, command: str, reason: str) -> None:
     """Emit a SEL audit event when a user hook entry is rejected."""
+    if not _MERGING.get():
+        return
     try:
         sel().log(
             SecurityEvent(
@@ -667,7 +678,9 @@ def _autoimport_agent_hooks(hooks_dir: Path) -> dict[str, list[dict[str, str]]]:
     return result
 
 
-def _merge_agent_hooks(hooks: dict, user_hooks: dict) -> dict:
+def _merge_agent_hooks(
+    hooks: dict, user_hooks: dict, *, waiting: list[dict[str, str]] | None = None
+) -> dict:
     """Append user-defined agent_hooks to bundled hooks (per event type).
 
     Bundled hooks are always first.  User hooks are appended, deduped by
@@ -675,7 +688,15 @@ def _merge_agent_hooks(hooks: dict, user_hooks: dict) -> dict:
     Malformed entries (missing ``command``) are silently skipped.
     Commands are validated: must be absolute paths to existing files,
     with no shell metacharacters and not in sensitive locations.
+
+    🔴 And only a hook the owner allowed is appended (`agent_hook_grants`), sealed to the file it
+    runs: the CLI runs these with nobody asked, so a new one, or one whose file changed since the
+    owner's yes, is left out, audited, and added to *waiting* for the Agents page to offer Allow.
+    An allowed one is appended as the copy of its file the owner allowed, which is what the CLI
+    runs (`agent_hook_grants.pinned`), so a later edit to the file never runs on the old yes.
     """
+    from personalclaw import agent_hook_grants
+
     if not isinstance(user_hooks, dict):
         logger.warning("agent_hooks is not a dict, ignoring")
         return hooks
@@ -776,9 +797,22 @@ def _merge_agent_hooks(hooks: dict, user_hooks: dict) -> dict:
                 )
                 _sel_hook_rejected(event, entry["command"], "invalid matcher")
                 continue
+            runs = agent_hook_grants.pinned(event, resolved, matcher, write=_MERGING.get())
+            if not runs:
+                _sel_hook_rejected(event, resolved, "not allowed by the owner")
+                if waiting is not None:
+                    waiting.append(
+                        {
+                            "event": event,
+                            "command": resolved,
+                            "matcher": matcher if isinstance(matcher, str) else "",
+                            "seal": agent_hook_grants.seal_of(resolved),
+                        }
+                    )
+                continue
             key = (resolved, matcher)
             if key not in existing_keys:
-                sanitized = {"command": resolved}
+                sanitized = {"command": runs}
                 if isinstance(matcher, str):
                     sanitized["matcher"] = matcher
                 existing.append(sanitized)
@@ -789,7 +823,9 @@ def _merge_agent_hooks(hooks: dict, user_hooks: dict) -> dict:
     return merged
 
 
-def _apply_user_agent_hooks(config: dict, pc_cfg: dict) -> None:
+def _apply_user_agent_hooks(
+    config: dict, pc_cfg: dict, *, waiting: list[dict[str, str]] | None = None
+) -> None:
     """Merge user-defined agent_hooks from personalclaw config into *config* (additive).
 
     Two sources, explicit first then auto-discovered:
@@ -929,10 +965,14 @@ def _apply_user_agent_hooks(config: dict, pc_cfg: dict) -> None:
                 continue
             combined_user_hooks.setdefault(event, []).extend(entries)
 
-    config["hooks"] = _merge_agent_hooks(config.get("hooks", {}), combined_user_hooks)
+    config["hooks"] = _merge_agent_hooks(
+        config.get("hooks", {}), combined_user_hooks, waiting=waiting
+    )
 
     after = sum(len(v) for v in config["hooks"].values() if isinstance(v, list))
     added = after - before
+    if not _MERGING.get():
+        return
     try:
         sel().log(
             SecurityEvent(
@@ -996,6 +1036,27 @@ def _bundled_hooks(bundled: dict) -> dict:
             out.append(entry)
         resolved[event] = out
     return resolved
+
+
+def user_hooks_waiting() -> list[dict[str, str]]:
+    """Every user agent hook the agent CLI's config leaves out because the owner has not allowed
+    it — ``{event, command, matcher, seal}`` each, for the Agents page's Allow.
+
+    The merge itself, run over the sources as they are now (`config.json` and the hooks folder), so
+    the page lists exactly what the next rebuild would leave out, and nothing it would merge.
+    Unaudited: it reads, it does not merge.
+    """
+    from personalclaw.config import config_path as _pc_config_path
+
+    pc_cfg = _load_json(_pc_config_path()) or {}
+    waiting: list[dict[str, str]] = []
+    token = _MERGING.set(False)
+    try:
+        cfg = pc_cfg if isinstance(pc_cfg, dict) else {}
+        _apply_user_agent_hooks({"hooks": {}}, cfg, waiting=waiting)
+    finally:
+        _MERGING.reset(token)
+    return waiting
 
 
 def build_agent_config() -> dict:

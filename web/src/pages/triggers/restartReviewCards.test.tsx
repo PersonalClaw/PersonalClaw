@@ -42,6 +42,7 @@ vi.mock('../../lib/api', async (orig) => ({
     schedules: () => Promise.resolve({ jobs: [] }),
     hooks: () => Promise.resolve([]),
     storeTriggers: () => Promise.resolve([]),
+    callbacks: () => Promise.resolve([]),
     triggerReview: () => {
       STATE.reviewReads += 1
       return STATE.reviewError ? Promise.reject(STATE.reviewError) : Promise.resolve(STATE.cards)

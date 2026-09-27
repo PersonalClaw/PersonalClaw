@@ -76,11 +76,6 @@ CHILD_MODULE = "personalclaw._app_python_child"
 _PIP_TIMEOUT = 600  # seconds — a heavy wheel (torch) can take minutes
 _LOCK_FILENAME = ".lock"
 
-#: pip settings that would redirect or reshape an install that must land in ``--prefix``.
-#: Everything else in the environment (index URLs, proxies, certificates) is the operator's
-#: and is passed through untouched.
-_PIP_LOCATION_VARS = ("PIP_TARGET", "PIP_PREFIX", "PIP_ROOT", "PIP_USER")
-
 #: How much of pip's output rides a failure into the "Fix with AI" prompt.
 _LOG_TAIL_CHARS = 2000
 
@@ -168,9 +163,8 @@ def child_argv(entry: Path) -> list[str]:
     return [sys.executable, "-m", CHILD_MODULE, str(entry)]
 
 
-def app_packages_env() -> dict[str, str] | None:
-    """The environment for a command that must import the app packages, or ``None`` to inherit
-    the gateway's unchanged (no app package is installed).
+def app_packages_env() -> dict[str, str]:
+    """The environment for a child of an app that must import the app packages.
 
     For a child :data:`CHILD_MODULE` cannot wrap: an app's setup hook (a shell command), or an
     app provider running one of its declared packages as ``python -m <package>`` (piper-tts).
@@ -180,13 +174,18 @@ def app_packages_env() -> dict[str, str] | None:
     is started through the resource-ceiling shim, so there is no platform code in it for a
     package to shadow. Published on ``personalclaw.sdk.util``: piper-tts re-derived it by hand
     (#124), from where ``importlib`` found the package.
+
+    The rest is the child allowlist (``sandbox.build_child_env``), never the gateway's own
+    environment: the gateway puts every secret saved in PersonalClaw into that one, and a hook is
+    the app's code.
     """
+    from personalclaw.sandbox import build_child_env
+
+    env = build_child_env(site="app-child")
     dirs = _existing_site_dirs()
-    if not dirs:
-        return None
-    env = dict(os.environ)
-    inherited = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = os.pathsep.join([*([inherited] if inherited else []), *dirs])
+    if dirs:
+        inherited = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = os.pathsep.join([*([inherited] if inherited else []), *dirs])
     return env
 
 
@@ -516,7 +515,16 @@ def install_everything() -> None:
 
 
 def _pip_env() -> dict[str, str]:
-    env = {key: value for key, value in os.environ.items() if key not in _PIP_LOCATION_VARS}
+    """What pip runs with: the child allowlist and pip's own settings (``sandbox.build_child_env``),
+    never the gateway's environment, which holds every secret saved in PersonalClaw. pip runs each
+    package's build code, and that code gets whatever pip has. ``HOME_INSTALL_PIP_ENV`` keeps
+    pip's cache out of the user's home."""
+    from personalclaw._installer import HOME_INSTALL_PIP_ENV
+    from personalclaw.sandbox import build_child_env
+
+    env = build_child_env(
+        site="app-packages-install", installer="pip", extra=dict(HOME_INSTALL_PIP_ENV)
+    )
     # pip decides what is already installed from its own import path, so it has to see the app
     # packages to reuse, upgrade or keep them; the base environment it sees on its own.
     inherited = env.get("PYTHONPATH", "")
@@ -714,6 +722,12 @@ def explain_failure(output: str, target: Declared, others: list[Declared]) -> tu
             f"A newer version of {label} may fix this; otherwise, report it to the app's author.",
             False,
         )
+
+    from personalclaw.sandbox import login_left_out_note
+
+    login = login_left_out_note(output, installer="pip")
+    if login:
+        return f"Couldn't download {label}'s Python packages ({_specs(target)}). {login}", False
 
     if _NETWORK_RE.search(output):
         host = _HOST_RE.search(output)

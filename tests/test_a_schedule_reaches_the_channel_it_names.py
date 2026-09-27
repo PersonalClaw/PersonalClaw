@@ -413,10 +413,14 @@ def test_the_cli_takes_a_chat_id_its_channel_accepts(home, installed):
 
 
 def test_the_cli_says_why_it_refuses(home, installed, capsys):
-    _cli("add", f"{CODES}:4242")
-    assert "A CodeChat id looks like C0123456789." in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exited:
+        _cli("add", f"{CODES}:4242")
+    assert exited.value.code == 1
+    assert "A CodeChat id looks like C0123456789." in capsys.readouterr().err
     assert TriggerStore(base_dir=home).load() == []
 
-    _cli("add", "C0EXAMPLE01")
-    assert "C0EXAMPLE01 isn't one of the chat channels set up here." in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exited:
+        _cli("add", "C0EXAMPLE01")
+    assert exited.value.code == 1
+    assert "C0EXAMPLE01 isn't one of the chat channels set up here." in capsys.readouterr().err
     assert TriggerStore(base_dir=home).load() == []

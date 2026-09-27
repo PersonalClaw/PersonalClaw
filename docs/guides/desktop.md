@@ -130,10 +130,15 @@ The switcher shows a status per row, and the statuses mean different things on p
 - **Not answering** / **Timed out** — the machine is off, asleep, or off the network. The app
   re-checks on a widening delay a bounded number of times, then stops and waits for you. When it
   answers again, the dashboard reloads by itself.
-- **Needs pairing again** — the gateway answered and refused. That is what a revoked device session
-  looks like. The app stops immediately and does not try again: re-presenting a credential that was
-  just refused achieves nothing and would trip that gateway's own pairing lockout. Pair it again from
-  its Devices panel.
+- **Signed out** — the gateway signed this app out: from Settings → Devices on another device, with
+  "Sign out all other devices", or because its sign-in ran out. The window shows the gateway's own
+  sentence saying why, when, and how to sign back in, and the row carries the same sentence. To pair
+  it again, choose **Pair a device** in Settings → Devices on a device that is still signed in, and
+  paste the pairing link into **Gateway → Gateways…** here.
+- **Refused the connection check** — the address answered the app's health check with a refusal.
+  A PersonalClaw gateway never does (the check needs no sign-in), so something in front of it — a
+  proxy asking for a password, say — or something else is answering. The app stops immediately and
+  does not try again: asking again achieves nothing and could trip a lockout.
 - **Answered, but not a PersonalClaw gateway** — something is at that address, and it is not this.
 - **Redirected somewhere else** — the address answered by pointing at a third host. The app does not
   follow it.

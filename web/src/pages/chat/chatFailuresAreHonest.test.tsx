@@ -296,4 +296,65 @@ describe('Chat history content search', () => {
     await waitFor(() => expect(h.sessionsSearch).toHaveBeenCalledTimes(2), { timeout: 3000 })
     await waitFor(() => expect(screen.queryByText(/Couldn't search inside your chats/)).toBeNull())
   })
+
+  it('says how many chats it searched while the index is built, and reads the rest when asked', async () => {
+    // Ledger 271, measured before: with the index 200 chats into a rebuild of 12,005, a word 240
+    // chats say answered 4 — and the list showed those 4 as the whole answer.
+    const user = userEvent.setup()
+    h.chatSessions.mockResolvedValue([
+      { key: 'chat-1', title: 'Trip planning', updated_at: '2026-09-26T10:00:00Z', origin: 'manual' },
+      { key: 'chat-2', title: 'Budget review', updated_at: '2026-09-26T11:00:00Z', origin: 'manual' },
+    ])
+    const building = { indexed: 3210, of: 12005, building: true, long: 0 }
+    h.sessionsSearch.mockImplementation((_q: string, opts?: { rest?: boolean }) => Promise.resolve(opts?.rest
+      ? { sessions: [{ key: 'dashboard_chat-1', snippet: 'the <<zebra>> crossing' }], source: 'index+scan', searched: { chats: 12005, of: 12005 }, complete: true, index: building }
+      : { sessions: [], source: 'index', searched: { chats: 3210, of: 12005 }, complete: false, index: building }))
+    function History() {
+      const [query, setQuery] = useState<Record<string, string>>({})
+      const patch = (p: Record<string, string | null | undefined>) => setQuery((q) => {
+        const next = { ...q }
+        for (const [k, v] of Object.entries(p)) { if (v == null || v === '') delete next[k]; else next[k] = v }
+        return next
+      })
+      return <ChatPage sub="history" navigate={() => {}} query={query} setQuery={patch} />
+    }
+    render(<AppearanceProvider><History /></AppearanceProvider>)
+    await user.type(await screen.findByRole('searchbox', { name: 'Search chats' }), 'zebra')
+    const notice = await screen.findByText(
+      /^Searched 3,210 of 12,005 chats — the search index is still being built, so matches in the other 8,795 are not listed yet\./,
+      {}, { timeout: 3000 },
+    )
+    expect(notice.getAttribute('data-partial')).toBe('true')
+    await user.click(within(notice).getByRole('button', { name: 'Search the other 8,795 directly' }))
+    await waitFor(() => expect(h.sessionsSearch).toHaveBeenLastCalledWith('zebra', { rest: true, limit: 200 }), { timeout: 3000 })
+    await waitFor(() => expect(screen.queryByText(/^Searched 3,210 of 12,005 chats/)).toBeNull(), { timeout: 3000 })
+    expect(await screen.findByText('matched via index and scanned transcripts')).toBeTruthy()
+    expect(await screen.findByText('Trip planning')).toBeTruthy()
+    expect(screen.queryByText('Budget review')).toBeNull()
+  })
+
+  it('says when more chats matched than the search lists', async () => {
+    const user = userEvent.setup()
+    h.chatSessions.mockResolvedValue([
+      { key: 'chat-1', title: 'Trip planning', updated_at: '2026-09-26T10:00:00Z', origin: 'manual' },
+    ])
+    h.sessionsSearch.mockResolvedValue({
+      sessions: [{ key: 'dashboard_chat-1', snippet: 'the <<zebra>> crossing' }], source: 'index',
+      searched: { chats: 12005, of: 12005 }, complete: true, index: { indexed: 12005, of: 12005, building: false, long: 0 }, matched: 240,
+    })
+    function History() {
+      const [query, setQuery] = useState<Record<string, string>>({})
+      const patch = (p: Record<string, string | null | undefined>) => setQuery((q) => {
+        const next = { ...q }
+        for (const [k, v] of Object.entries(p)) { if (v == null || v === '') delete next[k]; else next[k] = v }
+        return next
+      })
+      return <ChatPage sub="history" navigate={() => {}} query={query} setQuery={patch} />
+    }
+    render(<AppearanceProvider><History /></AppearanceProvider>)
+    await user.type(await screen.findByRole('searchbox', { name: 'Search chats' }), 'zebra')
+    const notice = await screen.findByText(/^Showing 1 of 240 matching chats — the search lists its 1 best/, {}, { timeout: 3000 })
+    expect(notice.getAttribute('data-partial')).toBe('true')
+    expect(screen.queryByText(/^Searched /)).toBeNull()
+  })
 })

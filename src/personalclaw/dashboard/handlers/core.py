@@ -12,7 +12,9 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
+from personalclaw.auth import lifetimes
 from personalclaw.config.edit_spec import (
+    LOOSEN_TITLE,
     ConfigValueError,
     app_write_refusal,
     coerce_edit_value,
@@ -26,7 +28,13 @@ from personalclaw.dashboard.handlers._shared import (
     config_write_refusal,
 )
 from personalclaw.dashboard.state import DashboardState
-from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
+from personalclaw.dashboard.token_auth import (
+    DEFAULT_TOKEN_TTL_SECS,
+    ISSUER_TOKEN,
+    MAX_SESSION_TTL_SECS,
+    mint_session,
+    parse_duration,
+)
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
@@ -958,7 +966,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         consent = unconsented_loosening(path_key, spec, current=current, new=value, body=body)
         if consent:
             raise RefusedInConfigTransaction(
-                consent_required(path_key, consent),
+                consent_required(path_key, consent, title=LOOSEN_TITLE),
                 audit=_audit("denied", f"{path_key}: loosening without confirm"),
             )
 
@@ -1222,12 +1230,21 @@ async def api_models_health(request: web.Request) -> web.Response:
 
 
 async def api_token_local(request: web.Request) -> web.Response:
-    """GET /api/token/local — issue a token for local apps.
+    """GET /api/token/local — issue a token for the CLI, a script or a local app.
 
     Requires a per-session secret written to ~/.personalclaw/.local_secret at
     gateway startup. Only processes on the same machine can read the file.
     Secret passed via ``X-Local-Secret`` header (not query string, to avoid
     leaking in logs).
+
+    ``?ttl=`` names the lifetime — ``30m``, ``20h``, ``7d``, at most 90 days. Without it the
+    token lasts :data:`DEFAULT_TOKEN_TTL_SECS`, 20 hours, ``personalclaw token``'s default. A
+    ``ttl`` longer than 90 days is refused (``400 token_ttl_too_long``, with the sentence naming
+    the limit and why), and one that is not a duration is refused too (``400
+    token_ttl_invalid``): each used to be answered with a token of some OTHER lifetime — a year
+    was reachable by asking, and ``ttl=3600`` quietly got the default. The reply says when the
+    token stops working (``expires_at``) and until when it can still be opened as a link to sign
+    a browser in (``open_within``), so every caller can tell its user.
     """
     import personalclaw.dashboard.handlers as _h  # noqa: F811
 
@@ -1254,13 +1271,25 @@ async def api_token_local(request: web.Request) -> web.Response:
             resources="invalid-secret",
         )
         return web.json_response({"error": "invalid secret"}, status=403)
-    ttl = MAX_SESSION_TTL_SECS
+    ttl = DEFAULT_TOKEN_TTL_SECS
     ttl_param = request.query.get("ttl", "")
     if ttl_param:
         parsed = parse_duration(ttl_param)
-        if parsed:
-            ttl = parsed
-    token = generate_token("local-app", ttl_seconds=ttl)
+        if parsed is None or parsed > MAX_SESSION_TTL_SECS:
+            _sel().log_api_access(
+                caller=request.remote or "unknown",
+                operation="token.local",
+                outcome="denied",
+                source="local-bootstrap",
+                resources="ttl-invalid" if parsed is None else "ttl-too-long",
+            )
+            if parsed is None:
+                return json_error(
+                    "token_ttl_invalid", message=lifetimes.unreadable(ttl_param), status=400
+                )
+            return json_error("token_ttl_too_long", message=lifetimes.too_long(parsed), status=400)
+        ttl = parsed
+    minted = mint_session("local-app", ttl, issuer=ISSUER_TOKEN)
     _sel().log_api_access(
         caller=request.remote or "unknown",
         operation="token.local",
@@ -1268,7 +1297,14 @@ async def api_token_local(request: web.Request) -> web.Response:
         source="local-bootstrap",
         resources="token-issued",
     )
-    return web.json_response({"token": token, "expires_in": ttl})
+    return web.json_response(
+        {
+            "token": minted.token,
+            "expires_in": minted.lifetime_secs,
+            "expires_at": minted.expires_at,
+            "open_within": minted.open_within_secs,
+        }
+    )
 
 
 # ── Session workspace (Orchestrated Chat) ────────────────────────────
@@ -1369,10 +1405,11 @@ async def api_session_agent_stream(request: web.Request) -> web.StreamResponse:
 
 
 async def api_logout(request: web.Request) -> web.Response:
-    """POST /api/logout — revoke all active dashboard sessions.
+    """POST /api/logout — sign every dashboard session out, everywhere.
 
-    Called by ``personalclaw logout`` CLI. Requires loopback + local secret
-    (same auth as /api/token/local) to prevent unauthorized revocation.
+    Called by ``personalclaw logout`` and ``personalclaw auth revoke --all``. Requires
+    loopback + local secret (same auth as /api/token/local) to prevent unauthorized
+    revocation. Each device's next request is told that every device was signed out, and when.
     """
     import personalclaw.dashboard.handlers as _h  # noqa: F811
     from personalclaw.dashboard.token_auth import revoke_all_sessions  # noqa: F811

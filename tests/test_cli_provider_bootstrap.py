@@ -316,7 +316,7 @@ def _embedding_app_env(monkeypatch):
     # rebind. Reset it so this test starts from a cold cache (production is cold too: the
     # CLI bootstraps providers BEFORE it ever resolves an embedder).
     monkeypatch.setattr(_knowledge, "_embedder", None, raising=False)
-    monkeypatch.setattr(_knowledge, "_embedder_spec", False, raising=False)
+    monkeypatch.setattr(_knowledge, "_embedder_basis", False, raising=False)
     try:
         yield
     finally:

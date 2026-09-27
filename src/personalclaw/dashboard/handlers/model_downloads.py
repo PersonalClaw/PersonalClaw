@@ -80,8 +80,14 @@ async def _download_precheck(reg, provider_name: str, model: str):
 
     Returns a :class:`personalclaw.local_models.fit.DiskPrecheck`. None (skip entirely) when
     no bytes are about to land: an unknown provider (``start`` reports that itself), a model
-    the catalog already has on disk, or a re-request for an in-flight job — every one of
-    those would otherwise refuse a request that downloads nothing.
+    the catalog already has on disk intact, or a re-request for an in-flight job — every one
+    of those would otherwise refuse a request that downloads nothing.
+
+    "Intact" is the rule ``ModelDownloadRegistry.start`` skips by, for the same reason: this
+    route is also the Repair of an ``integrity="truncated"`` row, which is on disk and is
+    fetched again. Skipping on "on disk" alone let a Repair start with no free-space check,
+    so it was never refused for space and never carried the warning of a disk that could not
+    be measured.
     """
     from personalclaw.local_models import fit
     from personalclaw.local_models.registry import catalog_for, get_provider
@@ -98,8 +104,8 @@ async def _download_precheck(reg, provider_name: str, model: str):
     try:
         for lm in await catalog_for(provider):
             if lm.name == model:
-                if lm.downloaded:
-                    return None  # already on disk; nothing to land
+                if lm.downloaded and lm.integrity != "truncated":
+                    return None  # already on disk intact; nothing to land
                 need_mb = float(lm.size_mb or 0)
                 break
     except Exception:  # noqa: BLE001 — a catalog failure must not block a download

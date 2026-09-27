@@ -329,8 +329,8 @@ def loopback_requires_token(auth_cfg: AuthConfig | None = None) -> bool:
     :func:`auth_is_off`) or the opt-in local-network bypass
     (``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`` — via
     :func:`local_network_bypass_enabled`). Under the default ``local_token``
-    mode a token IS required even on loopback — the middleware returns
-    ``403 {"error": "Token required"}`` for a tokenless loopback request. This is
+    mode a token IS required even on loopback — the middleware refuses a tokenless
+    loopback request with ``403 session_required`` and the sentence saying how to sign in. This is
     the predicate ``doctor`` must consult before claiming "no token required": a
     local *bind* is not the same fact as a token-free loopback.
     """

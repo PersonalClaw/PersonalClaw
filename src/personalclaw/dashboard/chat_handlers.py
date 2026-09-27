@@ -587,12 +587,22 @@ def _origin_label(origin: str, source_id: str) -> str:
     try:
         if origin == "loop":
             from personalclaw.loop import store as loop_store
+            from personalclaw.security import redact_for_display
 
             lp = loop_store.get(source_id)
-            return lp.name if lp and lp.name else source_id
+            # Masked like the loop list's name (`store.get_redacted`).
+            return redact_for_display(lp.name) if lp and lp.name else source_id
     except Exception:
         logger.debug("origin label lookup failed for %s/%s", origin, source_id, exc_info=True)
     return source_id
+
+
+def _disk_listing(log) -> list:
+    """Every chat on disk with its metadata, the search indexer held off while it is listed."""
+    from personalclaw import session_search
+
+    with session_search.INDEXER.foreground():
+        return log.list_sessions_with_metadata()
 
 
 async def api_chat_sessions(request: web.Request) -> web.Response:
@@ -627,6 +637,16 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
         if want_all:
             return True
         return (lifecycle == "archived") if want_archived else (lifecycle != "archived")
+
+    # The disk listing first, off the event loop: at 12,005 chats listing them held the loop for
+    # 0.9 s, every request answered meanwhile waiting on it (measured). The live sessions below
+    # are read after it, so they are as fresh as the answer.
+    disk: list = []
+    if state.conversation_log:
+        try:
+            disk = await asyncio.to_thread(_disk_listing, state.conversation_log)
+        except Exception:
+            logger.warning("list_sessions failed for chat history merge", exc_info=True)
 
     out: list[dict] = []
     seen: set[str] = set()
@@ -682,14 +702,10 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             continue
         out.append(d)
 
-    # Then merge disk-only sessions not already represented in memory.
-    if state.conversation_log:
-        try:
-            disk = state.conversation_log.list_sessions()
-        except Exception:
-            logger.warning("list_sessions failed for chat history merge", exc_info=True)
-            disk = []
-        for d in disk:
+    # Then merge disk-only sessions not already represented in memory — building the rows
+    # and the answer off the event loop too: for 12,005 chats they held it for 0.1 s more.
+    def _merge_disk() -> None:
+        for d, meta in disk:
             raw_key = d.get("key", "")
             if raw_key.startswith("dashboard:"):
                 name = raw_key.removeprefix("dashboard:")
@@ -715,7 +731,6 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                 continue  # non-dashboard, non-channel (worker namespace) — not chat history
             if name in seen:
                 continue
-            meta = state.conversation_log.get_metadata(raw_key)
             if request_app and meta.get(CREATED_BY_APP_META_KEY) != request_app:
                 continue
             if meta.get("closed"):
@@ -771,7 +786,10 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                 continue
             out.append(row)
 
-    return web.json_response(out)
+    if disk:
+        await asyncio.to_thread(_merge_disk)
+
+    return web.json_response(text=await asyncio.to_thread(json.dumps, out))
 
 
 def _started_by(creator: object, names: dict[str, str]) -> dict[str, str]:
@@ -2419,7 +2437,7 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
                     first_line_data.pop("closed", None)
                     lines[0] = json.dumps(first_line_data) + "\n"
                     atomic_write(path, "".join(lines))
-                    state.conversation_log._meta_cache.pop(resolved_key, None)
+                    state.conversation_log._invalidate_cache(resolved_key)
         except Exception:
             logger.warning("Failed to clear closed flag for %s", resolved_key, exc_info=True)
     # The whole transcript, every field of every line — through the one loader the boot

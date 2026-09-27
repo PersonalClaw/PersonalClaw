@@ -696,6 +696,73 @@ class TestParking:
         # The user-facing sentence: what stopped it, and that nothing was lost.
         assert "note(s) kept" in result.stderr and "2 steps" in result.stderr
 
+    def test_the_provider_says_what_a_finished_run_did_and_keeps_its_json_on_stdout(
+        self, monkeypatch
+    ):
+        """Ledger 295: a finished run's history row read its `stdout` — the loop's whole account as
+        JSON. `ActionResult.summary` is the row's line now: how far the run went, where, and what it
+        noted. The JSON stays on `stdout`, where the engine and the row's trace read it."""
+        from personalclaw.action_providers import browse_provider as bp
+        from personalclaw.action_providers.base import ActionContext
+
+        session, page = _fresh_pair()
+        decide = _Decide(
+            "NOTES version 2.0 shipped on Tuesday", "NOTES the scheduler is new.", "DONE"
+        )
+        monkeypatch.setattr(bp, "_decide", decide)
+        monkeypatch.setattr(
+            bp.BrowseActionProvider,
+            "_open",
+            lambda self, cfg, ctx, *, cdp_url="": _done((session, page, None)),
+        )
+
+        result = _run(
+            bp.BrowseActionProvider().execute(
+                {"goal": "find the latest version", "start_url": INDEX_URL},
+                ActionContext(event="clock"),
+            )
+        )
+
+        assert result.success is True and result.outcome == ""
+        assert result.summary == (
+            "Browse finished in 3 steps at example.test. Noted: version 2.0 shipped on Tuesday; "
+            "the scheduler is new."
+        )
+        payload = json.loads(result.stdout)
+        assert payload["notes"] == ["version 2.0 shipped on Tuesday", "the scheduler is new."]
+        assert payload["final_url"] == INDEX_URL
+
+    @pytest.mark.parametrize(
+        ("steps", "notes", "final_url", "said"),
+        [
+            (1, (), INDEX_URL, "Browse finished in 1 step at example.test, and noted nothing."),
+            (
+                2,
+                ("  the balance\n is $12.34.  ", ""),
+                "https://someone:hunter2@bank.example:8443/account?token=abc#top",
+                "Browse finished in 2 steps at bank.example:8443. Noted: the balance is $12.34.",
+            ),
+            (4, ("x" * 400,), "", f"Browse finished in 4 steps. Noted: {'x' * 299}…"),
+        ],
+        ids=["no-notes", "a-url-with-credentials-names-its-site-only", "long-notes-are-clipped"],
+    )
+    def test_a_finished_runs_sentence(self, steps, notes, final_url, said):
+        """The sentence's edges: nothing noted, a URL whose path, query and credentials a
+        sentence has no business repeating, and notes longer than a line."""
+        from personalclaw.action_providers import browse_provider as bp
+        from personalclaw.browse.loop import BrowseLoopResult, BrowseStep
+
+        run = BrowseLoopResult(
+            ok=True,
+            goal="read my balance",
+            final_url=final_url,
+            steps=tuple(
+                BrowseStep(index=i, url=INDEX_URL, action="read", fenced=True) for i in range(steps)
+            ),
+            notes=notes,
+        )
+        assert bp.BrowseActionProvider._done_sentence(run) == said
+
     def test_the_action_node_parks_a_needs_input_result_into_waiting(self):
         """The engine half of the contract. WAITING with no `wake_at` is what the controller
         reads as 'nothing will wake this run' — see the run-status test below."""

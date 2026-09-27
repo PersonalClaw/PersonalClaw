@@ -638,7 +638,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                     _audit("deduped", same.slug)
                     version = upd.version if upd is not None else same.version
                     return (
-                        f"That content is already saved as '{same.name}' "
+                        f"That content is already saved as '{redacted(same.name)}' "
                         f"(slug: {same.slug}) under the same tag — updated it in place "
                         f"(version {version}) instead of saving a duplicate."
                     )
@@ -650,7 +650,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 if similar is not None:
                     _audit("deduped", similar.slug)
                     return (
-                        f"An artifact named '{similar.name}' already exists "
+                        f"An artifact named '{redacted(similar.name)}' already exists "
                         f"(slug: {similar.slug}). To revise it, call artifact_update with "
                         f"slug='{similar.slug}'. To save a NEW separate artifact anyway, "
                         f"call artifact_save again with force=true."
@@ -672,7 +672,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 project_id=_current_project_id(),
             )
             _audit("success", art.slug)
-            return f"Saved artifact '{art.name}' (slug: {art.slug}, version {art.version})."
+            return (
+                f"Saved artifact '{redacted(art.name)}' (slug: {art.slug}, version {art.version})."
+            )
 
         if name == "artifact_get":
             got = prov.get(args["slug"], version=args.get("version"))
@@ -701,7 +703,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 _audit("not_found", args["slug"])
                 return tool_failure(f"Artifact not found: {args['slug']}")
             _audit("success", upd.slug)
-            return f"Updated artifact '{upd.name}' → version {upd.version}."
+            return f"Updated artifact '{redacted(upd.name)}' → version {upd.version}."
 
         if name == "artifact_list":
             arts = prov.list(
@@ -719,7 +721,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                     "name": redacted(a.name),
                     "kind": a.kind,
                     "version": a.version,
-                    "tags": a.tags,
+                    # Masked like the REST row's tags (`handlers._serialize`).
+                    "tags": [redacted(t) for t in a.tags],
                 }
                 for a in arts
             ]

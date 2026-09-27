@@ -119,10 +119,21 @@ def install(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> Captur
 
 
 def uninstall() -> None:
-    """Unload and remove the plist. Idempotent."""
+    """Unload and remove the plist, and the logs launchd wrote for the agent. Idempotent.
+
+    Install created ``LOG_DIR`` for the agent's output, so it goes with the service unless
+    something the service did not write is in it: a folder in the user's Library must not
+    outlive the service that made it.
+    """
     if PLIST_PATH.exists():
         _launchctl("unload", "-w", str(PLIST_PATH))
         PLIST_PATH.unlink()
+    for log in (STDOUT_LOG, STDERR_LOG):
+        log.unlink(missing_ok=True)
+    try:
+        LOG_DIR.rmdir()
+    except OSError:
+        pass  # already gone, or it holds something that is not the service's
 
 
 def is_active() -> bool:

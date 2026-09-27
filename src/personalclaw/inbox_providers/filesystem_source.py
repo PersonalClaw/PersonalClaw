@@ -31,9 +31,18 @@ class FilesystemSourceProvider(MessageSourceProvider):
     ingestion, against the closed set; this provider never guesses a kind from the text.
     """
 
+    #: What the inbox's sentences call this source.
+    display_name = "Drop folder"
+
     @property
     def source_name(self) -> str:
         return "filesystem"
+
+    def polling_enabled(self) -> bool:
+        """Only while ``inbox.enabled`` ("Poll the drop folder") is on, which it is not by
+        default: anything that can write to this machine can drop a file here, and the native
+        app that ships this source is locked on, so enabling it is no one's say-so."""
+        return bool(config_loader.AppConfig.load().inbox.enabled)
 
     async def poll(
         self, watched_channels: list[str], checkpoints: dict[str, str], user_id: str

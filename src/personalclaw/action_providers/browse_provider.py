@@ -60,12 +60,10 @@ up shipped and inert.
 
 **Browser lifecycle is still NOT here**, and BA-4 does not change that. ``browse/transport.py``
 records the decision: core does not discover Chrome, does not own a ``--user-data-dir`` process and
-does not supervise one. So the handoff hands the caller the exact argv that binds a headful window
-to the site's persistent profile (:func:`~personalclaw.browse.handoff.chrome_launch_args`) instead
-of launching it — which keeps the profile choice unforgeable (a caller cannot accidentally open the
-login window against a different profile than the run will read) while leaving the process where it
-already lives. Absent a target the provider returns a typed, actionable failure rather than
-pretending to browse — an action that silently no-ops is worse than one that says it cannot run.
+does not supervise one — so it opens no sign-in window either. The person signs in in the browser
+the step drives (its ``cdp_url`` target), and answering the park runs the step again there. Absent
+a target the provider returns a typed, actionable failure rather than pretending to browse — an
+action that silently no-ops is worse than one that says it cannot run.
 """
 
 from __future__ import annotations
@@ -113,6 +111,22 @@ OUTCOME_SKIP = "skip"
 #: ``background``: choosing the next action on an adversarial page is the reasoning axis's job,
 #: and the background axis is bound to the cheap models digests use.
 USE_CASE = "reasoning"
+
+#: How much of a finished run's notes its one-line summary quotes. The notes stay whole on
+#: `stdout`; the history row shows a line, and a page of notes is not one.
+_SUMMARY_NOTES_MAX = 300
+
+
+def _site_of(url: str) -> str:
+    """`host[:port]` of a URL for a sentence — never its path, query or credentials."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url or "")
+        host, port = parsed.hostname or "", parsed.port
+    except ValueError:
+        return ""
+    return f"{host}:{port}" if host and port else host
 
 
 def _budget_check() -> tuple[str, str]:
@@ -318,13 +332,15 @@ class BrowseActionProvider(ActionProvider):
                 # `resolve_cdp_url` never reads that key on this branch, so the gateway profile is
                 # unreachable from here rather than merely unused.
                 typed = disconnected_skip(status)
+                said = f"{typed.what}. {status.fix}."
                 return ActionResult(
                     success=True,
                     outcome=OUTCOME_SKIP,
                     stdout=json.dumps({"skipped": True, "target": target, "reason": status.reason}),
-                    stderr=f"{typed.what}. {status.fix}.",
+                    stderr=said,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     agent_error=typed,
+                    summary=said,
                 )
             # ── The per-task grant, requested BEFORE the browser is touched ──
             #
@@ -542,7 +558,6 @@ class BrowseActionProvider(ActionProvider):
         """
         from personalclaw.browse.handoff import (
             REASON_SESSION_EXPIRED,
-            chrome_launch_args,
             mark_expired,
             request_login,
         )
@@ -555,22 +570,16 @@ class BrowseActionProvider(ActionProvider):
         handoff = request_login(url, reason=reason, run_id=run_id, node_id=PROVIDER_NAME)
         if reason == REASON_SESSION_EXPIRED:
             mark_expired(url)
-            # BA-5 §(c): the moment auth_state=expired is written, SURFACE it — a persistent banner
-            # always, and a needs_input inbox item for a dispatch the workflow engine does not own
-            # (a schedule tick, a hook, a trigger's Test). Inside a run the engine raises the run's
-            # own row for this park, which is the one that can be answered; a second, site-level
-            # row would ask the same question again with nothing behind it. Best-effort.
+            # BA-5 §(c): the moment auth_state=expired is written, SURFACE it as a persistent
+            # banner. The question itself is asked by what the park belongs to — the workflow run's
+            # row, or the trigger's (`triggers.parks`) — where answering it runs this step again.
             from personalclaw.browse.mirror import surface_auth_expired
 
-            surface_auth_expired(url, inbox_item=not run_id)
-        payload = handoff.to_payload()
-        # The argv the caller needs to open the headful window on the RIGHT profile. Handed over
-        # rather than executed — see the module docstring on why core does not launch Chrome.
-        payload["headful_launch_args"] = chrome_launch_args(url, headful=True)
+            surface_auth_expired(url)
         return ActionResult(
             success=True,
             outcome=OUTCOME_NEEDS_INPUT,
-            stdout=json.dumps(payload),
+            stdout=json.dumps(handoff.to_payload()),
             stderr=handoff.sentence,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
@@ -639,7 +648,34 @@ class BrowseActionProvider(ActionProvider):
                 stderr=self._park_sentence(result),
                 duration_ms=duration,
             )
-        return ActionResult(success=True, stdout=payload, duration_ms=duration)
+        return ActionResult(
+            success=True,
+            stdout=payload,
+            duration_ms=duration,
+            summary=self._done_sentence(result),
+        )
+
+    @staticmethod
+    def _done_sentence(result: BrowseLoopResult) -> str:
+        """What a person reads on a run that finished: how far it went, where, and what it noted.
+
+        A finished run's history row used to be its `stdout` — the loop's whole account as JSON,
+        which is the right trace and not a line anyone reads (ledger 295). The notes are what the
+        run was sent for, so they are the sentence; the JSON on `stdout` keeps everything else.
+        """
+        count = result.step_count
+        head = f"Browse finished in {count} step{'' if count == 1 else 's'}"
+        site = _site_of(result.final_url)
+        if site:
+            head += f" at {site}"
+        noted = [" ".join(n.split()).rstrip(" .;") for n in result.notes]
+        noted = [n for n in noted if n]
+        if not noted:
+            return f"{head}, and noted nothing."
+        said = "; ".join(noted)
+        if len(said) > _SUMMARY_NOTES_MAX:
+            return f"{head}. Noted: {said[: _SUMMARY_NOTES_MAX - 1].rstrip(' .;')}…"
+        return f"{head}. Noted: {said}."
 
     @staticmethod
     def _park_sentence(result: BrowseLoopResult) -> str:

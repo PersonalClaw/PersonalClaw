@@ -14,6 +14,7 @@ from aiohttp import web
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.edit_spec import (
+    LOOSEN_TITLE,
     ConfigValueError,
     SecurityControl,
     coerce_edit_value,
@@ -945,7 +946,7 @@ def _unconsented_agent_loosening(
                 source="dashboard",
                 resources=f"{field}: loosening without confirm",
             )
-            return consent_required(field, consent)
+            return consent_required(field, consent, title=LOOSEN_TITLE)
     return None
 
 
@@ -1275,7 +1276,9 @@ async def _do_agents_sync(request: web.Request, body: dict) -> web.Response:
         if loosening and not confirm_granted(body):
             raise RefusedInConfigTransaction(
                 consent_required(
-                    f"agents.{loosening[0][0]}.approval_mode", _sync_consent(loosening)
+                    f"agents.{loosening[0][0]}.approval_mode",
+                    _sync_consent(loosening),
+                    title=LOOSEN_TITLE,
                 ),
                 audit={
                     "caller": request.get("user", "dashboard"),

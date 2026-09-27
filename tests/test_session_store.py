@@ -101,17 +101,101 @@ def test_expired_sessions_are_dropped_on_read(home):
     assert set(ss.load_sessions()) == {"live"}
 
 
-def test_forget_removes_one_session(home):
+def test_ending_removes_one_session_and_remembers_why(home):
     ss.remember_session("a", time.time() + 3600)
     ss.remember_session("b", time.time() + 3600)
-    ss.forget_session("a")
+    ended = ss.end_sessions(["a"], ss.END_SIGNED_OUT_ELSEWHERE)
+    assert [nonce for nonce, _ in ended] == ["a"]
     assert set(ss.load_sessions()) == {"b"}
+    assert ss.ended_session("a").reason == ss.END_SIGNED_OUT_ELSEWHERE
+    assert ss.ended_session("b") is None
 
 
-def test_forgetting_an_unknown_session_is_a_no_op(home):
+def test_ending_an_unknown_session_is_a_no_op(home):
     ss.remember_session("a", time.time() + 3600)
-    ss.forget_session("nope")
+    assert ss.end_sessions(["nope"], ss.END_SIGNED_OUT) == []
     assert set(ss.load_sessions()) == {"a"}
+    assert ss.ended_session("nope") is None
+
+
+def test_an_unknown_end_reason_is_refused(home):
+    """The reason is what a device is told; a free-form one would be untested copy."""
+    with pytest.raises(ValueError):
+        ss.end_sessions(["a"], "because")
+
+
+def test_a_row_without_a_device_block_is_listed_with_a_stable_handle(home):
+    """A row written before every row carried a device block must still be listable and
+    revocable — with a handle that is the same on every read, and is not the nonce."""
+    ss.sessions_path().write_text(
+        json.dumps({"sessions": {"old-nonce": {"exp": time.time() + 3600, "issuer": "unknown"}}}),
+        encoding="utf-8",
+    )
+    first = ss.load_session_records()["old-nonce"].device.id
+    assert first == ss.load_session_records()["old-nonce"].device.id
+    assert first and "old-nonce" not in first
+    assert ss.nonces_for_session(first) == ["old-nonce"]
+
+
+def test_a_store_the_previous_release_wrote_signs_nobody_out(home):
+    """The upgrade promise: every live row survives, a paired phone stays paired under its name
+    (the pairing-only capabilities key on its door), and a bare row counts as a browser, so a
+    burst of script tokens after the upgrade cannot push it out."""
+    now = time.time()
+    phone = {"id": "a1b2c3", "name": "Jordan's iPhone", "kind": "mobile", "minted_at": now - 60}
+    ss.sessions_path().write_text(
+        json.dumps(
+            {
+                "sessions": {
+                    "phone-nonce": {
+                        "exp": now + 3600,
+                        "issuer": "pair",
+                        "device": {**phone, "last_seen": now - 5},
+                    },
+                    "browser-nonce": {"exp": now + 3600, "issuer": "unknown"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    records = ss.load_session_records()
+    assert set(records) == {"phone-nonce", "browser-nonce"}
+    assert set(ss.paired_sessions()) == {"phone-nonce"}
+    kept = records["phone-nonce"].device
+    assert (kept.id, kept.name, kept.kind) == ("a1b2c3", "Jordan's iPhone", "mobile")
+    assert ss.pool_of(records["phone-nonce"]) == ss.POOL_DEVICE
+    assert ss.pool_of(records["browser-nonce"]) == ss.POOL_BROWSER
+
+
+@pytest.mark.parametrize(
+    ("user_agent", "expected"),
+    [
+        ("node", ("Script", "cli")),  # Node's own fetch, measured: exactly this
+        ("Deno/1.46.3", ("Script", "cli")),
+        ("curl/8.7.1", ("curl", "cli")),
+        ("python-requests/2.32.3", ("Python script", "cli")),
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+            ("Chrome on Mac", "browser"),
+        ),
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) PersonalClaw/0.2.0 Chrome/140.0.0.0 Electron/38.2.0 Safari/537.36",
+            ("PersonalClaw desktop app", "desktop"),
+        ),
+        (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+            ("Safari on iPhone", "mobile"),
+        ),
+        # A runtime's name ANYWHERE but first is a coincidence, not an identity.
+        ("Mozilla/5.0 (X11; Linux x86_64) node Firefox/140.0", ("Firefox on Linux", "browser")),
+        ("", ("", "unknown")),
+    ],
+)
+def test_a_client_is_named_from_what_its_user_agent_says(user_agent, expected):
+    assert ss.describe_user_agent(user_agent) == expected
 
 
 def test_an_empty_nonce_is_not_stored(home):
@@ -258,11 +342,11 @@ class TestSurvivesRestart:
         assert ta.validate_token(token)[0] is False
 
 
-# ── The TTL ruling ──────────────────────────────────────────────────────
+# ── Lifetimes ───────────────────────────────────────────────────────────
 
 
 def test_browser_default_is_thirty_days():
-    """Browser sessions ~30d; the 1-year cap is for explicit CLI tokens."""
+    """Browser sessions last 30 days by default, inside the 90-day limit."""
     from personalclaw.dashboard.token_auth import (
         DEFAULT_BROWSER_SESSION_TTL_SECS,
         MAX_SESSION_TTL_SECS,
@@ -272,8 +356,8 @@ def test_browser_default_is_thirty_days():
     assert DEFAULT_BROWSER_SESSION_TTL_SECS < MAX_SESSION_TTL_SECS
 
 
-def test_the_year_cap_is_still_reachable_explicitly(tmp_path, monkeypatch):
-    """An automation token the user asked to last a year still can."""
+def test_the_whole_90_day_limit_can_be_asked_for(tmp_path, monkeypatch):
+    """A token asked to last the limit exactly does — the limit refuses LONGER, not up to it."""
     from personalclaw.dashboard import token_auth as ta
 
     monkeypatch.setattr(ss, "config_dir", lambda: tmp_path)
@@ -287,14 +371,17 @@ def test_the_year_cap_is_still_reachable_explicitly(tmp_path, monkeypatch):
 
 
 def test_the_startup_url_uses_the_browser_default():
-    """The two gateway mint sites open a URL a HUMAN clicks, so 30d applies."""
-    import pathlib
+    """The two gateway mint sites open a URL a HUMAN clicks, so the browser lifetime applies:
+    30 days by default, not the 90-day limit."""
+    from types import SimpleNamespace
 
     import personalclaw.gateway as gw
+    from personalclaw.dashboard import token_auth as ta
 
-    src = pathlib.Path(gw.__file__).read_text(encoding="utf-8")
-    assert "ttl_seconds=DEFAULT_BROWSER_SESSION_TTL_SECS" in src
-    assert 'generate_token("local-startup", ttl_seconds=MAX_SESSION_TTL_SECS)' not in src
+    for issuer in (ta.ISSUER_STARTUP, ta.ISSUER_READY):
+        minted = gw.mint_startup_token(issuer, SimpleNamespace(session_ttl="30d"))
+        assert minted.lifetime_secs == ta.DEFAULT_BROWSER_SESSION_TTL_SECS
+        assert minted.lifetime_secs < ta.MAX_SESSION_TTL_SECS
 
 
 def test_ephemeral_secret_is_an_explicit_opt_in(tmp_path, monkeypatch):

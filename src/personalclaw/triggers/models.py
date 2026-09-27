@@ -947,6 +947,19 @@ class Trigger:
     #: units. Absent/0 never suppresses, so the first alert of anything always goes out.
     last_alert_hash: str = ""
     last_alert_at: float = 0.0
+    #: When a run of this trigger last stopped for a person: its action parked
+    #: (`outcome="needs_input"` — browse at a sign-in page) and the trigger's question is open.
+    #:
+    #: A third OUTCOME, beside `last_success_at` and `last_failure_at`, because it is neither: the
+    #: action did nothing it was asked yet, so it is not a success, and nothing failed. Both
+    #: recorders stamped `last_success_at` for it, which made a run that was waiting for you read
+    #: as one that had done its work. It is still a run that happened, so
+    #: `last_run_ts` reads the newest of the three — that is what clears a Run button
+    #: (`schedule_view._last_run_ts`).
+    #:
+    #: The LAST field, so no positional constructor call shifts: `Trigger` is on the SDK surface
+    #: (`personalclaw.sdk.channel`).
+    last_waiting_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -978,6 +991,7 @@ class Trigger:
             "run_count": self.run_count,
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
+            "last_waiting_at": self.last_waiting_at,
             "last_fired_at": self.last_fired_at,
             "park_retry_after": self.park_retry_after,
             "last_alert_hash": self.last_alert_hash,
@@ -1332,6 +1346,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         run_count=_int(data.get("run_count"), 0),
         last_success_at=str(data.get("last_success_at", "") or ""),
         last_failure_at=str(data.get("last_failure_at", "") or ""),
+        last_waiting_at=str(data.get("last_waiting_at", "") or ""),
         last_fired_at=str(data.get("last_fired_at", "") or ""),
         park_retry_after=_float(data.get("park_retry_after"), 0.0),
         last_alert_hash=str(data.get("last_alert_hash", "") or ""),

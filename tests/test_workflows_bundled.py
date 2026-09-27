@@ -17,6 +17,7 @@ and nobody notices until a user tries it" kind:
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -578,8 +579,13 @@ class TestEveryPipeCallParses:
 
     def test_a_bad_argument_nested_in_a_shipped_action_is_caught(self) -> None:
         """The mutation control: a non-literal argument inside a `foreach` body's action
-        arguments — `config.with`, two levels below the node — is refused at that node."""
-        spec = self._served("rich-ingest")
+        arguments — `config.with`, two levels below the node — is refused at that node.
+
+        The mutation is made on a copy the test owns. It used to be made on what the provider
+        served, and that was the provider's cached template: every later reader on the same worker
+        got the broken argument, and `test_workflows_contracts` failed `rich-ingest` whenever it
+        ran after this."""
+        spec = copy.deepcopy(self._served("rich-ingest"))
         root = Node.from_dict(spec["root"])
         [(path, node)] = [(p, n) for p, n in walk(root) if n.id == "create-task"]
         notes = node.config["with"]["notes"]
@@ -590,6 +596,37 @@ class TestEveryPipeCallParses:
         issues = [i for i in validate_spec(spec, strict=True).issues if i.code in _PIPE_CODES]
         assert [(i.code, i.path) for i in issues] == [("WF_BAD_PIPE", path)], issues
         assert "'unassigned' is not a literal" in issues[0].message
+
+
+class TestTheCacheHandsOutCopies:
+    """The provider parses each template once and caches it. What it hands out must be
+    the caller's to edit: a run, an instantiation or a test that changes a node in what it read
+    must never change the library for the next reader."""
+
+    def test_an_edit_to_what_was_read_never_reaches_the_next_read(self) -> None:
+        first = read_template("rich-ingest")
+        assert first is not None
+        root = first.root if isinstance(first.root, Node) else Node.from_dict(first.root)
+        [node] = [n for _p, n in walk(root) if n.id == "create-task"]
+        shipped = node.config["with"]["notes"]
+        node.config["with"]["notes"] = "edited in place"
+        first.name = "renamed-in-place"
+
+        again = read_template("rich-ingest")
+        assert again is not None and again.name == "rich-ingest"
+        root_again = again.root if isinstance(again.root, Node) else Node.from_dict(again.root)
+        [node_again] = [n for _p, n in walk(root_again) if n.id == "create-task"]
+        assert node_again.config["with"]["notes"] == shipped
+
+    def test_the_parse_is_still_cached(self) -> None:
+        """Copies, not re-reads: the expensive half — parse and macro expansion — runs once."""
+        from personalclaw.workflows import bundled_defs
+
+        bundled_defs._read_cached.cache_clear()
+        read_template("rich-ingest")
+        read_template("rich-ingest")
+        info = bundled_defs._read_cached.cache_info()
+        assert (info.misses, info.hits) == (1, 1)
 
 
 class TestProvider:

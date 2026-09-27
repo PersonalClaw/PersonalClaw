@@ -258,6 +258,66 @@ def _derived_ignore(entry_path: str, root: Path):
     return _ignore
 
 
+def _left_out_of_restore(entry_path: str, rel: str) -> bool:
+    """Whether a restore leaves ``rel``, a path inside the entry at ``entry_path``, out of the home.
+
+    What capture leaves behind (the entry's ``derived_within``) is never planted either. An archive
+    written before a path was left out still carries it, and planting it undoes the exclusion: an
+    app's ``venv/`` came back without its interpreter but with its package receipt, so Install
+    engine re-made the interpreter and skipped pip. A path another entry claims (``loop/loops.db``
+    inside ``loop``) is that entry's to restore, so it is kept.
+    """
+    from personalclaw.durability import inventory as inv
+    from personalclaw.portability import _is_derived_within
+
+    if not _is_derived_within(entry_path, rel):
+        return False
+    owner = inv.claim_for(f"{entry_path}/{rel}")
+    return owner is None or owner.path == entry_path
+
+
+def _restore_ignore(entry_path: str, root: Path):
+    """A copytree ``ignore`` that skips what :func:`_left_out_of_restore` leaves out."""
+    leaves = bool(_derived_within(entry_path))
+
+    def _ignore(directory: str, contents: list[str]) -> set[str]:
+        if not leaves:
+            return set()
+        base = Path(directory).relative_to(root)
+        return {n for n in contents if _left_out_of_restore(entry_path, (base / n).as_posix())}
+
+    return _ignore
+
+
+def _engines_not_here(snap: Path, components: list[str] | None) -> list[str]:
+    """The apps this restore brought back whose engine is not installed here, by display name.
+
+    An engine lives in the app's own ``venv/``, which a snapshot leaves out, so an app that declares
+    one comes back without it and offers Install engine. An app whose engine this home already has
+    (a merge keeps the live ``venv/``) is not named, nor is an app the restore did not touch.
+    """
+    if not _store_selected(components, "apps") or not (snap / "apps").is_dir():
+        return []
+    try:
+        from personalclaw.apps.manager import APP_MANIFEST_FILENAME, app_dir, engine_not_installed
+        from personalclaw.apps.manifest import AppManifest
+
+        names: list[str] = []
+        for tree in sorted((snap / "apps").iterdir()):
+            if tree.name.startswith(".") or not (tree / APP_MANIFEST_FILENAME).is_file():
+                continue
+            if not engine_not_installed(tree.name):
+                continue
+            manifest = AppManifest.from_json_file(app_dir(tree.name) / APP_MANIFEST_FILENAME)
+            names.append(manifest.displayName or tree.name)
+        return names
+    except Exception:  # noqa: BLE001 — a note after the restore must never fail the restore
+        import logging
+
+        logging.getLogger(__name__).debug("engine census after restore failed", exc_info=True)
+        return []
+
+
 def _projects_component_paths(base: Path) -> list[str]:
     """Home-relative per-project paths the named `projects` component covers.
 
@@ -418,11 +478,17 @@ def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
     shutil.copytree(str(src), str(dst), ignore=_ignore_symlinks, **kwargs)
 
 
-def _copy_tree_no_overwrite(src: Path, dst: Path) -> None:
+def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> None:
+    """Copy what ``dst`` lacks. Given the inventory ``entry_path`` it copies, leaves out what a
+    restore never plants (:func:`_left_out_of_restore`)."""
+    leaves = bool(entry_path) and bool(_derived_within(entry_path))
     for item in src.rglob("*"):
         if item.is_symlink():
             continue
-        target = dst / item.relative_to(src)
+        rel = item.relative_to(src)
+        if leaves and _left_out_of_restore(entry_path, rel.as_posix()):
+            continue
+        target = dst / rel
         if item.is_dir():
             target.mkdir(parents=True, exist_ok=True)
         elif item.is_file() and not target.exists():
@@ -851,13 +917,18 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
         # logs and SKIPS the table, and the restore reported "imported: 0" while looking
         # like it worked. A restore that silently drops all memory is far worse than one
         # that drops a provenance column, so the column is opportunistic, not required.
-        def _with_contributor(base: str, table: str) -> str:
-            return f"{base}, contributor" if _both_have(conn, table, "contributor") else base
+        #
+        # `embedding_model` rides the same way: the model that wrote each vector. A vector merged
+        # without it reads as one with no model recorded — stale until a re-index — so it goes
+        # along whenever both sides carry it.
+        def _with_optional(base: str, table: str) -> str:
+            extra = [c for c in ("contributor", "embedding_model") if _both_have(conn, table, c)]
+            return ", ".join([base, *extra])
 
         for table, cols, where in [
             (
                 "semantic_memory",
-                _with_contributor(
+                _with_optional(
                     "key, value_json, confidence, source, created_at, updated_at, embedding",
                     "semantic_memory",
                 ),
@@ -865,7 +936,7 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
             ),
             (
                 "episodic_memories",
-                _with_contributor(
+                _with_optional(
                     "id, conversation_id, text, embedding, tags, importance, created_at, "
                     "last_accessed_at",
                     "episodic_memories",
@@ -1472,7 +1543,7 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
                 (backup / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(live), str(backup / rel))
             if src.is_dir():
-                _copytree_safe(src, live)
+                _copytree_safe(src, live, ignore=_restore_ignore(rel, src))
             elif src.is_file():
                 live.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(src), str(live))
@@ -1804,7 +1875,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             dst = pc / rel
             if src.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
-                _copy_tree_no_overwrite(src, dst)
+                _copy_tree_no_overwrite(src, dst, entry_path=rel)
                 restored.append(rel)
             elif src.is_file() and not dst.exists():
                 # A file the live home does not have. An EXISTING file is left alone: merge
@@ -2000,6 +2071,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             _do_replace(snap, pc, components)
         else:
             _do_merge(snap, pc, components)
+        engines = _engines_not_here(snap, components)
 
     # Integrity check
     if _want(components, "memory") and (pc / "memory.db").is_file():
@@ -2025,5 +2097,11 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
     comp_str = ",".join(components) if components else "all"
     _audit("state_restored", f"mode={mode} components={comp_str} from={snap_path.name}")
 
+    for name in engines:
+        print(
+            f"⚠️  {name} has no engine here: a snapshot leaves engines out, since each one is "
+            "built for the machine it runs on. Install it with Install engine, on the app's card "
+            "in Settings → Providers."
+        )
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
     return 0

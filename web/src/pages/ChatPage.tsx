@@ -45,7 +45,7 @@ import { chatContextChips } from './chat/ChatContextLine'
 import { snapshotPredatesSend, streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
-import { chatFindPath, searchSourceLabel } from './chat/searchDeepLink'
+import { chatFindPath, searchCoverage, searchSourceLabel } from './chat/searchDeepLink'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
@@ -59,6 +59,7 @@ import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
+import { PartialNotice } from '../ui/PartialNotice'
 import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
 import { BundledFloorNotice } from './chat/BundledFloorNotice'
 import { ToolCard } from './chat/ToolCard'
@@ -91,7 +92,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -4751,6 +4752,9 @@ function applyTagEdit(tags: string[], edit: TagEdit): string[] {
   return out
 }
 
+/** The most matches the chat list's content search asks for: the route's ceiling. */
+const SEARCH_LIMIT = 200
+
 /** Dedicated sessions LIST page (#/chat/history) — search, manage, open. */
 function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) => void; query: Record<string, string>; setQuery: RouteProps['setQuery'] }) {
   // Instant-paint cache: sessions revalidate often (in-memory, persist:false);
@@ -4941,6 +4945,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // transcript-scan fallback), the `source` the endpoint reports and the client now
   // keeps. null = no content search has resolved, so the indicator stays hidden.
   const [contentSource, setContentSource] = useState<string | null>(null)
+  // How far the content search reached (`searched` of the chats, `complete`). While the search
+  // index is still being built an answer covers only the chats it holds, and says so; `restFor`
+  // is the query the user asked to read the rest of directly, which the next search does.
+  const [contentCoverage, setContentCoverage] = useState<Pick<SessionSearchAnswer, 'searched' | 'complete' | 'index' | 'matched'> | null>(null)
+  const [restFor, setRestFor] = useState<string | null>(null)
+  const [restBusy, setRestBusy] = useState(false)
   // Why the content search failed, or null. It used to fail in silence: the list quietly fell
   // back to title matches, and a chat the user remembered SAYING something in read as
   // "no such chat". Bumping `contentRetry` runs the same search again.
@@ -4953,10 +4963,13 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const [overFolder, setOverFolder] = useState<string | null>(null)
   useEffect(() => {
     const query = q.trim()
-    if (query.length < 2) { setContentKeys(null); setContentSnippets(new Map()); setContentSource(null); setContentFailure(null); return }
+    if (query.length < 2) { setContentKeys(null); setContentSnippets(new Map()); setContentSource(null); setContentCoverage(null); setContentFailure(null); return }
     let alive = true
+    const rest = restFor === query
     const t = window.setTimeout(() => {
-      api.sessionsSearch(query).then(({ sessions: rows, source }) => {
+      // The route's most: a chat that matched but is not in the answer is filtered out of the
+      // list below, so the answer holds as many as it may, and says when there were more.
+      api.sessionsSearch(query, { rest, limit: SEARCH_LIMIT }).then(({ sessions: rows, source, searched, complete, index, matched }) => {
         if (!alive) return
         const strip = (k: string) => k.replace(/^dashboard[_:]/, '')
         setContentKeys(new Set(rows.map((r) => strip(r.key))))
@@ -4964,16 +4977,19 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           rows.filter((r) => r.snippet).map((r) => [strip(r.key), r.snippet as string]),
         ))
         setContentSource(source ?? null)
+        setContentCoverage({ searched, complete, index, matched })
         setContentFailure(null)
       }).catch((e: unknown) => {
         if (!alive) return
-        setContentKeys(null); setContentSnippets(new Map()); setContentSource(null)
+        setContentKeys(null); setContentSnippets(new Map()); setContentSource(null); setContentCoverage(null)
         const sentence = failureSentence('search inside your chats', e)
         setContentFailure(/[.!?]$/.test(sentence) ? sentence : `${sentence}.`)
-      })
-    }, 300)
+      }).finally(() => { if (alive) setRestBusy(false) })
+    }, rest ? 0 : 300)
     return () => { alive = false; clearTimeout(t) }
-  }, [q, contentRetry])
+  }, [q, contentRetry, restFor])
+  const coverage = contentCoverage ? searchCoverage(contentCoverage) : null
+  const unlisted = contentKeys && contentCoverage?.matched ? contentCoverage.matched - contentKeys.size : 0
   const matches = useCallback((s: ChatSessionSummary) => {
     const sOrigin = s.origin ?? 'manual'
     // 'all' shows everything; otherwise the row's origin must match the scope
@@ -5345,6 +5361,21 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                 <span data-type="caption" className="mt-1 block text-on-surface-low">
                   {searchSourceLabel(contentSource)}
                 </span>
+              )}
+              {/* A content search that could not look in every chat says so, with the way to
+                  read the rest directly — never a partial answer that reads as the whole one. */}
+              {coverage && (
+                <PartialNotice complete={false} verb="Searched" shown={coverage.shown} total={coverage.total}
+                  what="chats" detail={coverage.detail} className="mt-1"
+                  action={{
+                    label: `Search the other ${coverage.rest.toLocaleString()} directly`,
+                    onClick: () => { setRestBusy(true); setRestFor(q.trim()) }, busy: restBusy,
+                  }} />
+              )}
+              {contentKeys && unlisted > 0 && (
+                <PartialNotice complete={false} shown={contentKeys.size} total={contentKeys.size + unlisted}
+                  what="matching chats" className="mt-1"
+                  detail={`the search lists its ${contentKeys.size.toLocaleString()} best; narrow it to find the others.`} />
               )}
               {contentFailure && (
                 <InlineError icon multiline className="mt-2" onRetry={() => setContentRetry((n) => n + 1)}>

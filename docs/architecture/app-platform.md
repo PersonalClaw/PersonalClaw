@@ -109,7 +109,9 @@ backend**.
   Generation sends its work to, a program a tool runs. Each is a name, what the app uses it
   for and what to do to have it, within the lengths the dialog shows. Install consent leads
   with them (*What it needs that PersonalClaw doesn't install*), the Store card says
-  "Needs ComfyUI", and an update that adds one asks again.
+  "Needs ComfyUI", and an update that adds one asks again. Once the app is installed,
+  `GET /api/apps` carries them on its row (`requires`) and the app's panel in the Library
+  shows the same row consent did.
 - **An engine** — a provider with `execution: "sidecar"` runs in a child process with a Python
   environment of its own, `apps/<app>/venv` (`local_models/sidecar.py`). Its engine is
   `dependencies.sidecarDependencies`: PEP 508 requirements (an option is an install error, and
@@ -124,6 +126,13 @@ backend**.
   of the app answers 409 `engine_installing`: pip is writing into the folder those replace or
   delete. **Remove engine** deletes an environment PersonalClaw made, never one someone else
   did.
+- **Backups leave the engine behind.** `apps/<app>/venv` is gigabytes built for this machine's
+  OS, CPU and Python, so the `apps` inventory entry declares `*/venv` `derived_within`: a
+  snapshot, an export and the hourly shard export leave it out. A restore or an import never
+  plants one an older archive still carries, since that copy came without its interpreter but
+  with its package receipt, and Install engine would then skip pip. The restore names each app
+  it brought back whose engine is not installed here (`snapshot._engines_not_here`), and the
+  app offers Install engine. A merge into a home that has the engine keeps it.
 
 ## Unload and load (`apps/app_runtime.py`)
 
@@ -244,7 +253,7 @@ An app with a backend gets its own subprocess:
 A backend does **not** inherit the gateway's environment. It receives
 `sandbox.build_child_env(site="app-backend")`: the `CHILD_ENV_BASE_NAMES`
 allowlist (`PATH`, `HOME`, `TMPDIR`, `XDG_*`, locale/`TZ`, proxy + CA vars,
-`PYTHONPATH`, and the three `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` vars) plus
+`PYTHONPATH`, `PYTHONPYCACHEPREFIX`, and the three `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` vars) plus
 any name the operator declared in `sandbox.env_passthrough`, layered with the
 four variables the supervisor **computes**:
 
@@ -269,7 +278,10 @@ region/SDK vars and the operator's git identity.
 purpose — it is not reachable from a manifest or a trigger payload, because an
 app-declared name would be an exfiltration channel. Note that the declaration is
 **global**, not per-site: a name declared there reaches every child site (cron,
-bash action, app backend). Withheld names are logged at DEBUG against the
+bash action, app backend). The same allowlist is where every other process the
+gateway starts for an app begins: the pip that installs its `pythonDependencies`,
+its engine's venv and pip, the npm that installs an ACP adapter, its setup hooks,
+worker, sidecar and MCP servers. Withheld names are logged at DEBUG against the
 `app-backend` site, so an app author whose variable stopped arriving can see
 exactly which one was dropped and why. `BackendConfig` has no `env` field — an
 app cannot declare its own environment.
@@ -288,10 +300,12 @@ boundary lives:
 - the owner's session credential (cookie + `Authorization`) and any inbound
   app-identity headers are **stripped** — an app backend must never see a
   token it could replay against the full gateway API;
-- a **fresh 1-hour app-scoped Bearer token** (`generate_token(user,
-  app=name)`, `_APP_TOKEN_TTL_SECS = 3600`) plus `X-PersonalClaw-App` are
+- the app's **1-hour app-scoped Bearer token** (`token_auth.app_session_token(user,
+  name)`, `APP_TOKEN_TTL_SECS = 3600`) plus `X-PersonalClaw-App` are
   injected, so the backend has an identity bounded to its own declared
-  permissions.
+  permissions. It is the same token the app's SDK holds, reused while it has more than
+  half its hour left: every mint is a session, and a fresh one per proxied request used to
+  sign the owner's other devices out.
 
 That boundary is about what the proxy hands a backend. A backend on the host is still a
 process under the owner's account, so it can read the home directly, `session_key` (the

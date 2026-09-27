@@ -86,6 +86,13 @@ def _snippet_to_listing(snip: "Any") -> dict[str, Any]:
 # would refuse a save over a change that did not touch this record's text.
 
 
+def _shown(item: "Any") -> dict[str, Any]:
+    """A saved prompt or snippet as a write answers with it: its content masked like the detail
+    read's. A save restores every marker it was sent, so answering with ``to_dict()`` handed the
+    editor back the very values its read had masked."""
+    return {**item.to_dict(), "content": redact_for_display(item.content)}
+
+
 def _prompt_document(tpl: "Any") -> dict[str, Any]:
     """The part of a prompt its editor edits and sends back, as the detail read shows it."""
     return {
@@ -316,7 +323,7 @@ async def api_prompt_create(request: web.Request) -> web.Response:
         msg = str(exc)
         status = 409 if "already exists" in msg else 400
         return web.json_response({"error": msg}, status=status)
-    return web.json_response({"ok": True, "name": tpl.name, "prompt": tpl.to_dict()})
+    return web.json_response({"ok": True, "name": tpl.name, "prompt": _shown(tpl)})
 
 
 #: Use cases whose rendered prompt is WRITTEN TO DISK rather than rendered per turn — so a
@@ -392,7 +399,7 @@ async def api_prompt_save(request: web.Request) -> web.Response:
     # is what the next save from this editor is compared against.
     saved = provider.get_prompt(bare) or tpl
     return web.json_response(
-        {"ok": True, "prompt": tpl.to_dict(), "revision": revision_of(_prompt_document(saved))}
+        {"ok": True, "prompt": _shown(tpl), "revision": revision_of(_prompt_document(saved))}
     )
 
 
@@ -830,7 +837,7 @@ async def api_snippet_create(request: web.Request) -> web.Response:
         msg = str(exc)
         status = 409 if "already exists" in msg else 400
         return web.json_response({"error": msg}, status=status)
-    return web.json_response({"ok": True, "name": snip.name, "snippet": snip.to_dict()})
+    return web.json_response({"ok": True, "name": snip.name, "snippet": _shown(snip)})
 
 
 async def api_snippet_save(request: web.Request) -> web.Response:
@@ -873,7 +880,7 @@ async def api_snippet_save(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
     saved = provider.get_snippet(bare) or snip
     return web.json_response(
-        {"ok": True, "snippet": snip.to_dict(), "revision": revision_of(_snippet_document(saved))}
+        {"ok": True, "snippet": _shown(snip), "revision": revision_of(_snippet_document(saved))}
     )
 
 

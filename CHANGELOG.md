@@ -14,6 +14,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Install consent and the Store card say what an app needs that PersonalClaw doesn't install.**
 
+- **You choose which chat channel asks your approvals: Settings → Notifications → Send approvals to.**
+
 - **Codex's compressed sessions come over too.**
 
 - **A task's due date now reminds you the day before, once, and you can turn that off per task.**
@@ -35,6 +37,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **`note_unknown_sender` loses its unused `silent` argument.**
 - **`make build` is the one distribution build, and it proves what it built.**
 
 - **`credentials.json` is gone: the gateway moves what it held into the credential store at its first start.**
@@ -43,15 +46,32 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A check gate that fails ends what follows it, a revise closes the question it answered, every queued edit applies, and four surfaces say what happened.**
+- **An Embedding rebind or clear reaches every memory store at its next use, and memory never compares one embedding model's vectors with another's.**
+- **The status chip says "Choose a model" when no model is chosen, not "12 degraded".**
+- **The chat list answers at once on a 12,005-chat history, the search index catches up in two minutes instead of five hours, and a search says when it has not looked in every chat.**
+- **Only an approval lets what follows an approval gate run, a trigger that stops for you asks you, and every question a run asks is its own.**
+- **Signing in on one more device no longer signs another one out without a word; a device that is signed out is told why; and Settings → Devices lists every sign-in.**
+- **Nothing signs in for longer than 90 days, and asking for longer says so; and every refusal of a sign-in says why and how to sign in, in the desktop app too.**
+- **Installing an app's packages, speaking a reply, the Doctor's speech probe and uninstalling the service no longer leave anything outside PersonalClaw's home.**
+
+- **A CLI command that refuses exits 1 and says why on stderr, so a script can tell it did nothing.**
+- **A Repair on Settings → Models shows its download where you pressed it, and is checked for free space first.**
+- **Backups leave an app's engine behind, and a restore says which apps need theirs installed again.**
+
+- **An installed inbox app is polled: Mail Inbox and Slack's inbox source did nothing at all.**
+
 - **A model provider you add without choosing a model says so, and never answers on a model nobody chose; its Default Model is the model it answers with.**
+- **A room's turns count in Settings → Usage, and every usage row names the provider that answered.**
 - **Mission Control follows a workflow run as it changes, an approval nobody answered no longer reads "(rejected)", and its Inbox note runs the call again where it was asked and resolves once it is answered.**
 - **Bringing your setup over answers in seconds on a months-long history, and imports all of it with progress you can stop.**
-
 - **An app update keeps the engine installed in the app's folder, as it keeps the app's data.**
 - **A chat turn is priced by the model that answered it, and a room member's turn falls back down its chain too.**
 - **The install scanner reads a language's rule only in that language.**
 - **Opening a chat you brought over from another tool no longer logs a 404.**
 - **A pasted image the model is shown is not also read into text, and what you see names it as you attached it.**
+- **Someone you haven't paired gets "I don't recognize you yet…" once a day, not once per message, on every channel.**
+- **A chat channel's card shows its whole status sentence.**
 - **A rewind confirmed while a run waits at a gate applies, a cancel closes the run's gates, and a step that parks on a sign-in page asks you.**
 - **An app's own page can save over the copy it read, and a refused save says what it refused.**
 - **A trigger refused away from the dashboard says where it is allowed, not who may allow it.**
@@ -198,11 +218,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Your prompts are no longer buried under PersonalClaw's own.**
 - **The Learning page no longer logs six errors on every visit when evals are off.**
 - **A failed chat turn says what failed and lands where you can see it, and editing an earlier message no longer deletes the turns after it without a trace.**
+- **An installed app's panel says what it needs that PersonalClaw doesn't install.**
 
 ### Security
 
+- **The hourly backup exports your prompt override alone, not every file in your home with it.**
+- **What an agent writes no longer runs as you until you allow it: its webhook callbacks, its heartbeat tasks and the agent CLI's hooks.**
+
+- **What PersonalClaw runs for an app no longer gets your credentials.**
 - **A file-backed artifact points only at a file PersonalClaw's own surfaces reach, so saving one can no longer overwrite a file anywhere on disk.**
 - **Saving something that shows a hidden credential no longer writes `[REDACTED: credential]` over the real value.**
+- **An automation's prompt and command are masked on every read, and so is everything else one read showed while another masked it.**
+- **A masked tag, memory fact key or lesson names the real one, so removing or editing it acts on it.**
+- **A goal loop's source file opens in Files, and a loop's deliverable is read only from inside its folders.**
 
 - **Allowing a trigger allows what it runs now, and only you allow one.**
 

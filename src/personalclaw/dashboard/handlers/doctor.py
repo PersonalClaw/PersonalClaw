@@ -115,7 +115,7 @@ async def api_degraded(request: web.Request) -> web.Response:
     Re-evaluates live each call (cheap, no-instantiate ``can_resolve_use_case``
     probes) and fires a down/recovery notification on a surface changing state, via
     the live dashboard state. Returns ``{surfaces: [{surface, label, available, floor,
-    backlog, use_cases}], degraded: [surface, ...], chat_provider}``.
+    backlog, use_cases, model_chosen}], degraded: [surface, ...], chat_provider}``.
 
     ``available`` answers "does a model resolve", which makes no network call — so a bound
     provider that is DOWN still reads available. ``chat_provider`` is the other half: the last
@@ -624,6 +624,13 @@ async def _tts_clone_probe(_timed) -> dict | None:
     provider = params["provider"]
     clone_capable = bool(getattr(provider, "supports_cloning", False))
     ref_path = ""
+    # The clip is the probe's own, handed over as the path to write, and removed below with any
+    # other path the synthesis returns, as the Models page's selftest does. Asked for with no
+    # path, a provider made a temporary file the probe only truth-tested, so every run with a
+    # voice bound left the clip in the system temp folder.
+    fd, clip = tempfile.mkstemp(suffix=".wav", prefix="pc-selftest-tts-")
+    os.close(fd)
+    result = None
     try:
         if clone_capable and not params.get("ref_audio"):
             # No locked profile clip — condition on the generated fixture so the clone
@@ -632,7 +639,7 @@ async def _tts_clone_probe(_timed) -> dict | None:
             os.close(fd)
             _write_reference_clip(ref_path)
             params = {**params, "ref_audio": ref_path, "ref_text": "reference clip"}
-        result = await _timed(route_synthesis(params, "Selftest.", output_path=""), timeout=60.0)
+        result = await _timed(route_synthesis(params, "Selftest.", output_path=clip), timeout=60.0)
         detail = "clone synthesis returned audio" if clone_capable else "synthesis returned audio"
         return {
             "ok": bool(result),
@@ -649,11 +656,12 @@ async def _tts_clone_probe(_timed) -> dict | None:
             "cloning": clone_capable,
         }
     finally:
-        if ref_path:
-            try:
-                os.unlink(ref_path)
-            except OSError:
-                pass
+        for path in {ref_path, clip, result if isinstance(result, str) else ""}:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 
 # ── Remediation engine ────────────────────────────────────────────────────────

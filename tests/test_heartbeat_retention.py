@@ -50,6 +50,13 @@ class TestStripKeepSentinel:
 
 
 class TestHeartbeatRetention:
+    @pytest.fixture(autouse=True)
+    def _the_owners_tasks(self, monkeypatch) -> None:
+        """Every task here is one the owner allowed: these tests are about what a pass keeps. A
+        task nobody allowed is not run at all (`test_a_heartbeat_task_the_agent_wrote_waits_for_the
+        _owner.py`)."""
+        monkeypatch.setattr(hb_mod, "allowed", lambda _text: True)
+
     @pytest.mark.asyncio
     async def test_completed_task_removed(self, tmp_path: Path) -> None:
         """Task without HEARTBEAT_KEEP is removed after processing."""

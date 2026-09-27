@@ -11,8 +11,9 @@ The audit found the same omission on every other command that resolves a model i
 
 * `consolidate` builds a SessionManager on the provider factory (extraction calls a model) and
   resolves the embedding model twice;
-* `learn` and `memory` size their vector store with `get_active_embedding_dim()`, which PROBES
-  the bound embedding model — unbootstrapped, that resolve failed on every invocation;
+* `learn` and `memory` open a vector store that embeds with the bound embedding model, resolved
+  at each call — unbootstrapped, it resolves to no provider on every invocation and embeds
+  nothing (it used to probe that model for the store's width, and fail the same way);
 * `doctor`'s Provider Health section lists the registry's entries, so an unbootstrapped doctor
   reported "no provider entries configured" on a home that had one.
 

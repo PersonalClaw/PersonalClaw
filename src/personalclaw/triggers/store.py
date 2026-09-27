@@ -463,6 +463,7 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     "run_count",
     "last_success_at",
     "last_failure_at",
+    "last_waiting_at",
     "health_status",
     "last_error_summary",
     "state",

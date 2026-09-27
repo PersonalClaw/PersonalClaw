@@ -79,6 +79,8 @@ class BoardOutcome(str, Enum):
     #: same carve-out `lib/loopStatus.effectiveLoopStatus` draws, so a budget stop never reads as
     #: a finished goal here while it reads "Ended early" everywhere else.
     ENDED_EARLY = "ended_early"
+    #: A run whose approval a person declined — the run registry's own word for the ending.
+    DECLINED = "declined"
 
 
 #: Board order. Needs-input is pinned FIRST and unconditionally: it is the only group where the run
@@ -330,6 +332,7 @@ _RUN_OUTCOME = {
     RunStatus.COMPLETE: BoardOutcome.COMPLETED,
     RunStatus.FAILED: BoardOutcome.FAILED,
     RunStatus.CANCELLED: BoardOutcome.CANCELLED,
+    RunStatus.DECLINED: BoardOutcome.DECLINED,
 }
 
 

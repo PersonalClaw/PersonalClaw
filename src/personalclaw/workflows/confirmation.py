@@ -194,14 +194,18 @@ class ConfirmationRequest:
         )
 
 
-def request_id(run_id: str, gate_id: str, epoch: int) -> str:
-    """A deterministic id for one (run, gate, epoch).
+def request_id(run_id: str, gate_id: str, epoch: int, ask: int = 0) -> str:
+    """A deterministic id for one ASK: the `ask`-th time (from 0) this gate of this run asked.
 
     Deterministic so a re-emitted request for the same waiting gate is recognizably the same record
     rather than a second row in the inbox. The epoch is in the key because a rewind SHOULD produce a
-    new request — the question is being asked about different work.
+    new request — the question is being asked about different work. So is the ask's ordinal: a gate
+    can ask again in the SAME epoch (a step that parked, approved and run again, stops again; a
+    rewind that does not force keeps the epoch), and a second ask sharing the first one's id is
+    answered by the first one's answer to anything that pairs the two by id. The first ask keeps
+    the id this function always gave it.
     """
-    basis = f"{run_id}\n{gate_id}\n{epoch}"
+    basis = f"{run_id}\n{gate_id}\n{epoch}" + (f"\n{ask}" if ask else "")
     return "cr-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:12]  # noqa: S324 — an id
 
 

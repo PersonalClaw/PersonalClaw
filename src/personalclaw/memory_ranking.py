@@ -62,6 +62,11 @@ AXES: tuple[_Axis, ...] = (
     _Axis(field="entity_graph", label="entity graph", absent="the entity graph is off"),
 )
 
+#: The :class:`RecallRanking` fields that are not axes: store state, not capabilities. An
+#: embedding rebind leaves vectors of the previous model in the store until the re-index
+#: re-embeds them, and a recall reads those by keyword, which the capabilities cannot show.
+STATE_FIELDS: tuple[str, ...] = ("stale", "comparable")
+
 #: The authored degradation clause. It comes from the Settings entity-graph section,
 #: which said it first; reusing it is why the two surfaces read as one product.
 FALLS_BACK_CLAUSE = "recall falls back to search alone"
@@ -69,16 +74,28 @@ FALLS_BACK_CLAUSE = "recall falls back to search alone"
 
 @dataclass(frozen=True)
 class RecallRanking:
-    """What actually ranked one recall. Fully derived from provider capabilities."""
+    """What actually ranked one recall: the provider's capabilities, and the two counts of store
+    state an embedding rebind leaves behind."""
 
     vector: bool
     full_text_search: bool
     entity_graph: bool
+    #: Memories whose vectors another embedding model wrote (a rebind, until the re-index
+    #: re-embeds them). A semantic search reads those by keyword beside its vector results.
+    stale: int = 0
+    #: Memories holding a vector of the model bound now — what the semantic arm compares. With
+    #: none of them and some stale, that arm has nothing to compare and the recall is by keyword.
+    comparable: int = 0
+
+    @property
+    def _vectors_stale(self) -> bool:
+        """The semantic arm is wired and every stored vector is another model's."""
+        return self.vector and self.stale > 0 and self.comparable == 0
 
     @property
     def mode(self) -> str:
         """The strongest ranking arm that ran (a member of :data:`MODES`)."""
-        if self.vector:
+        if self.vector and not self._vectors_stale:
             return "semantic"
         if self.full_text_search:
             return "keyword"
@@ -86,8 +103,9 @@ class RecallRanking:
 
     @property
     def degraded(self) -> bool:
-        """True when any recall-relevant axis is missing."""
-        return not all(getattr(self, a.field) for a in AXES)
+        """True when any recall-relevant axis is missing, or part of the store is read by keyword
+        because another embedding model wrote its vectors (:attr:`stale`)."""
+        return not all(getattr(self, a.field) for a in AXES) or (self.vector and self.stale > 0)
 
     @property
     def label(self) -> str:
@@ -97,26 +115,50 @@ class RecallRanking:
 
     @property
     def summary(self) -> str:
-        """One sentence a surface renders verbatim.
+        """One sentence a surface renders verbatim, and a second when :attr:`stale` memories are
+        waiting on the re-index.
 
         Built from the axis table rather than a 2×N matrix of hand-written strings,
         so a new axis extends every sentence instead of needing new ones.
         """
         missing = [a.absent for a in AXES if not getattr(self, a.field)]
-        if not missing:
-            return "Ranked by semantic similarity over embeddings, following entity-graph links."
-        loss = _join(missing)
-        if self.mode == "semantic":
-            # The vector arm ran; something advisory did not.
-            return f"Ranked by semantic similarity over embeddings, but {loss}."
-        if self.mode == "keyword":
-            return f"Keyword-ranked only: {loss}, so {FALLS_BACK_CLAUSE}."
-        return f"Not ranked: {loss}, so results are whatever the store returned unscored."
+        if self._vectors_stale:
+            missing.insert(0, "every stored vector is another embedding model's")
+        ranked = _ranked(self.mode, missing)
+        if not (self.vector and self.stale > 0):
+            return ranked
+        n = f"{self.stale} {'memory' if self.stale == 1 else 'memories'}"
+        if self._vectors_stale:
+            return f"{ranked} The re-index in Settings → Models re-embeds the {n}."
+        one = self.stale == 1
+        return (
+            f"{ranked} {n} embedded by another embedding model {'is' if one else 'are'} read by "
+            f"keyword until the re-index in Settings → Models re-embeds {'it' if one else 'them'}."
+        )
 
     def to_dict(self) -> dict[str, object]:
         d: dict[str, object] = {a.field: getattr(self, a.field) for a in AXES}
-        d.update(mode=self.mode, degraded=self.degraded, label=self.label, summary=self.summary)
+        d.update(
+            stale=self.stale,
+            mode=self.mode,
+            degraded=self.degraded,
+            label=self.label,
+            summary=self.summary,
+        )
         return d
+
+
+def _ranked(mode: str, missing: list[str]) -> str:
+    """The ranking sentence for ``mode`` with the ``missing`` clauses named."""
+    if not missing:
+        return "Ranked by semantic similarity over embeddings, following entity-graph links."
+    loss = _join(missing)
+    if mode == "semantic":
+        # The vector arm ran; something advisory did not.
+        return f"Ranked by semantic similarity over embeddings, but {loss}."
+    if mode == "keyword":
+        return f"Keyword-ranked only: {loss}, so {FALLS_BACK_CLAUSE}."
+    return f"Not ranked: {loss}, so results are whatever the store returned unscored."
 
 
 def _join(parts: list[str]) -> str:
@@ -125,20 +167,27 @@ def _join(parts: list[str]) -> str:
     return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
-def recall_ranking(caps: "MemoryCapabilities") -> RecallRanking:
+def recall_ranking(
+    caps: "MemoryCapabilities", *, stale: int = 0, comparable: int = 0
+) -> RecallRanking:
     """Derive the recall disclosure from a provider's declared capabilities.
 
     ``caps`` is whatever ``MemoryService.capabilities()`` returned — the live store
     state (``embed_fn`` presence, the graph toggle), not a config reading, so the
-    disclosure describes the recall that actually ran.
+    disclosure describes the recall that actually ran. ``stale`` and ``comparable`` are
+    the store's ``embedded_stale`` and ``embedded_count`` (:class:`RecallRanking`).
     """
     return RecallRanking(
         vector=bool(getattr(caps, "vector", False)),
         full_text_search=bool(getattr(caps, "full_text_search", False)),
         entity_graph=bool(getattr(caps, "entity_graph", False)),
+        stale=max(0, stale),
+        comparable=max(0, comparable),
     )
 
 
-def ranking_payload(caps: "MemoryCapabilities") -> dict[str, object]:
-    """``recall_ranking(caps).to_dict()`` — the shape every recall-ish API returns."""
-    return recall_ranking(caps).to_dict()
+def ranking_payload(
+    caps: "MemoryCapabilities", *, stale: int = 0, comparable: int = 0
+) -> dict[str, object]:
+    """``recall_ranking(caps, …).to_dict()`` — the shape every recall-ish API returns."""
+    return recall_ranking(caps, stale=stale, comparable=comparable).to_dict()

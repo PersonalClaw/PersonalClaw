@@ -22,6 +22,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
     redact_for_display,
+    stored_name,
 )
 from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
@@ -46,16 +47,28 @@ def _sel():
 def _ranking_payload(capable: Any) -> dict[str, Any]:
     """The recall-ranking disclosure for a service/store, from the ONE owner.
 
-    ``capable`` is anything with ``capabilities()`` (a ``MemoryService`` or a
-    ``VectorMemoryStore``). Fail-OPEN on a provider that cannot answer: a broken
-    capability probe must not take the whole recall down, and the disclosure that
-    comes back then says nothing ranked — which is the safe direction to be wrong
-    in, because it under-claims rather than over-claims.
+    ``capable`` is anything with ``capabilities()`` and ``memory_stats()`` (a
+    ``MemoryService`` or a ``VectorMemoryStore``); the stats say how much of the store a
+    semantic recall can compare (``embedded_count``) and how much it reads by keyword
+    because another embedding model wrote it (``embedded_stale``). Fail-OPEN on a
+    provider that cannot answer: a broken capability probe must not take the whole
+    recall down, and the disclosure that comes back then says nothing ranked — which is
+    the safe direction to be wrong in, because it under-claims rather than over-claims.
     """
     from personalclaw.memory_ranking import RecallRanking, ranking_payload
 
     try:
-        return ranking_payload(capable.capabilities())
+        stats = capable.memory_stats()
+
+        def _count(key: str) -> int:
+            value = stats.get(key) if isinstance(stats, dict) else None
+            return value if isinstance(value, int) else 0
+
+        return ranking_payload(
+            capable.capabilities(),
+            stale=_count("embedded_stale"),
+            comparable=_count("embedded_count"),
+        )
     except Exception:
         logger.debug("recall ranking disclosure unavailable", exc_info=True)
         return RecallRanking(vector=False, full_text_search=False, entity_graph=False).to_dict()
@@ -294,12 +307,10 @@ def _redact_memory_field(val: object) -> object:
 
 def _get_provider(state: DashboardState):
     """Get the record/vector memory PROVIDER for embedding-admin operations
-    (reindex / clear / wire embed_fn / FAISS) — the one surface that legitimately
-    reaches provider internals. Content operations go through _get_service."""
+    (reindex / stats / FAISS) — the one surface that legitimately reaches provider
+    internals. Content operations go through _get_service."""
     mem = _get_memory(state)
     if mem.vector_store:
-        if not mem.vector_store.embed_fn:
-            _auto_wire_embed_fn(mem.vector_store)
         return mem.vector_store
     # Fallback: create standalone
     if not hasattr(state, "_standalone_vector"):
@@ -307,7 +318,6 @@ def _get_provider(state: DashboardState):
 
         store = VectorMemoryStore()
         store.init()
-        _auto_wire_embed_fn(store)
         state._standalone_vector = store  # type: ignore[attr-defined]
         mem.vector_store = store
     return state._standalone_vector  # type: ignore[attr-defined]
@@ -320,19 +330,6 @@ def _get_service(state: DashboardState):
     from personalclaw.memory_service import MemoryService
 
     return MemoryService.over_vector_store(_get_provider(state))
-
-
-def _auto_wire_embed_fn(store) -> None:
-    """Wire embed_fn from the Settings > Models active embedding selection."""
-    try:
-        from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-        embed_fn = get_active_embed_fn()
-        if embed_fn:
-            store.embed_fn = embed_fn
-            logger.info("Auto-wired embed_fn from active_models.json")
-    except Exception:
-        logger.debug("Could not auto-wire embed_fn", exc_info=True)
 
 
 async def api_memory_semantic(request: web.Request) -> web.Response:
@@ -386,8 +383,16 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     source = body.get("source", "user_explicit")
     if not key or value is None:
         return web.json_response({"error": "key and value required"}, status=400)
-    # `api_memory_semantic` lists every fact masked, so a caller writing one back sends our marker
-    # for each hidden value in it. Put each back from the fact as stored.
+    # `api_memory_semantic` lists every fact masked, its key included, so a caller writing one back
+    # names it by the key it was shown and sends our marker for each hidden value in it. The key
+    # names the fact that shows as it; each marker is put back from that fact as stored.
+    try:
+        known = _stored_key(svc, str(key))
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    if known is None:
+        return web.json_response({"error": str(MaskConflict())}, status=409)
+    key = known
     stored = svc.get_semantic(key)
     if stored is not None:
         try:
@@ -439,11 +444,27 @@ async def api_memory_semantic_delete(request: web.Request) -> web.Response:
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
     svc = _get_service(request.app["state"])
-    key = request.match_info["key"]
-    ok = svc.delete_semantic(key, source="user_explicit")
+    # Named by the key the list showed, which is masked like the rest of the fact.
+    try:
+        key = _stored_key(svc, request.match_info["key"])
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    ok = key is not None and svc.delete_semantic(key, source="user_explicit")
     if not ok:
         return web.json_response({"error": "not found"}, status=404)
     return web.json_response({"ok": True})
+
+
+def _stored_key(svc: Any, shown: str) -> str | None:
+    """The key of the fact a caller means by *shown*, a key `api_memory_semantic` may have masked.
+
+    A key names a fact, so a masked one is not a new key: it names the stored fact whose key shows
+    as it (`security.stored_name`). *shown* itself when a fact has it exactly or it holds no
+    marker; ``None`` when a marker names no fact.
+    """
+    if svc.get_semantic(shown) is not None:
+        return shown
+    return stored_name(shown, (str(dict(e).get("key") or "") for e in svc.get_all_semantic()))
 
 
 async def api_memory_approval_rules(request: web.Request) -> web.Response:
@@ -591,14 +612,20 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
 
 
 async def api_memory_events(request: web.Request) -> web.Response:
-    """GET /api/memory/events — paginated audit trail."""
+    """GET /api/memory/events — paginated audit trail.
+
+    Each event carries the fact's key and its old and new values, masked the way the facts list
+    masks the same fact (`_redact_memory_field`). An undo names the event by id, so nothing here
+    is sent back.
+    """
     svc = _get_service(request.app["state"])
     try:
         limit = min(int(request.query.get("limit", "50")), 200)
         offset = int(request.query.get("offset", "0"))
     except (ValueError, TypeError):
         return web.json_response({"error": "limit/offset must be integers"}, status=400)
-    return web.json_response({"events": svc.get_events(limit=limit, offset=offset)})
+    events = svc.get_events(limit=limit, offset=offset)
+    return web.json_response({"events": [_redact_memory_field(dict(e)) for e in events]})
 
 
 async def api_memory_lint(request: web.Request) -> web.Response:
@@ -937,14 +964,8 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
     if _migrate_lock is None:
         _migrate_lock = asyncio.Lock()
     async with _migrate_lock:
-        # Ensure an embed fn is wired so migration generates vectors when an
-        # embedding model is active.
-        if not store.embed_fn:
-            from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-            store.embed_fn = get_active_embed_fn()
-
-        # Run in executor to avoid blocking event loop (can take 30+ seconds)
+        # Run in executor to avoid blocking event loop (can take 30+ seconds). The store embeds
+        # with the model bound now, so the migration generates vectors when one is bound.
         loop = asyncio.get_running_loop()
         counts = await loop.run_in_executor(None, store.migrate_from_markdown)
     # Auto-set migrated=true if migration produced entries
@@ -1170,8 +1191,15 @@ def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
                     except Exception:
                         pass
                 val_str = str(val) if not isinstance(val, str) else val
-                # ref = the fact's key (the Studio list keys semantic entries by `key`).
-                _add("sem", key, "semantic", f"{key} = {val_str[:120]}", ref=f"sem:{key}")
+                # ref = the fact's key as the Studio list shows it (`api_memory_semantic` masks
+                # it), so the list finds its node. `api_memory_record_links` reads it back.
+                _add(
+                    "sem",
+                    key,
+                    "semantic",
+                    f"{key} = {val_str[:120]}",
+                    ref=f"sem:{redact_for_display(key)}",
+                )
         except Exception:
             pass
 
@@ -1185,7 +1213,9 @@ def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
                     rule = json.loads(rule)
                 except Exception:
                     pass
-            _add("lesson", str(rule)[:80], "lesson", str(rule))
+            # ref = `MemoryPanel.lessonRef` of the rule the lessons list shows, which is masked.
+            shown = redact_for_display(str(rule))
+            _add("lesson", str(rule)[:80], "lesson", str(rule), ref=f"lesson:{shown[:80]}")
     except Exception:
         pass
 
@@ -1235,6 +1265,8 @@ async def api_memory_graph(request: web.Request) -> web.Response:
         for n in nodes:
             n["label"] = _redact_memory_field(n["label"])
             n["title"] = _redact_memory_field(n["title"])
+            # A node's handle quotes its label, so it is masked as the label is.
+            n["ref"] = _redact_memory_field(n["ref"])
 
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="memory_graph", outcome="success"
@@ -1425,8 +1457,16 @@ async def api_memory_record_links(request: web.Request) -> web.Response:
     ref = request.query.get("ref", "")
     if not ref:
         return web.json_response({"error": "ref is required"}, status=400)
+    # A fact is named by the key the list showed, which is masked (`_stored_key`).
+    stored = ref
+    if ref.startswith("sem:"):
+        try:
+            key = _stored_key(svc, ref[len("sem:") :])
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        stored = f"sem:{key}" if key is not None else ref
     loop = asyncio.get_event_loop()
-    links = await loop.run_in_executor(None, lambda: svc.graph_record_links(ref))
+    links = await loop.run_in_executor(None, lambda: svc.graph_record_links(stored))
     for link in links:
         if link.get("context"):
             link["context"] = _redact_memory_field(link["context"])

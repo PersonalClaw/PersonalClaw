@@ -235,30 +235,48 @@ async def _sessions_search(arguments: dict, state: Any) -> str:
     query = _require_text(arguments, "query")
     limit = _clamp_limit(arguments, default=5, ceiling=10)
 
-    def _run() -> list:
+    def _run():
+        from personalclaw import session_search
         from personalclaw.history import ConversationLog
 
-        log = ConversationLog()
         # The FTS index first (it also excludes restricted sessions), then the linear
         # scan — which applies the SAME exclusion. Either way, temporary/incognito
         # transcripts never reach an inbound caller.
-        try:
-            from personalclaw import session_search
+        with session_search.INDEXER.foreground():
+            return session_search.search(query, log=ConversationLog(), limit=limit)
 
-            hits = session_search.search_sessions(query, limit=limit)
-            if hits:
-                return hits
-        except Exception:  # noqa: BLE001
-            logger.debug("inbound: session index unavailable", exc_info=True)
-        return log.search_sessions(query, limit)
-
-    hits = await asyncio.get_event_loop().run_in_executor(None, _run)
-    hits = caps_mod.clamp_items(hits)
+    answer = await asyncio.get_event_loop().run_in_executor(None, _run)
+    hits = caps_mod.clamp_items(answer.hits)
+    # A partial answer says so — the index is still being built, or holds only the beginning of
+    # a long conversation, or there is none and only the newest conversations were read — so a
+    # caller cannot take "no match" for "not there".
+    if answer.complete:
+        partial = ""
+    elif answer.index is None:
+        partial = (
+            f" Only the {answer.searched:,} most recent of {answer.of:,} conversations were "
+            "searched: there is no search index."
+        )
+    elif answer.index["indexed"] < answer.index["of"]:
+        partial = (
+            f" Only {answer.searched:,} of {answer.of:,} conversations were searched: the search "
+            "index is still being built, so matches in the others are not listed yet."
+        )
+    else:
+        partial = (
+            f" Only {answer.searched:,} of {answer.of:,} conversations were searched whole: the "
+            "others are longer than the search index keeps, so only their beginnings were searched."
+        )
     if not hits:
-        return f"No conversations matched {query!r}."
+        return f"No conversations matched {query!r}.{partial}"
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
-    lines = [f"{len(hits)} conversation(s) matching {query!r}:"]
+    shown = (
+        f"{len(hits)} conversation(s)"
+        if answer.matched <= len(hits)
+        else f"The best {len(hits)} of {answer.matched:,} conversations"
+    )
+    lines = [f"{shown} matching {query!r}:{partial}"]
     for hit in hits:
         title = str(hit.get("title") or hit.get("key") or "untitled")
         snippet = str(hit.get("snippet") or "")

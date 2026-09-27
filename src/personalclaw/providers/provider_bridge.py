@@ -1712,6 +1712,34 @@ def _served_model(entry: Any, named: str | None) -> str | None:
     return None
 
 
+def model_chosen(use_case: str) -> bool:
+    """Whether a model is chosen for ``use_case`` at all, whether or not it can serve now.
+
+    A chain in Settings → Models chooses one; with none, a configured instance that serves the
+    use case and names a model of its own (``ProviderEntry.own_model``, its Default Model)
+    does, because resolution falls back to it. ``False`` is the state an instance saved from the
+    Add-instance form without a Default Model sits in with nothing bound: nothing broke, no
+    model has been chosen yet, and a surface on its floor for that reason is waiting on a
+    choice rather than degraded. Walks what :func:`can_resolve_use_case` walks, building
+    nothing; an agent runtime runs its CLI's own model and chooses none here.
+    """
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.use_cases import active_model_refs, parent_capability
+
+    if active_model_refs(use_case):
+        return True
+    target_cap = _capability_enum(parent_capability(use_case))
+    if target_cap is None:
+        return False
+    registry = get_default_registry()
+    return any(
+        entry.type != "acp_agent"
+        and bool(entry.own_model)
+        and target_cap in _entry_capabilities(registry, entry)
+        for entry in registry.list_entries()
+    )
+
+
 def can_resolve_use_case(use_case: str) -> bool:
     """Cheaply report whether a ModelProvider for ``use_case`` is resolvable
     *right now*, without building one.

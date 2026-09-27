@@ -26,7 +26,8 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
-from personalclaw.dashboard.handlers import trigger_revisions
+from personalclaw.config.edit_spec import LOOSEN_TITLE
+from personalclaw.dashboard.handlers import trigger_callbacks, trigger_revisions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
@@ -35,6 +36,7 @@ from personalclaw.security import (
     keep_masked_spans,
     keep_masked_values,
     redact_for_display,
+    redact_values_for_display,
 )
 
 
@@ -55,6 +57,8 @@ _LIFECYCLE = "lifecycle"
 #: in the trigger store as `kind: "event"` and is addressed as `store:<id>` like every other kind.
 _EVENT = "event"
 _STORE = "store"  # unified TriggerStore kinds with no legacy backend (event/file/web_watch/idle/…)
+#: A callback the agent registered with ``hook_register`` (`trigger_callbacks`).
+_CALLBACK = trigger_callbacks.KIND
 
 
 def _sel():
@@ -64,8 +68,8 @@ def _sel():
 
 
 def _redact(s: str) -> str:
-    # `redact_for_display`: a schedule's edit form is seeded from these rows, and the PUT puts back
-    # exactly this mask (`_keep_masked_schedule`).
+    # `redact_for_display`: a trigger's edit form is seeded from these rows, and the PUT puts back
+    # exactly this mask (`_keep_masked_trigger`).
     return redact_for_display(s or "")
 
 
@@ -79,7 +83,7 @@ def _split_id(trigger_id: str) -> tuple[str, str]:
     kind, _, raw = trigger_id.partition(":")
     if raw and kind == _STORE:
         return _STORE, raw
-    if raw and kind in (_SCHEDULE, _LIFECYCLE):
+    if raw and kind in (_SCHEDULE, _LIFECYCLE, _CALLBACK):
         return kind, raw
     return _SCHEDULE, trigger_id
 
@@ -244,7 +248,8 @@ def _project_one(
     interval = float(spec.get("interval_secs") or 0)
     common = {
         "trigger_id": f"{_SCHEDULE}:{trigger.id}",
-        "trigger_name": trigger.name,
+        # Masked like the list's name, for the week grid shows the same trigger.
+        "trigger_name": _redact(trigger.name),
         "start": start,
         "days": days,
         "until": until,
@@ -373,16 +378,20 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "store_kind": trigger.kind,
         "id": f"{_STORE}:{trigger.id}",
         "raw_id": trigger.id,
-        "name": trigger.name,
+        # Masked like a schedule row (`schedule_view.MASKED_FIELDS`): the name, what the trigger
+        # watches, and the action with its prompt or command.
+        "name": _redact(trigger.name),
         "enabled": trigger.enabled,
         "created_by": trigger.created_by,
-        "spec": dict(trigger.spec or {}),
+        "spec": redact_values_for_display(dict(trigger.spec or {})),
         # The action as `{provider, config}` — the shape the page reads — whichever of the two
         # stored shapes the row uses. The raw `workflow` was sent, so a row whose action nests under
         # `inline` (every row the API, the CLI and the app reconcilers write, a data-event trigger
         # included) read "What it runs: Action" on the page. A workflow ref or resume target, which
         # has no action shape, is still sent as stored.
-        "action": _inline_action(trigger) or dict(trigger.workflow or {}),
+        "action": redact_values_for_display(
+            _inline_action(trigger) or dict(trigger.workflow or {})
+        ),
         "health": trigger.health_status,
         # 🔴 THE LIFECYCLE STATE, which this projection omitted. `Trigger.state` carries
         # `active | paused | autopaused | parked | quarantined | retired` and reached NO surface:
@@ -393,7 +402,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         # not tell the user the automation has STOPPED.
         "state": trigger.state,
         "run_count": trigger.run_count,
-        # When it last RAN, and how: the newest of its success/failure stamps and its newest run
+        # When it last RAN, and how: the newest of its outcome stamps and its newest run
         # record's status, the pair a schedule row already carries. A store row had neither, so the
         # list could only infer "has it run" from `run_count` — the FIRE meter a Run button
         # deliberately does not spend — and a manual trigger read "never" beside the runs its own
@@ -425,7 +434,7 @@ def _last_run_status(state: DashboardState, job_id: str) -> str | None:
 
 
 def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
-    """ONE schedule row, projected and redacted (S101).
+    """ONE schedule row, projected and masked (S101; the masking is the projection's own).
 
     Shared by the list (`api_triggers`) and the single-row write responses (create, update), so
     they answer in exactly the same shape. Two projections would drift, and a create that
@@ -449,10 +458,6 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
         base_dir=store.base_dir,
         last_run_status=_last_run_status(state, trigger.id) or "",
     )
-    projected["name"] = _redact(projected.get("name") or "")
-    for key in ("message", "last_error", "schedule"):
-        if projected.get(key):
-            projected[key] = _redact(str(projected[key]))
     projected["broken"] = errors
     projected["warnings"] = warnings
     projected["needs_review"] = _needs_review(trigger)
@@ -484,12 +489,17 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "kind": _LIFECYCLE,
         "id": f"{_LIFECYCLE}:{hook.id}",
         "raw_id": hook.id,
-        "name": hook.name,
+        # Masked like a schedule row: the name, the matcher, and the action's config with its
+        # prompt or command. The editor sends them back, and `_keep_masked_trigger` restores them.
+        "name": _redact(hook.name),
         "enabled": hook.enabled,
-        "action": {"provider": hook.provider, "config": hook.provider_config},
+        "action": {
+            "provider": hook.provider,
+            "config": redact_values_for_display(hook.provider_config),
+        },
         # lifecycle mechanism
         "event": hook.event,
-        "matcher": hook.matcher,
+        "matcher": _redact(hook.matcher),
         "timeout": hook.timeout,
         "last_run": hook.last_run,
         "last_status": hook.last_status,
@@ -624,7 +634,7 @@ def _app_source_catalog() -> list[dict[str, Any]]:
 
 
 #: The kinds `GET /api/triggers` lists, in the order it lists them.
-_LIST_KINDS: tuple[str, ...] = (_SCHEDULE, _LIFECYCLE, _STORE)
+_LIST_KINDS: tuple[str, ...] = (_SCHEDULE, _LIFECYCLE, _STORE, _CALLBACK)
 
 
 def _gather(state: DashboardState, kind: str) -> list[Any]:
@@ -639,6 +649,7 @@ def _gather(state: DashboardState, kind: str) -> list[Any]:
     * ``store``: every OTHER unified-store row — data events, file and web watches, idle, manual,
       … Broken rows (S87 lenient parse) are included, not hidden: a broken automation invisible on
       its own page is undebuggable.
+    * ``callback``: every callback the agent registered (`webhook_callbacks`).
 
     ``all_rows``, not ``store.load()``: a registered ``trigger`` provider's rows belong on this page
     too (TSE-4). Raises on a source that cannot be read; the caller decides what that means.
@@ -651,6 +662,10 @@ def _gather(state: DashboardState, kind: str) -> list[Any]:
         return [row for row in rows if (row.trigger.kind == "clock") is clock]
     if kind == _LIFECYCLE:
         return list(_hook_store(state).list_all())
+    if kind == _CALLBACK:
+        from personalclaw import webhook_callbacks
+
+        return webhook_callbacks.list_all()
     raise ValueError(f"not a listed trigger kind: {kind!r}")
 
 
@@ -671,7 +686,7 @@ def unified_trigger_count(state: DashboardState) -> int:
 
 
 async def api_triggers(request: web.Request) -> web.Response:
-    """GET /api/triggers?type=schedule|lifecycle|store — every trigger.
+    """GET /api/triggers?type=schedule|lifecycle|store|callback — every trigger.
 
     ``?type=`` filters to one kind. The response also carries ``server_tz`` for
     the schedule cadence rendering the list does client-side.
@@ -695,6 +710,8 @@ async def api_triggers(request: web.Request) -> web.Response:
         elif kind == _LIFECYCLE:
             used_by = _used_by_index()
             triggers.extend(_serialize_lifecycle(h, used_by.get(h.id, [])) for h in rows)
+        elif kind == _CALLBACK:
+            triggers.extend(trigger_callbacks.serialize(c) for c in rows)
         else:
             triggers.extend(_serialize_store(row, owner=owner) for row in rows)
 
@@ -786,11 +803,9 @@ def _unconsented_loosening(
     return loosened
 
 
-def _grant_for_save(
-    state: DashboardState, body: dict, *, kind: str, raw: str
-) -> tuple[list[str], str] | None:
-    """``(providers, sentence)`` when saving *body*'s action needs the owner to allow it, else
-    ``None`` (`triggers.grants.question`).
+def _grant_for_save(state: DashboardState, body: dict, *, kind: str, raw: str) -> Any:
+    """The question (`triggers.grants.Question`) saving *body*'s action needs the owner to answer,
+    else ``None`` (`triggers.grants.question`).
 
     The editor is where the owner re-points an action or rewrites what it runs, so it is where they
     are asked: an edit that saved `bash` into a trigger allowed only `notify`, or a new command into
@@ -815,7 +830,9 @@ def _grant_for_save(
             _apply_hook_action(candidate, action)
             return grants.question(candidate, before=hook)
         need = grants.missing(candidate) if body.get("enabled") is True else []
-        return (need, grants.consent(candidate, need)) if need else None
+        if not need:
+            return None
+        return grants.Question(need, grants.consent(candidate, need), grants.title(candidate, need))
     if not isinstance(action, dict):
         return None
     row = _trigger_store().get(raw)
@@ -827,9 +844,10 @@ def _grant_for_save(
     return grants.question(candidate, before=row.trigger)
 
 
-def _grant_for_create(body: dict, *, trigger_type: str) -> tuple[list[str], str] | None:
-    """``(providers, sentence)`` when creating *body*'s trigger needs the owner to allow its action,
-    else ``None``. The create dialog asks it with the rest, so creating one stays a single step."""
+def _grant_for_create(body: dict, *, trigger_type: str) -> Any:
+    """The question (`triggers.grants.Question`) creating *body*'s trigger needs the owner to answer
+    for its action, else ``None``. The create dialog asks it with the rest, so creating one stays a
+    single step."""
     from personalclaw.hooks import ScriptHook
     from personalclaw.triggers import grants
     from personalclaw.triggers.models import Trigger
@@ -913,17 +931,36 @@ def _creation_consent(
     label = name if isinstance(name, str) and name else "new"
     grant = _grant_for_create(body, trigger_type=trigger_type)
     field = f"triggers.{label}.capabilities"
-    asks: list[tuple[str, str]] = []
+    asks: list[tuple[str, str, str]] = []
     if grant is not None and not confirm_granted(body):
         caller = request.get("user", "dashboard")
         _audit_grant(caller, "denied", f"{field}: creating without confirm")
-        asks.append((field, grant[1]))
+        asks.append((field, grant.sentence, grant.title))
     loosened = _unconsented_loosening(request, body, where=f"triggers.{label}.action", stored={})
     if loosened is not None:
-        asks.append(loosened)
+        asks.append((*loosened, LOOSEN_TITLE))
+    return _asked(asks)
+
+
+#: The heading of the one question a write asks when its action needs a grant AND it loosens
+#: whether the action's agent asks you: both sentences are in it, so the heading names both.
+_GRANT_AND_LOOSEN_TITLE = "Allow what it runs, and loosen a security setting?"
+
+
+def _asked(asks: list[tuple[str, str, str]]) -> web.Response | None:
+    """One ``confirmation_required`` for everything a write needs the owner's yes for, or None.
+
+    *asks* holds ``(field, sentence, title)`` per question — the grant for what the action runs,
+    a loosened posture — so a single Allow is never consent to a sentence the dialog did not show,
+    and its heading names what the owner is agreeing to: the question's own title when there is
+    one, both halves when there are two.
+    """
     if not asks:
         return None
-    return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
+    title = asks[0][2] if len(asks) == 1 else _GRANT_AND_LOOSEN_TITLE
+    return consent_required(
+        asks[0][0], " ".join(sentence for _field, sentence, _title in asks), title=title
+    )
 
 
 def _audit_created_grant(request: web.Request, trigger_id: str, granted: Any) -> None:
@@ -1266,6 +1303,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     kind, raw = _split_id(request.match_info["id"])
 
     if request.method == "DELETE":
+        if kind == _CALLBACK:
+            return trigger_callbacks.delete(request, state, raw)
         if kind == _STORE:
             store = _trigger_store()
             if store.get(raw) is None:
@@ -1326,12 +1365,21 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+    if kind == _CALLBACK:
+        return json_error(
+            "invalid_request",
+            message=(
+                "A callback is saved by the agent that registered it. Here it is allowed, switched "
+                "off or deleted."
+            ),
+            status=400,
+        )
 
-    if kind != _LIFECYCLE:
-        try:
-            body = _keep_masked_schedule(state, kind, raw, body)
-        except MaskConflict as exc:
-            return web.json_response({"error": str(exc)}, status=409)
+    submitted = body
+    try:
+        body = _keep_masked_trigger(state, kind, raw, submitted)
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
     problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
     if problem:
@@ -1341,6 +1389,13 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     )
     if stale is not None:
         return stale
+    # Restored again from the trigger as stored now, with nothing awaited before the write. The
+    # check compares masked rows, so a save since that changed only a hidden value passes it, and
+    # the copy restored before the await would put the old value back.
+    try:
+        body = _keep_masked_trigger(state, kind, raw, submitted)
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     # One question for everything this save needs the owner's yes for, so a single "Allow" is never
     # consent to a sentence the dialog did not show: a grant for the action as it is saved — a new
     # provider, or what a granted one runs changed — and a loosened approval posture for its agent.
@@ -1349,10 +1404,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     caller = request.get("user", "dashboard")
     grant = _grant_for_save(state, body, kind=kind, raw=raw)
     grant_field = f"triggers.{request.match_info['id']}.capabilities"
-    asks: list[tuple[str, str]] = []
+    asks: list[tuple[str, str, str]] = []
     if grant is not None and not confirm_granted(body):
         _audit_grant(caller, "denied", f"{grant_field}: saving without confirm")
-        asks.append((grant_field, grant[1]))
+        asks.append((grant_field, grant.sentence, grant.title))
     loosened = _unconsented_loosening(
         request,
         body,
@@ -1360,9 +1415,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         stored=_stored_action_config(state, kind, raw),
     )
     if loosened is not None:
-        asks.append(loosened)
-    if asks:
-        return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
+        asks.append((*loosened, LOOSEN_TITLE))
+    asked = _asked(asks)
+    if asked is not None:
+        return asked
 
     if kind == _LIFECYCLE:
         saved = _update_lifecycle(state, raw, body)
@@ -1371,7 +1427,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if grant is not None and saved.status == 200:
         # The save carried the owner's yes and the action it was asked about, so the save granted
         # exactly what the question named.
-        _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant[0])}")
+        _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant.providers)}")
     return saved
 
 
@@ -1383,18 +1439,25 @@ def _row_now(state: DashboardState, kind: str, raw: str) -> dict[str, Any] | Non
     return None if hook is None else _serialize_lifecycle(hook, _used_by_index().get(raw, []))
 
 
-def _keep_masked_schedule(state: DashboardState, kind: str, raw: str, body: dict) -> dict:
-    """*body* with each hidden value it echoes back restored from the stored schedule.
+def _keep_masked_trigger(state: DashboardState, kind: str, raw: str, body: dict) -> dict:
+    """*body* with each hidden value it echoes back restored from the stored trigger.
 
-    The edit form is seeded from :func:`_schedule_row_for`, which masks the name and the prompt,
-    and renaming an agent schedule sends both back, so the prompt would be stored as the marker.
-    Restored BEFORE the consent and action checks, so they judge what is actually saved.
+    Every kind's edit form is seeded from a masked row (:func:`_schedule_row_for`,
+    :func:`_serialize_store`, :func:`_serialize_lifecycle`) and sends its name and action back, and
+    a lifecycle form its matcher too, so each would be stored as the marker. Restored BEFORE the
+    consent and action checks, so they judge what is actually saved.
     """
     out = dict(body)
-    if isinstance(out.get("name"), str):
+    if kind == _LIFECYCLE:
+        hook = _hook_store(state).get(raw)
+        name, matcher = (hook.name, hook.matcher) if hook is not None else ("", "")
+    else:
         row = _trigger_store().get(raw)
-        if row is not None:
-            out["name"] = keep_masked_spans(out["name"], row.trigger.name or "")
+        name, matcher = (row.trigger.name if row is not None else ""), ""
+    if isinstance(out.get("name"), str):
+        out["name"] = keep_masked_spans(out["name"], name or "")
+    if kind == _LIFECYCLE and isinstance(out.get("matcher"), str):
+        out["matcher"] = keep_masked_spans(out["matcher"], matcher or "")
     if isinstance(out.get("action"), dict):
         out["action"] = keep_masked_values(out["action"], _stored_action(state, kind, raw))
     return out
@@ -1682,7 +1745,9 @@ def _switch_on_grant(
     caller = request.get("user", "dashboard")
     if missing and not confirm_granted(body):
         _audit_grant(caller, "denied", f"{field}: switching on without confirm")
-        return consent_required(field, grants.consent(trigger, missing))
+        return consent_required(
+            field, grants.consent(trigger, missing), title=grants.title(trigger, missing)
+        )
     granted = grants.give(trigger)
     persist()
     if granted:
@@ -1709,6 +1774,8 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
     """
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
+    if kind == _CALLBACK:
+        return await trigger_callbacks.toggle(request, state, raw)
     if kind == _STORE:
         # Route through the tool functions, which already refuse to enable a broken row and
         # report WHY — reusing them keeps the API and the chat tool answering identically.
@@ -1831,6 +1898,11 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     if kind == _LIFECYCLE:
         return web.json_response(
             {"error": "lifecycle triggers fire on events; use /test"}, status=400
+        )
+    if kind == _CALLBACK:
+        return web.json_response(
+            {"error": "a callback runs when the outside system that registered it calls back"},
+            status=400,
         )
     # 🔴 the manual-run re-point. A store-backed clock trigger fires through the SAME path
     # `_run_store` uses for every other store kind, so a Run button and an autonomous tick fire
@@ -2095,13 +2167,15 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
         # do without re-deriving the two stored action shapes itself.
         from personalclaw.triggers.schedule_view import _inline_action
 
+        # Masked like the list row: this answer shows the same action, so its prompt reaches the
+        # page masked here too (`tools.run` masks `result` and `text` the same way).
         return web.json_response(
             {
                 "ok": result.ok,
-                "name": row.trigger.name,
+                "name": _redact(row.trigger.name),
                 "result": result.data,
                 "text": result.text,
-                "would_run": _inline_action(row.trigger),
+                "would_run": redact_values_for_display(_inline_action(row.trigger)),
             }
         )
 
@@ -2149,12 +2223,77 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     return web.json_response({"ok": ran, "name": row.trigger.name, "result": note + paused_note})
 
 
+async def api_trigger_answer(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/answer — answer the question a trigger's action stopped on.
+
+    Body ``{resume_token, answer}``, ``answer`` a boolean. The token is the park's
+    (`triggers.parks`), single-use: a double click runs nothing twice. Approve runs the trigger's
+    action once more, now, through the Run button's own dispatch — the same grants, the same
+    capability fence — with the answer on that dispatch (`ActionContext.answer`), so the browse
+    action you confirmed a sign-in for goes on to the run. Deny closes the question; the trigger
+    asks again the next time its action stops. The refusals a Run button honours are read BEFORE
+    the token is spent, so a refused answer leaves the question answerable.
+    """
+    from personalclaw.triggers import parks
+    from personalclaw.triggers import tools as T
+
+    _kind, raw = _split_id(request.match_info["id"])
+    body = await json_object_body(request)
+    answer = body.get("answer")
+    if not isinstance(answer, bool):
+        return json_error("invalid_request", message="'answer' must be true or false", status=400)
+    token = str(body.get("resume_token", "") or "")
+    row = _trigger_store().get(raw)
+    if row is None:
+        # Deleted since it asked: there is nothing left to run, so the question goes too.
+        parks.withdraw(raw, state=request.app["state"])
+        return json_error(
+            "not_found",
+            message="This trigger no longer exists, so there is nothing to run.",
+            status=404,
+        )
+    if answer:
+        refusal = T.manual_refusal()
+        if refusal:
+            return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
+    park = parks.claim(raw, token)
+    if park is None:
+        return json_error(
+            "trigger_park_gone",
+            message=(
+                "This question was already answered, or the trigger no longer waits on it — "
+                "run it again to be asked afresh."
+            ),
+            status=409,
+        )
+    parks.close_row(request.app["state"], raw)
+    if not answer:
+        return web.json_response(
+            {"ok": True, "approved": False, "name": row.trigger.name, "result": "declined"}
+        )
+    ran, note = await _dispatch_store_action(
+        row.trigger, {"trigger_id": raw, "manual": True}, event="manual.answer", answer=True
+    )
+    return web.json_response(
+        {
+            "ok": ran,
+            "approved": True,
+            "name": row.trigger.name,
+            "result": note,
+            # The run it started stopped for you again (a sign-in page mid-run): a NEW question,
+            # with its own row — the answer's surface says so rather than "it ran".
+            "waiting": parks.load(raw) is not None,
+        }
+    )
+
+
 async def _dispatch_store_action(
     trigger: Any,
     payload: dict[str, Any],
     *,
     event: str = "manual.run",
     late: str = "",
+    answer: Any = None,
 ) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry.
 
@@ -2221,9 +2360,10 @@ async def _dispatch_store_action(
     # `gateway._record_fire_outcome`; the docstring above claims the two "share one dispatch so
     # their behaviour cannot drift", and recording is exactly where it had drifted.
     # `_record_manual_run` reuses the SAME `ScheduleRunStore` ledger and the SAME
-    # `last_success_at`/`last_failure_at` stamp, tagged `manual` — see its docstring for why
-    # `run_count` (the fire budget) is not spent. A `view.rendered` refresh flows through
-    # this same recorder, so a pull-on-view fire leaves the same run evidence a manual Run does.
+    # `last_success_at`/`last_failure_at`/`last_waiting_at` stamps, tagged `manual` — see its
+    # docstring for why `run_count` (the fire budget) is not spent. A `view.rendered` refresh
+    # flows through this same recorder, so a pull-on-view fire leaves the same run
+    # evidence a manual Run does.
     from personalclaw.triggers.delivery import status_url
 
     # The same `status_url` the autonomous path hands the provider, so a hand-run notify links back
@@ -2234,6 +2374,9 @@ async def _dispatch_store_action(
         payload=payload,
         status_url=status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
         trigger_id=str(getattr(trigger, "id", "") or ""),
+        # A person's answer to this trigger's park (`api_trigger_answer`), on the one dispatch it
+        # starts: the browse action you confirmed a sign-in for goes on to the run.
+        answer=answer,
     )
     from personalclaw.triggers.firepath import action_timeout
 
@@ -2265,9 +2408,10 @@ async def _record_manual_run(
     """Append a MANUAL run record and advance the trigger's last-run stamp (#308).
 
     Reuses the SAME ledger the autonomous fire path appends to — `ScheduleRunStore`, keyed by the
-    trigger id (via this module's `_runs_store()`) — and the SAME
-    `last_success_at`/`last_failure_at` stamp `gateway._record_fire_outcome` writes, so a Run button
-    and an autonomous tick leave the same evidence that a run happened. This is not a parallel
+    trigger id (via this module's `_runs_store()`) — and the SAME outcome stamps
+    `gateway._record_fire_outcome` writes (`last_success_at`, `last_failure_at`, and
+    `last_waiting_at` for a run that stopped for you), so a Run button and an autonomous tick leave
+    the same evidence that a run happened. This is not a parallel
     recorder: it writes the identical `ScheduleRun` shape to the identical store, and stamps the
     identical trigger fields. The read surfaces (`/history`, `_last_run_ts`, the completion watcher)
     already work — they were simply reading a store nothing wrote to on this path.
@@ -2296,13 +2440,19 @@ async def _record_manual_run(
         import time
         from datetime import datetime, timezone
 
-        from personalclaw.schedule_history import ScheduleRun, status_for_result
+        from personalclaw.schedule_history import (
+            ScheduleRun,
+            status_for_result,
+            summary_for_result,
+        )
+        from personalclaw.triggers import parks
 
         trigger_id = str(getattr(trigger, "id", "") or "")
         if not trigger_id:
             return
         finished = time.time()
 
+        trace = ""
         if exc is not None:
             status = "failure"
             error = f"{type(exc).__name__}: {exc}"
@@ -2322,7 +2472,13 @@ async def _record_manual_run(
             if late and status == "success":
                 status = "ran_late"
             error = ""
-            summary = str(getattr(result, "stdout", "") or "") if result is not None else ""
+            # The row says what the action did in the sentence it wrote for a person, and keeps
+            # what it printed as the trace — a browse run's JSON account.
+            summary = summary_for_result(result)
+            trace = str(getattr(result, "stdout", "") or "") if result is not None else ""
+            if status == "waiting":
+                # A park's row says it waits on you and on what, not the payload it parked with.
+                summary = trace = parks.waiting_line(result)
         if late and status != "failure":
             summary = f"{late[:1].upper()}{late[1:]}." + (f" {summary}" if summary else "")
 
@@ -2339,10 +2495,13 @@ async def _record_manual_run(
                 duration_ms=int(max(0.0, finished - started) * 1000),
                 status=status,
                 summary=summary,
-                trace=summary,
+                trace=trace or summary,
                 error=error,
             )
         )
+        # A park asks you, once, with the action's own card; a run that went through withdraws the
+        # question an earlier one asked.
+        parks.settle(trigger, result)
 
         # Advance the SAME last-run stamp the autonomous recorder writes, so `_last_run_ts` moves
         # and the completion watcher clears the pill. `state`/`health`/`enabled` are left untouched
@@ -2360,6 +2519,10 @@ async def _record_manual_run(
             # Serializers redact this on the way out (`_serialize_store` / `_schedule_row_for`),
             # exactly as `_record_fire_outcome` relies on.
             live.last_error_summary = (error or "manual run failed")[:200]
+        elif status == "waiting":
+            # A run that stopped for you did nothing it was asked yet: not a success.
+            # Its own stamp still moves `last_run_ts`, so the Run button clears all the same.
+            live.last_waiting_at = stamp
         else:
             live.last_success_at = stamp
         store.upsert(live)
@@ -2978,6 +3141,7 @@ def register_trigger_routes(app: web.Application) -> None:
     app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
     app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)
     app.router.add_post("/api/triggers/{id}/run", api_trigger_run)
+    app.router.add_post("/api/triggers/{id}/answer", api_trigger_answer)
     # The external webhook fire endpoint. Beside `/run`, same `{id}` shape, so it needs
     # no special ordering relative to the literal `/week`/`/doctor`/`/view/render` segments above.
     app.router.add_post("/api/triggers/{id}/fire", api_trigger_fire)

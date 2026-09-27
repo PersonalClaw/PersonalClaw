@@ -3,8 +3,8 @@
 Mirrors ``trigger_sources/registry.py`` and ``sync_transports/registry.py``: the
 ``inbox`` provider-type handler (``providers/registry.py::InboxTypeHandler``)
 registers an installed app's source here on enable and removes it on disable.
-:func:`personalclaw.inbox_providers.get_default_provider` reads it first, so an
-app-declared source resolves the way every other app provider type resolves.
+:func:`personalclaw.inbox_providers.source_catalog` reads it first, so an app-declared
+source is polled the way every other app provider type is consumed.
 
 **This registry holds INSTANCES, not classes** — the one shape difference from
 the ``personalclaw.message_source_providers`` entry-point group
@@ -16,9 +16,9 @@ instance into a fake "class" via a lambda would make ``dict[str, type]`` a lie
 and push the shape confusion into every future reader of either path.
 
 Keyed by the provider's own ``source_name`` (not the app name), because that is
-what an inbox item records (``inbox.py``'s ``source`` field) and what a caller
-asks :func:`get_default_provider` for. This module deliberately imports nothing
-from ``providers/`` — the dependency runs one way, handler → registry.
+what an inbox item records (``inbox.py``'s ``source`` field) and what a reply to that
+item is routed by (``inbox_providers.polled_source``). This module deliberately imports
+nothing from ``providers/`` — the dependency runs one way, handler → registry.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def register_source(provider: "MessageSourceProvider") -> str:
 
 def unregister_source(name: str) -> None:
     """Remove a source. A disabled/uninstalled app must leave NO phantom source
-    still answering :func:`get_default_provider` — see ``InboxTypeHandler``."""
+    still being polled — see ``InboxTypeHandler``."""
     _sources.pop(name, None)
 
 
@@ -59,5 +59,10 @@ def get_source(name: str) -> "MessageSourceProvider | None":
 
 
 def list_source_names() -> list[str]:
-    """Every app-contributed source name, for debug/doctor surfaces."""
+    """Every app-contributed source name, in order."""
     return sorted(_sources)
+
+
+def list_sources() -> "list[MessageSourceProvider]":
+    """Every app-contributed source instance, in name order: what the inbox polls for apps."""
+    return [_sources[name] for name in sorted(_sources)]

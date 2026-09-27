@@ -51,8 +51,8 @@ while not terminal:
 | `iteration_context.py` | the handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt |
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
 | `loop_convergence.py` | what a tripped loop does next: one decision through `loop.tick.evaluate` on the node's `SupervisorPolicy`, the ladder position persisted on the run row, a replan as a real mutation, or a hand-off to a human |
-| `gate_answers.py` | a step waiting on a human — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, and closing an ended run's waits |
-| `mid_flight.py` | applying queued mid-flight mutations at the tick's safe point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags |
+| `gate_answers.py` | a step waiting on a human — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, a decline and ending the run at an approval it did not get, closing an ended run's waits, and withdrawing an ask nobody answered |
+| `mid_flight.py` | the mid-flight mutation queue — held beside the run so a restart keeps it — and applying it at the tick's safe point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags |
 | `effect_boundary.py` | the effect ledger at execution time: ATTEMPTED before an effect-committing dispatch, its verdict after, and the committed-effect refusal or teardown before a redo |
 | `task_projection.py` | projecting settled nodes into Tasks and running their done-criteria, scheduled off the tick and never failing a node whose work succeeded |
 | `run_start.py` | what a run binds before its first node: the declared workspace, the project context dir as the memory cwd, a restricted origin's memory posture |
@@ -329,6 +329,13 @@ flywheel, shipped in bug reports, and rendered in a UI — a credential reaching
 it is leaked to all three. Outputs past ~64KB, or matching a binary magic
 prefix, spill to a file and leave a typed `result_omitted` stub.
 
+The run row and a step's stored output are kept as written, so every read that
+shows them masks them with the same redactor: the run list, the run page's status
+and its live snapshot (`handlers.shown_status`), every live event
+(`RunController._publish`) and a step's output, as the inspect drawer does. The
+Loops page masks the same run (`loop_view`), and a run's text reads the same on
+both.
+
 ## Mid-flight mutation
 
 A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
@@ -344,8 +351,18 @@ A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
    batch wakes the loop and the batch applies at the next tick — a rewind
    confirmed at a gate re-runs its closure while the gate waits, and the run parks
    on the same question again. A rewind whose closure includes the waiting gate
-   withdraws that question: its token is dropped and its Inbox row closes, and the
-   gate asks afresh. A PAUSED run is not woken; its edit applies when it resumes.
+   withdraws that question: its confirmation resolves `withdrawn`, its token is
+   dropped and its Inbox row closes, and the gate asks afresh. A PAUSED run is not
+   woken; its edit applies when it resumes. The queue is also written beside the
+   run (`pending_mutations.json`, `mid_flight.queue_mutation`) and read back by the
+   controller that next drives it, so an edit queued on a paused run survives a
+   restart before the resume. It applies at most once: the file goes before the
+   batches apply. Edits queued before the drain all apply, in the order they
+   were made: each is checked at submit against the spec the queue will leave
+   (`mid_flight.projected_spec`), so an edit may build on one still queued, and
+   prepared again at the drain against the spec the edit before it left. A batch
+   that no longer fits the spec the run resumes with is journaled
+   `mutation_rejected`, never dropped silently.
 3. **The frozen-region invariant.** A COMPLETED node cannot be edited — its
    output is already downstream, and changing the spec that produced it would
    make the run's own history a lie. The user's order is *rewind, then edit*.
@@ -400,14 +417,76 @@ its output on the step and states why it stopped. When its provider composed a
 needs-input card (browse's sign-in handoff: the question and what it tried),
 that card's wording is what the run page and the Inbox show.
 
+Each ask is its own record. Its question is the one its step kept when it began
+to wait (`NodeInstance.ask`), not the run's one `attention` slot, which two steps
+waiting at once would share. Its confirmation id is minted with it from `(run,
+gate, epoch)` and which ask of that step it is (`confirmation.request_id`), and is
+carried on its continuation, so the answer cites the id the question was asked
+with. A step can ask twice in one epoch (approved, run again, stopped again; a
+rewind that does not force), and the second ask is a new question that no earlier
+answer can answer. An ask that closes with nobody answering it — the run ended, a
+rewind withdrew it, its deadline passed — resolves `withdrawn` with the reason and
+`answered: false`, so its pending half is never left open and no escalation bet
+is graded by it (`gate_answers.withdraw_asks`). A revise (`revise{step_ref,
+comment}`: change that step, then ask me again) is a third outcome: its ask
+resolves `revised` with `answered: true`, and once the revised step has run the
+gate asks again under a new id. Scoring counts it apart from a yes and a no: the
+gate's said-no table lists it as `revised` (`introspection.gate_stats`), and the
+escalation bet on the revised ask is graded as the answer `revised`, with no
+number on its yes/no scale.
+
 Answering a gate records the answer as its output. Answering a parked action does
 not: approving runs the step again (`Ask.rerun`), with the answer on the one
 dispatch it starts (`ActionContext.answer`), because what the person did was lift
-what stopped it; denying ends it as declined. The gate policy's auto-approve and a
-remembered "always allow" apply to gates only — no policy can sign in for a user.
+what stopped it. That answer lives in memory: a restart between the answer and the
+dispatch loses it, and the step then parks on the same check and asks again. The
+gate policy's auto-approve and a remembered "always allow" apply to gates only — no
+policy can sign in for a user.
+
+A trigger's action that stops the same way asks through the trigger instead
+([tasks-triggers.md](tasks-triggers.md#an-action-that-stops-for-you-asks-you)):
+its run is recorded `waiting`, one Inbox row carries the same card, and Approve
+runs the action again with the answer. Where a person signs in is the browser
+the step drives (its `cdp_url` target): core opens no window for them, so no
+card, row or banner points them at one.
+
+**A gate is a gate: what follows one runs only once it passed.** `needs` means
+after, not after-it-passed, so the frontier alone would run the next step behind a
+gate that said no — and `on_error: null_continue`, the default, walked past one.
+The controller reads `gate_answers.stopping_gate` on every step, after deadlines
+resolve and before the frontier, and `end_at_gate` ends the run there:
+
+* **Deny** — on a gate, or on a parked step — makes the step `declined`: not a
+  failure, so no `on_error` can continue past it, and not a pass. The run ends
+  `declined`, and its error names the gate and who said no ("“approve” was declined
+  by Keyur, so nothing after it ran"): the owner's name for a dashboard answer, the
+  channel for a remote one, the trigger for an automation.
+* **No answer** — the gate's deadline passed (45 s by default in the background,
+  30 min while someone is on the other end, or the author's `timeout_secs`) — keeps
+  the gate `failed`, because nobody chose it and an unattended run must surface it
+  (WF2-R7). The run ends `failed`, saying how long it waited.
+* **A check that did not pass** — a `judge`, `expression`, `verify_command`,
+  `verify_script` or `ladder` gate that fails or escalates — ends what follows it the
+  same way. The run ends `failed` with the check's reason ("“quality-check” failed:
+  the draft cites no source, so nothing after it ran"), or `escalated` for a judge
+  that escalated. A check continues past a failure only when the gate itself
+  declares it: `on_error: null_continue` runs what follows and the run still ends
+  `failed`; `allow_failure: true` records the failure as degraded and the run can
+  complete. Of the bundled templates, `knowledge-lint` declares `allow_failure` on
+  its per-item judge (it records each item's verdict, and nothing after it writes),
+  and `audit-sweep`'s `fix_enabled`, a mode switch that was written as a gate, is a
+  branch.
+
+Every way, each step after the gate, in each sequence that holds it, is marked
+skipped with the reason ("not run: “approve” was declined", "not run: “verify”
+failed"), and anything still in flight elsewhere is stopped. A decline is the one terminal state that ends every
+container holding it (`tick.container_outcome`) and makes even a plain `needs`
+onto it unreachable. The engine has no construct for an author to declare a path
+taken on a decline — a denied gate's answer never entered the binding namespace,
+and `on_error` is a failure policy — so a decline always stops the run.
 
 A run that ends closes whatever it was still asking, whichever way it ended:
-`gate_answers.close_waits` cancels each waiting step and drops its token, and
+`gate_answers.close_waits` cancels each waiting step and withdraws its ask, and
 `_finish` closes the run's Inbox rows and cancels its approvals (#3620). A cancel
 always reaches that writer. The supervisor wakes a parked controller to apply a
 cancel written without waking it (`on_overlap: cancel_then_start` does that to

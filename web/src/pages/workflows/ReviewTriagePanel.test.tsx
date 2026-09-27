@@ -231,7 +231,9 @@ describe('the run cockpit mounts the review triage panel', () => {
     })
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
-    const trigger = await screen.findByTitle(/Review — accept or reject/i)
+    // By role, not by title: the header cluster's measurement probes carry the same title, hidden.
+    const trigger = await screen.findByRole('button', { name: 'Review' })
+    expect(trigger).toHaveAttribute('title', expect.stringMatching(/Review — accept or reject/i))
     // Nothing is fetched until the panel is opened: the read costs a live `git diff`.
     expect(workflowReview).not.toHaveBeenCalled()
 

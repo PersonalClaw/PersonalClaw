@@ -354,7 +354,7 @@ def _patch_proxy_world(
         rt_mod, "get_backend_supervisor", lambda: SimpleNamespace(get=lambda name: rb)
     )
     monkeypatch.setattr(app_secret_mod, "read_app_secret", lambda name: _SECRET)
-    monkeypatch.setattr(token_mod, "generate_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(token_mod, "app_session_token", lambda *a, **k: ("tok", 0.0))
 
     if raise_exc is not None:
 

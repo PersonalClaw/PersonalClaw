@@ -249,6 +249,18 @@ def gate_timeout_secs(
     return int(blocking_default if str(mode) == "blocking" else background_default)
 
 
+def timeout_phrase(secs: float) -> str:
+    """A gate's deadline in words — "45 seconds", "30 minutes", "24 hours", "2 days" — for the
+    sentence an unanswered approval ends its run with. The largest whole unit, so a declared
+    86400 reads as the day the author meant rather than as a count of seconds."""
+    total = max(0, int(secs))
+    for unit, size in (("day", 86400), ("hour", 3600), ("minute", 60)):
+        if total >= size and total % size == 0:
+            count = total // size
+            return f"{count} {unit}" + ("" if count == 1 else "s")
+    return f"{total} second" + ("" if total == 1 else "s")
+
+
 # ── continuation records ─────────────────────────────────────────────────────
 
 
@@ -273,6 +285,10 @@ class Continuation:
     #: The handoff bundle rendered when a run is blocked — what a returning human needs to
     #: re-acquire context without reading the whole journal.
     handoff: dict[str, Any] = field(default_factory=dict)
+    #: The typed confirmation this ask is (`gate_answers.stable_confirmation_id`), minted with it.
+    #: Carried here so its answer and its withdrawal cite THIS ask's id instead of deriving one
+    #: again — a gate asking twice in one epoch has two ids, and only the ask knows which is its.
+    confirmation_id: str = ""
 
     @property
     def expired(self) -> bool:
@@ -290,6 +306,7 @@ class Continuation:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "handoff": dict(self.handoff),
+            "confirmation_id": self.confirmation_id,
         }
 
     @classmethod
@@ -306,6 +323,7 @@ class Continuation:
             created_at=float(d.get("created_at", 0.0) or 0.0),
             expires_at=float(d.get("expires_at", 0.0) or 0.0),
             handoff=dict(d.get("handoff") or {}),
+            confirmation_id=str(d.get("confirmation_id", "") or ""),
         )
 
 
@@ -373,6 +391,7 @@ def create_continuation(
     handoff: dict[str, Any] | None = None,
     ttl_secs: int = DEFAULT_RESUME_TTL_SECS,
     now: float = 0.0,
+    confirmation_id: str = "",
 ) -> Continuation:
     clock = now or time.time()
     return save_continuation(
@@ -387,6 +406,7 @@ def create_continuation(
             created_at=clock,
             expires_at=clock + max(0, int(ttl_secs)) if ttl_secs else 0.0,
             handoff=dict(handoff or {}),
+            confirmation_id=confirmation_id,
         )
     )
 

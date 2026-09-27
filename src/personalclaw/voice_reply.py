@@ -194,7 +194,12 @@ def split_sentences(text: str) -> list[str]:
 
 
 async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None:
-    """Concatenate WAV files into a single file using ffmpeg."""
+    """Concatenate WAV files into a single file using ffmpeg.
+
+    With no *output* the stitch writes a temporary file of its own and hands it to the caller to
+    remove. A stitch that does not hand it back removes it here, because a caller given ``None``
+    cannot: a reply spoken without ``ffmpeg`` (not a dependency) left one per request.
+    """
     if not paths:
         return None
     if len(paths) == 1:
@@ -202,11 +207,13 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
             shutil.copy2(paths[0], output)
             return output
         return paths[0]
+    own_output = output is None
     if output is None:
         fd, output = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
     concat = "|".join(paths)
     proc = None
+    stitched: str | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
@@ -220,9 +227,8 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
             stderr=asyncio.subprocess.PIPE,
         )
         await asyncio.wait_for(proc.communicate(), timeout=_STITCH_TIMEOUT)
-        if proc.returncode != 0 or not os.path.exists(output):
-            return None
-        return output
+        if proc.returncode == 0 and os.path.exists(output):
+            stitched = output
     except asyncio.TimeoutError:
         # This arm did not exist. The bare `except Exception` below swallowed the timeout
         # (since 3.11 asyncio.TimeoutError IS builtins.TimeoutError), logged a traceback
@@ -232,10 +238,15 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
         if proc is not None:
             await kill_timed_out(proc)
         logger.warning("ffmpeg stitch timed out after %ss", _STITCH_TIMEOUT)
-        return None
     except Exception:
         logger.exception("ffmpeg stitch failed")
-        return None
+    finally:
+        if own_output and stitched is None:
+            try:
+                os.unlink(output)
+            except OSError:
+                pass
+    return stitched
 
 
 async def streaming_voice_reply(

@@ -1,6 +1,6 @@
 {
   "generated_from": "scripts/check_publication_hygiene.py",
-  "why": "This repository is PUBLIC. Every tracked path is published to every clone, forever, and `git rm` does not un-publish history. The rules below are the classes of path that reached `main` once and must not reach it again: per-PR review residue, a directory named for scratch work, build output, an embedded git worktree, dev-home or secret material, and an absolute path into the maintainer's real machine. Each is cheap to add by accident (a `git add -A` is enough) and expensive to remove.",
+  "why": "This repository is PUBLIC. Every tracked path is published to every clone, forever, and `git rm` does not un-publish history. The rules below are the classes of path that reached `main` once and must not reach it again: per-PR review residue, a directory named for scratch work, build output, an embedded git worktree, dev-home or secret material, an absolute path into the maintainer's real machine, and a reference to a system that is not public. Each is cheap to add by accident (a `git add -A` is enough) and expensive to remove.",
   "how_to_fix_a_red": "Delete the path, or move it somewhere the repo already publishes deliberately. Do NOT add it to `allowed` to make CI green unless you can write a rationale a stranger reading the public repo would accept — `allowed` is for paths whose name matches a rule but whose CONTENT is deliberately published, and every entry is reviewed as policy, not as a build fix.",
   "path_rules": [
     {
@@ -72,6 +72,23 @@
       "you"
     ],
     "rationale": "An absolute path into a real developer's home publishes the author's username and machine layout. This is an ALLOWLIST of placeholder home names rather than a denylist of real ones, for two reasons: a denylist would have to write the maintainer's username INTO the public repo to keep it out (self-defeating), and an allowlist reds an unrecognised name the first time it appears instead of only the names someone already thought of. The listed names are the complete measured set across the tracked tree — every one a synthetic fixture (`/Users/x`, `/home/u`, `/Users/dev`) or a dev-home path fragment (`/home/config.json`). Adding a name here is a claim that it is a PLACEHOLDER, not a person. `linuxbrew` and `lb` are claimed as placeholders on the same measured basis: `/home/linuxbrew/.linuxbrew` is Homebrew-on-Linux's canonical install prefix, byte-identical on every machine and named in Homebrew's own documentation, so it publishes nothing about this author; and `lb` is an unprivileged account that `scripts/fresh_install_validate.sh` CREATES inside a throwaway container (`chown -R lb:lb`, `su lb -c`) because Homebrew refuses to run as root — it is a fixture of the script, not a person's home."
+  },
+  "internal_reference_rule": {
+    "name": "internal-reference",
+    "digest_salt": "personalclaw/publication-hygiene/internal-reference/v1",
+    "rationale": "This repository is public, and the name, host, identifier or document of a system that is NOT public says something about where the code was written that the code never needs to say. Measured before this rule: eight tree lines cited one non-public document by its content id and forty-two named the guidance system it came from, alongside that system's numbered control ids, the CLI of a non-public sign-in tool, a non-public desktop app's bundle id, and a non-public team and service used as test fixtures — across source comments, test docstrings, docs and the CHANGELOG. Every one carried a real reason, and every reason survives without the citation: 'never trust an upload's declared type; cap what it can make us decode' is the principle, and the title of the document that taught it adds nothing a reader can use. The denylist is salted SHA-256 digests of canonical candidates, because a plaintext list would publish the names it exists to keep out — the self-defeat the home-path rule avoids by being an allowlist. Six kinds: `word` (a whole letter-and-digit run, case-folded), `phrase` (two consecutive words, checked only behind a `phrase-head` digest of the first), `host` (every suffix of a dotted run, so a denied host denies its subdomains), `code` (letters, an optional hyphen and one to three digits, digits folded to 9), and `id` (a three-letter prefix and a 14-character mixed-case or 8-character lowercase tail, folded to prefix and shape). Each kind carries one CONTROL entry whose plaintext the suite assembles at runtime, so a green run proves every kind fires against this very file. Every tracked path and every text file is checked; binary content is not decoded, for the reason the home-path rule gives.",
+    "how_to_fix": "An internal-reference finding is fixed by rewriting the sentence to state the PRINCIPLE instead of naming its source — 'never trust an upload's declared type; cap decoded size and page count', not a document's title or id — and by renaming a fixture that borrows a non-public team, service or app name. There is no exemption for this rule: a match is always a defect. To deny a new name, run `python3 scripts/check_publication_hygiene.py --digest KIND TEXT` and add the printed digest(s) to `internal_reference_rule.denied`; never write the plaintext into the repository, a commit message, a PR or an issue. Before publishing text outside the tree (a PR body, a release note, an unpacked wheel), `--scan PATH` checks it the same way.",
+    "denied": {
+      "word": [],
+      "phrase-head": [],
+      "phrase": [],
+      "host-head": [],
+      "host": [],
+      "code-head": [],
+      "code": [],
+      "id-head": [],
+      "id": []
+    }
   },
   "allowed": [
     {

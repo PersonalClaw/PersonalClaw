@@ -1,20 +1,27 @@
-"""Device pairing + the Devices registry.
+"""Device pairing + Settings → Devices, the list of everything signed in.
 
-Four routes, one credential type:
+Five routes, one credential type:
 
-* ``POST /api/devices/pair/start``     — owner-authenticated; mints a code + QR payload
-* ``POST /api/devices/pair/complete``  — auth-EXEMPT; the device redeems the code for a session
-* ``GET  /api/devices``                — owner-authenticated; the registry
-* ``POST /api/devices/{id}/revoke``    — owner-authenticated; locks one device out
+* ``POST /api/devices/pair/start``      — owner-authenticated; mints a code + QR payload
+* ``POST /api/devices/pair/complete``   — auth-EXEMPT; the device redeems the code for a session
+* ``GET  /api/devices``                 — owner-authenticated; every signed-in device and token
+* ``POST /api/devices/{id}/revoke``     — owner-authenticated; signs one of them out
+* ``POST /api/devices/revoke-others``   — owner-authenticated, ``{"confirm": true}``; signs out
+  all but the caller
 
 **There is no device token.** A paired device gets an ordinary session cookie from the same
-:func:`generate_token` the owner's browser uses; pairing only writes provenance
-(``issuer="pair"`` plus a ``device`` block) onto the session row it just minted. That is the
-load-bearing decision: a second credential type would need its own expiry, its own revocation
-list, its own middleware branch and its own bugs, and the first time the two disagreed the
-device would be authenticated by one and unknown to the other. The registry is therefore a
-VIEW over `sessions.json`, which is why "revoke" and "the session is gone" cannot drift apart
-— they are the same write.
+:func:`token_auth.mint_session` every door uses; pairing names its door (``issuer="pair"``)
+and its device. That is the load-bearing decision: a second credential type would need its own
+expiry, its own revocation list, its own middleware branch and its own bugs, and the first time
+the two disagreed the device would be authenticated by one and unknown to the other. The list
+is therefore a VIEW over `sessions.json`, which is why "sign out" and "the session is gone"
+cannot drift apart — they are the same write.
+
+**The list is every sign-in, not only the paired ones.** It used to show paired
+phones alone, so the owner's own browsers, the desktop app and every token a script minted —
+the sessions a sixth mint silently signed out — could not be seen, let alone signed out. An
+app-scoped token is left out on purpose: it is not a device, it only narrows a signed-in
+session to one app, and it is re-minted as that app needs it.
 
 ``pair/complete`` is exempt from token auth for exactly the reason ``/api/auth/login`` and
 ``/api/auth/enroll/complete`` are: the caller has no session yet, and gating the route behind
@@ -40,23 +47,28 @@ from aiohttp import web
 from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
 from personalclaw.dashboard.session_store import (
+    POOL_CAPS,
     DeviceInfo,
-    attach_device,
-    device_sessions,
-    forget_session,
-    nonces_for_device,
+    describe_user_agent,
+    nonces_for_session,
+    pool_of,
     sanitize_device_kind,
     sanitize_device_name,
+    signed_in_sessions,
 )
 from personalclaw.dashboard.token_auth import (
-    DEFAULT_BROWSER_SESSION_TTL_SECS,
-    generate_token,
-    parse_config_duration,
+    END_SIGNED_OUT,
+    END_SIGNED_OUT_ELSEWHERE,
+    END_SIGNED_OUT_OTHERS,
+    ISSUER_PAIR,
+    browser_session_ttl,
+    mint_session,
     revoke_nonce,
-    token_nonce,
+    sign_out,
 )
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
+from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
@@ -68,21 +80,6 @@ ERR_CODE_EXPIRED = "device_pair_expired"
 ERR_ORIGIN = "device_pair_origin_rejected"
 ERR_LOCKED_OUT = "device_pair_locked_out"
 ERR_UNKNOWN_DEVICE = "device_unknown"
-
-#: Coarse User-Agent → device kind. Only consulted when the client did not say, and the result
-#: still goes through `sanitize_device_kind`, so a match here cannot widen the vocabulary.
-_UA_KINDS: tuple[tuple[str, str], ...] = (
-    ("iphone", "mobile"),
-    ("ipad", "mobile"),
-    ("android", "mobile"),
-    ("mobile", "mobile"),
-    ("electron", "desktop"),
-    ("curl", "cli"),
-    ("python-requests", "cli"),
-    ("macintosh", "browser"),
-    ("windows", "browser"),
-    ("linux", "browser"),
-)
 
 #: The user id a paired device authenticates as. Distinct from `enrolled-device` so the auth
 #: log says which door was used.
@@ -185,33 +182,15 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
     )
 
 
-def _derive_device_name(request: web.Request) -> str:
-    """A label for a device that did not send one (C2 (b)).
+def _described(request: web.Request) -> tuple[str, str]:
+    """``(name, kind)`` for a device that did not name or declare itself (C2 (b)).
 
-    Coarse on purpose. A parsed browser-version string would be precise and wrong within a
-    month; "iPhone" is what the owner would have typed anyway, and they can rename it.
+    The ONE derivation every sign-in uses (``session_store.describe_user_agent``), so a
+    paired phone and a signed-in browser are described alike. Both still go through the
+    sanitizers, so a match here cannot widen the vocabulary.
     """
-    ua = str(request.headers.get("User-Agent") or "").lower()
-    for token, label in (
-        ("iphone", "iPhone"),
-        ("ipad", "iPad"),
-        ("android", "Android device"),
-        ("macintosh", "Mac"),
-        ("windows", "Windows PC"),
-        ("linux", "Linux device"),
-    ):
-        if token in ua:
-            return label
-    return "Paired device"
-
-
-def _derive_device_kind(request: web.Request) -> str:
-    """A kind for a device that did not declare one. Still clamped by the caller."""
-    ua = str(request.headers.get("User-Agent") or "").lower()
-    for token, kind in _UA_KINDS:
-        if token in ua:
-            return kind
-    return "unknown"
+    name, kind = describe_user_agent(str(request.headers.get("User-Agent") or ""))
+    return sanitize_device_name(name) or "Paired device", sanitize_device_kind(kind)
 
 
 # ── pair/complete ───────────────────────────────────────────────────────
@@ -262,29 +241,28 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         err = ERR_CODE_EXPIRED if outcome.result == pairing.RESULT_EXPIRED else ERR_CODE_INVALID
         return json_error(err, status=401)
 
-    # A device session at the same TTL as a browser login rather than the 1-year cap: a phone
-    # in a drawer should not hold a live session for a year.
-    ttl = parse_config_duration(cfg.session_ttl, default_secs=DEFAULT_BROWSER_SESSION_TTL_SECS)
-    token = generate_token(PAIRED_DEVICE_USER, ttl_seconds=ttl)
-    nonce = token_nonce(token)
-
+    # A device session at the same TTL as a browser login (`auth.session_ttl`, 30 days by
+    # default) rather than the 90-day limit: a phone in a drawer should not hold a live session
+    # for the longest a credential may last.
+    ttl = browser_session_ttl(cfg)
+    derived_name, derived_kind = _described(request)
     device = DeviceInfo(
         id=secrets.token_hex(8),
         # The device's own name wins, then the owner's label from `pair/start`, then a derived
         # one. None of the three is trusted text — all went through `sanitize_device_name`.
-        name=name or sanitize_device_name(outcome.label) or _derive_device_name(request),
-        # An explicit kind wins; otherwise derive, then clamp again so the derivation cannot
-        # widen the vocabulary either.
-        kind=kind if kind != "unknown" else sanitize_device_kind(_derive_device_kind(request)),
+        name=name or sanitize_device_name(outcome.label) or derived_name,
+        # An explicit kind wins; otherwise the derived one, already clamped.
+        kind=kind if kind != "unknown" else derived_kind,
         minted_at=time.time(),
+        ip=ip[:64],
     )
-    if not nonce or not attach_device(nonce, device):
-        # The session exists but is not attributable, so it cannot be listed or revoked. Refuse
-        # and retract it rather than leave an unrevocable session behind: an un-listed device
-        # session is the exact failure the registry exists to prevent.
-        if nonce:
-            revoke_nonce(nonce)
-            forget_session(nonce)
+    minted = mint_session(PAIRED_DEVICE_USER, ttl, issuer=ISSUER_PAIR, device=device)
+    token = minted.token
+    if not minted.persisted:
+        # The session exists but is not in the store, so it cannot be listed or revoked, and it
+        # would not survive a restart. Refuse and retract it rather than leave an unrevocable
+        # session behind: an un-listed device session is the exact failure the list prevents.
+        revoke_nonce(minted.nonce)
         _audit("device_paired", "denied", caller=ip, error="could not persist the device session")
         return json_error(ERR_CODE_INVALID, status=503)
 
@@ -331,8 +309,7 @@ async def pair_page(request: web.Request) -> web.Response:
     A browser that ALREADY holds a valid session is redirected home instead of being offered the
     form. That is not tidiness: redeeming a code here overwrites this browser's session cookie,
     so the owner's own laptop would silently become a "device" row while its previous session
-    row stayed behind unreachable — and with ``MAX_CONCURRENT_NONCES`` at 5 a self-pair also
-    spends an eviction slot for nothing.
+    row stayed behind unreachable, still counting against the browser limit.
     """
     from personalclaw.dashboard.handlers.auth import has_valid_session
 
@@ -410,71 +387,112 @@ _PAIR_HTML = page_document(
 )
 
 
-# ── the registry ────────────────────────────────────────────────────────
+# ── the list: everything signed in ─────────────────────────────────────
+
+
+def _row(nonce: str, record: Any, current: str) -> dict[str, Any]:
+    device = record.device
+    return {
+        "id": device.id,
+        "name": device.name,
+        "kind": device.kind,
+        # When it signed in. 0.0 only for a session from before this was recorded.
+        "minted_at": device.minted_at,
+        # 0.0 means "never made an authorized request" and the panel renders it as "never".
+        # It is deliberately not coalesced to `minted_at` — see `DeviceInfo`.
+        "last_seen": device.last_seen,
+        # Where it was last seen from; "" until it has made an authorized request.
+        "ip": device.ip,
+        "issuer": record.issuer,
+        # Which limit it counts against: `device`, `browser` or `token`.
+        "pool": pool_of(record),
+        "expires_at": record.expiry,
+        "current": bool(current) and nonce == current,
+    }
 
 
 async def api_devices_list(request: web.Request) -> web.Response:
-    """GET /api/devices — every paired device with a live session.
+    """GET /api/devices — every device and token signed in to this gateway.
 
-    Derived from `sessions.json`, so a device disappears from this list the moment its session
-    is revoked or expires. Never returns a nonce: the registry is something the owner reads out
-    loud, and the nonce is the credential.
+    Derived from `sessions.json`, so an entry disappears the moment its session is signed out
+    or expires. ``current`` marks the one asking. ``limits`` is how many of each kind may be
+    signed in at once. Never returns a nonce: this list is something the owner reads out loud.
     """
-    rows: list[dict[str, Any]] = []
-    for record in device_sessions().values():
-        device = record.device
-        if device is None:  # pragma: no cover — `device_sessions` filters these out
-            continue
-        rows.append(
-            {
-                "id": device.id,
-                "name": device.name,
-                "kind": device.kind,
-                "minted_at": device.minted_at,
-                # 0.0 means "never made an authorized request" and the panel renders it as
-                # "never". It is deliberately not coalesced to `minted_at` — see `DeviceInfo`.
-                "last_seen": device.last_seen,
-                "issuer": record.issuer,
-                "expires_at": record.expiry,
-            }
-        )
-    rows.sort(key=lambda r: float(r["minted_at"] or 0.0), reverse=True)
+    current = str(request.get("session_nonce") or "")
+    rows = [_row(nonce, record, current) for nonce, record in signed_in_sessions().items()]
+    rows.sort(key=lambda r: (not r["current"], -float(r["last_seen"] or r["minted_at"] or 0.0)))
     _audit("devices_listed", "ok", resources=f"devices={len(rows)}")
-    return web.json_response({"devices": rows})
+    return web.json_response({"devices": rows, "limits": dict(POOL_CAPS)})
 
 
 async def api_devices_revoke(request: web.Request) -> web.Response:
-    """POST /api/devices/{id}/revoke — lock one device out.
+    """POST /api/devices/{id}/revoke — sign one device or token out.
 
-    Drops the in-memory nonce AND the durable row, in that order. Both halves are load-bearing
-    and for different clocks: without the in-memory drop the device keeps working until this
-    process restarts, and without the durable drop it comes back TO LIFE at the next restart.
-    A revoke that un-revokes on reboot is worse than no revoke, because the owner was told it
-    worked.
+    Ends the session in memory AND in the durable store (``token_auth.sign_out``). Both halves
+    are load-bearing and for different clocks: without the in-memory drop the device keeps
+    working until this process restarts, and without the durable drop it comes back TO LIFE at
+    the next restart. A revoke that un-revokes on reboot is worse than no revoke, because the
+    owner was told it worked. The device's next request is told it was signed out from here.
     """
     if not check_origin(request):
         _audit("device_revoked", "denied", error="origin rejected")
         return json_error(ERR_ORIGIN, status=403)
 
     device_id = request.match_info.get("id", "")
-    nonces = nonces_for_device(device_id)
+    nonces = nonces_for_session(device_id)
     if not nonces:
         _audit("device_revoked", "denied", error="unknown device", resources=f"device={device_id}")
         return json_error(ERR_UNKNOWN_DEVICE, status=404)
 
-    for nonce in nonces:
-        revoke_nonce(nonce)
-        forget_session(nonce)
+    current = str(request.get("session_nonce") or "")
+    reason = END_SIGNED_OUT if current in nonces else END_SIGNED_OUT_ELSEWHERE
+    revoked = sign_out(nonces, reason, actor=str(request.get("user") or "owner"))
+    _audit("device_revoked", "ok", resources=f"device={device_id} sessions={revoked}")
+    return web.json_response({"ok": True, "revoked": revoked})
 
-    _audit("device_revoked", "ok", resources=f"device={device_id} sessions={len(nonces)}")
-    return web.json_response({"ok": True, "revoked": len(nonces)})
+
+async def api_devices_revoke_others(request: web.Request) -> web.Response:
+    """POST /api/devices/revoke-others — sign out every device and token but the caller's own.
+
+    The one-click answer to "a device I don't recognise is signed in" (or a lost phone): each
+    device it signs out is told, on its next request, that another device chose "Sign out all
+    other devices". App-scoped tokens are left alone — each is an app's narrowing of a
+    session, and one belonging to a signed-out session is refused with it. A caller with no
+    session of its own (a local-network bypass) keeps nothing, so this signs out everything.
+
+    It needs ``{"confirm": true}``, unlike signing ONE device out (which must stay a single
+    step: that is containment, see ``tests/test_destructive_actions_confirm.py``). This one
+    reaches every paired phone, each of which then has to be paired again, so a bare POST — a
+    script's, an agent's, a stray request's — signs nothing out. The panel sends it only from
+    its own confirmation, which names how many devices it will sign out.
+    """
+    if not check_origin(request):
+        _audit("devices_revoked_others", "denied", error="origin rejected")
+        return json_error(ERR_ORIGIN, status=403)
+    if not confirm_granted(await json_object_body(request)):
+        _audit("devices_revoked_others", "denied", error="not confirmed")
+        return json_error(
+            "confirmation_required",
+            message=(
+                'send {"confirm": true} — this signs out every other device and token, '
+                "and each has to sign in again"
+            ),
+            status=400,
+        )
+
+    current = str(request.get("session_nonce") or "")
+    others = [nonce for nonce in signed_in_sessions() if nonce != current]
+    revoked = sign_out(others, END_SIGNED_OUT_OTHERS, actor=str(request.get("user") or "owner"))
+    _audit("devices_revoked_others", "ok", resources=f"sessions={revoked}")
+    return web.json_response({"ok": True, "revoked": revoked})
 
 
 def register_device_routes(app: web.Application) -> None:
-    """Wire C2's four API routes plus the redeem PAGE the pairing URL points at."""
+    """Wire the five API routes plus the redeem PAGE the pairing URL points at."""
     app.router.add_post("/api/devices/pair/start", api_devices_pair_start)
     app.router.add_post("/api/devices/pair/complete", api_devices_pair_complete)
     app.router.add_get("/api/devices", api_devices_list)
+    app.router.add_post("/api/devices/revoke-others", api_devices_revoke_others)
     app.router.add_post("/api/devices/{id}/revoke", api_devices_revoke)
     # Registered here rather than beside the other pages in server.py: it is the entry point of
     # `pair/start`'s URL, and splitting the two across files is how the URL came to point at a

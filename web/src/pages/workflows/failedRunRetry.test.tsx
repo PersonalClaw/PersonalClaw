@@ -140,7 +140,10 @@ describe('a transient failure offers a retry that works', () => {
     const onOpenRun = vi.fn()
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={onOpenRun} />)
 
-    fireEvent.click(await screen.findByTitle(/Branch a new run from this one/i))
+    // By role, not by title: the header cluster's measurement probes carry the same title, hidden.
+    const fork = await screen.findByRole('button', { name: 'Fork' })
+    expect(fork).toHaveAttribute('title', expect.stringMatching(/Branch a new run from this one/i))
+    fireEvent.click(fork)
 
     await waitFor(() => expect(onOpenRun).toHaveBeenCalledWith('child-9'))
     expect(startDraftWorkflowRun).not.toHaveBeenCalled() // a fork is started by its author
@@ -203,7 +206,8 @@ describe('re-entry controls exist only where a live controller can apply them', 
   it('a draft offers Start and no Rewind / Run from / Edit', async () => {
     workflowRun.mockResolvedValue(withStatus('draft'))
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
-    await screen.findByTitle(/Start this run/i)
+    const start = await screen.findByRole('button', { name: 'Start' })
+    expect(start).toHaveAttribute('title', expect.stringMatching(/Start this run/i))
     expect(screen.queryByTitle(/Re-run this node and everything/i)).toBeNull()
     expect(screen.queryByTitle(/Re-run only what comes after/i)).toBeNull()
     expect(screen.queryByTitle(/Edit this stage's instruction/i)).toBeNull()

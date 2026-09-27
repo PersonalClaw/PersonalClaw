@@ -91,10 +91,12 @@ USAGE_VERSION = 1
 #: The fixed purpose vocabulary (plan §"The usage story").
 PURPOSES = ("interactive", "background", "loop", "eval", "app")
 
-#: ``usage/turns.jsonl`` ``source`` -> purpose. ``chat``/``cli``/``channel`` are the human-watched
-#: turns. Anything NOT listed here is an app name (``session._app``) and maps to ``app``.
+#: ``usage/turns.jsonl`` ``source`` -> purpose. ``chat``/``room``/``cli``/``channel`` are the
+#: human-watched turns: a room's members answer the human in a transcript they read. Anything NOT
+#: listed here is an app name (``session._app``) and maps to ``app``.
 PURPOSE_BY_SOURCE = {
     "chat": "interactive",
+    "room": "interactive",
     "cli": "interactive",
     "channel": "interactive",
     "loop": "loop",
@@ -181,9 +183,10 @@ def purpose_for_source(source: str) -> tuple[str, str]:
 
 
 #: Purposes declared in :data:`PURPOSE_BY_SOURCE` that NO turn-ledger writer can currently
-#: produce. Measured from the five live ``record_from_event`` call sites, which pass exactly
+#: produce. Measured from the six live ``record_from_event`` call sites, which pass exactly
 #: ``background`` (gateway heartbeat), ``channel``/``cron`` (announce path), ``subagent``,
-#: ``cli`` (cli_chat) and ``chat``-or-an-app-name (chat_runner, ``session._app or "chat"``):
+#: ``cli`` (cli_chat), ``room`` (a room member's turn) and ``chat``-or-an-app-name (chat_runner,
+#: ``session._app or "chat"``):
 #:
 #: * ``eval`` — declared for a first writer that does not exist yet. No call site passes the
 #:   literal, and no session is created with ``app="eval"``, so nothing can reach the bucket.
@@ -201,7 +204,7 @@ def purpose_for_source(source: str) -> tuple[str, str]:
 #: every surface that filters on :func:`reachable_purposes`.
 #:
 #: Kept as an explicit set rather than derived at runtime because the writers are spread across
-#: five modules and an import-time census of them would be a circular dependency. It cannot go
+#: six modules and an import-time census of them would be a circular dependency. It cannot go
 #: stale silently: ``test_usage_reachable_purposes`` censuses the real call sites — including the
 #: ``app=`` literals the chat seam forwards, which is exactly what the ``loop`` miss taught it.
 UNWRITTEN_PURPOSES = frozenset({"eval"})

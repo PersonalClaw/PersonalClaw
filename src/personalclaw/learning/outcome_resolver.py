@@ -131,11 +131,13 @@ def resolve(service: Any, *, now: float | None = None, max_runs: int = _MAX_RUNS
     questions are skipped (left open) when no vector store is available; ledger-sourced ones
     resolve regardless.
 
-    Report keys: ``resolved`` (questions closed with a measurement), ``inconclusive`` (closed
-    because the metric could not be read), ``pending`` (still inside their horizon, or waiting on
-    a metric source that is not available), ``proposed`` (lesson proposals filed).
+    Report keys: ``resolved`` (questions closed with a measurement), ``unscored`` (closed with an
+    answer that carries no number — an escalation `revised`, counted apart from the yes and the no
+    it is neither of), ``inconclusive`` (closed because the metric could not be read), ``pending``
+    (still inside their horizon, or waiting on a metric source that is not available),
+    ``proposed`` (lesson proposals filed).
     """
-    report = {"resolved": 0, "inconclusive": 0, "pending": 0, "proposed": 0}
+    report = {"resolved": 0, "unscored": 0, "inconclusive": 0, "pending": 0, "proposed": 0}
     if service is None:
         return report
     has_vector = bool(getattr(service, "has_vector", False))
@@ -175,13 +177,15 @@ def resolve(service: Any, *, now: float | None = None, max_runs: int = _MAX_RUNS
                 report["pending"] += 1
                 continue
 
+            answer = ""
             if question.metric_source == outcomes.SOURCE_LEDGER:
                 measured = outcomes.measure_from_events(question, events)
+                answer = outcomes.answer_from_events(question, events)
             elif question.metric_source == outcomes.SOURCE_CONSUMPTION:
                 measured = consumer_liveness.measure_consumption(question)
             else:
                 measured = _read_metric(service, question.metric)
-            resolution = outcomes.resolution_for(measured)
+            resolution = outcomes.resolution_for(measured, answer=answer)
             score = 0.0 if measured is None else outcomes.score(measured, question.baseline)
 
             if journal is None:
@@ -197,14 +201,17 @@ def resolve(service: Any, *, now: float | None = None, max_runs: int = _MAX_RUNS
                 measured=measured,
                 score=score,
                 resolution=resolution,
+                answer=answer,
             )
             # The resolution is now in `events` too, so a second pass in this same tick — and the
             # next tick's `open_questions` — subtracts it instead of re-resolving.
             events.append(resolved)
-            if resolution == outcomes.MEASURED:
-                report["resolved"] += 1
-            else:
+            if resolution != outcomes.MEASURED:
                 report["inconclusive"] += 1
+            elif measured is None:
+                report["unscored"] += 1
+            else:
+                report["resolved"] += 1
 
             if question.producer not in _PROPOSING_PRODUCERS:
                 continue

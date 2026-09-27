@@ -85,12 +85,13 @@ its own code. The controls below bound the token, so an app's requests never rea
 owner's full authority. They do not bound the code, which runs as you — the last bullet
 says what that means.
 
-- **App-scoped tokens** (`dashboard/token_auth.py::generate_token` with an `app`
-  claim) bound a request to that app's declared permissions; TTLs capped by
-  `MAX_SESSION_TTL_SECS`.
+- **App-scoped tokens** (`dashboard/token_auth.py::app_session_token`, a token with an
+  `app` claim) bound a request to that app's declared permissions; they last an hour, and
+  count against a limit of their own per app, so no app can sign the owner's devices out.
 - **Reverse-proxy credential stripping**
   (`dashboard/handlers/apps.py::api_app_proxy`): app backends never see the
-  owner's cookie/Authorization — a fresh 1-hour app-scoped token is injected.
+  owner's cookie/Authorization — the app's own 1-hour app-scoped token is injected (the
+  same one while it has more than half its hour left, not a new session per request).
 - **Permission middleware** holds in every auth mode — including `none`, where
   `dashboard/server.py`'s `_dev_user_middleware` re-adopts the app claim via
   `validate_token_with_app` so an app token only ever *narrows* reach. The internal
@@ -289,16 +290,28 @@ Data leaving the running system:
   append-only events (caller, operation, outcome).
 - **Redacted archive reads** (`security.py`: `redact_credentials`,
   `redact_exfiltration_urls`).
-- **A masked value is never saved back over the real one.** Every read that hands text to an
-  editor masks it with `redact_for_display`: a file in Files, an artifact, a loop before launch, a
-  schedule, an inbox draft, a prompt or snippet, a memory fact, and what the agent's `artifact_get`
-  and `knowledge_get` return. Each of those saves restores every marker it gets back from the
-  stored value (`keep_masked_spans`, `keep_masked_values`), so a marker left where it was keeps the
-  value it stood for and the plaintext never crosses the wire. A save whose markers can no longer be
-  placed is refused (`409`) rather than stored. A marker that is already part of the stored text,
-  like a `CLAUDE.md` imported redacted, stays text. A structured secret shown as `••••••••` works
-  the same way: an app, provider or MCP save that sends the mask back keeps the stored value, and
-  the credential store refuses the mask as a value (`secret_refs._move_into_store`).
+- **Every read masks the same way, and a masked value is never saved back over the real one.**
+  A read that hands text to you, an app, a channel or the agent masks it with `redact_for_display`
+  (`redact_values_for_display` for a structured value), so no read shows what another read of the
+  same thing masks: a file in Files; an artifact, its name, tags and text preview included; a loop
+  before launch, its plan, its command chip and its name wherever it appears; an automation's name,
+  prompt, command, action and last error on the Automations page, the week grid, a dry run,
+  `/cron list`, `personalclaw cron list`, the agent's automation tools and an investigation; an MCP
+  server's command, arguments, URL and error; an inbox draft and a notification; a prompt or
+  snippet; a memory fact, its key included, the memory history and graph; a lesson; and what the
+  agent's `artifact_get` and `knowledge_get` return. A workflow run's list, status, live events and
+  step outputs are masked with the journal's redactor, the one its journal and inspect drawer use.
+  Each save restores every marker it gets back from the value stored when it writes
+  (`keep_masked_spans`, `keep_masked_values`), read with nothing awaited before the write, so a
+  marker left where it was keeps the value it stood for, even one another save changed meanwhile,
+  and the plaintext never crosses the wire. A masked name (a tag, a fact's key, a lesson's rule)
+  names the stored one it masks (`stored_name`). A save whose markers can no longer be placed, or a
+  masked name that names nothing or more than one thing, is refused (`409`) rather than stored.
+  Exports and snapshots keep the stored values, so a restore restores them. A marker that is
+  already part of the stored text, like a `CLAUDE.md` imported redacted, stays text. A structured
+  secret shown as `••••••••` works the same way: an app, provider or MCP save that sends the mask
+  back keeps the stored value, and the credential store refuses the mask as a value
+  (`secret_refs._move_into_store`).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.
 - **Secret settings held by reference** (`config/secret_refs.py`): a provider key, every
@@ -378,6 +391,12 @@ Data leaving the running system:
   for an app), before the file is opened, so the answer says nothing about what the file holds.
   Every read and write checks it again, so a pointer recorded earlier, or one whose file was later
   swapped for a symlink out, touches nothing.
+- **A loop's own folder is the owner's** (`file_roots.all_dashboard_roots`). Files shows it when the
+  loop keeps its deliverable there or is a code loop with no workspace, so a graduated deliverable's
+  Source file opens, and never to an app: the folder holds the brief the loop's worker reads every
+  cycle. The watchdog and the judge read a deliverable only when it resolves inside the loop's
+  workspace or its own folder (`loop.files.file_inside`: symlinks and `..` resolved), so a
+  `primary_deliverable` named out of either reads nothing.
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 

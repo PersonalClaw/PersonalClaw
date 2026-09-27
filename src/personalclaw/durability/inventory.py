@@ -497,7 +497,16 @@ INVENTORY: tuple[StateEntry, ...] = (
         # minted on demand (`apps.app_secret.ensure_app_secret`) when the backend starts. It
         # rode every snapshot and every export inside this tree; nothing is lost by leaving it
         # out, and a copy that travels is a key that lets its holder sign as the gateway.
-        derived_within=("*/.app_secret",),
+        #
+        # Each app's `venv/` is the Python environment its sidecar runs in, with the engine Install
+        # engine put there (`sdk.sidecar.sidecar_venv_dir`): gigabytes, built for this machine's
+        # OS, CPU and Python. It rode every snapshot without its interpreter (the capture skips
+        # links), and a restore brought back its package receipt, so Install engine re-made the
+        # interpreter and skipped pip: the engine read as installed with another machine's
+        # packages. Left behind, a restored app has no engine and offers Install engine. A bundle
+        # never ships a `venv` (`supply_chain.NEVER_INSTALLED_NAMES`), so one at any depth here
+        # was built on this machine, and the `.{name}.rollback` copy of an update matches too.
+        derived_within=("*/.app_secret", "*/venv"),
     ),
     StateEntry(
         id="extensions",
@@ -594,9 +603,10 @@ INVENTORY: tuple[StateEntry, ...] = (
     # longest way round to exactly that. Now that `evals/studies/<id>/locked/` has a writer
     # (`evals/store.write_locked_check`), the control has something to protect.
     #
-    # `derived_within` is the field with a live reader on BOTH paths that copy this tree
-    # (`portability.py:_is_derived_within` and `snapshot.py:_derived_within`), so declaring
-    # it here excludes the answer keys from the portability export AND from snapshots. The
+    # `derived_within` is the field with a live reader on every path that copies this tree
+    # (`portability.py:_is_derived_within` and `snapshot.py:_derived_within`: the export, the
+    # snapshot, the hourly shard export and a restore), so declaring it here excludes the
+    # answer keys from the portability export AND from snapshots. The
     # snapshot half is a deliberate consequence, not an oversight: an answer key belongs on
     # one machine, and the cost — a REGISTERED-but-unrun study restored from a snapshot has
     # lost its checks — is caught loudly rather than silently, because `studies.run_study`
@@ -706,6 +716,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_REPLACE_ONLY,
         derived=True,
         help="FTS index over transcripts (rebuilt by reindex_session)",
+    ),
+    # The chat list's record of each transcript's metadata line, so a gateway that has just
+    # started lists without opening every transcript. Derived: each entry counts only while its
+    # transcript is unchanged, and a missing file is rebuilt by the next listing.
+    StateEntry(
+        id="session_listing",
+        kind=KIND_JSON_FILE,
+        path="session_listing.json",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="the chat list's record of each transcript's metadata line (rebuilt on listing)",
     ),
     # A DIRECTORY of per-workspace databases (`codegraph/<workspace-key>.db`), not one file — so
     # `kind` is a tree and the DB check needs the glob below rather than an exact path. Derived: the
@@ -1720,6 +1742,12 @@ IGNORED: tuple[str, ...] = (
     # pre-restore home already decided about — the storm the "review, don't auto-run" exists to
     # prevent, arriving by backup. Nothing is lost: the history rows record what happened.
     "trigger-review.json",
+    # A trigger's open question (`triggers/parks.py`): its action stopped for a person on THIS
+    # machine — browse at a sign-in page, in a browser profile `browse` above keeps out of every
+    # snapshot. Restored elsewhere, its Approve would run the action against a profile that was not
+    # carried, which stops at the same page and asks again. Nothing is lost without it: the history
+    # row says the run waited, and the trigger's next run that stops asks afresh.
+    "trigger_parks",
     # The poll cursors of the file, web and view triggers (`file_poll`, `web_poll`,
     # `pull_on_view`). Each module treats a MISSING state as a quiet re-seed — a watch's first
     # look records what it sees and fires nothing, a view binding refreshes on its next render —

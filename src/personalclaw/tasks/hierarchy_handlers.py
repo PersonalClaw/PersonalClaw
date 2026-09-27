@@ -20,7 +20,7 @@ from personalclaw.request_validation import (
     string_field,
 )
 from personalclaw.safety_flags import confirm_granted
-from personalclaw.security import is_sensitive_path, is_system_path
+from personalclaw.security import is_sensitive_path, is_system_path, redact_for_display
 from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.tasks.hierarchy import HierarchyStore
 from personalclaw.workflows import containers, leases
@@ -539,10 +539,13 @@ def _loop_rows(pid: str) -> list[dict]:
     rows: list[dict] = []
     for lp in loop_store.list_for_project(pid):
         state = _LOOP_STATE.get(str(lp.status), containers.BoardState.WORKING)
+        # Masked as the Loops page masks the same name and task (`loop.store._redact_loop`), and
+        # before the task is cut short, so a cut cannot leave half a key the screen misses.
+        title = redact_for_display(lp.name) if lp.name else redact_for_display(lp.task or "")[:60]
         rows.append(
             containers.BoardRow(
                 run_id=lp.id,
-                title=lp.name or (lp.task or "")[:60] or "(unnamed loop)",
+                title=title or "(unnamed loop)",
                 state=state,
                 origin="manual",
                 project_id=pid,

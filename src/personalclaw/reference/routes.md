@@ -7,7 +7,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 ## Agent-callable routes
 
 - `GET /api/action-providers` — the registered action providers + their
-- `GET /api/agent-hooks` — read-only view of agent hooks from personalclaw.json.
+- `GET /api/agent-hooks` — the agent CLI's hooks in effect, and the ones waiting for the owner.
+- `POST /api/agent-hooks/allow` — the owner's yes to one waiting agent hook.
 - `GET /api/agent-marketplace/agents` — list agents from a marketplace.
 - `POST /api/agent-marketplace/agents` — create a new agent definition.
 - `DELETE /api/agent-marketplace/agents/{name}` — delete an agent definition.
@@ -58,7 +59,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/apps/{name}/config` — save an app's settings, and apply them to its providers.
 - `POST /api/apps/{name}/disable` — _(no summary)_
 - `POST /api/apps/{name}/enable` — _(no summary)_
-- `POST /api/apps/{name}/token` — mint an app-scoped identity token.
+- `POST /api/apps/{name}/token` — the app-scoped identity token this app should use.
 - `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3) and report what the app's ``data/`` holds.
 - `POST /api/apps/{name}/update` — atomic update from ``{source, consent?}``.
 - `GET /api/artifacts` — metadata-only rows; ``q`` searches metadata and body.
@@ -241,10 +242,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/desktop/state` — what the desktop shell can actually do, right now.
 - `POST /api/desktop/state` — the shell pushes a refreshed capability manifest.
 - `POST /api/desktop/unregister` — the shell is quitting; forget its capabilities.
-- `GET /api/devices` — every paired device with a live session.
+- `GET /api/devices` — every device and token signed in to this gateway.
 - `POST /api/devices/pair/complete` — redeem a code for a durable device session.
 - `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
-- `POST /api/devices/{id}/revoke` — lock one device out.
+- `POST /api/devices/revoke-others` — sign out every device and token but the caller's own.
+- `POST /api/devices/{id}/revoke` — sign one device or token out.
 - `DELETE /api/doc-comments` — empty the deck.
 - `GET /api/doc-comments` — the whole cross-document deck, oldest first.
 - `POST /api/doc-comments` — append one comment.
@@ -309,6 +311,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/guardrails/project-trust` — the whole store;
 - `POST /api/guardrails/project-trust` — the whole store;
 - `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
+- `GET /api/heartbeat/tasks` — every task in HEARTBEAT.md, and whether the owner allowed it.
+- `POST /api/heartbeat/tasks/allow` — the owner's yes to one queued task.
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
 - `POST /api/inbox/digest` — on-demand channel digest.
@@ -318,7 +322,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/inbox/open` — every row still wanting the user (PENDING or SEEN).
 - `GET /api/inbox/owners` — owners present in the store, with counts, for the filter chips.
 - `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).
-- `GET /api/inbox/providers` — list registered inbox message source providers.
+- `GET /api/inbox/providers` — every message source the inbox knows, and whether it polls it.
 - `POST /api/inbox/restart` — stop and reinitialize the inbox service.
 - `POST /api/inbox/seen` — mark items SEEN (the read/unread boundary).
 - `POST /api/inbox/send` — send a reply to an inbox item.
@@ -435,7 +439,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/lexicon/terms` — {canonical, aliases?} — add a manual term.
 - `DELETE /api/lexicon/terms/{id}` — remove a term entirely.
 - `PATCH /api/lexicon/terms/{id}` — {enabled?} — enable/disable (prune) a term.
-- `POST /api/logout` — revoke all active dashboard sessions.
+- `POST /api/logout` — sign every dashboard session out, everywhere.
 - `GET /api/logs` — SSE stream of live log entries.
 - `GET /api/logs/level` — current backend logger level.
 - `POST /api/logs/level` — change the backend logger level at runtime.
@@ -772,7 +776,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/themes/{slug}` — get, update, or delete a custom theme.
 - `GET /api/themes/{slug}` — get, update, or delete a custom theme.
 - `PUT /api/themes/{slug}` — get, update, or delete a custom theme.
-- `GET /api/token/local` — issue a token for local apps.
+- `GET /api/token/local` — issue a token for the CLI, a script or a local app.
 - `GET /api/tools` — Return all tools from all active tool sources.
 - `GET /api/tools/groups` — the tool-GROUP partition (Context Economy §5).
 - `POST /api/tools/invoke` — execute one tool through the Tool entity.
@@ -790,6 +794,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/triggers/week` — the week-grid projection, from `?start=` (AUTO-A1 — S70).
 - `DELETE /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `PUT /api/triggers/{id}` — DELETE /api/triggers/{id}.
+- `POST /api/triggers/{id}/answer` — answer the question a trigger's action stopped on.
 - `POST /api/triggers/{id}/fire` — fire a `webhook` trigger from an EXTERNAL caller (WF2AUT-12).
 - `GET /api/triggers/{id}/history` — run records; other kinds answer `supported: false`.
 - `GET /api/triggers/{id}/history/{run_id}` — one full run record.
@@ -850,7 +855,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/ledger-rails` — GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
 - `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one terminal node (WF2-A2).
 - `GET /api/workflows/runs/{run_id}/outbox` — GET the run's published-artifact listing — the §2.5 outbox half of R17.
-- `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — GET one node's output, masked the way the inspect drawer masks it.
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
 - `PUT /api/workflows/runs/{run_id}/policy-overrides` — PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only.
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.

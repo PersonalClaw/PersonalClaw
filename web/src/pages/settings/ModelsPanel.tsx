@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import {
   Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
@@ -10,7 +10,7 @@ import {
   api, isNotRun, isSwitchedOff, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
   type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
-import { modelBytes } from '../chat/bundledModelDownload'
+import { BundledDownloadProgress, modelBytes } from '../chat/bundledModelDownload'
 import { splitModelRef } from '../../lib/modelRef'
 import {
   occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
@@ -36,7 +36,7 @@ import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
 import { DisclosureCard } from '../../ui/DisclosureCard'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { reportingWrite } from '../../app/reportingWrite'
-import { InlineModelDownload, isDownloadable, modelLabel } from './InlineModelDownload'
+import { DownloadFailure, InlineModelDownload, isDownloadable, modelLabel, useRowDownload } from './InlineModelDownload'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
@@ -677,6 +677,20 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
  *  so a save from it names none and is refused (`428`) rather than taken as a blind overwrite. */
 const NO_CHAIN: Revisioned<string[]> = { value: [], revision: '' }
 
+/** The confirm before an Embedding save. A change re-indexes; a clear re-indexes nothing — the
+ *  save starts the re-index only once a model is bound (`onSaved`) — so it says what clearing does
+ *  instead. It used to ask "Change & re-index" for a clear as well, and nothing re-indexed. */
+const EMBEDDING_CHANGE = {
+  title: 'Change the embedding model?',
+  body: 'Changing the embedding model will re-index ALL knowledge and memories. Existing embeddings are computed with the current model and are incompatible with a different one, so they must be regenerated.\n\nRe-indexing runs in the background and may take a while for large stores.',
+  confirmLabel: 'Change & re-index',
+}
+const EMBEDDING_CLEAR = {
+  title: 'Stop using an embedding model?',
+  body: 'Memory and knowledge search will match by keyword instead of by meaning until you choose an embedding model again. The embeddings already stored are kept, and choosing a model re-indexes them.',
+  confirmLabel: 'Clear',
+}
+
 /** Why a chain control is unavailable while a refused change waits in the notice above it. */
 
 // Each chain edit as an OPERATION, so a refused save re-applies onto the chain as stored now —
@@ -698,6 +712,103 @@ const moveRef = (ref: string, dir: -1 | 1): Rebase<string[]> => (theirs) => {
   return next
 }
 
+/** One model in a use case's picker: its toggle and chips, and what it is doing right here — the
+ *  Test of a downloaded local model, the Download of a chosen one this machine does not have, and
+ *  the Repair of one whose weights are incomplete.
+ *
+ *  🔑 A REPAIR SHOWS ITS PROGRESS WHERE IT WAS PRESSED. It used to post the download and re-read
+ *  the page, so the row looked idle while the weights came down again: no progress, no Cancel, and
+ *  the job's warning (the free space could not be checked, #3715) drawn only on Settings →
+ *  Providers, the one other place that job appears. It now runs through the row machine a chosen
+ *  model's Download uses (`useRowDownload`), so it draws the same progress row, warning included,
+ *  and a refusal lands under it. The page re-reads when the download lands and the chip can clear.
+ *
+ *  A column, not a bare button: the Repair, Test and Download affordances are buttons themselves
+ *  and cannot nest inside the toggle. */
+function ModelRow({ model: m, on, saving, held, localProviders, onToggle, onChanged, onDownloaded }: {
+  model: AvailableModel; on: boolean
+  /** The chain is being saved. */
+  saving: boolean
+  /** A refused save of the chain is waiting for the user (`StaleWriteNotice`). */
+  held: boolean
+  localProviders: ReadonlySet<string>
+  onToggle: () => void
+  /** Re-read the page: a repair landed. */
+  onChanged: () => void
+  /** A chosen model's download landed. */
+  onDownloaded: () => void
+}) {
+  // Every row holds one, so it tracks only the download its Repair starts (no list read per row).
+  const repair = useRowDownload(m, onChanged, { reattach: false })
+  // The status opens under the chip that was pressed, so a Repair pressed at the window's bottom
+  // edge drew its progress below the fold (measured in the drive: the row at y=907 of a 900px
+  // viewport). `block: 'nearest'`: already on screen, nothing moves; off it, the smallest scroll
+  // shows it.
+  const status = useRef<HTMLDivElement>(null)
+  const showing = repair.running !== null || repair.failed !== ''
+  useEffect(() => { if (showing) status.current?.scrollIntoView?.({ block: 'nearest' }) }, [showing])
+  // A LOCAL model (carries a `downloaded` flag) that's bound but NOT
+  // downloaded won't actually run — surface it so "configured" never
+  // silently means "inert" (e.g. after deleting a bound model's weights).
+  const notDownloaded = m.downloaded === false
+  // …and one this machine can fetch gets its Download right here (`InlineModelDownload`).
+  const downloadable = isDownloadable(m, localProviders)
+  // A local model carries a `downloaded` flag; a hosted/remote model does not. Only a
+  // present LOCAL model can run a real-inference selftest here.
+  const isLocal = m.downloaded !== undefined
+  // Gated pre-warn (LMMV §5): the server set `token_ready:false` on a gated row when no
+  // valid HF token is configured, so we warn BEFORE the user clicks Download. Absent =
+  // the cascade couldn't answer → no nag.
+  const needsToken = m.gated === true && m.token_ready === false
+  return (
+    <div className="flex flex-col rounded-md transition-colors hover:bg-surface-high"
+      style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
+      <div className="flex items-center gap-2.5 pr-3">
+        {/* Natively disabled only while the chain saves. A held change is a state the user resolves
+            in the notice above, so the toggle keeps its tab stop and says so, with the sentence
+            every held-change lock in this card uses. */}
+        <button type="button" onClick={held ? undefined : onToggle} disabled={saving}
+          aria-busy={saving || undefined} aria-disabled={(held && !saving) || undefined}
+          title={held ? HELD_CHANGE_REASON : undefined}
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left aria-disabled:opacity-40">
+          <span className="grid size-4 shrink-0 place-items-center rounded border"
+            style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
+            {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
+          </span>
+          <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono"
+            title={modelLabel(m) !== m.name ? m.name : undefined}>{modelLabel(m)}</span>
+        </button>
+        <ModelChips model={m} onRepair={() => { void repair.begin() }} repairing={repair.starting || repair.running !== null} />
+        {needsToken && (
+          <StatusPill tone="warn" className="shrink-0 inline-flex items-center gap-1"
+            role="img" aria-label="This gated model needs a valid HuggingFace token"
+            title="This gated model needs a valid HuggingFace token — add one under “HuggingFace token” below before downloading.">
+            <KeyRound size={9} /> needs token
+          </StatusPill>
+        )}
+        {on && notDownloaded && (
+          <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
+            style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
+            title={downloadable
+              ? 'Bound but not on this machine yet — download it below to use it.'
+              : 'Bound but not downloaded — download it in Providers to activate.'}>
+            <Download size={9} /> not downloaded
+          </span>
+        )}
+        <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
+      </div>
+      {showing && (
+        <div ref={status} data-testid="model-repair" className="flex flex-col gap-xs px-m pb-s">
+          {repair.running && <BundledDownloadProgress offer={repair.offer} job={repair.running} onCancel={repair.stop} />}
+          {repair.failed && <DownloadFailure text={repair.failed} />}
+        </div>
+      )}
+      {isLocal && m.downloaded === true && <ModelTestButton provider={m.provider} model={m.id} />}
+      {on && downloadable && <InlineModelDownload model={m} onDownloaded={onDownloaded} />}
+    </div>
+  )
+}
+
 function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRec, onChanged }: {
   /** The use case's chain as the panel read it, with the revision of exactly that chain. */
   useCase: string; chain: Revisioned<string[]>; allModels: AvailableModel[]
@@ -711,9 +822,6 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
   const [reindex, setReindex] = useState<import('../../lib/api').ReindexJob | null>(null)
-  // The `provider:id` ref currently being re-downloaded (truncated → Repair), so its
-  // button shows a pending state without blocking the rest of the list.
-  const [repairing, setRepairing] = useState<string | null>(null)
   const activeModels = chain.value
   const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', chain: false, icon: Boxes }
   // Filter to models declaring this capability, then DEDUPE by the `provider:id`
@@ -795,11 +903,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
 
   const setActive = async (op: Rebase<string[]>) => {
     if (useCase === 'embedding') {
-      const ok = await confirm({
-        title: 'Change the embedding model?',
-        body: 'Changing the embedding model will re-index ALL knowledge and memories. Existing embeddings are computed with the current model and are incompatible with a different one, so they must be regenerated.\n\nRe-indexing runs in the background and may take a while for large stores.',
-        confirmLabel: 'Change & re-index',
-      })
+      const ok = await confirm((op(activeModels) ?? activeModels).length === 0 ? EMBEDDING_CLEAR : EMBEDDING_CHANGE)
       if (!ok) return
     }
     setSaving(true)
@@ -823,21 +927,6 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
     const ref = activeModels[i]
     if (ref === undefined || i + dir < 0 || i + dir >= activeModels.length) return
     setActive(moveRef(ref, dir))
-  }
-  // Repair a truncated model: re-run the same download the "not downloaded" path uses
-  // (the runner overwrites the incomplete weights), then revalidate so the chip clears.
-  const repair = async (m: AvailableModel) => {
-    const ref = `${m.provider}:${m.id}`
-    setRepairing(ref)
-    try {
-      await api.startModelDownload(m.provider, m.id)
-      onChanged()
-    } catch (e) {
-      // No catch at all meant an unhandled rejection: the spinner stopped (the `finally` below) and
-      // NOTHING else happened, so a failed repair was indistinguishable from a click that did not
-      // register. Two siblings in this same file already report through `notify`.
-      notify(`Couldn't re-download ${m.id}: ${String((e as Error)?.message || e)}`, 'error')
-    } finally { setRepairing(null) }
   }
 
   return (
@@ -987,67 +1076,16 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
           ) : (
             <div className="-m-1 flex max-h-[300px] flex-col gap-0.5 overflow-y-auto p-1" style={{ opacity: saving ? 0.6 : 1 }}>
               {filtered.map((m) => {
-            const ref = `${m.provider}:${m.id}`
-            const on = activeModels.includes(ref)
-            // A LOCAL model (carries a `downloaded` flag) that's bound but NOT
-            // downloaded won't actually run — surface it so "configured" never
-            // silently means "inert" (e.g. after deleting a bound model's weights).
-            const notDownloaded = m.downloaded === false
-            // …and one this machine can fetch gets its Download right here (`InlineModelDownload`).
-            const downloadable = isDownloadable(m, localProviders)
-            // A local model carries a `downloaded` flag; a hosted/remote model does not. Only a
-            // present LOCAL model can run a real-inference selftest here.
-            const isLocal = m.downloaded !== undefined
-            // Gated pre-warn (LMMV §5): the server set `token_ready:false` on a gated row when no
-            // valid HF token is configured, so we warn BEFORE the user clicks Download. Absent =
-            // the cascade couldn't answer → no nag.
-            const needsToken = m.gated === true && m.token_ready === false
-            return (
-              // A COLUMN: the controls row plus, below it, the inline Test result for a downloaded
-              // local model. (A row, not a bare button, because the Repair/Test affordances are
-              // themselves buttons and can't nest inside the toggle.)
-              <div key={ref}
-                className="flex flex-col rounded-md transition-colors hover:bg-surface-high"
-                style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
-                <div className="flex items-center gap-2.5 pr-3">
-                  <button type="button" onClick={() => toggle(ref)} disabled={saving || conflicted}
-                    className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
-                    <span className="grid size-4 shrink-0 place-items-center rounded border"
-                      style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
-                      {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
-                    </span>
-                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono"
-                      title={modelLabel(m) !== m.name ? m.name : undefined}>{modelLabel(m)}</span>
-                  </button>
-                  <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
-                  {needsToken && (
-                    <StatusPill tone="warn" className="shrink-0 inline-flex items-center gap-1"
-                      role="img" aria-label="This gated model needs a valid HuggingFace token"
-                      title="This gated model needs a valid HuggingFace token — add one under “HuggingFace token” below before downloading.">
-                      <KeyRound size={9} /> needs token
-                    </StatusPill>
-                  )}
-                  {on && notDownloaded && (
-                    <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
-                      style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
-                      title={downloadable
-                        ? 'Bound but not on this machine yet — download it below to use it.'
-                        : 'Bound but not downloaded — download it in Providers to activate.'}>
-                      <Download size={9} /> not downloaded
-                    </span>
-                  )}
-                  <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
-                </div>
-                {isLocal && m.downloaded === true && <ModelTestButton provider={m.provider} model={m.id} />}
-                {/* Chosen but not on this machine: its download, right here. Finishing it is the
-                    binding taking effect — and for Embedding, the re-index the choice asked for,
-                    which could not start while the model was missing. */}
-                {on && downloadable && (
-                  <InlineModelDownload model={m}
-                    onDownloaded={() => { onChanged(); if (useCase === 'embedding') startReindex() }} />
-                )}
-              </div>
-            )
+                const ref = `${m.provider}:${m.id}`
+                // A chosen model's download finishing is the binding taking effect — and for
+                // Embedding, the re-index the choice asked for, which could not start while the
+                // model was missing.
+                const downloaded = () => { onChanged(); if (useCase === 'embedding') startReindex() }
+                return (
+                  <ModelRow key={ref} model={m} on={activeModels.includes(ref)}
+                    saving={saving} held={conflicted} localProviders={localProviders}
+                    onToggle={() => toggle(ref)} onChanged={onChanged} onDownloaded={downloaded} />
+                )
               })}
             </div>
           )}

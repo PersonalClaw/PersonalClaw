@@ -138,6 +138,11 @@ CHILD_ENV_BASE_NAMES: frozenset[str] = frozenset(
         # OUTAGE rather than a tightening. The gateway's own PYTHONPATH is trusted — a
         # trigger payload can never set it (``bash_provider.PROTECTED_ENV_NAMES``).
         "PYTHONPATH",
+        # Where Python keeps bytecode caches. A Python child has to write them where the gateway
+        # reads them: measured, a pip that installed an app package over another version wrote
+        # the new cache beside the source, the gateway read the old one from its prefix (same
+        # size, same second), and ran the old version's code. Protected from payloads the same.
+        "PYTHONPYCACHEPREFIX",
         # Locale + time. A script that prints non-ASCII or formats a date reads these, and
         # the failure without them is a mojibake/UnicodeEncodeError far from the cause.
         "LANG",
@@ -165,8 +170,8 @@ CHILD_ENV_BASE_NAMES: frozenset[str] = frozenset(
         # How the network works HERE. Absent on the host this was measured on, but a
         # corporate install has them, and a script that curls or pip-installs without them
         # fails SILENTLY (a hang, then a timeout) — the worst diagnostic shape there is.
-        # None are credential-shaped by the floor below, and all are inherited today, so
-        # keeping them widens nothing.
+        # A proxy address can carry a login (`http://ada:pw@proxy:3128`); a child gets the
+        # address without it (`_without_credentials`).
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "ALL_PROXY",
@@ -189,6 +194,74 @@ CHILD_ENV_BASE_NAMES: frozenset[str] = frozenset(
 )
 
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+#: A package installer's own settings, which the install it runs also gets (``build_child_env``'s
+#: ``installer=``). pip reads ``PIP_<OPTION>`` and npm ``npm_config_<key>`` from the environment:
+#: where the index or registry is, which certificate to trust, the cache, the timeouts. The rest of
+#: their configuration is in files under ``HOME``, which the base already passes.
+INSTALLER_ENV_PREFIXES: dict[str, tuple[str, ...]] = {
+    "pip": ("PIP_",),
+    "npm": ("npm_config_", "NPM_CONFIG_"),
+}
+
+#: Installer settings, by the part after the prefix (lower-cased), an install never takes from the
+#: environment: where it lands is the caller's to say (pip's ``target``/``prefix``/``root``/``user``
+#: and npm's ``global``/``location``/``prefix`` would move it). npm also keeps a registry login in
+#: the keys that start with ``_`` (``_auth``, ``_authToken``, ``_password``), which
+#: ``_installer_names`` leaves out with every other credential-named key.
+_INSTALLER_LOCATION_KEYS: dict[str, frozenset[str]] = {
+    "pip": frozenset({"target", "prefix", "root", "user"}),
+    "npm": frozenset({"global", "location", "prefix"}),
+}
+
+
+def _installer_names(installer: str, src: dict[str, str]) -> set[str]:
+    """The names in *src* that are *installer*'s own settings, less the ones it never gets."""
+    if not installer:
+        return set()
+    from personalclaw.apps.secret_fields import is_credential_field_name
+
+    prefixes = INSTALLER_ENV_PREFIXES[installer]
+    location = _INSTALLER_LOCATION_KEYS[installer]
+    out: set[str] = set()
+    for name in src:
+        prefix = next((p for p in prefixes if name.startswith(p)), None)
+        if prefix is None or not _ENV_NAME_RE.match(name):
+            continue
+        key = name[len(prefix) :].lower()
+        if key in location or key.startswith("_") or is_credential_field_name(key):
+            continue
+        out.add(name)
+    return out
+
+
+def _without_credentials(name: str, value: str) -> str:
+    """*value* with the user name and password taken out of any address in it."""
+    from personalclaw.security import strip_url_userinfo
+
+    kept = strip_url_userinfo(value)
+    if name.upper().endswith("PROXY") and "@" in kept and "://" not in kept:
+        # A proxy may be written without a scheme (`ada:pw@proxy:3128`), which curl, urllib and
+        # requests all read as an http:// address.
+        kept = kept.rsplit("@", 1)[1]
+    return kept
+
+
+#: ``(site, name)`` pairs already warned about, so a hook firing every minute says it once.
+_left_out_said: set[tuple[str, str]] = set()
+
+
+def _say_left_out(site: str, name: str) -> None:
+    if (site, name) in _left_out_said:
+        return
+    _left_out_said.add((site, name))
+    logger.warning(
+        "%s child env: %s is passed without the user name and password in its value. A child "
+        "that needs them must be granted %s BY NAME in sandbox.env_passthrough (config.json).",
+        site,
+        name,
+        name,
+    )
 
 
 def env_name_is_sensitive(name: str) -> bool:
@@ -244,13 +317,22 @@ def build_child_env(
     site: str,
     extra: "dict[str, str] | None" = None,
     source: "dict[str, str] | None" = None,
+    installer: str = "",
 ) -> dict[str, str]:
-    """The environment an agent-influenced child process runs with.
+    """The environment a child process runs with when it runs code PersonalClaw did not write:
+    an agent's command, a hook or cron script, an app's installs, hooks, backend, worker, engine
+    and MCP servers.
 
     Built from :data:`CHILD_ENV_BASE_NAMES` plus the operator's declared
     ``sandbox.env_passthrough`` names, never from a copy of the parent environment, then
     layered with *extra* — the values the CALL SITE computes (a hook's event/context, a
-    trigger's ``$variables``) rather than inherits.
+    trigger's ``$variables``) rather than inherits. *installer* (``"pip"`` or ``"npm"``) adds
+    that installer's own settings, for a child that installs packages
+    (:data:`INSTALLER_ENV_PREFIXES`).
+
+    An inherited value with a login in it (a proxy address, an index URL) is passed without it:
+    ``http://ada:pw@proxy:3128`` reaches the child as ``http://proxy:3128``. A name the operator
+    declared is passed as it is, because declaring it is the decision to hand it over.
 
     *site* names the spawn site in the logs. Withheld variable names are logged (names
     only, never values) so a script that breaks for want of one is diagnosable instead of a
@@ -258,14 +340,23 @@ def build_child_env(
     script.
     """
     src = dict(os.environ) if source is None else dict(source)
-    names = CHILD_ENV_BASE_NAMES | _declared_env_passthrough(site)
-    # The floor is enforced HERE, at the one point where a name becomes a variable in a
-    # child environment — not only where declarations are parsed. The parse-time check
-    # exists to WARN the operator which entry was ignored and why; this one is what makes
-    # the floor hold no matter how a name reached `names`.
-    env = {
-        name: src[name] for name in sorted(names) if name in src and not env_name_is_sensitive(name)
-    }
+    declared = _declared_env_passthrough(site)
+    names = CHILD_ENV_BASE_NAMES | declared | _installer_names(installer, src)
+    env: dict[str, str] = {}
+    for name in sorted(names):
+        # The floor is enforced HERE, at the one point where a name becomes a variable in a
+        # child environment — not only where declarations are parsed. The parse-time check
+        # exists to WARN the operator which entry was ignored and why; this one is what makes
+        # the floor hold no matter how a name reached `names`.
+        if name not in src or env_name_is_sensitive(name):
+            continue
+        value = src[name]
+        if name not in declared:
+            kept = _without_credentials(name, value)
+            if kept != value:
+                _say_left_out(site, name)
+            value = kept
+        env[name] = value
 
     withheld = sorted(name for name in src if name not in env)
     if withheld:
@@ -288,6 +379,56 @@ def build_child_env(
             continue
         env[name] = str(value)
     return env
+
+
+def credentials_left_out(*, installer: str = "") -> list[str]:
+    """The inherited variables :func:`build_child_env` passes without the login in their value."""
+    src = dict(os.environ)
+    declared = _declared_env_passthrough("install")
+    names = (CHILD_ENV_BASE_NAMES | _installer_names(installer, src)) - declared
+    return sorted(
+        name
+        for name in names
+        if name in src
+        and not env_name_is_sensitive(name)
+        and _without_credentials(name, src[name]) != src[name]
+    )
+
+
+#: How pip and npm say a proxy or an index wanted a login it was not given.
+_LOGIN_REFUSED_RE = re.compile(
+    r"Tunnel connection failed: 407|407 Proxy Authentication Required|HTTP error 40[13]\b|"
+    r"40[13] Client Error|\bE40[137]\b"
+)
+
+
+def login_left_out_note(output: str, *, installer: str) -> str:
+    """What an install failure says when a proxy or index asked for the login PersonalClaw kept
+    out of the install's environment, or ``""``.
+
+    Only when *output* shows that refusal AND an inherited value really lost a login: otherwise
+    the failure has another cause, and naming a proxy password would send the reader after it.
+    """
+    if not _LOGIN_REFUSED_RE.search(output):
+        return ""
+    names = credentials_left_out(installer=installer)
+    if not names:
+        return ""
+    if len(names) == 1:
+        (name,) = names
+        return (
+            f"The proxy or package index asked for a login, and PersonalClaw gives an install "
+            f"{name} without the user name and password in it. To pass it as it is, add {name} "
+            "under Settings → Security → Child environment passthrough: every process "
+            "PersonalClaw starts then gets it with the password."
+        )
+    listed = ", ".join(names[:-1]) + f" and {names[-1]}"
+    return (
+        f"The proxy or package index asked for a login, and PersonalClaw gives an install "
+        f"{listed} without the user names and passwords in them. To pass them as they are, add "
+        "their names under Settings → Security → Child environment passthrough: every process "
+        "PersonalClaw starts then gets them with the passwords."
+    )
 
 
 # ── Availability probes ──
@@ -534,6 +675,8 @@ def _build_launcher_script(sandbox_level: str = "strict") -> str:
     env_prefixes_json = json.dumps(env_prefixes)
     ssh_dir = json.dumps(os.path.join(home, ".ssh"))
     ssh_known_hosts = json.dumps(os.path.join(home, ".ssh", "known_hosts"))
+    # `repr`, not JSON: the pairs carry booleans, and the launcher is Python source.
+    owner_only_json = repr(sorted(set(_owner_only_targets())))
     strict_host_key_opt = (
         " -o StrictHostKeyChecking=accept-new" if _ssh_supports_accept_new() else ""
     )
@@ -551,6 +694,8 @@ _CLONE_NEWNS   = 0x00020000
 _MS_BIND       = 4096
 _MS_REC        = 16384
 _MS_PRIVATE    = 1 << 18
+_MS_RDONLY     = 1
+_MS_REMOUNT    = 32
 
 _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 _libc.mount.argtypes = [
@@ -570,6 +715,7 @@ ENV_PREFIXES = {env_prefixes_json}
 SSH_DIR = {ssh_dir}
 SSH_KNOWN_HOSTS = {ssh_known_hosts}
 HIDE_SSH = {hide_ssh}
+OWNER_ONLY = {owner_only_json}
 
 def main():
     argv = sys.argv[1:]
@@ -695,6 +841,21 @@ def main():
                 with open(os.path.join(SSH_DIR, "known_hosts"), "wb") as fh:
                     fh.write(kh_data)
 
+        # What runs as the owner, and what they allowed: bound onto itself read-only, so the
+        # kernel refuses a write whatever the command says (`owner_only`). A directory is made
+        # first when missing — a bind needs its target, and a `grants/` the command made itself
+        # would hold whatever yes it wrote there.
+        for target, is_dir in OWNER_ONLY:
+            if is_dir:
+                try:
+                    os.makedirs(target, mode=0o700, exist_ok=True)
+                except OSError:
+                    pass
+            if os.path.exists(target):
+                t = target.encode()
+                _libc.mount(t, t, None, _MS_BIND | _MS_REC, None)
+                _libc.mount(None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None)
+
         # Scrub sensitive env vars
         for key in list(os.environ):
             for prefix in ENV_PREFIXES:
@@ -816,7 +977,28 @@ def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
         )
         rules.append(f'(deny file-write* (subpath "{ssh_escaped}"))')
 
+    # What runs as the owner, and what they allowed (`owner_only`): never written from in here, at
+    # any level. The kernel refuses the write whatever the command says, which is what no reading
+    # of its text can promise. Both spellings of each path, because the home can sit behind a
+    # symlink (`/tmp` → `/private/tmp`) and the profile matches the path the write names.
+    for target, is_dir in _owner_only_targets():
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* ({"subpath" if is_dir else "literal"} "{escaped}"))')
+
     return _SEATBELT_PROFILE.format(deny_rules="\n".join(rules))
+
+
+def _owner_only_targets() -> list[tuple[str, bool]]:
+    """Every owner-only path (`owner_only`) as ``(path, is_dir)``, in each spelling it can be
+    written by — its absolute and its real path — for the sandbox to deny writes to."""
+    from personalclaw.owner_only import OWNER_ONLY_DIRS, owner_only_paths
+
+    out: list[tuple[str, bool]] = []
+    for path in owner_only_paths():
+        is_dir = path.name in OWNER_ONLY_DIRS
+        for spelling in dict.fromkeys((os.path.abspath(str(path)), os.path.realpath(str(path)))):
+            out.append((spelling, is_dir))
+    return out
 
 
 def sandbox_exec_argv(

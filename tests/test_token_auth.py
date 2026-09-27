@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import web
 
+from personalclaw.dashboard.session_store import POOL_CAPS, POOL_TOKEN
 from personalclaw.dashboard.token_auth import (
     LINK_WINDOW_SECS,
-    MAX_CONCURRENT_NONCES,
     MAX_SESSION_TTL_SECS,
     bind_token_ip,
     check_token_ip,
@@ -58,14 +58,26 @@ def test_token_url_safe_chars(user_id: str) -> None:
 # -- Valid duration parsing --
 
 
+# Returned as asked, never clamped to MAX_SESSION_TTL_SECS: a longer lifetime is the caller's to
+# refuse. Zero is not a lifetime.
 @pytest.mark.parametrize("n", [0, 1, 5, 24, 100, 9999])
 def test_parse_duration_hours(n: int) -> None:
-    assert parse_duration(f"{n}h") == min(n * 3600, MAX_SESSION_TTL_SECS)
+    assert parse_duration(f"{n}h") == (n * 3600 if n else None)
 
 
 @pytest.mark.parametrize("n", [0, 1, 5, 30, 60, 9999])
 def test_parse_duration_minutes(n: int) -> None:
-    assert parse_duration(f"{n}m") == min(n * 60, MAX_SESSION_TTL_SECS)
+    assert parse_duration(f"{n}m") == (n * 60 if n else None)
+
+
+@pytest.mark.parametrize("n", [1, 30, 90, 365])
+def test_parse_duration_days(n: int) -> None:
+    assert parse_duration(f"{n}d") == n * 86400
+
+
+def test_a_lifetime_over_the_limit_is_not_minted() -> None:
+    with pytest.raises(ValueError, match="at most 90 days"):
+        generate_token("user", ttl_seconds=MAX_SESSION_TTL_SECS + 1)
 
 
 # -- Invalid duration strings rejected --
@@ -79,7 +91,7 @@ def test_parse_duration_minutes(n: int) -> None:
         "m",
         "10",
         "10s",
-        "10d",
+        "10y",
         "abc",
         "-1h",
         "1.5h",
@@ -524,37 +536,40 @@ async def test_strict_path_non_loopback_still_hard_denied() -> None:
 # -- Nonce-based token invalidation --
 
 
-def test_oldest_token_evicted_after_max_concurrent() -> None:
-    """Token beyond MAX_CONCURRENT_NONCES evicts the oldest nonce."""
-    tokens = [generate_token("user1") for _ in range(MAX_CONCURRENT_NONCES + 1)]
+TOKEN_LIMIT = POOL_CAPS[POOL_TOKEN]
+
+
+def test_the_idlest_token_is_signed_out_past_the_token_limit() -> None:
+    """One token beyond the TOKEN limit signs out the least recently used token — and only
+    one, and only a token (the per-kind limits are tested in test_signed_in_devices.py)."""
+    tokens = [generate_token("user1") for _ in range(TOKEN_LIMIT + 1)]
     valid_old, _, reason = validate_token(tokens[0])
     valid_new, _, _ = validate_token(tokens[-1])
-    assert (
-        not valid_old
-    ), f"oldest token should be evicted after {MAX_CONCURRENT_NONCES + 1} generations"
-    assert reason == "token superseded"
+    assert not valid_old, f"the idlest token should go after {TOKEN_LIMIT + 1} mints"
+    assert reason == "signed out"
     assert valid_new, "most recently issued token should remain valid"
-    # Verify second-oldest survives (only one evicted)
+    # Verify second-oldest survives (only one signed out)
     valid_survivor, _, _ = validate_token(tokens[1])
-    assert valid_survivor, "second-oldest token should survive when only one is evicted"
+    assert valid_survivor, "second-oldest token should survive when only one is signed out"
 
 
 def test_concurrent_tokens_within_limit_all_valid() -> None:
-    """Up to MAX_CONCURRENT_NONCES tokens should all remain valid."""
-    tokens = [generate_token(f"user{i}") for i in range(MAX_CONCURRENT_NONCES)]
+    """Up to the token limit, every token stays valid."""
+    tokens = [generate_token(f"user{i}") for i in range(TOKEN_LIMIT)]
     for i, token in enumerate(tokens):
         valid, uid, _ = validate_token(token)
-        assert valid, f"token {i} should be valid within concurrent limit"
+        assert valid, f"token {i} should be valid within the limit"
         assert uid == f"user{i}"
 
 
 def test_token_rejected_when_no_nonces_registered() -> None:
-    """Verify deny-by-default: tokens rejected when no nonces are registered."""
+    """Verify deny-by-default: after signing everyone out, the token is refused — and the
+    refusal knows why, so the device that held it can be told."""
     token = generate_token("user1")
     revoke_all_sessions()
     valid, _, reason = validate_token(token)
     assert not valid
-    assert reason == "no active sessions"
+    assert reason == "signed out"
 
 
 def test_evict_expired_removes_old_entries() -> None:
@@ -588,10 +603,10 @@ def test_token_reusable_across_multiple_validations() -> None:
 
 
 def test_active_nonce_survives_eviction_via_refresh() -> None:
-    """Validating a token refreshes its nonce position, preventing eviction."""
+    """Using a token marks it recently seen, so the limit signs out an idle one instead."""
     old_token = generate_token("old_user")
     # Fill remaining slots
-    for i in range(MAX_CONCURRENT_NONCES - 1):
+    for i in range(TOKEN_LIMIT - 1):
         generate_token(f"filler{i}")
     # old_token is now the oldest — validate it to refresh its position
     valid, _, _ = validate_token(old_token, use_session_exp=True)

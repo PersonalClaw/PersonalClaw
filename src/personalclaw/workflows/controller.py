@@ -137,6 +137,7 @@ _ROOT_TO_RUN = {
     InstanceState.ESCALATED: RunStatus.ESCALATED,
     InstanceState.CANCELLED: RunStatus.CANCELLED,
     InstanceState.DISCARDED: RunStatus.CANCELLED,
+    InstanceState.DECLINED: RunStatus.DECLINED,
 }
 
 
@@ -335,8 +336,11 @@ class RunController:
         self._effects: dict[str, list[EffectRecord]] = effect_history(run.id)
         #: Validated batches awaiting the tick loop's drain point. A queue rather than
         #: direct application: a handler applying a mutation mid-launch would make two
-        #: writers of run state.
-        self._pending_mutations: list[tuple[mutations.BatchResult, str]] = []
+        #: writers of run state. Mirrored on disk (`mid_flight.queue_mutation`), and
+        #: reloaded here, so an edit queued on a paused run survives a restart.
+        self._pending_mutations: list[tuple[mutations.BatchResult, str]] = (
+            mid_flight.reload_mutations(self)
+        )
         #: instance path → what a person answered when that step parked on them, held for the ONE
         #: dispatch the answer starts (`gate_answers.settle_parked_step` writes it,
         #: `step_dispatch.execute` pops it into `ActionContext.answer`). In memory, like the
@@ -677,6 +681,16 @@ class RunController:
 
         self._wake_due_nodes()
 
+        # A gate that did not pass ENDS the run: a person's Deny ends it `declined`, an approval
+        # nobody gave or a check that failed ends it `failed`, a judge that would not rule ends it
+        # `escalated`. Read after the deadlines above resolve and BEFORE the frontier, so nothing
+        # after the gate is ever scheduled — the frontier alone would run it, since `needs` means
+        # after, not after-success.
+        stopped = gate_answers.stopping_gate(self)
+        if stopped is not None:
+            await gate_answers.end_at_gate(self, stopped)
+            return True
+
         # A dispatched stage's subagent may have finished since the last step. Settled BEFORE
         # the watcher reap for the same reason the reap precedes the frontier: a stage
         # finishing IS the "accompanied work complete" a watcher is reaped for, so settling it
@@ -827,8 +841,11 @@ class RunController:
             node = dict(walk(self.root)).get(spec_path(cont.instance_path))
             self._allow_memory.remember(node.config if node else {}, cont.node_id)
         inst.wake_at = 0.0
+        who = gate_answers.decliner(responder, channel)
         if ask.rerun:
-            gate_answers.settle_parked_step(self, cont, inst, approved=approved, answer=filled)
+            gate_answers.settle_parked_step(
+                self, cont, inst, approved=approved, answer=filled, who=who
+            )
         elif approved:
             inst.state = InstanceState.DONE
             ref, preview = self.journal.store_output(
@@ -839,23 +856,18 @@ class RunController:
                 self._outputs[cont.node_id] = preview
             inst.completed_at = now_stamp()
         else:
-            inst.state = InstanceState.FAILED
-            inst.failure = Failure(
-                failure_class=FailureClass.USER,
-                cause_plain="the gate was denied",
-                remediation="adjust the work the gate rejects, then re-run from this node",
-                terminal_reason="denied",
-            )
-            inst.completed_at = now_stamp()
+            # Declined, not failed: the next `_step` ends the run at this gate
+            # (`gate_answers.end_at_gate`), and nothing after it runs.
+            gate_answers.decline(self, cont.instance_path, inst, who=who, record={"answer": filled})
         # The resolution half. AFTER the claim is won and the epoch verified, so the ledger records
         # answers that actually applied — emitting before the claim would log an approval for a race
         # the caller lost, and the audit would show two people approving one gate.
         self.publish_confirmation_resolved(
             cont.instance_path,
             cont.node_id,
-            confirmation_id=gate_answers.stable_confirmation_id(
-                self.run.id, cont.node_id or cont.instance_path, cont.epoch
-            ),
+            # The id this ask was minted with — never one derived again here, which a gate that
+            # asked twice in one epoch would have shared with its earlier ask.
+            confirmation_id=cont.confirmation_id,
             verb="approve" if approved else "reject",
             approved=approved,
             resolved_by=responder or channel or "dashboard",
@@ -987,7 +999,11 @@ class RunController:
                 "preview": mutations.CascadePreview().to_dict(),
             }
 
-        result = mutations.prepare_batch(raw_ops, self.spec, self.instances, effects=self._effects)
+        # Against the spec the queue will leave, not the one the run has now: an edit made while
+        # others wait (a paused run) applies after them, so it must be valid there.
+        result = mutations.prepare_batch(
+            raw_ops, mid_flight.projected_spec(self), self.instances, effects=self._effects
+        )
         body = result.to_dict()
         if not result.ok:
             return body
@@ -1007,16 +1023,20 @@ class RunController:
                 }
             ]
             return body
-        self._pending_mutations.append((result, actor))
+        mid_flight.queue_mutation(self, result, actor)
         body["queued"] = True
         if self.run.status == RunStatus.NEEDS_INPUT:
             self._resume_loop()
         return body
 
-    def _skip(self, path: str) -> None:
+    def _skip(self, path: str, *, reason: str = "") -> None:
         """Mark a whole subtree skipped. The subtree matters: skipping only the case root
         would leave its children pending, and a derived container state would then read
-        the branch as unfinished forever."""
+        the branch as unfinished forever.
+
+        `reason` is the sentence the run page shows under each skipped row, for a skip a reader
+        would otherwise have to reconstruct — "not run: “Approve” was declined". An untaken
+        branch needs none: its sibling case says why."""
         node = dict(walk(self.root)).get(spec_path(path))
         paths = [path]
         if node is not None:
@@ -1029,8 +1049,10 @@ class RunController:
                 continue
             inst.state = InstanceState.SKIPPED
             inst.completed_at = now_stamp()
+            if reason:
+                inst.degraded_reason = reason
             self.journal.step_skipped(
-                target, node.id if node else "", epoch=inst.epoch, actor="engine"
+                target, node.id if node else "", epoch=inst.epoch, actor="engine", reason=reason
             )
         self._persist_state()
 
@@ -1541,6 +1563,9 @@ class RunController:
                 # the same record. Not bound downstream: WAITING is not a success state.
                 inst.output_ref = self.journal.store_output(item.path, result.output)[0]
                 inst.degraded_reason = result.degraded_reason
+            # THIS step's ask, on the step: the one its continuation is minted with. Written on
+            # every wait, so a step waiting again never asks its previous question.
+            inst.ask = dict(result.ask or {})
             if result.ask:
                 self.run.attention = dict(result.ask)
                 self._publish(
@@ -1616,6 +1641,7 @@ class RunController:
                 inst.state = InstanceState.WAITING
                 inst.completed_at = None
                 ask.setdefault("node_id", item.node.id)
+                inst.ask = dict(ask)
                 self.run.attention = ask
                 self._publish(
                     "workflow_attention",
@@ -1897,13 +1923,28 @@ class RunController:
                 )
                 continue
             # A gate that timed out. Unattended runs must surface this rather than wedge
-            # forever, and it is NOT a pass — nobody approved anything.
-            failure = Failure(
-                failure_class=FailureClass.TIMEOUT,
-                cause_plain="gate timed out with no answer",
-                remediation="answer the gate from the run view, or raise its timeout_secs",
-                terminal_reason="timed_out_unattended",
-            )
+            # forever, and it is NOT a pass — nobody approved anything. An APPROVAL
+            # nobody gave then ends the run at the next step (`gate_answers.end_at_gate`), so the
+            # sentence names how long it waited: it is what the run's own ending will say.
+            if gate_answers.is_approval_gate(node):
+                from personalclaw.workflows.human_input import gate_timeout_secs, timeout_phrase
+
+                waited = gate_timeout_secs(
+                    (node.config if node else None) or {}, mode=self.run.mode
+                )
+                failure = Failure(
+                    failure_class=FailureClass.TIMEOUT,
+                    cause_plain=f"no answer within {timeout_phrase(waited)}",
+                    remediation="fork the run to ask again, or raise the gate's timeout_secs",
+                    terminal_reason="timed_out_unattended",
+                )
+            else:
+                failure = Failure(
+                    failure_class=FailureClass.TIMEOUT,
+                    cause_plain="gate timed out with no answer",
+                    remediation="answer the gate from the run view, or raise its timeout_secs",
+                    terminal_reason="timed_out_unattended",
+                )
             inst.state = InstanceState.FAILED
             inst.failure = failure
             inst.completed_at = now_stamp()
@@ -1959,7 +2000,9 @@ class RunController:
     def _save_run(self) -> None:
         store.save(self.run)
 
-    async def _cancel_inflight(self) -> None:
+    async def _cancel_inflight(self, ending: RunStatus = RunStatus.CANCELLED) -> None:
+        """Stop every step still in flight because the run is ending as `ending` — a cancel, or a
+        decline (`gate_answers.end_at_gate`). The ending names what a stopped subagent is told."""
         for entry in list(self._inflight.values()):
             entry.task.cancel()
             inst = self._instance(entry.ready.path)
@@ -1983,7 +2026,7 @@ class RunController:
         # `SubagentManager.cancel` cancels the waiting task, whose `finally` ends the pending
         # approval as `cancelled`, and the subagent's error names the run's ending.
         nodes = dict(walk(self.root))
-        why = f"Cancelled: the workflow run {run_ending(RunStatus.CANCELLED)}"
+        why = f"Cancelled: the workflow run {run_ending(ending)}"
         for path in await stage_settlement.stop_dispatched_stages(self, reason=why):
             inst = self._instance(path)
             inst.state = InstanceState.CANCELLED
@@ -2041,12 +2084,7 @@ class RunController:
         """Write the run's terminal status. The single terminal writer (WF2-R10)."""
         self.run.status = status
         self.run.error_message = error
-        if status in (
-            RunStatus.COMPLETE,
-            RunStatus.FAILED,
-            RunStatus.CANCELLED,
-            RunStatus.ESCALATED,
-        ):
+        if status in TERMINAL_RUN_STATUSES:
             self.run.completed_at = now_stamp()
             if self.run.started_at:
                 self.run.elapsed_seconds = max(
@@ -2055,7 +2093,7 @@ class RunController:
         if status in TERMINAL_RUN_STATUSES:
             # An ended run's waits end with it — the gate a cancel caught stops reading
             # `waiting` and its token stops being offered — BEFORE the state below is persisted.
-            gate_answers.close_waits(self)
+            gate_answers.close_waits(self, status)
         totals = journal_mod.run_totals(self.run.id)
         self._inherit_ledger_tokens(totals)
         self._save_run()
@@ -2070,8 +2108,10 @@ class RunController:
             store.clear_cancel(self.run.id)
         if status in TERMINAL_RUN_STATUSES:
             # An ended run has nothing to resume, so a pause intent it carried (cancelled while
-            # paused) is not left behind to read as "paused" by anything that checks it.
+            # paused) is not left behind to read as "paused" by anything that checks it — nor an
+            # edit it queued, which a finished run never applies.
             store.clear_pause(self.run.id)
+            store.write_pending_mutations(self.run.id, [])
             # Give the resources back. A lease that outlives its run strands the resource
             # until the TTL runs down, and the next run would sit held by a holder that no longer
             # exists — the one failure mode a named holder is supposed to make impossible.
@@ -2177,7 +2217,10 @@ class RunController:
         verb: str,
         approved: bool,
         resolved_by: str = "",
+        reason: str = "",
     ) -> None:
+        # A withdrawn ask is closed, not answered (`gate_answers.WITHDRAWN`).
+        answered = verb != gate_answers.WITHDRAWN
         self.journal.confirmation_resolved(
             path,
             node_id,
@@ -2185,6 +2228,8 @@ class RunController:
             verb=verb,
             approved=approved,
             resolved_by=resolved_by,
+            answered=answered,
+            reason=reason,
         )
         self._publish(
             "workflow_confirmation_resolved",
@@ -2194,6 +2239,7 @@ class RunController:
                 "confirmation_id": confirmation_id,
                 "verb": verb,
                 "approved": bool(approved),
+                "answered": answered,
             },
         )
 
@@ -2248,6 +2294,11 @@ class RunController:
         * `epoch` — the run's current epoch, so an event from a superseded epoch (a rewind
           landed while it was in flight) is DROPPED instead of resurrecting stale state.
           A payload that already carries a node-specific epoch keeps it.
+
+        The payload is masked through the journal's redactor on the way out. An event is the run
+        page's read of the moment the journal records masked, and the page's first load is masked
+        too (`handlers.shown_status`), so an error, an ask or an output preview arriving live must
+        not show what a reload would hide.
         """
         fn = self.services.publish
         if fn is None:
@@ -2258,7 +2309,7 @@ class RunController:
             "event_id": f"{self.run.id}-evt-{self._event_seq}",
             "seq": self._event_seq,
             "epoch": self._run_epoch(),
-            **payload,
+            **journal_mod.redact(payload),
         }
         try:
             fn(event, body)

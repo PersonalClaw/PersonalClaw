@@ -17,6 +17,7 @@ const { API } = vi.hoisted(() => ({
     schedules: vi.fn(() => Promise.resolve({ jobs: [] })),
     hooks: vi.fn(() => Promise.resolve([])),
     storeTriggers: vi.fn(() => Promise.resolve([] as Row[])),
+    callbacks: vi.fn(() => Promise.resolve([])),
     triggerReview: vi.fn(() => Promise.resolve([])),
     actionProviders: vi.fn(() => Promise.resolve([])),
     autonomyLadder: vi.fn(() => Promise.reject(new Error('no ladder in this test'))),

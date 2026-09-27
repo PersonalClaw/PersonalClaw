@@ -29,6 +29,7 @@ const uLoops = vi.fn()
 const workflowRuns = vi.fn()
 const resolveApproval = vi.fn()
 const resumeWorkflowRun = vi.fn()
+const answerTriggerPark = vi.fn()
 
 vi.mock('../../lib/api', async (orig) => ({
   // Keep the real module: `ApiError` is what a failed call throws and the failure copy renders
@@ -42,6 +43,7 @@ vi.mock('../../lib/api', async (orig) => ({
     workflowRuns: (...a: unknown[]) => workflowRuns(...a),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
+    answerTriggerPark: (...a: unknown[]) => answerTriggerPark(...a),
   },
 }))
 
@@ -264,6 +266,97 @@ describe('answering a pending question', () => {
     // run id, so "open the run" navigates there, named after its subject for a link list.
     const link = screen.getByRole('link', { name: /^Open the run:/ })
     expect(link.getAttribute('href')).toMatch(/^#\/workflows\/runs\//)
+  })
+})
+
+// ── An approval is a yes or a no, answered from the card ────────────────────────────────────
+//
+// 🔴 Red on main: an approval's card carries no choices — the run takes a boolean for it — so the
+// card said "no preset options — open the run" and offered no button at all. That is the card of
+// a step that stopped at a sign-in page, the one a person most needs to answer from here.
+
+/** A step that stopped for you — browse at a sign-in page — as its Inbox row carries it. */
+const parkItem = (): InboxItem => ({
+  ...questionItem([]),
+  id: 'inbox-park',
+  message: 'Sign in to example.com, then confirm — the browse run resumes with that session.',
+  refs: {
+    workflow: 'run-77',
+    workflow_node: 'signin',
+    resume_token: 'tok-9',
+    needs_input: {
+      run_id: 'run-77', node_id: 'signin', block_kind: 'approval',
+      blocker: 'Sign in to example.com, then confirm — the browse run resumes with that session.',
+      choices: [], resume_token: 'tok-9', actionable: true,
+    },
+  },
+})
+
+/** The same question raised by a TRIGGER's action (`triggers.parks`): it has no run. */
+const triggerParkItem = (): InboxItem => ({
+  ...questionItem([]),
+  id: 'inbox-trigger',
+  message: 'Sign in to example.com, then confirm — the browse run resumes with that session.',
+  refs: {
+    trigger: 'balance',
+    trigger_name: 'Check my balance',
+    trigger_park: 'balance',
+    resume_token: 'tok-t',
+    needs_input: {
+      run_id: '', node_id: '', block_kind: 'approval',
+      blocker: 'Sign in to example.com, then confirm — the browse run resumes with that session.',
+      choices: [], resume_token: 'tok-t', actionable: true,
+    },
+  },
+})
+
+describe('answering an approval from its card', () => {
+  it('offers Approve and Deny, and Deny sends the run a no', async () => {
+    resumeWorkflowRun.mockResolvedValue({ ok: true, approved: false })
+    toLanes.mockReturnValue(lanes({ 'your-turn': [questionCard(parkItem())] }))
+    render(<MissionControl />)
+
+    expect(await screen.findByRole('button', { name: /^Approve .*loop-worker/ })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /^Deny .*loop-worker/ }))
+
+    expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: false, resume_token: 'tok-9' })
+    expect(await screen.findByRole('status')).toHaveTextContent('Declined — the run ends here.')
+    expect(screen.queryByText(/no preset options/)).toBeNull()
+  })
+
+  it('Approve sends the run a yes — the boolean, never a prose choice', async () => {
+    resumeWorkflowRun.mockResolvedValue({ ok: true, approved: true })
+    toLanes.mockReturnValue(lanes({ 'your-turn': [questionCard(parkItem())] }))
+    render(<MissionControl />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve/ }))
+
+    expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: true, resume_token: 'tok-9' })
+    expect(await screen.findByRole('status')).toHaveTextContent('Approved — the run is moving again.')
+  })
+
+  it("a trigger's question is answered at the trigger, not at a run it does not have", async () => {
+    answerTriggerPark.mockResolvedValue({ ok: true, approved: true, waiting: false })
+    toLanes.mockReturnValue(lanes({ 'your-turn': [questionCard(triggerParkItem())] }))
+    render(<MissionControl />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve/ }))
+
+    expect(answerTriggerPark).toHaveBeenCalledWith('balance', { resume_token: 'tok-t', answer: true })
+    expect(resumeWorkflowRun).not.toHaveBeenCalled()
+    expect(await screen.findByRole('status')).toHaveTextContent('Approved — it is running again.')
+  })
+
+  it("a refused trigger answer says why and keeps the question answerable", async () => {
+    answerTriggerPark.mockResolvedValue({ ok: false, refused: 'incident mode is active' })
+    toLanes.mockReturnValue(lanes({ 'your-turn': [questionCard(triggerParkItem())] }))
+    render(<MissionControl />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('incident mode is active')
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('button', { name: /^Approve/ })).toBeTruthy()
   })
 })
 

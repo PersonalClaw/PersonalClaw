@@ -45,8 +45,9 @@ That URL is also what a QR code encodes, so scanning and typing are the same mec
 is just kinder to your thumbs.
 
 **Use a fresh token for each device.** A token becomes bound to the first address that uses
-it, so a link you already opened on the machine will be refused from the phone
-(`IP mismatch`). Run `personalclaw token` again and open *that* link on the phone first.
+it, so a link you already opened on the machine will be refused from the phone, which is told
+the link "has already signed in another device". Run `personalclaw token` again and open *that*
+link on the phone first.
 
 **A durable session instead of a long URL.** A token link is fine once; for a device you will
 use every day, pair it. On the machine:
@@ -166,7 +167,7 @@ the same fallback: **type the address**.
 | Settings says *"no local-network address"* | The machine has no LAN address to publish — usually no network, or an interface that is up but unaddressed. |
 | `personalclaw discover` finds nothing | Discovery may be off on the other machine; or the network filters multicast. Guest and corporate Wi-Fi very often do, and client isolation blocks device-to-device traffic entirely. Nothing is broken — type the address. |
 | It worked, then stopped after a restart | Give it a few seconds. A stopping gateway withdraws its record immediately, and a starting one re-announces a small burst. |
-| The URL loads but a token is refused with `IP mismatch` | That token was already used from another address. Mint a fresh one with `personalclaw token` and open it on this device first. |
+| The page says the link "has already signed in another device" | That token was already used from another address. Mint a fresh one with `personalclaw token` and open it on this device first. |
 | `CSRF check failed: request origin not allowed` while redeeming a code | See the rough edge above — reach the gateway by hostname for that step. |
 
 ---
@@ -247,10 +248,10 @@ origin.** This is not a preference. The served dashboard is structurally incapab
 it:
 
 - **The dashboard is per-gateway by construction.** A shell loads the SPA *from* a gateway:
-  `desktop/main.js:1260` is a bare `wc.loadURL(localGatewayUrl)`, and `navigateToEndpoint` does the
+  `desktop/main.js:1327` is a bare `wc.loadURL(localGatewayUrl)`, and `navigateToEndpoint` does the
   same with a paired gateway's origin. One shell window is looking at one gateway at a time,
   always. (`localGatewayUrl` is resolved from the spawned gateway's READY line at
-  `desktop/main.js:201`; `activeUrl` is what the WebView is currently pointed at. They are separate
+  `desktop/main.js:204`; `activeUrl` is what the WebView is currently pointed at. They are separate
   variables on purpose — see [What the desktop shell narrows](desktop.md#connecting-to-a-gateway-you-did-not-start).)
 - **The SPA has no base-URL concept at all.** Its API client speaks root-relative `/api` paths
   on the same origin (`web/src/lib/api.ts:1-3`), and the WebSocket is built from
@@ -307,23 +308,26 @@ What must **not** happen, in any wrapper:
 ### Device sessions are per-gateway and never federate
 
 A device session is an **httponly cookie scoped to that gateway's own origin**
-(`pc_token_<port>`, `dashboard/handlers/auth.py:237-245`) — a browser sends it back only to the
-gateway that set it, which is why sessions never federate. There is
+(`pc_token_<port>`, set by `_set_session_cookie` in `dashboard/handlers/auth.py`) — a browser
+sends it back only to the gateway that set it, which is why sessions never federate. There is
 no shared identity across gateways, and no gateway knows the others exist.
 
 The consequence a wrapper must get right: **revoking a device session breaks exactly one
 entry.** The other endpoints keep working, untouched. A shell that reacts to one endpoint's
-`401` by clearing its whole registry has turned one revocation into a full re-pair of every
-gateway. Surface it as "this gateway needs pairing again" on that row, and leave the rest
-alone.
+refusal by clearing its whole registry has turned one revocation into a full re-pair of every
+gateway. Surface it on that row, and leave the rest alone. The gateway's refusal carries
+`X-Auth-Required: true` and a sentence saying why and how to sign back in (`error.message`, see
+[API overview](../reference/api-overview.md)) — show that rather than a wording of your own. The
+desktop app watches its page's own responses for that header and puts the gateway's sentence on
+the row (`desktop/connectMode.js::sessionRefusal`).
 
 **Carry a device session as the session cookie — never through the `?token=` query parameter.**
 This one is measured, not stylistic:
 
 - The query-param path **binds** the token to the first client IP it sees
   (`bind_token_ip` in `dashboard/token_auth.py`, called by `token_auth_middleware` on the
-  first query-param use) and then denies on mismatch with `IP mismatch` (`check_token_ip`,
-  enforced by the same middleware).
+  first query-param use) and then refuses on mismatch — `session_required`, reason `link_used`
+  (`check_token_ip`, enforced by the same middleware).
 - Cookie-borne requests skip that check entirely — *"the credential itself is the proof, and
   IP validation behind a proxy is unreliable"* (`token_auth_middleware`). So does a session
   carried in an `Authorization: Bearer` header: the binding belongs to the entry link alone.
@@ -454,7 +458,7 @@ real TLS tunnel being killed under a live session
   check_token_ip(...)`), so the same session still authenticates after a tunnel restart has moved
   your apparent address — which is exactly what happens when a phone changes network. This is the
   concrete reason the guide forbids `?token=` for a companion: that path *is* IP-bound, so a shell
-  that authenticates with it will find each reconnect refused with an IP mismatch.
+  that authenticates with it will find each reconnect refused as a link already used elsewhere.
 
 ### No hub, ever
 

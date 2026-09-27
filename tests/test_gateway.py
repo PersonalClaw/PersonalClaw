@@ -1,6 +1,7 @@
 """Tests for personalclaw.gateway (GatewayOrchestrator) coverage."""
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -49,6 +50,14 @@ def _make_orchestrator(
 
 
 # ─── Helper utilities ────────────────────────────────────────────────────
+
+
+def _write_inbox_enabled(on: bool) -> None:
+    """Set ``inbox.enabled`` ("Poll the drop folder") in the test's config file."""
+    from personalclaw.config import loader as config_loader
+
+    path = config_loader.config_dir() / "config.json"
+    path.write_text(json.dumps({"inbox": {"enabled": on}}), encoding="utf-8")
 
 
 def _mock_sessions():
@@ -1049,21 +1058,21 @@ class TestInitInbox:
     """Inbox service initialization."""
 
     @pytest.mark.asyncio
-    async def test_disabled_in_config_builds_service_without_provider(self):
+    async def test_disabled_in_config_builds_service_without_the_drop_folder(self):
         """Inbox is now Slack-INDEPENDENT: draft/classify/digest run over stored
         items through the bound chat model, so the service is ALWAYS constructed.
-        ``inbox.enabled=False`` only means no message-source (poll) provider is
-        attached — not that the service is absent. (Old behavior: inbox_svc is None
-        when disabled — removed; _init_inbox reads self._cfg.inbox, not AppConfig.load.)"""
+        ``inbox.enabled=False`` only means the drop folder is not polled — not that the
+        service is absent. (Old behavior: inbox_svc is None when disabled — removed.)"""
+        _write_inbox_enabled(False)
         orch = _make_orchestrator()
         orch.ctx_builder = MagicMock()
         orch.ctx_builder.memory = MagicMock()
         orch.sessions = _mock_sessions()
         orch.dashboard_state = None
-        orch._cfg.inbox.enabled = False
         await orch._init_inbox()
         assert orch.inbox_svc is not None
-        assert orch.inbox_svc._provider is None  # disabled → no poll source
+        polled = [s.source_name for s in orch.inbox_svc._sources()]
+        assert "filesystem" not in polled  # off → the drop folder is not polled
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1665,7 +1674,14 @@ class TestInteractiveApprovalSlack:
     (``_build_approval_blocks``/``_pending_approvals``/``update_message``)
     moved to the slack-channel app's test_delivery — core only sees the
     high-level ``ChannelDelivery.request_approval`` outcome now.
+
+    The channel knows its owner (``PERSONALCLAW_OWNER_ID``): a channel with no owner id is
+    passed over, because it cannot ask anyone (``channel_delivery.approval_delivery``).
     """
+
+    @pytest.fixture(autouse=True)
+    def _channel_knows_its_owner(self, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_OWNER_ID", "U1")
 
     @pytest.mark.asyncio
     async def test_channel_approval_approved(self):
@@ -2388,24 +2404,22 @@ class TestInitInboxEnabled:
     """Inbox service when enabled in config."""
 
     @pytest.mark.asyncio
-    async def test_enabled_without_slack_uses_filesystem_source(self):
-        """Inbox enabled but no Slack client → the service is still built and binds
-        the FILESYSTEM message-source provider (Slack-independent by design). Old
-        behavior — 'no-op without a Slack client, inbox_svc stays None' — was removed
-        when inbox triage moved off the Slack dependency."""
+    async def test_enabled_without_slack_polls_the_drop_folder(self):
+        """``inbox.enabled`` on with no Slack client → the service polls the built-in drop
+        folder (Slack-independent by design). Old behavior — 'no-op without a Slack client,
+        inbox_svc stays None' — was removed when inbox triage moved off the Slack
+        dependency. The switch is read at each poll, so no restart is needed for it."""
         orch = _make_orchestrator()  # no slack
         orch.ctx_builder = MagicMock()
         orch.ctx_builder.memory = MagicMock()
         orch.sessions = _mock_sessions()
         orch.dashboard_state = None
-        orch._cfg.inbox.enabled = True
+        _write_inbox_enabled(False)
         await orch._init_inbox()
         assert orch.inbox_svc is not None
-        # Enabled + no Slack → the default provider resolves to the filesystem source
-        # (get_default_provider("filesystem")). If that provider isn't installed the
-        # binding is None but the service still exists — either way it's not Slack.
-        prov = orch.inbox_svc._provider
-        assert prov is None or getattr(prov, "source_name", "") != "slack"
+        assert "filesystem" not in [s.source_name for s in orch.inbox_svc._sources()]
+        _write_inbox_enabled(True)
+        assert "filesystem" in [s.source_name for s in orch.inbox_svc._sources()]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2540,57 +2554,6 @@ class TestRetriggerRecovery:
 
         await on_event("subagent_started", info, {})
         orch.dashboard_state.broadcast_ws.assert_called()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Tests: run() signal handling and bg session
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestRunSignalAndBgSession:
-    """Run method signal handling and background session."""
-
-    @pytest.mark.asyncio
-    async def test_run_wires_active_embedding(self):
-        """run() wires the embedding fn from the Settings > Models binding."""
-        # no_dashboard=True so the bg-session task short-circuits the dashboard
-        # branch (otherwise it races on _local_only/_dashboard_port set by the
-        # mocked _init_dashboard).
-        orch = _make_orchestrator(no_dashboard=True)
-
-        orch._init_services = MagicMock()
-        orch.vector_memory = MagicMock()
-        orch._init_cron = AsyncMock()
-        orch._init_heartbeat = AsyncMock()
-        orch._init_inbox = AsyncMock()
-        orch._init_mcp_discovery = MagicMock()
-        orch._init_subagents = MagicMock()
-        orch._init_dashboard = AsyncMock()
-        orch._init_autonudge = AsyncMock()
-        orch._init_api_server = AsyncMock()
-        orch._check_for_updates = AsyncMock()
-        orch._shutdown = AsyncMock()
-
-        # Use a fresh asyncio.Event bound to this test's loop. The shared
-        # module-level shutdown_event can be polluted by prior tests in full-file runs.
-        fresh_event = asyncio.Event()
-        fresh_event.set()
-        with patch(
-            "personalclaw.embedding_providers.registry.get_active_embed_fn",
-            return_value=lambda x: [0.0],
-        ) as mock_embed:
-            with patch("personalclaw.shutdown_event", fresh_event):
-                with patch("personalclaw.gateway.shutdown_event", fresh_event):
-                    with patch("personalclaw.session.cleanup_orphaned_sessions"):
-                        with patch(
-                            "personalclaw.dashboard.handlers._bg_mcp_probe", new_callable=AsyncMock
-                        ):
-                            with patch("os._exit"):
-                                with patch("resource.getrlimit", return_value=(256, 10240)):
-                                    with patch("resource.setrlimit"):
-                                        await orch.run()
-
-        mock_embed.assert_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

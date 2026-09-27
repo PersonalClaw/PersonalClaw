@@ -514,20 +514,23 @@ def test_after_an_import_the_history_is_listed_and_kept_searchable_without_rerea
     ][:300]
     assert run_import(results, fingerprints=picks).counts()["imported"] == 300
 
+    # As a new process finds them: nothing of the listing kept, in memory or on disk.
+    history._HEADS.clear()
+    (history._sessions_dir().parent / history.LISTING_FILE).unlink(missing_ok=True)
     counted: list[int] = []
     reread: list[str] = []
-    count_lines, read_messages = history._count_message_lines, history.ConversationLog.read_messages
+    message_line, transcript_text = history._message_line, session_search._transcript_text
 
-    def counting(lines):
+    def counting(raw):
         counted.append(1)
-        return count_lines(lines)
+        return message_line(raw)
 
-    def reading(self, key, *args, **kwargs):
-        reread.append(key)
-        return read_messages(self, key, *args, **kwargs)
+    def reading(path):
+        reread.append(path.name)
+        return transcript_text(path)
 
-    monkeypatch.setattr(history, "_count_message_lines", counting)
-    monkeypatch.setattr(history.ConversationLog, "read_messages", reading)
+    monkeypatch.setattr(history, "_message_line", counting)
+    monkeypatch.setattr(session_search, "_transcript_text", reading)
     listed = [
         s
         for s in history.ConversationLog().list_sessions()
@@ -535,14 +538,14 @@ def test_after_an_import_the_history_is_listed_and_kept_searchable_without_rerea
     ]
     assert len(listed) == 300 and {s["messages"] for s in listed} == {2}
     assert counted == [], "the list counted lines instead of reading the recorded count"
-    assert session_search.reindex_all(limit=200) == 0
+    assert session_search.reindex_all() == 0
     assert reread == [], f"the index pass re-read {len(reread)} unchanged transcripts"
 
     # The pass still sees a change, and reads only what changed.
     changed = history.ConversationLog()
     changed.append(listed[0]["key"], "user", "and the zebra migration?")
-    assert session_search.reindex_all(limit=200) == 1
-    assert set(reread) == {listed[0]["key"]}
+    assert session_search.reindex_all() == 1
+    assert reread == [f"{listed[0]['key']}.jsonl"]
     assert [r["key"] for r in session_search.search_sessions("zebra")] == [listed[0]["key"]]
 
 

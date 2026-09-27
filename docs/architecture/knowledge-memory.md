@@ -147,6 +147,30 @@ item vector).
   `~/.personalclaw/memory.faiss` (optional — degrades to FTS5 without
   embeddings), time-decay retrieval, and config-threaded episodic knobs
   (`episodic_dedup_threshold`, `episodic_max_results` in `config/loader.py`).
+  - **It embeds with the model bound now.** Every store — the main `memory.db` and
+    each partition's — embeds through `embedding_providers/registry.py::bound_embedding()`,
+    which reads the `embedding` binding at each call and rebuilds when it, or the
+    instance it embeds through, changes. A rebind, a clear or an edit in Settings →
+    Providers reaches every store at its next use, without a restart; nothing wires an
+    embedding function into a store (a test pins one by assigning `embed_fn`).
+  - **One model's vectors are compared, never two.** Each stored vector records the
+    model that wrote it (`embedding_model`). Search, dedup, lesson dedup and
+    consolidation compare only vectors of the model bound now, because two models'
+    vectors are unrelated spaces and at one width they would score numbers that mean
+    nothing. The rest are **stale**: read by keyword beside the vector results
+    (`search_episodic` interleaves the two, so a memory the re-index has not reached
+    yet stays findable), counted (`embedded_stale` in `/api/memory/stats`, the
+    Doctor's `memory.store` row, the recall disclosure below), and re-embedded by the
+    re-index Settings → Models starts after an embedding save
+    (`dashboard/embedding_reindex.py`), which visits every memory store, open or
+    not, and by the one the gateway resumes at its start when any store holds
+    vectors the bound model did not write
+    (`dashboard/handlers/embedding_reindex.py::resume_interrupted_reindex`). A vector
+    written before models were recorded names none and is stale once a model is
+    bound, by the same rule as the knowledge chunks' fingerprint, so the first start
+    after that update re-embeds every memory once, in the background. The index
+    follows a running re-index: each vector it writes marks the index behind, and the
+    next search rebuilds it (off to the side, then swapped in).
 - **`memory_ranking.py`** — the ONE owner of "how did this recall actually rank".
   Derives a `RecallRanking` from the provider's declared `MemoryCapabilities`
   (`vector` / `full_text_search` / `entity_graph`) and composes the user-facing
@@ -154,7 +178,11 @@ item vector).
   wording instead of authoring its own. Served as `ranking` by
   `/api/memory/recall`, `/api/memory/context-preview`, `/api/memory/episodic/search`
   and `/api/memory/entities`; `null` on a recall a temporary session blocked, because
-  no recall ran. Adding a capability is forced to declare what it means for recall —
+  no recall ran. It also reads the one piece of store state a capability cannot show:
+  how many memories hold another embedding model's vector (`stale`) and how many the
+  model bound now can compare (`comparable`). With none comparable the recall is
+  keyword-ranked and says so; with some stale it says how many were read by keyword.
+  Adding a capability is forced to declare what it means for recall —
   `tests/test_recall_ranking_disclosure.py` censuses the dataclass fields, and a
   second census requires every handler calling a ranking scorer to serve the
   disclosure.
@@ -187,7 +215,10 @@ item vector).
   `~/.personalclaw/workspace/_ext/<slug(cwd)>`, and an empty cwd onto the shared
   `_ext/_default` partition. `context.py::ContextBuilder.get_memory_for` resolves
   and caches one store per partition (the gateway's own workspace is aliased
-  onto the main store, so a dashboard chat and the Memory UI share one).
+  onto the main store, so a dashboard chat and the Memory UI share one). A
+  partition gets its vector index once an embedding model is bound, asked at each
+  use, so the first binding reaches a directory already open, or once it holds
+  memories one wrote, so a clear leaves them searchable by keyword.
 - **Project locality rides that seam** (`memory_locality.py`): a project-owned
   run binds the project's `context_dir` as its cwd, so what it learns lands in
   that project's partition instead of the shared pile.

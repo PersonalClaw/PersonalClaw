@@ -311,6 +311,9 @@ describe('SecurityPanel — allow all private networks', () => {
     vi.doMock('../../ui/dialog', () => ({ confirm: confirmSpy }))
     vi.doMock('../../lib/api', () => ({
       api: {
+        // The signed-in devices summary renders inside this SAME panel; a total
+        // mock with no `devices` read would throw before the section under test renders.
+        devices: () => Promise.resolve([]),
         securityStats: () => Promise.resolve({
           denied_commands: 0, suspicious_patterns: 0, tool_schemas: 0, redaction_paths: 0,
         }),

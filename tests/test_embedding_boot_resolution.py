@@ -12,7 +12,7 @@ carried a traceback for a setup with nothing wrong in it.
 
 Three rails:
 
-* the gateway wires embeddings AFTER app providers register (driven through ``run()``);
+* an embedding bound before the app that provides it registers is used as soon as it does;
 * a provider TYPE no loaded app provides is a typed ``ProviderResolutionError``, not a bare
   ``KeyError`` from a dict lookup;
 * a provider that genuinely cannot be built logs one WARNING line that names why — no traceback.
@@ -20,9 +20,7 @@ Three rails:
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from types import SimpleNamespace
 
 import pytest
 
@@ -116,69 +114,30 @@ def test_an_unconfigured_provider_logs_one_line_too(registry, monkeypatch, caplo
     assert "host-ollama" in warnings[0].getMessage()
 
 
-class _Stop(Exception):
-    """Raised by the first boot step after service + server init, to end `run()` there."""
+def test_an_embedding_bound_before_its_app_registers_is_used_once_it_does(
+    registry, monkeypatch, tmp_path
+):
+    """The gateway's store, built the way ``_init_services`` builds it, asked before and after the
+    dashboard init — the step that registers app provider types and replays config entries.
 
-
-def test_the_gateway_wires_embeddings_after_app_providers_register(registry, monkeypatch):
-    """Driven through `GatewayOrchestrator.run()` with every boot step stubbed.
-
-    The dashboard init is the step that registers app provider types and replays config
-    entries, so the stub for it does exactly that. The embed fn must be wired from the
-    registry as it stands AFTER that step — on `origin/main` it was resolved before it and the
-    vector memory booted with none.
+    The gateway used to resolve the model once, right after ``_init_services()`` and before that
+    step, so the vector memory booted with no embed fn. It was then moved after that step, which
+    still resolved it only once. A store now embeds with the model bound at each use: there is no
+    boot step to order, and the same store embeds as soon as the type is registered.
     """
-    import personalclaw.computer_use.enable_state as computer_use
-    import personalclaw.guardrails.ceiling as ceiling
-    import personalclaw.resource_limits as resource_limits
-    import personalclaw.session as session_mod
-    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.vector_memory import VectorMemoryStore
 
-    monkeypatch.setattr(ceiling, "ensure_governance_boot", lambda: None)
-    monkeypatch.setattr(computer_use, "ensure_computer_use_boot", lambda: None)
-    monkeypatch.setattr(resource_limits, "raise_fd_limit", lambda: None)
-    monkeypatch.setattr(session_mod, "cleanup_orphaned_sessions", lambda: None)
     # Before the dashboard init nothing has replayed config.json: the entry is unknown and a
     # sync from here finds nothing to add, exactly as in a real boot's first seconds.
     monkeypatch.setattr(llm_reg, "sync_entries_from_config", lambda: 0)
+    store = VectorMemoryStore(db_path=tmp_path / "memory.db")
+    store.init()
+    assert store.embed_fn is None, "nothing can embed before an app provides the type"
 
-    orch = GatewayOrchestrator.__new__(GatewayOrchestrator)
-    orch._no_dashboard = False
-    orch._json_ready = False
-    order: list[str] = []
+    # `dashboard/server.py`: `load_all_extensions()` then `sync_entries_from_config()`.
+    _register_ollama_type(registry)
+    registry.register_entry(_ENTRY)
 
-    def _init_services() -> None:
-        order.append("services")
-        orch.vector_memory = SimpleNamespace(embed_fn=None)
-
-    async def _async_step(name: str) -> None:
-        order.append(name)
-
-    async def _init_dashboard() -> None:
-        # `dashboard/server.py`: `load_all_extensions()` then `sync_entries_from_config()`.
-        order.append("dashboard")
-        _register_ollama_type(registry)
-        registry.register_entry(_ENTRY)
-
-    async def _init_autonudge() -> None:
-        raise _Stop
-
-    orch._init_services = _init_services
-    orch._init_cron = lambda: _async_step("cron")
-    orch._init_heartbeat = lambda: _async_step("heartbeat")
-    orch._install_graph_maintenance_probe = lambda: None
-    orch._register_graph_maintenance_passes = lambda: None
-    orch._init_inbox = lambda: _async_step("inbox")
-    orch._init_mcp_discovery = lambda: None
-    orch._init_subagents = lambda: None
-    orch._init_dashboard = _init_dashboard
-    orch._init_api_server = lambda: _async_step("api")
-    orch._init_autonudge = _init_autonudge
-
-    with pytest.raises(_Stop):
-        asyncio.run(orch.run())
-
-    assert "dashboard" in order, "the stubbed boot reached the provider-registering step"
-    embed = orch.vector_memory.embed_fn
-    assert embed is not None, "the embed fn was resolved before the app registered its type"
+    embed = store.embed_fn
+    assert embed is not None, "the store did not pick up the type the app registered"
     assert embed("dimension probe") == [0.25, 0.5, 0.75]

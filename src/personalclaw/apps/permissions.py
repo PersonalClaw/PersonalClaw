@@ -373,6 +373,12 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     # The ACP agent's runtime config: `allowedTools` runs without asking, `mcpServers` are
     # commands it launches.
     "/api/agent/config": "the tools your agent runs without asking, and the servers it launches",
+    # The owner's yes to a script the agent CLI runs on every tool call or prompt
+    # (`agent_hook_grants`). The read beside it (`GET /api/agent-hooks`) stays declarable.
+    "/api/agent-hooks/allow": "letting a script run on your agent's events without asking",
+    # The owner's yes to a HEARTBEAT.md task: it runs with the agent's tools, unattended, on every
+    # pass (`heartbeat`). The list beside it (`GET /api/heartbeat/tasks`) stays declarable.
+    "/api/heartbeat/tasks/allow": "letting a heartbeat task run with your agent's tools",
     # ── Code that runs as you (see the class note above) ──
     # Every MCP route, reads included. A write names a command the gateway spawns
     # (`PUT /api/mcp/servers/{name}`), enables one the owner switched off, or copies one out of
@@ -1026,6 +1032,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     # Arming is the owner's: a pack stages its automations switched off so that only you arm them.
     "POST /api/triggers/{id}/toggle": OwnerOnly("switching your automations on and off"),
     "POST /api/triggers/{id}/run": OwnerOnly(_FIRES_AUTOMATION),
+    # Answering the question an automation stopped on (`triggers/parks.py`): Approve runs its
+    # action again, now, through the Run button's own path — the same firing by hand.
+    "POST /api/triggers/{id}/answer": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/{id}/test": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/view/render": OwnerOnly(_FIRES_AUTOMATION),
     # Deciding a restart's missed or interrupted run: `run_now` fires the automation.
@@ -1186,6 +1195,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "one is yours"
     ),
     "POST /api/devices/{id}/revoke": OwnerOnly("signing out your devices"),
+    "POST /api/devices/revoke-others": OwnerOnly("signing out your devices"),
     # ── channels ──
     "POST /api/channels/{name}/connect": OwnerOnly(
         "connecting a chat channel — the people on it can then reach your agent, as its trust "
@@ -1671,7 +1681,7 @@ def app_request_denial(app_name: str, path: str, *, method: str = "", route: str
     allowlist. Two ordinary situations produce it:
 
     * **The owner uninstalls the app.** The directory goes, so ``_manifest_of`` returns
-      ``None``. App tokens live an hour (``_APP_TOKEN_TTL_SECS``) and carry the claim in
+      ``None``. App tokens live an hour (``token_auth.APP_TOKEN_TTL_SECS``) and carry the claim in
       the token itself, so there is nothing to revoke — meaning the owner's remediation
       handed a misbehaving app MORE access than it had before, for up to an hour.
     * **The manifest stops parsing.** An app that can write its own install directory

@@ -22,14 +22,15 @@ import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
+import { CallbackDetail } from './CallbackDetail'
 import { TriggerReview } from './TriggerReview'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { triggerStatusMeta, explainsCause, relFuture } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
 
-// One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
+// One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store · callback.
 // `Data events` was missing, so an event trigger — creatable from this page's own form — had no
 // chip AND was absent from every count.
 // The plural wording is deliberate and differs from `TRIGGER_KINDS`' singular labels: these name
@@ -43,6 +44,7 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'lifecycle', label: 'Lifecycle events' },
   { key: 'event', label: 'Data events' },
   { key: 'store', label: 'Automations' },
+  { key: 'callback', label: 'Callbacks' },
 ]
 
 // 🔴 The local `statusDot` was DELETED. It handled four values and defaulted the rest to a
@@ -93,6 +95,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // data-event trigger is a row in the same store, so it arrives here too; `storeToTrigger` presents
   // it by the pattern it listens for.
   const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
+  // Callbacks the agent registered (`hook_register`): live, because the agent can register one — or
+  // register it again with other context — at any moment, and the switch is the owner's yes to it.
+  const { data: callbacks, error: callbacksErr, refresh: refreshCallbacks } = useQuery('triggers:callbacks', () => api.callbacks(), { persist: false })
   const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
   // What a restart left for you to decide: missed runs and interrupted runs. Live, like schedules.
   const { data: review = [], error: reviewErr, refresh: refreshReview } = useQuery('triggers:review', () => api.triggerReview(), { persist: false })
@@ -108,6 +113,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
   const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
   const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
+  const loadCallbacks = () => { invalidateKeys('triggers:callbacks'); refreshCallbacks() }
   const loadReview = () => { invalidateKeys('triggers:review'); refreshReview() }
   // Keep schedule next-run/running fresh, paused while hidden and slower while nobody is here.
   useVisiblePoll(refreshSchedules, 10_000, { immediate: false })
@@ -117,7 +123,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // `crons` whenever the trigger store changes, and every source re-reads on it.
   useChatSocket((m: WsMessage) => {
     if (refreshKinds(m).includes('crons')) {
-      loadSchedules(); loadHooks(); loadStores(); loadReview()
+      loadSchedules(); loadHooks(); loadStores(); loadCallbacks(); loadReview()
     }
   })
 
@@ -130,24 +136,24 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   )
 
   const triggers = useMemo<Trigger[] | null>(() => {
-    if (schedules === undefined || hooks === undefined || stores === undefined) return null
+    if (schedules === undefined || hooks === undefined || stores === undefined || callbacks === undefined) return null
     // Every kind needs its converter: the wire carries no `whenLabel`/`whenIcon`/`actionLabel`,
     // so a raw row would render `undefined` for the icon the list draws per row.
-    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger)]
+    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger), ...callbacks.map(callbackToTrigger)]
     const n = q.trim().toLowerCase()
     return all
       .filter((t) => filter === 'all' || t.kind === filter)
       .filter((t) => !n || `${t.name} ${t.whenLabel} ${t.actionLabel}`.toLowerCase().includes(n))
-  }, [schedules, hooks, stores, filter, q])
+  }, [schedules, hooks, stores, callbacks, filter, q])
 
   const open = useMemo(() => resolveOpenTrigger(triggers, openId), [triggers, openId])
 
   const counts = useMemo(() => {
-    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, all = stores?.length ?? 0
+    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, all = stores?.length ?? 0, c = callbacks?.length ?? 0
     // Data events are store rows; the chip counts them apart from the other store kinds.
     const e = (stores ?? []).filter((row) => row.store_kind === 'event').length
-    return { all: s + h + all, schedule: s, lifecycle: h, store: all - e, event: e }
-  }, [schedules, hooks, stores])
+    return { all: s + h + all + c, schedule: s, lifecycle: h, store: all - e, event: e, callback: c }
+  }, [schedules, hooks, stores, callbacks])
 
   // 🔴 A FAILED FETCH USED TO READ AS "No triggers". Each list source `.catch(() => [])`'d its
   // rejection, so a gateway that was down rendered the newcomer empty state — the exact conflation
@@ -157,7 +163,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // actually failed — a partial success still renders, because a working schedule list should not be
   // hidden because the event feed hiccuped.
   const loadFailed = triggers === null &&
-    !!(schedulesErr || hooksErr || storesErr)
+    !!(schedulesErr || hooksErr || storesErr || callbacksErr)
 
   return (
     <WorkbenchLayout
@@ -210,6 +216,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
               // A data-event trigger IS a store row: the same inspector, run history and Run now.
               : (open.kind === 'store' || open.kind === 'event') && open.store
               ? <StoreTriggerDetail trigger={open.store} providers={providers} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
+              : open.kind === 'callback' && open.callback
+              ? <CallbackDetail callback={open.callback} onChanged={loadCallbacks} onDeleted={() => { setOpenId(""); loadCallbacks() }} />
               : open.hook
               ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
               : null}
@@ -230,8 +238,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {reviewPanel}
         {loadFailed ? (
-          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr}
-            onRetry={() => { loadSchedules(); refreshHooks(); loadStores() }} />
+          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || callbacksErr}
+            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); loadCallbacks() }} />
         ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
               !q && filter === 'all' ? (
                 // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
@@ -299,10 +307,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // and informational means readable.
                   // An EVENT row gets no Edit either: the store inspector has no editor (the chat's
                   // `automation_update`, or recreating it, changes the pattern), so the item would
-                  // silently act as a second Open — an affordance that lies about what it does.
+                  // silently act as a second Open — an affordance that lies about what it does. Nor
+                  // does a CALLBACK: its context is the agent's, saved by `hook_register`.
                   const menuItems: ContextMenuItem[] = [
                     { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
-                    ...(t.readOnly || t.kind === 'event' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
+                    ...(t.readOnly || t.kind === 'event' || t.kind === 'callback' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
                   ]
                   return (
                     <ContextMenu key={t.id} items={menuItems}>
@@ -311,7 +320,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-s">
                           <span className={`truncate text-[0.9375rem] ${t.enabled ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{t.name}</span>
-                          {!t.enabled && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
+                          {/* A callback's switch is the owner's yes, so an off one says "not allowed to
+                              run" below rather than "disabled" as well. */}
+                          {!t.enabled && t.kind !== 'callback' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
                           {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
                           {/* A BLOCKING hook that no agent binds still fires — on the
                               informational path, whose results are discarded — so its run count

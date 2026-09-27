@@ -331,7 +331,9 @@ class InboxItem:
     # Native agent-posted questions route the reply back to the posting agent's
     # session (reply_target); poll-based sources reply through their provider.
     can_reply: bool = False
-    reply_target: str = ""  # native: the posting agent's session key for reply routing
+    #: Where a reply to this row goes. Native: the posting agent's session key. Polled: the
+    #: source's own id for the message (``IncomingMessage.id``), which ``send_reply`` is given.
+    reply_target: str = ""
     # P11: whether the user favorited this item — a strong positive engagement signal
     # feeding the engagement-ranking multiplier (tolerant from_dict makes it back-compat).
     favorited: bool = False
@@ -859,10 +861,12 @@ def emit_attention_item(
         item.refs["dedup_key"] = dedup_key
 
     # The row's one notification, named once: fired below, or held back for the second opinion.
+    # Masked the way the row itself reads (`redact_item`): the notification shows the same text,
+    # in the bell, on the lock screen and on a channel.
     note = {
         "kind": notification_kinds.kind_for_legacy_pair(source, kind),
-        "title": title,
-        "body": body,
+        "title": redact_for_display(title or ""),
+        "body": redact_for_display(body or ""),
         "item_kind": resolved_kind,
         **raiser,
     }

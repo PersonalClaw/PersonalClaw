@@ -142,16 +142,22 @@ class OpenAITtsProvider(TtsProvider):
                 with __import__("contextlib").suppress(Exception):
                     await client.close()
 
+        handed_back = False
         try:
-            return await asyncio.wait_for(_run(), timeout=120)
+            result = await asyncio.wait_for(_run(), timeout=120)
+            handed_back = result is not None
+            return result
         except asyncio.TimeoutError:
             logger.error("Remote TTS timed out for provider %r", self._provider_name)
-            self._cleanup(path, output_path)
             return None
         except Exception:
             logger.exception("Remote TTS failed for provider %r", self._provider_name)
-            self._cleanup(path, output_path)
             return None
+        finally:
+            # A temp file of our own that is not handed back is ours to remove, on every way out:
+            # an answer with no audio and a cancelled call (a caller's own timeout) kept it.
+            if not handed_back:
+                self._cleanup(path, output_path)
 
     @staticmethod
     def _cleanup(path: str, output_path: str) -> None:

@@ -21,8 +21,9 @@ import { invalidateKeys, useQuery } from '../../lib/data'
 import { rebaseList, type Rebase } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
-import { PanelHeader, Section, SavedToast, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
+import { PanelHeader, Section, SavedToast, Row, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
+import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
 
 /** Security posture → /api/security/stats (counts) + /api/security/denied-commands
@@ -79,6 +80,7 @@ export function SecurityPanel() {
           ))}
         </div>
       </Section>
+      <SignedInSummary />
       {!denied && deniedErr ? (
         <Section title="Shell denylist">
           <LoadError what="shell denylist patterns" error={deniedErr} onRetry={refreshDenied} />
@@ -94,6 +96,33 @@ export function SecurityPanel() {
       <OutsideHomeEditor />
       <DesktopCapabilitiesPanel />
     </div>
+  )
+}
+
+/** Who is signed in — a count, and the way to the ONE list (Settings → Devices).
+ *
+ *  "What can reach my gateway, and can I cut it off" is a security question, so it is asked here;
+ *  but the list itself lives in one place, and this reads the same cached query that page does
+ *  rather than growing a second list that could disagree with it. */
+function SignedInSummary() {
+  const { data, error, refresh } = useQuery('settings:devices', () => api.devices())
+  const devices = data?.filter((d) => d.pool !== 'token').length ?? 0
+  const tokens = data?.filter((d) => d.pool === 'token').length ?? 0
+  return (
+    <Section title="Signed-in devices"
+      hint="Every browser, paired device and token that can reach this gateway is listed under Devices, where you can sign any of them out — or all but this one.">
+      {!data && error ? (
+        <LoadError what="signed-in devices" error={error} onRetry={refresh} />
+      ) : (
+        <RowGroup>
+          <Row label={data
+            ? `${devices} ${devices === 1 ? 'device is' : 'devices are'} signed in, and ${tokens} ${tokens === 1 ? 'token is' : 'tokens are'} live.`
+            : 'Reading who is signed in…'}>
+            <TextLink href="#/settings/devices" ink="emphasis" size="sm">Review signed-in devices</TextLink>
+          </Row>
+        </RowGroup>
+      )}
+    </Section>
   )
 }
 
@@ -171,7 +200,7 @@ function ChildProcessCeilings({ note, onScopesSaved }: {
                 hint="Wrap each agent-influenced spawn in a transient systemd user scope carrying the ceilings above, so they bound the child's WHOLE process tree instead of one process. This is the fork-bomb containment the process limit cannot give. Linux only, and a no-op where a systemd user manager is unavailable (macOS, most containers)." />
               <StrListField label="Child environment passthrough" cfg={cfg} field="env_passthrough" editList={editList}
                 placeholder="Add name…"
-                hint="Extra environment VARIABLE NAMES a child may inherit, on top of the minimal base (PATH, locale, home, proxy/CA settings). Everything else is withheld — a child does not inherit the gateway's environment. Names matching the credential floor (AWS secrets, SSH agent socket, GPG home, git askpass) are refused even when declared here." />
+                hint="Extra environment VARIABLE NAMES a child may inherit, on top of the minimal base (PATH, locale, home, proxy/CA settings). A child is anything PersonalClaw starts to run code it didn't write: an agent's command, a hook, a script, and an app's installs, hooks and servers. Everything else is withheld, and a proxy address reaches a child without its password. A name added here is passed as it is, password included. Names matching the credential floor (AWS secrets, SSH agent socket, GPG home, git askpass) are refused even when declared here." />
             </RowGroup>
           )}
     </Section>
