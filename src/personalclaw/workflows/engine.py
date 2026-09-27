@@ -1901,9 +1901,10 @@ async def dispatch_gate(
             **engine_support.journalled_prompt(wire, instruction),
         )
 
-    # approval / event: park for a human or an external signal. The deadline is the owner's
-    # approval window, like every other approval's; a run started unattended has nobody to answer,
-    # so its gate gives up fast and the run says so rather than wedging (WF2-R7).
+    # approval / event: park for a human or an external signal, each with its own ask
+    # (`_ask_payload`). The deadline is the owner's approval window, like every other approval's; a
+    # run started unattended has nobody to answer, so its gate gives up fast and the run says so
+    # rather than wedging (WF2-R7).
     from personalclaw.workflows.human_input import gate_timeout_secs
 
     timeout_secs = gate_timeout_secs(cfg, unattended=unattended)
@@ -1917,12 +1918,20 @@ async def dispatch_gate(
 
 def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
     """The typed human-input ask (WF2-R7). One renderer covers every gate, which is why
-    the shape is fixed by `human_input.Ask` rather than left to each template."""
-    from personalclaw.workflows.human_input import Ask
+    the shape is fixed by `human_input.Ask` rather than left to each template.
 
+    An `event` gate asks EVENT, from its own kind and never from `ask_kind`. It waits for
+    something to happen, and what wakes it answers it with whatever it carries: a monitor's
+    self-scheduled trigger carries the message it was armed with. Every gate used to ask for an
+    approval, which takes only a yes or a no, so `goal-pursuit-monitor`'s own wake was refused
+    (`WF_RESUME_INVALID_ANSWER`) and the monitor never ran a second check.
+    """
+    from personalclaw.workflows.human_input import Ask, AskKind
+
+    event = str(cfg.get("kind", "") or "") == GateKind.EVENT.value
     return Ask.from_dict(
         {
-            "kind": cfg.get("ask_kind", "approval"),
+            "kind": AskKind.EVENT.value if event else cfg.get("ask_kind", "approval"),
             # 🪤 NO `or "Approval needed"` HERE. Manufacturing a prompt made this field always
             # truthy, which killed the identifying fallback in all THREE surfaces that render it:
             #

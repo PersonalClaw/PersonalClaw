@@ -7,9 +7,10 @@ the widget, the needs-input inbox, an HTTP call, and a chat tool all act on the 
 Four things hold it together:
 
 **A typed ask payload.** `{kind, prompt, fields, choices}` with `kind` in
-approval|choice|text|form. One renderer covers every human-input node, and the same payload
+approval|choice|text|form|event. One renderer covers every human-input node, and the same payload
 projects into an inbox as a real form. Free-form asks would need per-template rendering,
-which is how a "just add a prompt string" design becomes twelve half-broken UIs.
+which is how a "just add a prompt string" design becomes twelve half-broken UIs. `event` is the
+one kind that asks nobody anything: an `event` gate's, answered by whatever wakes it.
 
 **A continuation record.** Each `needs_input` transition persists
 `{node_id, instance_path, resolved_inputs, epoch, expires_at}` — so resuming re-enters THAT
@@ -76,6 +77,11 @@ class AskKind(str, Enum):
     CHOICE = "choice"
     TEXT = "text"
     FORM = "form"
+    #: An `event` gate's ask. The run is parked until something happens, and the answer is what
+    #: happened: the wake's payload, whatever it carries. A monitor's own trigger carries the
+    #: message it was armed with (`set_onetime_task`'s `message`), and you can wake it too. Not a
+    #: question, so it takes any value, never declines, and is never remembered.
+    EVENT = "event"
 
 
 @dataclass
@@ -127,9 +133,19 @@ class Ask:
     #: Approving RUNS THE STEP AGAIN instead of recording the answer as its output. The ask of a
     #: step that parked for a person (an action's `outcome="needs_input"`, e.g. browse stopping at
     #: a sign-in page): what the person does is lift what stopped it, and the answer is "carry on",
-    #: not the step's result. Such an ask is never remembered as "always allow" — nothing can
-    #: approve a sign-in on the user's behalf.
+    #: not the step's result. Such an ask is never remembered (:attr:`rememberable`).
     rerun: bool = False
+
+    @property
+    def rememberable(self) -> bool:
+        """Whether "always allow" may answer this ask the next time it is asked.
+
+        Never for a step that parked (`rerun`): what it waits for is a person's act, and nothing
+        can sign in on the user's behalf. Never for an EVENT either: it waits for something to
+        happen, and a remembered answer would wake it at once every time, so a monitor would check
+        without ever waiting.
+        """
+        return not self.rerun and self.kind != AskKind.EVENT
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -165,7 +181,12 @@ class Ask:
 
         Validated BEFORE the run resumes: rejecting at resume time would already have
         consumed the token, leaving the user with a dead link and an unanswered gate.
+
+        An EVENT takes whatever wakes it. Its answer is the wake's payload (the `answer` its
+        trigger was armed with, or your "wake it now"), so there is no shape to hold it to.
         """
+        if self.kind == AskKind.EVENT:
+            return ""
         if self.kind == AskKind.APPROVAL:
             if isinstance(answer, bool):
                 return ""

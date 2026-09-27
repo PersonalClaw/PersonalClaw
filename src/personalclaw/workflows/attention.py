@@ -86,6 +86,8 @@ def ask_body(ask: dict[str, Any] | None, handoff: dict[str, Any] | None) -> str:
                 "choice": "Waiting for you to choose an option.",
                 "text": "Waiting for a written answer.",
                 "form": "Waiting for you to fill in a form.",
+                # Not a question: nobody has to answer it, and you can wake it early.
+                "event": "Parked until something wakes it. You can wake it now.",
             }.get(kind, f"Waiting for a {kind} answer.")
         )
     attempted = [str(a) for a in ((handoff or {}).get("attempted") or []) if str(a).strip()]
