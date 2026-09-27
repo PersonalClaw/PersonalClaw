@@ -94,7 +94,7 @@ def references(value: Any) -> list[str]:
 def default_resolver(key: str) -> str:
     """Resolve one key from the credential store Settings → Secrets writes. "" when unset.
 
-    Mirrors `workflows.controller._secret_resolver` deliberately — the same store, the same
+    Mirrors `workflows.node_bindings._secret_resolver` deliberately — the same store, the same
     empty-on-missing contract — so a key resolves identically whether a workflow or a trigger asks.
     The caller decides what "" means; `resolve()` below treats it as a refusal.
     """

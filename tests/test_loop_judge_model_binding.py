@@ -288,7 +288,7 @@ class TestConfigWiring:
         """The allowlist entry itself. `test_config_roundtrip.py` cannot see this —
         its `_EDITABLE_CONFIG` assertions are hardcoded to `evals.*` keys, so deleting
         this entry leaves that file fully green."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         spec = _EDITABLE_CONFIG.get("loops.judge_use_case")
         assert spec is not None, "loops.judge_use_case is not PATCH-able"

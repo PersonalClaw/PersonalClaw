@@ -428,7 +428,7 @@ def test_scratchpad_path_round_trips_through_config(tmp_path, monkeypatch):
 
 
 def test_scratchpad_path_is_in_the_patch_allowlist():
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG["planning.scratchpad_path"]
     assert spec["type"] == "str"

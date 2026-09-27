@@ -109,16 +109,17 @@ def test_DIRECTION_1_the_wired_policy_still_has_its_production_caller():
 
     PP-15 INVERTED this direction. It used to assert that NO caller existed while the marker
     claimed zero; the marker now claims one, so the drift worth catching is the opposite one.
-    A deletion that strands `_supervisor_policy` would otherwise leave a `SupervisorPolicy`
+    A deletion that strands `loop_convergence._supervisor_policy` would otherwise leave a
+    `SupervisorPolicy`
     nothing reads, declaring itself wired — the exact lie the convention exists to prevent."""
     hits, _scanned = _census()
     assert hits, (
         "SupervisorPolicy claims a production caller but the census found none — either the "
         "wiring was removed (restore it, or set HAS_ZERO_PRODUCTION_CALLERS back to True)"
     )
-    assert "controller.py" in " ".join(
+    assert "loop_convergence.py" in " ".join(
         hits
-    ), f"the wired caller is the run controller (PP-15); census found only {hits}"
+    ), f"the wired caller is the run controller's convergence step (PP-15); census found {hits}"
 
 
 def test_DIRECTION_2_the_wired_module_declares_itself_wired():

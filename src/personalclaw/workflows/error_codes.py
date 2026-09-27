@@ -412,7 +412,8 @@ WF_ERROR_CODES: dict[str, str] = {
         "A fork op names a checkpoint the run does not have; journaled as a rejected mutation."
     ),
     # ── workflows/controller.py — gate resume, revise, replan ──────────────
-    # Returned as inline result dicts from `resume`/`_resume_revise`/`_converge_loop`.
+    # Returned as inline result dicts from
+    # `resume`/`gate_answers.resume_revise`/`loop_convergence.converge_loop`.
     "WF_RESUME_NOT_OWNER": (
         "The responder or channel is not permitted to answer this gate. Checked before the "
         "token is touched, and deliberately terse — echoing the gate's content to a shared "

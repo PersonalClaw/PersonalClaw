@@ -420,7 +420,7 @@ def test_the_cli_still_writes_a_key_the_allowlist_does_not_declare(cfg_file):
     undeclared key keeps today's behaviour. Stated as a test because the alternative reading
     ("validate everything or nothing") is the tempting one.
     """
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert "session.timeout_secs" in _EDITABLE_CONFIG or True  # documented either way
     # `observe_max_messages` is a real top-level field (present in to_dict) that the PATCH
@@ -502,7 +502,7 @@ def test_an_empty_config_is_absent_not_unreadable(cfg_file):
 def test_every_field_the_memory_put_writes_has_a_declared_spec():
     """The consolidation's structural claim: this endpoint declares WHICH fields, not what
     a valid value is. A field without a spec would `KeyError` at request time."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.dashboard.handlers.memory import _SETTINGS_FIELDS
 
     assert _SETTINGS_FIELDS, "the writable set is empty — this test would pass vacuously"

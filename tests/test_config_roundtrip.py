@@ -75,7 +75,7 @@ def test_save_load_roundtrip_companion(cfg_file):
 
 def test_companion_fields_in_editable_allowlist():
     """CA-4: both companion fields are PATCH-editable (the write path of the round-trip)."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG.get("companion.discovery_enabled") == {"type": "bool"}
     assert _EDITABLE_CONFIG.get("companion.instance_name", {}).get("type") == "str"
@@ -118,7 +118,7 @@ def test_save_load_roundtrip_local_models(cfg_file):
 
 def test_local_models_fields_in_editable_allowlist():
     """LMMV-5/LMMV-8: every knob is PATCH-editable (the write path of the round-trip)."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["local_models.pressure_warn_pct"] == {
         "type": "int",
@@ -462,7 +462,7 @@ def test_evals_editable_allowlist_excludes_the_capture_flag():
     """EVALUATION-SUBSTRATE §10 — the runtime-editable evals subset is in the PATCH
     allowlist, but the privacy-sensitive input-capture flag is deliberately NOT
     (mirroring external_access.mcp.allow_remote's exclusion)."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert "evals.enabled" in _EDITABLE_CONFIG
     assert "evals.study_default_k" in _EDITABLE_CONFIG
@@ -517,7 +517,7 @@ def test_updates_defaults_are_release_tracking_and_notify_only():
 
 def test_updates_fields_in_editable_allowlist():
     """RUM-1: every field is PATCH-editable (the write path of the round-trip)."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["updates.channel"] == {
         "type": "enum",
@@ -586,8 +586,8 @@ def test_every_apps_field_is_patchable_or_has_a_write_path():
     field with no `_EDITABLE_CONFIG` entry leaves this file fully green while the Settings
     toggle 400s. `apps.*` is user-facing config with no dedicated PUT, so every field in the
     section must be in the allowlist."""
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import AppsConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     missing = [f.name for f in fields(AppsConfig) if f"apps.{f.name}" not in _EDITABLE_CONFIG]
     assert not missing, f"apps config fields with no PATCH write path: {missing}"
@@ -616,8 +616,8 @@ def test_no_agent_sandbox_config_field_on_any_surface():
     """
     from pathlib import Path
 
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import AgentConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     repo = Path(__file__).resolve().parent.parent
 
@@ -675,9 +675,9 @@ def test_no_dashboard_layout_config_field_on_any_surface():
     """
     from pathlib import Path
 
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import DashboardConfig
     from personalclaw.dashboard.handlers import files as F
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     repo = Path(__file__).resolve().parent.parent
 

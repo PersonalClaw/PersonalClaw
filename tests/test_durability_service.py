@@ -908,7 +908,7 @@ class TestConfigContract:
     )
 
     def test_every_field_is_patchable(self):
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         for name in self._FIELDS:
             assert f"durability.{name}" in _EDITABLE_CONFIG, name
@@ -921,8 +921,8 @@ class TestConfigContract:
         """
         import dataclasses
 
+        from personalclaw.config.editable import _EDITABLE_CONFIG
         from personalclaw.config.loader import DurabilityConfig
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
         declared = {f.name for f in dataclasses.fields(DurabilityConfig)}
         allowlisted = {k.split(".", 1)[1] for k in _EDITABLE_CONFIG if k.startswith("durability.")}
@@ -932,7 +932,7 @@ class TestConfigContract:
     def test_retention_specs_are_bounded_and_allow_disabling_a_tier(self):
         """0 must be reachable (disable a tier) and the ceiling must be finite (a
         typo shouldn't budget a decade of archives)."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         for name in ("keep_daily", "keep_weekly", "keep_monthly"):
             spec = _EDITABLE_CONFIG[f"durability.{name}"]
@@ -941,7 +941,7 @@ class TestConfigContract:
             assert 0 < spec["max"] <= 365, name
 
     def test_the_two_switches_are_bools(self):
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         for name in ("auto_backup", "restore_drills"):
             assert _EDITABLE_CONFIG[f"durability.{name}"] == {"type": "bool"}

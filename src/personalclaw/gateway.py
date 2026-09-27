@@ -3829,13 +3829,13 @@ class GatewayOrchestrator:
             if parent_key and not parent_key.startswith(
                 # `workflow:<run>:<node>` is a RUN-OWNED session (`ownership.OWNED_PREFIX`), not a
                 # channel. Its completion is consumed by the run's own controller, which polls
-                # `SubagentManager.get` (`controller._reconcile_dispatched_stages`) — so the work
-                # here is not "deliver it somewhere else", it is "do not deliver it twice". Without
-                # this the key fell through to the branch below and a finished stage was treated as
-                # a chat: `sessions.get_or_create("workflow:...")` spun up an ACP session for a
-                # session that never existed and burned a full model turn injecting the result into
-                # it, retried `_MAX_INJECT_ATTEMPTS` times. `dispatch_stage` already declares the
-                # intended policy in its docstring — "completions belong in the run journal, not
+                # `SubagentManager.get` (`stage_settlement.reconcile_dispatched_stages`) — so the
+                # work here is not "deliver it somewhere else", it is "do not deliver it twice".
+                # Without this the key fell through to the branch below and a finished stage was
+                # treated as a chat: `sessions.get_or_create("workflow:...")` spun up an ACP session
+                # for a session that never existed and burned a full model turn injecting the result
+                # into it, retried `_MAX_INJECT_ATTEMPTS` times. `dispatch_stage` already declares
+                # the intended policy in its docstring — "completions belong in the run journal, not
                 # injected into whatever chat session happened to start the run" — and passes
                 # `silent=True` to say so; the only reader of `silent` is the notification tail
                 # below, which is where this now lands. The PREFIX (not `is_owned`) is the right

@@ -26,7 +26,7 @@ from personalclaw.tool_providers.base import RiskLevel
 from personalclaw.workflows import gate_policy as GP
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import store
+from personalclaw.workflows import mid_flight, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import (
     InstanceState,
@@ -305,7 +305,7 @@ class TestControllerAlwaysAllow:
         c.resume(token, True, always_allow=True)
         assert len(c._allow_memory) == 1
         c.submit_mutation([{"op": "rewind", "node_id": "approve"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert len(c._allow_memory) == 0
 
 

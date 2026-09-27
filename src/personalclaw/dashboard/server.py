@@ -15,6 +15,7 @@ from personalclaw.dashboard import (
     chat,
     handlers,
     handlers_inbox,
+    housekeeping,
     ws,
 )
 from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
@@ -50,70 +51,6 @@ def _single_post_ceiling() -> int:
 
 
 _DIST_DIR = Path(__file__).resolve().parent.parent / "static" / "dist"
-
-# How often to trim the security-event log (append-only + high-rate). Runs once
-# at startup, then on this cadence, off the event loop (prune rewrites the file).
-_SEL_PRUNE_INTERVAL_SECS = 6 * 60 * 60  # 6 hours
-
-
-_UPLOAD_SWEEP_INTERVAL_SECS = 60 * 60  # hourly
-
-
-async def _upload_sweep_loop() -> None:
-    """Periodically delete abandoned resumable-upload session dirs (partial parts).
-
-    A partial 2 GB upload the client never finishes would otherwise pin disk
-    forever. Sweeps sessions idle past the store TTL, at startup then hourly."""
-    from personalclaw import shutdown_event
-    from personalclaw.dashboard.handlers.files import _upload_dir
-    from personalclaw.uploads.store import UploadStore
-
-    store = UploadStore(Path(_upload_dir()) / ".parts")
-    first = True
-    while not shutdown_event.is_set():
-        if not first:
-            try:
-                await asyncio.wait_for(shutdown_event.wait(), timeout=_UPLOAD_SWEEP_INTERVAL_SECS)
-                return
-            except asyncio.TimeoutError:
-                pass
-        first = False
-        try:
-            swept = await asyncio.get_running_loop().run_in_executor(None, store.sweep)
-            if swept:
-                logger.info("Upload sweep removed %d abandoned session(s)", swept)
-        except Exception:
-            logger.debug("upload sweep skipped", exc_info=True)
-
-
-async def _sel_prune_loop() -> None:
-    """Periodically apply the SEL audit log's retention.
-
-    The live file's SIZE is bounded by the log's own rotation (`sel._ROTATE_BYTES`), which moves
-    it into `sel_archive/`; this is the AGE half — rows past retention leave the live file and
-    expired rotated files leave the archive. Once at startup, then every few hours, on an
-    executor thread (the prune rewrites the live file)."""
-    from personalclaw import shutdown_event
-
-    first = True
-    while not shutdown_event.is_set():
-        if not first:
-            try:
-                await asyncio.wait_for(shutdown_event.wait(), timeout=_SEL_PRUNE_INTERVAL_SECS)
-                return  # shutdown signalled
-            except asyncio.TimeoutError:
-                pass
-        first = False
-        try:
-            from personalclaw.sel import SecurityEventLog
-
-            removed = await asyncio.get_running_loop().run_in_executor(
-                None, SecurityEventLog().prune
-            )
-            if removed:
-                logger.info("SEL prune removed %d entries", removed)
-        except Exception:
-            logger.debug("SEL prune skipped", exc_info=True)
 
 
 def _precompute_telemetry(state: "DashboardState") -> None:
@@ -2624,12 +2561,12 @@ async def start_dashboard(
     state._terminal_reaper = _reaper  # prevent GC
 
     # Apply the security-event log's retention at startup + periodically (its size is bounded
-    # by rotation; see `_sel_prune_loop`).
-    state._sel_prune_task = asyncio.create_task(_sel_prune_loop())  # prevent GC
+    # by rotation; see `housekeeping.sel_prune_loop`).
+    state._sel_prune_task = asyncio.create_task(housekeeping.sel_prune_loop())  # prevent GC
 
     # Sweep abandoned resumable-upload session dirs (partial parts) so a never-
     # finished large upload can't pin disk forever.
-    state._upload_sweep_task = asyncio.create_task(_upload_sweep_loop())  # prevent GC
+    state._upload_sweep_task = asyncio.create_task(housekeeping.upload_sweep_loop())  # prevent GC
 
     # Scheduled backups (DURABILITY-AND-SYNC §3): nightly snapshot with tiered
     # retention, hourly incremental shard export, monthly restore drill. Started
@@ -2704,89 +2641,5 @@ async def start_dashboard(
     )
     if restored:
         logger.info("Restored %d session(s)", restored)
-
-    return runner, state
-
-
-async def start_api_server(
-    sessions: "SessionManager",
-    port: int = _DEFAULT_PORT,
-    subagents: "SubagentManager | None" = None,
-    owner_id: str = "",
-) -> tuple[web.AppRunner, DashboardState]:
-    """Start a minimal API-only server for MCP tool transport (no UI)."""
-    state = DashboardState(
-        sessions=sessions,
-        start_time=time.time(),
-        subagents=subagents,
-        owner_id=owner_id,
-    )
-    state._hook_store = ScriptHookStore()
-    set_global_hook_store(state._hook_store)
-
-    from personalclaw.inbox_providers.native_source import set_dashboard_state as _set_inbox_state
-
-    _set_inbox_state(state)
-
-    # Wire script hooks into subagent tool execution path
-    if state.subagents is not None:
-        state.subagents.hook_store = state._hook_store
-
-    # Visible notice + pct reset when auto-compaction fires on a dashboard session
-    state.wire_session_compact_callback()
-
-    app = web.Application(
-        client_max_size=_single_post_ceiling()
-    )  # small single-POST uploads only; large media → resumable upload sub-app
-    app["state"] = state
-    state.load_folders()
-    state.load_tags()
-    app["port"] = port
-    from personalclaw.auth.modes import AuthConfig as _AuthConfig
-
-    app["auth_cfg"] = _AuthConfig.from_env()
-
-    _precompute_telemetry(state)
-
-    # SEL audit middleware — log mutating MCP tool calls
-    _sel_methods = {"GET", "POST", "PUT", "DELETE"}
-
-    @web.middleware  # type: ignore[misc]
-    async def sel_audit_middleware(
-        request: web.Request,
-        handler: object,
-    ) -> web.StreamResponse:
-        if request.method in _sel_methods and request.path.startswith("/api/"):
-            from personalclaw.sel import sel
-
-            try:
-                resp = await handler(request)  # type: ignore[operator]
-                sel().log_api_access(
-                    caller="mcp_tool",
-                    operation=f"{request.method} {request.path}",
-                    outcome="ok" if resp.status < 400 else "error",
-                    resources=request.path,
-                )
-                return resp  # type: ignore[return-value]
-            except Exception as exc:
-                sel().log_api_access(
-                    caller="mcp_tool",
-                    operation=f"{request.method} {request.path}",
-                    outcome="error",
-                    resources=request.path,
-                    error=str(exc)[:200],
-                )
-                raise
-        return await handler(request)  # type: ignore[operator]
-
-    app.middlewares.append(sel_audit_middleware)
-
-    _register_mcp_routes(app)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
-    await _start_site(site, port)
-    logger.info("API-only server listening on 127.0.0.1:%d", port)
 
     return runner, state

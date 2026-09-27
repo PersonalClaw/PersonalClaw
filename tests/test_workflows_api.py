@@ -160,11 +160,26 @@ class TestOneEngineTwoSurfaces:
     def test_the_handlers_delegate_to_the_service_module(self) -> None:
         """The whole design: two implementations kept in sync by hand is the bug class
         this avoids."""
+        import ast
         import inspect
 
         source = inspect.getsource(H)
-        assert "from personalclaw.workflows import service" in source
-        for call in ("service.list_defs", "service.start_run", "service.status", "service.audit"):
+        imported = {
+            alias.name
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.ImportFrom) and node.module == "personalclaw.workflows"
+            for alias in node.names
+        }
+        # `run_cockpit` is the service layer's read half: the cockpit's projections, returning the
+        # same service-result dicts.
+        assert {"service", "run_cockpit"} <= imported, imported
+        for call in (
+            "service.list_defs",
+            "service.start_run",
+            "service.status",
+            "service.audit",
+            "run_cockpit.introspect",
+        ):
             assert call in source, call
 
     def test_routes_register_and_order_runs_before_the_def_wildcard(self) -> None:
@@ -995,9 +1010,9 @@ class TestIntrospectRoute:
         scrubber is what keeps the two from drifting."""
         import inspect
 
-        from personalclaw.workflows import service as S
+        from personalclaw.workflows import run_cockpit
 
-        source = inspect.getsource(S.introspection_timeline)
+        source = inspect.getsource(run_cockpit.introspection_timeline)
         assert "journal_mod.redact" in source
 
     async def test_the_route_is_a_GET_it_mutates_nothing(self) -> None:

@@ -191,7 +191,7 @@ def test_to_dict_carries_the_flag():
 def test_the_flag_is_patch_editable():
     """Absent from ``_EDITABLE_CONFIG`` ⇒ unreachable from the API or any UI."""
     from personalclaw.config.edit_spec import security_control
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG.get("sandbox.cgroup_scopes")
     assert spec is not None
@@ -209,7 +209,7 @@ def test_no_sandbox_allowlist_key_is_dead():
     there looking wired. Derive the key from the field object instead of retyping it,
     and check the whole section so this guard cannot pass on an empty match set.
     """
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     declared = {f.name for f in fields(SandboxConfig)}
     keys = [k for k in _EDITABLE_CONFIG if k.startswith("sandbox.")]

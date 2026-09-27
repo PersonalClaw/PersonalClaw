@@ -133,7 +133,7 @@ async def api_memory_settings(request: web.Request) -> web.Response:
     cfg = AppConfig.load()
     if request.method == "PUT":
         from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         caller = request.get("user", "dashboard")
 

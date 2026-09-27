@@ -197,10 +197,10 @@ describe('WORKFLOW_LIFECYCLE', () => {
       'workflow_confirmation_resolved',
       'workflow_task_verified',
       'workflow_cascade_blocked',
-      // LOOPS-EVOLUTION R14: emitted by RunController._consume_steering when a mid-run steer is
+      // LOOPS-EVOLUTION R14: emitted by loop_iteration._consume_steering when a mid-run steer is
       // consumed at the iteration boundary.
       'workflow_steering_consumed',
-      // PP-15: emitted by RunController._converge_loop for every convergence decision a tripped
+      // PP-15: emitted by loop_convergence.converge_loop for every convergence decision a tripped
       // loop gets — the rung, a replan, or a recoverable wait. Without it a run that quietly
       // switched to a fresh session looks to the user like a run doing nothing.
       'workflow_loop_converged',

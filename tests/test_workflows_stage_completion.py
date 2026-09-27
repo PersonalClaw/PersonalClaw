@@ -6,7 +6,7 @@ never left `RUNNING`: `_await_progress` pops the finished asyncio task out of
 `_inflight` (``controller.py:2686``) before `_apply` runs, and once `_inflight` is empty
 the tick loop takes the `else` branch at ``controller.py:573`` and yields on
 `asyncio.sleep(0)` forever — which also means `_await_progress`, the ONLY caller of
-`_enforce_stall_timeouts` (``controller.py:2682``), stops being called at all. Measured in
+`liveness.enforce_stall_timeouts` (``controller.py:2682``), stops being called at all. Measured in
 `SELF-VERIFICATION.md:430-441`: a node stayed RUNNING for fifteen minutes after its
 subagent reported `done: True`.
 
@@ -21,8 +21,9 @@ spinning while it was still live: a dispatched stage has no awaitable in `_infli
 reconciler polls on every tick, means one `SubagentManager.get` per event-loop turn for the
 whole multi-minute life of the subagent. Measured on `main`: 16737 `_step` calls and as many
 lookups in a 9.00s window (1859/s), 6.14s CPU = 68% of one core, for a single otherwise-idle
-run. The delay and the reconciler read ONE predicate (`_awaiting_out_of_band_work`), and the
-`ast` rail below is what keeps them from drifting back apart.
+run. The delay and the reconciler read ONE predicate
+(`stage_settlement.awaiting_out_of_band_work`), and the `ast` rail below is what keeps them from
+drifting back apart.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from typing import Any
 
 import pytest
 
-from personalclaw.workflows import store
+from personalclaw.workflows import stage_settlement, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import FailureClass, InstanceState, RunStatus, WorkflowRun
 
@@ -301,7 +302,7 @@ def test_a_settled_stage_stops_being_polled(wired):
     _drive(controller)
 
     assert controller.instances[STAGE_PATH].state is InstanceState.DONE
-    assert controller._awaiting_out_of_band_work() == []
+    assert stage_settlement.awaiting_out_of_band_work(controller) == []
     assert controller._dispatched_poll_delay() is None
 
 
@@ -331,36 +332,39 @@ def test_the_idle_tick_branch_never_sleeps_zero_while_a_stage_is_live(
 
 
 def test_the_poll_delay_and_the_reconciler_read_ONE_predicate():
-    """The rail. Both consumers must derive their set from `_awaiting_out_of_band_work`.
+    """The rail. Both consumers must derive their set from `awaiting_out_of_band_work`.
 
     A second copy of the condition is how the pair drifts, and the drift restores exactly this
     bug: a node kind the reconciler learns to poll but the loop does not learn to wake for is
     polled at `sleep(0)` frequency. Parsed with `ast` so a mention inside the (long) prose of
-    either docstring cannot satisfy it.
+    either docstring cannot satisfy it. The two consumers live in different modules — the delay is
+    the tick loop's (`controller`), the settle is `stage_settlement`'s — so each is looked up in
+    its own, and the predicate counts whether it is called by name or through its module.
     """
     from personalclaw.workflows import controller as controller_mod
 
-    src = Path(controller_mod.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    bodies = {
-        fn.name: fn
-        for fn in ast.walk(tree)
-        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and fn.name in {"_reconcile_dispatched_stages", "_dispatched_poll_delay"}
-    }
+    bodies = {}
+    for module, name in (
+        (controller_mod, "_dispatched_poll_delay"),
+        (stage_settlement, "reconcile_dispatched_stages"),
+    ):
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name == name:
+                bodies[name] = fn
     assert set(bodies) == {
-        "_reconcile_dispatched_stages",
+        "reconcile_dispatched_stages",
         "_dispatched_poll_delay",
     }, f"a consumer was renamed or removed: {sorted(bodies)}"
 
     for name, fn in bodies.items():
         calls = {
-            node.func.attr
+            node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
             for node in ast.walk(fn)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            if isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name))
         }
-        assert "_awaiting_out_of_band_work" in calls, (
-            f"`{name}` no longer derives its set from `_awaiting_out_of_band_work` — the "
+        assert "awaiting_out_of_band_work" in calls, (
+            f"`{name}` no longer derives its set from `awaiting_out_of_band_work` — the "
             "condition is duplicated, and the two copies will drift"
         )
         compared = {

@@ -356,7 +356,7 @@ def test_the_bundled_default_source_can_be_turned_off(tmp_path, monkeypatch):
     assert catalog.list_git_sources() == []
     assert catalog.builtin_git_sources() == []
 
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["apps.bundled_source_enabled"]["type"] == "bool"
 

@@ -402,7 +402,7 @@ def test_the_grant_defaults_empty_on_a_fresh_install(fresh_home):
 def test_the_grant_is_patch_editable(fresh_home):
     """Clause 4. The write path — a field with no allowlist entry leaves
     ``test_config_roundtrip.py`` green while the Tools-page control 400s."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["security.mcp_elicitation_servers"]["type"] == "str_list"
 

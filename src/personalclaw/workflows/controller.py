@@ -24,6 +24,15 @@ The loop is deliberately boring:
 transform does not wait behind a ten-minute stage. `WAITING` nodes hold no lane and are
 woken by deadline, so a run parked on an approval for six hours costs nothing.
 
+This module is the loop itself — launch, settle (`_apply`) and the terminal write
+(`_finish`). What each step DECIDES lives beside it, one responsibility per module, as
+functions over the controller: `run_admission`, `stage_settlement`, `step_dispatch`,
+`node_bindings`, `iteration_context`, `loop_iteration`, `loop_convergence`,
+`gate_answers`, `mid_flight`, `effect_boundary`, `task_projection`, `run_start`,
+`run_finish`, and the stall clock in `liveness`. They are reached only through this
+object — its tick loop and `resume` — so the split adds no writer: WF2-R10's one writer
+is still the controller, filed by what it decides.
+
 **Budget pre-charge (WF2-R4 invariant).** A resumed run inherits spend from its ledger
 before scheduling anything. Minting a fresh budget on resume would turn a crash loop into
 unbounded spend — the exact failure the cap exists to prevent.
@@ -32,82 +41,45 @@ unbounded spend — the exact failure the cap exists to prevent.
 from __future__ import annotations
 
 import asyncio
-import calendar
 import contextlib
 import logging
-import re
 import time
-from dataclasses import dataclass, field, replace
-from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw import project_context, review_triage
+from personalclaw import review_triage
 from personalclaw.guardrails.calls import CallLog, capture_model_calls
-from personalclaw.knowledge import session_brief
-from personalclaw.ledger import outcomes
-from personalclaw.loop import tick as convergence
-from personalclaw.loop.tick import Action as StepAction
 from personalclaw.workflows import (
     attention,
-    conditions,
 )
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import (
+    effect_boundary,
     execution_hints,
+    gate_answers,
     gate_policy,
+    iteration_context,
 )
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import (
-    judge_calibration,
+    liveness,
     longrun,
+    loop_iteration,
+    mid_flight,
     mutations,
-    ownership,
-    pool,
-    revision,
+    node_bindings,
+    run_admission,
+    run_finish,
+    run_start,
+    stage_settlement,
+    step_dispatch,
     store,
-    supervisor_policy,
+    task_projection,
 )
-from personalclaw.workflows.admission import (
-    AdmissionRequest,
-    AdmissionState,
-    MetricGate,
-    Scope,
-    compose,
-    default_policies,
-)
-from personalclaw.workflows.bindings import BindingContext, BindingError, node_deps
-from personalclaw.workflows.effects import (
-    EffectRecord,
-    EffectStatus,
-    committed_effect,
-    committed_effect_refusal,
-    effect_history,
-    effect_key,
-    output_id_of,
-    redo_blocked,
-    run_teardown,
-    teardown_refusal,
-)
-from personalclaw.workflows.engine import (
-    NodeResult,
-    apply_judge_contract,
-    apply_schema_notice,
-    dispatch,
-    node_commits_effects,
-    parse_json_loose,
-    release_execution_claim,
-)
-from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
+from personalclaw.workflows.effects import EffectRecord, EffectStatus, effect_history
+from personalclaw.workflows.engine import NodeResult, node_commits_effects
 from personalclaw.workflows.failure_taxonomy import with_breaker_window
-from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
-from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
-from personalclaw.workflows.liveness import last_heard
-from personalclaw.workflows.loop_middleware import (
-    InterruptQueue,
-    call_fingerprint,
-    classify_failure,
-)
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_RUN_STATUSES,
@@ -116,33 +88,25 @@ from personalclaw.workflows.models import (
     FailureClass,
     InstanceState,
     ItemErrorPolicy,
-    LoopMode,
     Node,
     NodeInstance,
     NodeKind,
     RunStatus,
     WorkflowRun,
+    now_stamp,
     run_ending,
     spec_path,
+    stamp_epoch,
+    walk,
 )
 from personalclaw.workflows.resilience import (
     Attempt,
     BreakerState,
     attempt_from_failure,
-    check_breaker,
     check_budget,
-    error_signature,
     escalation_artifact,
-    retry_prompt,
 )
-from personalclaw.workflows.scope import ScopeMode
-from personalclaw.workflows.scope import allowed_write_paths as scope_allowed
-from personalclaw.workflows.scope import diff as scope_diff
-from personalclaw.workflows.scope import enforces_scope, scope_mode
-from personalclaw.workflows.scope import snapshot as scope_snapshot
-from personalclaw.workflows.scope import watch_roots as scope_watch_roots
-from personalclaw.workflows.step_usage import NOT_RECORDED, NOTHING_SENT, measured, subagent_usage
-from personalclaw.workflows.supervisor_policy import tick_config as convergence_config
+from personalclaw.workflows.step_usage import NOT_RECORDED, NOTHING_SENT, measured
 from personalclaw.workflows.tick import (
     Frontier,
     Limits,
@@ -150,38 +114,16 @@ from personalclaw.workflows.tick import (
     derive_state,
     frontier,
     item_error_policy,
-    loop_should_continue,
     reap_watchers,
 )
 
 logger = logging.getLogger(__name__)
 
-#: A LOOP iteration marker specifically (`@2`), capturing the number. Distinct from the foreach
-#: marker (`#3`) because only a loop has an iteration counter to advance.
-_LOOP_MARKER_RE = re.compile(r"@(\d+)")
 
 #: How long a tick waits for in-flight work before re-deriving the frontier. Bounded so a
 #: WAITING deadline or an externally-answered gate is noticed promptly.
 TICK_WAKE_SECS = 5.0
 
-#: How long an escalated gate gets to be answered before its outcome is graded (PP-9). A day,
-#: because a gate raised overnight is answered in the morning and grading it sooner would call a
-#: sleeping user an unlanded interruption. Nothing expires at this point — the gate keeps waiting;
-#: only the BET about whether interrupting was worth it closes.
-ESCALATION_ANSWER_HORIZON_SECS = 24 * 3600.0
-
-#: How much of a node's total budget is held back from the DISPATCHER's own internal wait, so the
-#: dispatcher — not the outer kill in `_execute` — is what times out first.
-#:
-#: The margin is the whole point, and it is why this is not simply `timeout=total`. `_execute`
-#: wraps every dispatch in `asyncio.wait_for(coro, timeout=total)`; a dispatcher handed that same
-#: `total` for its own bounded wait always loses the race, because its timer is armed strictly
-#: later. Losing it costs the honest outcome: `dispatch_subworkflow`'s wait expiring returns
-#: DEGRADED carrying `child_run_id` and "subworkflow is still running" (the child is alive and
-#: findable), while the outer kill returns a bare FAILED/TIMEOUT that names no child at all. Five
-#: seconds is enough for the wrap-up that follows a dispatcher's wait — collecting the child's
-#: outputs and assembling the payload — and negligible against the 900s default.
-_DISPATCH_WAIT_RESERVE_SECS = 5
 
 #: Terminal-state map from a derived root outcome to the run's status.
 _ROOT_TO_RUN = {
@@ -258,21 +200,6 @@ class _InFlight:
     #: Every guarded model call the node's dispatch made (`guardrails.calls`) — what an action
     #: provider's calls used, and, at a cancel, how many were cut off mid-generation.
     calls: CallLog = field(default_factory=CallLog)
-
-
-#: How many convergence decisions per loop the run row keeps. Bounded, because an unbounded
-#: decision log on a run row is a slow leak that reads like an audit trail (PP-15).
-_CONVERGENCE_LOG_MAX = 50
-
-#: Breaker reasons that are a DECLARED BUDGET being reached, not a stall (PP-15).
-#:
-#: The distinction decides who answers the trip. A loop that thrashes is recoverable — that is
-#: what the escalation ladder is for, and failing it binary is the bug PP-15 fixes. A loop that
-#: reached the `max_iterations` or token cap ITS AUTHOR SET is not thrashing and has nothing
-#: cheaper to try: spending a fresh session and a model switch on a satisfied budget would
-#: re-run the work the cap existed to bound. So budgets keep going straight to the escalation
-#: artifact, exactly as before, and only thrash reaches the ladder.
-_BUDGET_TRIPS = frozenset({"max_iterations", "token_cap"})
 
 
 class RunController:
@@ -360,7 +287,7 @@ class RunController:
         self._steering_inject: dict[str, str] = {}
         #: Context lifecycle (WF2-R6), keyed by the iterated container's path. Held in memory for
         #: the CURRENT run and journaled on every write, so a resumed or rewound run rebuilds them
-        #: from the ledger rather than losing them — see `_rehydrate_context`.
+        #: from the ledger rather than losing them — see `iteration_context.rehydrate_context`.
         self._handoffs: dict[str, context_mod.Handoff] = {}
         self._carryover: dict[str, context_mod.Carryover] = {}
         self._decisions: dict[str, list[context_mod.Decision]] = {}
@@ -373,9 +300,10 @@ class RunController:
         #: session through the composer @-picker or the agent's `knowledge_search` tool, both of
         #: which are the user asking. Nothing here is reachable from a chat-context path.
         self._brief: Any = None
-        #: The run's worker model, resolved ONCE (see `_worker_model`) — the family a `cross_model`
-        #: judge gate must avoid (WF2LOO-11). The active selection does not change mid-run, so
-        #: re-resolving per gate would re-read the model store for an answer that cannot change.
+        #: The run's worker model, resolved ONCE (see `step_dispatch._worker_model`) — the family a
+        #: `cross_model` judge gate must avoid (WF2LOO-11). The active selection does not change
+        #: mid-run, so re-resolving per gate would re-read the model store for an answer that cannot
+        #: change.
         self._worker_model_cache: str | None = None
         #: node id -> the fraction each of that node's prompt compactions freed (WV-12). Read by
         #: `context_compaction.should_compact`: two consecutive compactions that each freed <10%
@@ -435,7 +363,7 @@ class RunController:
         as if it were a real answer — that is how a downstream prompt ends up confidently
         summarizing an error message.
         """
-        by_path = {path: node for path, node in _walk(self.root)}
+        by_path = {path: node for path, node in walk(self.root)}
         for path, inst in self.instances.items():
             if inst.state not in SUCCESS_STATES:
                 continue
@@ -655,8 +583,8 @@ class RunController:
         """Pre-flight: pre-charge the budget from the ledger, stamp start, journal it.
 
         Returns False when the run was REFUSED before any node ran — today only a fatal
-        `workspace:` declaration does that, and `_provision_workspace` has already written the
-        terminal status. The tick loop stops rather than scheduling into a workspace that could
+        `workspace:` declaration does that, and `run_start.provision_workspace` has already written
+        the terminal status. The tick loop stops rather than scheduling into a workspace that could
         not be honored.
         """
         resumed = bool(self.run.started_at)
@@ -678,13 +606,13 @@ class RunController:
         # the whole reason they are journaled — a resumed run that lost them would restart its next
         # iteration blind, re-deriving what a previous one already verified, which is the exact
         # failure the mechanism exists to prevent.
-        self._rehydrate_context()
-        self._rehydrate_loop_progress()
+        iteration_context.rehydrate_context(self)
+        iteration_context.rehydrate_loop_progress(self)
         if resumed:
-            self._requeue_orphaned_stages()
+            stage_settlement.requeue_orphaned_stages(self)
         async with self._lock:
             if not self.run.started_at:
-                self.run.started_at = _now()
+                self.run.started_at = now_stamp()
             self.run.status = RunStatus.RUNNING
             self._save_run()
         self.journal.run_started(
@@ -695,9 +623,9 @@ class RunController:
             owner_username=self.run.owner_username,
             origin_harness=self.run.origin_harness,
         )
-        self._enforce_inherited_mode()
-        provisioned = await self._provision_workspace()
-        self._bind_project_memory_cwd()
+        run_start.enforce_inherited_mode(self)
+        provisioned = await run_start.provision_workspace(self)
+        run_start.bind_project_memory_cwd(self)
         self._publish("workflow_run_update", {"status": self.run.status.value})
         return provisioned
 
@@ -716,208 +644,6 @@ class RunController:
             return False
         self.run.total_tokens = max(self.run.total_tokens, int(tokens))
         return True
-
-    async def _provision_workspace(self) -> bool:
-        """Stand up the run's declared workspace before the first node (WORK-CONTAINERS §4.1).
-
-        Returns False when the run was refused. This is the first production caller of
-        `workspace.plan_provisioning` / `worktrees.pending_setup`: before it, a spec's
-        `workspace:` block was parsed nowhere, so every run ran in place no matter what its
-        template declared — the whole §4.1 mechanism was a decision layer with no call site.
-
-        **A FATAL declaration REFUSES the run.** `parse_workspace` marks an unknown mode and a
-        greedy preserve pattern fatal precisely because they cannot be honored, and honoring
-        neither means running in a mode nobody chose. An ignored fatal issue is the inert-control
-        shape this program keeps finding, so it terminates the run through `_finish` (the single
-        terminal writer) instead of degrading quietly.
-
-        **The lock is taken and RELEASED here, not held for the run.** Holding a flock across a
-        multi-hour run would tie the workspace to this process's lifetime, so a gateway restart
-        would strand it. What the lock actually protects is the provisioning WINDOW — the
-        preserve+setup pass, where two processes writing the same tree corrupt each other. Live
-        contention refuses the run rather than queueing: two runs interleaving writes in one
-        worktree is worse than telling the second one now.
-
-        Idempotent, because `_prepare` runs again on resume: `add_worktree` returns the same path
-        for an existing run id (measured), setup is marker-guarded and content-addressed, and
-        preserve is an overwriting copy. The second pass is therefore cheap and safe rather than a
-        second workspace.
-
-        Guarded on everything except the deliberate refusal: a provisioning bug must cost the
-        isolation, never the run — a run that cannot start because a scratch dir failed to `mkdir`
-        would be strictly worse than one that runs in the project workspace and says so.
-        """
-        from personalclaw.config.loader import AppConfig
-        from personalclaw.workflows import containers, provisioning
-
-        if not provisioning.declares_workspace(self.spec):
-            # No `workspace:` block, no managed workspace. The default mode fills in a block that
-            # declared the OTHER fields; it does not opt every run in — see `declares_workspace`
-            # for the boot-sweep interaction that measurement caught.
-            return True
-        try:
-            cfg = AppConfig.load().workflows
-            spec, issues = provisioning.resolve_spec(
-                self.spec, default_mode=cfg.workspace_default_mode
-            )
-        except Exception:
-            logger.debug("run %s: workspace spec unreadable", self.run.id, exc_info=True)
-            return True
-
-        fatal = [i for i in issues if i.fatal]
-        if fatal:
-            reason = "; ".join(i.message for i in fatal)
-            self.journal.workspace_provisioned(
-                {"ok": False, "issues": [i.to_dict() for i in fatal], "refused": True}
-            )
-            async with self._lock:
-                await self._finish(
-                    RunStatus.FAILED, error=f"workspace declaration refused: {reason}"[:500]
-                )
-            return False
-
-        lock = provisioning.acquire_workspace_lock(self.run.id, name=spec.name)
-        if not lock.acquired:
-            # A named workspace another live run holds. Refused, not queued — see the docstring.
-            self.journal.workspace_provisioned(
-                {"ok": False, "contended": True, "degraded_reason": lock.reason}
-            )
-            async with self._lock:
-                await self._finish(RunStatus.FAILED, error=lock.reason[:500])
-            return False
-        try:
-            result = await provisioning.provision(
-                spec,
-                run_id=self.run.id,
-                project_id=self.run.project_id,
-                workspace_dir=self._project_workspace(),
-                issues=issues,
-                runner=self.services.teardown_runner,
-                # The fork anchor (WF2WOR-12): a child forked from a checkpoint provisions its
-                # container FROM the parent's committed workspace state. Empty for ordinary
-                # runs, forks from head, and forks whose backend could not snapshot.
-                from_snapshot=str(
-                    (getattr(self.run, "forked_from", None) or {}).get("workspace_snapshot", "")
-                    or ""
-                ),
-                # EI-6 §5.1 SPAWN half: the run's durable worker name — the SAME derivation the
-                # boot sweep recomputes (`watchdog._durable_substrate`), so a session opened
-                # under it is exactly the session a restarted gateway reattaches to. Passed
-                # unconditionally (a cheap string); whether it is USED is `run_step`'s
-                # flag+binary gate, kept next to the spawn it gates.
-                durable_session=containers.durable_worker_name(self.run),
-            )
-        except Exception:
-            logger.warning("run %s: workspace provisioning failed", self.run.id, exc_info=True)
-            return True
-        finally:
-            lock.release()
-
-        async with self._lock:
-            provisioning.stamp_run(self.run, result, spec)
-            self._save_run()
-        self.journal.workspace_provisioned(result.to_dict())
-        if result.isolated and result.path:
-            # The stage dispatcher's cwd, so a code-kind run's subagents actually work IN the
-            # worktree. Without this the isolation would be a directory nothing ran in — the
-            # mechanism would look provisioned and be decorative.
-            self.services.cwd = result.path
-        return True
-
-    def _project_workspace(self) -> str:
-        """The codebase this run's project binds, or the services cwd.
-
-        A project's `workspace_dir` is the tree a worktree branches from and the tree
-        `preserve_patterns` copies out of. Falling back to `services.cwd` keeps a project-less
-        run (a chat-launched batch) provisionable — its workspace is simply wherever the gateway
-        is rooted, which is what every other cwd-consuming node already assumes.
-        """
-        pid = self.run.project_id
-        if not pid:
-            return self.services.cwd
-        try:
-            from personalclaw.tasks.hierarchy import HierarchyStore
-
-            project = HierarchyStore().get_project(pid)
-            bound = str(getattr(project, "workspace_dir", "") or "") if project else ""
-            return bound or self.services.cwd
-        except Exception:
-            logger.debug("run %s: project workspace lookup failed", self.run.id, exc_info=True)
-            return self.services.cwd
-
-    def _bind_project_memory_cwd(self) -> None:
-        """Default a project-owned run's cwd to the project's `context_dir` (§1.6).
-
-        Memory is partitioned by cwd (`memory_dir_for_cwd`), so a project-owned run whose cwd
-        is empty writes everything it learns into the shared `_ext/_default` partition — one
-        pile every project's runs stir together. Binding the project's context dir (which §1.2
-        already calls "the default cwd fallback for stage nodes", and which the hierarchy store
-        documents as "the working area when no external workspace is bound") makes that memory
-        project-local for free: no second partitioning mechanism, just the seam that exists.
-
-        Runs LAST in `_prepare`, and only when nothing more specific has claimed the cwd:
-        an isolated workspace (`result.path`, set just above) and a caller-supplied
-        `services.cwd` are deliberate bindings, and a memory-locality default that overrode
-        them would move a code-kind run out of the worktree it was provisioned into.
-        """
-        if self.services.cwd:
-            return
-        from personalclaw.memory_locality import project_memory_cwd
-
-        cwd = project_memory_cwd(self.run.project_id)
-        if not cwd:
-            return
-        self.services.cwd = cwd
-        logger.info(
-            "run %s: cwd bound to project context dir for memory locality (%s)", self.run.id, cwd
-        )
-
-    def _enforce_inherited_mode(self) -> None:
-        """Apply a restricted origin's memory posture at run start (WORK-CONTAINERS §5.1).
-
-        The run already carries the inherited mode in `extra` (stamped by `start_run`); this is the
-        moment it becomes ENFORCED in the process-global `session_restrictions` registry — the fast
-        path the knowledge/learning writers consult during the run. The chat layer never marks the
-        registry (it enforces off `session.is_restricted` on the LIVE session object, which a
-        background run no longer holds), so this is the registry's FIRST writer for a run's keys.
-
-        The mark is made for BOTH the launching session key AND the run-owned key: the origin key is
-        what the run-end LearningGate reads (`_capture_run_end` keys `for_session` off
-        `origin.session_key`), and the owned key is what any run-scoped write would carry. A
-        `temporary` run gets both marks per `restriction_calls`, because `is_temporary` gates reads
-        while `is_restricted` gates writes.
-
-        **Durability lives in `run.extra`, not a session JSONL.** A run owns no `ConversationLog`
-        file — stage subagents persist under their own `subagent:<id>` keys, and the `workflow:`
-        owned string is a provenance ref, not a JSONL key. The run record's `extra["memory_mode"]`
-        IS the run's durable metadata head: `start_run` stamps it via `ownership.stamp_run_mode`,
-        which is `ownership.durable_metadata` (same `memory_mode` key by construction, not two
-        literals). It round-trips through the run record on disk and is what a gateway restart
-        replays — after which `_prepare` runs again and re-marks the registry from it, and the
-        engine's node-skip + the run-end gate keep reading it. Materializing an owned-session JSONL
-        line would create a file no reader consumes (the reindex path forgets restricted sessions on
-        sight), so the durable write is deliberately the `extra` head. DEVIATION from the literal
-        "JSONL write" phrasing, recorded in the plan's Execution log.
-
-        Idempotent and best-effort: `_prepare` runs once per live controller and again on resume,
-        and re-marking a key already in the LRU is a no-op. A NORMAL run does nothing — an
-        unrestricted origin has nothing to suppress. Guarded because `_prepare` must not fail the
-        run over a registry mutation.
-        """
-        mode = ownership.run_mode(self.run)
-        if mode is ownership.MemoryMode.NORMAL:
-            return
-        owned = ownership.own_session(self.run.id, "run", inherited_mode=mode)
-        try:
-            from personalclaw import session_restrictions
-
-            for call in ownership.restriction_calls(owned):
-                mark = getattr(session_restrictions, call)
-                if self.run.origin.session_key:
-                    mark(self.run.origin.session_key)
-                mark(owned.key)
-        except Exception:
-            logger.debug("run %s: registry mark failed", self.run.id, exc_info=True)
 
     async def _step(self) -> bool:
         """One scheduling step under the lock. Returns True when the run is terminal.
@@ -941,7 +667,7 @@ class RunController:
         # Mutations drain HERE — lock held, nothing mid-launch (WF2-R20 safety #1). Before
         # the frontier, so an applied edit is reflected in this step's scheduling rather
         # than a tick later.
-        self._drain_mutations()
+        mid_flight.drain_mutations(self)
 
         self._wake_due_nodes()
 
@@ -949,7 +675,7 @@ class RunController:
         # the watcher reap for the same reason the reap precedes the frontier: a stage
         # finishing IS the "accompanied work complete" a watcher is reaped for, so settling it
         # second would delay every reap by a tick.
-        self._reconcile_dispatched_stages()
+        stage_settlement.reconcile_dispatched_stages(self)
 
         # Watchers are reaped BEFORE the frontier, so a reaped watcher is already terminal in
         # this step's derivation and the run completes on the same tick its work finished.
@@ -981,7 +707,7 @@ class RunController:
         # PP-12 admission: the two rules the frontier structurally cannot apply, because both need
         # a clock and one needs the disk. Skipped entirely for a spec that declares none of their
         # keys — the same code path as before this existed, which is what "additive" has to mean.
-        admitted = await self._admit_ready(fr.ready)
+        admitted = await run_admission.admit_ready(self, fr.ready)
         if admitted is None:
             return True
 
@@ -996,14 +722,14 @@ class RunController:
 
         if not self._inflight and not fr.ready and not fr.deferred:
             waiting = [p for p, i in self.instances.items() if i.state == InstanceState.WAITING]
-            gates = [p for p in waiting if self._is_gate(p)]
+            gates = [p for p in waiting if gate_answers.is_gate(self, p)]
             # A gate awaiting a HUMAN surfaces as needs_input IMMEDIATELY (WF2-R7): a run
             # that parks quietly for 45s and only then surfaces is a run nobody knows to
             # answer. Surfacing and terminating are separate, though — see below.
             for path in gates:
-                self._ensure_continuation(path)
+                gate_answers.ensure_continuation(self, path)
             if gates and self.run.status != RunStatus.NEEDS_INPUT:
-                self._surface_needs_input()
+                gate_answers.surface_needs_input(self)
             if waiting and self._next_wake_delay() is None:
                 # Nothing will wake this run: no deadline, no in-flight work. NOW it is
                 # terminal. With a deadline still pending the loop keeps ticking so the
@@ -1012,126 +738,6 @@ class RunController:
                 await self._finish(RunStatus.NEEDS_INPUT)
                 return True
         return False
-
-    def _surface_needs_input(self) -> None:
-        """Publish the needs-input state without ending the run.
-
-        Split from `_finish` deliberately: a gate with an unattended deadline must be
-        VISIBLE now and still able to time out later. Collapsing the two would force a
-        choice between surfacing promptly and honouring the timeout.
-        """
-        self.run.status = RunStatus.NEEDS_INPUT
-        self._save_run()
-        self._publish("workflow_run_update", {"status": RunStatus.NEEDS_INPUT.value})
-
-    def _is_gate(self, path: str) -> bool:
-        """Is this waiting instance a human-input gate (versus a `wait` deadline)?
-
-        A `wait` is parked on the CLOCK and resolves itself, so surfacing it as needs_input
-        would ask a human to answer something nobody asked them.
-
-        `approval` and `event` are ONE case here on purpose, and #375 read that as the bug
-        it is not. An event gate's wake-up arrives as a trigger-declared resume against this
-        run (`triggers.loop._apply_resume` → `service.resume_run` → `resume`), which is the
-        same continuation a human answering the card consumes — so an event gate is
-        answerable by a human too, and `bundled/goal-pursuit-monitor`'s `park` message says
-        exactly that ("answer this gate to force a check now"). Splitting them would hide a
-        parked monitor from needs_input, leaving no surface for the escape hatch.
-        """
-        node = dict(_walk(self.root)).get(spec_path(path))
-        if node is None or node.kind != NodeKind.GATE:
-            return False
-        raw = str((node.config or {}).get("kind", "") or "")
-        return raw in ("approval", "event")
-
-    def _ensure_continuation(self, path: str) -> None:
-        """Mint a durable resume point for a waiting gate (WF2-R7), once per epoch.
-
-        Idempotent by (path, epoch): a run can pass through `needs_input` repeatedly as the
-        watchdog polls it, and a fresh token per poll would leave a pile of live approval
-        links for one question — each of them individually valid.
-        """
-        from personalclaw.workflows.human_input import (
-            create_continuation,
-            handoff_bundle,
-            list_continuations,
-        )
-
-        inst = self._instance(path)
-        for existing in list_continuations(self.run.id):
-            if existing.instance_path == path and existing.epoch == inst.epoch:
-                return
-        node = dict(_walk(self.root)).get(spec_path(path))
-        ask = dict(self.run.attention or {}) if self.run.attention else {}
-        outstanding = [
-            p for p, i in self.instances.items() if i.state not in TERMINAL_STATES and p != path
-        ]
-        cont = create_continuation(
-            self.run.id,
-            node_id=node.id if node else "",
-            instance_path=path,
-            epoch=inst.epoch,
-            resolved_inputs=self._resolved_for_path(path),
-            ask=ask,
-            handoff=handoff_bundle(
-                scope=self.run.workflow_name,
-                status="blocked on human input",
-                outstanding=outstanding,
-                checks_run=[p for p, i in self.instances.items() if i.state in SUCCESS_STATES],
-                next_steps=[f"answer the gate at {node.id if node else path}"],
-            ),
-        )
-        self._publish(
-            "workflow_needs_input",
-            {
-                "node_id": cont.node_id,
-                "instance_path": path,
-                "resume_token": cont.token,
-                "ask": cont.ask,
-                "handoff": cont.handoff,
-                "expires_at": cont.expires_at,
-            },
-        )
-        # The typed CONFIRMATION record's pending half (TASKS-SOPS §4, S61i). Emitted HERE rather
-        # than at a second site so it inherits this method's `(path, epoch)` idempotency for free:
-        # the watchdog polls a waiting run repeatedly, and a per-poll emission would put one
-        # "awaiting approval" row per poll into the ledger for a single question.
-        #
-        # `confirmation_id` is derived from `(run, gate, epoch)` by `confirmation.request_id`, NOT
-        # from the resume token. The token is single-use and rotates on rewind; the ID has to stay
-        # stable so `confirmation_pending` and `confirmation_resolved` pair up in the ledger.
-        confirmation_id = _confirmation_id(self.run.id, cont.node_id or path, inst.epoch)
-        self.publish_confirmation_pending(
-            path,
-            cont.node_id,
-            confirmation_id=confirmation_id,
-            kind=_confirmation_kind(node.config if node else {}),
-        )
-        self._open_escalation_outcome(path, cont.node_id, confirmation_id)
-        # …and DURABLY, to the inbox (WF2-R7). The SSE frame above only reaches a view that
-        # happens to be open; a scheduled run parking at 3am would otherwise wait in silence
-        # forever. Minted alongside the continuation so the two share the (path, epoch)
-        # idempotency — one row per question, not one per watchdog poll.
-        attention.raise_gate_item(
-            self.services.attention_state,
-            run_id=self.run.id,
-            workflow=self.run.workflow_name,
-            node_id=cont.node_id,
-            instance_path=path,
-            epoch=inst.epoch,
-            resume_token=cont.token,
-            ask=cont.ask,
-            handoff=cont.handoff,
-        )
-
-    def _resolved_for_path(self, path: str) -> dict[str, Any]:
-        """What this node had already resolved — the field that makes a resume re-enter
-        the STEP rather than re-run the enclosing subgraph."""
-        node = dict(_walk(self.root)).get(spec_path(path))
-        if node is None:
-            return {}
-        deps = node_deps(node.config or {})
-        return {dep: self._outputs.get(dep) for dep in sorted(deps)}
 
     def resume(
         self,
@@ -1180,11 +786,11 @@ class RunController:
         # rejection. Recognised HERE, alongside `validate_answer` and for the same reason: a revise
         # naming a step that does not exist must leave the token intact so the reviewer can correct
         # the name, and a check placed after the claim would have destroyed it already.
-        revise = _parse_revise(answer)
+        revise = gate_answers.parse_revise(answer)
         if revise is not None:
             step_ref, comment = revise
-            return self._resume_revise(
-                cont, token, step_ref, comment, responder=responder, channel=channel
+            return gate_answers.resume_revise(
+                self, cont, token, step_ref, comment, responder=responder, channel=channel
             )
 
         ask = Ask.from_dict(cont.ask)
@@ -1205,11 +811,11 @@ class RunController:
             return {"ok": False, "code": "WF_RESUME_STALE_EPOCH"}
 
         filled = ask.apply_defaults(answer)
-        approved = _is_approved(ask, filled)
+        approved = gate_answers.is_approved(ask, filled)
         if approved and always_allow:
             # Run-scoped, keyed by (operation, target) — and cleared on rewind, so it can
             # never auto-approve a step the user rewound to reconsider.
-            node = dict(_walk(self.root)).get(spec_path(cont.instance_path))
+            node = dict(walk(self.root)).get(spec_path(cont.instance_path))
             self._allow_memory.remember(node.config if node else {}, cont.node_id)
         inst.wake_at = 0.0
         if approved:
@@ -1228,14 +834,14 @@ class RunController:
                 remediation="adjust the work the gate rejects, then re-run from this node",
                 terminal_reason="denied",
             )
-        inst.completed_at = _now()
+        inst.completed_at = now_stamp()
         # The resolution half. AFTER the claim is won and the epoch verified, so the ledger records
         # answers that actually applied — emitting before the claim would log an approval for a race
         # the caller lost, and the audit would show two people approving one gate.
         self.publish_confirmation_resolved(
             cont.instance_path,
             cont.node_id,
-            confirmation_id=_confirmation_id(
+            confirmation_id=gate_answers.stable_confirmation_id(
                 self.run.id, cont.node_id or cont.instance_path, cont.epoch
             ),
             verb="approve" if approved else "reject",
@@ -1262,7 +868,7 @@ class RunController:
         # then approved is a `false_reject`. This is the calibration signal — a verdict that
         # followed a human override is not clean evidence about the template, and without the event
         # a refiner cannot tell the difference (see judge_calibration.DivergenceRecord).
-        self._emit_judge_divergence(cont.instance_path, cont.node_id, approved)
+        gate_answers.emit_judge_divergence(self, cont.instance_path, cont.node_id, approved)
         self.run.attention = None
         # The run has work again, so it is no longer surfaced as blocked. Written BEFORE the
         # loop restarts so a status read between the two never reports a stale needs_input.
@@ -1286,151 +892,6 @@ class RunController:
         # called `run_to_completion` by hand afterwards and so never saw it.
         self._resume_loop()
         return {"ok": True, "approved": approved, "node_id": cont.node_id}
-
-    def _resume_revise(
-        self,
-        cont: Any,
-        token: str,
-        step_ref: str,
-        comment: str,
-        *,
-        responder: str = "",
-        channel: str = "",
-    ) -> dict[str, Any]:
-        """Apply `revise{step_ref, comment}` to exactly one node, then let the run carry on.
-
-        This is the third answer to a waiting gate, and the reason it has to exist: a reviewer who
-        wants ONE step changed could previously only reject the whole plan and re-run it, which
-        re-rolls the twelve stages nobody complained about (the same argument `revision.py` makes
-        about regeneration).
-
-        Mirrors `planning.session.comment_step`'s awaiting_review → running semantics (a comment
-        sends the step back for a re-draft rather than accepting the artifact), with the engine's
-        own state names: the gate instance goes back to PENDING at the current epoch, not DONE, so
-        it re-asks against the revised step. It is deliberately NOT an approval — nothing is marked
-        approved, no `always_allow` is remembered, and no `gate_resolved` is journaled, because the
-        gate has not been answered yet.
-
-        EVERY refusal here happens before the token is consumed. The whole point of a revise is that
-        the reviewer is still deciding, so a rejected revise must leave them able to answer.
-        """
-        from personalclaw.workflows.human_input import consume_continuation
-
-        allowed, why = _revise_allowed(self.run)
-        if not allowed:
-            return {"ok": False, "code": "WF_REVISE_NOT_ALLOWED", "message": why}
-
-        root = self.spec.get("root")
-        if not isinstance(root, dict):
-            return {
-                "ok": False,
-                "code": "WF_REVISE_NO_SPEC",
-                "message": "this run has no readable spec to revise",
-            }
-        node_id, code, message = revision.resolve_step_ref(root, step_ref)
-        if code:
-            return {"ok": False, "code": code, "message": message}
-        text = str(comment or "").strip()
-        if not text:
-            return {
-                "ok": False,
-                "code": "WF_REVISE_NO_COMMENT",
-                "message": "a revise must say what to change (`comment`)",
-            }
-
-        patch = revision.comment_patch(
-            root, node_id, text, requested_by=responder or channel or "user"
-        )
-        if patch is None:
-            return {
-                "ok": False,
-                "code": "WF_REVISE_NOT_APPLICABLE",
-                "message": f"{node_id!r} cannot carry a revision comment",
-            }
-        merged = revision.merge_patches(self.spec, [patch])
-        if not merged.applied:
-            return {
-                "ok": False,
-                "code": "WF_REVISE_REJECTED",
-                "message": "; ".join(merged.rejected) or "the revision did not apply",
-            }
-
-        # The token is consumed only once the revision is certain to land. A revise answers the
-        # gate as surely as an approval does — leaving the token live would let the same reviewer
-        # revise twice off one ask, and the second would land on an already-revised step.
-        claimed = consume_continuation(self.run.id, token)
-        if claimed is None:
-            return {"ok": False, "code": "WF_RESUME_ALREADY_USED"}
-        inst = self._instance(cont.instance_path)
-        if inst.epoch != cont.epoch:
-            return {"ok": False, "code": "WF_RESUME_STALE_EPOCH"}
-
-        # ONE spec, written once, journaled with the ops that produced it. `_commit_mutation` is the
-        # single writer of `spec.json` + `spec_history/` + `user_edited_mid_flight`, so routing the
-        # revision through it is what makes the recorded edit and the executing spec the same
-        # document rather than two that agree by convention.
-        result = mutations.BatchResult(
-            ok=True,
-            ops=[
-                mutations.Op(
-                    kind=mutations.OpKind.UPDATE_NODE,
-                    node_id=node_id,
-                    node=patch.node,
-                    note=f"revise: {text}",
-                    raw={"op": "revise", "step_ref": node_id, "comment": text},
-                )
-            ],
-            preview=mutations.CascadePreview(rerun=[node_id]),
-            spec=merged.spec,
-        )
-        self._commit_mutation(result, responder or channel or "user")
-
-        # The revised step re-asks. PENDING at the SAME epoch, matching `_apply_reentry`'s
-        # no-force behaviour — and the cache cannot serve the old answer anyway, because the
-        # cache key hashes the node's own spec region and the prompt just changed.
-        inst.state = InstanceState.PENDING
-        inst.output_ref = ""
-        inst.failure = None
-        inst.completed_at = None
-        inst.wake_at = 0.0
-        inst.attempt = 0
-        if cont.node_id:
-            self._outputs.pop(cont.node_id, None)
-        self.journal.write(
-            journal_mod.GATE_REVISED,
-            instance_path=cont.instance_path,
-            node_id=cont.node_id,
-            epoch=cont.epoch,
-            step_ref=node_id,
-            comment=text,
-            revised_by=responder or channel or "dashboard",
-        )
-        self.run.attention = None
-        if self.run.status == RunStatus.NEEDS_INPUT:
-            self.run.status = RunStatus.RUNNING
-        self._persist_state()
-        self._save_run()
-        self._publish(
-            "workflow_gate_revised",
-            {
-                "node_id": cont.node_id,
-                "instance_path": cont.instance_path,
-                "step_ref": node_id,
-            },
-        )
-        # Same reasoning as the approval path: the gate's inbox row must not outlive the ask it
-        # raised. The revised step raises its own row when it re-asks.
-        attention.resolve_gate_item(self.services.attention_state, self.run.id, cont.node_id)
-        self._publish("workflow_run_update", {"status": self.run.status.value})
-        self._resume_loop()
-        return {
-            "ok": True,
-            "revised": True,
-            "approved": False,
-            "node_id": cont.node_id,
-            "step_ref": node_id,
-            "spec_version": self.run.spec_version,
-        }
 
     def _resume_loop(self) -> None:
         """Relaunch the tick loop if it has exited and the run is not terminal.
@@ -1512,196 +973,13 @@ class RunController:
         body["queued"] = True
         return body
 
-    def _drain_mutations(self) -> None:
-        """Apply queued batches. Called under the lock, between scheduling steps.
-
-        Each batch is RE-VERIFIED here (WF2-R2 TOCTOU): nodes complete while a user reads a
-        preview, so a node that was pending at submit may be frozen by now. Re-validating
-        against current state is the only way to catch that, and `validate_batch` is pure
-        so running it twice costs nothing.
-        """
-        if not self._pending_mutations:
-            return
-        queued = list(self._pending_mutations)
-        self._pending_mutations.clear()
-        for result, actor in queued:
-            try:
-                root = Node.from_dict(self.spec.get("root") or {})
-            except ValueError:
-                logger.warning("workflow %s: spec unreadable, dropping mutation", self.run.id)
-                continue
-            issues = mutations.validate_batch(result.ops, root, self.instances)
-            if issues:
-                # The state moved under the preview. Rejected, and journaled as rejected —
-                # a silently dropped batch is indistinguishable from an applied one.
-                self.journal.write(
-                    journal_mod.MUTATION_REJECTED,
-                    actor=actor,
-                    ops=[o.to_dict() for o in result.ops],
-                    issues=[i.to_dict() for i in issues],
-                )
-                self._publish(
-                    "workflow_mutation_rejected",
-                    {"issues": [i.to_dict() for i in issues], "actor": actor},
-                )
-                continue
-            self._commit_mutation(result, actor)
-
-    def _commit_mutation(self, result: mutations.BatchResult, actor: str) -> None:
-        """Swap in the candidate spec, apply state effects, journal the batch."""
-        if result.spec is None:
-            return
-        self.spec = result.spec
-        self.run.spec_version += 1
-        self.root = Node.from_dict(self.spec.get("root") or {"kind": "sequence"})
-        store.write_spec(self.run.id, self.spec)
-        store.write_spec_history(
-            self.run.id,
-            self.run.spec_version,
-            mutations.history_record(
-                result.ops,
-                actor=actor,
-                version=self.run.spec_version,
-                spec=self.spec,
-                preview=result.preview,
-                owner_username=self.run.owner_username,
-                origin_harness=self.run.origin_harness,
-            ),
-        )
-        self.journal.user_edited_mid_flight([o.to_dict() for o in result.ops])
-
-        for op in result.ops:
-            if op.kind in (mutations.OpKind.REWIND, mutations.OpKind.RUN_FROM):
-                self._apply_reentry(op, result.preview)
-            elif op.kind == mutations.OpKind.SKIP:
-                self._skip_by_id(op.node_id)
-            elif op.kind == mutations.OpKind.SET_INPUT:
-                self.run.inputs.update(op.overrides)
-            elif op.kind == mutations.OpKind.FORK:
-                self._apply_fork(op)
-
-        # Nodes whose inputs changed but which are NOT being re-run (WF2-R2 #3). Flagged
-        # rather than silently serving an answer computed from inputs that no longer exist.
-        self._flag_stale(result.preview)
-        self._save_run()
-        self._persist_state()
-        self._publish(
-            "workflow_spec_updated",
-            {
-                "spec_version": self.run.spec_version,
-                "actor": actor,
-                "preview": result.preview.to_dict(),
-            },
-        )
-
-    def _apply_reentry(self, op: mutations.Op, preview: mutations.CascadePreview) -> None:
-        """Reset the binding closure so it re-runs.
-
-        `rewind` resets the seed node AND its consumers; `run_from` resets only the
-        consumers, leaving the seed's output in place — that is the whole distinction
-        ("redo the synthesis with the same gathered data").
-
-        The outputs are ARCHIVED, not deleted: a rewind that discarded the prior answer
-        would make the edit irreversible, and the attic is what lets a reader see what the
-        run used to say.
-        """
-        targets = set(preview.rerun)
-        if op.kind == mutations.OpKind.RUN_FROM:
-            targets.discard(op.node_id)
-        paths = [path for path, node in _walk(self.root) if node.id in targets for _ in (0,)]
-        # A remembered "always allow" must not survive a rewind: it would auto-approve the
-        # very step the user rewound in order to reconsider it (WF2-R7).
-        self._allow_memory.clear()
-        epoch = mutations.next_epoch(self.instances, paths, force=op.force)
-        for path in paths:
-            inst = self._instance(path)
-            if inst.output_ref:
-                store.archive_output(self.run.id, path, self.run.spec_version)
-            inst.state = InstanceState.PENDING
-            inst.epoch = epoch
-            inst.output_ref = ""
-            inst.failure = None
-            inst.completed_at = None
-            inst.wake_at = 0.0
-            inst.attempt = 0
-            node = dict(_walk(self.root)).get(spec_path(path))
-            if node is not None and node.id:
-                # Drop the cached output so a binding cannot resolve a stale value between
-                # the reset and the re-run.
-                self._outputs.pop(node.id, None)
-            self.journal.invalidate_prefix(path)
-            # A pending approval for a node about to re-run would resume a step that no
-            # longer exists in that form (WF2-R7) — drop the token rather than let it land
-            # in the wrong epoch.
-            drop_continuations(self.run.id, instance_prefix=path)
-
-    def _apply_fork(self, op: mutations.Op) -> None:
-        """Branch a child run. THIS run is untouched — that is the whole point of fork.
-
-        The child is left in DRAFT: starting it is the caller's decision, because a fork is
-        usually created to be edited before it runs ("try a stricter judge"). Auto-starting
-        would race the edit it exists to receive.
-        """
-        from personalclaw.workflows.checkpoints import fork_run
-
-        try:
-            result = fork_run(
-                self.run,
-                self.spec,
-                self.instances,
-                checkpoint_id=op.checkpoint_id,
-                note=op.note,
-                now=_now(),
-            )
-        except ValueError as exc:
-            self.journal.write(
-                journal_mod.MUTATION_REJECTED,
-                actor="engine",
-                ops=[op.to_dict()],
-                issues=[{"code": "WF_MUT_UNKNOWN_CHECKPOINT", "message": str(exc), "node_id": ""}],
-            )
-            return
-        self.journal.write(
-            journal_mod.CHILD_RUN_ATTACH,
-            parent_run_id=self.run.id,
-            child_run_id=result.child.id,
-            node_id=op.node_id,
-        )
-        self._publish("workflow_forked", result.to_dict())
-
-    def _skip_by_id(self, node_id: str) -> None:
-        for path, node in _walk(self.root):
-            if node.id == node_id:
-                self._skip(path)
-
-    def _flag_stale(self, preview: mutations.CascadePreview) -> None:
-        """Journal `inputs_stale` for done nodes outside the re-run set (WF2-R2 #3)."""
-        rerun = set(preview.rerun)
-        for path, node in _walk(self.root):
-            if not node.id or node.id in rerun:
-                continue
-            inst = self.instances.get(path)
-            if inst is None or inst.state not in SUCCESS_STATES:
-                continue
-            if not (node_deps(node.config or {}) & rerun):
-                continue
-            self.journal.write(
-                journal_mod.INPUTS_STALE,
-                instance_path=path,
-                node_id=node.id,
-                epoch=inst.epoch,
-                stale_deps=sorted(node_deps(node.config or {}) & rerun),
-            )
-
     def _skip(self, path: str) -> None:
         """Mark a whole subtree skipped. The subtree matters: skipping only the case root
         would leave its children pending, and a derived container state would then read
         the branch as unfinished forever."""
-        node = dict(_walk(self.root)).get(spec_path(path))
+        node = dict(walk(self.root)).get(spec_path(path))
         paths = [path]
         if node is not None:
-            from personalclaw.workflows.models import walk
-
             paths = [
                 path if sub == "root" else f"{path}{sub[len('root'):]}" for sub, _n in walk(node)
             ]
@@ -1710,34 +988,11 @@ class RunController:
             if inst.state in TERMINAL_STATES:
                 continue
             inst.state = InstanceState.SKIPPED
-            inst.completed_at = _now()
+            inst.completed_at = now_stamp()
             self.journal.step_skipped(
                 target, node.id if node else "", epoch=inst.epoch, actor="engine"
             )
         self._persist_state()
-
-    def _awaiting_out_of_band_work(self) -> list[str]:
-        """Paths whose node is RUNNING behind a worker this controller must POLL, not await.
-
-        ONE predicate, two consumers: `_reconcile_dispatched_stages` asks the manager for each
-        one's verdict, and `_dispatched_poll_delay` is why the tick loop wakes up to ask at all.
-        Re-deriving the condition at the second site is how the two drift, and the drift is not
-        cosmetic: a node polled by a reconciler the loop does not know to wake for gets polled at
-        `asyncio.sleep(0)` frequency — measured at 1224-1859 `SubagentManager.get` lookups per
-        second and 65-68% of one core for a SINGLE otherwise-idle run. So the delay is derived
-        from the same set the reconciler walks.
-
-        The membership test is `RUNNING` + a persisted foreign key, not a node-kind list. A kind
-        list would be a second vocabulary to keep in step with the dispatchers (and
-        `test_workflows_stage_completion` already ratchets that `dispatch_stage` is the only
-        producer of RUNNING); "the instance carries a handle to work happening elsewhere" is the
-        property both consumers actually need.
-        """
-        return [
-            path
-            for path, inst in self.instances.items()
-            if inst.state == InstanceState.RUNNING and inst.subagent_id
-        ]
 
     def _dispatched_poll_delay(self) -> float | None:
         """How long the idle tick branch may sleep while out-of-band work is live, or None.
@@ -1763,268 +1018,9 @@ class RunController:
         stage) is real and stays open; it is a policy call about what a parked run owes its
         in-flight workers, not something to settle inside a spin fix.
         """
-        if not self._awaiting_out_of_band_work():
+        if not stage_settlement.awaiting_out_of_band_work(self):
             return None
         return TICK_WAKE_SECS
-
-    def _reconcile_dispatched_stages(self) -> None:
-        """Settle `stage` nodes whose spawned subagent has finished.
-
-        `dispatch_stage` spawns and returns RUNNING immediately (``engine.py:777``), so by the
-        time that result is applied the awaited asyncio task is ALREADY done: `_await_progress`
-        pops the entry out of `_inflight` (:2686) before `_apply` sees it, and the tick loop
-        then takes the idle branch (:573) that never calls `_await_progress` again.
-        `_enforce_stall_timeouts` is reachable only from there (:2682), so it stopped being able
-        to observe the node at all; `node_timeout_total` never could, because it bounds the
-        awaited dispatcher coroutine (:2539) and for a stage that coroutine ends at the spawn.
-        The result was a node that stayed RUNNING with no `step_completed` after its subagent
-        had reported `done: True` — which hung every template containing a `stage`.
-
-        **`_inflight` is deliberately NOT the home for a dispatched stage.** Every consumer of
-        that dict assumes `entry.task` is a live awaitable: `_await_progress` selects on it with
-        FIRST_COMPLETED, and both the stall sweep and `_cancel_inflight` cancel it. Re-inserting
-        an already-finished task would make `asyncio.wait` return instantly on every tick and
-        re-apply the same RUNNING result forever; parking a never-resolving placeholder there
-        instead would mean inventing a fake task to satisfy a signature. A spawned subagent is
-        not an awaited task. What the controller legitimately owns is the ID of the work, and
-        that is instance state — exactly like `wake_at`.
-
-        **One source of truth for liveness.** "Has this subagent finished?" stays owned by
-        `SubagentManager.get` (``subagent.py:1632``), the same lookup the sessions surface reads
-        (``dashboard/handlers/sessions.py:388``). Nothing is registered here. That also settles
-        the HUNG case without a second deadline: the manager's own reaper (``subagent.py:739``)
-        force-kills a child past `_default_timeout` and records the verdict as `done=True` with
-        `error="Reaped after ..."` (:791-793). That deadline already existed and was merely
-        unread — so this method is a READER, not a new timeout.
-        """
-        manager = self.services.subagents
-        if manager is None or not hasattr(manager, "get"):
-            return
-        settled = False
-        for path in self._awaiting_out_of_band_work():
-            inst = self._instance(path)
-            try:
-                info = manager.get(inst.subagent_id)
-            except Exception:
-                # A failed lookup is not a verdict on the node. Logged and retried next tick:
-                # letting a transient error in an OBSERVER kill work that is proceeding is the
-                # shape where a safety control becomes an outage.
-                logger.debug(
-                    "run %s: subagent lookup failed for %s", self.run.id, path, exc_info=True
-                )
-                continue
-            if info is None or not getattr(info, "done", False):
-                # UNKNOWN or still working — no verdict either way. `None` is the post-restart
-                # shape (a fresh manager knows no ids): reading it as "finished" would bless
-                # work that never reported, and reading it as "failed" would invent a verdict
-                # on no evidence for a run the watchdog may be mid-adoption of.
-                # `audit.STALE_RUNNING` (``audit.py:39``) stays the backstop for a RUNNING node
-                # nobody is driving.
-                continue
-            node = dict(_walk(self.root)).get(spec_path(path))
-            node_id = node.id if node else ""
-            error = str(getattr(info, "error", "") or "")
-            reaped = bool(getattr(info, "reaped", False))
-            # 🔴 The child's USAGE, which this method used to leave on the floor: a spawned `stage`
-            # returns at `_apply`'s RUNNING branch, before any usage is booked, so a template whose
-            # only leaves are stages (`general-project`) charged its run NOTHING. Measured on the
-            # owner's instance: run 61899886, eight `done` nodes on a remote provider,
-            # `total_tokens: 0`. Charged and journaled for BOTH outcomes, as `_apply` does: a
-            # reaped stage burned its whole deadline.
-            usage = subagent_usage(info)
-            inst.tokens = usage.billable()
-            self.run.total_tokens += inst.tokens
-            if error:
-                failure = Failure(
-                    # The manager reaps on its OWN deadline, so a reaped child is a timeout.
-                    # Anything else it reports is an execution fault: filing that as TIMEOUT
-                    # would tell the user to raise a limit that was never the problem.
-                    failure_class=FailureClass.TIMEOUT if reaped else FailureClass.INTERNAL,
-                    # The manager's own sentence, verbatim — it carries the elapsed time and
-                    # the deadline that was crossed, which a re-worded message would drop.
-                    cause_plain=error,
-                    remediation=(
-                        "the subagent was force-killed after exceeding its deadline; raise the "
-                        "subagent timeout, or split this stage into smaller steps"
-                        if reaped
-                        else "check the subagent's transcript for the failing turn"
-                    ),
-                    recoverable=True,
-                )
-                inst.state = InstanceState.FAILED
-                inst.failure = failure
-                inst.completed_at = _now()
-                # `retries_exhausted`, and no `_should_retry` consultation, is not a shortcut:
-                # neither TIMEOUT nor INTERNAL is in `RETRYABLE_CLASSES`, so the retry policy
-                # would decline both anyway. Re-deriving that here would be a second copy of
-                # the rule that could drift from the first.
-                self.journal.step_failed(
-                    path,
-                    node_id,
-                    epoch=inst.epoch,
-                    failure=failure,
-                    usage=usage,
-                    attempt=inst.attempt,
-                    retries_exhausted=True,
-                )
-                # 🔴 The FAILED ATTEMPT IS OVER, so its no-double-execution claim goes back (#3533).
-                # This is the only place a spawned stage settles, and the claim's 900s TTL used to
-                # be its only way out — so a failed stage went on fencing its own instance, and the
-                # retry met its own lease: `another worker holds the claim on this node (held by …
-                # for another 899s)`, rendered DEGRADED. DEGRADED is a SUCCESS state, so the run
-                # then reported COMPLETE having re-run nothing. Measured that way on a rewind of a
-                # reaped stage before this existed.
-                #
-                # The SUCCESS branch below deliberately keeps its claim: the symptom a retained
-                # DONE claim causes is a stage-bodied loop refusing its own next round, and that is
-                # fixed by keying the claim per node INSTANCE (#3531) rather than by shortening the
-                # window here. Releasing on both outcomes ALSO clears it — measured, the research
-                # round loop goes from 1 dispatch to 8 — but it would be a second mechanism for one
-                # symptom, and a re-run of the same SUCCEEDED instance is intercepted before the
-                # claim is consulted anyway (the committed-effects redo gate, then the WF2-A1 resume
-                # cache).
-                release_execution_claim(inst.claim_target, inst.claim_holder)
-                inst.claim_target = ""
-                inst.claim_holder = ""
-            else:
-                inst.state = InstanceState.DONE
-                inst.completed_at = _now()
-                stage_result = self._settled_stage_output(
-                    node, str(getattr(info, "result", "") or "")
-                )
-                output = stage_result.output
-                # What the declared `schema` asked for and the subagent did not return (#3545), on
-                # the instance, the row below and the event, as `_apply` does for a dispatched node.
-                inst.schema_shortfall = stage_result.schema_shortfall
-                ref, preview = self.journal.store_output(path, output)
-                inst.output_ref = ref
-                if node_id:
-                    # NOW the binding namespace gets the subagent's actual output. Until this
-                    # existed a downstream `{{nodes.X}}` on a stage could only ever have read
-                    # the placeholder the RUNNING branch left behind.
-                    self._outputs[node_id] = preview
-                self.journal.step_completed(
-                    path,
-                    node_id,
-                    epoch=inst.epoch,
-                    # No cache key. The awaited dispatch that owned this node's key returned at
-                    # the spawn, so there is no key under which THIS output was derived;
-                    # inventing one would let a later resume serve a cache hit for a subagent
-                    # result this run never computed.
-                    cache_key="",
-                    state=InstanceState.DONE,
-                    retries=max(0, inst.attempt - 1),
-                    # The ledger fields the run row's charge above is derived from, so a reader
-                    # reconciling the two arrives at the same number. `tokens` also decides
-                    # `run_totals()["tokens_recorded"]`, which is what `_prepare` pre-charges a
-                    # capped resume from. No `provider`: the subagent does not report one.
-                    tokens=usage.tokens,
-                    model=usage.model,
-                    cost_usd=usage.cost_usd,
-                    output_ref=ref,
-                    schema_shortfall=inst.schema_shortfall,
-                )
-                if node is not None:
-                    self._record_terminal_effect(node, path, inst, inst.state, output)
-            # 🔴 The ITERATION COUNTER, which this method used to leave behind. `_apply` advances
-            # the loop for an awaited dispatch, and for a spawned `stage` it returns at the RUNNING
-            # branch above — so a loop whose body ENDS in a stage settled here, journalled
-            # `step_completed`, and then nothing moved: no `iteration` record, no second round, and
-            # the tick loop reported "run deadlocked: no runnable nodes and none in flight" after
-            # exactly one iteration.
-            #
-            # Measured with a control (PP-16, the research port): a
-            # `sequence[transform, loop(until_dry, streak 2, body=sequence[stage, stage])]`
-            # deadlocks after one iteration with ZERO `iteration` records, while the byte-identical
-            # spec with `infer` bodies runs two and ends on `dry_streak`. That is the same symptom
-            # `_loop_parent`'s docstring records for the container-body bug — deadlock after exactly
-            # one iteration — reached by the other of the two settle paths, and it is why no shipped
-            # stage-bodied loop template had ever been observed past round one.
-            #
-            # Safe to call unconditionally: `_advance_loop` no-ops unless this path really is inside
-            # a loop body AND `_iteration_complete` says the whole body is terminal, so a stage that
-            # is merely the FIRST leaf of a container body still advances nothing.
-            self._advance_loop(path, node_id)
-            self._publish(
-                "workflow_node_done",
-                {
-                    "node_id": node_id,
-                    "instance_path": path,
-                    "status": inst.state.value,
-                    "node_epoch": inst.epoch,
-                    # Only when there is something to name (#3545), as `_apply`'s event does. Empty
-                    # on every branch but DONE: `_launch` clears it per attempt.
-                    **(
-                        {"schema_shortfall": inst.schema_shortfall} if inst.schema_shortfall else {}
-                    ),
-                },
-            )
-            settled = True
-        if settled:
-            self._persist_state()
-            # The RUN ROW too, not just instance state. `service.status()` is a pure store read
-            # (`store.get(run_id)`), so a `total_tokens` that lives only in this object is a number
-            # no surface can see until `_finish` happens to flush it — and a run the user is
-            # watching would report zero for its whole life. `_persist_state` writes instances
-            # only, which is why the counter needs its own flush here.
-            self._save_run()
-
-    def _settled_stage_output(self, node: Node | None, text: str) -> NodeResult:
-        """A spawned stage's settled result, its output in the shape its own `config` DECLARES.
-
-        This settle path is the ONLY place a `stage` output is produced — `dispatch_stage` returns
-        RUNNING at the spawn — so every seam that reads a stage's declared shape has to be applied
-        here or it is inert. Two were:
-
-        * **The declared `schema`.** The output used to be `{"result": "<the subagent's raw
-          text>"}` unconditionally, so a stage's declared keys reached no binding, no
-          `progress_field` and no judge contract. Measured consequences on the shipped library:
-          `general-project` declares `progress_field: meaningful_progress`, `_progress_value` never
-          found it, `_iteration_is_dry` fell back to the whole-output rule, a non-empty
-          `{"result": …}` is never dry — so `until_dry` degenerated into `max_iterations` and the
-          run escalated with "the loop reached its iteration ceiling" (#3524's wrong headline).
-          `{{last.output.summary}}` and `{{nodes.work.output.summary}}` could not resolve either,
-          which is why closing #3524's `last` gap alone only moves the error from
-          `unresolved reference at 'last'` to `unresolved reference at 'summary'`. An `infer` node
-          in the same run has always been parsed (`engine.parse_json_loose` at its DONE branch) —
-          that asymmetry between two node kinds reading the same templates was the whole defect.
-        * **`judge_contract`.** `engine.apply_judge_contract` runs at the dispatch seam so "a node
-          kind cannot skip it", and a `stage` skipped it anyway: at that seam a stage's result is
-          still `RUNNING` with `{"subagent_id": …}`, which the contract declines. ALL SEVEN
-          `judge_contract` nodes in the bundled library are stages, so the contract validated
-          nothing, ever — the engine's recomputed `overall`, its `valid` flag and its `shortfalls`
-          (which three templates bind as `{{last.output.shortfalls}}`) were never produced.
-        * **The declared-schema notice (#3545).** The dispatch seam's own
-          `engine.apply_schema_notice`, observing the subagent's TEXT rather than the output built
-          from it. The `{"result": text}` envelope would be named as a `result` key the worker never
-          wrote, and the judge contract writes every key a judge schema declares whatever the model
-          said, so the settled output of a judge that answered in prose carries all of them.
-
-        A stage that declares NO schema keeps `{"result": text}` — unstructured output is a real
-        thing a stage may return, and that is its shape, not a fallback. A stage that declares one
-        and returns unparseable text also keeps it: the binding then fails naming the key it wanted,
-        which is what happens today, so this cannot turn a run that passes into one that fails. It
-        can only ADD resolvable keys.
-        """
-        if node is None:
-            return NodeResult(state=InstanceState.DONE, output={"result": text})
-        cfg = node.config or {}
-        parsed: Any = None
-        if isinstance(cfg.get("schema"), dict) and cfg["schema"]:
-            parsed = parse_json_loose(text)
-        output: Any = parsed if isinstance(parsed, dict) else {"result": text}
-        # Through the same helper the dispatch seam uses, so there is ONE definition of what a
-        # validated verdict is — a second copy here would drift from the gate's.
-        settled = apply_judge_contract(
-            node,
-            NodeResult(state=InstanceState.DONE, output=output),
-            judge_hints_from_dict(
-                (self.spec.get("runtime_hints") or {}).get("judge")
-                if isinstance(self.spec.get("runtime_hints"), dict)
-                else None
-            ),
-        )
-        return apply_schema_notice(node, settled, text)
 
     def _reap_watchers(self) -> None:
         """Stop `until_cancelled` watchers whose accompanied work has finished.
@@ -2049,8 +1045,8 @@ class RunController:
             if inst.state in TERMINAL_STATES:
                 continue
             inst.state = InstanceState.CANCELLED
-            inst.completed_at = _now()
-            node = dict(_walk(self.root)).get(spec_path(path))
+            inst.completed_at = now_stamp()
+            node = dict(walk(self.root)).get(spec_path(path))
             node_id = node.id if node else ""
             self.journal.write(
                 journal_mod.WATCHER_REAPED,
@@ -2064,7 +1060,7 @@ class RunController:
                 if sub_inst.state in TERMINAL_STATES:
                     continue
                 sub_inst.state = InstanceState.CANCELLED
-                sub_inst.completed_at = _now()
+                sub_inst.completed_at = now_stamp()
             for entry in [
                 e for p, e in self._inflight.items() if p == path or p.startswith(f"{path}.")
             ]:
@@ -2128,377 +1124,6 @@ class RunController:
                 ),
             )
 
-    # ── PP-12 admission: the policies that need a clock and the disk ──────────
-    #
-    # `frontier()` is pure, so it can apply neither a lease (occupancy that lives on disk, under a
-    # TTL) nor a bake floor (elapsed time). Both are still ADMISSION — "may this start now, given
-    # persisted state" — so they compose in the same list, through the same `compose()`, against the
-    # same `AdmissionRequest`; only the impure inputs are gathered here, by the one object that
-    # already owns a clock and the run's state. That split is what keeps the frontier replayable
-    # while the new rules still bind for real.
-
-    #: Node config keys the PP-12 policies read. A spec containing none of them never builds an
-    #: `AdmissionState` and never asks a question — the pre-PP-12 code path, exactly.
-    _ADMISSION_KEYS = ("lease", "min_dwell_secs", "metric_pass")
-
-    #: `root.children[2]` → its parent and index. Sequence children are POSITIONAL in an instance
-    #: path (`tick._visit`), which is what makes "the step before this one" answerable at all.
-    _CHILD_SEGMENT = re.compile(r"^(?P<parent>.+)\.children\[(?P<index>\d+)\]$")
-
-    async def _admit_ready(self, ready: list[ReadyNode]) -> list[ReadyNode] | None:
-        """Apply the lease / bake-floor / metric-gate policies to this tick's ready set.
-
-        Returns what may launch, or `None` when this call FINISHED the run — a metric gate that ran
-        out of rollbacks is the loop's `COMPLETE(blocked)`, and a run whose gate has given up must
-        say so rather than hold a step forever.
-        """
-        if not self._declares_admission_keys():
-            return list(ready)
-        self._adopt_held_leases()
-        self._release_settled_leases()
-        self._admission_wake = 0.0
-        state = self._admission_state(ready)
-        wip = execution_hints.from_runtime_hints(
-            self.spec.get("runtime_hints")
-        ).single_active_feature
-        admitted: list[ReadyNode] = []
-        stalls: list[str] = []
-        for item in ready:
-            ok, fatal = self._admit(item, state, wip=wip, stalls=stalls)
-            if fatal:
-                await self._finish(RunStatus.FAILED, error=fatal)
-                return None
-            if ok:
-                admitted.append(item)
-        if (
-            not admitted
-            and not self._inflight
-            and stalls
-            and not self._admission_wake
-            and not self._pending_mutations
-        ):
-            # Every refusal this tick was one that cannot change by itself, with nothing running to
-            # change it and no rollback queued. Holding forever would be a silent hang; the tick
-            # loop's no-deadline path sleeps zero, so it would be a HOT one.
-            await self._finish(RunStatus.FAILED, error="; ".join(stalls))
-            return None
-        return admitted
-
-    def _admit(
-        self,
-        item: ReadyNode,
-        state: AdmissionState,
-        *,
-        wip: bool,
-        stalls: list[str],
-    ) -> tuple[bool, str]:
-        """One item's verdict: `(may_launch, fatal_error)`.
-
-        The step gate is asked BEFORE the lease is claimed. Reversed, a step held by its metric gate
-        would still take the resource and hold it for the whole bake window — a claim nothing is
-        going to use.
-        """
-        claim = self._lease_claim(item.path)
-        policies = default_policies(
-            self.services.lane_limits or Limits(),
-            single_active_feature=wip,
-            # The holder is per ITEM, so the snapshot is re-stamped rather than rebuilt: two items
-            # of one fan-out must present different identities or the lease would never serialize
-            # them (`pool.acquire` treats a same-holder re-acquire as a renewal).
-            state=replace(state, holder=claim[1] if claim else ""),
-        )
-        request = AdmissionRequest(scope=Scope.STEP, key=item.path, node=item.node)
-        verdict = compose(policies, request)
-        if not verdict.admits(0):
-            binding = verdict.binding
-            reason = ""
-            if isinstance(binding, MetricGate):
-                decision = binding.decision(request)
-                if decision is not None:
-                    reason = decision.reason
-                    if decision.action is StepAction.COMPLETE:
-                        return False, (
-                            f"metric gate on {item.node.id or item.path}: {decision.reason}"
-                        )
-                    if decision.action is StepAction.ROLLBACK:
-                        self._queue_metric_rollback(item, decision)
-                    else:
-                        stalls.append(
-                            f"metric gate on {item.node.id or item.path} holds it: "
-                            f"{decision.reason}"
-                        )
-            self._journal_admission_hold(item, verdict, reason)
-            return False, ""
-        if claim is None:
-            return True, ""
-
-        resource, holder, _scope, ttl = claim
-        request = AdmissionRequest(scope=Scope.RESOURCE, key=resource, node=item.node)
-        verdict = compose(policies, request)
-        if not verdict.admits(0):
-            record = state.leases.get(resource)
-            self._journal_admission_hold(
-                item,
-                verdict,
-                f"{resource!r} is held by {record.holder!r}" if record else f"{resource!r} is held",
-            )
-            if record is not None:
-                self._note_admission_wake(record.expires_at())
-            return False, ""
-        lease, error = pool.claim_task(resource, holder=holder, now=state.now, ttl_seconds=ttl)
-        if lease is None:
-            # The verdict said yes; the flocked compare-and-swap said no. THIS is the authoritative
-            # answer — a policy that advised on a stale read and a claim that lost the race are the
-            # two halves of one mechanism, and skipping the claim because the advice was positive is
-            # exactly the read-then-write S57 measured failing 36 of 40 races.
-            self._journal_admission_hold(item, verdict, f"{resource!r} claim lost: {error}")
-            self._note_admission_wake(state.now + 1.0)
-            return False, ""
-        self._held_leases[resource] = holder
-        return True, ""
-
-    def _declares_admission_keys(self) -> bool:
-        """Whether any node declares a PP-12 key, cached per spec version."""
-        cached = self._admission_declared
-        version = int(self.run.spec_version)
-        if cached is not None and cached[0] == version:
-            return cached[1]
-        declared = any(
-            key in (node.config or {})
-            for _path, node in _walk(self.root)
-            for key in self._ADMISSION_KEYS
-        )
-        self._admission_declared = (version, declared)
-        return declared
-
-    def _admission_state(self, ready: list[ReadyNode]) -> AdmissionState:
-        """Gather the clock-and-disk inputs for this tick's ready set. The only impure step."""
-        now = time.time()
-        leases: dict[str, pool.Lease] = {}
-        ttl = pool.DEFAULT_LEASE_SECS
-        since: dict[str, float] = {}
-        metrics: dict[str, float] = {}
-        floors: dict[str, float] = {}
-        rollbacks: dict[str, int] = {}
-        for item in ready:
-            claim = self._lease_claim(item.path)
-            if claim is not None:
-                resource, _holder, _scope, ttl = claim
-                record = pool.read_lease(resource)
-                if record is not None:
-                    leases[resource] = record
-            config = item.node.config or {}
-            if config.get("min_dwell_secs"):
-                prior_path, _prior_id = self._prior_step(item.path)
-                completed = self._instance(prior_path).completed_at if prior_path else None
-                if completed:
-                    since[item.path] = _epoch(completed)
-            if config.get("metric_pass") is None:
-                continue
-            value = self._resolve_metric(config.get("metric_from"))
-            if value is not None:
-                metrics[item.path] = value
-            floor = _opt_metric(config.get("metric_floor"))
-            if floor is not None:
-                floors[item.path] = floor
-            prior_path, _prior_id = self._prior_step(item.path)
-            if prior_path:
-                # `epoch` IS the consecutive-rollback count: every rollback rewinds the prior step,
-                # and `mutations.next_epoch` bumps it. Persisted, so the cap survives a restart —
-                # an in-memory counter would let a crash-looping run roll back forever.
-                rollbacks[item.path] = int(self._instance(prior_path).epoch)
-        return AdmissionState(
-            now=now,
-            leases=leases,
-            lease_ttl_secs=ttl,
-            since=since,
-            metrics=metrics,
-            floors=floors,
-            rollbacks=rollbacks,
-        )
-
-    def _lease_claim(self, path: str) -> tuple[str, str, str, int] | None:
-        """`(resource, holder, holder scope, ttl)` for a ready item under a `lease:` declaration.
-
-        The holder scope is what RELEASES the lease: the declaring node itself, or — when the
-        declaration is on a container — the ITEM of it this path belongs to, so a `foreach` holding
-        `lease: "endpoint"` serializes its items instead of claiming once for the whole fan-out.
-
-        The OUTERMOST declaration wins. One resource per item is deliberate: two would need a claim
-        ORDER to stay deadlock-free, and an ordered multi-resource lock manager is the distributed
-        substrate this plan's soul guardrail excludes.
-        """
-        nodes = dict(_walk(self.root))
-        segments = path.split(".")
-        for i in range(len(segments)):
-            prefix = ".".join(segments[: i + 1])
-            node = nodes.get(spec_path(prefix))
-            if node is None:
-                continue
-            config = node.config or {}
-            resource = str(config.get("lease", "") or "").strip()
-            if not resource:
-                continue
-            scope = prefix
-            if i + 1 < len(segments) and "#" in segments[i + 1]:
-                scope = ".".join(segments[: i + 2])
-            try:
-                ttl = int(config.get("lease_ttl_secs") or pool.DEFAULT_LEASE_SECS)
-            except (TypeError, ValueError):
-                ttl = pool.DEFAULT_LEASE_SECS
-            return resource, f"{self.run.id}:{scope}", scope, max(1, ttl)
-        return None
-
-    def _prior_step(self, path: str) -> tuple[str, str]:
-        """`(instance path, node id)` of the step immediately before `path` in its parent sequence.
-
-        Empty for the first child, or for a node whose parent is not a sequence: a bake floor has
-        nothing to measure from and a rollback has nowhere to go, and inventing a target would roll
-        back a node the author never put in front of this one.
-        """
-        match = self._CHILD_SEGMENT.match(path)
-        if match is None:
-            return "", ""
-        index = int(match.group("index"))
-        if index == 0:
-            return "", ""
-        prior = f"{match.group('parent')}.children[{index - 1}]"
-        node = dict(_walk(self.root)).get(spec_path(prior))
-        return prior, (node.id if node is not None else "")
-
-    def _resolve_metric(self, raw: Any) -> float | None:
-        """Resolve `metric_from` against the run's outputs.
-
-        Accepts the dotted form (`verify.score`) and the familiar binding form
-        (`{{nodes.verify.output.score}}`) — normalising instead of ignoring, because a metric source
-        the engine silently could not read would leave the gate looking enforced while abstaining on
-        every tick.
-        """
-        source = str(raw or "").strip()
-        if not source:
-            return None
-        source = source.strip("{} ").strip()
-        if source.startswith("nodes."):
-            source = source[len("nodes.") :].replace(".output.", ".", 1)
-        cursor: Any = self._outputs
-        for key in source.split("."):
-            if not isinstance(cursor, dict):
-                return None
-            cursor = cursor.get(key)
-        return _opt_metric(cursor)
-
-    def _queue_metric_rollback(self, item: ReadyNode, decision: Any) -> None:
-        """Roll the prior step back on a metric regression, through the real mutation queue.
-
-        A `rewind` op, not a bespoke reset: `_apply_reentry` already archives outputs, bumps the
-        epoch, invalidates the journal region and drops stale approvals, and a second reset path
-        would be one that forgets whichever of those it was written before.
-        """
-        prior_path, prior_id = self._prior_step(item.path)
-        if not prior_id:
-            return
-        key = f"{item.path}@{self._instance(prior_path).epoch}"
-        if key in self._rollbacks_queued:
-            return
-        self._rollbacks_queued.add(key)
-        body = self.submit_mutation(
-            # `force`, deliberately: without it `mutations.next_epoch` leaves the epoch alone
-            # and the journal's inputs-hash tier REPLAYS the step's cached output. A rollback
-            # that serves the cache re-produces the metric that failed, so the gate would roll
-            # back forever — and the epoch is also the persisted rollback count that caps it.
-            [{"kind": "rewind", "node_id": prior_id, "force": True}],
-            actor="engine",
-            confirm=True,
-        )
-        self.journal.write(
-            journal_mod.DECISION,
-            instance_path=item.path,
-            node_id=item.node.id,
-            decision="metric_rollback",
-            detail=(
-                f"{decision.reason}; rolling back to {prior_id!r} "
-                f"(queued={bool(body.get('queued'))})"
-            ),
-        )
-
-    def _journal_admission_hold(self, item: ReadyNode, verdict: Any, reason: str) -> None:
-        """Record one PP-12 refusal, once. A refusal nobody can read back is indistinguishable from
-        a scheduler that lost the node — the same reasoning `_journal_wip_holds` is built on."""
-        binding = verdict.binding
-        hold = verdict.hold.value or "unrecorded"
-        key = f"{item.path}@{hold}"
-        if key in self._admission_logged:
-            return
-        self._admission_logged.add(key)
-        self.journal.write(
-            journal_mod.DECISION,
-            instance_path=item.path,
-            node_id=item.node.id,
-            decision=f"admission_{hold}",
-            detail=(
-                f"{getattr(binding, 'name', '') or 'admission'} held this step"
-                + (f": {reason}" if reason else "")
-            ),
-        )
-
-    def _note_admission_wake(self, when: float) -> None:
-        """Earliest moment a time-bound hold could change its mind."""
-        if when <= 0:
-            return
-        self._admission_wake = when if not self._admission_wake else min(self._admission_wake, when)
-
-    def _adopt_held_leases(self) -> None:
-        """Re-adopt the leases THIS RUN holds, once — the restart half of the release path.
-
-        A fresh controller has no memory of a claim its predecessor made, and only a holder may
-        release. The holder string is run-scoped, so the records on disk name this run: adopting
-        them is what lets a restarted gateway hand the resource on when the item settles. Without
-        it the release would wait for the TTL — correct, but "the endpoint sits idle for fifteen
-        minutes" is exactly the outcome a named holder exists to prevent.
-        """
-        if self._leases_adopted:
-            return
-        self._leases_adopted = True
-        prefix = f"{self.run.id}:"
-        root = pool.leases_dir()
-        if not root.is_dir():
-            return
-        for path in sorted(root.glob("*.json")):
-            record = pool.read_lease(path.stem)
-            if record is not None and record.task_id and record.holder.startswith(prefix):
-                self._held_leases[record.task_id] = record.holder
-
-    def _release_settled_leases(self) -> None:
-        """Release every lease whose holder scope is finished. The claim is per ITEM, so the release
-        is too — holding until the run ends would serialize the whole fan-out on its first item."""
-        for resource, holder in list(self._held_leases.items()):
-            scope = holder.split(":", 1)[1] if ":" in holder else ""
-            if scope and not self._scope_settled(scope):
-                continue
-            pool.release_task(resource, holder=holder)
-            self._held_leases.pop(resource, None)
-
-    def _release_held_leases(self) -> None:
-        """Release everything this run holds. Called on the terminal write: a lease outliving its
-        run strands the resource until the TTL expires, and the whole point of a named holder is
-        that the holder is the one who gives it back."""
-        for resource, holder in list(self._held_leases.items()):
-            pool.release_task(resource, holder=holder)
-        self._held_leases.clear()
-
-    def _scope_settled(self, scope: str) -> bool:
-        """Whether every instance at or under `scope` is terminal and none is in flight."""
-        if any(path == scope or path.startswith(scope + ".") for path in self._inflight):
-            return False
-        seen = False
-        for path, inst in self.instances.items():
-            if path != scope and not path.startswith(scope + "."):
-                continue
-            seen = True
-            if inst.state not in TERMINAL_STATES:
-                return False
-        return seen
-
     def _journal_collected_items(self, states: dict[str, InstanceState]) -> None:
         """Write each `on_item_error: collect` fan-out's per-item failures once it is terminal.
 
@@ -2521,7 +1146,7 @@ class RunController:
         hint every tick — a mid-flight mutation can add a fan-out. Deduped by `path@epoch`, so a
         rewound-and-re-run fan-out gets a second, honest record.
         """
-        for path, node in _walk(self.root):
+        for path, node in walk(self.root):
             if node.kind != NodeKind.FOREACH:
                 continue
             if item_error_policy(node) != ItemErrorPolicy.COLLECT:
@@ -2571,7 +1196,7 @@ class RunController:
         """
         prefix = f"{container_path}.body#"
         out: list[dict[str, Any]] = []
-        by_path = dict(_walk(self.root))
+        by_path = dict(walk(self.root))
         for path in sorted(self.instances):
             inst = self.instances[path]
             if not path.startswith(prefix) or inst.state != InstanceState.FAILED:
@@ -2603,8 +1228,8 @@ class RunController:
 
     async def _launch(self, item: ReadyNode) -> None:
         """Dispatch one node, serving a cache hit when the journal has one."""
-        ctx = self._context_for(item)
-        resolved_view = self._resolved_inputs(item, ctx)
+        ctx = node_bindings.context_for(self, item)
+        resolved_view = node_bindings.resolved_inputs(self, item, ctx)
         inst = self._instance(item.path)
         key = CacheKey(
             path=item.path,
@@ -2620,7 +1245,7 @@ class RunController:
             state = InstanceState(str(hit.get("state", "done")))
             inst.state = state
             inst.output_ref = str(hit.get("output_ref", "") or "")
-            inst.completed_at = _now()
+            inst.completed_at = now_stamp()
             # …and on the INSTANCE, not only in the ledger. The `step_cached` event below is the
             # durable record, but a status read would have to scan the whole ledger to answer
             # "was this row cached?" — so the projection is stamped here, one of the two places
@@ -2649,11 +1274,11 @@ class RunController:
             )
             return
 
-        if not await self._effect_preflight(item, inst):
+        if not await effect_boundary.effect_preflight(self, item, inst):
             return
 
         inst.state = InstanceState.RUNNING
-        inst.started_at = _now()
+        inst.started_at = now_stamp()
         inst.attempt += 1
         # The other half of the cache-origin stamp. Cleared here rather than at each of the six
         # rewind reset sites: every path to a terminal state runs through this dispatch, so a
@@ -2681,7 +1306,7 @@ class RunController:
         if node_commits_effects(item.node):
             # ATTEMPTED goes down BEFORE dispatch: a crash between here and the outcome
             # must leave evidence the effect MAY have fired (WF2-R1).
-            self._record_effect(item.node, item.path, inst, EffectStatus.ATTEMPTED)
+            effect_boundary.record_effect(self, item.node, item.path, inst, EffectStatus.ATTEMPTED)
         self._persist_state()
         self.journal.step_started(item.path, item.node.id, epoch=inst.epoch, lane=item.lane)
         self._publish(
@@ -2706,453 +1331,9 @@ class RunController:
         # The task COPIES the context at creation, so a log bound around `create_task` is the
         # dispatch's own: every guarded model call it makes, however deep, is recorded there.
         with capture_model_calls() as calls:
-            task = asyncio.create_task(self._execute(item, ctx))
+            task = asyncio.create_task(step_dispatch.execute(self, item, ctx))
         self._inflight[item.path] = _InFlight(
             task=task, ready=item, started=now, last_progress=now, cache_key=key, calls=calls
-        )
-
-    # ── effect ledger (WF2-R1) ──
-
-    def _effect_key(self, path: str, inst: NodeInstance) -> str:
-        return effect_key(self.run.id, path, inst.epoch, self._effects.get(path, []))
-
-    def _record_effect(
-        self,
-        node: Node,
-        path: str,
-        inst: NodeInstance,
-        status: EffectStatus,
-        *,
-        key: str = "",
-        **fields: Any,
-    ) -> None:
-        """Journal one effect event and fold it into the in-memory history, so a
-        same-process re-read agrees with what a resumed process would reconstruct.
-
-        `key` overrides the derived key for records about a PRIOR epoch's effect — a
-        COMPENSATED must carry the committed effect's own key, or `committed_effect`
-        can never match the two and the boundary never clears.
-        """
-        record = EffectRecord(
-            instance_path=path,
-            idempotency_key=key or self._effect_key(path, inst),
-            effect_status=status,
-            epoch=inst.epoch,
-            node_id=node.id,
-            provider=str((node.config or {}).get("provider", "") or ""),
-            output_id=str(fields.get("output_id", "") or ""),
-            compensation_ref=str(fields.get("compensation_ref", "") or ""),
-        )
-        self.journal.effect(
-            path,
-            idempotency_key=record.idempotency_key,
-            effect_status=status.value,
-            epoch=inst.epoch,
-            node_id=record.node_id,
-            provider=record.provider,
-            output_id=record.output_id,
-            compensation_ref=record.compensation_ref,
-            detail=str(fields.get("detail", "") or ""),
-        )
-        self._effects.setdefault(path, []).append(record)
-
-    def _record_terminal_effect(
-        self,
-        node: Node,
-        path: str,
-        inst: NodeInstance,
-        state: InstanceState,
-        output: Any,
-    ) -> None:
-        """Record the terminal effect verdict for every effect-committing dispatcher."""
-        if not node_commits_effects(node):
-            return
-        if state in SUCCESS_STATES and state != InstanceState.NO_CHANGE:
-            # COMMITTED captures the teardown ref AT COMMIT TIME: a later spec edit
-            # must not change what tears down an already-provisioned resource.
-            self._record_effect(
-                node,
-                path,
-                inst,
-                EffectStatus.COMMITTED,
-                output_id=output_id_of(output),
-                compensation_ref=str((node.config or {}).get("teardown", "") or ""),
-            )
-        elif state == InstanceState.NO_CHANGE:
-            # The dispatcher reported `skip` — nothing fired, and the ledger says so.
-            self._record_effect(node, path, inst, EffectStatus.SKIPPED)
-
-    async def _effect_preflight(self, item: ReadyNode, inst: NodeInstance) -> bool:
-        """The committed-effect boundary, enforced before a tool-bearing node re-executes.
-
-        Returns False when the node was refused (a terminal state was written). Membership
-        follows the actual dispatcher, so pure dispatches pass through.
-        A same-epoch retry passes too — it reuses the same idempotency key, which an
-        idempotent receiver dedupes, so it is the retry contract working, not a
-        double-fire.
-        """
-        if not node_commits_effects(item.node):
-            return True
-        committed = committed_effect(self._effects.get(item.path, []))
-        if committed is None or committed.epoch == inst.epoch:
-            return True
-        if redo_blocked(item.node.config or {}, committed, inst.epoch):
-            inst.state = InstanceState.BLOCKED
-            inst.completed_at = _now()
-            inst.failure = committed_effect_refusal(item.node.id or item.path, committed.epoch)
-            self.journal.step_failed(
-                item.path,
-                item.node.id,
-                epoch=inst.epoch,
-                failure=inst.failure,
-                usage=NOTHING_SENT,
-                attempt=inst.attempt,
-                retries_exhausted=True,
-            )
-            self._persist_state()
-            self._publish(
-                "workflow_node_done",
-                {
-                    "node_id": item.node.id,
-                    "instance_path": item.path,
-                    "status": InstanceState.BLOCKED.value,
-                    "degraded_reason": "committed_effect",
-                },
-            )
-            return False
-        # redo_effects: true — tear down the committed resource first, then proceed.
-        if committed.compensation_ref:
-            runner = self.services.teardown_runner
-            ok, detail = await run_teardown(
-                committed.compensation_ref, committed.output_id, runner=runner
-            )
-            if not ok:
-                # A failed teardown leaves an UNKNOWN external state; proceeding would
-                # stack a second resource on top of a live first one.
-                inst.state = InstanceState.BLOCKED
-                inst.completed_at = _now()
-                inst.failure = teardown_refusal(detail)
-                self.journal.step_failed(
-                    item.path,
-                    item.node.id,
-                    epoch=inst.epoch,
-                    failure=inst.failure,
-                    usage=NOTHING_SENT,
-                    attempt=inst.attempt,
-                    retries_exhausted=True,
-                )
-                self._persist_state()
-                return False
-            self._record_effect(
-                item.node,
-                item.path,
-                inst,
-                EffectStatus.COMPENSATED,
-                key=committed.idempotency_key,
-                output_id=committed.output_id,
-                compensation_ref=committed.compensation_ref,
-                detail=detail[:500],
-            )
-        return True
-
-    def _with_retry_hint(self, item: ReadyNode) -> Node:
-        """On a retry, hand the dispatcher a node whose prompt carries the correction.
-
-        Returns the node UNCHANGED on a first attempt and for kinds with no prompt, so
-        the common path pays nothing. A copy is returned rather than mutating the spec
-        node: the spec is shared across every instance of a `foreach` body, and editing it
-        in place would leak one item's failure into every sibling's prompt.
-        """
-        attempts = self._attempts.get(item.path)
-        if not attempts:
-            return item.node
-        prompt = (item.node.config or {}).get("prompt")
-        if not isinstance(prompt, str) or not prompt:
-            return item.node
-        import copy
-
-        node = copy.deepcopy(item.node)
-        node.config["prompt"] = retry_prompt(prompt, attempts)
-        return node
-
-    def _with_carried_context(self, node: Node, item: ReadyNode) -> Node:
-        """Prepend the previous iteration's handoff/carryover/decisions to a fresh session's prompt.
-
-        This is what makes `session: fresh` mean something. Without it the policy is a label: the
-        iteration starts clean and also starts BLIND, re-deriving what the previous one verified —
-        which is worse than the continuous session it replaced.
-
-        Prepended, not appended: it is context the reader needs BEFORE the instruction, and a model
-        that reads the task first has already begun planning without the constraints.
-
-        A copy, never a mutation — the spec node is shared across every instance of an iterated
-        body, and editing it in place would leak iteration 3's context into iteration 1's prompt on
-        a rewind. Same reasoning as `_with_retry_hint`.
-        """
-        prompt = (node.config or {}).get("prompt")
-        if not isinstance(prompt, str) or not prompt:
-            return node
-        carried = self._carried_context(item)
-        if not carried:
-            return node
-        import copy
-
-        out = copy.deepcopy(node)
-        out.config["prompt"] = f"{carried}\n\n---\n\n{prompt}"
-        return out
-
-    def _worker_model(self) -> str:
-        """The concrete model this run's WORKERS resolve to — the family a `cross_model`
-        judge gate must avoid (WF2LOO-11).
-
-        A stage spawn records no model synchronously (it returns RUNNING with a
-        subagent id and the model is chosen inside the async turn), so the honest,
-        available source is the SAME resolution a worker stage performs: its
-        `model_tier` maps to a use case (the default `standard` tier → the
-        `orchestration` axis that model-less subagent spawns run under), and the
-        engine resolves that axis to the head of its active-selection chain. That is
-        exactly the model a worker WILL run on, which is what the judge must differ
-        from. Memoized: the active selection does not change mid-run, and the family
-        is all the check needs.
-        """
-        if self._worker_model_cache is None:
-            worker_uc = self.services.model_tiers.get("standard", DEFAULT_MODEL_TIERS["standard"])
-            self._worker_model_cache = resolve_axis_model(worker_uc)
-        return self._worker_model_cache
-
-    async def _execute(self, item: ReadyNode, ctx: BindingContext) -> NodeResult:
-        """Run a dispatcher under the total-timeout knob.
-
-        A timeout here is a REAL kill, not a decorative config value — the studied
-        cautionary case is an engine that shipped a no-op node timeout nobody noticed,
-        because timeouts only ever execute under failure.
-        """
-        total = self.services.node_timeout_total
-        # The budget a dispatcher's OWN bounded wait gets (#381). Without it `dispatch` fell back
-        # to its signature default of 60s, so a `subworkflow` node stopped waiting for its child
-        # after exactly a minute no matter what the run's timeout was — the parent recorded
-        # "subworkflow is still running" with empty outputs (breaking every downstream binding) for
-        # work the child then finished. No configuration reached that 60: `node_timeout_total` is
-        # the only knob, and it was applied to the outer kill below and nowhere else, so the node's
-        # real budget and the wait it was supposed to bound never met. `0` means "no ceiling" on
-        # both sides, matching the `else` branch below and `wait_for_terminal`'s reading of a zero.
-        dispatch_wait = max(1, total - _DISPATCH_WAIT_RESERVE_SECS) if total and total > 0 else 0
-        node = self._with_retry_hint(item)
-        # The carried context goes on AFTER the retry hint, so a retried fresh iteration gets both
-        # the correction and the handoff. Order between them does not matter — they are appended to
-        # different ends — but dropping either on a retry would be a real loss.
-        node = self._with_carried_context(node, item)
-        # Write-scope snapshot BEFORE the node runs (WF2-R19). Only for nodes that opted
-        # in: the walk is real work, and a fan-out of fast transforms must not each pay
-        # for a tree scan.
-        allowed = scope_allowed(node.config or {}, self.services.cwd)
-        # The WATCHED set is wider than the ALLOWED set by necessity: an escape lands
-        # outside what is allowed, so snapshotting only the allowed paths would make a
-        # violation undetectable by construction.
-        watched = scope_watch_roots(node.config or {}, self.services.cwd)
-        before = scope_snapshot(watched) if enforces_scope(node.config or {}) else None
-        coro = dispatch(
-            node,
-            # Through the clock seam (PP-6), not `time.time()`: a `wait` computes its deadline
-            # against this `now`, and `_wake_due_nodes` later resolves that deadline against the
-            # same seam — the two clock reads that decide a parked node's fate must come from ONE
-            # clock, or a replay's recorded `now` would set a deadline the recorded wake never
-            # crosses. Every non-wait dispatcher ignores `now`.
-            ctx,
-            now=self._clock(),
-            subagents=self.services.subagents,
-            depth=self.depth,
-            run_id=self.run.id,
-            # The owning project, for an ACTION node's provenance (WORK-CONTAINERS §1.6):
-            # `knowledge-persist` files its item under this container. Passed from the run
-            # record rather than resolved provider-side so one seam owns the attribution.
-            project_id=self.run.project_id,
-            # This instance's engine key, for an ACTION node's ledger provenance. The controller is
-            # the only layer that knows it, and a provider must stamp it rather than its node id:
-            # `inspect_node` slices the run ledger by `instance_path`, so a row carrying a bare node
-            # id is durably written and invisible in the runs surface. Same `item.path` the stall
-            # clock below is bound to, so a row and its progress notes agree on which instance ran.
-            instance_path=item.path,
-            # The effect's identity, for an ACTION to hand its receiver: the key the ledger's
-            # ATTEMPTED record carries, so a retry is recognisable as the attempt it retries.
-            idempotency_key=self._effect_key(item.path, self._instance(item.path)),
-            cwd=self.services.cwd,
-            tiers=self.services.model_tiers,
-            completion=self.services.completion,
-            get_provider=self.services.get_provider,
-            verify=self.services.verify,
-            # The run's mode decides a gate's deadline: background times out fast and
-            # surfaces, blocking waits because a human is right there (WF2-R7).
-            mode=self.run.mode,
-            # The node's OWN budget for a bounded internal wait, minus the reserve above (#381).
-            # Read by the two dispatchers that wait on something: `subworkflow`'s child-run wait and
-            # `action`'s provider call. Both previously got the signature default of 60s — a ceiling
-            # no setting could move, and one the `subworkflow` docstring explicitly disclaims ("the
-            # wait is bounded by the node's timeout").
-            timeout=dispatch_wait,
-            # For `subworkflow`: the child must be driven by the SAME supervisor that will adopt
-            # it after a restart, so it is passed through rather than resolved from a global.
-            supervisor=self.services.supervisor,
-            # Feeds the STALL clock (WF2-R5). Bound to this instance's path so a dispatcher cannot
-            # accidentally refresh a sibling's clock — and passed at all because without it
-            # `timeout_stall` fires on any node slower than the window, which makes the two timeout
-            # knobs one knob and kills a node that is visibly working.
-            on_progress=lambda path=item.path: self.note_progress(path),
-            # The worker model a `cross_model` judge gate must differ from (WF2LOO-11). Resolved
-            # from the run's worker axis; only the JUDGE branch reads it, so a run with no
-            # cross_model gate pays nothing.
-            worker_model=self._worker_model(),
-            # The spec's `runtime_hints.judge`, parsed by the contract's own lenient parser
-            # (WF2LOO-13) — the same split `execution_hints.from_runtime_hints` does for the
-            # execution half. Parsed per dispatch rather than cached: it is a dict walk over a
-            # handful of keys, and caching it would have to be invalidated by a live mutation of
-            # the spec, which is a correctness risk in exchange for nothing measurable.
-            judge_hints=judge_hints_from_dict(
-                (self.spec.get("runtime_hints") or {}).get("judge")
-                if isinstance(self.spec.get("runtime_hints"), dict)
-                else None
-            ),
-            # This node's compaction history (WV-12). `setdefault` so the list IDENTITY is stable
-            # across iterations — the ladder appends to it in place, and handing out a fresh copy
-            # each call would record saves nobody ever reads, leaving the anti-thrashing rule
-            # permanently looking at an empty history.
-            compaction_saves=self._compaction_saves.setdefault(node.id, []),
-            # The user's explicit unattended grant, read off the run's overlay at EVERY dispatch
-            # rather than cached: the overlay is the run row's, and the row is what a restart
-            # re-reads. Only a stage consults it (`dispatch_stage`).
-            unattended=supervisor_policy.unattended_grant(self.run.policy_overrides),
-        )
-        if total and total > 0:
-            try:
-                result = await asyncio.wait_for(coro, timeout=total)
-            except asyncio.TimeoutError:
-                return NodeResult(
-                    state=InstanceState.FAILED,
-                    failure=Failure(
-                        failure_class=FailureClass.TIMEOUT,
-                        cause_plain=f"node exceeded timeout_total ({total}s)",
-                        remediation="raise workflows.default_node_timeout_total_secs, or "
-                        "split this node into smaller steps",
-                        recoverable=True,
-                    ),
-                )
-        else:
-            result = await coro
-        if before is not None:
-            result = self._check_write_scope(node, result, before, allowed, watched)
-        return self._check_success_when(node, result, ctx)
-
-    def _check_success_when(
-        self, node: Node, result: NodeResult, ctx: BindingContext
-    ) -> NodeResult:
-        """Apply a node's declared `success_when` predicate (LOOPS-EVOLUTION R5f).
-
-        **It can only NARROW success, never widen it.** A node that already failed stays
-        failed — otherwise `success_when` would be a way to bless a broken node, and the
-        first template to discover that would use it as one.
-
-        The use it exists for is INVERTED semantics: `code-project`'s reproduction stage
-        must not count as done because it ran. Reproducing the bug (or documenting why it is
-        infeasible) IS the success condition, and a stage that quietly failed to reproduce
-        and moved on to editing is the exact "no repro, straight to a fix" pattern R5c
-        forbids.
-
-        Evaluated against the node's OWN output, bound as `output.*`. Written WITHOUT `{{}}`
-        braces on purpose: `resolve_config` resolves every braced binding in a config
-        *before* the node runs, and at that moment `output` does not exist yet — a braced
-        form would fail the node with a binding error instead of testing it.
-        """
-        raw = (node.config or {}).get("success_when")
-        expr = str(raw or "").strip()
-        if not expr:
-            return result
-        if result.state not in SUCCESS_STATES:
-            return result
-
-        probe = replace(ctx, self_output=result.output, has_self_output=True)
-        try:
-            met = conditions.evaluate(expr, probe)
-        except BindingError as exc:
-            # An unevaluable predicate is a FAILURE, not a pass: "I could not tell whether
-            # this succeeded" must never read as "it succeeded".
-            return NodeResult(
-                state=InstanceState.FAILED,
-                output=result.output,
-                failure=Failure(
-                    failure_class=FailureClass.USER,
-                    cause_plain=f"success_when could not be evaluated: {exc}",
-                    remediation=(
-                        "reference a field the node's schema actually produces, e.g. "
-                        "`output.some_flag`"
-                    ),
-                ),
-            )
-        if met:
-            return result
-        return NodeResult(
-            state=InstanceState.FAILED,
-            output=result.output,
-            degraded_reason=result.degraded_reason,
-            failure=Failure(
-                failure_class=FailureClass.PROTOCOL,
-                cause_plain=f"the node ran but its success condition is false: {expr}",
-                remediation=(
-                    "the node did not achieve what it was declared to achieve — read its "
-                    "output and either satisfy the condition or change the declaration"
-                ),
-            ),
-        )
-
-    def _check_write_scope(
-        self,
-        node: Node,
-        result: NodeResult,
-        before: Any,
-        allowed: list[str],
-        watched: list[str],
-    ) -> NodeResult:
-        """Diff the tree and flag writes that escaped the declared scope (WF2-R19).
-
-        DETECTIVE, not preventive: a real sandbox is the OS-seatbelt layer this leaves
-        room for. `warn` records and continues; `reject` flips the node to
-        `scope_violation` so the escape cannot pass as a clean success.
-        """
-        report = scope_diff(before, scope_snapshot(watched), allowed)
-        if report.clean:
-            return result
-        mode = scope_mode(node.config or {})
-        self.journal.write(
-            journal_mod.STEP_SCOPE,
-            instance_path="",
-            node_id=node.id,
-            mode=mode,
-            **report.to_dict(),
-        )
-        logger.warning(
-            "workflow %s node %s wrote outside its declared scope: %s",
-            self.run.id,
-            node.id or "?",
-            ", ".join(report.violations[:5]),
-        )
-        if mode != ScopeMode.REJECT:
-            # Recorded, outcome preserved — a warn-only default on an existing template is
-            # the difference between a useful signal and a broken run.
-            return result
-        return NodeResult(
-            state=InstanceState.SCOPE_VIOLATION,
-            output=result.output,
-            failure=Failure(
-                failure_class=FailureClass.PERMISSION,
-                cause_plain=(
-                    "node wrote outside its allowed_write_paths: "
-                    + ", ".join(report.violations[:5])
-                ),
-                remediation=(
-                    "add the path to the node's `allowed_write_paths`, or fix the node so "
-                    "it writes inside the run workspace"
-                ),
-                terminal_reason="scope_violation",
-            ),
         )
 
     async def _await_progress(self) -> None:
@@ -3167,7 +1348,7 @@ class RunController:
             return
         await asyncio.wait(tasks, timeout=TICK_WAKE_SECS, return_when=asyncio.FIRST_COMPLETED)
         async with self._lock:
-            self._enforce_stall_timeouts()
+            liveness.enforce_stall_timeouts(self)
             for path, entry in list(self._inflight.items()):
                 if not entry.task.done():
                     continue
@@ -3188,87 +1369,6 @@ class RunController:
             # unrelated caller happened to save. `service.status()` reads the store, so that is the
             # difference between a running run showing its spend and showing zero.
             self._save_run()
-
-    def _node_stall_window(self, path: str) -> int:
-        """This node's stall window: its own `timeout_stall_secs`, else the run-level default.
-
-        🔴 The per-node override was DECLARED BY FOUR SHIPPED TEMPLATES AND READ BY NOTHING (S147).
-        `design-project.refine` asks 600s, `general-project.project` 900s,
-        `goal-pursuit-open-ended.work` 900s and `goal-pursuit-verifiable.work` 1200s — and
-        `_enforce_stall_timeouts` consulted only `services.node_timeout_stall`, so every one of them
-        silently got the 300s default and a legitimately slow node was killed as wedged.
-
-        That is the WRONG DIRECTION to fail in. `timeout_stall` is supposed to mean "silent", not
-        "slow" (the heartbeat in `liveness.wait_with_progress` exists precisely to keep that
-        distinction), and a node whose author measured it needing 20 minutes being cancelled at 5 is
-        the failure the knob was added to prevent.
-
-        A node may only RAISE its window, never lower it below the run default: that value is the
-        operator's floor for how long a silent node may sit, and letting a template shorten it would
-        let a bundled spec tighten an operator's policy. Zero/invalid falls back to the default
-        rather than disabling the check — a malformed knob must not switch a safety timeout off.
-        """
-        node = dict(_walk(self.root)).get(spec_path(path))
-        default = int(self.services.node_timeout_stall or 0)
-        raw = (node.config or {}).get("timeout_stall_secs") if node is not None else None
-        try:
-            declared = int(raw) if raw is not None else 0
-        except (TypeError, ValueError):
-            declared = 0
-        return max(default, declared) if declared > 0 else default
-
-    def _enforce_stall_timeouts(self) -> None:
-        """Kill nodes that have gone silent. The stall knob is separate from the total
-        knob on purpose: a long-but-progressing node survives, a wedged one does not.
-
-        The window is PER NODE (`_node_stall_window`) — see that method for the four shipped
-        templates whose declared override was inert.
-
-        A model call counts as progress while its provider is still sending (`liveness`).
-        """
-        if not self.services.node_timeout_stall or self.services.node_timeout_stall <= 0:
-            return
-        now = time.time()
-        for path, entry in list(self._inflight.items()):
-            stall = self._node_stall_window(path)
-            if stall <= 0 or now - last_heard(entry.last_progress, entry.calls) < stall:
-                continue
-            entry.task.cancel()
-            self._inflight.pop(path, None)
-            inst = self._instance(path)
-            failure = Failure(
-                failure_class=FailureClass.TIMEOUT,
-                cause_plain=f"no progress for {stall}s (timeout_stall)",
-                remediation="the node produced no progress events; check the provider, raise this "
-                "node's `timeout_stall_secs`, or raise "
-                "workflows.default_node_timeout_stall_secs",
-                recoverable=True,
-            )
-            inst.state = InstanceState.FAILED
-            inst.failure = failure
-            inst.completed_at = _now()
-            # Read before the cancel reaches the calls: each one still open is cut off by it.
-            usage = measured(entry.calls)
-            inst.tokens = usage.billable()
-            inst.model_substituted = list(usage.substitutions)
-            self.run.total_tokens += inst.tokens
-            self.journal.step_failed(
-                path,
-                entry.ready.node.id,
-                epoch=inst.epoch,
-                failure=failure,
-                usage=usage,
-                attempt=inst.attempt,
-                retries_exhausted=True,
-            )
-            self._publish(
-                "workflow_node_done",
-                {
-                    "node_id": entry.ready.node.id,
-                    "instance_path": path,
-                    "status": InstanceState.FAILED.value,
-                },
-            )
 
     def note_progress(self, path: str) -> None:
         """Feed the stall clock. Called by the dispatch layer when a node emits progress
@@ -3294,8 +1394,8 @@ class RunController:
         if result.state == InstanceState.RUNNING:
             # A spawned stage: `dispatch_stage` returns as soon as the subagent is live
             # (`engine.py:777`), so this node's real completion arrives out of band and
-            # `_reconcile_dispatched_stages` settles it. The old comment here said "the
-            # watchdog reconciles it" — it did not: `watchdog._reap_if_finished` reaps at the
+            # `stage_settlement.reconcile_dispatched_stages` settles it. The old comment here said
+            # "the watchdog reconciles it" — it did not: `watchdog._reap_if_finished` reaps at the
             # RUN level and requires every instance to be terminal already, so it could never
             # be what moved an instance off RUNNING.
             #
@@ -3320,9 +1420,9 @@ class RunController:
                 # `agent_count: 0`, which is why the owner's eight-node run did.
                 #
                 # Counted at the SPAWN, not at the settle, and that is the whole reason it lives in
-                # this branch rather than in `_reconcile_dispatched_stages` beside the token
-                # roll-up: a run holding three live subagents must not report zero agents while
-                # they work. `dispatch_stage` is the only dispatcher that can reach here — the
+                # this branch rather than in `stage_settlement.reconcile_dispatched_stages` beside
+                # the token roll-up: a run holding three live subagents must not report zero agents
+                # while they work. `dispatch_stage` is the only dispatcher that can reach here — the
                 # `ast` rail in `test_workflows_stage_completion` pins RUNNING to it — so this is
                 # once per subagent the run actually started.
                 #
@@ -3350,7 +1450,7 @@ class RunController:
             )
             if verdict.approved:
                 inst.state = InstanceState.DONE
-                inst.completed_at = _now()
+                inst.completed_at = now_stamp()
                 ref, preview = self.journal.store_output(
                     item.path, {"approved": True, "auto": verdict.decision.value}
                 )
@@ -3414,7 +1514,9 @@ class RunController:
                     # Same epoch, same idempotency key: the receiver can dedupe. The
                     # RETRIED record keeps the ledger honest about how many dispatches
                     # the external system may have seen.
-                    self._record_effect(item.node, item.path, inst, EffectStatus.RETRIED)
+                    effect_boundary.record_effect(
+                        self, item.node, item.path, inst, EffectStatus.RETRIED
+                    )
                 inst.state = InstanceState.PENDING
                 self.journal.write(
                     journal_mod.STEP_ATTEMPT,
@@ -3436,7 +1538,7 @@ class RunController:
                 return
 
         inst.state = result.state
-        inst.completed_at = _now()
+        inst.completed_at = now_stamp()
         inst.degraded_reason = result.degraded_reason
         # What this node's declared `schema` asked for and did not get (#3545). Carried onto the
         # instance beside `degraded_reason` rather than folded into it: a shortfall is not a
@@ -3464,7 +1566,9 @@ class RunController:
                 )
                 return
 
-        self._record_terminal_effect(item.node, item.path, inst, result.state, result.output)
+        effect_boundary.record_terminal_effect(
+            self, item.node, item.path, inst, result.state, result.output
+        )
 
         if item.node.kind == NodeKind.SUBWORKFLOW and isinstance(result.output, dict):
             child_id = str(result.output.get("child_run_id", "") or "")
@@ -3551,14 +1655,16 @@ class RunController:
                 # the record and the wire agree. Nothing re-scans here: `redact_credentials` is not
                 # idempotent over a composed line, so a second pass at the recording seam could
                 # garble the very text it was meant to protect.
-                resolved_prompt_ref=self._store_prompt(item.path, result.resolved_prompt),
+                resolved_prompt_ref=node_bindings.store_prompt(
+                    self, item.path, result.resolved_prompt
+                ),
                 resolved_prompt_redacted=result.prompt_redacted,
                 resolved_prompt_scan=result.prompt_scan_categories,
                 output_ref=ref,
                 schema_shortfall=result.schema_shortfall,
                 model_substituted=usage.substitutions,
             )
-            self._project_task(item, inst, result)
+            task_projection.project_task(self, item, inst, result)
         else:
             if result.output is not None:
                 # A FAILED node's output is normally nothing worth keeping — but some failures
@@ -3596,7 +1702,7 @@ class RunController:
                 detail=(result.failure.cause_plain if result.failure else ""),
             )
 
-        self._advance_loop(item.path, item.node.id)
+        loop_iteration.advance_loop(self, item.path, item.node.id)
         self._publish(
             "workflow_node_done",
             {
@@ -3679,1146 +1785,6 @@ class RunController:
         inst.declined_edges = sorted(set(inst.declined_edges) | set(edges))
         self._declined_edges.update(edges)
 
-    def _emit_judge_divergence(
-        self, instance_path: str, node_id: str, human_approved: bool
-    ) -> None:
-        """Record a human overriding a judge on the same gate (LOOPS-EVOLUTION R3).
-
-        Reads this node's last `judge_verdict` from the ledger; emits `judge_divergence` only when
-        the human's decision actually contradicts it. No prior judge verdict (an ordinary approval
-        gate) → nothing to diverge from, so nothing is written.
-        """
-        if not node_id:
-            return
-        verdicts = journal_mod.ledger(self.run.id, kinds={journal_mod.JUDGE_VERDICT})
-        mine = [v for v in verdicts if v.get("node_id") == node_id]
-        if not mine:
-            return
-        judge_verdict = str(mine[-1].get("verdict", ""))
-        judged_pass = judge_verdict.upper() == "PASS"
-        if judged_pass == human_approved:
-            return  # judge and human agree — not a divergence
-        record = judge_calibration.DivergenceRecord(
-            run_id=self.run.id,
-            node_id=node_id,
-            template=str(self.run.workflow_name or ""),
-            judge_verdict=judge_verdict,
-            human_verdict="PASS" if human_approved else "REJECT",
-        )
-        self.journal.write(journal_mod.JUDGE_DIVERGENCE, **record.to_dict())
-
-    def _consume_steering(self, parent_path: str, node: Node, iteration: int) -> None:
-        """Consume mid-run steering at the loop boundary (LOOPS-EVOLUTION R14).
-
-        The durable queue (`run.extra["steering_queue"]`, written by `service.steer_run`) is
-        drained HERE — under the lock, between iterations, exactly like `_drain_mutations`. Mid-
-        iteration injection would race the worker's own state; the boundary is where the next
-        iteration can actually act on the instruction. Single-use: the queue is cleared and the
-        rendered block parked on `_steering_inject` for the next iteration's prompt, so a resume
-        cannot replay it. Journaled so a refiner can tell a human-steered verdict from an
-        autonomous one — without the event the two are indistinguishable (see journal.STEERING).
-        """
-        pending = self.run.extra.get("steering_queue")
-        if not isinstance(pending, list) or not pending:
-            return
-        self.run.extra["steering_queue"] = []
-        queue = InterruptQueue()
-        for entry in pending:
-            text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
-            queue.push(text, now=time.time())
-        consumed = queue.consume(now=time.time())
-        texts = [i.text for i in consumed]
-        if not texts:
-            self._save_run()
-            return
-        block = queue.as_steering_prompt(consumed)
-        # Append if a block is already parked (two steers before the next iteration read either):
-        # the newest instruction goes last, the same order `consume` preserves.
-        existing = self._steering_inject.get(parent_path)
-        self._steering_inject[parent_path] = f"{existing}\n\n{block}" if existing else block
-        self.journal.write(
-            journal_mod.STEERING,
-            instance_path=parent_path,
-            node_id=node.id,
-            iteration=iteration,
-            count=len(texts),
-            texts=texts,
-        )
-        self._publish(
-            "workflow_steering_consumed",
-            {"instance_path": parent_path, "node_id": node.id, "count": len(texts)},
-        )
-        # Persist the drained queue immediately: a crash between here and the next tick must not
-        # resurrect an instruction the ledger already records as consumed.
-        self._save_run()
-
-    # ── convergence: ONE decision, `loop.tick.evaluate` (PP-15) ──────────────
-
-    def _supervisor_policy(self, node: Node) -> supervisor_policy.SupervisorPolicy:
-        """The loop's declared convergence policy, or the default posture.
-
-        This is the call that makes `SupervisorPolicy` load-bearing: the thresholds
-        `evaluate` reads come from the TEMPLATE's `supervisor:` block, not from constants
-        buried in the engine. A node that declares none gets the default policy, whose
-        values reproduce what the engine did before it was consulted.
-
-        The run's sparse overlay composes ON TOP (PP-16 seam 4d, OWNER RULING 2): the
-        template stays the shared default source — it structurally cannot hold a
-        per-instance setting — and `run.policy_overrides` carries only the knobs THIS run
-        overrode. A run with an empty overlay gets the template's policy object unchanged,
-        so the sparse common case costs nothing.
-        """
-        declared = supervisor_policy.parse_supervisor_policy((node.config or {}).get("supervisor"))
-        return supervisor_policy.apply_policy_overrides(declared, self.run.policy_overrides)
-
-    def _convergence_ledger(self, parent_path: str) -> dict[str, Any]:
-        """This loop's persisted convergence position, on the run row.
-
-        `run.extra` and not the event ledger, deliberately. The position has to be PERSISTED —
-        an in-memory cursor is exactly what the deleted `check_middleware` kept, and it makes
-        the ladder a property of this PROCESS's uptime, so the same run answers differently
-        before and after a crash. But it must not be written as an `iteration` row either: that
-        kind means "the loop body ran once", and a decision *about* the body is not another
-        body run. Recording it there inflates every consumer's iteration count, including the
-        `max_iterations` cap a user set.
-        """
-        book = self.run.extra.setdefault("convergence", {})
-        if not isinstance(book, dict):
-            book = {}
-            self.run.extra["convergence"] = book
-        entry = book.setdefault(parent_path, {})
-        if not isinstance(entry, dict):
-            entry = {}
-            book[parent_path] = entry
-        return entry
-
-    def _convergence_state(
-        self, parent_path: str, node: Node, breaker: BreakerState, *, stall: str = ""
-    ) -> convergence.TickState:
-        """Assemble this loop's convergence snapshot. Pure over what it is handed.
-
-        Two sources, each the one that owns its half:
-
-        * **The failure evidence comes from the BREAKER.** `breaker.error_signatures` is the
-          record the trip detector already collected, so the stall tier fires on the trip
-          instead of waiting to re-observe the same thing N more times. Re-counting the
-          failures here would be a second detector — the redundancy the R-de-dup ruling
-          forbids — and it would also make the response arrive later than the detection.
-        * **The ladder position comes from persisted run state** (`_convergence_ledger`), so a
-          resumed run re-derives the same rung rather than restarting at the cheapest one.
-
-        A loop whose body has stopped failing has no signatures, so the stall tiers are vacuous
-        and `evaluate` falls through to the progress branches — the `reset_after_success`
-        behaviour, obtained structurally rather than by remembering to call it.
-        """
-        book = self._convergence_ledger(parent_path)
-        signatures = [s for s in breaker.error_signatures if s]
-        critique = self.run.extra.get("plan_critique")
-        return convergence.TickState(
-            step_index=0,
-            step_started_at=0.0,
-            # The workflows loop node's "call" is the failing NODE plus its failure signature:
-            # the same node failing the same way repeatedly IS the identical-call signal,
-            # expressed in what the breaker actually holds.
-            call_fingerprints=tuple(call_fingerprint(node.id, sig) for sig in signatures),
-            failure_classes=tuple(classify_failure(sig).value for sig in signatures),
-            nudges_issued=int(book.get("nudges", 0) or 0),
-            escalations_taken=int(book.get("escalations", 0) or 0),
-            attempts_at_rung=int(book.get("attempts", 0) or 0),
-            recoverable_waits=int(book.get("recoverable_waits", 0) or 0),
-            replans_taken=int(book.get("replans", 0) or 0),
-            plan_critique=critique.strip() if isinstance(critique, str) else "",
-            stall_confirmed=stall,
-        )
-
-    def _record_convergence(
-        self,
-        parent_path: str,
-        cfg: convergence.TickConfig,
-        state: convergence.TickState,
-        decision: convergence.Decision,
-    ) -> None:
-        """Persist the counter advance `tick.applied` derives, plus a bounded audit log.
-
-        `tick.applied` is the pure write half: it says what the counters BECOME, and this is the
-        one place that puts them on disk. Splitting it that way is what keeps the position
-        re-derivable — the decision never advances anything itself.
-        """
-        after = convergence.applied(cfg, state, decision)
-        book = self._convergence_ledger(parent_path)
-        book["nudges"] = after.nudges_issued
-        book["escalations"] = after.escalations_taken
-        book["attempts"] = after.attempts_at_rung
-        book["recoverable_waits"] = after.recoverable_waits
-        book["replans"] = after.replans_taken
-        # Bounded: an unbounded decision log on the run row is a slow leak that looks like an
-        # audit trail.
-        log = book.setdefault("log", [])
-        if isinstance(log, list):
-            log.append(decision.to_dict())
-            del log[:-_CONVERGENCE_LOG_MAX]
-        self._save_run()
-
-    def _replan_ops(
-        self, node: Node, decision: convergence.Decision, *, attempt: int
-    ) -> list[dict[str, Any]]:
-        """The REAL mutation batch a `REPLAN` queues.
-
-        Not a retry with the critique stapled to the prompt — that is what this replaces, and it
-        is indistinguishable from the failing attempt in the spec, in `spec_history` and to a
-        human reading either. An `insert` CHANGES the plan: the run's remaining steps now include
-        a step that re-derives them from the critique, the spec version bumps, and the change is
-        auditable. Placed immediately after the loop in the root sequence, so it is the next
-        thing the run does with the work the critique rejected.
-        """
-        root = self.spec.get("root") or {}
-        parent_id = ""
-        at: int | None = None
-        children = root.get("children")
-        if isinstance(children, list):
-            for i, child in enumerate(children):
-                if isinstance(child, dict) and child.get("id") == node.id:
-                    # The realistic shape: the loop is a step in a sequence, so the replan step
-                    # is the next step — literally "the remaining steps changed".
-                    parent_id, at = str(root.get("id") or ""), i + 1
-                    break
-        if at is None:
-            body = root.get("body") if root.get("id") == node.id else None
-            if isinstance(body, dict) and isinstance(body.get("children"), list):
-                # The loop IS the root: its remaining work is its own further iterations, so the
-                # replan step goes at the FRONT of the body and runs before the rejected work
-                # is repeated.
-                parent_id, at = str(body.get("id") or ""), 0
-            else:
-                # No structural target this batch could edit without inventing a container. A
-                # replan that cannot land is not a replan, and quietly applying it somewhere
-                # else would change a different part of the plan than the critique named.
-                return []
-        op: dict[str, Any] = {
-            "op": "insert",
-            "node": {
-                "kind": "infer",
-                "id": f"{node.id}__replan{attempt}",
-                "name": "re-derive remaining steps",
-                "config": {
-                    "prompt": (
-                        "The plan for the remaining work was judged unsound. Critique:\n"
-                        f"{decision.replan_directive}\n\n"
-                        "Re-derive the remaining steps to satisfy the critique. Do not repeat "
-                        "the rejected approach."
-                    )
-                },
-            },
-            "note": f"PP-15 replan {attempt}: {decision.reason}",
-            "index": at,
-        }
-        if parent_id:
-            op["parent_id"] = parent_id
-        return [op]
-
-    def _converge_loop(
-        self,
-        parent_path: str,
-        node: Node,
-        iteration: int,
-        *,
-        breaker_reason: str,
-        breaker_detail: str,
-    ) -> bool:
-        """Ask the ONE convergence core what to do about a tripped loop. `True` = the run stops.
-
-        Replaces the BINARY trip handling. The breaker still detects the stall — it remains the
-        sole trip authority, and nothing here re-counts what it counted — but "a stall was
-        detected" and "therefore a human must look at this" were the same line, which made every
-        middle rung of the declared ladder unreachable. Now the trip is the QUESTION and
-        `evaluate` gives the answer: wait, nudge, change strategy, replan, or surface.
-        """
-        policy = self._supervisor_policy(node)
-        cfg = convergence_config(policy)
-        breaker = self._breakers.setdefault(parent_path, BreakerState())
-        state = self._convergence_state(parent_path, node, breaker, stall=breaker_reason)
-        # `time.time()`, NOT `_now()`: the run clock is an ISO string and `evaluate` does
-        # arithmetic on `now` (the dwell branch). Passing the display clock here is a TypeError
-        # at the first tripped breaker — the one path a happy-path test never reaches.
-        decision = convergence.evaluate(cfg, state, time.time())
-        self._record_convergence(parent_path, cfg, state, decision)
-        self._publish(
-            "workflow_loop_converged",
-            {"instance_path": parent_path, "node_id": node.id, **decision.to_dict()},
-        )
-
-        if decision.action is convergence.Action.REPLAN:
-            ops = self._replan_ops(node, decision, attempt=state.replans_taken + 1)
-            result = (
-                self.submit_mutation(ops, actor="supervisor", confirm=True)
-                if ops
-                else {"ok": False, "issues": [{"code": "WF_REPLAN_NO_TARGET"}]}
-            )
-            if not result.get("queued"):
-                # A replan that could not be queued is not a replan. Surfacing beats looping on
-                # a plan the engine has just declared unsound.
-                self._surface_loop(parent_path, node, reason=decision.reason, detail=str(result))
-                return True
-            # Consumed, so the next tick does not re-decide REPLAN against the same critique and
-            # spend the whole budget re-deriving one plan.
-            self.run.extra.pop("plan_critique", None)
-            self._save_run()
-            return False
-
-        if decision.surfaced:
-            self._surface_loop(
-                parent_path,
-                node,
-                reason=decision.reason or breaker_reason,
-                detail=decision.detail or breaker_detail,
-            )
-            return True
-
-        if decision.nudge_text:
-            existing = self._steering_inject.get(parent_path)
-            self._steering_inject[parent_path] = (
-                f"{existing}\n\n{decision.nudge_text}" if existing else decision.nudge_text
-            )
-        return False
-
-    def _surface_loop(self, parent_path: str, node: Node, *, reason: str, detail: str) -> None:
-        """Hand a loop to a human. ESCALATED, deliberately NOT FAILED: "I gave up and a human
-        must decide" is a different fact from "this broke", and collapsing them loses what the
-        user needs to act on.
-
-        **The reason is re-derived when the iterations were not work (#3524).** A budget trip says
-        the loop ran out of room; it does not say whether it spent that room WORKING. Measured on a
-        `general-project` run: the banner read "the loop reached its iteration ceiling at project /
-        reached 6 iterations", which a user reads as "my task was too big" — while five of the six
-        iterations had failed instantly on a binding and never called a model at all. The engine
-        knew both facts and surfaced neither: the wrong one of two possible sentences is worse than
-        a vague one, because it sends the reader to shrink a task that was never the problem.
-
-        So a loop whose iterations FAILED escalates as `iterations_failed`, and the detail carries
-        the count and the first failure's own message. The original budget token is kept in the
-        detail rather than dropped — it is still true, and it is what a reader greps for.
-        """
-        failed, attempted, first_error = self._iteration_failures(parent_path)
-        if failed:
-            detail = (
-                f"{failed} of {attempted} iterations failed instead of finishing their work"
-                + (f", the first with: {first_error}" if first_error else "")
-                + f". The loop then stopped on `{reason}`"
-                + (f" ({detail})" if detail else "")
-                + "."
-            )
-            reason = "iterations_failed"
-        loop_inst = self._instance(parent_path)
-        loop_inst.state = InstanceState.ESCALATED
-        loop_inst.completed_at = _now()
-        self._escalate(parent_path, node.id, reason=reason, detail=detail)
-
-    def _iteration_failures(self, loop_path: str) -> tuple[int, int, str]:
-        """`(iterations with a failed body node, iterations attempted, the first failure's cause)`.
-
-        The measurement behind `iterations_failed`. Derived from the instances rather than from a
-        counter, because no counter distinguishes the two endings — `self._iterations` only says how
-        far the loop got, which is identical for a loop that worked six times and one that failed
-        six times.
-
-        An iteration counts as attempted once any instance exists under its `body@<n>` prefix, so an
-        iteration the scheduler never opened is not counted against the loop.
-        """
-        failed = attempted = 0
-        first_error = ""
-        for index in range(int(self._iterations.get(loop_path, 0)) + 1):
-            prefix = f"{loop_path}.body@{index}"
-            members = [
-                inst
-                for path, inst in self.instances.items()
-                if path == prefix or path.startswith(f"{prefix}.")
-            ]
-            if not members:
-                continue
-            attempted += 1
-            broken = [i for i in members if i.state is InstanceState.FAILED]
-            if not broken:
-                continue
-            failed += 1
-            if not first_error:
-                first_error = next(
-                    (i.failure.cause_plain for i in broken if i.failure and i.failure.cause_plain),
-                    "",
-                )
-        return failed, attempted, first_error
-
-    def _loop_node_under_overlay(self, node: Node) -> Node:
-        """The loop node with the run's ``max_cycles`` override applied as its iteration cap.
-
-        A template is SHARED across runs, so a per-instance cycle budget cannot live in it (OWNER
-        RULING 2); the run's overlay carries it, and this is where it meets the one config key the
-        engine bounds iterations by. A copy, never an edit: the spec every other reader walks must
-        keep the template's declaration. No override (or ``0``) returns the node unchanged.
-        """
-        cap = supervisor_policy.loop_iteration_cap(self.run.policy_overrides)
-        if not cap:
-            return node
-        return replace(node, config={**(node.config or {}), "max_iterations": cap})
-
-    def _advance_loop(self, path: str, node_id: str) -> None:
-        """Advance a loop's iteration counter when its body finished an iteration.
-
-        The counter lives here rather than in the frontier because advancing it is a
-        WRITE, and the frontier is pure. `loop_should_continue` keeps the decision itself
-        pure and testable.
-
-        Takes the settled leaf's PATH and ID rather than a `ReadyNode`, because there are two
-        settle paths and only one of them has a `ReadyNode` in hand. `_apply` settles an awaited
-        dispatch; `_reconcile_dispatched_stages` settles a spawned `stage`, whose awaited coroutine
-        already returned at the spawn. Both must advance the loop — see that method's own note on
-        why a dispatched stage is not an `_inflight` entry.
-        """
-        parent_path, iteration = _loop_parent(path)
-        if parent_path is None:
-            return
-        node = dict(_walk(self.root)).get(spec_path(parent_path))
-        if node is None or node.kind != NodeKind.LOOP:
-            return
-        # The run's own cycle budget, applied to the ONE node both iteration-cap readers below
-        # consult (`check_breaker` and `loop_should_continue` both read `max_iterations`).
-        node = self._loop_node_under_overlay(node)
-        if not self._iteration_complete(node, parent_path, iteration):
-            # A CONTAINER-bodied loop calls this once per leaf. Advancing on the first one
-            # would end the iteration mid-cycle: the wait would complete, the counter would
-            # move, and the synthesize stage after it would be scheduled into the NEXT
-            # iteration's path — where nothing had produced its inputs.
-            return
-        output = self._outputs.get(node_id)
-        if self._iteration_is_dry(node, parent_path, iteration, output):
-            self._dry_streaks[parent_path] = self._dry_streaks.get(parent_path, 0) + 1
-        else:
-            self._dry_streaks[parent_path] = 0
-
-        # Feed the breaker, then consult it BEFORE the next iteration. Deterministic and
-        # LLM-free: a loop thrashing on the same error is the most common autonomous-run
-        # failure, and paying a model to notice it would be slower and less reliable.
-        #
-        # This `check_breaker` is the SOLE trip DETECTOR (LOOPS-EVOLUTION R-de-dup): nothing
-        # below re-counts what it counted. What changed in PP-15 is what a trip MEANS. It used to
-        # mean "escalate to a human", which made the declared five-rung ladder unreachable — the
-        # engine failed binary after two consecutive errors. Now a trip is the question, and
-        # `loop.tick.evaluate` — the ONE convergence core, shared with the loop kinds and driven
-        # by this node's `SupervisorPolicy` — gives the answer: wait, nudge, take a rung, replan,
-        # or surface. `loop_middleware.check_middleware`, which used to hold a second copy of
-        # that reasoning over a mutable cursor, is deleted.
-        inst = self._instance(path)
-        breaker = self._breakers.setdefault(parent_path, BreakerState())
-        breaker.record(
-            signature=error_signature(inst.failure) if inst.failure else "",
-            output=output,
-            tokens=inst.tokens,
-        )
-        verdict = check_breaker(node, breaker)
-        if verdict.tripped:
-            self.journal.iteration(
-                parent_path,
-                node.id,
-                iteration=iteration,
-                outcome=f"breaker:{verdict.reason}",
-                error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
-                tokens=inst.tokens,
-            )
-            if verdict.reason in _BUDGET_TRIPS:
-                # A satisfied budget is not a stall. Unchanged pre-PP-15 behaviour.
-                self._surface_loop(parent_path, node, reason=verdict.reason, detail=verdict.detail)
-                return
-            if self._converge_loop(
-                parent_path,
-                node,
-                iteration,
-                breaker_reason=verdict.reason,
-                breaker_detail=verdict.detail,
-            ):
-                return
-
-        # Consume steering BEFORE the continue decision, so a mid-run instruction reaches the next
-        # iteration's prompt (R14). Drained even when the loop is about to end — a dropped
-        # instruction the user cannot see is indistinguishable from one that was silently ignored,
-        # so the STEERING event is journaled regardless; only the injection needs a next iteration.
-        self._consume_steering(parent_path, node, iteration)
-
-        # ONE definition of `{{last.output}}`, shared with the body (`_last_output`). The loop's
-        # own `condition` used to read the LAST SETTLED LEAF's output instead, which is a
-        # different value the moment the body is a container: `goal-pursuit-verifiable` ends its
-        # body on `judge` and tests `{{last.output.command_passed}}`, a key only its `fix` stage
-        # emits, so that condition could never resolve and the loop exited `condition_unresolvable`
-        # every time. A leaf body layers exactly one mapping, so nothing changes there.
-        layered, _ = self._iteration_output(parent_path, iteration)
-        ctx = BindingContext(
-            inputs=self.run.inputs,
-            node_outputs=self._outputs,
-            node_artifacts=self._node_artifacts(),
-            iter_index=iteration,
-            last_output=layered,
-            has_last=True,
-        )
-        keep_going, reason = loop_should_continue(
-            node,
-            iteration=iteration + 1,
-            last_output=output,
-            dry_streak=self._dry_streaks.get(parent_path, 0),
-            ctx=ctx,
-        )
-        self.journal.iteration(
-            parent_path,
-            node.id,
-            iteration=iteration,
-            outcome=reason or "continue",
-            error_signature="",
-            tokens=0,
-        )
-        # Mark the seen-set only now — AFTER the iteration succeeded. Marking at read time
-        # means a cycle that dies mid-synthesis has already suppressed items it never
-        # processed, and nothing will ever surface them again (§4.1).
-        self._mark_seen(parent_path, node, output)
-        # Capture what this iteration hands to the next, BEFORE the counter advances (WF2-R6).
-        # Journaled rather than held in memory so a rewind to this iteration replays the handoff
-        # it actually had, instead of reconstructing one from a transcript that no longer exists —
-        # which is the summarization failure handoffs exist to replace.
-        self._capture_iteration_context(parent_path, node, iteration, output)
-        if keep_going:
-            self._iterations[parent_path] = iteration + 1
-            return
-
-        # The loop is out of iterations. If it is STILL thrashing it did not FINISH — it ran out
-        # of room while failing, and `DONE` would hand the user a complete run full of garbage.
-        #
-        # This restores the terminal outcome the binary handling gave for free. Under the old
-        # code a thrash escalated on its FIRST trip, so it could never reach its last iteration;
-        # now the ladder deliberately keeps it running, and a loop whose iteration budget is
-        # smaller than the ladder's attempt budget would otherwise walk off the end reporting
-        # success. Re-asking the SOLE detector is how the two endings are told apart without
-        # inventing a second piece of state: anything tripping here was tripping earlier too.
-        final = check_breaker(node, breaker)
-        if final.tripped and final.reason not in _BUDGET_TRIPS:
-            self._surface_loop(parent_path, node, reason=final.reason, detail=final.detail)
-            return
-
-        loop_inst = self._instance(parent_path)
-        loop_inst.state = InstanceState.DONE
-        loop_inst.completed_at = _now()
-
-    def _iteration_complete(self, node: Node, parent_path: str, iteration: int) -> bool:
-        """Has this loop iteration's WHOLE body reached a terminal state?
-
-        Derived through the same `frontier` machinery the scheduler uses, so "the body finished"
-        means exactly what it means everywhere else. A leaf body is trivially complete on its own
-        completion; a container body is complete only when its children are.
-        """
-        if node.body is None:
-            return True
-        state = derive_state(
-            node.body,
-            f"{parent_path}.body@{iteration}",
-            {p: i.state for p, i in self.instances.items()},
-            declined_edges=self._declined_edges,
-            outputs=self._outputs,
-            inputs=self.run.inputs,
-            iterations=self._iterations,
-        )
-        return state in TERMINAL_STATES
-
-    # ── until_dry dryness (WF2LOO-14) ──
-
-    def _iteration_is_dry(self, node: Node, parent_path: str, iteration: int, output: Any) -> bool:
-        """Did this iteration surface nothing new? Feeds the `until_dry` streak.
-
-        TWO rules, and which applies is the TEMPLATE's declaration, not the engine's guess:
-
-        * the loop declares `progress_field` → **that field decides**, wherever inside the
-          iteration it was emitted (`_progress_reading` states the per-type rule);
-        * it declares none → the whole last output decides (`_is_dry`), byte-for-byte what
-          every loop did before this. Most loops declare none, and none of them change.
-
-        A declared field this iteration did not emit falls back to the whole-output rule
-        instead of counting as dryness. Deliberate direction: treating an absent field as
-        "nothing new" would end the user's loop after `streak` iterations because the body
-        forgot a key — silently truncating real work. Paying for one more iteration and
-        learning nothing is the cheaper mistake, and it is visible; a truncated run is not.
-        """
-        field = str((node.config or {}).get("progress_field", "") or "")
-        if not field:
-            return _is_dry(output)
-        found, value = self._progress_value(node, parent_path, iteration, field)
-        if not found:
-            return _is_dry(output)
-        reading = _progress_reading(value)
-        if reading == _UNREADABLE:
-            # A type with no rule is not evidence of dryness (e.g. an oversize output whose
-            # inline preview is a `result_omitted` stub). Same direction as absence.
-            return _is_dry(output)
-        return reading == _DRY
-
-    def _progress_value(
-        self, node: Node, parent_path: str, iteration: int, field: str
-    ) -> tuple[bool, Any]:
-        """This iteration's value for `field` as `(found?, value)`.
-
-        `found` is separate from the value because ``None`` is a legitimate DRY reading —
-        "the body said nothing" — and absence is not; collapsing them would make a missing
-        key end the loop.
-
-        Scans the loop BODY, not just the output `_advance_loop` is holding. That output is
-        the last leaf to finish, and both shipped templates that declare a progress field
-        put it on the FIRST stage of a sequence body and end each iteration on a judge stage
-        whose schema has no such key — so reading only the last leaf would leave this control
-        inert for exactly the templates that asked for it.
-
-        Restricted to nodes whose instance for THIS iteration succeeded: `self._outputs` is
-        keyed by node id, so a body node that did not run this time still holds the PREVIOUS
-        iteration's value, and reading that would report last iteration's progress as this
-        one's. The last match in document order wins — the iteration's latest word on its
-        own progress.
-        """
-        if node.body is None:
-            return False, None
-        base = f"{parent_path}.body@{iteration}"
-        found, value = False, None
-        for sub, child in _walk(node.body):
-            if not child.id:
-                continue
-            inst = self.instances.get(base if sub == "root" else f"{base}{sub[len('root'):]}")
-            if inst is None or inst.state not in SUCCESS_STATES:
-                continue
-            out = self._outputs.get(child.id)
-            if isinstance(out, dict) and field in out:
-                found, value = True, out[field]
-        return found, value
-
-    # ── long-run watcher state (KNOWLEDGE-SYNTHESIS §4) ──
-
-    def _mark_seen(self, parent_path: str, node: Node, output: Any) -> None:
-        """Record what a successful cycle consumed, and journal the whole set.
-
-        Only for loops that actually accumulate — a `counted` loop over three review passes
-        has no items and no reason to carry a seen-set. Keyed by the loop's path so two
-        watchers in the same run keep independent sets: a shared one would have each watcher
-        suppressing the other's novel items, and the symptom (a watcher that mysteriously
-        finds nothing) points nowhere near the cause.
-        """
-        cfg = node.config or {}
-        if str(cfg.get("mode", "") or "") != LoopMode.UNTIL_CANCELLED.value:
-            return
-        items = longrun._flatten_outputs([output])
-        if not items:
-            return
-        seen = self._seen.setdefault(parent_path, longrun.SeenSet())
-        added = seen.mark_all(items)
-        if not added:
-            return
-        self.journal.write(
-            journal_mod.SEEN_SET,
-            instance_path=parent_path,
-            node_id=node.id,
-            seen=seen.to_dict(),
-            added=added,
-            total=len(seen),
-        )
-
-    # ── context lifecycle (WF2-R6) ──
-
-    def _capture_iteration_context(
-        self, parent_path: str, node: Node, iteration: int, output: Any
-    ) -> None:
-        """Journal the handoff, carryover and decision an iteration produced.
-
-        Read from the iteration's OWN OUTPUT rather than inferred: a node that wants to hand
-        something to the next iteration says so in a `handoff` / `carryover` / `decision` key, and
-        inferring one from prose would produce exactly the lossy summary the mechanism replaces.
-        A node that says nothing hands over nothing, which is correct — a fabricated handoff is
-        worse than none, because the next iteration would trust it.
-
-        Never raises: a run must not die because a bookkeeping write failed.
-        """
-        if not isinstance(output, dict):
-            return
-        inst = self._instance(parent_path)
-        try:
-            handoff = context_mod.Handoff.from_dict(output.get("handoff"))
-            if not handoff.empty:
-                self._handoffs[parent_path] = handoff
-                self.journal.handoff(
-                    parent_path,
-                    node.id,
-                    epoch=inst.epoch,
-                    iteration=iteration,
-                    handoff=handoff.to_dict(),
-                )
-
-            fresh = context_mod.Carryover.from_dict(output.get("carryover"))
-            if not fresh.empty:
-                # MERGED into what the loop already carried, not replaced: the buckets accumulate
-                # across iterations, and an iteration that only touched one file must not erase the
-                # nine the previous ones verified.
-                merged = self._carryover.get(parent_path, context_mod.Carryover()).merge(fresh)
-                self._carryover[parent_path] = merged
-                self.journal.carryover(
-                    parent_path,
-                    node.id,
-                    epoch=inst.epoch,
-                    iteration=iteration,
-                    buckets=merged.to_dict(),
-                )
-
-            raw_decisions = output.get("decisions")
-            if isinstance(output.get("decision"), dict):
-                raw_decisions = [output["decision"]]
-            for raw in raw_decisions if isinstance(raw_decisions, list) else []:
-                decision = context_mod.Decision.from_dict(raw if isinstance(raw, dict) else None)
-                if decision.empty:
-                    continue
-                self._decisions.setdefault(parent_path, []).append(decision)
-                self.journal.decision(
-                    parent_path, node.id, epoch=inst.epoch, decision=decision.to_dict()
-                )
-
-            # LEARN-R18: a node that made a measurable bet says so in a `pending_outcome`
-            # key {subject, metric, horizon_secs, baseline}. It is journaled as an OPEN
-            # question at decision time — a single/list of dicts, mirroring `decision` —
-            # and the curator's resolver measures ground truth once the horizon elapses.
-            # Kept separate from `decision` on purpose: a Decision is a settled choice, a
-            # pending outcome is a claim about the future the run cannot yet evaluate.
-            raw_pending = output.get("pending_outcomes")
-            if isinstance(output.get("pending_outcome"), dict):
-                raw_pending = [output["pending_outcome"]]
-            for raw in raw_pending if isinstance(raw_pending, list) else []:
-                if not isinstance(raw, dict):
-                    continue
-                subject = str(raw.get("subject") or "").strip()
-                metric = str(raw.get("metric") or "").strip()
-                if not subject or not metric:
-                    continue
-                try:
-                    horizon = float(raw.get("horizon_secs") or 0.0)
-                    baseline = float(raw.get("baseline") or 0.0)
-                except (TypeError, ValueError):
-                    continue
-                self.journal.pending_outcome(
-                    parent_path,
-                    node.id,
-                    epoch=inst.epoch,
-                    subject=subject,
-                    metric=metric,
-                    horizon_secs=horizon,
-                    baseline=baseline,
-                )
-        except Exception:
-            logger.debug(
-                "run %s: could not capture iteration context at %s",
-                self.run.id,
-                parent_path,
-                exc_info=True,
-            )
-
-    def _rehydrate_context(self) -> None:
-        """Rebuild the context lifecycle from the ledger on start/resume (WF2-R6).
-
-        Replays in ledger ORDER, so the last handoff per container wins and the carryover arrives
-        already merged (each write journaled the merged state, so the final one is complete). A
-        rewind's records are naturally excluded because a rewind archives the region's journal
-        entries — the replay sees only what is still live.
-
-        Never raises: a resumed run must start even if its ledger is partly unreadable. It would
-        start context-blind, which is worse than nothing but far better than not starting.
-        """
-        try:
-            records = journal_mod.ledger(
-                self.run.id,
-                kinds={
-                    journal_mod.HANDOFF,
-                    journal_mod.CARRYOVER,
-                    journal_mod.DECISION,
-                    journal_mod.SEEN_SET,
-                },
-            )
-        except Exception:
-            logger.debug("run %s: could not read the context ledger", self.run.id, exc_info=True)
-            return
-        for rec in records:
-            path = str(rec.get("instance_path", "") or "")
-            if not path:
-                continue
-            kind = rec.get("kind")
-            try:
-                if kind == journal_mod.HANDOFF:
-                    self._handoffs[path] = context_mod.Handoff.from_dict(rec)
-                elif kind == journal_mod.CARRYOVER:
-                    # Each journaled bucket set is already the MERGED state at that point, so the
-                    # later record replaces rather than re-merges — re-merging would be harmless but
-                    # would quietly double the dedup work on every resume.
-                    self._carryover[path] = context_mod.Carryover.from_dict(rec)
-                elif kind == journal_mod.DECISION:
-                    decision = context_mod.Decision.from_dict(rec)
-                    if not decision.empty:
-                        self._decisions.setdefault(path, []).append(decision)
-                elif kind == journal_mod.SEEN_SET:
-                    # Each record carries the WHOLE set at that point, so the last one wins —
-                    # the same reason as CARRYOVER. A delta encoding would be smaller but would
-                    # make a partially-unreadable ledger reconstruct a WRONG set rather than an
-                    # old one, and an old seen-set only costs tokens.
-                    self._seen[path] = longrun.SeenSet.from_dict(rec.get("seen") or {})
-            except Exception:
-                logger.debug("run %s: skipping unreadable context record", self.run.id)
-
-    def _rehydrate_loop_progress(self) -> None:
-        """Rebuild every loop's iteration counter from the ledger on start/resume.
-
-        🔴 ``_iterations`` lived in memory only, and it is what the frontier reads to know WHICH
-        iteration of a loop's body is current. A controller built by a restarted gateway started
-        every loop back at iteration 0 — whose body was already terminal — so nothing was runnable
-        and the run FAILED "run deadlocked: no runnable nodes and none in flight". Measured on a
-        General loop paused in its second iteration, the gateway restarted, then resumed: failed
-        five seconds after Resume. Every run whose loop was past its first iteration when the
-        process ended had the same fate.
-
-        The counter advances exactly when ``_advance_loop`` journals a ``continue`` iteration, so
-        that record is its durable form: the next iteration of each loop is one past the last one
-        that continued. Replayed like ``_rehydrate_context`` — a rewind archives the rows it undoes,
-        so only live history counts — and never raises, for the same reason. ``max`` keeps a
-        same-process restart of the tick loop (a resume) from moving a counter backwards.
-
-        The dry streak and breaker evidence are NOT journaled and start empty: a resumed
-        ``until_dry`` loop may run up to ``streak`` more iterations before it can stop dry, which
-        costs cycles rather than correctness.
-        """
-        try:
-            rows = journal_mod.ledger(self.run.id, kinds={journal_mod.ITERATION})
-        except Exception:
-            logger.debug("run %s: could not read the iteration ledger", self.run.id, exc_info=True)
-            return
-        for rec in rows:
-            path = str(rec.get("instance_path", "") or "")
-            iteration = rec.get("iteration")
-            if not path or not isinstance(iteration, int) or rec.get("outcome") != "continue":
-                continue
-            self._iterations[path] = max(int(self._iterations.get(path, 0)), iteration + 1)
-
-    def _requeue_orphaned_stages(self) -> list[str]:
-        """Put back in the queue every stage whose subagent ended with an earlier gateway process.
-
-        A dispatched stage keeps its subagent's id in instance state, and
-        ``_reconcile_dispatched_stages`` polls the manager for its verdict. After a restart the
-        subagent is gone — a native one ran in the dead process, an ACP one is killed by the
-        orphan sweep — while the state still reads RUNNING with its id, and a fresh manager knows
-        no ids. The reconciler rightly invents no verdict for an unknown id, so the stage read
-        "still working" until the stale-run audit, and the loop never moved again.
-
-        Called only when a RESUMED run's controller starts, which is what makes "unknown to this
-        process's manager" decisive: nothing this controller spawned can be unknown, and a
-        subagent another controller in this process spawned is known (one manager per process).
-        So this is not a verdict on the work — the stage goes back to PENDING at the same epoch,
-        exactly like a paused stage (`_pause_inflight`): its attempt is not charged, its
-        no-double-execution claim is released (a leftover claim makes the re-run meet its own
-        lease, #3533), and the scheduler dispatches it again.
-        """
-        manager = self.services.subagents
-        if manager is None or not hasattr(manager, "get"):
-            return []
-        orphans: list[str] = []
-        for path in self._awaiting_out_of_band_work():
-            inst = self._instance(path)
-            try:
-                known = manager.get(inst.subagent_id) is not None
-            except Exception:
-                continue  # an unreadable manager is not evidence the work is gone
-            if known:
-                continue
-            release_execution_claim(inst.claim_target, inst.claim_holder)
-            inst.claim_target = ""
-            inst.claim_holder = ""
-            inst.state = InstanceState.PENDING
-            inst.subagent_id = ""
-            inst.started_at = None
-            inst.attempt = max(0, inst.attempt - 1)
-            orphans.append(path)
-        if orphans:
-            logger.info(
-                "run %s: re-queued %d stage(s) whose subagent ended with the previous process: %s",
-                self.run.id,
-                len(orphans),
-                ", ".join(orphans),
-            )
-            self._persist_state()
-        return orphans
-
-    def _carried_context(self, item: ReadyNode) -> str:
-        """The context block a `session: fresh` iteration starts from, or "".
-
-        Only for a node INSIDE an iterated container: a top-level node has no previous iteration to
-        inherit from, and injecting an empty block would teach a model the section is noise.
-
-        `session: continuous` returns "" deliberately — a continuous session already HAS the
-        previous iteration's context in its transcript, and prepending a handoff to it would say
-        everything twice.
-        """
-        parent_path, _iteration = _loop_parent(item.path)
-        if parent_path is None:
-            return ""
-        node = dict(_walk(self.root)).get(parent_path)
-        if node is None:
-            return ""
-        # Steering (R14) reaches BOTH session policies: a mid-run instruction must land even in a
-        # `continuous` loop, whose transcript otherwise carries no fresh block. Consume it single-
-        # use — once it is in a prompt, a re-render must not repeat it. It goes LAST, after the
-        # handoff/carryover, because it is the newest and highest-priority instruction.
-        steer = self._steering_inject.pop(parent_path, "")
-        if context_mod.session_policy(node.config) != context_mod.SESSION_FRESH:
-            return steer
-        carried = context_mod.render_context(
-            handoff=self._handoffs.get(parent_path),
-            carryover=self._carryover.get(parent_path),
-            decisions=self._decisions.get(parent_path),
-        )
-        if steer:
-            return f"{carried}\n\n{steer}" if carried else steer
-        return carried
-
-    # ── binding context ──
-
-    def _session_brief(self) -> Any:
-        """The project brief, built lazily and cached for the run.
-
-        Never raises and never blocks the run: a brief is an enhancement, so a store that cannot
-        answer means the run starts without the digest rather than not starting.
-        """
-        if self._brief is not None:
-            return self._brief
-        project = str(getattr(self.run, "project_id", "") or "")
-        if not project:
-            # No project means no scope. An unscoped brief would be "everything the user knows",
-            # injected into every run — expensive, and wrong about what the run is for.
-            self._brief = session_brief.SessionBrief()
-            return self._brief
-        try:
-            from personalclaw.config.loader import AppConfig
-            from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
-
-            path = knowledge_db_path()
-            if not path.is_file():
-                self._brief = session_brief.SessionBrief(project=project)
-                return self._brief
-            budget = int(
-                getattr(
-                    AppConfig.load().knowledge,
-                    "session_brief_max_tokens",
-                    session_brief.DEFAULT_MAX_TOKENS,
-                )
-            )
-            self._brief = session_brief.build(
-                KnowledgeStore(db_path=str(path)), project_id=project, max_tokens=budget
-            )
-        except Exception:
-            logger.debug("run %s: session brief unavailable", self.run.id, exc_info=True)
-            self._brief = session_brief.SessionBrief(project=project)
-        return self._brief
-
-    def _context_for(self, item: ReadyNode) -> BindingContext:
-        watcher_path = self._enclosing_watcher(item.path)
-        seen = self._seen.get(watcher_path) if watcher_path else None
-        last_output, has_last = self._last_output(item.path)
-        return BindingContext(
-            inputs=dict(self.run.inputs),
-            node_outputs=dict(self._outputs),
-            node_artifacts=self._node_artifacts(),
-            item=item.item,
-            has_item=item.has_item,
-            iter_index=item.iter_index,
-            last_output=last_output,
-            has_last=has_last,
-            sibling_outputs=self._sibling_outputs(item.path),
-            previous_output=self._previous_output(item.path),
-            has_previous=self._previous_output(item.path) is not None,
-            seen_filter=seen.unseen if seen else None,
-            brief=self._session_brief(),
-            secret_resolver=_secret_resolver,
-        )
-
-    def _node_artifacts(self) -> dict[str, str] | None:
-        """node id → artifact ref, for outputs the journal OFFLOADED (WV-11).
-
-        This is the writer that closes the `node_artifacts` seam: `{{nodes.x.artifact}}`
-        resolves to a live pointer only for nodes whose output spilled past
-        `MAX_INLINE_OUTPUT_BYTES` (or was binary). An offloaded output's `output_ref` does not
-        start with `outputs/` — that is exactly the distinction `store.store_output` records
-        when it writes to `artifacts/` instead. Derived from instance refs (the durable record),
-        not the in-memory preview map, so it survives a restart and a rewind the same way
-        `node_outputs` does. Only SUCCESS states contribute — a failed node's leftover ref must
-        not resolve as if it were a real artifact.
-        """
-        by_path = {path: node for path, node in _walk(self.root)}
-        artifacts: dict[str, str] = {}
-        for path, inst in self.instances.items():
-            if inst.state not in SUCCESS_STATES or not inst.output_ref:
-                continue
-            if inst.output_ref.startswith("outputs/"):
-                continue
-            node = by_path.get(spec_path(path))
-            if node is None or not node.id:
-                continue
-            artifacts[node.id] = inst.output_ref
-        return artifacts or None
-
-    def _sibling_outputs(self, path: str) -> dict[str, list[Any]] | None:
-        """Accumulated outputs of the node's siblings inside its enclosing `parallel`.
-
-        A LIST per sibling and not just its current output: a watcher reads a sibling that is
-        still producing, so "the output" is the wrong shape — the synthesizer needs the
-        accumulation to see a trend, which is the whole reason the binding exists (§4.2).
-
-        Accumulated from the JOURNAL rather than from `self._outputs`, because a loop body
-        overwrites its node-id output every iteration: reading the live map would show cycle
-        50 and nothing before it, and the window/seen-set machinery would have nothing to
-        bound.
-        """
-        tree = dict(_walk(self.root))
-        container = _enclosing_parallel(path, tree)
-        if container is None:
-            return None
-        node = tree.get(spec_path(container))
-        if node is None or not node.children:
-            return None
-        out: dict[str, list[Any]] = {}
-        for index, child in enumerate(node.children):
-            cpath = f"{container}.children[{index}]"
-            if path == cpath or path.startswith(f"{cpath}."):
-                continue  # a node is not its own sibling
-            if not child.id:
-                continue
-            out[child.id] = self._accumulated_outputs(cpath)
-        return out or None
-
-    def _accumulated_outputs(self, subtree: str) -> list[Any]:
-        """Every output a subtree has produced, oldest first.
-
-        Read from the journal's stored outputs so loop iterations accumulate instead of the
-        newest overwriting the rest.
-        """
-        acc: list[Any] = []
-        for spath in sorted(
-            (p for p in self.instances if p == subtree or p.startswith(f"{subtree}.")),
-            key=_natural_key,
-        ):
-            inst = self.instances[spath]
-            if inst.state not in SUCCESS_STATES or not inst.output_ref:
-                continue
-            # By INSTANCE PATH, not by `output_ref`: the ref is already the run-relative file
-            # path, and `read_output` derives the filename from what it is given — passing the
-            # ref would hash a hash and read nothing, silently, forever.
-            value = store.read_output(self.run.id, spath)
-            if value is not None:
-                acc.append(value)
-        return acc
-
-    def _last_output(self, path: str) -> tuple[Any, bool]:
-        """`{{last.output}}` — the previous ITERATION of the loop this node is in.
-
-        Returns `(value, present?)`. `present` is separate from the value because `None` is a
-        legitimate previous output and absence is not, the same reason `_progress_value` returns
-        a pair: collapsing them would make a body that legitimately returned nothing
-        indistinguishable from a body this engine never handed anything to.
-
-        **What one ITERATION's output IS, when the body is a container.** The iteration's
-        produced outputs, LAYERED in document order — each mapping's keys merge in, a later node
-        wins a collision. That is the contract the bundled templates were written against and the
-        only one that can serve them: `general-project`'s body prompt reads `summary` (its
-        worker's key) and `verdict` (its judge's key) in one breath, so no single child's output
-        is the answer. A one-node body layers exactly one mapping and is therefore identical to
-        handing that node's output straight through, which is what keeps `design-project`
-        unchanged.
-
-        A NON-mapping output has nothing to merge into, so the latest word wins outright — the
-        rule `_advance_loop` has always applied to the loop's own `condition`.
-
-        Read through `_accumulated_outputs` (the journal's stored outputs) rather than
-        `self._outputs`, which is keyed by NODE ID: a loop body overwrites its own entry every
-        iteration, so reading that map would hand iteration 3 its own output as if it were
-        iteration 2's.
-        """
-        loop_path, iteration = _loop_parent(path)
-        if loop_path is None or iteration <= 0:
-            # No enclosing loop, or the first iteration — there is no previous one either way.
-            # `bindings._first_cycle_miss` turns the second case into the documented
-            # `| default(...)`; the first still raises, because `last` outside a loop names
-            # nothing.
-            return None, False
-        return self._iteration_output(loop_path, iteration - 1)
-
-    def _iteration_output(self, loop_path: str, iteration: int) -> tuple[Any, bool]:
-        """One iteration's layered output. See `_last_output` for the contract it implements."""
-        produced = self._accumulated_outputs(f"{loop_path}.body@{iteration}")
-        if not produced:
-            return None, False
-        layered: Any = {}
-        for value in produced:
-            if isinstance(value, dict) and isinstance(layered, dict):
-                layered.update(value)
-            else:
-                layered = value
-        return layered, True
-
-    def _previous_output(self, path: str) -> Any:
-        """The prior successful cycle of the enclosing loop, for diff-aware synthesis.
-
-        Distinct from `{{last.output}}`, which is the previous iteration of the loop the node
-        is IN. `previous` is the prior cycle of the whole watcher body, which for a `sequence`
-        body is what a synthesis stage actually wants: its own last report, not the output of
-        whichever node happened to run before it.
-        """
-        watcher = self._enclosing_watcher(path)
-        if watcher is None:
-            return None
-        current = int(self._iterations.get(watcher, 0))
-        if current <= 0:
-            return None
-        node = dict(_walk(self.root)).get(watcher)
-        if node is None or node.body is None:
-            return None
-        prior = self._accumulated_outputs(f"{watcher}.body@{current - 1}")
-        return prior[-1] if prior else None
-
-    def _enclosing_watcher(self, path: str) -> str | None:
-        """The nearest enclosing `until_cancelled` loop path, or None."""
-        for candidate, node in _walk(self.root):
-            if node.kind != NodeKind.LOOP:
-                continue
-            if str((node.config or {}).get("mode", "") or "") != LoopMode.UNTIL_CANCELLED.value:
-                continue
-            if path == candidate or path.startswith(f"{candidate}."):
-                return candidate
-        return None
-
-    def _resolved_inputs(self, item: ReadyNode, ctx: BindingContext) -> dict[str, Any]:
-        """What actually reached this node — the cache's `inputs_hash` input.
-
-        Only the node's declared dependencies, not the whole output map: hashing every
-        output would invalidate the cache whenever any unrelated node finished, making
-        resume useless.
-        """
-        from personalclaw.workflows.bindings import node_deps
-
-        deps = node_deps(item.node.config or {})
-        view: dict[str, Any] = {dep: self._outputs.get(dep) for dep in sorted(deps)}
-        if item.has_item:
-            view["__item"] = item.item
-        if item.iter_index is not None:
-            view["__iter"] = item.iter_index
-        return view
-
-    def _store_prompt(self, path: str, prompt: str) -> str:
-        """Persist the fully-resolved prompt and return its ref.
-
-        Required for trajectory replay (§5): the acceptance bar is that prompt → tool
-        calls → output is reconstructable from ledger events alone.
-        """
-        if not prompt:
-            return ""
-        return store.write_output(self.run.id, f"{path}::prompt", prompt)
-
     # ── wake / budget / persistence ──
 
     def _wake_due_nodes(self) -> None:
@@ -4837,7 +1803,7 @@ class RunController:
                 continue
             crossed = inst.wake_at
             inst.wake_at = 0.0
-            node = dict(_walk(self.root)).get(spec_path(path))
+            node = dict(walk(self.root)).get(spec_path(path))
             kind = node.kind if node else None
             # The one load-bearing wall-clock read a run's trajectory depends on: THIS value, read
             # through the seam, is what let the parked node advance. Journaled as the nondeterminism
@@ -4848,7 +1814,7 @@ class RunController:
             if kind == NodeKind.WAIT:
                 # The deadline WAS the work. Reaching it is success.
                 inst.state = InstanceState.DONE
-                inst.completed_at = _now()
+                inst.completed_at = now_stamp()
                 node_id = node.id if node else ""
                 # Persisted, not just in-memory: a restart re-reads outputs from disk, and
                 # an in-memory-only value would come back None and break a binding on it.
@@ -4883,7 +1849,7 @@ class RunController:
             )
             inst.state = InstanceState.FAILED
             inst.failure = failure
-            inst.completed_at = _now()
+            inst.completed_at = now_stamp()
             self.journal.step_failed(
                 path,
                 node.id if node else "",
@@ -4941,7 +1907,7 @@ class RunController:
             entry.task.cancel()
             inst = self._instance(entry.ready.path)
             inst.state = InstanceState.CANCELLED
-            inst.completed_at = _now()
+            inst.completed_at = now_stamp()
             # What the step had spent when the cancel landed. Read NOW, before the task sees its
             # CancelledError: every call still open is a generation this cancel cut off, and what
             # the finished ones reported is then a floor. Without the row a run cancelled
@@ -4953,18 +1919,18 @@ class RunController:
             )
         self._inflight.clear()
         # A DISPATCHED stage is in flight too, and it is the one `_inflight` never holds (see
-        # `_reconcile_dispatched_stages`): its subagent kept working after the run was cancelled,
-        # and a spawn still waiting on approval stayed in the approvals queue — measured 2026-09-25,
-        # a cancelled run's `spawn:` approval was approvable, and approving it spawned a subagent
-        # for a run that no longer existed. Stopping the subagent ends both:
+        # `stage_settlement.reconcile_dispatched_stages`): its subagent kept working after the run
+        # was cancelled, and a spawn still waiting on approval stayed in the approvals queue —
+        # measured 2026-09-25, a cancelled run's `spawn:` approval was approvable, and approving it
+        # spawned a subagent for a run that no longer existed. Stopping the subagent ends both:
         # `SubagentManager.cancel` cancels the waiting task, whose `finally` ends the pending
         # approval as `cancelled`, and the subagent's error names the run's ending.
-        nodes = dict(_walk(self.root))
+        nodes = dict(walk(self.root))
         why = f"Cancelled: the workflow run {run_ending(RunStatus.CANCELLED)}"
-        for path in await self._stop_dispatched_stages(reason=why):
+        for path in await stage_settlement.stop_dispatched_stages(self, reason=why):
             inst = self._instance(path)
             inst.state = InstanceState.CANCELLED
-            inst.completed_at = _now()
+            inst.completed_at = now_stamp()
             node = nodes.get(spec_path(path))
             # Its model calls ran in the subagent, outside this controller's call log, so what it
             # spent is "not recorded" (`None`) rather than a zero claiming it was free.
@@ -4972,37 +1938,6 @@ class RunController:
                 path, node.id if node else "", epoch=inst.epoch, usage=NOT_RECORDED
             )
         self._persist_state()
-
-    async def _stop_dispatched_stages(self, *, reason: str) -> list[str]:
-        """Stop every dispatched stage's subagent; return the paths whose subagent was stopped.
-
-        A path whose subagent had ALREADY finished (or that this process's manager does not know —
-        the post-restart shape) is left RUNNING and not returned: its outcome is real, and the
-        reconciler settles it on the next step it gets. Resetting a finished stage would throw its
-        work away; cancelling an unknown one is not possible. Each stopped attempt's
-        no-double-execution claim is released here, because the attempt is over and nothing else
-        will release it before its TTL (#3533's shape).
-        """
-        manager = self.services.subagents
-        if manager is None or not hasattr(manager, "cancel"):
-            return []
-        stopped: list[str] = []
-        for path in self._awaiting_out_of_band_work():
-            inst = self._instance(path)
-            try:
-                cancelled = bool(await manager.cancel(inst.subagent_id, reason=reason))
-            except Exception:
-                logger.warning(
-                    "run %s: could not stop the subagent for %s", self.run.id, path, exc_info=True
-                )
-                continue
-            if not cancelled:
-                continue
-            release_execution_claim(inst.claim_target, inst.claim_holder)
-            inst.claim_target = ""
-            inst.claim_holder = ""
-            stopped.append(path)
-        return stopped
 
     async def _pause_inflight(self) -> None:
         """Withdraw the work in flight, so a paused run does nothing more until it is resumed.
@@ -5018,8 +1953,12 @@ class RunController:
           same-epoch retry by design) and its withdrawn attempt is not counted as one;
         * an awaited node is cancelled and reset the same way.
         """
-        self._reconcile_dispatched_stages()
-        withdrawn = list(await self._stop_dispatched_stages(reason="Stopped: the run was paused"))
+        stage_settlement.reconcile_dispatched_stages(self)
+        withdrawn = list(
+            await stage_settlement.stop_dispatched_stages(
+                self, reason="Stopped: the run was paused"
+            )
+        )
         for entry in list(self._inflight.values()):
             entry.task.cancel()
             withdrawn.append(entry.ready.path)
@@ -5051,10 +1990,10 @@ class RunController:
             RunStatus.CANCELLED,
             RunStatus.ESCALATED,
         ):
-            self.run.completed_at = _now()
+            self.run.completed_at = now_stamp()
             if self.run.started_at:
                 self.run.elapsed_seconds = max(
-                    0.0, _epoch(self.run.completed_at) - _epoch(self.run.started_at)
+                    0.0, stamp_epoch(self.run.completed_at) - stamp_epoch(self.run.started_at)
                 )
         totals = journal_mod.run_totals(self.run.id)
         self._inherit_ledger_tokens(totals)
@@ -5075,7 +2014,7 @@ class RunController:
             # PP-12: give the resources back. A lease that outlives its run strands the resource
             # until the TTL runs down, and the next run would sit held by a holder that no longer
             # exists — the one failure mode a named holder is supposed to make impossible.
-            self._release_held_leases()
+            run_admission.release_held_leases(self)
             # A run that ended answers its own outstanding questions by ending: nothing about
             # it is actionable now. Leaving the rows open would put a permanently unanswerable
             # gate in the inbox — cancel a run mid-gate and the question survives the run.
@@ -5090,132 +2029,11 @@ class RunController:
             # run's other rows.
             attention.announce_loop_end(self.services.attention_state, self.run, status)
             if status == RunStatus.COMPLETE:
-                self._revise_project_overview()
-            self._capture_run_end()
+                run_finish.revise_project_overview(self)
+            run_finish.capture_run_end(self)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
         if status in TERMINAL_RUN_STATUSES:
-            await self._drain_overlap_queue()
-
-    async def _drain_overlap_queue(self) -> None:
-        """Start the next `on_overlap: queue` run for this def, now that this one has ended.
-
-        The live call site for the queue (WV-14). It belongs here because this is the moment
-        the def stops being busy: `_save_run` above has already written the terminal status,
-        so `store.active_runs()` no longer counts this run and the drain's own re-check sees
-        a free def.
-
-        Awaited inline rather than fired as a task, deliberately: a floating task makes the
-        handoff untestable ("did it start?" becomes a race) and can outlive the loop that
-        created it. Fully guarded, because `_finish` is the single terminal writer (WF2-R10)
-        and MUST NOT raise — a failure here costs the NEXT run's start, never this run's
-        recorded outcome, and the watchdog's poll re-drains what this missed.
-        """
-        supervisor = getattr(self.services, "supervisor", None)
-        if supervisor is None:
-            return
-        try:
-            from personalclaw.workflows import overlap
-
-            await overlap.drain(self.run.workflow_name, supervisor)
-        except Exception:
-            logger.debug("run %s: overlap drain failed", self.run.id, exc_info=True)
-
-    def _capture_run_end(self) -> None:
-        """Route a terminal run through the LearningGate → run-end learner (LEARNING-FLYWHEEL §3.3).
-
-        The RUN_END cadence. Best-effort and fully guarded: `_finish` is the single terminal
-        writer (WF2-R10) and MUST NOT raise, so a failure here costs a lesson, never the run's
-        terminal status.
-
-        Inert unless a memory service with a live vector store was injected into EngineServices —
-        every test and CLI path leaves `services.memory` None, so this no-ops there exactly as
-        `self_model_observer.observe_turn` no-ops without `has_vector`. The gate is what honors
-        success criterion 10: an incognito/temporary session's terminal run is denied here (via
-        the session-key restriction registry) and writes nothing through this cadence, and
-        `learning.run_end_enabled=False` turns the cadence off without touching the others.
-        """
-        service = getattr(self.services, "memory", None)
-        if service is None or not getattr(service, "has_vector", False):
-            return
-        try:
-            from types import SimpleNamespace
-
-            from personalclaw.config.loader import AppConfig
-            from personalclaw.learning import run_end
-            from personalclaw.learning.gate import Cadence, LearningGate
-
-            cfg = AppConfig.load().learning
-            # The session that started the run is likely gone by terminal time. `for_session` then
-            # reads the process-global registry by key (`_enforce_inherited_mode` marked it at
-            # start), AND the `is_restricted` flag carried on this namespace — set from the RUN's
-            # inherited mode, not hardcoded False. The run record is the durable authority: a
-            # registry mark can evict from the bounded LRU over a long run, and reading
-            # `is_restricted=False` there would re-open the gate an incognito origin closed. Belt
-            # (record) and suspenders (registry), fail-closed by construction.
-            restricted = ownership.run_mode(self.run) in ownership.WRITE_SUPPRESSED
-            session = SimpleNamespace(
-                key=self.run.origin.session_key, is_restricted=restricted, _ephemeral=False
-            )
-            decision = LearningGate.for_session(session, cfg).decide(
-                Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
-            )
-            if not decision.allowed:
-                logger.debug(
-                    "run %s: run-end capture gated (%s)", self.run.id, decision.reason.value
-                )
-                return
-            run_end.capture(self.run, service, journal=journal_mod)
-        except Exception:
-            logger.debug("run %s: run-end capture failed", self.run.id, exc_info=True)
-
-    def _revise_project_overview(self) -> None:
-        """Auto-revise the run's project overview on a successful completion (WORK-CONTAINERS §6.1).
-
-        DETERMINISTIC by design: this appends a terse line (run name + terminal status +
-        a one-line summary drawn from the run's handoff/summary, else its workflow name) to
-        the living overview and records the outcome in the decisions ledger. It does NOT
-        call an LLM — the `completion` service is inert in prod, and an LLM-summarized
-        overview is an explicit follow-on. This is a DEVIATION from a literal "revise"
-        (append, not summarize), recorded in the plan's Execution log.
-
-        Best-effort and fully guarded: `_finish` is the single terminal writer and MUST
-        NOT raise, so a failure here costs the overview line, never the terminal status.
-        """
-        pid = self.run.project_id
-        if not pid:
-            return
-        try:
-            name = self.run.workflow_name or "run"
-            summary = self._completion_summary()
-            line = f"- {name} → {self.run.status.value}"
-            if summary:
-                line += f": {summary}"
-            current = project_context.read_overview(pid)
-            new_text = f"{current}\n{line}" if current else line
-            project_context.write_overview(pid, new_text)
-            project_context.append_ledger(
-                pid,
-                "decisions",
-                f"{name} → {self.run.status.value}",
-                link=self.run.id,
-            )
-        except Exception:
-            logger.debug("project overview revision skipped for %s", self.run.id, exc_info=True)
-
-    def _completion_summary(self) -> str:
-        """A one-line summary for the overview append: the run's own handoff, else "".
-
-        Pulled from the last recorded handoff's summary — what the run itself said it
-        produced — rather than fabricated. A run that said nothing hands over nothing, so
-        the line falls back to just name + status, which is honest.
-        """
-        try:
-            handoff = getattr(self.run, "extra", {}).get("summary") if self.run.extra else ""
-            if isinstance(handoff, str) and handoff.strip():
-                return handoff.strip().splitlines()[0][:200]
-        except Exception:
-            return ""
-        return ""
+            await run_finish.drain_overlap_queue(self)
 
     def _item_context(self, item: ReadyNode) -> dict[str, Any]:
         """The per-item fields a foreach row renders (WF2-R5): `[i/total] label`.
@@ -5245,253 +2063,6 @@ class RunController:
         if label:
             out["item_label"] = label
         return out
-
-    # ── TASKS-SOPS task projection (S61f) ──
-
-    def _projected_tasks(self) -> list[Any]:
-        """What this run has already projected, for `plan_materialization`'s dedup.
-
-        Held in memory on the controller rather than read from the task store per node: the store is
-        per-entity JSON, so a read per settled node is one file scan per node, and the controller is
-        the single writer for its own run. A restart re-reads from the store via the projection
-        rebuild (§1 makes full recompute the normal path), so nothing is lost by not persisting the
-        cache itself.
-        """
-        return [type("_T", (), {"workflow_binding": b})() for b in self._projected]
-
-    def _schedule_verification(self, spec: Any, path: str, node_id: str) -> None:
-        """Run a projected node's done-criterion and emit `task_verified`.
-
-        Scheduled, not inline: a criterion is a shell command or a file read (`pytest -q` is the
-        canonical authoring shape), and running it inside the sync settle path would block the whole
-        tick on someone else's test suite.
-
-        A node with NO criterion schedules nothing. `Task.can_mark_complete`'s rule is that a task
-        with no exit criteria is freely completable, and emitting a `task_verified(passed=True)` for
-        a node nobody wrote a check for would manufacture evidence that does not exist.
-
-        The emptiness test asks the PARSER, not truthiness. Measured (S61h): `"   "` is truthy, so a
-        whitespace-only criterion passed a `if not criterion` guard and then parsed to zero checks —
-        which the evaluator correctly reports as UNRUNNABLE, so the node showed a scary "could not
-        verify" for a field its author had effectively left blank.
-        """
-        criterion = getattr(spec, "done_criterion", "")
-        from personalclaw.workflows import verified_done as _vd
-
-        checks, problems = _vd.parse_criterion(criterion)
-        if not checks and not problems:
-            return
-
-        async def _verify_and_emit() -> None:
-            passed = await self._run_criterion(spec.done_criterion)
-            self.publish_task_verified(
-                path,
-                node_id,
-                task_id="",
-                # NOT `bool(passed)`: `None` means the check could not run, and collapsing it to
-                # False reports a failure that never happened.
-                passed=passed,
-                criterion=str(spec.done_criterion)[:200],
-            )
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(_verify_and_emit())
-            return
-        handle = loop.create_task(_verify_and_emit())
-        self._projection_writes.add(handle)
-        handle.add_done_callback(self._projection_writes.discard)
-
-    async def _run_criterion(self, raw: Any) -> bool | None:
-        """Evaluate a done-criterion to the TRISTATE `verified_done` expects.
-
-        `None` (could not run) is preserved all the way out, never collapsed to False. The whole
-        point of the tristate is that a missing binary is not a failing test: reporting "the check
-        failed" for a criterion that never executed sends the user to debug their code when the
-        problem is their environment, and §1 projects the two to different blocked kinds for exactly
-        that reason.
-        """
-        from personalclaw.workflows import verified_done as _vd
-
-        checks, problems = _vd.parse_criterion(raw)
-        if problems or not checks:
-            # An unparseable criterion is UNRUNNABLE, not failed. The author wrote something the
-            # engine could not read, which is a different problem from the work being wrong.
-            return None
-        verdict = _vd.Verdict()
-        for check in checks:
-            if check.kind is _vd.CheckKind.COMMAND:
-                from personalclaw.loop.gates import run_verify_command
-
-                outcome = await run_verify_command(
-                    check.command, None, label=f"criterion:{self.run.id}"
-                )
-                verdict.results.append(
-                    _vd.CheckResult(
-                        kind=check.kind.value,
-                        passed=outcome,
-                        weight=check.weight,
-                        detail=check.command[:120],
-                    )
-                )
-            else:
-                verdict.results.append(_vd.evaluate_file_phrase(check, self._read_criterion_file))
-        return verdict.passed
-
-    @staticmethod
-    def _read_criterion_file(path: str) -> str | None:
-        """Read a file for a `file_phrase` check, or None when it cannot be read.
-
-        None rather than "" — `evaluate_file_phrase` treats an unreadable file as UNRUNNABLE, and an
-        empty string would read as "the file exists and the phrase is absent", which is a
-        claim about
-        content nobody read.
-        """
-        try:
-            return Path(path).read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            return None
-
-    def _schedule_task_write(self, spec: Any, path: str, node_id: str) -> None:
-        """Schedule the projected Task write on the running loop, then emit the event.
-
-        The settle path (`_apply`) is SYNC but runs inside the async tick, and the task provider's
-        `create_task` is async — so this follows the controller's established idiom for that shape
-        (`asyncio.create_task`, as the tick loop and node dispatch already do) rather than blocking
-        the tick on a filesystem write.
-
-        The EVENT fires from the write's completion, not before it, so `task_id` is the real id. An
-        event with an empty id would tell a board to render a row it cannot open.
-
-        No running loop (a synchronous unit test, a replay) still projects: the write runs
-        inline via
-        `asyncio.run`, because a projection that only worked inside a live gateway would be
-        untestable exactly where it matters.
-        """
-
-        async def _write_and_emit() -> None:
-            task_id = await self._write_projected_task(spec)
-            self.publish_task_materialized(
-                path,
-                node_id,
-                task_id=task_id,
-                fingerprint=spec.binding.fingerprint,
-                refreshed=False,
-            )
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(_write_and_emit())
-            return
-        handle = loop.create_task(_write_and_emit())
-        # Tracked so a controller teardown does not leave the write as an orphaned task warning, and
-        # so a test can await settlement rather than sleeping.
-        self._projection_writes.add(handle)
-        handle.add_done_callback(self._projection_writes.discard)
-
-    async def _write_projected_task(self, spec: Any) -> str:
-        """Write one projected Task through the task provider. Returns its id, or "" on failure.
-
-        The engine is the ENGINE actor in §1's three-actor matrix, so the write carries
-        `managed=True` on the binding and sets the engine-owned fields directly — which is exactly
-        what `materialize.reject_write` refuses when anyone ELSE attempts it. The asymmetry is the
-        point: one writer for a managed task's status, and a refusal (naming the alternative) for
-        every other path. Those other paths are the three doors listed on
-        `tasks.registry.engine_owned_refusal`, which is where the refusal is applied; this sentence
-        described an unwired guard until #390 wired it.
-
-        Failures return "" rather than raising: the event still fires with an empty task id, which
-        is honest (the projection was attempted and did not land) and leaves the next rebuild to
-        recover. Raising would fail a node whose work already succeeded.
-        """
-        try:
-            from personalclaw.tasks.registry import create_task
-
-            fields: dict[str, Any] = {
-                "title": spec.title or "Untitled step",
-                "description": spec.body or "",
-                "workflow_binding": {
-                    "run_id": spec.binding.run_id,
-                    "node_id": spec.binding.node_id,
-                    "node_path": spec.binding.node_path,
-                    "managed": True,
-                    "fingerprint": spec.binding.fingerprint,
-                },
-            }
-            if spec.status:
-                fields["status"] = spec.status
-            if spec.done_criterion:
-                fields["done_criterion"] = spec.done_criterion
-            if spec.blocked_kind:
-                fields["blocked_kind"] = spec.blocked_kind
-            if spec.preview:
-                fields["preview"] = spec.preview
-            task = await create_task("native", **fields)
-            return str(getattr(task, "id", "") or "")
-        except Exception:  # noqa: BLE001 - a board row must never fail a successful node
-            logger.debug("workflow %s: projected task write failed", self.run.id, exc_info=True)
-            return ""
-
-    def _project_task(self, item: Any, inst: Any, result: Any) -> None:
-        """Project a settled leaf node into a Task, and emit the event.
-
-        THE call site the projection modules were built for. `materialize` owns every decision here
-        — which nodes earn a task, the dedup keys, the fan-out cap — so this method is the plumbing
-        and nothing else: it assembles the node dict, asks, and writes.
-
-        Swallows everything. A projection failure must not fail the RUN: the node has already
-        succeeded and its output is already journaled, so turning a board-row problem into a run
-        failure would lose real work over a presentation concern. The projection is idempotent by
-        construction (fingerprint dedup), so the next tick or a rebuild recovers it.
-        """
-        try:
-            from personalclaw.workflows import materialize as _materialize
-
-            # The keys `should_materialize`/`plan_materialization` actually read are `id`, `label`,
-            # `kind`, `path` and `config` — measured against their source. A `node_id` key (the name
-            # the BINDING uses) is silently ignored by both, which would make every node fail the
-            # has-an-id refusal and project nothing at all. `label` is the TITLE source (#382): omit
-            # it here and the projection falls back to the raw node id even though the author wrote
-            # a name, which is the half of that defect this dict owns — the other half was
-            # `plan_materialization` reading `config.label`, where no definition puts it.
-            node_dict = {
-                "id": item.node.id,
-                "label": item.node.label,
-                "path": item.path,
-                "kind": item.node.kind.value,
-                "config": dict(item.node.config or {}),
-            }
-            wanted, _why = _materialize.should_materialize(node_dict)
-            if not wanted:
-                return
-            plan = _materialize.plan_materialization(
-                self.run.id, [node_dict], existing_tasks=self._projected_tasks()
-            )
-            for spec in plan.create:
-                # Recorded BEFORE the write is scheduled: the dedup set must reflect the intent
-                # immediately, or a second settle in the same tick would plan the same task again
-                # while the first write is still in flight.
-                self._projected.append(spec.binding)
-                self._schedule_task_write(spec, item.path, item.node.id)
-                # Verification rides the same scheduled path: a criterion is a command or a file
-                # read, and running it inline would block the tick on someone else's test suite.
-                self._schedule_verification(spec, item.path, item.node.id)
-            if plan.existing:
-                # A rewind's dedup-merge. Emitted as a REFRESH rather than skipped silently:
-                # "did my rewind re-create the board" is a question only the event answers.
-                self.publish_task_materialized(
-                    item.path,
-                    item.node.id,
-                    task_id="",
-                    fingerprint=_materialize.fingerprint(
-                        source_ref="", title=item.node.id, body=""
-                    ),
-                    refreshed=True,
-                )
-        except Exception:  # noqa: BLE001 - a board row must never fail a successful node
-            logger.debug("workflow %s: task projection failed", self.run.id, exc_info=True)
 
     # ── TASKS-SOPS projection events (S61e) ──
     #
@@ -5535,43 +2106,6 @@ class RunController:
                 "confirmation_kind": kind,
             },
         )
-
-    def _open_escalation_outcome(self, path: str, node_id: str, confirmation_id: str) -> None:
-        """Open the escalation's outcome question: we interrupted the user — did it land?
-
-        The `escalation` producer of the general outcome facility (PP-9). `confirmation_pending`
-        records that we ASKED; this records the bet that asking was worth it, graded from the run's
-        own ledger: a `confirmation_resolved` carrying this `confirmation_id` is the measurement,
-        and its `approved` boolean IS the number (approved ⇒ 1.0, rejected ⇒ 0.0 against a baseline
-        of 1.0, so a rejected interruption scores −1). A gate nobody ever answers closes as
-        `inconclusive` once the horizon passes — the honest reading of an interruption that went
-        nowhere, and the one that decays fastest.
-
-        Ledger-sourced on purpose: this resolves on a box with no vector store, because the ground
-        truth is an event we wrote ourselves.
-
-        Emitted at the same site as `confirmation_pending` so it inherits that site's
-        `(path, epoch)` idempotency — one question per gate, not one per watchdog poll.
-        """
-        try:
-            self.journal.open_outcome(
-                producer=outcomes.PRODUCER_ESCALATION,
-                subject=f"escalated gate `{node_id or path}` to the user",
-                metric=journal_mod.CONFIRMATION_RESOLVED,
-                metric_source=outcomes.SOURCE_LEDGER,
-                match={"confirmation_id": confirmation_id},
-                value_field="approved",
-                horizon_secs=ESCALATION_ANSWER_HORIZON_SECS,
-                # The bet is an approval: we only stop to ask when we expect a yes.
-                baseline=1.0,
-                instance_path=path,
-                node_id=node_id,
-                confirmation_id=confirmation_id,
-            )
-        except Exception:
-            # A gate that is already waiting must not fail because its outcome record did not
-            # land — the user still has a question to answer.
-            logger.debug("escalation outcome open failed for run %s", self.run.id, exc_info=True)
 
     def publish_confirmation_resolved(
         self,
@@ -5683,42 +2217,6 @@ class RunController:
 # ── module helpers ───────────────────────────────────────────────────────────
 
 
-def _confirmation_id(run_id: str, gate_id: str, epoch: int) -> str:
-    """The stable confirmation id for one (run, gate, epoch).
-
-    Delegates to `confirmation.request_id` rather than composing a string here. Two id schemes for
-    one record is the failure mode where `confirmation_pending` and `confirmation_resolved` never
-    pair up in the ledger, and nobody notices until someone asks how long a gate waited.
-
-    The EPOCH is in the key because a rewind SHOULD produce a new confirmation — the question is
-    being asked about different work. Deriving from the resume token instead would break that: a
-    token is single-use and rotates per poll, so pending and resolved would carry different ids for
-    the same question.
-    """
-    from personalclaw.workflows.confirmation import request_id
-
-    return request_id(run_id, gate_id, epoch)
-
-
-def _confirmation_kind(node_config: dict[str, Any]) -> str:
-    """Which `ConfirmationType` this gate is, as its wire value.
-
-    A destructive gate is NOT the same record as an ordinary approval: §4 gives them different
-    expiry policies (auto-reject vs hold) and only the ordinary one may be muted. Reading the
-    node's own declared risk keeps that classification with the author who made it, rather than
-    inferring it from the prompt text at render time.
-    """
-    from personalclaw.workflows.confirmation import ConfirmationType
-
-    risk = str((node_config or {}).get("risk_category", "") or "").strip().lower()
-    if risk in {"destructive", "destructive_op", "irreversible"}:
-        return ConfirmationType.DESTRUCTIVE_CONFIRM.value
-    kind = str((node_config or {}).get("kind", "") or "").strip().lower()
-    if kind in {"input", "needs_input", "question"}:
-        return ConfirmationType.NEEDS_INPUT.value
-    return ConfirmationType.APPROVAL.value
-
-
 #: Max characters of a foreach item's label. A row shows one line, and a fan-out over long
 #: strings would otherwise put kilobytes of prose in the event stream for no gain.
 _ITEM_LABEL_MAX = 60
@@ -5751,20 +2249,6 @@ def _clip(text: str) -> str:
     return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
 
 
-def _opt_metric(value: Any) -> float | None:
-    """A metric, or None when there is not a number here (PP-12).
-
-    Booleans are refused: `True` would read as `1.0` and pass a `metric_pass: 1.0` gate on a field
-    that was never a measurement.
-    """
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _is_engine_install_fault(exc: BaseException) -> bool:
     """Whether `exc` says the ENGINE ITSELF could not be imported, not that a run failed.
 
@@ -5788,148 +2272,6 @@ def _is_engine_install_fault(exc: BaseException) -> bool:
     return name == "personalclaw" or name.startswith("personalclaw.")
 
 
-def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _epoch(ts: str | None) -> float:
-    """Parse a UTC `...Z` stamp to a real epoch.
-
-    `calendar.timegm`, NOT `time.mktime`: mktime reads the struct as LOCAL time, which
-    shifts a UTC stamp by the machine's offset. Here it is only ever used as a DIFFERENCE
-    of two stamps, so equal offsets cancelled and elapsed time came out right — except
-    across a DST boundary, where the two offsets differ and the run's duration was off by
-    an hour.
-    """
-    if not ts:
-        return 0.0
-    try:
-        return float(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _walk(root: Node) -> list[tuple[str, Node]]:
-    from personalclaw.workflows.models import walk
-
-    return walk(root)
-
-
-def _enclosing_parallel(path: str, tree: dict[str, Node]) -> str | None:
-    """The path of the nearest enclosing `parallel`, walking OUTWARD.
-
-    Not just the nearest `.children[N]` prefix: a watcher's synthesize stage sits at
-    `…children[1].body@3.children[0]`, whose nearest prefix is the BODY SEQUENCE. Stopping
-    there returned no siblings for the one node in the whole template that needs them —
-    measured, and silent, because a missing `siblings` root reads as "this node has no
-    siblings" rather than as an error.
-
-    Nearest-first among genuine parallels, so a nested parallel resolves to the inner one: a
-    node's siblings are the legs of ITS parallel, not an outer one's.
-    """
-    matches = list(re.finditer(r"\.children\[\d+\]", path))
-    for match in reversed(matches):
-        candidate = path[: match.start()]
-        if not candidate:
-            continue
-        node = tree.get(spec_path(candidate))
-        if node is not None and node.kind == NodeKind.PARALLEL:
-            return candidate
-    return None
-
-
-def _natural_key(path: str) -> list[Any]:
-    """Sort instance paths NUMERICALLY on their indices.
-
-    A plain string sort puts `children[10]` before `children[2]` and `body@10` before `body@2`,
-    so "oldest first" silently became wrong at the tenth iteration — the window would keep the
-    wrong items and `previous.output` would return the wrong cycle. Ten cycles in is late enough
-    that no short test would ever see it.
-    """
-    return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", path)]
-
-
-def _loop_parent(path: str) -> tuple[str | None, int]:
-    """`root.children[0].body@2` → `("root.children[0]", 2)`.
-
-    The marker need not END the path. A loop whose body is a CONTAINER puts its leaf work
-    deeper — `root.children[1].body@0.children[2]` — and the old form required the path to end
-    at `@N`, so `int("0.children[2]")` raised, `_advance_loop` returned silently, the loop never
-    advanced, and the run deadlocked after exactly one iteration. Measured live, and five
-    shipped templates use container-bodied loops.
-
-    The INNERMOST marker wins, so a loop nested inside another loop's body advances itself
-    rather than its parent.
-    """
-    matches = list(_LOOP_MARKER_RE.finditer(path))
-    if not matches:
-        return None, 0
-    match = matches[-1]
-    body = path[: match.start()]
-    if not body.endswith(".body"):
-        return None, 0
-    return body[: -len(".body")], int(match.group(1))
-
-
-def _is_dry(output: Any) -> bool:
-    """Did an iteration surface anything new, judged by its WHOLE output?
-
-    The rule for a loop that declares no `progress_field`. Unchanged: an empty or absent
-    output is dry, anything else is progress.
-    """
-    if output is None:
-        return True
-    if isinstance(output, (list, dict, str)):
-        return len(output) == 0
-    return False
-
-
-#: One reading of a loop's declared `progress_field`. A CLOSED set of three — `_progress_
-#: reading` returns exactly one of them, and `unreadable` exists precisely so that no value
-#: falls into a default branch that guesses.
-_DRY = "dry"
-_PROGRESS = "progress"
-_UNREADABLE = "unreadable"
-
-
-def _progress_reading(value: Any) -> str:
-    """Classify ONE value of a loop's declared `progress_field`: dry, progress, unreadable.
-
-    The rule, stated once: **a declared progress field is dry when its value is the field's
-    own expression of "nothing"** — zero, blank, empty, false, or null. Per type, exhaustively:
-
-    * ``None`` → dry. The body answered the question with "nothing".
-    * ``bool`` → ``False`` dry, ``True`` progress. A boolean field IS the answer; checked
-      before ``int`` because ``bool`` is an ``int`` subclass and would otherwise be read as
-      "1 finding" / "0 findings" by accident.
-    * ``int`` / ``float`` → dry iff ``== 0``. This is the shipped `new_findings_count: 0`
-      case. A NEGATIVE count is progress, not dryness: a nonsensical count is not evidence
-      that nothing happened, and reading it as dryness would cut the loop short.
-    * ``str`` → dry iff blank after ``strip()``. A whitespace-only summary of what is new
-      says nothing is new.
-    * ``bytes`` / ``bytearray`` → dry iff empty.
-    * ``list`` / ``tuple`` / ``set`` / ``frozenset`` / ``dict`` → dry iff empty. Nothing
-      collected.
-    * any other type → **unreadable**. There is no rule for it, so this refuses to call it
-      dry and hands the decision back to the whole-output fallback. Not swallowed as
-      "progress": the caller can tell "I read the field and it said nothing" from "I could
-      not read the field", and only the first may end a loop.
-    """
-    if value is None:
-        return _DRY
-    if isinstance(value, bool):
-        return _PROGRESS if value else _DRY
-    if isinstance(value, (int, float)):
-        return _DRY if value == 0 else _PROGRESS
-    if isinstance(value, str):
-        return _DRY if not value.strip() else _PROGRESS
-    if isinstance(value, (bytes, bytearray)):
-        return _DRY if len(value) == 0 else _PROGRESS
-    if isinstance(value, (list, tuple, set, frozenset, dict)):
-        return _DRY if len(value) == 0 else _PROGRESS
-    return _UNREADABLE
-
-
 def _preview(value: Any, limit: int = 500) -> Any:
     if isinstance(value, str):
         return value[:limit]
@@ -5942,87 +2284,3 @@ def _preview(value: Any, limit: int = 500) -> Any:
             return str(value)[:limit]
         return text[:limit]
     return value
-
-
-def _parse_revise(answer: Any) -> tuple[str, str] | None:
-    """Read `revise{step_ref, comment}` out of a gate answer. Returns `(step_ref, comment)` or None.
-
-    Recognised STRUCTURALLY, by the `revise` key rather than by a free-text prefix. A gate whose
-    ask is a `text` legitimately receives prose, and sniffing for the word "revise" in it would
-    hijack an answer that merely mentioned revising something.
-
-    `answer` is untyped by contract (`WORKFLOW_RESUME_SCHEMA`), so both spellings a caller
-    naturally reaches for are accepted: the nested `{"revise": {...}}` a tool emits, and the flat
-    `{"revise": true, "step_ref": ..., "comment": ...}` a form posts. An `answer` with no `revise`
-    key is None, which is what routes every existing answer down the unchanged approval path.
-    """
-    if not isinstance(answer, dict) or "revise" not in answer:
-        return None
-    body = answer.get("revise")
-    if isinstance(body, dict):
-        source: dict[str, Any] = body
-    else:
-        # A truthy flag alongside sibling keys. A falsy flag is NOT a revise — `{"revise": false}`
-        # against an approval gate is a rejection expressed clumsily, and the approval path's own
-        # `validate_answer` is the right thing to tell the caller so.
-        if not body:
-            return None
-        source = answer
-    step_ref = str(source.get("step_ref", "") or source.get("step", "") or "").strip()
-    comment = str(source.get("comment", "") or source.get("text", "") or "").strip()
-    return step_ref, comment
-
-
-def _revise_allowed(run: Any) -> tuple[bool, str]:
-    """Whether this run can take a revision at all.
-
-    A terminal run cannot: there is nothing left to re-run, so a revision would edit a spec that
-    will never execute again — which would break the one promise the verb makes, that the recorded
-    plan is the plan that runs.
-    """
-    if getattr(run, "is_terminal", False):
-        return False, f"run is already {getattr(getattr(run, 'status', None), 'value', 'finished')}"
-    return True, ""
-
-
-def _is_approved(ask: Any, answer: Any) -> bool:
-    """Did the human say yes?
-
-    Only an `approval` ask can DENY — a text or form answer is data, not a verdict, and
-    treating an empty string as a denial would fail a gate the user actually answered.
-    """
-    from personalclaw.workflows.human_input import AskKind
-
-    if ask.kind != AskKind.APPROVAL:
-        return True
-    if isinstance(answer, bool):
-        return answer
-    if isinstance(answer, dict):
-        return bool(answer.get("approved"))
-    return False
-
-
-def _secret_resolver(key: str) -> str:
-    """Resolve `{{secret:KEY}}` from the credential store Settings → Secrets writes.
-
-    Injected rather than imported at the binding layer so unit tests never touch real
-    credentials, and so the resolution point is a single auditable seam.
-
-    An unknown name returns "" rather than raising: `resolve()` treats an empty secret as
-    a resolution failure and reports it with the binding's own error message, which is
-    more actionable than a bare `KeyError` from two layers down. An OWNED key (a provider's or
-    an app's own `PCSECRET_…` key) raises instead, with the sentence that says why no step can
-    read it: that key is set, so "is not set" would be false.
-    """
-    from personalclaw.config.loader import config_dir
-    from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
-
-    try:
-        cred = CredentialStore(config_dir()).resolve(key)
-    except OwnedCredentialRefused as refused:
-        raise BindingError(
-            refused.cause, remediation=refused.remedy, caller_supplied=True
-        ) from None
-    except KeyError:
-        return ""
-    return cred.secret or ""

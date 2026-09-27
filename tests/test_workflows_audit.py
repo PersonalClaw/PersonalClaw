@@ -289,7 +289,7 @@ class TestUtcParsing:
     def test_the_controller_parses_utc_identically(self) -> None:
         """Both parsers must agree, or a run's elapsed time and its audit age disagree."""
         from personalclaw.workflows.audit import _epoch as audit_epoch
-        from personalclaw.workflows.controller import _epoch as ctrl_epoch
+        from personalclaw.workflows.models import stamp_epoch as ctrl_epoch
 
         assert ctrl_epoch("2026-01-01T00:00:00Z") == audit_epoch("2026-01-01T00:00:00Z")
 

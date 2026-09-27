@@ -218,7 +218,7 @@ class TestStartApiServerWiring:
 
         monkeypatch.setattr(_st, "config_dir", lambda: tmp_path)
 
-        from personalclaw.dashboard.server import start_api_server
+        from personalclaw.dashboard.api_server import start_api_server
 
         runner, state = await start_api_server(
             sessions=MagicMock(count=0),

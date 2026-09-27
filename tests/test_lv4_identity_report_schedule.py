@@ -253,7 +253,7 @@ class TestOneVocabulary:
         `guardrails.scan_mode` keeps three hand-copied `warn/redact/block` lists; this is the
         assertion that stops a fourth copy of THIS vocabulary drifting.
         """
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         spec = _EDITABLE_CONFIG["learning.identity_report_cadence"]
         assert spec["type"] == "enum"

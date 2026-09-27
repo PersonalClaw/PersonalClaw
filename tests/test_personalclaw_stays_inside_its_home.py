@@ -479,6 +479,38 @@ def test_the_hugging_face_cli_sign_in_is_not_read_until_allowed(real_home, monke
     assert hf_token._read_hf_cli_file() == "hf_machine_wide_token_1234"
 
 
+def test_an_app_gets_the_hugging_face_folder_read_only_and_only_once_allowed(real_home):
+    """``sdk.util.outside_home_path`` is how an installable app reaches the folder.
+
+    Nothing in this repo called it, so no test showed that an app is told ``None`` until the owner
+    allows the place, or that the path it then gets refuses every write, through the folder and
+    through any child of it.
+    """
+    from personalclaw.sdk.util import outside_home_path
+
+    model = real_home / ".cache" / "huggingface" / "hub" / "model.bin"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"weights")
+
+    assert outside_home_path("huggingface-cache") is None
+
+    _allow("huggingface-cache")
+    folder = outside_home_path("huggingface-cache")
+    assert folder == real_home / ".cache" / "huggingface"
+    assert (folder / "hub" / "model.bin").read_bytes() == b"weights"
+    with pytest.raises(PermissionError):
+        (folder / "hub" / "model.bin").write_bytes(b"replaced")
+    with pytest.raises(PermissionError):
+        (folder / "hub" / "model.bin").open("wb")
+    with pytest.raises(PermissionError):
+        (folder / "hub" / "model.bin").unlink()
+    with pytest.raises(PermissionError):
+        (folder / "downloads").mkdir()
+    assert model.read_bytes() == b"weights"
+    assert not (real_home / ".cache" / "huggingface" / "downloads").exists()
+    assert outside_home_path("no-such-place") is None
+
+
 # ── F-54: PersonalClaw's data folder is not an editable Files root ──────────────────────────
 
 
@@ -513,7 +545,7 @@ async def test_settings_lists_each_place_and_whether_it_is_allowed(real_home):
 
 
 def test_allowing_a_place_is_a_loosening_the_owner_confirms():
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG["security.outside_home"]
     assert spec["type"] == "str_list"

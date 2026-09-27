@@ -399,7 +399,7 @@ def test_trigger_lands_disabled_and_staged(built_pack, importer_home):
 
 def test_config_subset_only_editable_keys_staged(built_pack, importer_home):
     # A pack proposing one editable key + one bogus key: only the editable one is staged.
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     editable_key = next(iter(_EDITABLE_CONFIG))
     manifest, members = _read_pack(built_pack)

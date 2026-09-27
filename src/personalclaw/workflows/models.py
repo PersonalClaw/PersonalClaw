@@ -20,7 +20,9 @@ Three rules the rest of the engine depends on:
 
 from __future__ import annotations
 
+import calendar
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -319,6 +321,58 @@ def sibling_group(path: str) -> str:
     need the shared definition path, which is exactly what removing all the markers produces.
     """
     return TRAILING_MARKER_RE.sub("", path)
+
+
+#: A LOOP iteration marker specifically (`@2`), capturing the number. Distinct from the foreach
+#: marker (`#3`) because only a loop has an iteration counter to advance.
+_LOOP_MARKER_RE = re.compile(r"@(\d+)")
+
+
+def loop_parent(path: str) -> tuple[str | None, int]:
+    """`root.children[0].body@2` → `("root.children[0]", 2)`.
+
+    The marker need not END the path. A loop whose body is a CONTAINER puts its leaf work
+    deeper — `root.children[1].body@0.children[2]` — and the old form required the path to end
+    at `@N`, so `int("0.children[2]")` raised, `advance_loop` returned silently, the loop never
+    advanced, and the run deadlocked after exactly one iteration. Measured live, and five
+    shipped templates use container-bodied loops.
+
+    The INNERMOST marker wins, so a loop nested inside another loop's body advances itself
+    rather than its parent.
+    """
+    matches = list(_LOOP_MARKER_RE.finditer(path))
+    if not matches:
+        return None, 0
+    match = matches[-1]
+    body = path[: match.start()]
+    if not body.endswith(".body"):
+        return None, 0
+    return body[: -len(".body")], int(match.group(1))
+
+
+# ── run timestamps ───────────────────────────────────────────────────────────
+
+
+def now_stamp() -> str:
+    """Now, in the UTC `...Z` form every `started_at` / `completed_at` on a run is written in."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def stamp_epoch(ts: str | None) -> float:
+    """Parse a UTC `...Z` stamp to a real epoch.
+
+    `calendar.timegm`, NOT `time.mktime`: mktime reads the struct as LOCAL time, which
+    shifts a UTC stamp by the machine's offset. Here it is only ever used as a DIFFERENCE
+    of two stamps, so equal offsets cancelled and elapsed time came out right — except
+    across a DST boundary, where the two offsets differ and the run's duration was off by
+    an hour.
+    """
+    if not ts:
+        return 0.0
+    try:
+        return float(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ── outcomes (WF2-R5) ────────────────────────────────────────────────────────
@@ -1271,7 +1325,7 @@ class NodeInstance:
     item_total: int = 0
     #: The subagent this instance dispatched, for a `stage` node. `dispatch_stage` spawns and
     #: returns RUNNING immediately, so the node's real completion arrives out of band and
-    #: `RunController._reconcile_dispatched_stages` needs a way back to the spawn.
+    #: `stage_settlement.reconcile_dispatched_stages` needs a way back to the spawn.
     #:
     #: PERSISTED for the same reason as `wake_at`: a gateway restart that re-adopts this run
     #: must still be able to ask who was doing the work. It is a FOREIGN KEY, not a record --

@@ -23,6 +23,7 @@ from unittest.mock import patch
 import pytest
 
 from personalclaw.triggers import secrets as S
+from personalclaw.workflows import node_bindings
 
 _FAKE = {"MY_KEY": "sk-abc123", "TOK": "t0k"}
 
@@ -166,7 +167,7 @@ def test_a_resolver_returning_empty_is_treated_as_missing():
 
 
 def test_the_default_resolver_returns_empty_for_an_unknown_key(tmp_path, monkeypatch):
-    """Mirrors `workflows.controller._secret_resolver`: the same store and the same
+    """Mirrors `workflows.node_bindings._secret_resolver`: the same store and the same
     empty-on-missing contract, so a key resolves identically for a workflow and a trigger."""
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     assert S.default_resolver("DEFINITELY_NOT_SET") == ""
@@ -273,9 +274,7 @@ def test_the_workflow_engine_and_the_trigger_path_share_the_credential_store():
     that both call `CredentialStore(config_dir()).resolve(...)` — not that they share a function."""
     import inspect
 
-    from personalclaw.workflows import controller
-
-    wf = inspect.getsource(controller._secret_resolver)
+    wf = inspect.getsource(node_bindings._secret_resolver)
     tr = inspect.getsource(S.default_resolver)
     for needle in ("CredentialStore", "config_dir()", "cred.secret or"):
         assert needle in wf and needle in tr, needle

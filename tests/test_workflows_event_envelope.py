@@ -147,12 +147,12 @@ class TestEnvelope:
 
         A node's epoch belongs under `node_epoch`. Asserted structurally because the payload
         dicts are spread into the envelope, so a re-introduction would be invisible."""
-        import inspect
+        from tests.controller_sources import controller_source
 
-        from personalclaw.workflows import controller as ctrl
-
-        source = inspect.getsource(ctrl.RunController)
-        # `_publish` itself sets the envelope epoch; no OTHER line may pass one in a payload.
+        # The controller AND its responsibility modules: a payload built in one of them is spread
+        # into the same envelope. `_publish` itself sets the envelope epoch; no OTHER line may pass
+        # one in a payload.
+        source = controller_source()
         offenders = [
             line.strip()
             for line in source.splitlines()

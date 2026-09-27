@@ -436,14 +436,12 @@ def _config_cmd(args: argparse.Namespace) -> None:
 def _editable_spec(key: str) -> dict | None:
     """The PATCH allowlist's spec for a dotted key, or None if it declares none.
 
-    Imported lazily: the registry lives in a dashboard handler module (the inert-surface
-    census parses that file for the `_EDITABLE_CONFIG` literal, so it cannot move), and
-    `personalclaw config get` should not pay for importing aiohttp. A failure to import is
-    not a reason to refuse a write — it means no spec is available, which is exactly the
-    "key not declared" case.
+    Imported lazily, so `personalclaw config get` does not pay for the registry's own imports
+    (`config/editable.py`). A failure to import is not a reason to refuse a write — it means no
+    spec is available, which is exactly the "key not declared" case.
     """
     try:
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         return _EDITABLE_CONFIG.get(key)
     except Exception:  # noqa: BLE001 — no spec available is the same as no spec declared

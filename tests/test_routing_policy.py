@@ -395,7 +395,7 @@ def test_routing_config_survives_a_malformed_section(
 
 def test_editable_config_exposes_the_runtime_subset() -> None:
     """Wiring point (d): the PATCH allowlist carries the routing knobs a user tunes live."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     for key in (
         "routing.enabled",

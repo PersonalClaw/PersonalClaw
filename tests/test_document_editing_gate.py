@@ -33,8 +33,8 @@ from personalclaw.artifacts import registry
 from personalclaw.artifacts.handlers import register_artifact_routes
 from personalclaw.artifacts.models import mime_for_ext
 from personalclaw.artifacts.native import NativeArtifactProvider
+from personalclaw.config.editable import _EDITABLE_CONFIG
 from personalclaw.config.loader import AppConfig
-from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 from personalclaw.documents.docx_parser import parse_docx
 from personalclaw.documents.model import Block, DocumentModel, Run
 from personalclaw.documents.model_json import document_to_dict

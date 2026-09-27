@@ -14,7 +14,7 @@ shape whose singular form seam 4c deleted so it could never be mis-filled.
 **Railed in both directions, plus the measured reality.** The projection returns the plural
 mapping from REAL persisted bindings (written and re-read through the actual native store, not
 in-memory stand-ins), and an empty / unbound / foreign-run query projects `{}`. The middle
-truth is pinned too: the engine's own write (`controller._write_projected_task`) passes no
+truth is pinned too: the engine's own write (`task_projection._write_projected_task`) passes no
 `task_list_id`, so a fresh run honestly projects `{}` until its tasks are filed into lists —
 a move the write façade permits because `task_list_id` is not engine-owned.
 """
@@ -97,7 +97,7 @@ async def test_the_plural_mapping_derives_from_persisted_bindings(tmp_path):
 
 @pytest.mark.asyncio
 async def test_the_engines_own_write_shape_projects_nothing_until_filed(tmp_path):
-    """The measured middle truth. `controller._write_projected_task` sends title, description
+    """The measured middle truth. `task_projection._write_projected_task` sends title, description
     and the binding — and NO `task_list_id` — so a fresh run's projection is honestly `{}`:
     no list holds that work yet, the same reading as a phase absent from `Loop.task_list_ids`.
     The entry appears the moment the task is FILED into a list, and that filing is a
@@ -109,7 +109,8 @@ async def test_the_engines_own_write_shape_projects_nothing_until_filed(tmp_path
         "permitted user move, and this projection's non-empty case just lost its only writer"
     )
     with _isolated_tasks(tmp_path):
-        # The exact field shape the controller writes (measured against _write_projected_task).
+        # The exact field shape the controller writes (measured against
+        # task_projection._write_projected_task).
         task = await registry.create_task(
             "native",
             title="Implement the parser",

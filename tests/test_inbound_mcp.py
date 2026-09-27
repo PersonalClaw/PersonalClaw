@@ -794,7 +794,7 @@ class TestConfigWiring:
 
     def test_enabled_flag_is_patchable_but_remote_knobs_are_not(self):
         """allow_remote/public_url are deliberately NOT web-editable."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         assert "external_access.mcp.enabled" in _EDITABLE_CONFIG
         assert "external_access.mcp.allow_remote" not in _EDITABLE_CONFIG

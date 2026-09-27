@@ -46,7 +46,7 @@ import pytest
 
 from personalclaw import tmux_substrate
 from personalclaw.agents import runner_lifecycle
-from personalclaw.workflows import containers, provisioning, store, worktrees
+from personalclaw.workflows import containers, provisioning, run_start, store, worktrees
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 from personalclaw.workflows.watchdog import WorkflowWatchdog
@@ -452,7 +452,7 @@ class TestDurableStepSeam:
     async def test_the_controller_names_the_session_the_sweep_recomputes(
         self, tmux_shim, durable_on, tmp_path
     ):
-        """The LAST link: `controller._provision_workspace` passes the run's OWN derived name.
+        """The LAST link: `run_start.provision_workspace` passes the run's OWN derived name.
 
         Driven through the controller rather than by calling `provision` with a hand-built
         name, because the defect this catches is precisely the hand-off — a controller that
@@ -466,7 +466,7 @@ class TestDurableStepSeam:
         }
         run = _run(project_id="proj")
         controller = RunController(store.get(run.id), spec, services=EngineServices())
-        assert await controller._provision_workspace()
+        assert await run_start.provision_workspace(controller)
         name = containers.durable_worker_name(store.get(run.id))
         assert (tmux_shim / name).exists(), (
             "the controller did not open the setup's durable session under the name the "

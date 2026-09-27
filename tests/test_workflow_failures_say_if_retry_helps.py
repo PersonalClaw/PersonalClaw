@@ -26,7 +26,7 @@ import httpx
 import pytest
 
 from personalclaw.workflows import checkpoints as CP
-from personalclaw.workflows import service, store
+from personalclaw.workflows import run_cockpit, service, store
 from personalclaw.workflows.bindings import BindingContext
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.effects import EffectStatus, effect_history, idempotency_key
@@ -422,6 +422,6 @@ class TestFirstOutput:
             run, TestARetryInsideTheBreakerWindow.SPEC, services=EngineServices(completion=down)
         )
         assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
-        stats = service.introspect(run.id)["stats"]
+        stats = run_cockpit.introspect(run.id)["stats"]
         assert stats["steps_completed"] == 0  # the control: nothing produced output
         assert stats["first_byte_ms"] is None, "0 ms claimed output arrived instantly"

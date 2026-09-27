@@ -200,7 +200,7 @@ def test_a_deleted_leaf_has_no_write_path(path_key: str, cls_name: str, leaf: st
     """Contract point 5: no ``_EDITABLE_CONFIG`` row, which is the exact predicate the PATCH
     handler evaluates (``spec = _EDITABLE_CONFIG.get(path_key)``; a falsy spec is refused with
     "field not editable"). So the write that used to return 200 now returns 400."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert not _EDITABLE_CONFIG.get(path_key), f"{path_key} is still allowlisted for PATCH"
 

@@ -1616,9 +1616,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         channel never holds up the bell. When no channel can take it, the log says why; the note
         is already in the bell and the Inbox, so nothing is lost.
         """
-        from personalclaw import notification_rules as rules
+        from personalclaw.dashboard.channel_messages import channel_dm_text
 
-        text = rules.channel_dm_text(note)
+        text = channel_dm_text(note)
         if not text:
             return
 

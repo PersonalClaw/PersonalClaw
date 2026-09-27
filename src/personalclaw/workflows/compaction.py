@@ -2,11 +2,11 @@
 
 A long-horizon node's prompt GROWS. `infer` and the judge branch of `gate` each send
 one bounded prompt built from the template text plus everything the run has accumulated
-by then — the carried handoff/carryover/decisions block (`_with_carried_context`), a
-retry hint, and whatever sibling views and prior outputs its bindings resolve to. Cycle
-50 of a loop carries 50 cycles of findings. Before this module the engine sent that
-prompt as-is and let the provider decide: a node that had done real work died on a
-context-length error the engine could have measured and avoided one call earlier.
+by then — the carried handoff/carryover/decisions block (`iteration_context.with_carried_context`),
+a retry hint, and whatever sibling views and prior outputs its bindings resolve to. Cycle 50 of a
+loop carries 50 cycles of findings. Before this module the engine sent that prompt as-is and let the
+provider decide: a node that had done real work died on a context-length error the engine could have
+measured and avoided one call earlier.
 
 **Two layers, in order.**
 
@@ -97,8 +97,8 @@ def segment_prompt(prompt: str) -> list[dict]:
 
     Split on blank lines: paragraph blocks are the boundary a concatenated prompt
     actually has, and they are separator-agnostic (they subsume the ``---`` fence
-    `_with_carried_context` joins on without depending on it). Empty blocks are dropped
-    so a run of blank lines cannot pad the head/tail protection with nothing.
+    `iteration_context.with_carried_context` joins on without depending on it). Empty blocks are
+    dropped so a run of blank lines cannot pad the head/tail protection with nothing.
     """
     blocks = [b.strip() for b in (prompt or "").split("\n\n")]
     return [{"role": "user", "content": b} for b in blocks if b]

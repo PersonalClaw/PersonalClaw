@@ -92,9 +92,10 @@ The loop surfaces do not care which home a loop has:
   cancels the dispatched stage's subagent and re-queues it at the same epoch, and a paused run is
   not re-adopted after a restart. Resume clears the intent and wakes the controller.
 - **Restart.** A resumed controller rebuilds each loop's iteration counter from the ledger's
-  `continue` iteration rows (`_rehydrate_loop_progress`) and re-queues a dispatched stage whose
-  subagent this process does not know (`_requeue_orphaned_stages`) — without both, a run past its
-  first iteration failed "run deadlocked" after a restart.
+  `continue` iteration rows (`iteration_context.rehydrate_loop_progress`) and re-queues a
+  dispatched stage whose subagent this process does not know
+  (`stage_settlement.requeue_orphaned_stages`) — without both, a run past its first iteration
+  failed "run deadlocked" after a restart.
 - **Ending.** A run with a `loop_kind` announces its end as a loops-table loop does
   (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification, and
   a "Loop needs a decision" inbox item when it escalates; a cancel says nothing.

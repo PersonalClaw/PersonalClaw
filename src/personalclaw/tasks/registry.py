@@ -289,8 +289,8 @@ async def engine_owned_refusal(
 
     🔴 **Deliberately NOT applied inside :func:`update_task`.** The contract is an actor
     asymmetry, not a field lock: the engine sets a managed task's ``status``/``preview``/
-    ``evidence`` directly (``controller._write_projected_task``) and the loop writes task status
-    through this very façade, so a guard at the façade would refuse the one writer that is
+    ``evidence`` directly (``task_projection._write_projected_task``) and the loop writes task
+    status through this very façade, so a guard at the façade would refuse the one writer that is
     allowed. The façade cannot know who is calling; a door can. That is why this is an opt-in
     function beside ``update_task`` rather than a branch inside it.
 

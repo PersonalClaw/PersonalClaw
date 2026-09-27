@@ -1,11 +1,11 @@
 """A DRAFT run can be started — the caller-driven launch a fork had no verb for (#372).
 
-`_apply_fork` leaves its child in DRAFT deliberately and says so: *"starting it is the caller's
-decision, because a fork is usually created to be edited before it runs ('try a stricter judge').
-Auto-starting would race the edit it exists to receive."* The decision was never deliverable.
-Fork is the entry point to the whole branch-and-edit story, so the feature was a dead end: every
-use of the UI's **Fork run** button added another run that could never execute, and the only
-outcome its author was offered was cancelling something that never started.
+`mid_flight._apply_fork` leaves its child in DRAFT deliberately and says so: *"starting it is the
+caller's decision, because a fork is usually created to be edited before it runs ('try a stricter
+judge'). Auto-starting would race the edit it exists to receive."* The decision was never
+deliverable. Fork is the entry point to the whole branch-and-edit story, so the feature was a dead
+end: every use of the UI's **Fork run** button added another run that could never execute, and the
+only outcome its author was offered was cancelling something that never started.
 
 **The closed loop, measured on a real fork.** The nine run verbs all assume a run already
 running, and two of them said so in their own remediation:

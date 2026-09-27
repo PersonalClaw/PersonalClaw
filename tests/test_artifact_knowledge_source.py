@@ -512,6 +512,6 @@ def test_the_field_is_patchable_without_a_restart():
     """It is in the PATCH allowlist, so the toggle in Settings → Sources saves. A field the
     frontend renders but the write path rejects is a control that reports success and moves
     nothing."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["knowledge.auto_ingest_artifacts"] == {"type": "bool"}

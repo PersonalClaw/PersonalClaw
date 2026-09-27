@@ -24,8 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.config.editable import _EDITABLE_CONFIG
 from personalclaw.config.loader import AppConfig, WorkflowsConfig
-from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 from personalclaw.workflows import settings as wf_settings
 
 FIELDS = (

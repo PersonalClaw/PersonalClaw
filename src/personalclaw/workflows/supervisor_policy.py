@@ -15,7 +15,7 @@ WIRED — this module now has a production caller.
 ===============================================
 It used to parse and validate while nothing in the engine read a ``SupervisorPolicy``, and it
 said so. PP-15 was named as the wiring owner and is that caller:
-``RunController._supervisor_policy`` parses a loop node's ``supervisor:`` block, and
+``loop_convergence._supervisor_policy`` parses a loop node's ``supervisor:`` block, and
 :func:`tick_config` turns it into the ``TickConfig`` that ``loop.tick.evaluate`` — the ONE
 convergence core, now shared by the workflow ``loop`` node and the loop kinds — reads. The
 thresholds a template declares here are the thresholds the engine applies; the per-kind Python
@@ -949,7 +949,7 @@ def loop_iteration_cap(overrides: dict[str, Any] | None) -> int:
 
     ``max_cycles`` is the per-instance cycle budget a loop is created with (knob 12). On the run
     path the loop node's own ``max_iterations`` is what bounds iterations, so the override has to
-    reach THAT reader to mean anything (`RunController._loop_node_under_overlay`); before this, a
+    reach THAT reader to mean anything (`loop_iteration._loop_node_under_overlay`); before this, a
     loop created with a budget of 30 ran the template's literal 6 while every loop surface counted
     toward 30. ``0`` keeps the template's own cap: a run loop always has a bounded iteration
     count, so "uncapped" is not a run semantic, and a malformed value is no override at all.
@@ -975,7 +975,7 @@ def policy_for_run(
     still resolves through `policy_for_kind` (`loop/watchdog.py`, untouched by this seam),
     so THIS composition has no kind-keyed production caller until the loop-as-run unification
     (seam 4g) hands runs a kind. The overlay mechanism itself is production-wired today:
-    `RunController._supervisor_policy` applies the same `apply_policy_overrides` to the
+    `loop_convergence._supervisor_policy` applies the same `apply_policy_overrides` to the
     template-declared policy of every workflow run.
     """
     return apply_policy_overrides(policy_for_kind(kind, kind_config), overrides)
