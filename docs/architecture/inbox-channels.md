@@ -155,6 +155,28 @@ so a card can say "cancelled" for a stopped turn instead of reading it as a Deny
 survives a restart, so `close_orphaned_approval_rows` closes, at boot, any row still asking for
 one.
 
+**How long it waits, and what a denial without an answer leaves.** Every approval that waits
+waits one window, the owner's `agent.approval_timeout_minutes` (Settings → Agent defaults →
+Approval wait; two hours by default, one minute to one week), read per approval by
+`approval_window_secs`. An MCP server's question is cut shorter by its own call ceiling, and a
+subagent's or workflow step's approval also ends with that work's time limit. Past the window
+the call is denied: it fails closed. An unattended run (a trigger's session, a loop worker, a
+channel delivery, a subagent) never waits at all. It declines a call that needs approval at
+once, because nobody is there to ask: `chat_runner`'s fail-fast for a runtime that asks, and
+the native runtime's own decline, which it marks on the tool result (`TOOL_META_AUTO_DENIED`)
+for the chat runner or the subagent manager to see. Either way the call is **denied without an
+answer**, and `dashboard/auto_denials.py` leaves one `system/auto_denied` Inbox item for it.
+The item says what was denied, who asked, when and why, and that the call did not run. Its refs
+are `auto_denied` (`expired` | `unattended`), `tool` and `session`, plus `chat` when that is a
+chat a person answers in. The Inbox then offers **Ask it to try again** (it sends a stated
+message into that chat, so the approval is asked again while someone is there) and opens the
+chat or the workflow step where it happened. There is one item per approval, and one per
+session and tool for the unattended case, so a run that retries a declined call leaves one
+item. The approval's own row still closes. Before this, the row closing was the whole record,
+so by morning an approval asked at night was on no surface. There used to be a second,
+five-minute window for "unattended" sources, keyed by a substring of `source`. No caller ever
+passed one, so it is gone.
+
 **An ended owner ends its approvals.** Cancelling a workflow run stops its dispatched stages
 (each subagent cancelled with the run's own reason), and a run that ends for any reason cancels
 every approval still under `workflow:<run>:`; stopping a loop stops its worker turns; stopping a

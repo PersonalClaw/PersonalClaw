@@ -44,8 +44,9 @@ property" reasoning :mod:`personalclaw.browse.target` uses for the connector —
 ``GET /api/browse/status`` read model the browse panel already polls, and
 ``POST /api/browse/grants/{request_id}/{action}`` answers one). This gate is deliberately NOT the
 native-session tool-approval dict behind ``GET /api/approvals``: that one is keyed by tool +
-tool_input with an ORIGIN-AWARE timeout, and routing a browse grant through it would let
-``_approval_timeout_for`` silently redefine the 300s fail-closed ceiling this control declares.
+tool_input with a CONFIGURABLE wait (``agent.approval_timeout_minutes``), and routing a browse
+grant through it would let ``approval_window_secs`` silently redefine the 300s fail-closed ceiling
+this control declares.
 Two gates, because they gate two different things — one store each, and neither mirrors the other.
 """
 

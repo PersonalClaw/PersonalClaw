@@ -78,6 +78,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_RESULT,
     STOP_MAX_TOKENS,
     TOOL_META_APPROVAL_WAIVED,
+    TOOL_META_AUTO_DENIED,
     AgentEvent,
     is_length_stop,
 )
@@ -1715,6 +1716,8 @@ class NativeAgentRuntime(AgentProvider):
                     tool_name,
                 )
                 meta.update(_FAILED)
+                # Said to whoever consumes this stream, which can reach the Inbox (F-33).
+                meta[TOOL_META_AUTO_DENIED] = True
             else:
                 request_id = call.tool_call_id or tool_name
                 # Register the pending Future BEFORE surfacing the request, so an

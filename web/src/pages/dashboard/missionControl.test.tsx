@@ -26,6 +26,7 @@ const inboxOpen = vi.fn()
 const approvals = vi.fn()
 const chatSessions = vi.fn()
 const uLoops = vi.fn()
+const workflowRuns = vi.fn()
 const resolveApproval = vi.fn()
 const resumeWorkflowRun = vi.fn()
 
@@ -38,6 +39,7 @@ vi.mock('../../lib/api', async (orig) => ({
     approvals: (...a: unknown[]) => approvals(...a),
     chatSessions: (...a: unknown[]) => chatSessions(...a),
     uLoops: (...a: unknown[]) => uLoops(...a),
+    workflowRuns: (...a: unknown[]) => workflowRuns(...a),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
   },
@@ -124,6 +126,7 @@ beforeEach(() => {
   approvals.mockResolvedValue([])
   chatSessions.mockResolvedValue([])
   uLoops.mockResolvedValue([])
+  workflowRuns.mockResolvedValue({ runs: [], total: 0, limit: 200, offset: 0 })
   toLanes.mockReturnValue(lanes())
 })
 
@@ -294,8 +297,34 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
         [appr],
         [{ key: 'chat-1', title: 'nightly sweep', running: true, stopping: false, pending_approval: false }],
         [],
+        [],
       ),
     )
+  })
+
+  it('🔑 hands the running workflow runs to the Working lane — a run is not a chat or a loop (F-32)', async () => {
+    // Measured: a run started from Workflows was working while this lane said "Nothing is running
+    // right now". Neither a chat session nor the loop listing carries it; the run list does.
+    const run = { id: 'run-5', workflow_name: 'paper-ingest', status: 'running', started_at: '2026-09-26T09:00:00Z', created_at: '2026-09-26T09:00:00Z', spec_version: 1 }
+    workflowRuns.mockResolvedValue({ runs: [run], total: 1, limit: 200, offset: 0 })
+    render(<MissionControl />)
+
+    await waitFor(() => expect(toLanes).toHaveBeenCalled())
+    expect(workflowRuns).toHaveBeenCalledWith({ status: 'running', limit: 200 })
+    expect(toLanes.mock.calls[toLanes.mock.calls.length - 1][4]).toEqual([run])
+  })
+
+  it('a working run or loop opens from its card', async () => {
+    const runCard: LaneCard = {
+      key: 'run:run-5', lane: 'working', origin: 'run', id: 'run-5', title: 'paper-ingest', subtitle: 'running',
+      at: null, refs: { link: '#/workflows/runs/run-5' },
+      run: { id: 'run-5', workflow_name: 'paper-ingest', status: 'running', started_at: '2026-09-26T09:00:00Z', created_at: '2026-09-26T09:00:00Z' },
+    }
+    toLanes.mockReturnValue(lanes({ working: [runCard] }))
+    render(<MissionControl />)
+
+    const link = await screen.findByRole('link', { name: /Open the run: paper-ingest/ })
+    expect(link.getAttribute('href')).toBe('#/workflows/runs/run-5')
   })
 
   it('hands the loop listing to the Working lane — a run-backed loop has no chat session', async () => {

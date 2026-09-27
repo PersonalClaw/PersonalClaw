@@ -27,8 +27,10 @@ from personalclaw.llm.base import (
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
     EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
     LLMEvent,
 )
+from personalclaw.llm.events import TOOL_META_AUTO_DENIED
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
@@ -2296,6 +2298,15 @@ class SubagentManager:
                     subagent_id=info.id,
                     parent_session_key=info.parent_session_key,
                     agent_role=info.agent,
+                )
+            elif event.kind == EVENT_TOOL_RESULT and (event.tool_meta or {}).get(
+                TOOL_META_AUTO_DENIED
+            ):
+                # The native runtime declined a call that needed an approval: a subagent is
+                # unattended, so nobody could be asked. It told the model; this tells the owner,
+                # through the gateway, which can reach the Inbox (F-33).
+                await self._fire_event(
+                    "subagent_auto_denied", info, {"tool": _redact(event.title or "")}
                 )
             elif event.kind == EVENT_COMPLETE:
                 # Capture the child's token/cost accounting before breaking — S2k

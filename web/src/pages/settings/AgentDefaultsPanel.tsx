@@ -134,6 +134,10 @@ export function AgentDefaultsPanel() {
             options={[{ key: 'auto', label: 'Auto' }, { key: 'interactive', label: 'Ask each time' }, { key: 'trust_reads', label: 'Trust reads' }]} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patchYolo}
             hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
+          {/* F-33. Was a fixed two hours, so an approval asked at night was denied before anyone woke.
+              Still fails closed: past the wait the call is denied, and the Inbox says so. */}
+          <NumberRow label="Approval wait" cfg={cfg} field="approval_timeout_minutes" patch={patch} min={1} max={10080} suffix="min"
+            hint="How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. A subagent's or workflow step's approval also ends with that work's own time limit. Unattended runs never wait: no one is there to ask." />
         </RowGroup>
       </Section>
 

@@ -427,7 +427,7 @@ async def test_the_stop_hook_runs_even_with_no_provider_registered():
 @pytest.mark.asyncio
 async def test_an_unanswered_chat_approval_says_it_expired(world, monkeypatch):
     """A timeout is not a Deny either: the card and the transcript say it expired."""
-    monkeypatch.setattr(type(world.state), "_APPROVAL_TIMEOUT", 0.05)
+    monkeypatch.setattr(type(world.state), "approval_window_secs", lambda _self: 0.05)
     session = _chat(world)
     _set_stream(world.client, _turn())
     await asyncio.wait_for(run_chat(world.state, session, "clean up"), timeout=5)
@@ -440,7 +440,7 @@ async def test_an_unanswered_chat_approval_says_it_expired(world, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_background_approval_nobody_answers_says_it_expired(world, monkeypatch):
-    monkeypatch.setattr(type(world.state), "_UNATTENDED_APPROVAL_TIMEOUT", 0.05)
+    monkeypatch.setattr(type(world.state), "approval_window_secs", lambda _self: 0.05)
     assert await world.state.request_approval("cron-1", "cron", "bash") is False
     (frame,) = _resolved(world, "cron-1")
     assert frame["outcome"] == "expired", frame

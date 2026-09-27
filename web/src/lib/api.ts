@@ -1898,6 +1898,10 @@ export interface WorkflowRunSummary {
   elapsed_seconds?: number; total_tokens?: number; error_message?: string
   attention?: Record<string, unknown> | null
   project_id?: string; mode?: string
+  /** The name the run was started under (a loop's name), `''` when it has none. */
+  title?: string
+  /** The run that spawned this one as a sub-workflow, `''` for a run nothing spawned. */
+  parent_run_id?: string
 }
 export interface WorkflowRunDetailData {
   run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number

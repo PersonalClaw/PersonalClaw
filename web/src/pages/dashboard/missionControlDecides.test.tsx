@@ -33,6 +33,8 @@ vi.mock('../../lib/api', async (orig) => ({
     approvals: (...a: unknown[]) => approvals(...a),
     chatSessions: (...a: unknown[]) => chatSessions(...a),
     uLoops: () => Promise.resolve([]),
+    // The Working lane's third source (F-32): nothing is running in these scenarios.
+    workflowRuns: () => Promise.resolve({ runs: [], total: 0, limit: 200, offset: 0 }),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
   },

@@ -496,6 +496,27 @@ def _sanitize_bot_name(raw: str) -> str:
     return kept.strip()[:_BOT_NAME_MAX].strip()
 
 
+#: The bounds of ``agent.approval_timeout_minutes`` — one minute to one week, the same ceiling the
+#: editable-config registry declares (``config/editable.py``). A week is the workflow gate's own
+#: default lifetime (``workflows.confirmation_ttl_secs``), and past it a turn parked on one tool
+#: call is not waiting for an answer any more.
+APPROVAL_TIMEOUT_MINUTES_MIN = 1
+APPROVAL_TIMEOUT_MINUTES_MAX = 7 * 24 * 60
+APPROVAL_TIMEOUT_MINUTES_DEFAULT = 120
+
+
+def _approval_minutes(raw: object) -> int:
+    """``agent.approval_timeout_minutes`` as ``load()`` reads it: a whole number of minutes inside
+    the bounds, and the default for a value that is not one. Never zero or negative — a zero
+    window would deny every approval the moment it was asked, which is not what a hand-edited
+    ``0`` meant."""
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return APPROVAL_TIMEOUT_MINUTES_DEFAULT
+    if raw < APPROVAL_TIMEOUT_MINUTES_MIN:
+        return APPROVAL_TIMEOUT_MINUTES_DEFAULT
+    return min(raw, APPROVAL_TIMEOUT_MINUTES_MAX)
+
+
 @dataclass
 class SelfQaConfig:
     """Self-QA Companion settings (SELF-VERIFICATION §3) — the commit-watch QA loop.
@@ -573,6 +594,18 @@ class AgentConfig:
     yolo: bool = field(
         default=False,
         metadata=_meta("YOLO Mode", "Skip tool approval confirmations."),
+    )
+    #: How long a tool approval waits for an answer before it is denied (F-33). It was a fixed
+    #: two hours, so an approval asked at night was refused before anyone woke. The answer still
+    #: fails CLOSED: past the window the call is denied, never run, and the Inbox says so.
+    approval_timeout_minutes: int = field(
+        default=APPROVAL_TIMEOUT_MINUTES_DEFAULT,
+        metadata=_meta(
+            "Approval Wait (minutes)",
+            "How long a tool approval waits for your answer before it is denied. An approval a "
+            "subagent or workflow step asks for also ends when that work's own time limit does. "
+            "Unattended runs never wait: no one is there to ask, so they are denied at once.",
+        ),
     )
     acp_concurrent_sessions: bool = field(
         default=False,
@@ -4003,6 +4036,9 @@ class AppConfig:
                 # agent.provider is native, NOT the legacy "acp" — ACP is opt-in.
                 provider=agent_data.get("provider", "native"),
                 yolo=agent_data.get("yolo", False),
+                approval_timeout_minutes=_approval_minutes(
+                    agent_data.get("approval_timeout_minutes")
+                ),
                 acp_concurrent_sessions=agent_data.get("acp_concurrent_sessions", False),
                 # Defaults ON (PROMPT-CACHE-SUBSTRATE §C6): caching is semantically
                 # transparent — the model sees the same tokens either way and every

@@ -135,7 +135,9 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   // approval's session key — a workflow stage's `workflow:<run>:<node>` is not a chat, and
   // spelling `chat/<session>` for it is the 404 `approvalDestination` exists to prevent (#258).
   // The router path is its href without the leading `#/`, which `navigate` owns.
-  if (refs.approval && typeof refs.session === 'string' && refs.session) {
+  // …and so does the note a call denied without an answer leaves (F-33): it names the same
+  // session, and the place it happened is where the approval would have been answered.
+  if ((refs.approval || refs.auto_denied) && typeof refs.session === 'string' && refs.session) {
     return approvalDestination(refs.session).href.replace(/^#\//, '')
   }
   if (refs.session) return `chat/${encodeURIComponent(refs.session)}`
@@ -160,7 +162,7 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
 export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   const refs = it.refs || {}
   if (refs.loop) return 'Go to loop'
-  if (refs.approval && typeof refs.session === 'string' && refs.session) {
+  if ((refs.approval || refs.auto_denied) && typeof refs.session === 'string' && refs.session) {
     return approvalDestination(refs.session).linkLabel
   }
   if (refs.session) return 'Go to chat'
