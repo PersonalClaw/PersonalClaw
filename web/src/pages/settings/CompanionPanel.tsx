@@ -6,8 +6,7 @@ import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, ToggleRow, Field, Row, SegPills } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
-import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { InlineError } from '../../ui/InlineError'
+import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { serviceWorkerBlockedReason } from '../../app/registerServiceWorker'
 
 // The editable companion.* fields mirror the backend _EDITABLE_CONFIG allowlist
@@ -215,7 +214,7 @@ export function CompanionPanel() {
             wrote. It now renders its controls from a successful read and nothing else. */}
         {mobileCfg === null ? (
           mobileErr
-            ? <InlineError icon onRetry={refreshMobile}>Couldn't read your phone push settings: {String((mobileErr as Error)?.message || mobileErr)}</InlineError>
+            ? <InlineLoadError what="phone push settings" error={mobileErr} onRetry={refreshMobile} />
             : <ListSkeleton rows={2} what="phone push settings" />
         ) : (
         <RowGroup>

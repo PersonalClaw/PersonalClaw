@@ -1198,9 +1198,9 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
     <Modal title={`Edit ${name}`} icon={<Pencil size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-3">
         {!def && loadErr ? (
-          <LoadError what="this server's settings" error={loadErr} onRetry={refresh} />
+          <LoadError what="server settings" error={loadErr} onRetry={refresh} />
         ) : !def || (def.editable && !form) ? (
-          <ListSkeleton rows={3} what="this server's settings" />
+          <ListSkeleton rows={3} what="server settings" />
         ) : !def.editable ? (
           <p data-type="body-s" className="text-on-surface-low">{def.reason}</p>
         ) : form && (<>

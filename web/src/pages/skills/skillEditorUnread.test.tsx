@@ -34,7 +34,7 @@ describe('editing SKILL.md', () => {
     vi.spyOn(api, 'skillDocument').mockRejectedValue(new Error('skill directory unreadable'))
     const update = vi.spyOn(api, 'updateSkill').mockResolvedValue({ ok: true, revision: 'r2' })
     await openEditor()
-    expect(await screen.findByRole('heading', { name: "Couldn't load your SKILL.md" })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: "Couldn't load your skill file" })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Retry/ })).toBeInTheDocument()
     expect(screen.queryByRole('textbox'), 'an empty editor stood in for an unread file').toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Save/ }))

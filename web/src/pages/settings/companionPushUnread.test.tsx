@@ -48,7 +48,8 @@ describe('the Phone push section', () => {
   it('a failed read of it shows the failure, and offers no backend to pick', async () => {
     failThePushRead()
     render(<CompanionPanel />)
-    expect(await screen.findByText(/Couldn't read your phone push settings: config unreadable/)).toBeInTheDocument()
+    // Through the section-sized load-failure primitive: the read's own message, as an alert.
+    expect(await screen.findByRole('alert')).toHaveTextContent('config unreadable')
     expect(screen.queryByRole('button', { name: 'Push backend: Web push' }),
       'the backend pills stood in for an unread setting').toBeNull()
     expect(screen.queryByRole('button', { name: 'Push backend: Off' })).toBeNull()
