@@ -283,9 +283,11 @@ async def api_sidecar_install_start(request: web.Request) -> web.Response:
 async def api_sidecar_install_status(request: web.Request) -> web.Response:
     """GET /api/models/sidecar/{provider}/install/status — the rich install poll shape.
 
-    ``{provider, installed, managed, install_dir, job: {state, steps, log_tail, error,
-    remediation, weights_progress}}``. ``remediation`` is deliberately separate from
-    ``error``: the error says what broke, the remediation says what the user should DO,
+    ``{provider, installed, managed, install_dir, requirements, job: {id, state, steps,
+    log_tail, error, remediation, weights_progress}}``. ``requirements`` are what the install
+    puts in the environment (the manifest's ``sidecarDependencies``), and ``job.id`` is what
+    ``DELETE /api/models/downloads/{id}`` cancels. ``remediation`` is deliberately separate
+    from ``error``: the error says what broke, the remediation says what the user should DO,
     which is the difference between a dead end and a next step.
     """
     provider = request.match_info["provider"]
@@ -298,6 +300,7 @@ async def api_sidecar_install_status(request: web.Request) -> web.Response:
     status = install.status()
     job = registry.install_job(provider)
     status["job"] = {
+        "id": job.id if job is not None else "",
         "state": job.state if job is not None else "idle",
         "progress": job.progress if job is not None else 0.0,
         "steps": status.pop("steps"),

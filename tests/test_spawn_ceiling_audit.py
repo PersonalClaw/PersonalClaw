@@ -207,8 +207,9 @@ _CEILING_WRAPPED: dict[str, str] = {
         "model sidecar child → tool ceiling via spawn_shim_argv (argv-prepend)"
     ),
     # Sidecar install (venv + pip) — user-initiated but runs third-party setup code, so it
-    # carries the ``build`` profile (NOFILE raised; a pip install opens many fds).
-    "local_models/sidecar.py::SidecarInstall._run::subprocess.run": (
+    # carries the ``build`` profile (NOFILE raised; a pip install opens many fds). A Popen, so
+    # its output reaches the install's log as pip writes it and a cancel can stop it.
+    "local_models/sidecar.py::SidecarInstall._run::subprocess.Popen": (
         "sidecar venv/pip install → build ceiling via spawn_shim_argv"
     ),
 }

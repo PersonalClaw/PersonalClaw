@@ -55,7 +55,8 @@
     {"annotation": "str", "kind": "positional_or_keyword", "name": "event"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "context"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "payload"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "status_url"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "status_url"},
+    {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "answer"}
    ],
    "returns": "None"
   },
@@ -3395,7 +3396,8 @@
    "migrate_from_crons": {
     "kind": "method",
     "params": [
-     {"annotation": "Path | str | None", "default": "None", "kind": "positional_or_keyword", "name": "crons_path"}
+     {"annotation": "Path | str | None", "default": "None", "kind": "positional_or_keyword", "name": "crons_path"},
+     {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "now"}
     ],
     "returns": "dict[str, Any]"
    },
@@ -5137,7 +5139,8 @@
     {"annotation": "QualityDeclaration | None", "default": "None", "kind": "positional_or_keyword", "name": "quality"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "uiCapabilities"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tags"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"},
+    {"annotation": "list[Prerequisite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requires"}
    ],
    "returns": "None"
   },
@@ -5386,7 +5389,8 @@
     {"annotation": "str", "default": "'gateway'", "kind": "positional_or_keyword", "name": "managedBy"},
     {"annotation": "MarketplaceDependencies", "default": "<factory>", "kind": "positional_or_keyword", "name": "marketplace"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "commands"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "pythonDependencies"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "pythonDependencies"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sidecarDependencies"}
    ],
    "returns": "None"
   },
@@ -5403,6 +5407,13 @@
     "kind": "method",
     "params": [],
     "returns": "dict[str, Any]"
+   },
+   "validate": {
+    "kind": "method",
+    "params": [
+     {"annotation": "list[ProviderConfig]", "kind": "positional_or_keyword", "name": "providers"}
+    ],
+    "returns": "list[str]"
    }
   }
  },
@@ -5556,6 +5567,37 @@
     "kind": "method",
     "params": [],
     "returns": "dict[str, Any]"
+   }
+  }
+ },
+ "personalclaw.sdk.manifest.Prerequisite": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "name"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "why"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "how"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "from_dict": {
+    "kind": "classmethod",
+    "params": [
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "data"}
+    ],
+    "returns": "Prerequisite"
+   },
+   "to_dict": {
+    "kind": "method",
+    "params": [],
+    "returns": "dict[str, Any]"
+   },
+   "validate": {
+    "kind": "method",
+    "params": [],
+    "returns": "list[str]"
    }
   }
  },

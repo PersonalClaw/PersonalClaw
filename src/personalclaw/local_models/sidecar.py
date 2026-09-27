@@ -662,15 +662,33 @@ def stop_sidecar_watchdog() -> None:
 #: killed install re-runs from where it died rather than from the top.
 INSTALL_STEPS = ("venv", "deps", "weights")
 
+#: How long ``python -m venv`` may take.
+_VENV_TIMEOUT_SECS = 300
+#: How long the engine's ``pip install`` may run before it is stopped. An engine is torch-sized:
+#: gigabytes of wheels over whatever connection the owner has, then an install that unpacks tens
+#: of thousands of files. The live log is what shows it is working in the meantime.
+DEPS_TIMEOUT_SECS = 2 * 60 * 60
+
+
+class InstallCancelled(RuntimeError):
+    """The owner cancelled the install while a step was running."""
+
 
 @dataclass
 class _Step:
     name: str
-    status: str = "pending"  # pending | running | done | skipped | error
+    status: str = "pending"  # pending | running | done | skipped | error | cancelled
     detail: str = ""
+    #: When the step last started running (epoch seconds), so a surface can say for how long.
+    started_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "status": self.status, "detail": self.detail}
+        return {
+            "name": self.name,
+            "status": self.status,
+            "detail": self.detail,
+            "started_at": self.started_at,
+        }
 
 
 class SidecarInstall:
@@ -680,6 +698,11 @@ class SidecarInstall:
     a kill, a crash, or a success: the venv step skips when the interpreter is already
     there, the deps step skips when the receipt matches the manifest's requirement list,
     and the weights step is a disk probe. Nothing is torn down to be rebuilt.
+
+    The requirements are the manifest's ``dependencies.sidecarDependencies`` — the engine —
+    never its ``pythonDependencies``, which the app installer puts in the gateway's own
+    ``app-python``. A running command's output reaches :attr:`log_tail` line by line, and
+    :meth:`cancel` stops it.
     """
 
     def __init__(
@@ -701,6 +724,9 @@ class SidecarInstall:
         self.reason = ""
         self.remediation = ""
         self._log: list[str] = []
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen[str] | None = None
+        self._cancelled = False
 
     # -- discovery ---------------------------------------------------------
 
@@ -708,7 +734,7 @@ class SidecarInstall:
     def for_app(cls, app: str) -> "SidecarInstall | None":
         """Build the install for an INSTALLED app that declares a sidecar provider.
 
-        Returns None when the app is not installed, has no manifest, or runs
+        Returns None when the app is not installed, has no manifest, or runs every provider
         ``execution: in-process`` — an install has nothing to mean for an app that never
         asked for a child process.
         """
@@ -723,10 +749,9 @@ class SidecarInstall:
         except Exception:
             logger.debug("sidecar install: unreadable manifest for %s", app, exc_info=True)
             return None
-        provider = manifest.provider
-        if provider is None or provider.execution != EXECUTION_SIDECAR:
+        if not any(p.execution == EXECUTION_SIDECAR for p in manifest.all_providers()):
             return None
-        return cls(app, requirements=list(manifest.dependencies.pythonDependencies))
+        return cls(app, requirements=list(manifest.dependencies.sidecarDependencies))
 
     # -- state -------------------------------------------------------------
 
@@ -742,7 +767,8 @@ class SidecarInstall:
 
     @property
     def log_tail(self) -> list[str]:
-        return list(self._log)
+        with self._lock:
+            return list(self._log)
 
     def status(self) -> dict[str, Any]:
         """The rich poll shape (§3.2): what happened, and what to do about it."""
@@ -751,6 +777,7 @@ class SidecarInstall:
             "installed": self.installed,
             "managed": self.managed,
             "install_dir": str(self.venv),
+            "requirements": list(self.requirements),
             "steps": [s.to_dict() for s in self.steps],
             "log_tail": self.log_tail,
             "error": self.error,
@@ -759,6 +786,25 @@ class SidecarInstall:
         }
 
     # -- the steps ---------------------------------------------------------
+
+    def begin(self) -> None:
+        """Start a fresh run: the last run's steps, error, log and cancellation are forgotten,
+        so a run that succeeds after a failed one does not go on showing its error."""
+        with self._lock:
+            self._cancelled = False
+            self._log.clear()
+        for step in self.steps:
+            step.status, step.detail, step.started_at = "pending", "", 0.0
+        self.error = self.reason = self.remediation = ""
+
+    def cancel(self) -> None:
+        """Stop the install: the running command is killed and no later step starts. What the
+        steps already finished stays, so the next run resumes from the one that stopped."""
+        with self._lock:
+            self._cancelled = True
+            proc = self._proc
+        if proc is not None:
+            _stop(proc)
 
     def run(self) -> bool:
         """Run every step, skipping the already-satisfied ones. True if all succeeded."""
@@ -778,15 +824,17 @@ class SidecarInstall:
         if step is None:
             return False
         handler = getattr(self, f"_step_{step.name}")
-        step.status = "running"
+        step.status, step.started_at = "running", time.time()
         try:
+            if self._cancelled:
+                raise InstallCancelled("the install was cancelled")
             step.status, step.detail = handler()
         except Exception as exc:  # noqa: BLE001 — a step failure is reported, not raised
-            step.status = "error"
+            step.status = "cancelled" if isinstance(exc, InstallCancelled) else "error"
             step.detail = str(exc)[:200]
             self.error = str(exc)[:200]
             self.reason, self.remediation = _classify_install_failure(exc, step.name)
-            logger.warning("sidecar install %s: step %s failed", self.app, step.name)
+            logger.warning("sidecar install %s: step %s %s", self.app, step.name, step.status)
             return False
         return True
 
@@ -795,7 +843,11 @@ class SidecarInstall:
         if python.is_file():
             return "skipped", "venv already present"
         self.venv.parent.mkdir(parents=True, exist_ok=True)
-        self._run([sys.executable, "-m", "venv", str(self.venv)], timeout=300)
+        self._run(
+            [sys.executable, "-m", "venv", str(self.venv)],
+            label="python -m venv",
+            timeout=_VENV_TIMEOUT_SECS,
+        )
         if not python.is_file():
             raise RuntimeError(f"venv creation produced no interpreter at {python}")
         (self.venv / _MARKER).write_text(
@@ -805,10 +857,17 @@ class SidecarInstall:
 
     def _step_deps(self) -> tuple[str, str]:
         if not self.requirements:
-            return "skipped", "no pythonDependencies declared"
+            return "skipped", "no sidecarDependencies declared"
         if self._receipt_matches():
             return "skipped", "requirements already installed"
+        unreadable = [r for r in self.requirements if not _is_requirement(r)]
+        if unreadable:
+            raise ValueError(
+                f"{unreadable[0][:80]!r} is not a requirement pip can read, so nothing was "
+                "installed"
+            )
         python = venv_python(self.venv)
+        # `--` ends pip's options: a requirement can never be read as one, whatever it says.
         self._run(
             [
                 str(python),
@@ -816,9 +875,11 @@ class SidecarInstall:
                 "pip",
                 "install",
                 "--disable-pip-version-check",
+                "--",
                 *self.requirements,
             ],
-            timeout=1800,
+            label="pip",
+            timeout=DEPS_TIMEOUT_SECS,
         )
         # The receipt is written only after pip EXITS ZERO, which is what makes the step
         # resumable: a killed pip leaves no receipt, so the next run redoes it.
@@ -846,40 +907,69 @@ class SidecarInstall:
             return not self.requirements
         return sorted(str(r) for r in recorded) == self.requirements
 
-    def _run(self, argv: list[str], *, timeout: int) -> None:
-        """Run one install command, capturing its tail. Raises on non-zero exit."""
+    def _run(self, argv: list[str], *, label: str, timeout: float) -> None:
+        """Run one install command, its output read into the log tail as it is written.
+
+        Raises, naming it by *label*, when it exits non-zero, when it is still running after
+        *timeout* seconds, and when :meth:`cancel` stopped it; a stopped command's whole
+        process group goes with it."""
         from personalclaw.sandbox import PROFILE_BUILD, build_child_env, spawn_shim_argv
 
         # Ceiling: pip and venv creation are operator-initiated but run third-party
         # setup code, so they carry the ``build`` profile (NOFILE raised, OOM bias kept)
         # via argv-prepend — never preexec_fn, this can run off a worker thread.
         launch = spawn_shim_argv(list(argv), PROFILE_BUILD)
-        proc = subprocess.run(  # noqa: S603 — core-built argv, no shell
+        proc = subprocess.Popen(  # noqa: S603 — core-built argv, no shell
             launch,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=timeout,
+            bufsize=1,
             env=build_child_env(site="model-sidecar-install"),
-            check=False,
+            start_new_session=True,
         )
-        for line in (proc.stdout or "").splitlines()[-_LOG_TAIL_MAX:]:
-            self._note(line)
-        for line in (proc.stderr or "").splitlines()[-_LOG_TAIL_MAX:]:
-            self._note(line)
-        if proc.returncode != 0:
-            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        with self._lock:
+            self._proc = proc
+            cancelled = self._cancelled
+        if cancelled:  # cancelled before there was a process to stop
+            _stop(proc)
+        reader = threading.Thread(
+            target=self._read_output, args=(proc,), name=f"sidecar-install-{self.app}", daemon=True
+        )
+        reader.start()
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _stop(proc)
             raise RuntimeError(
-                f"{Path(argv[0]).name} exited {proc.returncode}: "
-                f"{tail[-1][:160] if tail else 'no output'}"
-            )
+                f"{label} was still running after {_duration(timeout)} and was stopped "
+                "(timed out)"
+            ) from None
+        finally:
+            with self._lock:
+                self._proc = None
+            reader.join(timeout=5)
+        if self._cancelled:
+            raise InstallCancelled("the install was cancelled")
+        if code != 0:
+            tail = self.log_tail
+            raise RuntimeError(f"{label} exited {code}: {tail[-1][:160] if tail else 'no output'}")
+
+    def _read_output(self, proc: subprocess.Popen[str]) -> None:
+        stream = proc.stdout
+        if stream is None:  # pragma: no cover — always a pipe here
+            return
+        for line in stream:
+            self._note(line)
 
     def _note(self, line: str) -> None:
         line = line.rstrip()[:200]
         if not line:
             return
-        self._log.append(line)
-        if len(self._log) > _LOG_TAIL_MAX:
-            del self._log[: len(self._log) - _LOG_TAIL_MAX]
+        with self._lock:
+            self._log.append(line)
+            if len(self._log) > _LOG_TAIL_MAX:
+                del self._log[: len(self._log) - _LOG_TAIL_MAX]
 
     def delete(self) -> bool:
         """Remove the venv — only ever a CORE-created one (``managed``).
@@ -893,8 +983,49 @@ class SidecarInstall:
             return False
         shutil.rmtree(self.venv, ignore_errors=True)
         for step in self.steps:
-            step.status, step.detail = "pending", ""
+            step.status, step.detail, step.started_at = "pending", "", 0.0
         return not self.venv.exists()
+
+
+def _is_requirement(spec: str) -> bool:
+    """Whether pip reads *spec* as one requirement (PEP 508), never as an option."""
+    from packaging.requirements import InvalidRequirement, Requirement
+
+    try:
+        Requirement(spec)
+    except InvalidRequirement:
+        return False
+    return True
+
+
+def _stop(proc: subprocess.Popen[str]) -> None:
+    """Terminate *proc* and everything it started (pip's build children), then reap it."""
+    import signal
+
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, AttributeError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=_TERM_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, AttributeError):
+            proc.kill()
+        proc.wait(timeout=_TERM_TIMEOUT)
+
+
+def _duration(secs: float) -> str:
+    """``2 hours``, ``5 minutes``, ``30 seconds``."""
+    for unit, size in (("hour", 3600), ("minute", 60)):
+        if secs >= size and secs % size == 0:
+            n = int(secs // size)
+            return f"{n} {unit}{'s' if n != 1 else ''}"
+    n = int(secs)
+    return f"{n} second{'s' if n != 1 else ''}"
 
 
 def _classify_install_failure(exc: Exception, step: str) -> tuple[str, str]:
@@ -904,6 +1035,8 @@ def _classify_install_failure(exc: Exception, step: str) -> tuple[str, str]:
     the remediation says what the user should DO about it — the one field that turns a
     dead end into a next action.
     """
+    if isinstance(exc, InstallCancelled):
+        return "cancelled", "Install engine starts it again, from the step it stopped at."
     text = str(exc).lower()
     if isinstance(exc, subprocess.TimeoutExpired) or "timed out" in text:
         return "timeout", "Re-run the install — it resumes from the step that timed out."

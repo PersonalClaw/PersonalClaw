@@ -48,7 +48,7 @@ backend**.
   `.hg`, `.svn` (version-control metadata, whose tools run what it names),
   `__pycache__` (bytecode the interpreter would run instead of the scanned source)
   and `.venv`, `venv`, `.tox` (virtualenvs; the platform installs
-  `pythonDependencies` itself). What is left out is not scanned, not in the consent
+  `pythonDependencies` itself, and a sidecar's engine into `apps/<app>/venv`). What is left out is not scanned, not in the consent
   digest and not installed; a link into it is refused. Everything else is the app,
   `node_modules` included: a JavaScript app's dependencies are code it runs, so they
   install and are scanned like any other file. Skills follow the same rule
@@ -69,9 +69,10 @@ backend**.
 - **Every install waits for consent** — a clean scan is not consent.
   `POST /api/apps/preview {source}` stages the source and returns what installing
   it grants and runs (`apps/disclosure.describe`: permissions, scheduled jobs and
-  whether each is switched on, Python packages, dashboard code, its own server
-  process, the install hook, MCP servers), the scan, and a `consent` digest of the
-  staged bytes. `POST /api/apps {source, consent}` commits only if the bytes still
+  whether each is switched on, Python packages, the engine packages Install engine would
+  put in a sidecar's environment, dashboard code, its own server process, the install
+  hook, MCP servers), what it needs that PersonalClaw does not install, the scan, and a
+  `consent` digest of the staged bytes. `POST /api/apps {source, consent}` commits only if the bytes still
   have that digest; anything else — `confirm: true` included — answers 409 with
   the review. The install invariant is scanned-bytes == reviewed-bytes ==
   installed-bytes (no swap-after-scan window, and none after consent either).
@@ -100,6 +101,29 @@ backend**.
   installed from (`updateSource`).
 - **Removal** distinguishes deactivate (providers deregistered, files kept)
   from force-uninstall.
+
+## What an app needs, and its engine
+
+- **Prerequisites** — `requires: [{name, why, how}]` (`manifest.Prerequisite`) lists what the
+  app needs on this machine that PersonalClaw does not install: the ComfyUI server Local Image
+  Generation sends its work to, a program a tool runs. Each is a name, what the app uses it
+  for and what to do to have it, within the lengths the dialog shows. Install consent leads
+  with them (*What it needs that PersonalClaw doesn't install*), the Store card says
+  "Needs ComfyUI", and an update that adds one asks again.
+- **An engine** — a provider with `execution: "sidecar"` runs in a child process with a Python
+  environment of its own, `apps/<app>/venv` (`local_models/sidecar.py`). Its engine is
+  `dependencies.sidecarDependencies`: PEP 508 requirements (an option is an install error, and
+  pip's options end with `--` before them), installed into that environment and never into
+  `app-python`, and only when the owner presses **Install engine** on the app's card in
+  Settings → Providers or on its Configure page. The install is a job
+  (`POST /api/models/sidecar/{app}/install`): the environment, then pip, each step skipped
+  when already done, so a stopped install resumes. pip's output reaches the job's log tail as
+  it is written, the pip step may run for `DEPS_TIMEOUT_SECS` (two hours) before it is stopped,
+  and cancelling (`DELETE /api/models/downloads/{id}`) kills pip and what it started. A
+  finished install re-measures the app's availability. While it runs, an update or a removal
+  of the app answers 409 `engine_installing`: pip is writing into the folder those replace or
+  delete. **Remove engine** deletes an environment PersonalClaw made, never one someone else
+  did.
 
 ## Unload and load (`apps/app_runtime.py`)
 

@@ -856,6 +856,9 @@ export interface AppSummary {
   /** A multi-instance provider: it has NO app-level settings — its settings live on each of its
    *  instances, which are added, edited, tested and removed in Settings → Providers. */
   configuredPerInstance?: boolean
+  /** A provider of it runs its engine in a child process with a Python environment of its own,
+   *  which Configure offers to install (Install engine). */
+  sidecar?: boolean
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
@@ -922,6 +925,11 @@ export interface AppDisclosure {
   permissions: AppPermissionsWire
   crons: AppCronSummary[]
   pythonDependencies: AppPythonDependency[]
+  /** The requirement specifiers, verbatim, that Install engine puts in the app's own Python
+   *  environment, where its sidecar child runs them. Nothing installs them before that. */
+  sidecarDependencies: string[]
+  /** What it needs on this machine that PersonalClaw does not install. */
+  requires: AppPrerequisite[]
   hasUI: boolean
   uiComponents: string
   /** Its own server process, started on install and kept running while it is enabled. */
@@ -962,6 +970,9 @@ export interface AppDisclosure {
  *  spec arrives `false`, which is the louder of the two disclosures and the same
  *  fail-closed direction the guard takes. */
 export interface AppPythonDependency { spec: string; coreOwned: boolean }
+/** Something an app needs on this machine that PersonalClaw does not install (a ComfyUI server),
+ *  what the app uses it for, and what the owner does to have it — the manifest's `requires`. */
+export interface AppPrerequisite { name: string; why: string; how: string }
 export interface AppCatalogEntry {
   name: string; displayName: string; description: string; version: string
   icon: string; heroUrl?: string; author: string
@@ -992,6 +1003,10 @@ export interface AppCatalogEntry {
    *  declares none and for a registry pointer; `consentKnown` says which. Read only
    *  through `consentPythonDeps`, which owns that distinction. */
   pythonDependencies?: AppPythonDependency[]
+  /** What Install engine will put in the app's own Python environment — see `AppDisclosure`. */
+  sidecarDependencies?: string[]
+  /** What it needs that PersonalClaw does not install — see `AppDisclosure`. */
+  requires?: AppPrerequisite[]
   /** #492 — does this app ship browser code? Same two field names and meanings as
    *  `AppSummary` above, so ONE reading serves the pre-install card and the installed
    *  one (`consentHostUi`). A UI bundle runs in the dashboard PAGE, which the
@@ -4904,7 +4919,9 @@ export interface SettingsProvider {
   // managed = a lifecycle app provider (installByDefault: install/uninstall is its
   // on/off). false = an always-on native built-in (mandatory, no toggle).
   managed?: boolean
-  provider?: { type?: string; entity?: string; capabilities?: string[]; multiInstance?: boolean; hasConfigSchema?: boolean }
+  /** `execution: 'sidecar'` runs its engine in a child process with a Python environment of its
+   *  own, which the card offers to install (Install engine). */
+  provider?: { type?: string; entity?: string; capabilities?: string[]; multiInstance?: boolean; hasConfigSchema?: boolean; execution?: string }
   tags?: string[]
 }
 // Agent runtime readiness — native + each acp:<cli>. `extension` keys it onto
@@ -5117,6 +5134,28 @@ export interface LocalModel { name: string; id: string; size_mb: number; size: n
 // `speed_bps`/`eta_s` are coarse poller derivations (0 = not cheaply knowable);
 // `reason` is a typed machine label on error/cancel ('cancelled'|'network'|
 // 'disk_full'|'gated'|'not_found'), '' otherwise.
+/** One step of an engine install. `started_at` is when it last started (epoch seconds, `0` never). */
+export interface SidecarInstallStep {
+  name: 'venv' | 'deps' | 'weights'
+  status: 'pending' | 'running' | 'done' | 'skipped' | 'error' | 'cancelled'
+  detail: string
+  started_at: number
+}
+/** `GET /api/models/sidecar/{app}/install/status` — an app's engine: what Install engine puts in its
+ *  own Python environment (`requirements`), whether it is there, and the install job, whose `id` is
+ *  what `cancelModelDownload` cancels. `remediation` is what to do about `error`. */
+export interface SidecarInstallStatus {
+  provider: string; installed: boolean; managed: boolean; install_dir: string
+  requirements: string[]
+  job: {
+    id: string
+    state: 'idle' | 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+    progress: number
+    steps: SidecarInstallStep[]
+    log_tail: string[]; error: string; reason: string; remediation: string
+    weights_progress: number
+  }
+}
 export interface DownloadJob {
   id: string; provider: string; model: string
   kind: 'weights' | 'sidecar-install'
@@ -7194,15 +7233,7 @@ export const api = {
       '/api/models/unload', { provider }),
   // The resumable sidecar install (LMMV §3.2) for a provider declaring execution: sidecar.
   sidecarInstallStatus: (provider: string) =>
-    get<{
-      provider: string; installed: boolean; managed: boolean; install_dir: string
-      job: {
-        state: string; progress: number
-        steps: { name: string; status: string; detail: string }[]
-        log_tail: string[]; error: string; reason: string; remediation: string
-        weights_progress: number
-      }
-    }>(`/api/models/sidecar/${encodeURIComponent(provider)}/install/status`),
+    get<SidecarInstallStatus>(`/api/models/sidecar/${encodeURIComponent(provider)}/install/status`),
   startSidecarInstall: (provider: string) =>
     post<DownloadJob>(`/api/models/sidecar/${encodeURIComponent(provider)}/install`),
   deleteSidecarInstall: (provider: string) =>

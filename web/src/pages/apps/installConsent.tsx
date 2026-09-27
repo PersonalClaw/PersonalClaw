@@ -3,7 +3,7 @@ import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/sc
 import { trustTierLabel } from '../../lib/trustTier'
 import {
   ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot,
-  Globe, LayoutDashboard, PackagePlus, Copy, Check, Server, Download, RefreshCw, Sparkles, Loader2,
+  Globe, LayoutDashboard, PackagePlus, Copy, Check, Server, Download, RefreshCw, Sparkles, Loader2, Wrench,
 } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
@@ -11,7 +11,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { FieldError } from '../../ui/forms'
 import {
   api, type AppSummary, type AppInstallResult, type AppCronSummary, type AppScanReport, type AppCatalogEntry,
-  type AppPythonDependency, type AppDisclosure, type AppScanFinding,
+  type AppPythonDependency, type AppDisclosure, type AppScanFinding, type AppPrerequisite,
 } from '../../lib/api'
 import { terminalRefusalReason } from '../../lib/useGuardedInstall'
 import { readableErrText } from '../../lib/errText'
@@ -211,6 +211,8 @@ export function disclosureOf(entry: AppCatalogEntry | undefined): AppDisclosure 
     permissions: entry.permissions ?? {},
     crons: entry.crons ?? [],
     pythonDependencies: entry.pythonDependencies ?? [],
+    sidecarDependencies: entry.sidecarDependencies ?? [],
+    requires: entry.requires ?? [],
     hasUI: Boolean(entry.hasUI),
     uiComponents: entry.uiComponents ?? '',
     hasBackend: Boolean(entry.hasBackend),
@@ -240,6 +242,7 @@ type DisclosureAction = 'install' | 'update'
 export function AppDisclosureView({ disclosure, action }: { disclosure: AppDisclosure; action: DisclosureAction }) {
   return (
     <div className="flex flex-col gap-m" data-testid="app-disclosure">
+      <RequiresRow requires={disclosure.requires} />
       {disclosure.crons.length > 0 && <CronConsentList crons={disclosure.crons} action={action} />}
       <PermissionList perms={disclosure.permissions ?? {}} hostUi={consentHostUi(disclosure)}
         pythonDeps={disclosure.pythonDependencies} />
@@ -276,6 +279,14 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
     items.push(p.execution === 'sidecar'
       ? <>Runs its {p.type} provider {cmd(p.implementation)} in a child process of the gateway.</>
       : <>Loads its {p.type} provider {cmd(p.implementation)} into the gateway's own process.</>)
+  }
+  if (d.sidecarDependencies.length) {
+    items.push(
+      <>When you choose Install engine, installs{' '}
+        {d.sidecarDependencies.map((s, i) => <span key={s}>{i > 0 ? ', ' : ''}{cmd(s)}</span>)} into its own
+        Python environment, which that child process runs.
+      </>,
+    )
   }
   if (hook) {
     items.push(<>Runs {cmd(hook)} in the app's folder during the {action}.</>)
@@ -316,6 +327,29 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
   )
 }
 
+/** What the app needs on this machine that PersonalClaw does not install, each with what it is for
+ *  and what to do to have it — first, because it decides whether installing is worth it at all.
+ *  Plain text, as the manifest wrote it. Renders nothing when it needs nothing. */
+function RequiresRow({ requires }: { requires: AppPrerequisite[] }) {
+  if (!requires.length) return null
+  return (
+    <div className="flex gap-s rounded-md border border-outline-variant bg-surface-high p-m" data-testid="consent-requires">
+      <Wrench size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+      <div data-type="body-s" className="min-w-0 text-on-surface-low">
+        <div className="text-on-surface">What it needs that PersonalClaw doesn't install</div>
+        <ul className="mt-xs flex flex-col gap-s">
+          {requires.map((r) => (
+            <li key={r.name}>
+              <div><span className="text-on-surface">{r.name}</span>. {r.why}</div>
+              <div className="mt-0.5">{r.how}</div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 /** The skills installing the app adds to your skills — instructions every agent may load and
  *  follow. An app ships skills only here, in its manifest (`POST /api/skills*` is owner-only),
  *  so this row is the whole of what an app can teach your agents. */
@@ -347,6 +381,8 @@ function disclosureFacts(d: AppDisclosure): { key: string; label: string }[] {
       label: `Scheduled job “${c.name || 'job'}” — ${fmtCadence(c)}`,
     })),
     ...d.pythonDependencies.map((p) => ({ key: `py:${p.spec}`, label: `Python package ${p.spec}` })),
+    ...d.sidecarDependencies.map((s) => ({ key: `engine:${s}`, label: `Engine package ${s}` })),
+    ...d.requires.map((r) => ({ key: `requires:${JSON.stringify([r.name, r.why, r.how])}`, label: `Needs ${r.name}` })),
     ...(d.hasUI || d.uiComponents ? [{ key: 'ui', label: 'Runs in this dashboard page' }] : []),
     ...(d.hasBackend ? [{ key: `backend:${d.backendSandbox}`, label: d.backendSandbox ? `Its own server process, in the ${d.backendSandbox} sandbox` : 'Its own server process' }] : []),
     ...d.providers.map((p) => ({ key: `provider:${p.type}:${p.implementation}:${p.execution}`, label: `Provider module ${p.implementation}` })),
