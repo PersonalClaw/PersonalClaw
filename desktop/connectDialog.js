@@ -20,7 +20,8 @@ const {
   HEALTH_REACHABLE,
   HEALTH_UNREACHABLE,
   HEALTH_TIMEOUT,
-  HEALTH_NEEDS_PAIRING,
+  HEALTH_REFUSED,
+  HEALTH_SIGNED_OUT,
   HEALTH_NOT_A_GATEWAY,
   HEALTH_HTTP_ERROR,
   HEALTH_REDIRECTED,
@@ -42,8 +43,11 @@ const CONNECT_CHANNELS = Object.freeze({
  *
  * 🔑 `unknown` IS NOT `unreachable`. A row that has never been probed and a row that was probed
  * and did not answer are two different facts, and telling the user the second when the first is
- * true is how a switcher gets blamed for an outage it invented. Same for `needs_pairing`, which is
- * the ONE state that means "act", versus `unreachable`, which means "wait".
+ * true is how a switcher gets blamed for an outage it invented. Same for `signed_out`, which is
+ * the ONE state that means "act" — the gateway signed this app out, and its sentence (on the row,
+ * and in the window) says how to sign back in — versus `unreachable`, which means "wait". A health
+ * check answered 401/403 (`refused`) is not a sign-in problem at all: a PersonalClaw gateway never
+ * refuses it, so pairing again would not help, and the row does not say it would.
  */
 function healthCopy(status) {
   switch (status) {
@@ -53,8 +57,10 @@ function healthCopy(status) {
       return { tone: "warn", text: "Not answering", action: "" };
     case HEALTH_TIMEOUT:
       return { tone: "warn", text: "Timed out", action: "" };
-    case HEALTH_NEEDS_PAIRING:
-      return { tone: "act", text: "Needs pairing again", action: "pair" };
+    case HEALTH_SIGNED_OUT:
+      return { tone: "act", text: "Signed out", action: "" };
+    case HEALTH_REFUSED:
+      return { tone: "bad", text: "Refused the connection check", action: "" };
     case HEALTH_NOT_A_GATEWAY:
       return { tone: "bad", text: "Answered, but not a PersonalClaw gateway", action: "" };
     case HEALTH_REDIRECTED:
@@ -92,6 +98,9 @@ function describeRow(row, { activeId, health = {}, localBaseUrl = "" } = {}) {
     statusText: copy.text,
     statusTone: copy.tone,
     statusAction: copy.action,
+    /** The gateway's own sentence for this row's state, when it gave one (a sign-out: why, when,
+     *  and how to sign back in). Untrusted text, already cleaned; rendered with `textContent`. */
+    statusDetail: (health[row.id] && health[row.id].message) || "",
     version: (health[row.id] && health[row.id].version) || "",
     /** Present only when the row has no URL at all — distinct from an unreachable one. */
     missingUrl: !url,

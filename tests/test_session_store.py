@@ -342,11 +342,11 @@ class TestSurvivesRestart:
         assert ta.validate_token(token)[0] is False
 
 
-# ── The TTL ruling ──────────────────────────────────────────────────────
+# ── Lifetimes ───────────────────────────────────────────────────────────
 
 
 def test_browser_default_is_thirty_days():
-    """Owner ruling: browser sessions ~30d; the 1-year cap is for explicit CLI tokens."""
+    """Browser sessions last 30 days by default, inside the 90-day limit (ledger 285)."""
     from personalclaw.dashboard.token_auth import (
         DEFAULT_BROWSER_SESSION_TTL_SECS,
         MAX_SESSION_TTL_SECS,
@@ -356,8 +356,8 @@ def test_browser_default_is_thirty_days():
     assert DEFAULT_BROWSER_SESSION_TTL_SECS < MAX_SESSION_TTL_SECS
 
 
-def test_the_year_cap_is_still_reachable_explicitly(tmp_path, monkeypatch):
-    """An automation token the user asked to last a year still can."""
+def test_the_whole_90_day_limit_can_be_asked_for(tmp_path, monkeypatch):
+    """A token asked to last the limit exactly does — the limit refuses LONGER, not up to it."""
     from personalclaw.dashboard import token_auth as ta
 
     monkeypatch.setattr(ss, "config_dir", lambda: tmp_path)
@@ -372,7 +372,7 @@ def test_the_year_cap_is_still_reachable_explicitly(tmp_path, monkeypatch):
 
 def test_the_startup_url_uses_the_browser_default():
     """The two gateway mint sites open a URL a HUMAN clicks, so the browser lifetime applies:
-    30 days by default (the owner ruling), never the year cap."""
+    30 days by default, not the 90-day limit."""
     from types import SimpleNamespace
 
     import personalclaw.gateway as gw

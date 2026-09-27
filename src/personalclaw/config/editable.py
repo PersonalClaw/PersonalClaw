@@ -18,6 +18,7 @@ from __future__ import annotations
 import unicodedata
 
 from personalclaw import self_update
+from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS
 from personalclaw.config.edit_spec import (
     ConfigValueError,
     NotASecurityControl,
@@ -1100,6 +1101,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     },
     "auth.session_ttl": {
         "type": "duration",
+        # A sign-in lasts at most 90 days (`personalclaw.auth.lifetimes`); longer is refused
+        # with the sentence saying so, never stored and quietly applied as something else.
+        "max_secs": MAX_LIFETIME_SECS,
         "security": SecurityControl(
             loosens_when_longer(),
             "A signed-in browser stays signed in longer before it must sign in again.",

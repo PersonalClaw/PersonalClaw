@@ -241,8 +241,9 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         err = ERR_CODE_EXPIRED if outcome.result == pairing.RESULT_EXPIRED else ERR_CODE_INVALID
         return json_error(err, status=401)
 
-    # A device session at the same TTL as a browser login rather than the 1-year cap: a phone
-    # in a drawer should not hold a live session for a year.
+    # A device session at the same TTL as a browser login (`auth.session_ttl`, 30 days by
+    # default) rather than the 90-day limit: a phone in a drawer should not hold a live session
+    # for the longest a credential may last.
     ttl = browser_session_ttl(cfg)
     derived_name, derived_kind = _described(request)
     device = DeviceInfo(

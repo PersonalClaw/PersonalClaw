@@ -5,9 +5,10 @@ Measured on main: ``personalclaw token`` printed a bare URL; the ``--json-ready`
 it for 30 days; the ``generate_token`` docstring said the session was "capped at 20 hours" while
 the cap was a year; and ``/api/token/local`` handed a year to any caller that did not name a
 lifetime. The decision recorded with this change: a browser sign-in lasts ``auth.session_ttl``
-(30 days by default, the owner's ruling) and the startup link and harness token ARE browser
-sign-ins, so they follow that setting; a token a caller mints without naming a lifetime lasts 20
-hours, the documented ``personalclaw token`` default; a year stays reachable only when asked for.
+(30 days by default) and the startup link and harness token ARE browser sign-ins, so they follow
+that setting; a token a caller mints without naming a lifetime lasts 20 hours, the documented
+``personalclaw token`` default; and nothing lasts longer than 90 days (ledger 285) — asking for
+longer is refused with a sentence saying so.
 """
 
 from __future__ import annotations
@@ -140,4 +141,5 @@ def test_the_lifetimes_the_help_and_docs_state_are_the_codes():
     assert "capped at 20 hours" not in docstring and "5 minutes" not in docstring
     token_row = next(line for line in cli_doc.splitlines() if "`personalclaw token" in line)
     assert "20h" in token_row and "Settings → Devices" in token_row, token_row
-    assert re.search(r"1 year|a year|8760h", token_row), "the ceiling a caller may ask for"
+    assert re.search(r"90d|90 days", token_row), "the ceiling a caller may ask for"
+    assert not re.search(r"1 year|a year|8760h", token_row), "a year is no longer on offer"

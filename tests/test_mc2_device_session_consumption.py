@@ -148,7 +148,10 @@ async def test_the_ip_check_is_live_on_the_query_param_exchange(_isolated) -> No
             "/api/mc2/probe", params={"token": token}, headers={"X-Real-IP": IP_ROAMED}
         )
         assert moved.status == 403, "the query-param path must reject a moved token"
-        assert (await moved.json())["error"] == "IP mismatch"
+        # The refusal says why: this link already signed in another device (ledger 286).
+        error = (await moved.json())["error"]
+        assert error["code"] == "session_required", error
+        assert error["detail"]["reason"] == "link_used", error
 
 
 @pytest.mark.asyncio

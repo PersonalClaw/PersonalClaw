@@ -1528,6 +1528,38 @@ async def _probe_credentials_file(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_session_lifetime(_ctx: DoctorContext) -> ProbeResult:
+    """security — does ``auth.session_ttl`` ask for longer than the 90-day limit? (ledger 285)
+
+    A sign-in lasts at most 90 days, the most a long-lived credential may live. A WRITE of a
+    longer value is refused; a config file that already says longer is applied as 90 days
+    instead, because a hand-edited file must never brick the box. So the file says one lifetime
+    and every sign-in lasts another — a WARN on this card, and nothing else, until it is fixed.
+    The same report ``personalclaw doctor`` prints (``lifetimes.session_lifetime_report``).
+    """
+    from personalclaw.auth.lifetimes import exact_words, session_lifetime_report
+
+    def _configured() -> str:
+        try:
+            return str(config_loader.AppConfig.load().auth.session_ttl or "")
+        except Exception:  # noqa: BLE001 — an unreadable config gets the default, as sign-ins do
+            return ""
+
+    report = session_lifetime_report(await asyncio.to_thread(_configured))
+    evidence = {
+        "configured": report.configured,
+        "applied_secs": report.applied_secs,
+        "limit_secs": report.limit_secs,
+    }
+    if report.over_limit:
+        return ProbeResult(ok=False, detail=report.warning, evidence=evidence, remedy=report.remedy)
+    return ProbeResult(
+        ok=True,
+        detail=f"a sign-in lasts {exact_words(report.applied_secs)}, within the 90-day limit",
+        evidence=evidence,
+    )
+
+
 async def _probe_legacy_trigger_files(ctx: DoctorContext) -> ProbeResult:
     """automations — is a legacy automation file back after this home imported it?
 
@@ -2212,6 +2244,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_credentials_file,
             "credentials.json moved into the credential store",
+        )
+    )
+    register_probe(
+        Probe(
+            "security.session_lifetime",
+            "security",
+            Tier.CAPABILITY,
+            _probe_session_lifetime,
+            "Sign-ins last no longer than the 90-day limit",
         )
     )
     register_probe(

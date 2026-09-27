@@ -37,9 +37,11 @@
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  *
  * `isRetryable`/`nextReconnectStep` split failures into RETRYABLE (the host is not answering) and
- * TERMINAL (the host answered and refused). An auth refusal — the shape a revoked device session produces — is
- * terminal with **zero** retries: the row is marked `needs_pairing` and the automated path stops
- * until the user acts. Retryable failures back off on the SPA's own published curve
+ * TERMINAL (the host answered and refused). A health check answered 401/403 is terminal with
+ * **zero** retries: the row is marked `refused` and the automated path stops until the user acts.
+ * (A PersonalClaw gateway never refuses `/api/healthz` — it is auth-exempt — so that answer comes
+ * from something in front of it, or from something else. A revoked device session is a different
+ * fact, seen on the page's own traffic: `sessionRefusal` → `signed_out`, below.) Retryable failures back off on the SPA's own published curve
  * (`250 * 2 ** attempt`, ceiling 6 — `web/src/lib/useChatSocket.ts:45-46`) and are **bounded**;
  * after `MAX_RECONNECT_ATTEMPTS` the policy says `give_up` and waits for a human. Nothing here
  * ever re-presents a credential, because the probe never presents one in the first place.
@@ -120,7 +122,8 @@ const HEALTH_UNKNOWN = "unknown"; // never probed — NOT the same as unreachabl
 const HEALTH_REACHABLE = "reachable";
 const HEALTH_UNREACHABLE = "unreachable"; // DNS or TCP failure
 const HEALTH_TIMEOUT = "timeout";
-const HEALTH_NEEDS_PAIRING = "needs_pairing"; // answered 401/403 — the device session is gone
+const HEALTH_REFUSED = "refused"; // the health check itself answered 401/403 — not a sign-in problem
+const HEALTH_SIGNED_OUT = "signed_out"; // the gateway refused THIS app's sign-in, on its page's own traffic
 const HEALTH_NOT_A_GATEWAY = "not_a_gateway"; // answered, but not a PersonalClaw gateway
 const HEALTH_HTTP_ERROR = "http_error";
 const HEALTH_REDIRECTED = "redirected"; // answered 3xx — never followed
@@ -131,12 +134,17 @@ const HEALTH_STATES = Object.freeze([
   HEALTH_REACHABLE,
   HEALTH_UNREACHABLE,
   HEALTH_TIMEOUT,
-  HEALTH_NEEDS_PAIRING,
+  HEALTH_REFUSED,
+  HEALTH_SIGNED_OUT,
   HEALTH_NOT_A_GATEWAY,
   HEALTH_HTTP_ERROR,
   HEALTH_REDIRECTED,
   HEALTH_REFUSED_BY_POLICY,
 ]);
+
+/** The longest gateway sentence a row carries. A sign-in refusal is two sentences; anything much
+ *  longer than that is not one, and a row is not the place for it. */
+const NOTICE_MAX = 400;
 
 /** Outcomes the shell may retry on its own. Everything else is a human's decision. */
 const RETRYABLE = Object.freeze([HEALTH_UNREACHABLE, HEALTH_TIMEOUT, HEALTH_HTTP_ERROR]);
@@ -472,6 +480,12 @@ function confirmEndpoint(store, plan, { label = "", id, kind = "remote", now = D
  * lands.
  */
 function sanitizeLabel(text) {
+  return cleanText(text).slice(0, LABEL_MAX);
+}
+
+/** `text` with control characters removed and whitespace collapsed — `sanitizeLabel` without its
+ *  clamp, for untrusted text that is not a label (a gateway's sign-in sentence). */
+function cleanText(text) {
   const raw = String(text === null || text === undefined ? "" : text);
   let out = "";
   for (const ch of raw) {
@@ -486,7 +500,7 @@ function sanitizeLabel(text) {
     if (cp < 0x20 || cp === 0x7f) continue;
     out += ch;
   }
-  return out.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX);
+  return out.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -663,7 +677,7 @@ function probeEndpoint(baseUrl, { timeoutMs = PROBE_TIMEOUT_MS, httpMod = http, 
         }
         if (code === 401 || code === 403) {
           res.resume();
-          return done({ status: HEALTH_NEEDS_PAIRING, httpStatus: code, version: "", detail: "" });
+          return done({ status: HEALTH_REFUSED, httpStatus: code, version: "", detail: "" });
         }
         let buf = "";
         res.setEncoding("utf8");
@@ -705,6 +719,65 @@ function probeEndpoint(baseUrl, { timeoutMs = PROBE_TIMEOUT_MS, httpMod = http, 
   });
 }
 
+// ── the page's own refusals ────────────────────────────────────────────────────────────────────
+
+/**
+ * Is this completed response the gateway refusing THIS app's sign-in?
+ *
+ * `details` is an Electron `webRequest.onCompleted` record — status and headers of a request the
+ * PAGE made, with the page's own cookie. The shell presents nothing; it only reads. A sign-in
+ * refusal is a 401/403 carrying `X-Auth-Required: true` (`token_auth._deny`), which is what tells it
+ * apart from a route refusing an action, which never carries that header. Headers arrive as
+ * `{name: [values]}` in whatever case the server sent.
+ */
+function sessionRefusal(details) {
+  if (!details || (details.statusCode !== 401 && details.statusCode !== 403)) return false;
+  const headers = details.responseHeaders || {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "x-auth-required") continue;
+    const values = Array.isArray(value) ? value : [value];
+    return values.some((v) => String(v).trim().toLowerCase() === "true");
+  }
+  return false;
+}
+
+/**
+ * The row's health once the gateway has signed this app out: `signed_out`, with the gateway's own
+ * sentence (why, when, and how to sign back in) as `message`.
+ *
+ * The sentence is untrusted text from a machine the shell does not control, so it gets the label's
+ * treatment — control characters out, whitespace collapsed — and a clamp; the switcher renders it
+ * with `textContent` besides.
+ */
+function signedOutHealth(message, httpStatus) {
+  const clean = cleanText(message).slice(0, NOTICE_MAX);
+  return { status: HEALTH_SIGNED_OUT, httpStatus: httpStatus || 0, version: "", detail: "", message: clean };
+}
+
+/**
+ * What one completed response of the page means for the ACTIVE gateway's row:
+ *
+ *   - `"signed_out"` — that gateway refused this app's sign-in (`sessionRefusal`);
+ *   - `"signed_in"` — a page of that gateway loaded, which it serves only to a signed-in app (so a
+ *     sign-out is over: the app paired again). The pairing page is the one page served to anyone,
+ *     so it does not count;
+ *   - `""` — nothing to note: another origin, a route refusing an action, a static asset.
+ */
+function sessionEventFrom(details, activeOrigin) {
+  if (!details || !activeOrigin) return "";
+  let url;
+  try {
+    url = new URL(String(details.url || ""));
+  } catch {
+    return "";
+  }
+  if (url.origin !== activeOrigin) return "";
+  if (sessionRefusal(details)) return "signed_out";
+  const ok = details.statusCode >= 200 && details.statusCode < 300;
+  if (ok && details.resourceType === "mainFrame" && url.pathname !== "/pair") return "signed_in";
+  return "";
+}
+
 /** Is this outcome one the shell may retry by itself? */
 function isRetryable(status) {
   return RETRYABLE.includes(status);
@@ -712,9 +785,9 @@ function isRetryable(status) {
 
 /**
  * What to do after a probe. `{action, delayMs, attempt, reason}` where `action` is
- * `stay` | `retry` | `give_up` | `needs_pairing` | `stop`.
+ * `stay` | `retry` | `give_up` | `refused` | `stop`.
  *
- * 🔑 `needs_pairing` GETS ZERO RETRIES. An endpoint that answered 401/403 has refused a
+ * 🔑 `refused` GETS ZERO RETRIES. An endpoint that answered 401/403 has refused a
  * credential; probing it again on a timer is the credential-retry loop this function exists to
  * make impossible, and it would also drive the gateway's own per-IP lockout against its owner.
  * `not_a_gateway`, `redirected` and `refused_by_policy` stop for the same reason: the host
@@ -722,8 +795,8 @@ function isRetryable(status) {
  */
 function nextReconnectStep({ status, attempt = 0, maxAttempts = MAX_RECONNECT_ATTEMPTS } = {}) {
   if (status === HEALTH_REACHABLE) return { action: "stay", delayMs: 0, attempt: 0, reason: "reachable" };
-  if (status === HEALTH_NEEDS_PAIRING) {
-    return { action: "needs_pairing", delayMs: 0, attempt, reason: "auth_refused_terminal" };
+  if (status === HEALTH_REFUSED) {
+    return { action: "refused", delayMs: 0, attempt, reason: "auth_refused_terminal" };
   }
   if (!isRetryable(status)) return { action: "stop", delayMs: 0, attempt, reason: `terminal:${status}` };
   const next = attempt + 1;
@@ -739,7 +812,7 @@ function nextReconnectStep({ status, attempt = 0, maxAttempts = MAX_RECONNECT_AT
  *
  * One row's outcome never touches another's — the map is built independently per row and the
  * registry is never mutated here. That is T4.4's "revoking one gateway's device session breaks
- * only that entry" expressed as code: a `needs_pairing` on one row leaves every other row's
+ * only that entry" expressed as code: a `refused` on one row leaves every other row's
  * status, confirmation record and namespaced state exactly as it was.
  */
 async function probeAll(registry, { probe = probeEndpoint, localBaseUrl = "" } = {}) {
@@ -800,7 +873,12 @@ module.exports = {
   HEALTH_REACHABLE,
   HEALTH_UNREACHABLE,
   HEALTH_TIMEOUT,
-  HEALTH_NEEDS_PAIRING,
+  HEALTH_REFUSED,
+  HEALTH_SIGNED_OUT,
+  NOTICE_MAX,
+  sessionEventFrom,
+  sessionRefusal,
+  signedOutHealth,
   HEALTH_NOT_A_GATEWAY,
   HEALTH_HTTP_ERROR,
   HEALTH_REDIRECTED,

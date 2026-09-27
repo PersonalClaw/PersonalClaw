@@ -12,6 +12,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
+from personalclaw.auth import lifetimes
 from personalclaw.config.edit_spec import (
     LOOSEN_TITLE,
     ConfigValueError,
@@ -30,6 +31,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import (
     DEFAULT_TOKEN_TTL_SECS,
     ISSUER_TOKEN,
+    MAX_SESSION_TTL_SECS,
     mint_session,
     parse_duration,
 )
@@ -1235,11 +1237,14 @@ async def api_token_local(request: web.Request) -> web.Response:
     Secret passed via ``X-Local-Secret`` header (not query string, to avoid
     leaking in logs).
 
-    ``?ttl=`` names the lifetime (``20h``, ``30m``, up to a year). Without it the token lasts
-    :data:`DEFAULT_TOKEN_TTL_SECS` — 20 hours, ``personalclaw token``'s documented default; it
-    used to be a YEAR, which the owner ruling reserves for a caller that asks for one. The
-    reply says when the token stops working (``expires_at``) and until when it can still be
-    opened as a link to sign a browser in (``open_within``), so every caller can tell its user.
+    ``?ttl=`` names the lifetime — ``30m``, ``20h``, ``7d``, at most 90 days. Without it the
+    token lasts :data:`DEFAULT_TOKEN_TTL_SECS`, 20 hours, ``personalclaw token``'s default. A
+    ``ttl`` longer than 90 days is refused (``400 token_ttl_too_long``, with the sentence naming
+    the limit and why), and one that is not a duration is refused too (``400
+    token_ttl_invalid``): each used to be answered with a token of some OTHER lifetime — a year
+    was reachable by asking, and ``ttl=3600`` quietly got the default. The reply says when the
+    token stops working (``expires_at``) and until when it can still be opened as a link to sign
+    a browser in (``open_within``), so every caller can tell its user.
     """
     import personalclaw.dashboard.handlers as _h  # noqa: F811
 
@@ -1270,8 +1275,20 @@ async def api_token_local(request: web.Request) -> web.Response:
     ttl_param = request.query.get("ttl", "")
     if ttl_param:
         parsed = parse_duration(ttl_param)
-        if parsed:
-            ttl = parsed
+        if parsed is None or parsed > MAX_SESSION_TTL_SECS:
+            _sel().log_api_access(
+                caller=request.remote or "unknown",
+                operation="token.local",
+                outcome="denied",
+                source="local-bootstrap",
+                resources="ttl-invalid" if parsed is None else "ttl-too-long",
+            )
+            if parsed is None:
+                return json_error(
+                    "token_ttl_invalid", message=lifetimes.unreadable(ttl_param), status=400
+                )
+            return json_error("token_ttl_too_long", message=lifetimes.too_long(parsed), status=400)
+        ttl = parsed
     minted = mint_session("local-app", ttl, issuer=ISSUER_TOKEN)
     _sel().log_api_access(
         caller=request.remote or "unknown",
