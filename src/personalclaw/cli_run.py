@@ -68,8 +68,9 @@ _BOOT_TIMEOUT_SECS = 90.0
 _DEFAULT_TURN_TIMEOUT_SECS = 600.0
 
 #: TTL for the token minted for one CLI invocation. Short on purpose: a headless run is
-#: seconds-to-minutes, and ``generate_token`` evicts the oldest of five concurrent
-#: nonces — a long-lived CLI token would push the operator's browser session out.
+#: seconds-to-minutes, and a token that outlives its run is a live credential for nothing.
+#: (It counts against the TOKEN limit only, so however many runs there are, none of them can
+#: sign the operator's browser or phone out — ledger 255.)
 _TOKEN_TTL_SECS = 3600
 
 

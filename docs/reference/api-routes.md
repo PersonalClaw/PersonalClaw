@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **874 registrations** over **706 distinct paths** — 867 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **875 registrations** over **707 distinct paths** — 868 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -68,12 +68,12 @@ The 127 families the surface divides into, largest first.
 | `/api/tools` | 6 | 6 |
 | `/api/autonudge` | 5 | 3 |
 | `/api/desktop` | 5 | 4 |
+| `/api/devices` | 5 | 5 |
 | `/api/feedback` | 5 | 5 |
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
 | `/api/uploads` | 5 | 5 |
 | `/api/autonomy` | 4 | 4 |
-| `/api/devices` | 4 | 4 |
 | `/api/external-access` | 4 | 4 |
 | `/api/update` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 868 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -210,7 +210,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/apps/{name}/config` | save an app's settings, and apply them to its providers. |
 | `POST` | `/api/apps/{name}/disable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/enable` | _(no summary)_ |
-| `POST` | `/api/apps/{name}/token` | mint an app-scoped identity token. |
+| `POST` | `/api/apps/{name}/token` | the app-scoped identity token this app should use. |
 | `GET` | `/api/apps/{name}/uninstall-preview` | classify shared deps (A3) and report what the app's ``data/`` holds. |
 | `POST` | `/api/apps/{name}/update` | atomic update from ``{source, consent?}``. |
 | `GET` | `/api/artifacts` | metadata-only rows; ``q`` searches metadata and body. |
@@ -393,10 +393,11 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/desktop/state` | what the desktop shell can actually do, right now. |
 | `POST` | `/api/desktop/state` | the shell pushes a refreshed capability manifest. |
 | `POST` | `/api/desktop/unregister` | the shell is quitting; forget its capabilities. |
-| `GET` | `/api/devices` | every paired device with a live session. |
+| `GET` | `/api/devices` | every device and token signed in to this gateway. |
 | `POST` | `/api/devices/pair/complete` | redeem a code for a durable device session. |
 | `POST` | `/api/devices/pair/start` | mint a single-use pairing code + QR payload. |
-| `POST` | `/api/devices/{id}/revoke` | lock one device out. |
+| `POST` | `/api/devices/revoke-others` | sign out every device and token but the caller's own. |
+| `POST` | `/api/devices/{id}/revoke` | sign one device or token out. |
 | `DELETE` | `/api/doc-comments` | empty the deck. |
 | `GET` | `/api/doc-comments` | the whole cross-document deck, oldest first. |
 | `POST` | `/api/doc-comments` | append one comment. |
@@ -587,7 +588,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/lexicon/terms` | {canonical, aliases?} — add a manual term. |
 | `DELETE` | `/api/lexicon/terms/{id}` | remove a term entirely. |
 | `PATCH` | `/api/lexicon/terms/{id}` | {enabled?} — enable/disable (prune) a term. |
-| `POST` | `/api/logout` | revoke all active dashboard sessions. |
+| `POST` | `/api/logout` | sign every dashboard session out, everywhere. |
 | `GET` | `/api/logs` | SSE stream of live log entries. |
 | `GET` | `/api/logs/level` | current backend logger level. |
 | `POST` | `/api/logs/level` | change the backend logger level at runtime. |
@@ -924,7 +925,7 @@ The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/themes/{slug}` | get, update, or delete a custom theme. |
 | `GET` | `/api/themes/{slug}` | get, update, or delete a custom theme. |
 | `PUT` | `/api/themes/{slug}` | get, update, or delete a custom theme. |
-| `GET` | `/api/token/local` | issue a token for local apps. |
+| `GET` | `/api/token/local` | issue a token for the CLI, a script or a local app. |
 | `GET` | `/api/tools` | Return all tools from all active tool sources. |
 | `GET` | `/api/tools/groups` | the tool-GROUP partition (Context Economy §5). |
 | `POST` | `/api/tools/invoke` | execute one tool through the Tool entity. |

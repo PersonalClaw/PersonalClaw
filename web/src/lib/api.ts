@@ -6,6 +6,7 @@
 import { apiVersionHeaders } from './apiVersion'
 import { errEnvelope, errText } from './errText'
 import { withSecurityConsent } from './securityConsent'
+import { isSignedOutRefusal, reportSignedOut, signedOutState } from './signedOut'
 import { basedOn, type Revisioned } from './staleWrite'
 import { activePersonaTheme } from '../design/personalities'
 
@@ -50,7 +51,21 @@ export class ApiError extends Error {
  *  app SDK's client (`app/appSdk.tsx`), so an app page's failures are read by the same builder. */
 export async function apiError(r: Response): Promise<ApiError> {
   const { message, code, detail } = await errEnvelope(r)
+  if (isSignedOutRefusal(r)) {
+    // This browser's session ended. Recorded ONCE for the whole tab (`lib/signedOut.ts`), so the
+    // shell shows one signed-out screen with the gateway's sentence instead of every panel
+    // failing on its own with a bare refusal.
+    const reason = (detail as { reason?: unknown } | undefined)?.reason
+    reportSignedOut({ message, code, reason: typeof reason === 'string' ? reason : '' })
+  }
   return new ApiError(message, r.status, code, detail)
+}
+
+/** Once this tab is signed out, a request can only be refused — so none is sent. Every poll on
+ *  every mounted panel would otherwise keep writing a denied row to the gateway's security log. */
+function refuseIfSignedOut(): Promise<never> | null {
+  const ended = signedOutState()
+  return ended ? Promise.reject(new ApiError(ended.message, 403, ended.code)) : null
 }
 
 /** True when a rejection is this gateway's typed failure carrying exactly `code`.
@@ -79,16 +94,16 @@ async function j<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>
 }
 
-const get = <T>(p: string) => fetch(p, { headers: { ...SK } }).then(j<T>)
+const get = <T>(p: string) => refuseIfSignedOut() ?? fetch(p, { headers: { ...SK } }).then(j<T>)
 // `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
 // (`lib/staleWrite.ts`) — and nothing else rides it.
 const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+  refuseIfSignedOut() ?? fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const del = (p: string) => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
+  refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+const del = (p: string) => refuseIfSignedOut() ?? fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
 /** App install/update: POST that returns the parsed body on ANY HTTP status.
  *  The scanner verdict + needs_consent are carried in the 400/409 body, so a
@@ -799,14 +814,22 @@ export interface CompanionDiscovery {
  *  state from `minted_at` and must render as "never": the backend deliberately does not
  *  backfill it from the pairing time, because a device that paired and never came back would
  *  otherwise read as freshly active. See `DeviceInfo` in `dashboard/session_store.py`. */
+/** One row of Settings → Devices: a device, browser or token signed in to this gateway.
+ *  `minted_at` is when it signed in; `last_seen` 0 means it has never made an authorized
+ *  request since; `ip` is where it was last seen from ('' until then). `issuer` is the door it
+ *  came through (`pair`, `enroll`, `login`, `token`, `startup`, `ready`, `unknown`), `pool` the
+ *  limit it counts against, and `current` marks the device asking. */
 export interface DeviceRec {
   id: string
   name: string
   kind: 'browser' | 'mobile' | 'desktop' | 'cli' | 'unknown'
   minted_at: number
   last_seen: number
+  ip: string
   issuer: string
+  pool: 'device' | 'browser' | 'token'
   expires_at: number
+  current: boolean
 }
 /** `pair/start`'s reply. `code` arrives pre-grouped (`XXXX-XXXX`) for reading out loud, and
  *  `pairing_url` already contains it, so the URL is actionable on its own — which is what makes
@@ -6660,16 +6683,23 @@ export const api = {
   // surface never invents a second one for a state it does not own.
   companionDiscovery: () => get<CompanionDiscovery>('/api/companion/discovery'),
   // ── The device registry (COMPANION-APPS C2 / CA-2) ──
-  // Settings → Devices is the ONLY device list in the product; other surfaces link here
-  // rather than growing a second one. `devicePairStart` mints a short-lived code; the device
-  // itself redeems it against `pair/complete`, which is deliberately reachable WITHOUT a
-  // session (a device with no session is the whole point), so this dashboard never calls it.
+  // Settings → Devices is the ONLY device list in the product — every browser, paired device
+  // and token signed in, not only the paired ones — and other surfaces link here rather than
+  // growing a second one. `devicePairStart` mints a short-lived code; the device itself
+  // redeems it against `pair/complete`, which is deliberately reachable WITHOUT a session (a
+  // device with no session is the whole point), so this dashboard never calls it.
   devices: () => get<{ devices: DeviceRec[] }>('/api/devices').then((d) => d.devices),
   devicePairStart: (label?: string) =>
     post<DevicePairStart>('/api/devices/pair/start', label ? { label } : {}),
-  // Drops the in-memory nonce AND the durable row, so a revoke cannot un-revoke on reboot.
+  // Signs one out, in memory AND on disk, so it cannot come back on reboot; its next request
+  // is told it was signed out from here.
   deviceRevoke: (id: string) =>
     post<{ ok: boolean; revoked: number }>(`/api/devices/${encodeURIComponent(id)}/revoke`, {}),
+  // Every device and token but this one ("Sign out all other devices"). The route refuses a
+  // request without `confirm: true`; call it only from the owner's confirmation, which is what
+  // Settings → Devices does.
+  devicesRevokeOthers: () =>
+    post<{ ok: boolean; revoked: number }>('/api/devices/revoke-others', { confirm: true }),
 
   // ── Packs (AGENT-PACKS §3.4/§9, AP-3) ──
   // The installed-pack ledger (each pack's components, connector resolutions +

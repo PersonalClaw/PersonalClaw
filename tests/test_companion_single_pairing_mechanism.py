@@ -130,9 +130,9 @@ def test_scanner_is_not_vacuous() -> None:
     for root in _SHARED_ROOTS:
         assert (_ROOT / root).is_dir(), f"{root} does not exist — every census below is vacuous"
     # A control pattern that IS present, proving a zero elsewhere means absence, not a broken
-    # scanner. `attach_device` is the device-provenance writer; `endpointSocketUrl` is the S3
-    # socket-URL helper the wrapper contract names.
-    assert _census("attach_device"), "control pattern missing — the Python census is broken"
+    # scanner. `issuer=ISSUER_PAIR` is the device-provenance writer (the pairing door's mint);
+    # `endpointSocketUrl` is the S3 socket-URL helper the wrapper contract names.
+    assert _census("issuer=ISSUER_PAIR"), "control pattern missing — the Python census is broken"
     assert _census("endpointSocketUrl"), "control pattern missing — the web census is broken"
     # The device-token pattern itself can match, and matches the shapes a symbol takes.
     for spelling in ("device_token", "deviceToken", "device-token", "DEVICE_TOKEN"):
@@ -172,12 +172,12 @@ def test_pairing_code_store_has_one_production_importer() -> None:
 
 
 def test_device_provenance_has_one_writer() -> None:
-    """Only the C2 route module names a paired device or writes its provenance."""
-    writers = {
-        path
-        for path in _census("attach_device(", ("src/personalclaw",))
-        if not path.endswith("session_store.py")  # its own definition site
-    }
+    """Only the C2 route module names a paired device or writes its provenance.
+
+    Pairing provenance is the door a session is minted through (``issuer=ISSUER_PAIR``), and
+    the pairing-only capabilities read exactly that — so one module may mint through it.
+    """
+    writers = set(_census("issuer=ISSUER_PAIR", ("src/personalclaw",)))
     assert writers == {
         "src/personalclaw/dashboard/handlers/devices.py"
     }, f"device provenance is written from more than one module: {sorted(writers)}"

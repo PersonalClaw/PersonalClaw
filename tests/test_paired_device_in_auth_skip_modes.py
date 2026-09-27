@@ -223,14 +223,16 @@ def test_presented_session_nonce_resolves_a_real_paired_session(_isolated) -> No
             self.cookies = cookies
             self.headers: dict[str, str] = {}
 
-    token = token_auth.generate_token(devices_h.PAIRED_DEVICE_USER, ttl_seconds=3600)
-    nonce = token_auth.token_nonce(token)
-    device = ss.DeviceInfo(id="abc123", name="Pixel", kind="mobile", minted_at=0.0)
-    assert ss.attach_device(nonce, device), "the fixture must persist a real device row"
+    device = ss.DeviceInfo(id="abc123", name="Pixel", kind="mobile")
+    minted = token_auth.mint_session(
+        devices_h.PAIRED_DEVICE_USER, 3600, issuer=ss.ISSUER_PAIR, device=device
+    )
+    assert minted.persisted, "the fixture must persist a real device row"
+    token, nonce = minted.token, minted.nonce
 
     assert token_auth.presented_session_nonce(_Req({COOKIE: token}), PORT) == nonce
-    record = ss.device_sessions().get(nonce)
-    assert record is not None and record.device is not None
+    record = ss.paired_sessions().get(nonce)
+    assert record is not None
     assert record.device.id == "abc123"
 
     # Fails CLOSED on everything the token does not prove.

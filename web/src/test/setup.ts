@@ -7,6 +7,7 @@ import { afterEach } from 'vitest'
 // `vi.mock('../../lib/data', …)` wholesale cannot replace it with a factory that has no
 // `resetDataStore` and take the whole suite down.
 import { resetDataStore } from '../lib/data/store'
+import { resetSignedOutForTests } from '../lib/signedOut'
 
 // `waitFor`'s default timeout is 1000 ms, and it was never raised when this suite's real
 // wall-clock was measured. #1675 raised vitest's `testTimeout` 5 s → 20 s on the finding that
@@ -75,4 +76,8 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
 //
 // Cold cache per test is also just the correct fixture — a test asserting a first paint should
 // not depend on which test ran before it.
-afterEach(() => { cleanup(); resetDataStore() })
+//
+// The tab's signed-out state (`lib/signedOut.ts`) is a module singleton for the same reason, and
+// a leaked one is worse than a warm cache: once set, the api client refuses every request
+// locally, so each later test in the file would fail on a request it never saw sent.
+afterEach(() => { cleanup(); resetDataStore(); resetSignedOutForTests() })

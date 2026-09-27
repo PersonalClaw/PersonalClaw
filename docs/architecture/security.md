@@ -77,15 +77,22 @@ permission model holds in every auth mode.
   the one `auth_bearer_invalid`, and no refusal echoes or audits the token. Only the
   Bearer scheme is the gateway's: another scheme in the same header (a reverse
   proxy's `Basic` login) is ignored, not refused.
-- `generate_token(user_id, ttl_seconds, app=...)` mints tokens with an
-  optional **`app` claim**; app-scoped tokens bound a request to that app's
-  declared permissions. In the Bearer header an app token only narrows the
-  owner session it is presented beside, for the same user.
+- `mint_session(user_id, ttl, issuer=...)` mints every session, naming the door it came
+  through (the startup link, the harness token, `personalclaw token`, a password, a device
+  code, a pairing, an app); `generate_token(user_id, ttl_seconds, app=...)` is the published
+  mint for the `token` door, with an optional **`app` claim**. App-scoped tokens bound a
+  request to that app's declared permissions. In the Bearer header an app token only narrows
+  the owner session it is presented beside, for the same user.
 - App backends never see the owner's credential: the reverse proxy strips
-  cookie + Authorization and injects a fresh 1-hour app-scoped token
+  cookie + Authorization and injects the app's own 1-hour app-scoped token
   (see [app-platform.md](app-platform.md#the-reverse-proxy--token-model)).
-- Session TTLs are capped (`MAX_SESSION_TTL_SECS`); nonces are registered and
-  evicted.
+- Session TTLs are capped (`MAX_SESSION_TTL_SECS`, a year, only when a caller asks for it;
+  browser sign-ins last `auth.session_ttl`, 30 days by default, and a token that names no
+  lifetime 20 hours). How many may be signed in is bounded per kind — 20 browsers, 20 paired
+  devices, 20 tokens, and each app separately — over the durable store, so the limit holds
+  across restarts, and the one it signs out is the least recently used of its own kind. Every
+  sign-in and sign-out is an SEL row (`session_signed_in` / `session_signed_out`, with the
+  reason), and a signed-out browser is told why on its next request.
 
 ### Webhook auth
 

@@ -22,7 +22,7 @@ from personalclaw.dashboard.origin import (
     dashboard_origin,
     parse_dashboard_url,
 )
-from personalclaw.dashboard.token_auth import parse_duration
+from personalclaw.dashboard.token_auth import duration_words, parse_duration
 from personalclaw.frontend import build_frontend_sync, ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -127,12 +127,46 @@ def _token(args: argparse.Namespace) -> None:
     print(f"http://localhost:{port}?token={token}")
     # On stderr, so stdout stays a list of URLs a script can open; a person running
     # `docker exec … personalclaw token` sees both.
+    lifetime = _token_lifetime_note(data)
+    if lifetime:
+        print(lifetime, file=sys.stderr)
     note = container_port_note(port)
     if note:
         print(note, file=sys.stderr)
     origin = dashboard_origin(AppConfig.load().dashboard.url)
     if origin and "localhost" not in origin:
         print(f"{origin}/?token={token}")
+
+
+def _token_lifetime_note(reply: dict) -> str:
+    """What the minted token is and how long it lasts, from the gateway's own numbers.
+
+    Empty when the gateway did not say (an older one still running beside a newer CLI):
+    stating a lifetime this side cannot know would be a guess.
+    """
+    try:
+        lasts = int(reply["expires_in"])
+        open_within = int(reply.get("open_within") or lasts)
+        until = time.strftime("%H:%M on %d %B", time.localtime(float(reply["expires_at"])))
+    except (KeyError, TypeError, ValueError):
+        return ""
+    if open_within >= lasts:
+        how = (
+            f"It works for {duration_words(lasts)}, until {until}: open it in a browser to sign "
+            "that browser in, or send the token after ?token= as an "
+            '"Authorization: Bearer" header from a script.'
+        )
+    else:
+        how = (
+            f"Open it in a browser within {duration_words(open_within)} to sign that browser in "
+            f"until {until}. From a script, send the token after ?token= as an "
+            f'"Authorization: Bearer" header; it works for {duration_words(lasts)}.'
+        )
+    return (
+        f"This is a sign-in link for your PersonalClaw dashboard. {how}\n"
+        "Treat it like a password: anyone who has it can use your dashboard. Settings → Devices "
+        "lists every sign-in, and signs any of them out."
+    )
 
 
 def _logout(port: int) -> None:

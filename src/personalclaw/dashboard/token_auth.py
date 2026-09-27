@@ -36,6 +36,29 @@ from aiohttp import web
 from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.dashboard.origin import is_loopback, is_private_network
 from personalclaw.dashboard.owner_token_url import script_tag as owner_token_script
+
+# The doors a session is issued through and the reasons one ends, re-exported so every mint
+# site and sign-out names them from this module. Constants and classes only: the store's
+# FUNCTIONS are imported where they are called, so a test that patches one is honoured.
+from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported doors, see above
+    END_EXPIRED,
+    END_LIMIT,
+    END_REASONS,
+    END_REPLACED,
+    END_SIGNED_OUT,
+    END_SIGNED_OUT_ELSEWHERE,
+    END_SIGNED_OUT_EVERYWHERE,
+    END_SIGNED_OUT_OTHERS,
+    ISSUER_APP,
+    ISSUER_ENROLL,
+    ISSUER_LOGIN,
+    ISSUER_PAIR,
+    ISSUER_READY,
+    ISSUER_STARTUP,
+    ISSUER_TOKEN,
+    DeviceInfo,
+    SessionRecord,
+)
 from personalclaw.sel import AUDIT_OUTCOME_SUCCESS
 from personalclaw.sel import sel as _sel_fn
 
@@ -128,8 +151,12 @@ _MAX_LAST_SEEN_TRACKED = 64
 class TokenStateManager:
     """Thread-safe manager for token authentication state.
 
-    Encapsulates all mutable token state (nonces, IP bindings, consumption)
-    with consistent locking. Uses OrderedDict for O(1) nonce eviction.
+    Encapsulates all mutable token state (nonces, IP bindings, consumption) with consistent
+    locking. The nonce set is a CACHE of the durable session store, not a policy: it answers
+    "is this session live?" without a file read, and it has no limit of its own beyond a
+    backstop. How many sessions of each kind may be signed in is decided in ONE place, over
+    the store (``session_store.POOL_CAPS``) — it used to be decided here, as five sessions
+    in total, which is how a script's sixth token signed the owner's phone out (ledger 255).
 
     Threading model: This class uses threading.Lock (not asyncio.Lock) because
     token operations are called from both async contexts (aiohttp middleware)
@@ -137,33 +164,34 @@ class TokenStateManager:
     is minimal (dict operations only), so blocking the event loop is negligible.
     """
 
-    def __init__(self, max_concurrent_nonces: int = 5) -> None:
+    def __init__(self, max_cached_sessions: int) -> None:
         self._lock = threading.Lock()
-        self._max_nonces = max_concurrent_nonces
-        # OrderedDict maintains insertion order for O(1) oldest eviction
+        self._max_nonces = max_cached_sessions
+        # Least recently used first, so the backstop forgets the idlest. Forgetting one is a
+        # cache miss (one file read on its next request), never a sign-out.
         self._nonces: OrderedDict[str, float] = OrderedDict()
         self._ip_bindings: dict[str, tuple[str, float]] = {}  # token → (ip, exp)
         self._consumed: dict[str, float] = {}  # token → exp
         # nonce → when we last ATTEMPTED a `last_seen` stamp. In-memory so the common request
         # is a dict lookup and never a file read; see `_touch_last_seen`.
         self._last_seen_touched: dict[str, float] = {}
+        # nonce → the (ip, user agent, browser carrier) last noted, so an unchanged client
+        # costs a dict lookup rather than a file read; see `note_session_client`.
+        self._client_noted: dict[str, tuple[str, str, bool]] = {}
 
-    def register_nonce(self, nonce: str, expiry: float) -> str | None:
-        """Register a nonce with its expiry time, evicting oldest if over limit."""
+    def register_nonce(self, nonce: str, expiry: float) -> None:
+        """Cache a live nonce with its expiry."""
         with self._lock:
             self._nonces[nonce] = expiry
-            self._nonces.move_to_end(nonce)  # Most recent at end
-            if len(self._nonces) > self._max_nonces:
-                evicted, _ = self._nonces.popitem(last=False)
-                return evicted
-            return None
+            self._nonces.move_to_end(nonce)
+            while len(self._nonces) > self._max_nonces:
+                self._nonces.popitem(last=False)
 
     def is_nonce_valid(self, nonce: str) -> tuple[bool, str]:
         """Check if nonce is valid. Returns (valid, reason).
 
-        Deny-by-default: rejects if the nonce is in neither the in-memory set nor the durable
-        store. Refreshes the nonce's eviction position on each successful check so that
-        actively-used sessions are not evicted by newer token grants.
+        Deny-by-default: rejects if the nonce is live in neither the in-memory cache nor the
+        durable store.
 
         **The durable fallback is what makes a persisted signing key useful** (S1). With the
         key alone, a token minted before a restart would verify its signature and then be
@@ -171,11 +199,15 @@ class TokenStateManager:
         a more confusing reason. A signature check without a live session record is not
         enough to authorize; a session record is the second half of the same fix.
         """
+        now = time.time()
         with self._lock:
-            in_memory = nonce in self._nonces
-            if in_memory:
+            expiry = self._nonces.get(nonce)
+            live = expiry is not None and expiry > now
+            if live:
                 self._nonces.move_to_end(nonce)
-        if in_memory:
+            elif expiry is not None:
+                self._nonces.pop(nonce, None)
+        if live:
             # Outside the lock: the stamp takes it again, and it must never gate the verdict.
             self._touch_last_seen(nonce)
             return True, ""
@@ -183,17 +215,20 @@ class TokenStateManager:
         # Not in memory: consult the durable store before refusing. A hit means this process
         # restarted (or never saw the mint), NOT that the session is invalid.
         try:
-            from personalclaw.dashboard.session_store import load_sessions
+            from personalclaw.dashboard.session_store import ended_session, load_sessions
 
             stored = load_sessions()
+            ended = ended_session(nonce) if nonce not in stored else None
         except Exception:  # noqa: BLE001 — an unreadable store means "no session", fail closed
             logger.debug("session store unreadable during nonce check", exc_info=True)
-            stored = {}
+            stored, ended = {}, None
         expiry = stored.get(nonce)
         if expiry is None:
+            if ended is not None:
+                return False, "session expired" if ended.reason == END_EXPIRED else "signed out"
             with self._lock:
-                return False, "no active sessions" if not self._nonces else "token superseded"
-        if expiry <= time.time():
+                return False, "no active sessions" if not self._nonces else "session not found"
+        if expiry <= now:
             return False, "session expired"
         # Adopt it into memory so subsequent checks are lock-only, and so eviction ordering
         # treats a restored session like any other active one.
@@ -301,28 +336,43 @@ class TokenStateManager:
         """
         with self._lock:
             existed = self._nonces.pop(nonce, None) is not None
+            self._client_noted.pop(nonce, None)
             if token:
                 self._ip_bindings.pop(token, None)
                 self._consumed.pop(token, None)
             return existed
 
+    def client_already_noted(self, nonce: str, client: tuple[str, str, bool]) -> bool:
+        """True when *client* is what was last noted for *nonce*; records it otherwise."""
+        with self._lock:
+            if self._client_noted.get(nonce) == client:
+                return True
+            self._client_noted[nonce] = client
+            if len(self._client_noted) > _MAX_LAST_SEEN_TRACKED:
+                self._client_noted.pop(next(iter(self._client_noted)), None)
+            return False
+
     def clear_all(self) -> None:
-        """Clear all token state (nonces, IP bindings, consumed tokens, last-seen throttle)."""
+        """Clear all token state (nonces, IP bindings, consumed tokens, both throttles)."""
         with self._lock:
             self._nonces.clear()
             self._ip_bindings.clear()
             self._consumed.clear()
-            # The throttle is in-memory state like the rest: a restart must forget it, so the
-            # first authorized request after one stamps instead of being suppressed by a
+            # The throttles are in-memory state like the rest: a restart must forget them, so
+            # the first authorized request after one stamps instead of being suppressed by a
             # timestamp from the previous process.
             self._last_seen_touched.clear()
+            self._client_noted.clear()
 
 
-# Maximum concurrent valid tokens before oldest is evicted
-MAX_CONCURRENT_NONCES = 5
+def _cache_bound() -> int:
+    from personalclaw.dashboard.session_store import MAX_SESSIONS
+
+    return MAX_SESSIONS
+
 
 # Module-level singleton instance
-_state: TokenStateManager = TokenStateManager(max_concurrent_nonces=MAX_CONCURRENT_NONCES)
+_state: TokenStateManager = TokenStateManager(max_cached_sessions=_cache_bound())
 
 _BYPASS_PREFIXES = ("/assets/", "/fonts/", "/sprites/", "/vendor/")
 _BYPASS_EXACT = {"/claw.svg", "/api/token/local", "/api/healthz"}
@@ -392,7 +442,7 @@ _BYPASS_EXACT.add("/api/mcp/oauth/callback")
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.
 LINK_WINDOW_SECS = 24 * 3600
-# Maximum session TTL — sessions effectively never expire for local installs.
+
 #: Query params this module CONSUMES as credentials, so they are not the handler's arguments.
 #:
 #: ``?token=`` is the query-token auth path and ``?app_token=`` the app-narrowing token of the
@@ -419,8 +469,8 @@ ERR_BEARER_INVALID = "auth_bearer_invalid"
 #: right one to pick, so neither is.
 ERR_CREDENTIAL_CONFLICT = "auth_credential_conflict"
 
-# The cookie is re-issued on every page load via the session renewal path so
-# the clock only matters for completely idle browsers.
+# The longest any session may last — reachable only when a caller ASKS for it (a
+# `personalclaw token --ttl 8760h` automation token), never as a default.
 MAX_SESSION_TTL_SECS = 365 * 24 * 3600  # 1 year
 
 # Default BROWSER session lifetime (owner ruling, REMOTE-USER-AUTH S1).
@@ -429,12 +479,27 @@ MAX_SESSION_TTL_SECS = 365 * 24 * 3600  # 1 year
 # restart wiped them, so the number never really applied. Now that they survive restarts, a
 # 1-year default would mean a browser cookie that outlives the reason it was issued, and a
 # stolen one stays good for a year. 30 days is long enough that a daily-driven instance never
-# prompts you, short enough that an abandoned session ages out.
+# prompts you, short enough that an abandoned session ages out. `auth.session_ttl` overrides
+# it, for every door a browser signs in through (:func:`browser_session_ttl`).
 #
 # The 1-year cap REMAINS reachable, but only when a caller asks for it explicitly — that is
 # the CLI/automation token case (`personalclaw token`), where re-minting is manual and the
 # user chose the lifetime.
 DEFAULT_BROWSER_SESSION_TTL_SECS = 30 * 24 * 3600  # 30 days
+
+#: What a token lasts when its caller names no lifetime: `personalclaw token`'s documented
+#: `--ttl 20h`, and `/api/token/local` without `?ttl=` (which used to hand out a YEAR).
+DEFAULT_TOKEN_TTL_SECS = 20 * 3600
+
+#: An app-scoped token's lifetime. Short, so a leaked one has a small blast radius.
+APP_TOKEN_TTL_SECS = 3600
+
+#: How long a session cookie outlives its session. The gateway refuses the cookie the moment
+#: the signed ``session_exp`` passes — this only keeps the browser SENDING it, because a
+#: browser drops a cookie at its Max-Age, and a gateway that never sees the expired cookie
+#: cannot tell that device its sign-in ended, or when, or how to sign back in (ledger 255).
+SIGNED_OUT_NOTICE_GRACE_SECS = 7 * 86400
+
 
 _403_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' "
@@ -499,8 +564,8 @@ _403_HTML = (
     "<stop offset='0.75' stop-color='#c597ff'/><stop offset='1' stop-color='#d8627e'/>"
     "</linearGradient></defs>"
     "<path fill='url(#cg)' d='M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z'/></svg></div>"  # noqa: E501
-    "<h1>403 — {reason}</h1>"
-    "<p>Run <code>personalclaw token</code> in your terminal, then paste the URL below.</p>"
+    "<h1>{heading}</h1>"
+    "<p>{explanation}</p>"
     "<input id='u' type='text' placeholder='Paste token URL or raw token…' autofocus>"
     "<button onclick='go()'>Connect</button>"
     "<div class='err' id='e'>Invalid URL</div>"
@@ -536,60 +601,202 @@ def _sign(payload: bytes) -> str:
     return _b64url_encode(hmac.new(_secret(), payload, hashlib.sha256).digest())
 
 
-def generate_token(user_id: str, ttl_seconds: int = 3600, *, app: str = "") -> str:
-    """Return ``base64url(payload).base64url(signature)``.
+@dataclass(frozen=True)
+class MintedSession:
+    """One freshly minted session: the token, and the facts a caller states about it."""
 
-    The token carries two expiry times:
-    - ``exp``: link click window (5 minutes) — URL must be opened before this
-    - ``session_exp``: cookie session TTL (capped at 20 hours)
+    token: str
+    nonce: str
+    #: The public handle Settings → Devices lists it under (never the nonce).
+    session_id: str
+    #: When it was minted — the signed ``iat``.
+    issued_at: float
+    #: When the session ends — the signed ``session_exp``.
+    expires_at: float
+    #: Until when the token can be OPENED as a ``?token=`` link to sign a browser in.
+    open_until: float
+    #: Whether the session reached the durable store (and so the list, and a restart).
+    persisted: bool
 
-    When *app* is provided, the token payload includes ``"app": app`` so
-    downstream middleware can extract the verified app identity.
+    @property
+    def lifetime_secs(self) -> int:
+        return round(self.expires_at - self.issued_at)
 
-    Up to ``_MAX_CONCURRENT_NONCES`` tokens can be valid concurrently.
-    When the limit is exceeded, the oldest nonce is evicted (O(1) via OrderedDict).
+    @property
+    def open_within_secs(self) -> int:
+        return round(self.open_until - self.issued_at)
+
+
+def mint_session(
+    user_id: str,
+    ttl_seconds: int,
+    *,
+    issuer: str,
+    device: DeviceInfo | None = None,
+    app: str = "",
+) -> MintedSession:
+    """Mint a session through the door *issuer* names, and record it.
+
+    Every door that hands out a session calls this, naming itself — the gateway's startup link
+    and harness token, ``/api/token/local`` (``personalclaw token``, ``personalclaw run``,
+    scripts), a password sign-in, a device code, a pairing, and an app's scoped token. The door
+    decides the limit the session counts against (``session_store.pool_of``), and *device* is
+    the client when the door knows it (a sign-in, a pairing); a link learns its client the
+    first time something opens it.
+
+    The token carries two expiry times, both signed:
+
+    * ``exp`` — until when it can be opened as a ``?token=`` link: the link window
+      (:data:`LINK_WINDOW_SECS`, 24 hours) or its whole lifetime, whichever is sooner;
+    * ``session_exp`` — when the session ends, at most :data:`MAX_SESSION_TTL_SECS`.
+
+    Recording the session enforces its kind's limit, and every session that limit signs out
+    is dropped from memory and written to the SEL as a sign-out, naming the reason. Every
+    sign-in but an app token's is written to the SEL too (an app token only narrows a session
+    that already signed in; one row per app request was the log flood of ledger 67).
+    Persistence is best-effort — a token whose row could not be written still works for this
+    process's lifetime, which is strictly better than refusing to issue one — and a caller for
+    which it is not (pairing) reads ``persisted``.
     """
+    from personalclaw.dashboard.session_store import new_device_id, remember_session
+
     _evict_expired()
     now = time.time()
     nonce = os.urandom(8).hex()
-    session_ttl = min(ttl_seconds, MAX_SESSION_TTL_SECS)
+    session_ttl = max(1, min(int(ttl_seconds), MAX_SESSION_TTL_SECS))
+    expires_at = now + session_ttl
+    open_until = now + min(LINK_WINDOW_SECS, session_ttl)
+    device = device or DeviceInfo(id=new_device_id(), minted_at=now)
+    if not device.minted_at:
+        device.minted_at = now
 
-    evicted = _state.register_nonce(nonce, now + session_ttl)
-    # Persist the session so it survives a restart (S1). Best-effort: a store that cannot be
-    # written must not fail the mint — the token still works for this process's lifetime,
-    # which is strictly better than refusing to issue one at all.
+    _state.register_nonce(nonce, expires_at)
+    persisted = False
     try:
-        from personalclaw.dashboard.session_store import forget_session, remember_session
-
-        remember_session(nonce, now + session_ttl)
-        if evicted:
-            # Keep the durable store in step with the in-memory eviction, or the file would
-            # accumulate sessions the running process has already forgotten.
-            forget_session(evicted)
+        remembered = remember_session(nonce, expires_at, issuer=issuer, device=device, app=app)
+        persisted = remembered.persisted
+        _signed_out(remembered.evicted, END_LIMIT, actor=user_id)
     except Exception:  # noqa: BLE001
         logger.debug("could not persist the minted session", exc_info=True)
-    if evicted:
-        _sel_fn().log_api_access(
-            caller=user_id,
-            operation="nonce_evicted",
-            outcome="ok",
-            source="token_auth",
-            resources=f"evicted_nonce={evicted}",
-        )
 
     payload_dict: dict[str, object] = {
         "sub": user_id,
-        "exp": now + LINK_WINDOW_SECS,
-        "session_exp": now + session_ttl,
+        "exp": open_until,
+        "session_exp": expires_at,
         "iat": now,
         "nonce": nonce,
     }
     if app:
         payload_dict["app"] = app
     payload = json.dumps(payload_dict, separators=(",", ":")).encode()
-    encoded_payload = _b64url_encode(payload)
-    signature = _sign(payload)
-    return f"{encoded_payload}.{signature}"
+    token = f"{_b64url_encode(payload)}.{_sign(payload)}"
+
+    if issuer != ISSUER_APP:
+        _audit_session(
+            "session_signed_in",
+            caller=user_id,
+            session_id=device.id,
+            issuer=issuer,
+            kind=device.kind,
+            extra={"expires_at": expires_at, "lifetime_secs": session_ttl},
+        )
+    return MintedSession(
+        token=token,
+        nonce=nonce,
+        session_id=device.id,
+        issued_at=now,
+        expires_at=expires_at,
+        open_until=open_until,
+        persisted=persisted,
+    )
+
+
+def client_of(request: Any) -> DeviceInfo:
+    """The client behind *request*, for a door that mints a session in answer to it.
+
+    Named and kinded from the User-Agent (``session_store.describe_user_agent``), placed at
+    the connection's address; ``last_seen`` stays 0.0 until it makes an authorized request.
+    """
+    from personalclaw.dashboard.session_store import (
+        describe_user_agent,
+        new_device_id,
+        sanitize_device_kind,
+        sanitize_device_name,
+    )
+
+    headers = getattr(request, "headers", None) or {}
+    name, kind = describe_user_agent(str(headers.get("User-Agent") or ""))
+    return DeviceInfo(
+        id=new_device_id(),
+        name=sanitize_device_name(name),
+        kind=sanitize_device_kind(kind),
+        ip=str(getattr(request, "remote", "") or "")[:64],
+    )
+
+
+def generate_token(user_id: str, ttl_seconds: int = 3600, *, app: str = "") -> str:
+    """Return ``base64url(payload).base64url(signature)`` — a token for the ``token`` door.
+
+    The published mint (``personalclaw.sdk.channel``): an app's "open the dashboard" link
+    and every caller that is not one of the gateway's own doors. With *app*, the token is
+    app-scoped (its ``app`` claim narrows a session to that app's permissions). See
+    :func:`mint_session` for the two expiry times and the per-kind limit.
+    """
+    return mint_session(
+        user_id, ttl_seconds, issuer=ISSUER_APP if app else ISSUER_TOKEN, app=app
+    ).token
+
+
+#: ``(user, app)`` → ``(token, nonce, expires_at)``: the app-scoped token each app is using.
+_APP_TOKENS: dict[tuple[str, str], tuple[str, str, float]] = {}
+_APP_TOKENS_LOCK = threading.Lock()
+
+
+def app_session_token(user_id: str, app: str) -> tuple[str, float]:
+    """``(token, expires_at)`` — the app-scoped token *app* uses for *user_id*, re-minted at
+    half its life.
+
+    Its three consumers — the app SDK's mount (``POST /api/apps/{name}/token``), the reverse
+    proxy in front of an app's backend, and an agent's call to an app route — each used to
+    mint a FRESH token, the proxy on every request. Every mint is a session, so an app page
+    making a handful of backend calls signed the owner's other devices out (ledger 255); with
+    a limit per app it would instead push out the app's OWN earlier tokens, including the one
+    its SDK holds. One live token per user and app, reused while it has more than half its
+    hour left, is the same identity and the same narrowing without either.
+    """
+    now = time.time()
+    key = (user_id, app)
+    with _APP_TOKENS_LOCK:
+        cached = _APP_TOKENS.get(key)
+    if cached is not None:
+        token, nonce, expires_at = cached
+        if expires_at - now > APP_TOKEN_TTL_SECS / 2 and _state.is_nonce_valid(nonce)[0]:
+            return token, expires_at
+    minted = mint_session(user_id, APP_TOKEN_TTL_SECS, issuer=ISSUER_APP, app=app)
+    with _APP_TOKENS_LOCK:
+        _APP_TOKENS[key] = (minted.token, minted.nonce, minted.expires_at)
+    return minted.token, minted.expires_at
+
+
+def browser_session_ttl(auth_cfg: Any = None) -> int:
+    """How long a BROWSER sign-in lasts: ``auth.session_ttl``, 30 days by default.
+
+    One answer for every door a browser signs in through — a password, a device code, a
+    pairing, and the link the gateway prints and opens at startup (and its harness twin), which
+    used to hard-code 30 days and ignore the setting.
+    """
+    if auth_cfg is None:
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            auth_cfg = AppConfig.load().auth
+        except Exception:  # noqa: BLE001 — an unreadable config gets the documented default
+            logger.debug("could not read auth.session_ttl", exc_info=True)
+            return DEFAULT_BROWSER_SESSION_TTL_SECS
+    configured = str(getattr(auth_cfg, "session_ttl", "") or "")
+    if not configured:
+        return DEFAULT_BROWSER_SESSION_TTL_SECS
+    return parse_config_duration(configured, default_secs=DEFAULT_BROWSER_SESSION_TTL_SECS)
 
 
 def validate_token(token: str, *, use_session_exp: bool = False) -> tuple[bool, str, str]:
@@ -616,8 +823,12 @@ def validate_token(token: str, *, use_session_exp: bool = False) -> tuple[bool, 
         data = json.loads(payload_bytes)
     except Exception:
         return False, "", "invalid payload"
-    exp_field = "session_exp" if use_session_exp else "exp"
-    if time.time() > data.get(exp_field, data.get("exp", 0)):
+    session_exp = data.get("session_exp", data.get("exp", 0))
+    # A link (`?token=`) must be opened inside its click window AND inside its session: this
+    # checked only the 24-hour window, so a 1-hour token opened as a link after its hour still
+    # signed a browser in for as long as this process remembered the nonce.
+    deadline = session_exp if use_session_exp else min(data.get("exp", 0), session_exp)
+    if time.time() > deadline:
         return False, "", "token expired"
     # Validate nonce is still in the valid set (not evicted due to limit)
     token_nonce = data.get("nonce", "")
@@ -648,6 +859,166 @@ def validate_token_with_app(
     except Exception:
         pass
     return valid, user_id, reason, app_name
+
+
+@dataclass(frozen=True)
+class SignedOutNotice:
+    """What a device whose session ended is told: why, when, and how to sign back in.
+
+    Only ever built for a token whose SIGNATURE verified, so it goes only to a device that
+    really held the session. ``message`` is product copy composed here, where the facts are;
+    every surface that shows it (the SPA, the paste-token gate, the sign-in page) shows it
+    verbatim rather than keeping a second wording of its own.
+    """
+
+    code: str  # the wire code: `session_signed_out` or `session_expired`
+    reason: str  # an `END_*` reason, or "expired"
+    at: float  # when it ended
+    message: str
+
+
+#: The registered wire codes of a signed-out refusal (``http_errors.HTTP_ERROR_CODES``).
+ERR_SESSION_SIGNED_OUT = "session_signed_out"
+ERR_SESSION_EXPIRED = "session_expired"
+
+#: What each limit counts, as the sentence names it.
+_POOL_NOUNS = {"device": "paired devices", "browser": "browsers", "token": "tokens"}
+
+
+def duration_words(secs: float) -> str:
+    """``30 days`` / ``20 hours`` / ``1 hour`` / ``45 minutes`` / ``1 second`` — how every
+    surface that states a session's lifetime words it (the gateway banner, `personalclaw
+    token`, the signed-out sentence)."""
+    secs = max(0, round(secs))
+    # Days from two days up (a day is "24 hours", which is how a link window reads); hours and
+    # minutes from two of them up, or exactly one.
+    if secs >= 2 * 86400:
+        count = round(secs / 86400)
+        return f"{count} days"
+    for unit, size in (("hour", 3600), ("minute", 60)):
+        if secs >= 2 * size or secs == size:
+            count = round(secs / size)
+            return f"{count} {unit}{'' if count == 1 else 's'}"
+    return f"{secs} second{'' if secs == 1 else 's'}"
+
+
+def _when_words(ts: float, now: float | None = None) -> str:
+    """``today at 09:14`` / ``yesterday at 09:14`` / ``on 27 September at 09:14``.
+
+    In this machine's local time — the gateway's owner is the reader, on the same machine or
+    the same network — and absolute, so the sentence stays true however long it is read after.
+    """
+    now = time.time() if now is None else now
+    moment = time.localtime(ts)
+    clock = time.strftime("%H:%M", moment)
+    today = time.localtime(now)
+    if (moment.tm_year, moment.tm_yday) == (today.tm_year, today.tm_yday):
+        return f"today at {clock}"
+    yesterday = time.localtime(now - 86400)
+    if (moment.tm_year, moment.tm_yday) == (yesterday.tm_year, yesterday.tm_yday):
+        return f"yesterday at {clock}"
+    year = f" {moment.tm_year}" if moment.tm_year != today.tm_year else ""
+    return f"on {moment.tm_mday} {time.strftime('%B', moment)}{year} at {clock}"
+
+
+def _how_to_sign_back_in(via: str) -> str:
+    """The door back in for a session that came through *via*, given what this gateway offers."""
+    password = _login_offered()
+    if via in (ISSUER_PAIR, ISSUER_ENROLL):
+        pair = (
+            "To sign it back in, open Settings → Devices on a device that is still signed in "
+            "and choose Pair a device"
+        )
+        return f"{pair}, or sign in with your password." if password else f"{pair}."
+    if password:
+        return "Sign in again with your password."
+    return (
+        "To sign back in, run `personalclaw token` on the computer running PersonalClaw and "
+        "open the link it prints here."
+    )
+
+
+def signed_out_notice(token: str) -> SignedOutNotice | None:
+    """Why the session *token* names is no longer signed in — or *None* when that is not
+    something this token's holder may be told.
+
+    *None* for anything that is not a genuine token of this gateway (a bad signature, a
+    malformed or empty string) and for a session nobody remembers ending: those keep the
+    plain refusal they always had, so a forger learns nothing from the answer.
+    """
+    parts = (token or "").split(".", 1)
+    if len(parts) != 2:
+        return None
+    encoded_payload, sig = parts
+    try:
+        payload_bytes = _b64url_decode(encoded_payload)
+        if not sig.isascii() or not hmac.compare_digest(sig, _sign(payload_bytes)):
+            return None
+        data = json.loads(payload_bytes)
+    except Exception:  # noqa: BLE001 — anything unverifiable gets no explanation
+        return None
+    if not isinstance(data, dict):
+        return None
+    from personalclaw.dashboard.session_store import POOL_CAPS, ended_session
+
+    nonce = str(data.get("nonce") or "")
+    ended = ended_session(nonce)
+    via = ended.issuer if ended is not None else ""
+    device = "This browser" if ended is not None and ended.kind == "browser" else "This device"
+    if ended is not None and ended.reason != END_EXPIRED:
+        when = _when_words(ended.at)
+        pool = _pool_of_ended(ended)
+        why = {
+            END_SIGNED_OUT: f"{device} signed out {when}.",
+            END_SIGNED_OUT_ELSEWHERE: (
+                f"{device} was signed out {when} from Settings → Devices on another device."
+            ),
+            END_SIGNED_OUT_OTHERS: (
+                f"{device} was signed out {when}, when another device chose "
+                "“Sign out all other devices”."
+            ),
+            END_SIGNED_OUT_EVERYWHERE: (
+                f"Every device was signed out {when}, from the computer running PersonalClaw."
+            ),
+            END_REPLACED: (
+                f"This browser signed in again {when} with a newer link, which ended this "
+                "earlier sign-in."
+            ),
+            END_LIMIT: (
+                f"{device} was signed out {when} because more than {POOL_CAPS.get(pool, 0)} "
+                f"{_POOL_NOUNS.get(pool, 'sessions')} were signed in, and it was the one used "
+                "least recently."
+            ),
+        }[ended.reason]
+        return SignedOutNotice(
+            code=ERR_SESSION_SIGNED_OUT,
+            reason=ended.reason,
+            at=ended.at,
+            message=f"{why} {_how_to_sign_back_in(via)}",
+        )
+    session_exp = float(data.get("session_exp") or 0.0)
+    if session_exp and session_exp <= time.time():
+        lasted = duration_words(session_exp - float(data.get("iat") or session_exp))
+        return SignedOutNotice(
+            code=ERR_SESSION_EXPIRED,
+            reason=END_EXPIRED,
+            at=session_exp,
+            message=(
+                f"Your sign-in on this device lasted {lasted} and ended "
+                f"{_when_words(session_exp)}. {_how_to_sign_back_in(via)}"
+            ),
+        )
+    return None
+
+
+def _pool_of_ended(ended: Any) -> str:
+    """The limit an ended session counted against, from what its ending recorded."""
+    from personalclaw.dashboard.session_store import pool_of
+
+    record = SessionRecord(
+        expiry=ended.expiry, issuer=ended.issuer, device=DeviceInfo(id="", kind=ended.kind)
+    )
+    return pool_of(record)
 
 
 def token_nonce(token: str) -> str:
@@ -702,7 +1073,9 @@ class _Credentials:
     carrier brought it (``query`` / ``header`` / ``cookie``); ``app`` is the app the request is
     scoped to, from the token's own claim or an app token layered over an owner session. A
     refusal carries either ``error_code`` (a stable wire code, for the Bearer's refusals) or
-    ``reason`` (the prose reason ``_deny`` has always answered with).
+    ``reason`` (the prose reason ``_deny`` has always answered with), and — when the refused
+    token is genuine and its session is known to have ended — ``notice``, the sentence that
+    tells the device why and how to sign back in.
     """
 
     token: str = ""
@@ -711,6 +1084,7 @@ class _Credentials:
     app: str = ""
     error_code: str = ""
     reason: str = ""
+    notice: SignedOutNotice | None = None
 
     @property
     def valid(self) -> bool:
@@ -744,7 +1118,9 @@ def _select_request_credentials(request: Any, port: int) -> _Credentials:
     * then the cookie.
     * A Bearer with none of those to stand on is refused with the one stable
       ``auth_bearer_invalid`` — an app token included, because in the header an app token
-      only NARROWS an owner session and never stands in for one.
+      only NARROWS an owner session and never stands in for one. The Bearer's refusal stays
+      that one code on purpose, with no signed-out sentence: it says nothing about which
+      failure it was. The browser carriers (the link and the cookie) get the sentence.
 
     Layered app identity (the untrusted-app sandbox, P1) then applies unchanged: an app's SDK
     sends the owner cookie PLUS its own app-scoped token — in the Bearer header (fetch) or as
@@ -782,7 +1158,7 @@ def _select_request_credentials(request: Any, port: int) -> _Credentials:
             token, use_session_exp=source != "query"
         )
     if not valid:
-        return _Credentials(reason=reason)
+        return _Credentials(reason=reason, notice=signed_out_notice(token))
 
     if not app:
         layered = (bearer if source != "header" else "") or request.query.get("app_token", "")
@@ -814,11 +1190,43 @@ def presented_session_nonce(request: Any, port: int) -> str:
     the SAME :func:`_select_request_credentials` the strict path uses — so a session carried in
     the ``Authorization`` header is named exactly like one carried in the cookie — and an
     absent, forged, expired or conflicting credential yields ``""``, so every consumer keeps
-    its stricter branch. Validation also stamps the device's ``last_seen``, exactly as it does
-    on the authenticated path.
+    its stricter branch. Validation also stamps the device's ``last_seen``, and the client is
+    noted (:func:`note_session_client`), exactly as on the authenticated path.
     """
     credentials = _select_request_credentials(request, port)
-    return token_nonce(credentials.token) if credentials.valid else ""
+    if not credentials.valid:
+        return ""
+    nonce = token_nonce(credentials.token)
+    note_session_client(nonce, request, credentials.source)
+    return nonce
+
+
+def note_session_client(nonce: str, request: Any, source: str, *, ip: str = "") -> None:
+    """Record where the client of an AUTHORIZED request was seen from, and what it is.
+
+    What Settings → Devices shows as "where" and as the device's kind and name, and what
+    moves a link from the token limit to the browser limit once a browser opens it. The
+    common request — the same client again — is a dict lookup; the store is read only when
+    something about the client changed. *ip* is the address the middleware resolved (a
+    trusted proxy's ``X-Real-IP``); without one, the connection's. Never raises and never
+    affects the verdict.
+    """
+    if not nonce:
+        return
+    try:
+        ip = ip or str(getattr(request, "remote", "") or "")
+        headers = getattr(request, "headers", None) or {}
+        user_agent = str(headers.get("User-Agent") or "")[:256]
+        client = (ip, user_agent, source in ("query", "cookie"))
+        if _state.client_already_noted(nonce, client):
+            return
+        from personalclaw.dashboard.session_store import note_client
+
+        note = note_client(nonce, ip=ip, user_agent=user_agent, browser_carrier=client[2])
+        if note.evicted:
+            _signed_out(note.evicted, END_LIMIT, actor="system")
+    except Exception:  # noqa: BLE001 — a note must never deny an authorized request
+        logger.debug("could not note the client of an authorized session", exc_info=True)
 
 
 def _evict_expired() -> None:
@@ -854,12 +1262,83 @@ def try_consume(token: str, session_exp: float = 0.0) -> bool:
     return _state.try_consume(token, session_exp or time.time() + MAX_SESSION_TTL_SECS)
 
 
+def _audit_session(
+    operation: str,
+    *,
+    caller: str,
+    session_id: str,
+    issuer: str,
+    kind: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """One SEL row for a session's start or end. Never the nonce or the token — the public
+    handle is what names it, the same one Settings → Devices shows. Never raises."""
+    metadata: dict[str, Any] = {"session": session_id, "issuer": issuer, "kind": kind}
+    metadata.update(extra or {})
+    detail = f" reason={metadata['reason']}" if "reason" in metadata else ""
+    try:
+        _sel_fn().log_api_access(
+            caller=caller or "system",
+            operation=operation,
+            outcome="ok",
+            source="token_auth",
+            resources=f"session={session_id} issuer={issuer}{detail}",
+            metadata=metadata,
+        )
+    except Exception:  # noqa: BLE001 — the audit must not break a sign-in or a sign-out
+        logger.warning("could not record a session event in the SEL", exc_info=True)
+
+
+def _signed_out(ended: Any, reason: str, *, actor: str) -> int:
+    """Finish ending *ended* (``(nonce, record)`` pairs the store already ended): drop each
+    from memory, and record each in the SEL — except app tokens, which are not sign-ins."""
+    count = 0
+    for nonce, record in ended:
+        _state.revoke_nonce(nonce)
+        count += 1
+        if record.issuer == ISSUER_APP:
+            continue
+        _audit_session(
+            "session_signed_out",
+            caller=actor,
+            session_id=record.device.id,
+            issuer=record.issuer,
+            kind=record.device.kind,
+            extra={"reason": reason},
+        )
+    return count
+
+
+def sign_out(nonces: list[str], reason: str, *, actor: str) -> int:
+    """End each of *nonces*, remembering *reason* for the device that held it. Returns how
+    many were live.
+
+    THE one way a session ends early — a device signing itself out, the owner signing one out
+    (or all the others) from Settings → Devices, ``personalclaw logout``, the per-kind limit
+    and a browser that signed in again. Each is dropped from memory **and** from the durable
+    store: memory alone lets the session return at the next restart, the store alone lets it
+    keep working until then. And each is remembered with its reason, which is what lets the
+    device that held it be told why on its next request instead of reading a bare 403.
+    """
+    if reason not in END_REASONS:
+        raise ValueError(f"unknown end reason {reason!r}")
+    from personalclaw.dashboard.session_store import end_sessions
+
+    live = [n for n in nonces if n]
+    try:
+        ended = end_sessions(live, reason)
+    except Exception:  # noqa: BLE001 — memory must still forget them; say that it could not
+        logger.warning("could not end the sessions in the durable store", exc_info=True)
+        for nonce in live:
+            _state.revoke_nonce(nonce)
+        return 0
+    return _signed_out(ended, reason, actor=actor)
+
+
 def revoke_all_sessions() -> None:
-    """Revoke all active dashboard sessions (also used for test isolation).
+    """Sign every session out, everywhere (``personalclaw logout``; also test isolation).
 
-    Emits a SEL audit event before clearing state so the revocation is recorded.
-
-    **Clears the DURABLE store too, not just memory** (S1). This is the security half of
+    **Ends them in the DURABLE store too, not just memory** (S1). This is the security half of
     persisting sessions: with only the in-memory clear, a revoked token would be rejected
     until the next restart and then accepted again, because `is_nonce_valid` would find its
     nonce still recorded on disk. "Revoke" that un-revokes itself on reboot is worse than no
@@ -867,20 +1346,17 @@ def revoke_all_sessions() -> None:
     `test_token_rejected_when_no_nonces_registered`, which is exactly the assertion that
     should notice.
     """
-    _sel_fn().log_api_access(
-        caller="system",
-        operation="dashboard_sessions_revoked",
-        outcome="ok",
-        source="token_auth",
-        resources="action=revoke_all",
-    )
-    _state.clear_all()
     try:
-        from personalclaw.dashboard.session_store import clear_sessions
+        from personalclaw.dashboard.session_store import load_session_records
 
-        clear_sessions()
+        nonces = list(load_session_records())
     except Exception:  # noqa: BLE001
-        logger.warning("could not clear the durable session store during revoke", exc_info=True)
+        logger.warning("could not read the durable session store during revoke", exc_info=True)
+        nonces = []
+    sign_out(nonces, END_SIGNED_OUT_EVERYWHERE, actor="system")
+    _state.clear_all()
+    with _APP_TOKENS_LOCK:
+        _APP_TOKENS.clear()
 
 
 def secure_cookies() -> bool:
@@ -902,49 +1378,24 @@ def secure_cookies() -> bool:
         return False
 
 
-def revoke_token(token: str) -> bool:
-    """Revoke the ONE session *token* belongs to (logout). Returns whether it was live.
+def revoke_token(token: str, *, actor: str = "owner") -> bool:
+    """Sign out the ONE session *token* belongs to (logout). Returns whether it was live.
 
-    Clears the nonce from memory **and** from the durable store. The second half is the
-    security-relevant one: with only the in-memory drop, a logged-out session would be
-    refused until the next restart and then accepted again, because `is_nonce_valid` would
-    still find its nonce on disk — the same class of bug S1's `revoke_all_sessions` fixed.
-
-    Note this revokes the SESSION, not just the presented string: any other copy of the same
-    token dies with it, which is what a user pressing "log out" means.
+    Note this ends the SESSION, not just the presented string: any other copy of the same
+    token dies with it, which is what a user pressing "sign out" means.
     """
     nonce = token_nonce(token)
     if not nonce:
         return False  # a malformed token has no session to revoke
-
-    existed = _state.revoke_nonce(nonce, token)
-    try:
-        from personalclaw.dashboard.session_store import forget_session, load_sessions
-
-        stored = load_sessions()
-        if nonce in stored:
-            existed = True
-        forget_session(nonce)
-    except Exception:  # noqa: BLE001
-        logger.warning("could not remove the session from the durable store", exc_info=True)
-
-    _sel_fn().log_api_access(
-        caller="system",
-        operation="session_revoked",
-        outcome="ok",
-        source="token_auth",
-        resources=f"nonce={nonce[:8]}…",
-    )
-    return existed
+    _state.revoke_nonce(nonce, token)
+    return sign_out([nonce], END_SIGNED_OUT, actor=actor) > 0
 
 
 def revoke_nonce(nonce: str) -> bool:
-    """Drop ONE nonce from this process's live set. Returns whether it was there.
+    """Drop ONE nonce from this process's live set only. Returns whether it was there.
 
-    The IN-MEMORY half of a revoke, for callers that hold a nonce rather than a token — the
-    device registry, which never sees the device's token. The DURABLE half is
-    ``session_store.forget_session``, and a caller needs both: memory alone lets the session
-    return at the next restart, the file alone lets it keep working until then.
+    For the one caller that must retract a session the store never recorded (pairing, when
+    the row could not be written). Every other end goes through :func:`sign_out`.
     """
     if not nonce:
         return False
@@ -1071,17 +1522,28 @@ def token_auth_middleware(
         the nonce travels — it is the registry handle, and the token stays in this middleware.
         Consumed by the ``/api/ws`` origin check (CA-7): a paired device session is the one
         thing that can vouch for an origin-less upgrade.
+
+        The client is noted here too (:func:`note_session_client`) — where it was seen from and
+        what it is — because this is the one place that has both an authorized session and
+        the request it came on.
         """
         request["user"] = credentials.user_id
         request["app"] = credentials.app
         request["session_nonce"] = token_nonce(credentials.token)
+        note_session_client(
+            request["session_nonce"],
+            request,
+            credentials.source,
+            ip=_resolved_client_ip(request),
+        )
 
     def _refuse(request: web.Request, credentials: _Credentials, fallback: str) -> web.Response:
         """A Bearer's refusal is its stable wire code; every other refusal keeps its wording.
 
         JSON on every path, pages included: a header credential is sent by a client that
         reads JSON, never by a browser navigating to a page, so the paste-token gate would be
-        an answer to a question nobody asked. The body never echoes the credential.
+        an answer to a question nobody asked. The body never echoes the credential. A browser
+        carrier whose session is known to have ended gets its signed-out sentence instead.
         """
         from personalclaw.http_errors import json_error
 
@@ -1090,7 +1552,24 @@ def token_auth_middleware(
             return json_error(ERR_CREDENTIAL_CONFLICT, status=403, headers=headers)
         if credentials.error_code:
             return json_error(ERR_BEARER_INVALID, status=403, headers=headers)
-        return _deny(request, fallback)
+        return _deny(request, fallback, notice=credentials.notice)
+
+    def _retire_the_sign_in_it_replaces(request: web.Request, token: str, user_id: str) -> None:
+        """A browser opening a new link moves to it: end the sign-in its cookie held before.
+
+        The gateway opens a fresh startup link in the default browser at every start, and the
+        browser swaps its cookie for it. The session it swapped out stayed live for its whole
+        lifetime with no browser holding it — a credential nobody would ever sign out, and one
+        more identical "Chrome on Mac" row in Settings → Devices for every restart. Only an
+        owner session in THIS browser's cookie is retired; a token held anywhere else is not.
+        """
+        previous = request.cookies.get(f"pc_token_{port}", "")
+        if not previous or hmac.compare_digest(previous.encode(), token.encode()):
+            return
+        valid, _user, _reason, app = validate_token_with_app(previous, use_session_exp=True)
+        previous_nonce = token_nonce(previous)
+        if valid and not app and previous_nonce and previous_nonce != token_nonce(token):
+            sign_out([previous_nonce], END_REPLACED, actor=user_id or "owner")
 
     @web.middleware
     async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
@@ -1309,6 +1788,7 @@ def token_auth_middleware(
             except Exception:
                 pass
             bind_token_ip(token, client_ip, session_exp)
+            _retire_the_sign_in_it_replaces(request, token, user_id)
 
         # Expose authenticated identity to handlers (deny-by-default)
         _adopt(request, credentials)
@@ -1319,18 +1799,16 @@ def token_auth_middleware(
         # Set cookie after handler (needs response object)
         if from_query:
             cookie_name = f"pc_token_{port}"
-            cookie_max_age = MAX_SESSION_TTL_SECS
-            if session_exp:
-                remaining = int(session_exp - time.time())
-                if 0 < remaining <= MAX_SESSION_TTL_SECS:
-                    cookie_max_age = remaining
+            remaining = int(session_exp - time.time()) if session_exp else MAX_SESSION_TTL_SECS
             resp.set_cookie(
                 cookie_name,
                 token,
                 httponly=True,
                 samesite="Lax",
                 path="/",
-                max_age=cookie_max_age,
+                # The session's own end, plus the grace that lets its end be explained
+                # (SIGNED_OUT_NOTICE_GRACE_SECS). The gateway refuses it at `session_exp`.
+                max_age=min(max(0, remaining), MAX_SESSION_TTL_SECS) + SIGNED_OUT_NOTICE_GRACE_SECS,
                 secure=secure_cookies(),
             )
             # Clear the non-port-specific cookie so only pc_token_{port} is used.
@@ -1498,9 +1976,54 @@ def _login_offered() -> bool:
         return False
 
 
-def _deny(request: web.Request, reason: str) -> web.Response:
+#: What the paste-token gate says when there is no signed-out sentence to show instead.
+_GATE_HOW_TO = "Run <code>personalclaw token</code> in your terminal, then paste the URL below."
+
+
+def notice_html(message: str) -> str:
+    """*message* as HTML: escaped, with its `backticked` commands shown as code."""
+    import html as _html
+
+    parts = _html.escape(message).split("`")
+    return "".join(f"<code>{part}</code>" if i % 2 else part for i, part in enumerate(parts))
+
+
+def _deny(
+    request: web.Request, reason: str, *, notice: SignedOutNotice | None = None
+) -> web.Response:
+    """The refusal a request without a usable session gets.
+
+    With a *notice* — a genuine session that is known to have ended — an API request gets the
+    registered envelope (``session_signed_out`` / ``session_expired``) carrying the sentence and
+    the reason, which the SPA shows as its signed-out screen; a page gets the same sentence on
+    the paste-token gate. Every other refusal keeps the body it always had (the doctor and
+    other clients read ``{"error": "Token required"}``). Both carry ``X-Auth-Required``.
+    """
+    import html as _html
+
     headers = {"X-Auth-Required": "true"}
     if request.path.startswith("/api/"):
+        if notice is not None:
+            from personalclaw.http_errors import json_error
+
+            extra = {"detail": {"reason": notice.reason, "at": notice.at}}
+            # Two literal calls rather than `json_error(notice.code, …)`: the registry rail can
+            # only see a literal code (tests/test_http_error_codes_append_only.py).
+            if notice.code == ERR_SESSION_EXPIRED:
+                return json_error(
+                    "session_expired",
+                    message=notice.message,
+                    status=403,
+                    headers=headers,
+                    error_extra=extra,
+                )
+            return json_error(
+                "session_signed_out",
+                message=notice.message,
+                status=403,
+                headers=headers,
+                error_extra=extra,
+            )
         return web.json_response({"error": reason}, status=403, headers=headers)
     # REMOTE-USER-AUTH T3.3 — when a password login is on offer, an expired or absent session
     # on a PAGE request lands on /login instead of the paste-token gate. Telling a remote user
@@ -1515,8 +2038,16 @@ def _deny(request: web.Request, reason: str) -> web.Response:
             status=302,
             headers={**headers, "Location": "/login", "Cache-Control": "no-store"},
         )
+    if notice is not None:
+        heading, explanation = "You’re signed out", notice_html(notice.message)
+    else:
+        heading, explanation = f"403 — {_html.escape(reason)}", _GATE_HOW_TO
     return web.Response(
-        text=_403_HTML.format(reason=reason, owner_token_script=owner_token_script(scrub=True)),
+        text=_403_HTML.format(
+            heading=heading,
+            explanation=explanation,
+            owner_token_script=owner_token_script(scrub=True),
+        ),
         status=403,
         content_type="text/html",
         headers=headers,

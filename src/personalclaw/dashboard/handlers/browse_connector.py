@@ -42,7 +42,7 @@ from aiohttp import web
 
 from personalclaw.browse import clear_connector, connector_status, register_connector
 from personalclaw.dashboard.origin import is_loopback
-from personalclaw.dashboard.session_store import DeviceInfo, device_sessions
+from personalclaw.dashboard.session_store import DeviceInfo, paired_sessions
 from personalclaw.http_errors import json_error
 from personalclaw.net import LOOPBACK_INTERNAL, evaluate
 from personalclaw.request_validation import json_object_body
@@ -100,14 +100,14 @@ def _paired_device(request: web.Request) -> DeviceInfo | None:
     """The paired-device row that authorized this request, or ``None``.
 
     The middleware has already validated the session and recorded its nonce; a connector
-    caller must ADDITIONALLY be a paired device (a ``sessions.json`` row with ``device`` set),
+    caller must ADDITIONALLY be a paired device (a ``sessions.json`` row issued by pairing),
     so its identity in the connector registry is the same ``device_id`` pairing minted and the
-    attached browser is a real ``GET /api/devices`` entry. The owner's own browser session has
-    no device row and is therefore not eligible.
+    attached browser is a real ``GET /api/devices`` entry. The owner's own browser session is
+    listed there too, but it was not paired, and is therefore not eligible.
     """
     nonce = str(request.get("session_nonce") or "")
-    record = device_sessions().get(nonce)
-    if record is None or record.device is None:
+    record = paired_sessions().get(nonce)
+    if record is None:
         return None
     return record.device
 

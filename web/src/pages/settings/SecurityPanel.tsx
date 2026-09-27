@@ -21,8 +21,9 @@ import { invalidateKeys, useQuery } from '../../lib/data'
 import { rebaseList, type Rebase } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
-import { PanelHeader, Section, SavedToast, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
+import { PanelHeader, Section, SavedToast, Row, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
+import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
 
 /** Security posture → /api/security/stats (counts) + /api/security/denied-commands
@@ -79,6 +80,7 @@ export function SecurityPanel() {
           ))}
         </div>
       </Section>
+      <SignedInSummary />
       {!denied && deniedErr ? (
         <Section title="Shell denylist">
           <LoadError what="shell denylist patterns" error={deniedErr} onRetry={refreshDenied} />
@@ -94,6 +96,33 @@ export function SecurityPanel() {
       <OutsideHomeEditor />
       <DesktopCapabilitiesPanel />
     </div>
+  )
+}
+
+/** Who is signed in — a count, and the way to the ONE list (Settings → Devices).
+ *
+ *  "What can reach my gateway, and can I cut it off" is a security question, so it is asked here;
+ *  but the list itself lives in one place, and this reads the same cached query that page does
+ *  rather than growing a second list that could disagree with it (ledger 255). */
+function SignedInSummary() {
+  const { data, error, refresh } = useQuery('settings:devices', () => api.devices())
+  const devices = data?.filter((d) => d.pool !== 'token').length ?? 0
+  const tokens = data?.filter((d) => d.pool === 'token').length ?? 0
+  return (
+    <Section title="Signed-in devices"
+      hint="Every browser, paired device and token that can reach this gateway is listed under Devices, where you can sign any of them out — or all but this one.">
+      {!data && error ? (
+        <LoadError what="signed-in devices" error={error} onRetry={refresh} />
+      ) : (
+        <RowGroup>
+          <Row label={data
+            ? `${devices} ${devices === 1 ? 'device is' : 'devices are'} signed in, and ${tokens} ${tokens === 1 ? 'token is' : 'tokens are'} live.`
+            : 'Reading who is signed in…'}>
+            <TextLink href="#/settings/devices" ink="emphasis" size="sm">Review signed-in devices</TextLink>
+          </Row>
+        </RowGroup>
+      )}
+    </Section>
   )
 }
 

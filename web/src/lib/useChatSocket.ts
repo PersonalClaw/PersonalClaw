@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { signedOutState } from './signedOut'
 
 export interface WsMessage { type: string; data: Record<string, unknown> }
 
@@ -91,7 +92,10 @@ function connect(): void {
     // Only flag drops after a real connection, as each caller's own socket did.
     for (const s of [...subscribers]) if (s.sawOpen) call(() => s.onStatus.current?.(false))
     retry = Math.min(retry + 1, 6)
-    timer = window.setTimeout(() => { timer = undefined; if (subscribers.size) connect() }, 250 * 2 ** retry)
+    // A signed-out tab stops reconnecting: every upgrade would be refused, and each refusal is a
+    // row in the gateway's security log. Signing in again reloads the page, which starts over.
+    if (signedOutState()) return
+    timer = window.setTimeout(() => { timer = undefined; if (subscribers.size && !signedOutState()) connect() }, 250 * 2 ** retry)
   }
   sock.onerror = () => sock.close()
 }

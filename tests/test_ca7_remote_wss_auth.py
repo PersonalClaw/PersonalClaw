@@ -77,13 +77,17 @@ def _app(allowed: set[str] | None = None) -> web.Application:
 
 
 def _paired_token(*, device: bool = True) -> str:
-    """A real signed token whose session row optionally carries a paired device."""
-    token = token_auth.generate_token("owner")
-    if device:
-        nonce = token_auth.token_nonce(token)
-        assert nonce, "the minted token must carry a nonce for the test to mean anything"
-        assert ss.attach_device(nonce, ss.DeviceInfo(id="dev-1", name="Phone", kind="mobile"))
-    return token
+    """A real signed token — issued by PAIRING, or (``device=False``) an ordinary one."""
+    if not device:
+        return token_auth.generate_token("owner")
+    minted = token_auth.mint_session(
+        "owner",
+        3600,
+        issuer=ss.ISSUER_PAIR,
+        device=ss.DeviceInfo(id="dev-1", name="Phone", kind="mobile"),
+    )
+    assert minted.persisted, "the fixture must persist a real paired row"
+    return minted.token
 
 
 async def _upgrade(app: web.Application, token: str, *, origin: str | None) -> int:
@@ -171,13 +175,13 @@ async def test_the_refusal_it_replaces_was_bypassable_by_forging_an_origin() -> 
 
 @pytest.mark.asyncio
 async def test_an_unreadable_device_registry_fails_closed() -> None:
-    with mock.patch.object(ss, "device_sessions", side_effect=OSError("boom")):
+    with mock.patch.object(ss, "paired_sessions", side_effect=OSError("boom")):
         assert await _upgrade(_app(), _paired_token(), origin=None) == 403
 
 
 @pytest.mark.asyncio
 async def test_a_session_nonce_the_registry_does_not_know_fails_closed() -> None:
-    with mock.patch.object(ss, "device_sessions", return_value={"someone-else": object()}):
+    with mock.patch.object(ss, "paired_sessions", return_value={"someone-else": object()}):
         assert await _upgrade(_app(), _paired_token(), origin=None) == 403
 
 
@@ -266,5 +270,5 @@ def test_the_allowed_origin_set_is_byte_identical(monkeypatch) -> None:
 def test_a_paired_device_does_not_widen_the_allowlist() -> None:
     baseline = build_allowed_origins(PORT, local_only=False)
     token = _paired_token()
-    assert token_auth.token_nonce(token) in ss.device_sessions()
+    assert token_auth.token_nonce(token) in ss.paired_sessions()
     assert build_allowed_origins(PORT, local_only=False) == baseline
