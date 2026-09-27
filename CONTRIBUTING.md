@@ -414,6 +414,12 @@ is outstanding. `restore` refuses to overwrite a file you edited after the mutat
   slice or don't ship it (clean break, above).
 - **Docs are part of the change.** If you alter config fields, routes, or CLI
   flags, update [docs/reference/](docs/reference/) in the same PR.
+- **A new font, image, binary or fixture needs a licence record.** List its path
+  in a group in [`ASSET_LICENSES.json`](ASSET_LICENSES.json): a project-owned group
+  if the project made it, or a third-party group with its source, version, copyright
+  lines and sha256 if it did not, plus its notice in
+  `web/public/THIRD_PARTY_NOTICES.txt`. `make asset-licenses` checks the tree and
+  `make asset-licenses-built` checks what the web build emits.
 - Match the existing style; `make lint` must pass.
 
 ### What CI will and won't tell you on your first PR
@@ -472,4 +478,5 @@ known flake from a genuine break without a blind re-run.
 ## License
 
 By contributing you agree that your contributions are licensed under the
-project's [MIT License](LICENSE).
+project's [MIT License](LICENSE). The third-party fonts the dashboard ships keep
+their own licences, reproduced in `web/public/THIRD_PARTY_NOTICES.txt`.

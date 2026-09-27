@@ -32,6 +32,7 @@ DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
 .PHONY: help format lock lint test test-e2e test-visual build clean harness-validate gates \
+        asset-licenses asset-licenses-built \
         mutation-check bundled-model sdk-snapshot apps-contract \
         serve serve-fresh serve-web \
         web-build spa-check backend-build pyinstaller \
@@ -138,6 +139,16 @@ mutation-check:
 ## ratchet, and every baseline is shrink-only and FORBIDDEN to raise.
 gates:
 	$(PYTHON) scripts/gate_report.py
+
+## asset-licenses: every tracked font, image, binary and fixture has a source, licence and
+## notice in ASSET_LICENSES.json (third-party files are pinned by sha256)
+asset-licenses:
+	$(PYTHON) scripts/check_asset_licenses.py
+
+## asset-licenses-built: the same, plus every font and binary `npm run build` emitted into
+## web/dist (run web-build first)
+asset-licenses-built:
+	$(PYTHON) scripts/check_asset_licenses.py --built-web
 
 ## sdk-snapshot: rewrite src/personalclaw/sdk/signatures.json from the live SDK and print what
 ## changed. tests/test_sdk_signature_snapshot.py fails until you do, so every SDK change is a

@@ -38,6 +38,10 @@ jobs:
       - name: Classify the release tag (one parser — RUM-8)
         id: ver
         run: python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --github-output >> "$GITHUB_OUTPUT"
+      # Nothing ships without a licence record: every tracked font, image and binary here,
+      # then every font and binary the SPA build emits (ASSET_LICENSES.json). Stdlib only.
+      - name: Verify bundled asset licences
+        run: python3 scripts/check_asset_licenses.py
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -46,6 +50,8 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Verify the built SPA's asset licences
+        run: python3 scripts/check_asset_licenses.py --built-web
       - name: Install uv + build backend
         uses: astral-sh/setup-uv@v7
       - name: Build sdist + wheel (with web/dist)
