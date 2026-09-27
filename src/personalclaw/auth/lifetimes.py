@@ -9,11 +9,13 @@ dashboard.
 **Longer is REFUSED, never clamped.** A clamp mints a credential its caller did not ask for and
 tells them nothing — the caller believes it lasts a year and it lasts 90 days, or the reverse. So
 every place a lifetime is ASKED for — ``personalclaw token --ttl``, ``GET /api/token/local?ttl=``,
-``auth.session_ttl`` through the config API or ``personalclaw config set``, and an app calling
-``generate_token`` — refuses with a sentence naming the limit and why (:func:`too_long`, and
-:func:`config_too_long` for a config write). The one exception is a config file that ALREADY says
-longer: it is applied as 90 days (:func:`configured_lifetime`), because a hand-edited file must
-never brick the box, and ``personalclaw doctor`` and the Doctor page say so until it is fixed
+``auth.session_ttl`` through the config API or ``personalclaw config set``, an app calling
+``generate_token``, and an integration's token (``personalclaw inbound token create --ttl``, a
+client registered with a ``ttl``) — refuses with a sentence naming the limit and why
+(:func:`too_long`, :func:`integration_too_long`, and :func:`config_too_long` for a config write).
+The one exception is a config file that ALREADY says longer: it is applied as 90 days
+(:func:`configured_lifetime`), because a hand-edited file must never brick the box, and
+``personalclaw doctor`` and the Doctor page say so until it is fixed
 (:func:`session_lifetime_report`).
 
 Deliberately free of imports from the rest of PersonalClaw: the config validator, the gateway's
@@ -24,6 +26,7 @@ particular must not import the HTTP surface to read a setting.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 
 #: The longest any sign-in, link or token may last: 90 days.
@@ -132,6 +135,50 @@ def session_lifetime_report(configured: str) -> SessionLifetimeReport:
     )
 
 
+def duration_words(secs: float) -> str:
+    """``30 days`` / ``20 hours`` / ``1 hour`` / ``45 minutes`` / ``1 second`` — how every
+    surface that states a lifetime words it (the gateway banner, `personalclaw token`, a
+    signed-out sentence, an integration token's refusal). Rounded, for reading; a refusal of
+    a request uses :func:`exact_words`, which names exactly what was asked for."""
+    secs = max(0, round(secs))
+    # Days from two days up (a day is "24 hours", which is how a link window reads); hours and
+    # minutes from two of them up, or exactly one.
+    if secs >= 2 * 86400:
+        count = round(secs / 86400)
+        return f"{count} days"
+    for unit, size in (("hour", 3600), ("minute", 60)):
+        if secs >= 2 * size or secs == size:
+            count = round(secs / size)
+            return f"{count} {unit}{'' if count == 1 else 's'}"
+    return f"{secs} second{'' if secs == 1 else 's'}"
+
+
+def when_words(ts: float, now: float | None = None) -> str:
+    """``today at 09:14`` / ``yesterday at 09:14`` / ``on 27 September at 09:14``.
+
+    In this machine's local time — the gateway's owner is the reader, on the same machine or
+    the same network — and absolute, so the sentence stays true however long it is read after.
+    """
+    now = time.time() if now is None else now
+    moment = time.localtime(ts)
+    clock = time.strftime("%H:%M", moment)
+    today = time.localtime(now)
+    if (moment.tm_year, moment.tm_yday) == (today.tm_year, today.tm_yday):
+        return f"today at {clock}"
+    yesterday = time.localtime(now - 86400)
+    if (moment.tm_year, moment.tm_yday) == (yesterday.tm_year, yesterday.tm_yday):
+        return f"yesterday at {clock}"
+    year = f" {moment.tm_year}" if moment.tm_year != today.tm_year else ""
+    return f"on {moment.tm_mday} {time.strftime('%B', moment)}{year} at {clock}"
+
+
+def until_words(ts: float, now: float | None = None) -> str:
+    """``today at 09:14`` / ``27 September at 09:14`` — :func:`when_words` as it reads after
+    "until", without the "on"."""
+    words = when_words(ts, now)
+    return words[len("on ") :] if words.startswith("on ") else words
+
+
 def exact_words(secs: int) -> str:
     """``365 days`` / ``2161 hours`` / ``45 minutes`` — *secs* in the largest unit that divides it
     exactly, so a refusal names what was asked for rather than a rounding of it (2161 hours is
@@ -150,6 +197,21 @@ def too_long(requested_secs: int) -> str:
     return (
         f"A sign-in can last at most 90 days, and {exact_words(requested_secs)} is longer. {WHY} "
         "Ask for 90 days or less, such as 90d or 2160h."
+    )
+
+
+#: Why the limit exists for an integration's token: a copy of one reaches the gateway itself.
+INTEGRATION_WHY = (
+    "90 days is the limit for a long-lived credential, because the longer a token keeps working, "
+    "the longer anyone who copies it can reach your gateway."
+)
+
+
+def integration_too_long(requested_secs: int) -> str:
+    """The refusal a request for an integration token longer than the limit gets."""
+    return (
+        f"An integration token can last at most 90 days, and {exact_words(requested_secs)} is "
+        f"longer. {INTEGRATION_WHY} Ask for 90 days or less, such as 90d or 2160h."
     )
 
 

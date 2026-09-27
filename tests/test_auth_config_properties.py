@@ -42,12 +42,12 @@ def test_P6_loopback_invariant_none_mode(bind_host):
 
 
 @given(
-    mode=st.sampled_from([AuthMode.LOCAL_TOKEN, AuthMode.API_KEY, AuthMode.OAUTH2]),
+    mode=st.sampled_from([AuthMode.LOCAL_TOKEN]),
     bind_host=st.sampled_from(["0.0.0.0", "127.0.0.1", "10.0.0.1", "::1"]),
 )
 @settings(max_examples=50)
 def test_P6_non_none_mode_respects_bind_host(mode, bind_host):
-    """P6: non-NONE modes return the configured bind_host unchanged."""
+    """P6: the one non-NONE mode returns the configured bind_host unchanged."""
     cfg = AuthConfig(mode=mode, bind_host=bind_host)
     result = effective_bind(cfg)
     assert (

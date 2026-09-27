@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Check, Copy, KeyRound, Laptop, MonitorSmartphone, QrCode, Smartphone, Terminal, Globe, XCircle,
+  Check, Copy, KeyRound, Laptop, MonitorSmartphone, Plug2, QrCode, ShieldAlert, Smartphone, Terminal,
+  Globe, XCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api } from '../../lib/api'
-import type { DeviceRec, DevicePairStart } from '../../lib/api'
+import type { DeviceRec, DevicePairStart, IntegrationRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
-import { useQuery } from '../../lib/data'
+import { invalidateKeys, useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup } from './settingsUI'
 import { PairingQr } from './PairingQr'
 import { Button } from '../../ui/Button'
-import { StatusPill } from '../../ui/StatusPill'
+import { StatusPill, type StatusPillTone } from '../../ui/StatusPill'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { relPast, absTime } from '../schedule/scheduleMeta'
 import { copyText } from '../../app/clipboard'
@@ -66,6 +67,42 @@ function signedInLine(d: DeviceRec): string {
   return `${verb} ${d.minted_at > 0 ? relPast(d.minted_at) : 'at an unknown time'}`
 }
 
+/** One record of a list — a device, a token, an integration: what it is on the left (an icon over
+ *  a name and two sublines), its action on the right. Shared by every row of this panel, which is
+ *  a record list rather than label-and-hint settings rows, so it is not a `Row`. */
+const RECORD_ROW = 'flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0'
+const RECORD_MAIN = 'flex min-w-0 items-start gap-3'
+
+/** An integration token's state, as a pill — none while it works. */
+const INTEGRATION_STATE: Record<IntegrationRec['state'], { pill: string; tone: StatusPillTone } | null> = {
+  live: null,
+  disabled: { pill: 'Switched off', tone: 'warn' },
+  expired: { pill: 'Expired', tone: 'danger' },
+  revoked: { pill: 'Revoked', tone: 'danger' },
+  replaced: { pill: 'Replaced', tone: 'neutral' },
+}
+
+/** An integration token's row heading: a surface token's name as a heading (`Capture proxy
+ *  token`), a client's as its owner named it. */
+function integrationName(r: IntegrationRec): string {
+  return r.kind === 'surface' ? `${r.name.charAt(0).toUpperCase()}${r.name.slice(1)}` : r.name
+}
+
+/** What to call an integration token in a sentence: `MCP token`, or `the “ide” client's token`. */
+function integrationTitle(r: IntegrationRec): string {
+  return r.kind === 'surface' ? r.name : `the “${r.name}” client's token`
+}
+
+/** "Issued 3d ago · stops working Dec 26, 14:05" — a token that was never given an issue time
+ *  (made before lifetimes existed) reads "First seen", because that is when its 90 days began. */
+function integrationLine(r: IntegrationRec): string {
+  const started = r.found ? 'First seen' : 'Issued'
+  const since = `${started} ${r.issued_at > 0 ? relPast(r.issued_at) : 'at an unknown time'}`
+  if (r.state === 'revoked') return `${since} · revoked`
+  const ended = r.expires_at * 1000 <= Date.now()
+  return `${since} · ${ended ? 'stopped working' : 'stops working'} ${absTime(r.expires_at)}`
+}
+
 /** Seconds until *expiresAt* (epoch seconds), floored at 0.
  *  Derived from the deadline rather than by decrementing `expires_in`, so a backgrounded tab
  *  that stopped getting timer ticks reads the real remaining time when it wakes, not a frozen one. */
@@ -116,6 +153,12 @@ function CopyButton({ value, label }: { value: string; label: string }) {
  *  stay on screen beside it, because a camera that will not focus must not be the only way in. */
 export function DevicesPanel() {
   const { data, error: loadErr, refresh } = useQuery('settings:devices', () => api.devices())
+  // The tokens external agents reach the inbound surfaces with. Not sessions — but "what can reach
+  // this gateway?" is asked here, so they are answered here, with a revoke (ledger 317a).
+  const {
+    data: integrationsData, error: integrationsErr, refresh: refreshIntegrations,
+  } = useQuery('settings:integrations', () => api.deviceIntegrations())
+  const [revokingIntegration, setRevokingIntegration] = useState<string | null>(null)
   const [pairing, setPairing] = useState<DevicePairStart | null>(null)
   const [starting, setStarting] = useState(false)
   const [left, setLeft] = useState(0)
@@ -201,6 +244,33 @@ export function DevicesPanel() {
     }
   }
 
+  // One integration token, revoked at once. The confirmation names what keeps working, because a
+  // surface's own token and a registered client's token end different things.
+  const revokeIntegration = async (r: IntegrationRec) => {
+    const title = integrationTitle(r)
+    const body = r.kind === 'surface'
+      ? `Anything still using the ${r.name} is refused at once, and told it was revoked. Registered clients keep their own tokens. To use a surface token again, run ${r.renew}.`
+      : `The “${r.name}” client is removed, and anything still using its token is refused at once and told it was revoked. Register it again to give it a new token.`
+    const ok = await confirm({
+      title: `Revoke ${title}?`,
+      body,
+      danger: true,
+      confirmLabel: 'Revoke',
+    })
+    if (!ok) return
+    setRevokingIntegration(r.id)
+    try {
+      await api.deviceIntegrationRevoke(r.id)
+      notify(`${title[0].toUpperCase()}${title.slice(1)} is revoked.`, 'success')
+      invalidateKeys('settings:external-access')
+      refreshIntegrations()
+    } catch (e) {
+      notify(`Couldn't revoke ${title}: ${msg(e)}`, 'error')
+    } finally {
+      setRevokingIntegration(null)
+    }
+  }
+
   const [signingOutOthers, setSigningOutOthers] = useState(false)
   // Every device and token but this one — the answer to a lost phone, or a row you don't know.
   const revokeOthers = async (others: number) => {
@@ -258,8 +328,8 @@ export function DevicesPanel() {
     const name = rowName(d)
     return (
       <div key={d.id}
-        className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
-        <div className="flex min-w-0 items-start gap-3">
+        className={RECORD_ROW}>
+        <div className={RECORD_MAIN}>
           <KindIcon size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-s">
@@ -288,6 +358,47 @@ export function DevicesPanel() {
           loading={revoking === d.id} ariaLabel={d.current ? 'Sign out of this device' : `Sign out ${name}`}>
           Sign out
         </Button>
+      </div>
+    )
+  }
+
+  const integrations = integrationsData?.integrations ?? []
+  const integrationProblem = integrationsData?.problem ?? ''
+  const integrationsFailed = !integrationsData && Boolean(integrationsErr)
+  const renderIntegration = (r: IntegrationRec) => {
+    const state = INTEGRATION_STATE[r.state]
+    const title = integrationTitle(r)
+    return (
+      <div key={r.id}
+        className={RECORD_ROW}>
+        <div className={RECORD_MAIN}>
+          <Plug2 size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-s">
+              <span data-type="body-s" className="truncate text-on-surface">{integrationName(r)}</span>
+              {state && <StatusPill tone={state.tone}>{state.pill}</StatusPill>}
+            </div>
+            <div data-type="body-s" className="mt-0.5 text-on-surface-low">
+              {r.kind === 'surface' ? 'Surface token' : 'Client'}
+              {' · '}
+              <span>Reaches {r.surface_names.join(', ') || 'no surface'}</span>
+              {' · '}
+              <span>Last used {r.last_seen > 0 ? relPast(r.last_seen) : 'never'}</span>
+            </div>
+            <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+              {integrationLine(r)}
+              {r.kind === 'surface' && r.state !== 'live'
+                ? <>{' · a new one: '}<code className="font-mono">{r.renew}</code></>
+                : null}
+            </div>
+          </div>
+        </div>
+        {r.state !== 'revoked' && (
+          <Button size="xs" variant="danger" onClick={() => revokeIntegration(r)}
+            loading={revokingIntegration === r.id} ariaLabel={`Revoke ${title}`}>
+            Revoke
+          </Button>
+        )}
       </div>
     )
   }
@@ -431,6 +542,25 @@ export function DevicesPanel() {
         <Section title={`Tokens (${tokens.length})`}
           hint="Links and tokens that no browser has opened: from personalclaw token, personalclaw run, a script, or the gateway's startup line. Each lasts what it was minted for; up to 20 can be live at once, and past that the one used least recently is signed out.">
           <RowGroup>{tokens.map(renderRow)}</RowGroup>
+        </Section>
+      )}
+
+      {(integrations.length > 0 || integrationProblem || integrationsFailed) && (
+        <Section title={`Integrations${integrations.length ? ` (${integrations.length})` : ''}`}
+          hint="The tokens external agents reach this gateway with: each inbound surface's own token, from personalclaw inbound token create, and each registered client's. Each works for at most 90 days. Revoke one, and whatever still uses it is refused at once and told it was revoked.">
+          {integrationsFailed ? (
+            <LoadError what="integration tokens" error={integrationsErr} onRetry={refreshIntegrations} />
+          ) : (
+            <>
+              {integrationProblem && (
+                <p data-type="body-s" className="mb-s flex items-start gap-1.5 text-on-surface">
+                  <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+                  <span>{integrationProblem}</span>
+                </p>
+              )}
+              {integrations.length > 0 && <RowGroup>{integrations.map(renderIntegration)}</RowGroup>}
+            </>
+          )}
         </Section>
       )}
     </div>

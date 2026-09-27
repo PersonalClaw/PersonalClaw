@@ -3,10 +3,10 @@
 Read-mostly. The panel needs four things and this module is careful about which of
 them it will hand back:
 
-* **Per-surface state** — enabled, whether a valid token exists, and remote posture.
-  Whether a token EXISTS is reported; the token itself never is. `token_problem`
-  already returns a reason rather than a bool, so "why is this surface off?" is
-  answerable without the credential ever entering a response body.
+* **Per-surface state** — enabled, whether a valid token exists, when it stops working,
+  and remote posture. Whether a token EXISTS is reported; the token itself never is.
+  `token_problem` already returns a reason rather than a bool, so "why is this surface
+  off?" is answerable without the credential ever entering a response body.
 * **Per-client records** — labels and bindings, with the token *hash* elided too.
   A hash is not a credential, but publishing it over HTTP hands an offline
   guesser the exact target it needs, for no operator benefit.
@@ -46,6 +46,7 @@ def _surface_rows() -> list[dict]:
     for surface in auth.surfaces():
         surface_cfg = getattr(ea, surface, None)
         problem = auth.token_problem(surface)
+        lifetime = _token_lifetime(surface) if problem is None else {}
         rows.append(
             {
                 "surface": surface,
@@ -55,12 +56,31 @@ def _surface_rows() -> list[dict]:
                 # needs the cause named; a bare `false` costs an hour.
                 "token_configured": problem is None,
                 "token_problem": problem or "",
+                # When the token stops working, and whether it already has: expiry and
+                # revocation refuse the TOKEN, not the surface, so a registered client's own
+                # token keeps working and `token_configured` stays true.
+                **lifetime,
                 # The bridge's exception is reported as data so the FE does not have to
                 # re-derive a rule the backend already enforces.
                 "loopback_only": surface == auth.BRIDGE_SURFACE,
             }
         )
     return rows
+
+
+def _token_lifetime(surface: str) -> dict:
+    """``token_expires_at`` and ``token_state`` for *surface*'s configured token — or, when the
+    record of token lifetimes cannot be read, ``token_state: "unavailable"`` (every surface token
+    is refused until it can)."""
+    from personalclaw.inbound import auth, tokens
+
+    try:
+        record = tokens.surface_token(surface, auth.load_surface_token(surface))
+    except tokens.RegistryUnavailable:
+        return {"token_expires_at": 0.0, "token_state": "unavailable"}
+    if record is None:
+        return {}
+    return {"token_expires_at": record.expires_at, "token_state": record.state()}
 
 
 def _unknown_provider(name: str) -> str | None:
@@ -122,6 +142,9 @@ def _client_rows() -> list[dict]:
                 "disabled": bool(client.disabled),
                 "created_at": client.created_at,
                 "last_seen_at": client.last_seen_at,
+                # When its token stops working (epoch seconds): at most 90 days after it was
+                # issued. Past it, the client is refused and told so until registered again.
+                "expires_at": client.expires_at,
                 # Derived, per §1.5 — never a stored counter.
                 "requests_seen": counts.get(client.client_id, 0),
                 "refusals_seen": refusals.get(client.client_id, 0),
@@ -185,13 +208,19 @@ async def api_external_access_client(request: web.Request) -> web.Response:
     stored, so this is the single moment it can be shown. Revocation deletes the
     record, which is what kills the token — there is no separate revocation list to
     fall out of sync with the registry.
+
+    A token works for ``ttl`` (``30m`` / ``20h`` / ``7d``; default and limit 90 days). A
+    longer one is refused, never shortened: whoever asked would believe it lasts longer.
     """
+    from personalclaw.auth import lifetimes
     from personalclaw.inbound import auth
     from personalclaw.inbound import clients as clients_mod
+    from personalclaw.inbound.tokens import INTEGRATION_TTL_SECS
 
+    actor = str(request.get("user") or "owner")
     if request.method == "DELETE":
         client_id = str(request.match_info.get("client_id", "") or "")
-        if not clients_mod.revoke_client(client_id):
+        if not clients_mod.revoke_client(client_id, actor=actor):
             return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
         return web.json_response({"ok": True, "revoked": client_id})
 
@@ -216,6 +245,14 @@ async def api_external_access_client(request: web.Request) -> web.Response:
             "invalid_request",
             message=(f"unknown surfaces: {', '.join(unknown)} (known: {', '.join(sorted(known))})"),
             status=400,
+        )
+    ttl_text = str(body.get("ttl", "") or "").strip()
+    ttl_secs = lifetimes.lifetime_seconds(ttl_text) if ttl_text else INTEGRATION_TTL_SECS
+    if ttl_secs is None:
+        return json_error("token_ttl_invalid", message=lifetimes.unreadable(ttl_text), status=400)
+    if ttl_secs > INTEGRATION_TTL_SECS:
+        return json_error(
+            "token_ttl_too_long", message=lifetimes.integration_too_long(ttl_secs), status=400
         )
     tools = body.get("tools")
     scope = body.get("scope")
@@ -250,6 +287,8 @@ async def api_external_access_client(request: web.Request) -> web.Response:
         scope=scope if isinstance(scope, dict) else None,
         upstream=upstream,
         rate_overrides=rate_overrides if isinstance(rate_overrides, dict) else None,
+        ttl_secs=ttl_secs,
+        actor=actor,
     )
     return web.json_response(
         {
@@ -257,10 +296,13 @@ async def api_external_access_client(request: web.Request) -> web.Response:
             "client_id": client.client_id,
             "label": client.label,
             "surfaces": list(client.surfaces),
+            "expires_at": client.expires_at,
             # Shown ONCE. There is no endpoint that can return it again.
             "token": token,
             "token_notice": (
-                "Copy this now — it is stored only as a hash and cannot be shown again."
+                "Copy this now — it is stored only as a hash and cannot be shown again. It "
+                f"works for {lifetimes.duration_words(ttl_secs)}, until "
+                f"{lifetimes.until_words(client.expires_at)}; Settings → Devices lists it."
             ),
         }
     )

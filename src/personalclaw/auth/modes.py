@@ -1,26 +1,19 @@
 """Auth modes and configuration for the PersonalClaw gateway.
 
-This module defines the four supported authentication modes
-(``none``, ``local_token``, ``api_key``, ``oauth2``) and the
-``AuthConfig`` dataclass that the gateway's middleware dispatches on.
+This module defines the two authentication modes — ``local_token`` (the default) and
+``none`` — and the ``AuthConfig`` dataclass that the gateway's middleware dispatches on.
 
 The ``effective_bind`` helper enforces the loopback invariant: when the
 mode is ``NONE``, the bind host is forced to ``127.0.0.1`` regardless of
-what was configured. Any other mode honors the configured ``bind_host``.
+what was configured. ``local_token`` honors the configured ``bind_host``.
 
-Only ``none`` and ``local_token`` are *selectable*. ``api_key`` and
-``oauth2`` are declared here and their request-side halves are built, but
-no configuration reaches them — so a request for one is NAMED at startup
-rather than downgraded in silence (see
-:func:`classify_auth_mode_request`).
-
-This module MUST NOT import provider SDKs or auth libraries
-(``cryptography``, ``httpx``): the JWT verification path loads lazily
-inside ``auth/oidc.py`` only when ``AuthMode.OAUTH2`` is in use.
+A request for anything else — including ``api_key`` and ``oauth2``, which were declared
+here without any configuration able to select them and were deleted (ledger 317b) — is
+NAMED at startup rather than downgraded in silence (see :func:`classify_auth_mode_request`).
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from enum import Enum
 
 LOOPBACK_HOST = "127.0.0.1"
@@ -33,33 +26,18 @@ class AuthMode(str, Enum):
 
     NONE = "none"
     LOCAL_TOKEN = "local_token"
-    API_KEY = "api_key"
-    OAUTH2 = "oauth2"
 
 
-#: The ``PERSONALCLAW_AUTH_MODE`` values an operator can actually put in force,
-#: mapped to the mode each selects. This is the selector's single source of
-#: truth — :func:`classify_auth_mode_request` reads it rather than re-deciding,
-#: so a mode added to :class:`AuthMode` without a wired selector lands in
-#: neither this mapping nor :data:`UNSELECTABLE_MODES` and is caught by the
-#: classification rail in ``tests/test_sl8_unhonored_auth_mode_is_named.py``.
+#: The ``PERSONALCLAW_AUTH_MODE`` values an operator can put in force, mapped to the mode
+#: each selects. This is the selector's single source of truth —
+#: :func:`classify_auth_mode_request` reads it rather than re-deciding, and every
+#: :class:`AuthMode` must be here (``tests/test_sl8_unhonored_auth_mode_is_named.py``), so a
+#: mode cannot again be declared without anything able to select it.
 SELECTABLE_MODES: dict[str, AuthMode] = {
     AuthMode.NONE.value: AuthMode.NONE,
     AuthMode.LOCAL_TOKEN.value: AuthMode.LOCAL_TOKEN,
 }
 
-#: Modes ``AuthMode`` declares that no configuration can select. Their
-#: request-side halves exist — ``dashboard/token_auth.py`` validates a Bearer key
-#: and ``auth/oidc.py`` verifies an OIDC JWT — but nothing populates
-#: ``AuthConfig``'s per-mode fields, so ``from_env`` cannot hand them a usable
-#: config. Documented in ``.env.example`` and ``docs/architecture/security.md``;
-#: this is the runtime's own copy of that fact, so it can say so out loud.
-UNSELECTABLE_MODES: frozenset[str] = frozenset({AuthMode.API_KEY.value, AuthMode.OAUTH2.value})
-
-_UNSELECTABLE_REASON = (
-    "declared in AuthMode but not selectable — the request-side half is built "
-    "(dashboard/token_auth.py, auth/oidc.py) but no configuration reaches it"
-)
 _UNKNOWN_REASON = "not a known auth mode"
 
 #: Cap on how much of the requested value is echoed back. The value of an auth
@@ -111,14 +89,12 @@ def classify_auth_mode_request(raw: str | None = None) -> AuthModeRequest:
 
     ``raw`` defaults to the environment. This function makes no admission
     decision and changes none: it reports the mode ``from_env`` selects, plus a
-    reason when the requested mode is not the one that ends up in force. That
-    happens two ways — the value names a declared-but-unwired mode
-    (:data:`UNSELECTABLE_MODES`), or it is not a mode name at all. Both leave
-    ``LOCAL_TOKEN`` in force, which fails CLOSED (a client presenting the
-    credential the operator configured is refused, not admitted) — the cost is
-    lost access, not weakened auth. The defect this names is legibility: before
-    SL-8 an operator who set ``oauth2`` believed they had enforced IdP SSO and
-    was in fact on a shared bearer token, with nothing said.
+    reason when the requested value is not a mode (``api_key`` and ``oauth2``
+    included, since they were deleted). That leaves ``LOCAL_TOKEN`` in force,
+    which fails CLOSED (a client presenting some other credential is refused, not
+    admitted) — the cost is lost access, not weakened auth. The defect this names
+    is legibility: before SL-8 an operator who set ``oauth2`` believed they had
+    enforced IdP SSO and was in fact on a local token, with nothing said.
     """
     if raw is None:
         import os
@@ -133,9 +109,8 @@ def classify_auth_mode_request(raw: str | None = None) -> AuthModeRequest:
     if selected is not None:
         return AuthModeRequest(requested=requested, effective=selected)
 
-    reason = _UNSELECTABLE_REASON if requested in UNSELECTABLE_MODES else _UNKNOWN_REASON
     return AuthModeRequest(
-        requested=requested, effective=AuthMode.LOCAL_TOKEN, unhonored_reason=reason
+        requested=requested, effective=AuthMode.LOCAL_TOKEN, unhonored_reason=_UNKNOWN_REASON
     )
 
 
@@ -144,17 +119,14 @@ class AuthConfig:
     """Runtime auth configuration consumed by ``auth_middleware``.
 
     Defaults to ``LOCAL_TOKEN`` mode bound to loopback with CSRF on.
-    Operators flip ``mode`` (and supply the matching per-mode fields)
-    to opt into stronger auth.
     """
 
     mode: AuthMode = AuthMode.LOCAL_TOKEN
     bind_host: str = LOOPBACK_HOST
     cookie_name: str = "personalclaw_token"
-    oauth2_issuer: str | None = None
-    oauth2_client_id: str | None = None
-    oauth2_audience: str | None = None
-    api_key_env: str | None = None
+    # Keyword-only: the four deleted fields sat between `cookie_name` and this one, so a caller
+    # still passing them by position must fail loudly rather than bind an issuer URL to this.
+    _: KW_ONLY
     csrf_required: bool = True
 
     @classmethod
@@ -166,10 +138,9 @@ class AuthConfig:
         loopback by ``effective_bind`` so an unauthenticated gateway can never reach a
         non-loopback interface (dev convenience on localhost only).
 
-        A value the runtime cannot honor (``api_key``, ``oauth2``, or anything
-        unrecognised) still yields ``LOCAL_TOKEN`` — the admission decision is
-        unchanged — but it is now WARNED about rather than downgraded in silence
-        (SL-8). ``personalclaw doctor`` prints the same sentence."""
+        Any other value (``api_key`` and ``oauth2`` included) still yields ``LOCAL_TOKEN``
+        — the admission decision is unchanged — but it is WARNED about rather than
+        downgraded in silence (SL-8). ``personalclaw doctor`` prints the same sentence."""
         request = classify_auth_mode_request()
         if request.detail:
             logger.warning("%s", request.detail)
@@ -181,7 +152,7 @@ def effective_bind(auth_cfg: AuthConfig) -> str:
 
     When ``auth_cfg.mode == AuthMode.NONE`` the bind host is forced to
     ``127.0.0.1`` so an unauthenticated gateway can never reach a
-    non-loopback interface. For every other mode the configured
+    non-loopback interface. For ``LOCAL_TOKEN`` the configured
     ``bind_host`` is returned unchanged.
     """
     if auth_cfg.mode == AuthMode.NONE:

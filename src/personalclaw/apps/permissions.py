@@ -1199,6 +1199,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "one is yours"
     ),
     "POST /api/devices/{id}/revoke": OwnerOnly("signing out your devices"),
+    "POST /api/devices/integrations/{id}/revoke": OwnerOnly(
+        "revoking the tokens your integrations reach this gateway with"
+    ),
     "POST /api/devices/revoke-others": OwnerOnly("signing out your devices"),
     # ── channels ──
     "POST /api/channels/{name}/connect": OwnerOnly(

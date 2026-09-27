@@ -38,6 +38,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS, integration_too_long
+from personalclaw.inbound import tokens
+from personalclaw.inbound.tokens import INTEGRATION_TTL_SECS, client_expires_at
+
 logger = logging.getLogger(__name__)
 
 _FILE = "inbound_clients.json"
@@ -92,6 +96,10 @@ class InboundClient:
     disabled: bool = False
     created_at: str = ""
     last_seen_at: str = ""
+    #: When this client's token stops working (epoch seconds). At most 90 days after it was
+    #: issued (ledger 317a); a client registered before lifetimes existed ends 90 days after its
+    #: ``created_at`` (``tokens.client_expires_at``).
+    expires_at: float = 0.0
 
     def may_use(self, surface: str) -> bool:
         """Whether this client is bound to ``surface``.
@@ -158,6 +166,9 @@ def load_clients() -> dict[str, InboundClient]:
                 disabled=bool(row.get("disabled", False)),
                 created_at=str(row.get("created_at", "") or ""),
                 last_seen_at=str(row.get("last_seen_at", "") or ""),
+                expires_at=client_expires_at(
+                    str(row.get("created_at", "") or ""), row.get("expires_at")
+                ),
             )
         except Exception:  # noqa: BLE001 — one bad row must not hide the others
             logger.debug("inbound: skipping unreadable client row %r", client_id, exc_info=True)
@@ -193,6 +204,8 @@ def create_client(
     scope: dict[str, Any] | None = None,
     upstream: str = "",
     rate_overrides: dict[str, Any] | None = None,
+    ttl_secs: int = INTEGRATION_TTL_SECS,
+    actor: str = "owner",
 ) -> tuple[InboundClient, str]:
     """Register a client and return ``(record, token)``.
 
@@ -200,12 +213,17 @@ def create_client(
     there is deliberately no way to recover it later — rotation is cheap and a
     re-readable bearer credential is one an unattended process can also read.
 
+    It works for *ttl_secs* — at most 90 days, the limit for a long-lived credential. A longer
+    lifetime raises ``ValueError`` whose message is the sentence to show whoever asked.
+
     ``upstream`` names a config.json ProviderEntry (see :class:`InboundClient`), not a
     URL. It is stored verbatim and NOT validated here: this function is the persistence
     seam and a provider may legitimately be configured after the client is registered.
     Validation belongs to the operator-facing route, which refuses an unknown name up
     front the same way it refuses an unknown surface.
     """
+    if int(ttl_secs) > MAX_LIFETIME_SECS:
+        raise ValueError(integration_too_long(int(ttl_secs)))
     token = secrets.token_urlsafe(48)  # ~64 chars, comfortably past MIN_TOKEN_BYTES
     client = InboundClient(
         client_id=secrets.token_hex(8),
@@ -220,21 +238,24 @@ def create_client(
         disabled=False,
         created_at=_now(),
     )
+    client.expires_at = time.time() + max(1, int(ttl_secs))
     clients = load_clients()
     clients[client.client_id] = client
     save_clients(clients)
-    _sel_event("inbound_client_created", client.client_id, f"surfaces={','.join(surfaces)}")
+    tokens.client_signed_in(client, actor=actor)
     return client, token
 
 
-def revoke_client(client_id: str) -> bool:
-    """Delete a client's record. The token dies with it. False when unknown."""
+def revoke_client(client_id: str, *, actor: str = "owner") -> bool:
+    """Delete a client's record. The token dies with it, and whatever still presents it is told
+    it was revoked, and when (``tokens.refusal``). False when unknown."""
     clients = load_clients()
-    if client_id not in clients:
+    client = clients.get(client_id)
+    if client is None:
         return False
     del clients[client_id]
     save_clients(clients)
-    _sel_event("inbound_client_revoked", client_id, "record deleted")
+    tokens.client_ended(client, tokens.REVOKED, actor=actor)
     return True
 
 
@@ -275,6 +296,8 @@ def lookup_by_token(token: str, surface: str) -> tuple[InboundClient | None, str
             matched = client
     if matched is None:
         return None, "bearer token matches no registered client"
+    if matched.expires_at <= time.time():
+        return None, f"client {matched.client_id}'s token expired"
     if matched.disabled:
         return None, f"client {matched.client_id} is disabled"
     if not matched.may_use(surface):

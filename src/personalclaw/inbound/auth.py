@@ -16,6 +16,8 @@ import hmac
 import logging
 import os
 import secrets
+import sys
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +60,22 @@ def load_surface_token(surface: str) -> str | None:
     keychain and then ``.env`` — so a token follows whichever backend the owner has
     active instead of living in a bespoke dotfile this module invented. Environment
     is checked first so a container can inject one without any persistence at all.
+
+    **Unless the environment's value was replaced.** A process copies the store's tokens into
+    its environment when it starts, and ``personalclaw inbound token create --rotate`` runs in
+    another process: it writes the store and records the old token as replaced
+    (``inbound/tokens.py``). An environment value that record names is this process's stale
+    copy, so the store's newer value is the configured one, and it is copied into the
+    environment as it is read — the running gateway honours a rotation at once, and the old
+    token stops at once. The store is read only then, never on the ordinary path.
     """
     env_key = token_env_key(surface)
     from_env = (os.environ.get(env_key) or "").strip()
     if from_env:
+        newer = _stored_after_rotation(env_key, from_env)
+        if newer:
+            os.environ[env_key] = newer
+            return newer
         return from_env
     try:
         from personalclaw.config.credentials import get_credential
@@ -72,20 +86,47 @@ def load_surface_token(surface: str) -> str | None:
         return None
 
 
-def create_surface_token(surface: str) -> str:
-    """Mint, persist and return a fresh token for ``surface``.
+def _stored_after_rotation(env_key: str, from_env: str) -> str:
+    """The store's value for *env_key* when *from_env* is a token recorded as replaced and the
+    store holds a different one; otherwise ``""``."""
+    from personalclaw.inbound import tokens
+
+    if not tokens.was_replaced(from_env):
+        return ""
+    try:
+        from personalclaw.config.credentials import get_credential
+
+        stored = (get_credential(env_key) or "").strip()
+    except Exception:  # noqa: BLE001 — unreadable: the replaced value stays, and is refused
+        logger.debug("inbound: credential read failed for %s", env_key, exc_info=True)
+        return ""
+    return stored if stored and stored != from_env else ""
+
+
+def create_surface_token(surface: str, ttl_secs: int | None = None, *, actor: str = "owner") -> str:
+    """Mint, persist and return a fresh token for ``surface``, working for *ttl_secs*.
 
     Persisted through `save_credential`, so it lands in the active credential
     backend (keychain, else ``.env`` at 0600) and is mirrored into ``os.environ`` —
     the running gateway therefore honours a freshly created token without a restart.
+    Its lifetime is recorded beside it (``inbound/tokens.py``): at most 90 days, the limit
+    for a long-lived credential, which is also the default. A longer *ttl_secs* raises
+    ``ValueError`` whose message is the sentence to show whoever asked.
 
     Rotation is just calling this again: the previous value is overwritten, which is
-    what makes `--rotate` meaningful.
+    what makes `--rotate` meaningful, and whatever still presents it is told it was replaced.
     """
+    from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS, integration_too_long
+    from personalclaw.inbound import tokens
+
+    lifetime = tokens.INTEGRATION_TTL_SECS if ttl_secs is None else int(ttl_secs)
+    if lifetime > MAX_LIFETIME_SECS:
+        raise ValueError(integration_too_long(lifetime))
     token = secrets.token_urlsafe(48)  # ~64 chars, well past MIN_TOKEN_BYTES
     from personalclaw.config.credentials import save_credential
 
     save_credential(token_env_key(surface), token)
+    tokens.issue_surface_token(surface, token, lifetime, actor=actor)
     return token
 
 
@@ -148,13 +189,22 @@ def token_problem(surface: str) -> str | None:
 
 
 def verify_bearer(surface: str, presented: str) -> bool:
-    """Constant-time bearer check. False for any unusable token configuration."""
+    """Constant-time bearer check. False for any unusable token configuration, and for a
+    token past its lifetime or revoked (``inbound/tokens.py``) — whose holder is then told
+    which, in the refusal's sentence (``tokens.refusal``)."""
     if token_problem(surface) is not None:
         return False
     expected = load_surface_token(surface) or ""
     if not presented:
         return False
-    return hmac.compare_digest(presented, expected)
+    if not hmac.compare_digest(presented, expected):
+        return False
+    from personalclaw.inbound import tokens
+
+    if not tokens.surface_usable(surface, expected):
+        return False
+    tokens.note_surface_use(surface, expected)
+    return True
 
 
 def _peer_host(request) -> str:
@@ -244,21 +294,72 @@ def inbound_cmd(args) -> int:
     sub = str(getattr(args, "token_action", "") or "create")
     key = token_env_key(surface)
 
+    from personalclaw.auth.lifetimes import (
+        duration_words,
+        integration_too_long,
+        lifetime_seconds,
+        unreadable,
+        until_words,
+        when_words,
+    )
+    from personalclaw.inbound import tokens
+
+    current = None
+    try:
+        current = tokens.surface_token(surface, load_surface_token(surface))
+    except tokens.RegistryUnavailable as exc:
+        print(
+            f"❌ {surface}: the token registry is unreadable, so every surface token refuses: {exc}"
+        )
+        return 1
+
     if sub == "show":
         problem = token_problem(surface)
         if problem:
             print(f"❌ {surface}: {problem}")
             return 1
+        ended = tokens.ending(surface, load_surface_token(surface) or "")
+        if ended is not None:
+            print(f"❌ {surface}: {ended.sentence}")
+            return 1
         print(f"✅ {surface}: a valid token is configured ({key}, credential store)")
+        if current is not None:
+            started = "first seen" if current.found else "created"
+            print(
+                f"   {started.capitalize()} {when_words(current.issued_at)}; it works until "
+                f"{until_words(current.expires_at)}."
+            )
         print("   The value is intentionally not printed — rotate if you've lost it.")
         return 0
 
+    if sub == "revoke":
+        if current is None:
+            print(f"❌ No token is configured for {surface}.")
+            return 1
+        if not tokens.revoke_surface_token(surface, load_surface_token(surface), actor="cli"):
+            print(f"❌ The {surface} token is already revoked.")
+            return 1
+        print(f"✅ Revoked the {surface} inbound token. Anything still using it is refused, and")
+        print(f"   told it was revoked. Create a new one with: {tokens.create_command(surface)}")
+        return 0
+
     if sub != "create":
-        print("Usage: personalclaw inbound token create <surface> [--rotate]")
+        print("Usage: personalclaw inbound token create <surface> [--rotate] [--ttl 90d]")
         return 2
 
+    ttl_text = str(getattr(args, "ttl", "") or "90d")
+    ttl = lifetime_seconds(ttl_text)
+    if ttl is None:
+        print(f"❌ {unreadable(ttl_text)}", file=sys.stderr)
+        return 1
+    if ttl > tokens.INTEGRATION_TTL_SECS:
+        print(f"❌ {integration_too_long(ttl)}", file=sys.stderr)
+        return 1
+
     rotate = bool(getattr(args, "rotate", False))
-    if load_surface_token(surface) and not rotate:
+    # A token that expired or was revoked is not one worth protecting from a plain `create`.
+    live = current is not None and current.usable()
+    if live and not rotate:
         # Existence is asked of the CREDENTIAL STORE, not of a file: with the keychain
         # backend active there is no path to stat, so a file check would report "no
         # token" and silently clobber a live one on the next `create`.
@@ -266,9 +367,14 @@ def inbound_cmd(args) -> int:
         print("   Re-run with --rotate to replace it (the old token stops working).")
         return 1
 
-    token = create_surface_token(surface)
-    print(f"✅ {'Rotated' if rotate else 'Created'} the {surface} inbound token.")
+    replacing = current is not None
+    token = create_surface_token(surface, ttl, actor="cli")
+    print(f"✅ {'Rotated' if replacing else 'Created'} the {surface} inbound token.")
     print(f"🔑 stored as {key} in the credential store (keychain, else .env at 0600)")
+    print(
+        f"⏱  It works for {duration_words(ttl)}, until {until_words(time.time() + ttl)}; then "
+        "create a new one. Settings → Devices lists it, and revokes it."
+    )
     print()
     print("Copy it into your client now — it is not shown again:")
     print()

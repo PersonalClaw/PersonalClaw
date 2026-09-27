@@ -234,6 +234,12 @@ export interface ExternalAccessSurface {
   token_configured: boolean
   /** WHY the token is unusable, when it is — the mount refusal's own reason string. */
   token_problem: string
+  /** Whether the configured token still works: `expired` / `revoked` / `replaced` refuse THAT
+   *  token while the surface stays on for registered clients, and `unavailable` means the record
+   *  of token lifetimes can't be read, so every surface token is refused. Absent with no token. */
+  token_state?: 'live' | 'expired' | 'revoked' | 'replaced' | 'unavailable'
+  /** When the configured token stops working (epoch seconds; 0 when unknown). */
+  token_expires_at?: number
   /** True for the control bridge, which ignores `allow_remote` by construction. */
   loopback_only: boolean
 }
@@ -249,6 +255,8 @@ export interface ExternalAccessClient {
   disabled: boolean
   created_at: string
   last_seen_at: string
+  /** When its token stops working (epoch seconds): at most 90 days after it was issued. */
+  expires_at: number
   /** Derived from `inbound_audit.jsonl`, not a stored counter. */
   requests_seen: number
   refusals_seen: number
@@ -849,6 +857,26 @@ export interface DeviceRec {
   pool: 'device' | 'browser' | 'token'
   expires_at: number
   current: boolean
+}
+/** One row of Settings → Devices → Integrations: a token an external agent reaches an inbound
+ *  surface with. `kind: 'surface'` is a surface's own token (`personalclaw inbound token create`);
+ *  `'client'` is a registered client's. Times are epoch seconds, and `last_seen` 0 means never used.
+ *  `found` marks a surface token first recorded when it was first SEEN (made before lifetimes
+ *  existed, or set outside the CLI), so its `issued_at` is that moment. `renew` is the command that
+ *  makes a new surface token (`''` for a client). Never a token or a hash. */
+export interface IntegrationRec {
+  id: string
+  kind: 'surface' | 'client'
+  name: string
+  surfaces: string[]
+  /** `surfaces` in the words the owner knows them by (`MCP`, `capture proxy`). */
+  surface_names: string[]
+  issued_at: number
+  expires_at: number
+  last_seen: number
+  found: boolean
+  state: 'live' | 'expired' | 'revoked' | 'replaced' | 'disabled'
+  renew: string
 }
 /** `pair/start`'s reply. `code` arrives pre-grouped (`XXXX-XXXX`) for reading out loud, and
  *  `pairing_url` already contains it, so the URL is actionable on its own — which is what makes
@@ -4906,7 +4934,7 @@ export interface SystemInfo {
   // NOTE: backend also returns ollama_* fields — intentionally NOT typed/surfaced
   // here (vendor leakage).
 }
-export interface AuthStatus { mode: string; bind_host: string; valid: boolean; minutes_remaining?: number; oauth2_issuer?: string }
+export interface AuthStatus { mode: string; bind_host: string; valid: boolean; minutes_remaining?: number }
 
 // A pending tool approval — ONE registry entry (state._pending_approvals) that every surface
 // reads: GET /api/approvals and the `approval` WS event carry the SAME shape, for a chat's
@@ -6785,6 +6813,14 @@ export const api = {
   // Settings → Devices does.
   devicesRevokeOthers: () =>
     post<{ ok: boolean; revoked: number }>('/api/devices/revoke-others', { confirm: true }),
+  // The tokens external agents reach the inbound surfaces with — each surface's own and each
+  // registered client's — with when each stops working. `problem` is the sentence to show when
+  // the record of their lifetimes can't be read (every surface token is refused until it can).
+  deviceIntegrations: () =>
+    get<{ integrations: IntegrationRec[]; problem: string }>('/api/devices/integrations'),
+  // Revokes one at once; whatever still presents it is refused, and told it was revoked.
+  deviceIntegrationRevoke: (id: string) =>
+    post<{ ok: boolean; revoked: string }>(`/api/devices/integrations/${encodeURIComponent(id)}/revoke`, {}),
 
   // ── Packs (AGENT-PACKS §3.4/§9, AP-3) ──
   // The installed-pack ledger (each pack's components, connector resolutions +

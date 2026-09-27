@@ -413,6 +413,9 @@ async def test_the_create_route_pins_a_known_provider_and_reports_it(monkeypatch
         method = "POST"
         match_info: dict = {}
 
+        def get(self, key, default=None):  # request state: who is asking
+            return default
+
         async def json(self):
             return {
                 "label": "external-agent",
@@ -443,6 +446,9 @@ async def test_the_create_route_refuses_an_unknown_provider_and_creates_nothing(
     class _Req:
         method = "POST"
         match_info: dict = {}
+
+        def get(self, key, default=None):  # request state: who is asking
+            return default
 
         async def json(self):
             return {

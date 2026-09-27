@@ -863,7 +863,7 @@ async def api_auth_status(request: web.Request) -> web.Response:
     """Auth configuration status — mode, bind_host, and session validity.
 
     Returns a JSON object with no secret values:
-    ``{mode, bind_host, valid, minutes_remaining?, oauth2_issuer?}``
+    ``{mode, bind_host, valid, minutes_remaining?}``
 
     ``valid`` is always ``true`` for an authenticated request (unauthenticated
     requests are rejected before reaching this handler).  ``minutes_remaining``
@@ -880,8 +880,6 @@ async def api_auth_status(request: web.Request) -> web.Response:
         "bind_host": auth_cfg.bind_host,
         "valid": True,
     }
-    if auth_cfg.oauth2_issuer:
-        body["oauth2_issuer"] = auth_cfg.oauth2_issuer
     # Compute remaining session minutes for local_token mode
     if auth_cfg.mode.value == "local_token":
         token_state = request.get("token_state")

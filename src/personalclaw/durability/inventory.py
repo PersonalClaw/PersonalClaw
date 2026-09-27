@@ -1146,6 +1146,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_LWW,
         help="inbound access clients: labels, bindings and token hashes (never tokens)",
     ),
+    # How long each integration token works (ledger 317a), keyed by the token's SHA-256 —
+    # never the token. EXPORTS beside the client registry it describes, for the same
+    # reason: a home restored without it records every configured token as new, and gives
+    # each a fresh 90 days. Not `secret=True`: a hash does not authenticate anything.
+    StateEntry(
+        id="inbound_tokens",
+        kind=KIND_JSON_FILE,
+        path="inbound_tokens.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_LWW,
+        help="when each integration token was issued and stops working, by hash (never tokens)",
+    ),
     # 🔴 `derived=True`, so this is DELIBERATELY excluded from exports (§10 lists it
     # among the excluded stores) while still being CLAIMED — an undeclared file under
     # the home fails `audit_home()`, so leaving it out entirely would report the

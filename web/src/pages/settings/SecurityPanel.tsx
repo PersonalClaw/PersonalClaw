@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { FieldError, FieldHintProvider } from '../../ui/forms'
+import { FieldError, FieldHintProvider, Select } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
 import {
@@ -12,6 +12,7 @@ import {
   type OutsideHomePlace,
 } from '../../lib/api'
 import { confirm } from '../../ui/dialog'
+import { ConsentDeclined } from '../../lib/securityConsent'
 import {
   desktopBridge, getLoginItem, requestDesktopCapability, setLoginItem,
 } from '../../lib/desktopBridge'
@@ -21,7 +22,7 @@ import { invalidateKeys, useQuery } from '../../lib/data'
 import { rebaseList, type Rebase } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
-import { PanelHeader, Section, SavedToast, Row, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
+import { PanelHeader, Section, SavedToast, Row, RowGroup, ToggleRow, NumberRow, StrListField, Field } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
@@ -81,6 +82,7 @@ export function SecurityPanel() {
         </div>
       </Section>
       <SignedInSummary />
+      <SignInLifetime />
       {!denied && deniedErr ? (
         <Section title="Shell denylist">
           <LoadError what="shell denylist patterns" error={deniedErr} onRetry={refreshDenied} />
@@ -122,6 +124,125 @@ function SignedInSummary() {
           </Row>
         </RowGroup>
       )}
+    </Section>
+  )
+}
+
+/** The longest a sign-in may last, in seconds: 90 days, the gateway's limit
+ *  (`auth/lifetimes.py::MAX_LIFETIME_SECS`). */
+export const SIGN_IN_LIMIT_SECS = 90 * 86400
+const UNIT_SECS: Record<string, number> = { m: 60, h: 3600, d: 86400 }
+
+/** `30m` / `20h` / `7d` in seconds, or `null` — the gateway's one lifetime grammar
+ *  (`auth/lifetimes.py::lifetime_seconds`): a whole number and a unit, nothing around it. */
+export function lifetimeSecs(text: string): number | null {
+  const m = /^(\d+)([mhd])$/.exec(text)
+  if (!m) return null
+  const secs = Number(m[1]) * UNIT_SECS[m[2]]
+  return secs > 0 ? secs : null
+}
+
+/** `12 hours` / `45 days` — *secs* in the largest unit it is a whole number of. */
+export function lifetimeWords(secs: number): string {
+  for (const [unit, size] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) {
+    if (secs >= size && secs % size === 0) {
+      const n = secs / size
+      return `${n} ${unit}${n === 1 ? '' : 's'}`
+    }
+  }
+  return `${secs} seconds`
+}
+
+/** The lifetimes offered. The longest is the limit itself, so nothing longer can be chosen here. */
+export const SIGN_IN_LIFETIMES: { value: string; label: string }[] = [
+  { value: '12h', label: '12 hours' },
+  { value: '1d', label: '1 day' },
+  { value: '7d', label: '7 days' },
+  { value: '14d', label: '14 days' },
+  { value: '30d', label: '30 days — the default' },
+  { value: '60d', label: '60 days' },
+  { value: '90d', label: '90 days — the limit' },
+]
+
+/** `auth.session_ttl` — how long a browser sign-in lasts (ledger 317c).
+ *
+ *  It had no control anywhere: `personalclaw config set` and a hand-edited `config.json` were the
+ *  only ways to shorten how long a stolen cookie keeps working. The write goes through the one
+ *  config PATCH, so the gateway validates it (the 90-day limit is its rule, `config/editable.py`)
+ *  and asks for the owner's consent when it lengthens the sign-in (a `SecurityControl`), with no
+ *  second copy of either decision here.
+ *
+ *  🔑 THE CAP IS IN THE CONTROL, not a clamp behind it: the longest option is 90 days, so a longer
+ *  lifetime cannot be picked. A value set elsewhere is shown as its own option rather than
+ *  mis-shown as a preset; one over the limit is shown for what it is, with the fact that every
+ *  sign-in lasts 90 days anyway — the same sentence `personalclaw doctor` prints. */
+function SignInLifetime() {
+  const [saved, setSaved] = useState(false)
+  const [stored, setStored] = useState<string | null>(null)
+  const { data, error, refresh } = useQuery('settings:auth', () =>
+    api.personalclawConfig().then((c) => (c.auth ?? {}) as Record<string, unknown>),
+  )
+  useEffect(() => {
+    if (!data) return
+    setStored(typeof data.session_ttl === 'string' && data.session_ttl ? data.session_ttl : '30d')
+  }, [data])
+  const label = 'Sign-ins last'
+  const hint = 'How long a browser stays signed in after a password, a device code, a pairing, or the link the gateway opens at start, before it must sign in again. At most 90 days: the longer a sign-in keeps working, the longer anyone who copies it can use your dashboard. A change applies to the next sign-in; a device already signed in keeps the lifetime it signed in with.'
+
+  if (!data && error) {
+    return (
+      <Section title="Sign-in lifetime">
+        <LoadError what="sign-in lifetime" error={error} onRetry={refresh} />
+      </Section>
+    )
+  }
+  const current = stored ?? '30d'
+  const secs = lifetimeSecs(current)
+  const over = secs !== null && secs > SIGN_IN_LIMIT_SECS
+  const options = SIGN_IN_LIFETIMES.some((o) => o.value === current)
+    ? SIGN_IN_LIFETIMES
+    : [
+      ...SIGN_IN_LIFETIMES,
+      secs === null
+        ? { value: current, label: `${current} — not a length of time`, disabled: true }
+        : over
+          ? { value: current, label: `${current} — longer than the limit`, disabled: true }
+          : { value: current, label: `${lifetimeWords(secs)} — set outside Settings` },
+    ]
+  const choose = (value: string) => {
+    const prev = current
+    setStored(value)
+    api.patchConfig('auth.session_ttl', value).then(() => {
+      setSaved(true); window.setTimeout(() => setSaved(false), 1500)
+      invalidateKeys('settings:auth')
+    }).catch((e) => {
+      setStored(prev)
+      if (e instanceof ConsentDeclined) { notify(e.message); return }
+      notify(`Couldn't change how long a sign-in lasts: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+  return (
+    <Section title="Sign-in lifetime">
+      <RowGroup>
+        <Field label={label} hint={hint}>
+          <div className="flex items-center gap-s">
+            <Select value={current} options={options} onChange={choose} disabled={stored === null}
+              disabledReason={stored === null ? 'Still reading how long a sign-in lasts' : undefined} />
+            <SavedToast show={saved} />
+          </div>
+          {over ? (
+            <p role="status" data-type="body-s" className="mt-s flex items-start gap-1.5 text-on-surface">
+              <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+              <span>{`auth.session_ttl is ${current}, longer than the 90-day limit for a sign-in, so every sign-in lasts 90 days. Choose 90 days or less.`}</span>
+            </p>
+          ) : secs === null ? (
+            <p role="status" data-type="body-s" className="mt-s flex items-start gap-1.5 text-on-surface">
+              <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+              <span>{`auth.session_ttl is “${current}”, which is not a length of time, so every sign-in lasts the 30-day default. Choose a lifetime.`}</span>
+            </p>
+          ) : null}
+        </Field>
+      </RowGroup>
     </Section>
   )
 }

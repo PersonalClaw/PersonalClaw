@@ -5,6 +5,8 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { Button } from '../../ui/Button'
 import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow, StrListField } from './settingsUI'
 import { LoadError, Skeleton, LoadingStatus } from '../../ui/ListScaffold'
+import { absTime } from '../schedule/scheduleMeta'
+import { StatusPill } from '../../ui/StatusPill'
 
 // Named `CACHE_KEY`, not `KEY`. `dataLayerAdoption.test.ts` resolves an identifier
 // handed to `useQuery` by matching `const <NAME> = '…'` across the WHOLE tree, so a
@@ -16,6 +18,15 @@ const CACHE_KEY = 'settings:external-access'
 
 /** How each surface describes itself. The backend sends the surface KEY; the prose
  *  lives here because it is UI copy, and a user reading "a2a" learns nothing. */
+/** A surface's own token can stop working while the surface stays on for registered clients, so
+ *  it is named beside the switch rather than folded into "not serving". */
+const TOKEN_ENDED: Record<string, string> = {
+  expired: 'token expired',
+  revoked: 'token revoked',
+  replaced: 'token replaced',
+  unavailable: 'token refused',
+}
+
 const SURFACE_COPY: Record<string, { label: string; hint: string }> = {
   openai: {
     label: 'OpenAI-compatible API',
@@ -331,7 +342,8 @@ export function ExternalAccessPanel() {
           <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
             No clients yet. A client is created through the API,{' '}
             <code>POST /api/external-access/clients</code>, which returns its token once. A plain
-            surface token also works, but it cannot be scoped or revoked on its own.
+            surface token also works, but it cannot be scoped. Every token lasts at most 90 days,
+            and Settings → Devices lists each one, with a revoke.
           </div>
         ) : (
           <div className="flex flex-col gap-1">
@@ -398,6 +410,10 @@ function SurfaceRow({
     : !master
       ? 'the master switch is off'
       : ''
+  const ended = surface.token_configured && surface.token_state ? TOKEN_ENDED[surface.token_state] ?? '' : ''
+  const endedWhy = surface.token_state === 'unavailable'
+    ? "The record of when each surface token stops working can't be read, so every surface token is refused until it can. Registered clients keep their own tokens."
+    : `This surface's own token no longer works (${ended}); registered clients keep their own. Create a new one with personalclaw inbound token create ${surface.surface} --rotate.`
   return (
     <Row
       label={copy.label}
@@ -415,6 +431,9 @@ function SurfaceRow({
             title={`On, but not serving: ${blocked}.`}>
             not serving
           </span>
+        )}
+        {surface.enabled && !blocked && ended && (
+          <StatusPill tone="warn" className="shrink-0" title={endedWhy}>{ended}</StatusPill>
         )}
         {surface.enabled && !blocked && surface.allow_remote && (
           <span
@@ -449,6 +468,7 @@ function ClientRow({
   onRevoke: () => void
 }) {
   const [confirming, setConfirming] = useState(false)
+  const expired = client.expires_at > 0 && client.expires_at * 1000 <= Date.now()
   const pins = [
     client.agent ? `agent ${client.agent}` : '',
     client.tools.length ? `${client.tools.length} tool${client.tools.length === 1 ? '' : 's'}` : '',
@@ -469,8 +489,17 @@ function ClientRow({
             {client.requests_seen} request{client.requests_seen === 1 ? '' : 's'} seen
             {client.refusals_seen > 0 && `, ${client.refusals_seen} refused`}
           </span>
+          {client.expires_at > 0 && (
+            <span>{expired ? 'token stopped working' : 'token works until'} {absTime(client.expires_at)}</span>
+          )}
         </div>
       </div>
+      {expired && (
+        <StatusPill tone="danger" className="shrink-0"
+          title="Its token ran its lifetime, so every request from it is refused and told so. Revoke it and register it again to give it a new token.">
+          expired
+        </StatusPill>
+      )}
       {client.disabled && (
         <span
           data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"

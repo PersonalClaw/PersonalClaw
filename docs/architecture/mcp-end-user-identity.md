@@ -276,14 +276,10 @@ and a **validator** that authorizes on the result. PersonalClaw has none of them
   explicitly "an attribution string, not a credential"
   (`src/personalclaw/identity.py:11-13`), and there is deliberately no user table
   (`src/personalclaw/auth/credentials.py:3-5`).
-- **No reachable federation to exchange *from*.** A JWT verifier ships at
-  `src/personalclaw/auth/oidc.py` and `AuthConfig` declares `oauth2_issuer` /
-  `oauth2_client_id` / `oauth2_audience`
-  (`src/personalclaw/auth/modes.py:154-156`) — but `OAUTH2` is **unreachable**:
-  it is in `UNSELECTABLE_MODES` (`src/personalclaw/auth/modes.py:57`), only `none` and
-  `local_token` are selectable (`src/personalclaw/auth/modes.py:46-49`), and
-  `AuthConfig.from_env` sets the mode and nothing else
-  (`src/personalclaw/auth/modes.py:176`). So today there is no federated identity in the
+- **No federation to exchange *from*.** The two auth modes are `none` and `local_token`
+  (`src/personalclaw/auth/modes.py::SELECTABLE_MODES`). An `oauth2` mode was once declared,
+  with a JWT verifier and `AuthConfig` fields for an issuer, a client id and an audience,
+  but nothing could select it and it was deleted. So there is no federated identity in the
   process to exchange.
 - **No validator that could use the result.** Every inbound tool handler reads the single
   owner's stores with no scoping argument
@@ -407,7 +403,7 @@ decision and none may be taken by an implementing worker without an explicit own
 | `S3` | Adding a member to `PINNED_BINDINGS` (`src/personalclaw/inbound/clients.py:50`) | The pin set *is* the authorization model; a new pin must be proven enforced. |
 | `S4` | Per-user scoping inside tool handlers (`src/personalclaw/inbound/tools.py:294-310`) | Turns single-owner reads into an authorization decision — the largest change in the set. |
 | `S5` | Joining `channel_trust` to the inbound package (§3.1) | Couples two deliberately independent trust systems; a shared key would need one owner. |
-| `S6` | Making `AuthMode.OAUTH2` selectable (`src/personalclaw/auth/modes.py:57`) | Owned by the SSO/OIDC note, not this one; listed so the two are not implemented twice. |
+| `S6` | Adding a federated sign-in (an SSO issuer) | Owned by the SSO/OIDC note, not this one; listed so the two are not implemented twice. |
 | `S7` | Any relaxation of C-1 or C-2 (§6) | These are the constraints; relaxing one is the decision this note exists to prevent. |
 | `S8` | Attributing an audit line (`src/personalclaw/inbound/audit.py:46`) to an end user | The audit log is the incident-response surface; a second identity in it must be unambiguous. |
 

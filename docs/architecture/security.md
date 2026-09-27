@@ -14,39 +14,28 @@ tamper-evident audit log. Paths are relative to
 
 ## Auth modes
 
-`auth/modes.py` defines four modes, but **only two are selectable today**.
-`AuthConfig.from_env()` recognises `PERSONALCLAW_AUTH_MODE=none` and otherwise
-returns the `local_token` default — so `api_key` and `oauth2` cannot be reached
-from configuration even though their request-side halves are built.
+`auth/modes.py` defines two modes, and `AuthConfig.from_env()` selects between them:
+`PERSONALCLAW_AUTH_MODE=none`, or the `local_token` default for anything else.
 
-| Mode | Selectable | Behavior |
-|---|---|---|
-| `none` | ✅ | No token auth — **bind is forced to loopback** by `effective_bind` (an unauthenticated gateway must never leave the host). Dev convenience. |
-| `local_token` | ✅ | The default: token auth with a login page; static assets bypass the check (the real asset surface only — `dashboard/token_auth.py`). An opt-in, IP-gated local-network bypass exists. |
-| `api_key` | ❌ **not selectable** | Header key auth. Validation is implemented (`dashboard/token_auth.py` checks `Authorization: Bearer` against the configured key) but no env value reaches it. |
-| `oauth2` | ❌ **not selectable** | OIDC JWT verification is implemented (`auth/oidc.py`, imported lazily only in this mode) but no env value reaches it. |
+| Mode | Behavior |
+|---|---|
+| `none` | No token auth — **bind is forced to loopback** by `effective_bind` (an unauthenticated gateway must never leave the host). Dev convenience. |
+| `local_token` | The default: token auth with a login page; static assets bypass the check (the real asset surface only — `dashboard/token_auth.py`). An opt-in, IP-gated local-network bypass exists. |
 
-**What that means in practice.** Setting `PERSONALCLAW_AUTH_MODE=api_key` leaves
-the gateway on `local_token` and ignores `PERSONALCLAW_API_KEY`. It fails
-**closed** — a client presenting `Authorization: Bearer <that key>` is refused, not
-admitted — so the cost is lost access, not weakened auth. But it is a configuration
-that reads as working and is not, which is why it is stated here rather than left to
-be discovered.
+`api_key` and `oauth2` used to be declared here too, with their request-side halves built
+(a Bearer-key check and an OIDC JWT verifier) and no configuration able to select either.
+They were deleted: an authentication path nothing can reach still has to be read, audited
+and kept secure, and it misleads whoever finds it. A browser SSO sign-in, if it is ever
+built, is one more issuer of the existing session (see
+[`sso-oidc-integration.md`](sso-oidc-integration.md)), not a mode.
 
-**The runtime says so out loud.** A mode it cannot honor — `api_key`, `oauth2`, or
-any unrecognised string — is not applied *silently*: `classify_auth_mode_request()`
-in `auth/modes.py` describes the request, `AuthConfig.from_env()` logs a warning
-naming the requested mode, that it was not applied, and the mode actually in force,
-and `personalclaw doctor` prints the same sentence as an `auth mode:` row. This is
-legibility only — it changes no admission decision, and `doctor`'s exit status is
-unaffected.
-
-Wiring the selector is tracked as roadmap scope, and it carries one design question
-worth settling deliberately rather than in passing: whether an unhonourable mode
-should **refuse at startup** or fall back. Refusing is the honest posture for a
-security control, but `from_env()` is also called as a fallback inside a request path
-(`dashboard/origin.py`), so a naive raise would turn a misconfiguration into a 500
-rather than a clean boot failure. The fix belongs with that atom, not in a doc change.
+**The runtime says so out loud.** A value that is not a mode — `api_key`, `oauth2` or any
+other string — is not ignored *silently*: `classify_auth_mode_request()` in `auth/modes.py`
+describes the request, `AuthConfig.from_env()` logs a warning naming the requested value,
+that it was not applied, and the mode actually in force, and `personalclaw doctor` prints
+the same sentence as an `auth mode:` row. It fails **closed** — `local_token` stays in
+force, so the cost of a typo is lost access, not weakened auth. This is legibility only: it
+changes no admission decision, and `doctor`'s exit status is unaffected.
 
 ### The `AUTH_MODE=none` sandbox fix
 
@@ -89,7 +78,8 @@ permission model holds in every auth mode.
 - No session, link or token lasts longer than 90 days (`MAX_SESSION_TTL_SECS`): a long-lived
   credential is replaced at least every 90 days, because the longer a link or token keeps
   working, the longer anyone who copies it can use the dashboard. A request for longer — `personalclaw token --ttl`, `?ttl=` on
-  `/api/token/local`, `auth.session_ttl`, an app's `generate_token` — is refused with a sentence
+  `/api/token/local`, `auth.session_ttl` (Settings → Security sets it, and offers nothing longer),
+  an app's `generate_token` — is refused with a sentence
   naming the limit and why, never shortened; a config file that already says longer is applied
   as 90 days and `personalclaw doctor` says so; and a token minted longer before the limit
   existed stops 90 days after it was issued. Browser sign-ins last `auth.session_ttl`, 30 days by
@@ -101,6 +91,20 @@ permission model holds in every auth mode.
   how to sign in (`session_signed_out`, `session_expired`, `session_required`); a request that
   presents garbage, or a token another key signed, reads exactly what presenting nothing reads.
   A script's Bearer keeps the one uniform `auth_bearer_invalid`.
+- **An integration's token is under the same limit** (`inbound/tokens.py`). The token an external
+  agent reaches an inbound surface with — a surface's own (`personalclaw inbound token create
+  <surface> --ttl`) or a registered client's (`POST /api/external-access/clients` with a `ttl`) —
+  lasts at most 90 days, and a request for longer is refused. A surface token's lifetime is
+  recorded by the token's SHA-256 in `inbound_tokens.json`, never the token itself: one from
+  before lifetimes existed, or set outside the CLI, lasts 90 days from the first time the gateway
+  sees it, and a client registered before them lasts 90 days from its registration. A configured
+  value that briefly cannot be read (a locked keychain) keeps the lifetime it had, a revoked token
+  stays refused for as long as it is configured, and a registry that cannot be read refuses every
+  surface token rather than give each a fresh 90 days. Settings → Devices lists every integration
+  token with when it stops working, and revokes any of them at once; each start and end is a
+  `session_signed_in` / `session_signed_out` row. A token that expired, was revoked or was
+  replaced is told which, and when, under the same `unauthorized` code every other inbound refusal
+  carries; a token the gateway never issued is told nothing more.
 
 ### Webhook auth
 
