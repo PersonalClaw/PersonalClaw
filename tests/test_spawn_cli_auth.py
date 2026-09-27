@@ -13,12 +13,13 @@ The fix routes ``spawn`` through the same trio ``personalclaw run`` already uses
 ``probe_gateway`` (hits the auth-bypassed ``/api/healthz`` for liveness),
 ``mint_local_token`` (exchanges the shared ``.local_secret`` for a token at
 ``/api/token/local`` — the same handshake ``token``/``status``/``logout`` use), and
-``_authed`` (rides the token as ``?token=``, the only location ``token_auth`` honours).
+``owner_headers`` (the token in ``Authorization: Bearer``, never in the URL).
 
 These tests build a minimal fake gateway that actually enforces token auth on
-``/api/spawn`` (403 without ``?token=``, 200 with it matching what ``/api/token/local``
-minted) — the run-list test fails against the pre-fix ``_spawn`` because it never
-attaches a token, and passes after because the fix does.
+``/api/spawn`` (403 without the header, 200 with it matching what ``/api/token/local``
+minted), and that refuses any ``/api/spawn`` URL carrying the token — the run-list test
+fails against the pre-fix ``_spawn`` because it never attaches a token, and passes after
+because the fix does.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ import io
 import json
 import urllib.error
 import urllib.request
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -66,13 +67,13 @@ def _fake_gateway(secret_path, agents_payload):
 
     ``/api/healthz`` always answers (the bypass every liveness probe relies on),
     ``/api/token/local`` requires the correct ``X-Local-Secret`` header, and
-    ``/api/spawn*`` requires ``?token=`` to equal what that mint returned.
+    ``/api/spawn*`` requires an ``Authorization: Bearer`` header carrying what that mint
+    returned — and fails the test outright if the URL carries the token instead.
     """
 
     def _urlopen(req, timeout=5):
         url = req if isinstance(req, str) else req.full_url
         parts = urlsplit(url)
-        query = parse_qs(parts.query)
 
         if parts.path == "/api/healthz":
             return _Resp({})
@@ -92,7 +93,13 @@ def _fake_gateway(secret_path, agents_payload):
             return _Resp({"token": _TOKEN})
 
         if parts.path.startswith("/api/spawn"):
-            if query.get("token", [""])[0] != _TOKEN:
+            assert _TOKEN not in url, f"the owner token rode the URL: {url}"
+            bearer = (
+                ""
+                if isinstance(req, str)
+                else next((v for k, v in req.headers.items() if k.lower() == "authorization"), "")
+            )
+            if bearer != f"Bearer {_TOKEN}":
                 raise _forbidden(url)
             return _Resp(agents_payload)
 
@@ -127,7 +134,7 @@ def test_spawn_list_authenticates_against_a_real_auth_gateway(_local_secret, mon
 
     Fails before the fix (no token ever sent -> 403 -> "gateway not running", even
     though the fake gateway is answering `/api/healthz` fine). Passes after: the
-    minted token rides `?token=` and the fake gateway's `/api/spawn` accepts it.
+    minted token rides the Bearer header and the fake gateway's `/api/spawn` accepts it.
     """
     monkeypatch.setattr(
         urllib.request,
@@ -152,8 +159,8 @@ def test_spawn_list_authenticates_against_a_real_auth_gateway(_local_secret, mon
     assert "agent-42" in out, f"the authenticated request never reached the gateway: {out!r}"
 
 
-def test_spawn_run_sends_the_minted_token_on_the_query_string(_local_secret, monkeypatch, capsys):
-    """`spawn run --async` must attach `?token=` to its POST, not send it bare."""
+def test_spawn_run_sends_the_minted_token_in_the_header(_local_secret, monkeypatch, capsys):
+    """`spawn run --async` must authenticate its POST with the minted token, not send it bare."""
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
@@ -165,6 +172,31 @@ def test_spawn_run_sends_the_minted_token_on_the_query_string(_local_secret, mon
     out = capsys.readouterr().out
     assert "Forbidden" not in out
     assert "Spawned subagent agent-7" in out
+
+
+def test_spawn_run_polls_with_the_header_until_the_subagent_is_done(
+    _local_secret, monkeypatch, capsys
+):
+    """The blocking form's poll loop is the third request and must authenticate the same way:
+    a poll the gateway refuses reads as "lost connection to gateway"."""
+    gateway = _fake_gateway(_local_secret, {"id": "agent-9", "task": "probe"})
+    polled: list[str] = []
+
+    def _urlopen(req, timeout=5):
+        url = req if isinstance(req, str) else req.full_url
+        if urlsplit(url).path == "/api/spawn/agent-9":
+            polled.append(url)
+            gateway(req, timeout)  # the same auth rule as every other /api/spawn request
+            return _Resp({"done": True, "result": "the subagent's answer"})
+        return gateway(req, timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    monkeypatch.setattr(cli_commands._time, "sleep", lambda _s: None)
+
+    cli_commands._spawn(_spawn_args(action="run", port=10884, task="probe", fire_and_forget=False))
+
+    assert polled, "the blocking form never polled"
+    assert "the subagent's answer" in capsys.readouterr().out
 
 
 def test_spawn_reports_not_running_only_when_the_gateway_is_actually_absent(monkeypatch, capsys):

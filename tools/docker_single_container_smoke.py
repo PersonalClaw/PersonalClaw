@@ -281,8 +281,12 @@ def published_port(argv: list[str]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _get(url: str) -> tuple[int, str, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "dist15-smoke"})
+def _get(url: str, *, token: str = "") -> tuple[int, str, str]:
+    """GET *url*; with *token*, authenticated by ``Authorization: Bearer`` — never the URL."""
+    headers = {"User-Agent": "dist15-smoke"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_S) as resp:  # noqa: S310
             return (
@@ -466,7 +470,7 @@ def _assert_download_offer(base: str, token: str) -> None:
     What onboarding, the chat screen and Settings → Models all render the offer from. ``null``
     here is the measured image defect: all-200 responses and no offer anywhere.
     """
-    status, _ctype, body = _get(f"{base}/api/onboarding?token={token}")
+    status, _ctype, body = _get(f"{base}/api/onboarding", token=token)
     if status != 200:
         _fail(f"/api/onboarding returned {status} (want 200) — body: {body[:300]!r}")
     try:

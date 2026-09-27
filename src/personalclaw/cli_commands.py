@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from personalclaw.cli_run import RunError, _authed, mint_local_token, probe_gateway
+from personalclaw.cli_run import RunError, mint_local_token, owner_headers, probe_gateway
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
 from personalclaw.embedding_providers.registry import get_active_embedding_dim
@@ -38,8 +38,7 @@ def _spawn(args: argparse.Namespace) -> None:
     misread as absent) and ``mint_local_token`` for the credential itself (reads the
     shared ``.local_secret`` and exchanges it at ``/api/token/local`` — the same handshake
     ``personalclaw token``/``status``/``logout`` use). The minted token then rides every
-    request via ``_authed`` (``?token=`` — the only location ``token_auth`` honours for
-    primary owner auth; a ``Bearer`` header is deliberately not a fallback for it).
+    request in the ``Authorization: Bearer`` header (``owner_headers``), never in the URL.
 
     Before this fix ``_spawn`` sent no credential at all, so a 403 from the default
     auth-on gateway raised ``urllib.error.HTTPError`` (a ``URLError`` subclass) and landed
@@ -74,7 +73,8 @@ def _spawn(args: argparse.Namespace) -> None:
 def _spawn_list(base: str, port: int, token: str) -> None:
     """``spawn list`` — GET ``/api/spawn`` carrying the caller's minted token."""
     try:
-        with urllib.request.urlopen(f"{base}{_authed('/api/spawn', token)}", timeout=5) as resp:
+        req = urllib.request.Request(f"{base}/api/spawn", headers=owner_headers(token))
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         try:
@@ -99,9 +99,9 @@ def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> No
     """Spawn a subagent via the dashboard API."""
     data = json.dumps({"task": args.task}).encode()
     req = urllib.request.Request(
-        f"{base}{_authed('/api/spawn', token)}",
+        f"{base}/api/spawn",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **owner_headers(token)},
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -126,11 +126,11 @@ def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> No
     # Block: poll until done
 
     print(f"Spawned subagent {agent_id}, waiting for result...", file=sys.stderr)
-    poll_url = f"{base}{_authed(f'/api/spawn/{agent_id}', token)}"
+    poll = urllib.request.Request(f"{base}/api/spawn/{agent_id}", headers=owner_headers(token))
     while True:
         _time.sleep(2)
         try:
-            with urllib.request.urlopen(poll_url, timeout=5) as resp:
+            with urllib.request.urlopen(poll, timeout=5) as resp:
                 status = json.loads(resp.read())
         except Exception:
             print("Error: lost connection to gateway", file=sys.stderr)

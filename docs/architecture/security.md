@@ -64,9 +64,23 @@ permission model holds in every auth mode.
 
 `dashboard/token_auth.py`:
 
+- **One credential, three carriers.** `_select_request_credentials` is the one rule
+  every auth path uses to pick the credential that authorizes a request. `?token=`
+  is the browser's entry link: bound to the first client address that uses it and
+  exchanged for the `HttpOnly` `pc_token_<port>` cookie. `Authorization: Bearer` is
+  for every client that is not a browser: it accepts exactly the sessions the cookie
+  accepts, judged by the same rules (signature, session lifetime, a live nonce), and
+  it is stateless — no cookie, no address binding — and keeps the token out of URLs.
+  A different owner token in the header beside `?token=` is refused
+  (`auth_credential_conflict`); a Bearer with nothing else to stand on that is not a
+  live owner session — expired, revoked, forged, an app's, another surface's — gets
+  the one `auth_bearer_invalid`, and no refusal echoes or audits the token. Only the
+  Bearer scheme is the gateway's: another scheme in the same header (a reverse
+  proxy's `Basic` login) is ignored, not refused.
 - `generate_token(user_id, ttl_seconds, app=...)` mints tokens with an
   optional **`app` claim**; app-scoped tokens bound a request to that app's
-  declared permissions.
+  declared permissions. In the Bearer header an app token only narrows the
+  owner session it is presented beside, for the same user.
 - App backends never see the owner's credential: the reverse proxy strips
   cookie + Authorization and injects a fresh 1-hour app-scoped token
   (see [app-platform.md](app-platform.md#the-reverse-proxy--token-model)).

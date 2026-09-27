@@ -199,18 +199,29 @@ def test_the_staged_ci_runs_the_four_apps_repo_jobs() -> None:
     assert "Signed-off-by" in ci
 
 
-def test_the_staged_readme_uses_the_query_token_not_a_bearer_header() -> None:
-    """The gateway accepts Bearer only for app-scoped narrowing tokens; owner auth is ?token=."""
+def test_the_staged_readme_sends_the_owner_token_in_the_header_not_the_url() -> None:
+    """Every curl in the walkthrough authenticates with ``Authorization: Bearer``; none puts
+    the token in a URL, where it lands in the reader's shell history and any proxy log."""
     readme = (STAGED / "README.md").read_text(encoding="utf-8")
-    assert "?token=$PERSONALCLAW_TOKEN" in readme
-    # No curl in the text may SEND a bearer header. The phrase itself must stay: the text
-    # warns the reader off it, which is why the walkthrough works on the first try.
-    assert "-H 'Authorization" not in readme
-    assert '-H "Authorization' not in readme
-    assert "Authorization: Bearer" in readme, "the Bearer warning must stay in the text"
+    assert "token=$PERSONALCLAW_TOKEN" not in readme
+    curls = [line for line in readme.splitlines() if line.lstrip().startswith(("curl", "review="))]
+    assert len(curls) >= 4, f"the walkthrough lost its API calls: {curls}"
+    assert readme.count('-H "Authorization: Bearer $PERSONALCLAW_TOKEN"') == len(
+        curls
+    ), "every API call in the walkthrough must carry the owner token as a Bearer header"
     # Clone-to-installed: the four beats a stranger needs, in the text.
-    for beat in ("--from-template", "pytest", "/api/apps?token=", "/enable?token="):
+    for beat in ("--from-template", "pytest", "/api/apps/preview", "/enable"):
         assert beat in readme, f"staged README does not walk the reader through {beat}"
+
+
+def test_the_scaffold_readme_sends_the_owner_token_in_the_header_not_the_url(tmp_path) -> None:
+    """``personalclaw app new``'s README teaches the same install as the staged template."""
+    from personalclaw.cli_app_new import scaffold
+
+    app = scaffold("header-probe", "channel", dest=tmp_path, year=2026)
+    readme = (app.path / "README.md").read_text(encoding="utf-8")
+    assert "token=$PERSONALCLAW_TOKEN" not in readme
+    assert readme.count('-H "Authorization: Bearer $PERSONALCLAW_TOKEN"') == 3, readme
 
 
 # ---------------------------------------------------------------------------

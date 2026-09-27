@@ -94,9 +94,13 @@ says what that means.
 - **Permission middleware** holds in every auth mode — including `none`, where
   `dashboard/server.py`'s `_dev_user_middleware` re-adopts the app claim via
   `validate_token_with_app` so an app token only ever *narrows* reach. The internal
-  routes' cookie/`?token=` fallback records the claim too
-  (`dashboard/token_auth.py::_extract_and_validate_token`): it used to validate an app
-  token and drop its identity, so `/api/tools/invoke` reached the handler as the owner.
+  routes' session fallback records the claim too — every auth path picks its credential
+  through `dashboard/token_auth.py::_select_request_credentials` — where it used to
+  validate an app token and drop its identity, so `/api/tools/invoke` reached the
+  handler as the owner.
+- **Reverse-proxy query stripping** (`api_app_proxy`): the proxy drops the credential query
+  parameters (`?token=`, `?app_token=`) before forwarding, for the reason it drops the
+  cookie and `Authorization` — a backend must never hold a token it could replay.
 - **The owner's security posture is not an app's to change.** A config field whose
   `_EDITABLE_CONFIG` entry declares a `SecurityControl` (`config/edit_spec.py`) refuses an
   app-scoped write `403`, in either direction, with a Security Event Log row naming the
