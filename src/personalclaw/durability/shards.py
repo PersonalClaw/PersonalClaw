@@ -380,6 +380,34 @@ def _stage_db_copy(out_dir: Path, entry_id: str, src_copy: Path) -> DbCopy | Non
     return DbCopy(path=rel, entry_id=entry_id, bytes=len(data), sha256=_sha256(data))
 
 
+def _export_blob(root: Path, path: Path) -> int:
+    """The one file a file-shaped tree entry names (``prompt.md``), as a content-addressed blob.
+
+    Never the folder it sits in. That folder is the home, and exporting it put every file there
+    into this entry's blobs: the credential store's values, the session-signing key, the other
+    stores' raw databases. Shards are the copy that leaves the machine, and secrets never shard.
+    So the entry's blobs are this file alone, and any other blob an earlier export left there is
+    removed.
+    """
+    if path.is_symlink():
+        return 0
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return 0
+    digest = _sha256(data)
+    blob_root = root / "blobs"
+    if blob_root.is_dir():
+        for stray in [p for p in blob_root.rglob("*") if p.is_file() and p.name != digest]:
+            stray.unlink(missing_ok=True)
+    dest = blob_root / digest[:2] / digest
+    if dest.exists():
+        return 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_bytes(dest, data)
+    return 1
+
+
 def export_shards(
     home: Path,
     out_dir: Path,
@@ -456,7 +484,7 @@ def export_shards(
                 if src.is_dir():
                     result.blobs += _export_blobs(out_dir / entry.id, src, entry_path=entry.path)
                 else:
-                    result.blobs += _export_blobs(out_dir / entry.id, src.parent)
+                    result.blobs += _export_blob(out_dir / entry.id, src)
 
     result.shards.sort(key=lambda s: s.path)
     # An INCREMENTAL export rewrote only the changed entries' shards, but the
