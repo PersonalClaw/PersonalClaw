@@ -2,10 +2,11 @@
 
 Pure-python nodes (exif, thumbnail, ffmpeg split, frame-extract) need no model.
 Model-backed nodes resolve DIRECTLY to a default capability binding — OCR / vision /
-video-classify → ``image_modality``, consolidation → ``chat``, transcription → ``stt``
-— and **gracefully skip** when no model is active (the executor checks
-``can_resolve_use_case`` first). There are no dedicated ingestion use-cases / per-role
-overrides: ingestion simply uses the model you bound for that capability.
+video-classify → ``image_modality`` (with nothing bound, a chat model that takes images),
+consolidation → ``chat``, transcription → ``stt`` — and **gracefully skip** when no model
+serves (the executor checks ``registry.unserved_reason`` first). There are no dedicated
+ingestion use-cases / per-role overrides: ingestion simply uses the model you bound for that
+capability.
 
 The video graph (graphs.py ``VideoGraph``) wires these into the worked-example DAG:
 a/v split → transcription ‖ (frame-extract → classify → conditional ocr|vision →

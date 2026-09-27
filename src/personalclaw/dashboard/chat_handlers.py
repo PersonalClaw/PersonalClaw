@@ -1307,7 +1307,7 @@ async def api_chat_screen_state(request: web.Request) -> web.Response:
     session = state._sessions.get(name)
     enabled = bool(AppConfig.load().dashboard.screen_share_enabled)
     verdict = await session_image_input(state, session)
-    delivery, reason = screen_context.resolve_delivery(verdict.accepted)
+    delivery, reason = await screen_context.resolve_delivery(verdict.accepted)
     return web.json_response(
         {
             "enabled": enabled,

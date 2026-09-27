@@ -14,10 +14,14 @@ from personalclaw.knowledge.pipeline.types import NodeContext
 
 
 def _set_resolvable(monkeypatch, fn):
-    """Control use-case resolvability for the executor. The executor binds
-    ``can_resolve_use_case`` at import (``from registry import …``), so patch it in
-    the EXECUTOR's namespace — patching registry's wouldn't reach it."""
-    monkeypatch.setattr(ex, "can_resolve_use_case", fn)
+    """Control whether a model serves each use-case, for the executor. The executor binds
+    ``unserved_reason`` at import (``from registry import …``), so patch it in the
+    EXECUTOR's namespace — patching registry's wouldn't reach it."""
+
+    async def _unserved(use_case):
+        return "" if fn(use_case) else f"no model serves the {use_case} use case"
+
+    monkeypatch.setattr(ex, "unserved_reason", _unserved)
 
 
 def _run(coro):

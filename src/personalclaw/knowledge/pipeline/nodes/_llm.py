@@ -1,9 +1,10 @@
 """Shared helpers for model-backed pipeline nodes (#47).
 
 A node resolves its model through a Settings>Models **use-case** (via
-``resolve_provider_for_use_case``) and runs a one-shot completion. The executor has
-already verified the use-case is resolvable (``can_resolve_use_case``) before a
-model-backed node runs, so these helpers assume a model exists — but still degrade to
+``resolve_provider_for_use_case``; image understanding through the platform's image
+reader, ``providers.image_input.resolve_image_reader``) and runs a one-shot completion.
+The executor has already verified a model serves the use-case (``registry.unserved_reason``)
+before a model-backed node runs, so these helpers assume a model exists — but still degrade to
 ``""`` on any provider error rather than raising (the node then reports failure and
 the item goes partial).
 
@@ -37,7 +38,6 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
     """
     from personalclaw.llm.base import EVENT_TEXT_CHUNK
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
     messages = _build_messages(prompt, images)
     # The chunks of the most recent FAILED attempt. ``_collect`` must re-raise so the
@@ -74,7 +74,7 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
             return "".join(partial)
     else:
         try:
-            provider = resolve_provider_for_use_case(use_case)
+            provider = await _single_provider(use_case)
         except Exception:
             # Resolution failing (no provider for the use-case, bad binding) is a real
             # reason a node produces nothing — surface it at WARNING, not DEBUG, so a
@@ -104,6 +104,22 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
             len(images or []),
         )
     return result
+
+
+async def _single_provider(use_case: str):
+    """The provider a one-entry or unbound *use_case* runs on.
+
+    Image understanding asks the platform's image reader — its binding, else a chat model that
+    takes images, built by that model's name (``providers.image_input.resolve_image_reader``) —
+    because the plain resolver has no implicit pick for it. Every other use case resolves as
+    itself.
+    """
+    from personalclaw.providers.image_input import IMAGE_USE_CASE, resolve_image_reader
+    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+
+    if use_case == IMAGE_USE_CASE:
+        return await resolve_image_reader()
+    return resolve_provider_for_use_case(use_case)
 
 
 def _build_messages(prompt: str, images: list[str] | None) -> list[dict]:

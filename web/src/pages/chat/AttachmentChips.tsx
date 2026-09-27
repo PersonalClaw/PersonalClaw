@@ -5,8 +5,9 @@ import { useQuery } from '../../lib/data'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { Modal } from '../../ui/Modal'
+import { TextLink } from '../../ui/TextLink'
 import { FieldError } from '../../ui/forms'
-import { imagesAsTextNote, type ImageDelivery } from './imageAttachments'
+import { imagesAsTextNote, UNREAD_NO_IMAGE_MODEL, type ImageDelivery } from './imageAttachments'
 
 export interface AttachmentChipsProps {
   paths: string[]
@@ -46,8 +47,9 @@ function ImageAttachmentChips({ paths, images, session, agent, model, runtime, o
 }
 
 /** What a model that takes no images gets instead: the text read from each image, or — when
- *  nothing could read one — only its size and format. Read from the images' own extraction (it
- *  started at upload), so the sentence is about these files, not about what might be installed. */
+ *  nothing could read one — only its size and format, and when that is because no image model is
+ *  set up, where to set one up. Read from the images' own extraction (it started at upload), so
+ *  the sentence is about these files, not about what might be installed. */
 function ImagesAsTextNote({ input, images }: { input: ChatImageInput; images: string[] }) {
   const { data, error } = useQuery(
     `chat:attachment-extract:${images.join('|')}`,
@@ -58,8 +60,26 @@ function ImagesAsTextNote({ input, images }: { input: ChatImageInput; images: st
       <FieldError className="-mt-1 mb-2">{input.reason} Couldn't read what it would get from {images.length === 1 ? 'the image' : 'the images'} — {(error as Error)?.message || 'the server did not respond'}</FieldError>
     )
   }
-  const note = imagesAsTextNote(input, images.length, data ? data.every((x) => x.read) : undefined)
-  return note ? <p role="note" className="-mt-1 mb-2 text-[0.75rem] text-on-surface-var">{note}</p> : null
+  const got = data && {
+    read: data.every((x) => x.read),
+    noImageModel: data.every((x) => !x.read && x.unread === UNREAD_NO_IMAGE_MODEL),
+  }
+  const note = imagesAsTextNote(input, images.length, got)
+  if (!note) return null
+  return (
+    <p role="note" className="-mt-1 mb-2 text-[0.75rem] text-on-surface-var">
+      {note}{got?.noImageModel && <> <SetUpAnImageModel /></>}
+    </p>
+  )
+}
+
+/** Where an image model is set up — said wherever no image model is, so the fix is one click. */
+function SetUpAnImageModel() {
+  return (
+    <>Choose one in{' '}
+      <TextLink href="#/settings/models" ink="emphasis" className="underline">Settings → Models</TextLink>.
+    </>
+  )
 }
 
 /** Highlighted chips for @-mentioned files, shown ABOVE the composer. Clicking
@@ -133,6 +153,7 @@ export function TurnAttachments({ paths, delivery, onOpenFile }: { paths: string
 function AttachmentPeekModal({ path, name, delivery, reason, onOpenFile, onClose }: { path: string; name: string; delivery?: 'image' | 'text'; reason?: string; onOpenFile: (p: string) => void; onClose: () => void }) {
   const [text, setText] = useState<string | null>(null)
   const [read, setRead] = useState(true)
+  const [unread, setUnread] = useState('')
   const [readErr, setReadErr] = useState<unknown>(null)
   const [loading, setLoading] = useState(delivery !== 'image')
   useEffect(() => {
@@ -143,7 +164,7 @@ function AttachmentPeekModal({ path, name, delivery, reason, onOpenFile, onClose
     setLoading(true)
     setReadErr(null)
     api.attachmentExtract(path)
-      .then((r) => { if (alive) { setText(r.text || ''); setRead(r.read) } })
+      .then((r) => { if (alive) { setText(r.text || ''); setRead(r.read); setUnread(r.unread) } })
       // A failed read is not "no extractable text": that sentence would describe the file.
       .catch((e) => { if (alive) setReadErr(e) })
       .finally(() => { if (alive) setLoading(false) })
@@ -161,7 +182,12 @@ function AttachmentPeekModal({ path, name, delivery, reason, onOpenFile, onClose
         ) : (
         <div>
           {delivery === 'text' && !loading && !readErr && (
-            <p className="mb-2 text-on-surface-var text-[0.8125rem]">{reason ? `${reason} ` : ''}{read ? 'The text read from the image was sent instead.' : "Nothing could read the image, so only its size and format were sent."}</p>
+            <p className="mb-2 text-on-surface-var text-[0.8125rem]">
+              {reason ? `${reason} ` : ''}
+              {read ? 'The text read from the image was sent instead.'
+                : unread === UNREAD_NO_IMAGE_MODEL ? <>No image model is set up, so only its size and format were sent. <SetUpAnImageModel /></>
+                  : 'Nothing could read the image, so only its size and format were sent.'}
+            </p>
           )}
           <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Extracted content (what the agent saw)</div>
           {readErr ? (

@@ -48,7 +48,7 @@ from personalclaw.knowledge.pipeline.nodes.ocr_nodes import (
     PdfRasterizeNode,
     _render_scale,
 )
-from personalclaw.knowledge.pipeline.registry import can_resolve_use_case, resolve_runnable
+from personalclaw.knowledge.pipeline.registry import resolve_runnable, unserved_reason
 from personalclaw.knowledge.pipeline.runner import ingest_item
 from personalclaw.knowledge.pipeline.types import NodeContext
 from personalclaw.knowledge.readers import FileReader
@@ -151,7 +151,7 @@ def spy() -> _SpyEngine:
 def no_engine():
     """Assert no OCR engine is registered — the state a user with no OCR app is in."""
     ensure_nodes_registered()
-    assert resolve_runnable("ocr", "vision-llm") is None, (
+    assert asyncio.run(resolve_runnable("ocr", "vision-llm")) is None, (
         "an OCR backend is runnable in this environment, so the 'nothing available' "
         "clauses below would not be measuring what they claim"
     )
@@ -336,8 +336,8 @@ def test_the_no_model_environment_is_what_makes_clause_1_meaningful(spy):
     model can never be what satisfied it."""
     from personalclaw.knowledge.pipeline.registry import get_node, node_available
 
-    assert can_resolve_use_case("image_modality") is False
-    resolved = resolve_runnable("ocr", "vision-llm")
+    assert asyncio.run(unserved_reason("image_modality"))
+    resolved = asyncio.run(resolve_runnable("ocr", "vision-llm"))
     assert resolved is not None, "the engine backend should be runnable with a spy registered"
     node, _backend = resolved
     # The substitute must not itself need a bound model — that is the whole property. Asserted
@@ -691,7 +691,7 @@ class TestTheRailIsNotVacuous:
 
         assert "engine" in backends_for("ocr"), "the engine backend should be registered"
         assert node_available(get_node("ocr", "engine")) is False
-        assert resolve_runnable("ocr", "vision-llm") is None
+        assert asyncio.run(resolve_runnable("ocr", "vision-llm")) is None
 
     def test_a_pinned_backend_is_never_substituted(self, spy):
         """The fallback reconsiders the GRAPH's default only. A user who pinned a backend

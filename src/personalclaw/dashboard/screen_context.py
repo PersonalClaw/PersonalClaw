@@ -30,8 +30,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # Bounded so a long-running gateway that opened many sessions can't grow the map
 # without limit. Frames are large, so this is deliberately much smaller than the
@@ -183,28 +186,31 @@ def live_sessions() -> int:
 
 #: A frame rides the turn as a real image content part.
 DELIVERY_NATIVE = "native"
-#: The bound model can't read images, but a vision model IS bound to the
-#: ``image_modality`` use case, so the frame is described once and the FENCED text
-#: is injected instead.
+#: The session's model can't read images, but something else reads them — the model bound
+#: to image understanding, or with nothing bound a chat model that takes images
+#: (``providers.image_input.image_reader``) — so the frame is described once and the
+#: FENCED text is injected instead.
 DELIVERY_DESCRIBED = "described"
 #: Nothing can read the frame. The control is offered disabled, with the reason.
 DELIVERY_NONE = "none"
 
 
-def resolve_delivery(accepts_images: bool) -> tuple[str, str]:
+async def resolve_delivery(accepts_images: bool) -> tuple[str, str]:
     """Return ``(mode, reason)`` for a frame on a session whose model ``accepts_images``.
 
     ``reason`` is empty for the two working modes and, for
     :data:`DELIVERY_NONE`, is the user-facing sentence the disabled control shows —
-    so the UI never has to invent its own explanation for a decision made here.
+    so the UI never has to invent its own explanation for a decision made here. The
+    described mode asks the same image reader the description itself is built from, so the
+    control is never offered for a frame nothing would read.
     """
     if accepts_images:
         return DELIVERY_NATIVE, ""
     try:
-        from personalclaw.providers.provider_bridge import can_resolve_use_case
+        from personalclaw.providers.image_input import image_reader
 
-        if can_resolve_use_case("image_modality"):
+        if (await image_reader()).ref:
             return DELIVERY_DESCRIBED, ""
     except Exception:  # noqa: BLE001 — a broken registry is "no vision", not a crash
-        pass
+        logger.debug("screen share: image-reader probe failed", exc_info=True)
     return DELIVERY_NONE, "Bind a vision model in Settings → Models to share your screen."

@@ -11,11 +11,12 @@ screenshot, the thing the agent described actually is — and returning a point 
 with a located CDP input event. Four properties are load-bearing:
 
 **It resolves ONLY through the existing vision capability.** :func:`available` and
-:func:`ground` go through ``provider_bridge``'s ``image_modality`` use case — the same seam
-``chat_runner._describe_screen_frame`` and the knowledge pipeline's vision nodes already use. There
-is no new vendor string here, no new client, and no app-owned model socket: a user who has bound a
-vision model in Settings → Models has already configured this, and a user who has not gets
-:data:`REASON_NO_VISION_MODEL`.
+:func:`ground` go through the platform's image reader (``providers.image_input``) — the
+``image_modality`` binding, else a chat model that takes images — the same seam
+``chat_runner._describe_screen_frame`` and the knowledge pipeline's vision nodes use. There is no
+new vendor string here, no new client, and no app-owned model socket: a user who has bound a
+vision model in Settings → Models, or who chats with one, has already configured this, and a user
+who has neither gets :data:`REASON_NO_VISION_MODEL`.
 
 **The point is NORMALISED, not pixel.** The model answers fractions of the image
 (``POINT <fx> <fy>``, both in 0-1) and the caller multiplies by the CSS viewport. A screenshot is
@@ -53,15 +54,17 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalclaw.providers.image_input import IMAGE_USE_CASE
+
 logger = logging.getLogger(__name__)
 
-#: The Settings → Models capability this path resolves through — the EXISTING vision axis
-#: (``providers/use_cases.py``), bridged to the provider ``Capability.VISION`` by
-#: ``providers/provider_bridge.py``'s ``_CAPABILITY_TO_ENUM``. Naming it once here is what keeps
-#: BA-10 free of a new vendor string: every resolution in this module goes through this constant.
-VISION_USE_CASE = "image_modality"
+#: The Settings → Models capability this path reads images through — the EXISTING vision axis
+#: (``providers/use_cases.py``), whose binding the platform's image reader asks first, before a
+#: chat model that takes images (``providers/image_input.py``). Naming it once here is what keeps
+#: BA-10 free of a new vendor string.
+VISION_USE_CASE = IMAGE_USE_CASE
 
-#: The typed reason a run parks when nothing is bound to :data:`VISION_USE_CASE`. A CONSTANT rather
+#: The typed reason a run parks when nothing reads images (see :func:`available`). A CONSTANT rather
 #: than a composed sentence because the loop's park reason, the SEL row and the user-facing card all
 #: quote it, and an honest refusal that spells itself three ways reads as three different failures.
 REASON_NO_VISION_MODEL = "no vision model available"
@@ -221,18 +224,20 @@ class GroundingResult:
         return self.outcome == OUTCOME_GROUNDED and self.point is not None
 
 
-def available() -> bool:
-    """True when a model is bound to :data:`VISION_USE_CASE` right now.
+async def available() -> bool:
+    """True when something reads images right now: the :data:`VISION_USE_CASE` binding, else a
+    chat model that takes images.
 
-    Delegates to ``provider_bridge.can_resolve_use_case`` rather than probing the config itself —
-    it is the same function the onboarding "add a model" nudge and the screen-share delivery gate
-    already use, so "the dashboard says you have a vision model" and "the browse loop can ground a
-    click" cannot disagree. A broken registry answers False (no vision), never raises.
+    Asks the platform's image reader (``providers.image_input.image_reader``) rather than probing
+    the config itself — the same answer the screen-share delivery gate and the knowledge pipeline
+    ask, and the one :func:`_complete` resolves through, so "the dashboard says you have a vision
+    model" and "the browse loop can ground a click" cannot disagree. A broken registry answers
+    False (no vision), never raises.
     """
     try:
-        from personalclaw.providers.provider_bridge import can_resolve_use_case
+        from personalclaw.providers.image_input import image_reader
 
-        return bool(can_resolve_use_case(VISION_USE_CASE))
+        return bool((await image_reader()).ref)
     except Exception:  # noqa: BLE001 — an unresolvable registry is "no vision", not a crash
         logger.debug("browse vision: capability probe failed", exc_info=True)
         return False
@@ -334,7 +339,7 @@ async def ground(
             outcome=OUTCOME_NO_SCREENSHOT,
             reason="there is no screenshot of this step to ground a click on",
         )
-    if not available():
+    if not await available():
         return GroundingResult(outcome=OUTCOME_NO_MODEL, reason=REASON_NO_VISION_MODEL)
 
     data_url = image_data_url(screenshot_path)
@@ -360,7 +365,7 @@ async def ground(
 
 
 async def _complete(*, data_url: str, description: str) -> str:
-    """One multimodal completion through the ``image_modality`` use case. Returns raw text.
+    """One multimodal completion on the platform's image reader. Returns raw text.
 
     Split out so :func:`ground` reads as its four guards and so a test can drive the guards without
     a provider. The message shape is the platform's existing OpenAI-style content-block convention
@@ -368,9 +373,9 @@ async def _complete(*, data_url: str, description: str) -> str:
     translates it into Ollama's ``images: [<base64>]``, and the hosted providers take it as-is.
     """
     from personalclaw.llm.base import EVENT_TEXT_CHUNK
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.providers.image_input import resolve_image_reader
 
-    provider = resolve_provider_for_use_case(VISION_USE_CASE)
+    provider = await resolve_image_reader()
     messages = [
         {
             "role": "user",

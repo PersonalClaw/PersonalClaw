@@ -219,9 +219,11 @@ its long edge is scaled down first.
 
 When it does not — a text-only model, or an agent CLI such as Claude Code, which runs its own
 connection — the image goes as text: what OCR and your image-understanding model read from it.
-The chip says **as text** before you send, with the reason ("gemma3:1b can't take images.")
-and what the model will get instead. If nothing is set up to read an image, it gets only the
-image's size and format, and the chip says that too. After sending, the chip on your message
+That model is the one chosen for **Image · Modality** in Settings → Models; with none chosen,
+your chat model reads images itself when it takes them. The chip says **as text** before you send, with the
+reason ("gemma3:1b can't take images.") and what the model will get instead. If nothing is set
+up to read an image, it gets only the image's size and format, and the chip says **No image
+model is set up** with a link to Settings → Models. After sending, the chip on your message
 keeps saying **sent as text**, and its preview shows exactly the text that was sent.
 
 ### When the menu entry is not there
